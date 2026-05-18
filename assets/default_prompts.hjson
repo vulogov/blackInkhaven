@@ -1,0 +1,62 @@
+// inkhaven prompt library
+// `{{selection}}` is replaced with the editor selection (or the full Paragraph
+// content if there is no selection). `{{context}}` is replaced with the
+// surrounding hierarchical context (Book/Chapter/Subchapter titles).
+
+{
+  prompts: [
+    {
+      name: tighten
+      description: Tighten prose; remove flab without changing meaning
+      template: '''
+        Tighten the following prose. Preserve voice and meaning; remove
+        redundancy and weak constructions.
+
+        {{selection}}
+      '''
+    }
+    {
+      name: darker
+      description: Rewrite in a darker, more ominous tone
+      template: '''
+        Rewrite the following in a darker, more ominous tone. Keep length
+        roughly the same.
+
+        {{selection}}
+      '''
+    }
+    {
+      name: continue
+      description: Continue the scene in the same voice for one paragraph
+      template: '''
+        Continue this scene in the same voice for one paragraph.
+
+        Context: {{context}}
+
+        ---
+
+        {{selection}}
+      '''
+    }
+    {
+      name: translate-ru
+      description: Translate to Russian preserving literary register
+      template: '''
+        Translate the following text into Russian, preserving the literary
+        register and rhythm. Output Russian only.
+
+        {{selection}}
+      '''
+    }
+    {
+      name: typst-index
+      description: Suggest a Typst document index for the current Book
+      template: '''
+        Given the following Book hierarchy, propose a Typst document index
+        configuration (#outline, #set page, fonts, etc). Output valid Typst.
+
+        {{context}}
+      '''
+    }
+  ]
+}
