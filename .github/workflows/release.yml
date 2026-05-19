@@ -44,7 +44,11 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
-          - os: macos-latest
+          # macOS x86_64 must run on an Intel runner — macos-latest is
+          # macos-14 (Apple Silicon), and cross-building a tree with
+          # native build scripts (yeslogic-fontconfig-sys etc.) from
+          # there fails because pkg-config can't reconcile arch mismatch.
+          - os: macos-13
             target: x86_64-apple-darwin
             archive: tar.gz
           - os: macos-latest
