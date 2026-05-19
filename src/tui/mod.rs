@@ -1,4 +1,5 @@
 mod app;
+mod file_picker;
 mod focus;
 mod highlight;
 mod input;

@@ -28,6 +28,7 @@ use crate::store::hierarchy::Hierarchy;
 use crate::store::node::{Node, NodeKind};
 use crate::store::{InsertPosition, Snapshot};
 
+use super::file_picker::{FilePicker, PickerContext};
 use super::focus::Focus;
 use super::highlight::{
     BlockSelection, TypstHighlighter, build_row_spans, build_visual_row_spans, diff_added,
@@ -120,6 +121,35 @@ enum MoveDir {
     Down,
 }
 
+#[derive(Default)]
+struct ImportCounts {
+    /// Any branch created during import: chapter, subchapter, or book.
+    branches: usize,
+    paragraphs: usize,
+}
+
+fn derive_paragraph_title_from_path(path: &std::path::Path) -> String {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("imported");
+    let pretty: String = stem
+        .replace('_', " ")
+        .replace('-', " ")
+        .split_whitespace()
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().chain(c).collect(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    if pretty.is_empty() {
+        "Imported".into()
+    } else {
+        pretty
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum InferenceAction {
     Replace,
@@ -163,6 +193,7 @@ enum Modal {
         kind: NodeKind,
         input: TextInput,
     },
+    FilePicker(FilePicker),
     SnapshotPicker {
         /// Kept for potential refresh ops after future snapshot mutations.
         #[allow(dead_code)]
@@ -528,6 +559,9 @@ impl App {
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') if plain => return Ok(self.request_quit()),
             KeyCode::F(2) => self.open_rename_modal(),
+            // F3 in Tree: import a file (becomes new paragraph after cursor)
+            // or a directory tree (dirs → subchapters, files → paragraphs).
+            KeyCode::F(3) => self.open_file_picker(PickerContext::TreeInsertOrImport),
             KeyCode::Up => self.move_cursor(-1),
             KeyCode::Down => self.move_cursor(1),
             KeyCode::Home => self.tree_cursor = 0,
@@ -636,6 +670,12 @@ impl App {
         }
         if matches!(key.code, KeyCode::F(6)) {
             self.open_snapshot_picker();
+            return Ok(false);
+        }
+        // F3 opens the file-load dialog: pick a file, its content replaces
+        // the editor buffer (and marks dirty).
+        if matches!(key.code, KeyCode::F(3)) {
+            self.open_file_picker(PickerContext::EditorLoad);
             return Ok(false);
         }
 
@@ -1464,6 +1504,332 @@ impl App {
         }
     }
 
+    fn open_file_picker(&mut self, context: PickerContext) {
+        let root = std::env::current_dir().unwrap_or_else(|_| self.layout.root.clone());
+        self.modal = Modal::FilePicker(FilePicker::new(root, context));
+    }
+
+    fn commit_file_pick(&mut self) {
+        let (path, is_dir, context) = match &self.modal {
+            Modal::FilePicker(p) => match p.current() {
+                Some(entry) => (entry.path.clone(), entry.is_dir, p.context),
+                None => {
+                    self.modal = Modal::None;
+                    return;
+                }
+            },
+            _ => return,
+        };
+
+        match (context, is_dir) {
+            (PickerContext::EditorLoad, true) => {
+                self.status =
+                    "Editor F3 needs a file, not a directory — Enter on a file".into();
+            }
+            (PickerContext::EditorLoad, false) => {
+                self.load_file_into_editor(&path);
+                self.modal = Modal::None;
+            }
+            (PickerContext::TreeInsertOrImport, false) => {
+                self.import_single_file(&path);
+                self.modal = Modal::None;
+            }
+            (PickerContext::TreeInsertOrImport, true) => {
+                self.import_directory_tree(&path);
+                self.modal = Modal::None;
+            }
+        }
+    }
+
+    fn load_file_into_editor(&mut self, path: &std::path::Path) {
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.status = format!("read {}: {e}", path.display());
+                return;
+            }
+        };
+        let body = String::from_utf8_lossy(&bytes).into_owned();
+        let Some(doc) = self.opened.as_mut() else {
+            self.status =
+                "no paragraph open — open one first, then F3 to replace its body".into();
+            return;
+        };
+        let lines: Vec<String> = if body.is_empty() {
+            vec![String::new()]
+        } else {
+            body.split('\n').map(String::from).collect()
+        };
+        let mut new_textarea = TextArea::new(lines);
+        new_textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
+        new_textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
+        doc.textarea = new_textarea;
+        doc.dirty = true;
+        doc.scroll_row = 0;
+        doc.scroll_col = 0;
+        doc.last_activity = std::time::Instant::now();
+        self.focus = Focus::Editor;
+        self.status = format!("loaded `{}` — bold marks the change vs saved", path.display());
+    }
+
+    fn import_single_file(&mut self, path: &std::path::Path) {
+        // Place the new paragraph after the tree cursor's same-kind ancestor
+        // if there is one (so it's "insert after current"). Falls back to
+        // append-at-end under the nearest valid parent.
+        let cursor_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
+        let anchor = cursor_id.and_then(|id| {
+            let mut cur = Some(id);
+            while let Some(c) = cur {
+                let node = self.hierarchy.get(c)?;
+                if node.kind == NodeKind::Paragraph {
+                    return Some(node.id);
+                }
+                cur = node.parent_id;
+            }
+            None
+        });
+        let position = match anchor {
+            Some(id) => InsertPosition::After(id),
+            None => InsertPosition::End,
+        };
+        let parent = match position {
+            InsertPosition::After(anchor_id) => self
+                .hierarchy
+                .get(anchor_id)
+                .and_then(|n| n.parent_id)
+                .and_then(|pid| self.hierarchy.get(pid))
+                .cloned(),
+            InsertPosition::End => {
+                match self
+                    .hierarchy
+                    .pick_parent_for(&self.cfg, cursor_id, NodeKind::Paragraph)
+                {
+                    Ok(p) => p.cloned(),
+                    Err(e) => {
+                        self.status = format!("can't import here: {e}");
+                        return;
+                    }
+                }
+            }
+        };
+
+        let title = derive_paragraph_title_from_path(path);
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.status = format!("read {}: {e}", path.display());
+                return;
+            }
+        };
+
+        let created = match self.store.create_node(
+            &self.cfg,
+            &self.hierarchy,
+            NodeKind::Paragraph,
+            &title,
+            parent.as_ref(),
+            None,
+            position,
+        ) {
+            Ok(n) => n,
+            Err(e) => {
+                self.status = format!("create paragraph: {e}");
+                return;
+            }
+        };
+
+        // Replace the templated body with the actual file content.
+        let Some(rel) = &created.file else {
+            self.status = "created paragraph has no file path — bug?".into();
+            return;
+        };
+        let abs = self.layout.root.join(rel);
+        if let Err(e) = std::fs::write(&abs, &bytes) {
+            self.status = format!("write {}: {e}", abs.display());
+            return;
+        }
+        let mut node = created.clone();
+        if let Err(e) = self.store.update_paragraph_content(&mut node, &bytes) {
+            self.status = format!("update: {e}");
+            return;
+        }
+        let _ = self.store.sync();
+        self.status = format!("imported `{}` as paragraph", path.display());
+        self.reload_hierarchy();
+        if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == created.id) {
+            self.tree_cursor = i;
+        }
+    }
+
+    fn import_directory_tree(&mut self, root: &std::path::Path) {
+        // The top-level dir's "kind" adapts to where the tree cursor sits:
+        //   Book      → top dir becomes a Chapter
+        //   Chapter   → top dir becomes a Subchapter
+        //   Subchapter→ top dir becomes a Subchapter (requires unbounded)
+        //   Paragraph → reject
+        // Same rule applies at every recursion level: the new branch's kind
+        // is "one level deeper than its parent", so a nested directory tree
+        // walks down the hierarchy with it.
+        let cursor_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
+        let parent_id = cursor_id.and_then(|id| {
+            // If cursor is on a paragraph we walk up to its enclosing branch
+            // — easier than telling the user "move first".
+            let mut cur = Some(id);
+            while let Some(c) = cur {
+                let node = self.hierarchy.get(c)?;
+                if node.kind != NodeKind::Paragraph {
+                    return Some(node.id);
+                }
+                cur = node.parent_id;
+            }
+            None
+        });
+
+        let mut counts = ImportCounts::default();
+        let result = self.import_dir_recursive(root, parent_id, &mut counts);
+
+        // Always reload — even on partial failure the new branches/paragraphs
+        // that DID get created should be visible in the tree.
+        self.reload_hierarchy();
+
+        match result {
+            Ok(()) => {
+                self.status = format!(
+                    "imported {}: {} branch(es), {} paragraph(s)",
+                    root.display(),
+                    counts.branches,
+                    counts.paragraphs
+                );
+            }
+            Err(e) => {
+                self.status = format!(
+                    "partial import of {}: {} branch(es), {} paragraph(s) — stopped at: {e}",
+                    root.display(),
+                    counts.branches,
+                    counts.paragraphs
+                );
+            }
+        }
+    }
+
+    fn import_dir_recursive(
+        &mut self,
+        source: &std::path::Path,
+        parent_id: Option<Uuid>,
+        counts: &mut ImportCounts,
+    ) -> InkResult<()> {
+        // Resolve the parent against a freshly loaded hierarchy so prior
+        // creates in this import are visible.
+        let hierarchy = Hierarchy::load(&self.store)?;
+        let parent = parent_id.and_then(|id| hierarchy.get(id).cloned());
+
+        let kind = match parent.as_ref().map(|p| p.kind) {
+            None => NodeKind::Book,
+            Some(NodeKind::Book) => NodeKind::Chapter,
+            Some(NodeKind::Chapter) => NodeKind::Subchapter,
+            Some(NodeKind::Subchapter) => {
+                if self.cfg.hierarchy.unbounded_subchapters {
+                    NodeKind::Subchapter
+                } else {
+                    return Err(Error::Store(format!(
+                        "max hierarchy depth reached at `{}` — enable `hierarchy.unbounded_subchapters: true` in inkhaven.hjson to allow deeper nesting",
+                        source.file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("(unnamed)")
+                    )));
+                }
+            }
+            Some(NodeKind::Paragraph) => {
+                return Err(Error::Store(
+                    "can't import under a paragraph — move cursor to a branch first".into(),
+                ));
+            }
+        };
+
+        let title = source
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("imported")
+            .to_string();
+        let created = self.store.create_node(
+            &self.cfg,
+            &hierarchy,
+            kind,
+            &title,
+            parent.as_ref(),
+            None,
+            InsertPosition::End,
+        )?;
+        counts.branches += 1;
+        let created_id = created.id;
+
+        let mut children: Vec<std::path::PathBuf> = {
+            let Ok(rd) = std::fs::read_dir(source) else {
+                return Ok(());
+            };
+            let mut entries: Vec<_> = rd
+                .filter_map(Result::ok)
+                .filter(|e| {
+                    e.file_name()
+                        .to_str()
+                        .map(|s| !s.starts_with('.'))
+                        .unwrap_or(true)
+                })
+                .collect();
+            entries.sort_by(|a, b| {
+                let a_dir = a.path().is_dir();
+                let b_dir = b.path().is_dir();
+                match (a_dir, b_dir) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => a.file_name().cmp(&b.file_name()),
+                }
+            });
+            entries.into_iter().map(|e| e.path()).collect()
+        };
+
+        for child_path in children.drain(..) {
+            if child_path.is_dir() {
+                self.import_dir_recursive(&child_path, Some(created_id), counts)?;
+            } else {
+                self.import_file_as_paragraph_by_id(&child_path, created_id, counts)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn import_file_as_paragraph_by_id(
+        &mut self,
+        file: &std::path::Path,
+        parent_id: Uuid,
+        counts: &mut ImportCounts,
+    ) -> InkResult<()> {
+        let title = derive_paragraph_title_from_path(file);
+        let bytes = std::fs::read(file).map_err(Error::Io)?;
+        let hierarchy = Hierarchy::load(&self.store)?;
+        let parent = hierarchy
+            .get(parent_id)
+            .cloned()
+            .ok_or_else(|| Error::Store(format!("import: parent {parent_id} vanished")))?;
+        let created = self.store.create_node(
+            &self.cfg,
+            &hierarchy,
+            NodeKind::Paragraph,
+            &title,
+            Some(&parent),
+            None,
+            InsertPosition::End,
+        )?;
+        if let Some(rel) = &created.file {
+            let abs = self.layout.root.join(rel);
+            std::fs::write(&abs, &bytes).map_err(Error::Io)?;
+            let mut node = created.clone();
+            self.store.update_paragraph_content(&mut node, &bytes)?;
+        }
+        counts.paragraphs += 1;
+        Ok(())
+    }
+
     fn open_rename_modal(&mut self) {
         let Some(&(id, _)) = self.rows.get(self.tree_cursor) else {
             self.status = "nothing selected to rename".into();
@@ -1624,6 +1990,29 @@ impl App {
         let is_deleting = matches!(self.modal, Modal::Deleting { .. });
         let is_snapshot = matches!(self.modal, Modal::SnapshotPicker { .. });
         let is_renaming = matches!(self.modal, Modal::Renaming { .. });
+        let is_file_picker = matches!(self.modal, Modal::FilePicker(_));
+
+        if is_file_picker {
+            let mut commit = false;
+            if let Modal::FilePicker(picker) = &mut self.modal {
+                match key.code {
+                    KeyCode::Up => picker.move_up(),
+                    KeyCode::Down => picker.move_down(),
+                    KeyCode::PageUp => picker.page_up(10),
+                    KeyCode::PageDown => picker.page_down(10),
+                    KeyCode::Home => picker.jump_first(),
+                    KeyCode::End => picker.jump_last(),
+                    KeyCode::Right => picker.expand(),
+                    KeyCode::Left => picker.collapse_or_step_out(),
+                    KeyCode::Enter => commit = true,
+                    _ => {}
+                }
+            }
+            if commit {
+                self.commit_file_pick();
+            }
+            return Ok(false);
+        }
 
         if is_renaming {
             let mut commit = false;
@@ -2068,7 +2457,115 @@ impl App {
     }
 
 
+    fn draw_file_picker_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+        picker: &FilePicker,
+    ) {
+        // Roomy panel — most of the screen, leaving a margin on all sides.
+        let width = area.width.saturating_sub(8).max(40);
+        let height = area.height.saturating_sub(4).max(10);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = match picker.context {
+            PickerContext::EditorLoad => format!(" Load file into editor — {} ", picker.root.display()),
+            PickerContext::TreeInsertOrImport => {
+                format!(" Import into tree — {} ", picker.root.display())
+            }
+        };
+
+        // The block reserves 2 rows (borders); a footer hint takes 1 more.
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let list_height = inner.height.saturating_sub(1) as usize;
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let list_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+
+        // Scroll: keep cursor in view.
+        let mut scroll = 0;
+        if picker.cursor >= list_height && list_height > 0 {
+            scroll = picker.cursor + 1 - list_height;
+        }
+
+        let mut lines: Vec<Line> = Vec::with_capacity(list_height);
+        for (i, entry) in picker
+            .entries
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(list_height)
+        {
+            let indent = "  ".repeat(entry.depth);
+            let glyph = if entry.is_dir {
+                if entry.expanded { "▾ 📁 " } else { "▸ 📁 " }
+            } else {
+                "  📄 "
+            };
+            let name = entry
+                .path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("?")
+                .to_string();
+            let mut style = if entry.is_dir {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default()
+            };
+            if i == picker.cursor {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+            lines.push(Line::from(Span::styled(
+                format!("{indent}{glyph}{name}"),
+                style,
+            )));
+        }
+
+        f.render_widget(Paragraph::new(lines), list_rect);
+
+        let hint = Line::from(Span::styled(
+            " ↑↓ navigate · → expand · ← collapse/parent · Enter pick · Esc cancel ",
+            Style::default().add_modifier(Modifier::DIM),
+        ));
+        f.render_widget(Paragraph::new(hint), footer_rect);
+    }
+
     fn draw_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        // The file picker needs a much larger panel than the fixed
+        // 80-wide / 8-high box used for confirms — give it its own renderer.
+        if let Modal::FilePicker(picker) = &self.modal {
+            self.draw_file_picker_modal(f, area, picker);
+            return;
+        }
+
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
         let x = area.x + (area.width.saturating_sub(width)) / 2;
@@ -2078,6 +2575,7 @@ impl App {
 
         let (title, border_color, body): (String, Color, Vec<Line<'_>>) = match &self.modal {
             Modal::None => return,
+            Modal::FilePicker(_) => unreachable!("file picker handled above"),
             Modal::Adding {
                 kind,
                 parent_label,
