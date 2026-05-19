@@ -115,7 +115,7 @@ fn tree_entries() -> [Entry; 35] {
     ]
 }
 
-fn editor_entries() -> [Entry; 54] {
+fn editor_entries() -> [Entry; 56] {
     [
         entry("arrows", "Move cursor"),
         entry("Ctrl+← / →", "Word back / forward"),
@@ -166,6 +166,8 @@ fn editor_entries() -> [Entry; 54] {
         entry("Ctrl+B T", "Retitle paragraph from its first sentence"),
         entry("Ctrl+B P", "Place RAG — selection → Places book → AI pane"),
         entry("Ctrl+B C", "Character RAG — selection → Characters book → AI pane"),
+        entry("Ctrl+B G", "Notes RAG — selection → Notes book → AI pane"),
+        entry("Ctrl+B Y", "Artefacts RAG — selection → Artefacts book → AI pane"),
         entry("Ctrl+B H", "Open this Quick reference"),
         entry("Ctrl+B V", "Version / author / credits panel"),
         entry("Ctrl+B I", "Current book info (paths · stats · PDF status)"),

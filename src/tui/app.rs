@@ -1950,7 +1950,7 @@ impl App {
                         .into()
                 }
                 Focus::Editor => {
-                    "META · S save · N snapshot · R history · F split · T retitle · P place · C character · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · Esc cancel"
+                    "META · S save · N snapshot · R history · F split · T retitle · P place · C character · G notes · Y artefacts · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · Esc cancel"
                         .into()
                 }
                 Focus::Ai | Focus::AiPrompt => {
@@ -4261,6 +4261,19 @@ impl App {
             // Characters book.
             KeyCode::Char('C') | KeyCode::Char('c') => {
                 self.start_lexicon_inference(LexiconKind::Characters);
+                true
+            }
+            // G: notes-RAG inference. Notes don't have a clean
+            // single-letter mnemonic (N is taken by snapshot), so
+            // we picked `G` for "Glossary / Get notes".
+            KeyCode::Char('G') | KeyCode::Char('g') => {
+                self.start_lexicon_inference(LexiconKind::Notes);
+                true
+            }
+            // Y: artefacts-RAG inference. `A` is taken globally by
+            // Book Assembly; `Y` echoes the yellow editor highlight.
+            KeyCode::Char('Y') | KeyCode::Char('y') => {
+                self.start_lexicon_inference(LexiconKind::Artefacts);
                 true
             }
             _ => false,
@@ -9341,12 +9354,17 @@ fn truncate_to_chars(s: &str, max: usize) -> String {
 /// names are skipped silently (with a tracing warning) so a typo doesn't
 /// break the editor.
 fn build_lexicon(hierarchy: &Hierarchy, cfg: &Config) -> super::lexicon::Lexicon {
-    let mut places = None;
-    let mut characters = None;
+    use super::lexicon::LexCategory;
+    let mut places: Option<Uuid> = None;
+    let mut characters: Option<Uuid> = None;
+    let mut notes: Option<Uuid> = None;
+    let mut artefacts: Option<Uuid> = None;
     for node in hierarchy.iter() {
         match node.system_tag.as_deref() {
             Some(crate::store::SYSTEM_TAG_PLACES) => places = Some(node.id),
             Some(crate::store::SYSTEM_TAG_CHARACTERS) => characters = Some(node.id),
+            Some(crate::store::SYSTEM_TAG_NOTES) => notes = Some(node.id),
+            Some(crate::store::SYSTEM_TAG_ARTEFACTS) => artefacts = Some(node.id),
             _ => {}
         }
     }
@@ -9382,7 +9400,23 @@ fn build_lexicon(hierarchy: &Hierarchy, cfg: &Config) -> super::lexicon::Lexicon
             })
             .collect()
     };
-    super::lexicon::Lexicon::build(hierarchy, places, characters, algos)
+    // Higher-priority first: Place > Character > Artefact > Note —
+    // matches the renderer's overlap precedence so the build-time
+    // dedupe and the per-column style picker agree.
+    let mut books: Vec<(Uuid, LexCategory)> = Vec::new();
+    if let Some(id) = places {
+        books.push((id, LexCategory::Place));
+    }
+    if let Some(id) = characters {
+        books.push((id, LexCategory::Character));
+    }
+    if let Some(id) = artefacts {
+        books.push((id, LexCategory::Artefact));
+    }
+    if let Some(id) = notes {
+        books.push((id, LexCategory::Note));
+    }
+    super::lexicon::Lexicon::build(hierarchy, &books, algos)
 }
 
 /// Standard text-input key dispatch: typing, navigation, deletion. Shared
@@ -9415,12 +9449,15 @@ fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) {
     }
 }
 
-/// Which system book a lexicon-RAG inference draws context from. Picked
-/// by the meta chord (P for Places, C for Characters) in the editor.
+/// Which system book a lexicon-RAG inference draws context from.
+/// Picked by the editor-meta chords (`P` Places, `C` Characters,
+/// `G` Notes, `Y` Artefacts).
 #[derive(Debug, Clone, Copy)]
 enum LexiconKind {
     Places,
     Characters,
+    Notes,
+    Artefacts,
 }
 
 impl LexiconKind {
@@ -9428,12 +9465,16 @@ impl LexiconKind {
         match self {
             LexiconKind::Places => "Place",
             LexiconKind::Characters => "Character",
+            LexiconKind::Notes => "Note",
+            LexiconKind::Artefacts => "Artefact",
         }
     }
     fn system_tag(self) -> &'static str {
         match self {
             LexiconKind::Places => crate::store::SYSTEM_TAG_PLACES,
             LexiconKind::Characters => crate::store::SYSTEM_TAG_CHARACTERS,
+            LexiconKind::Notes => crate::store::SYSTEM_TAG_NOTES,
+            LexiconKind::Artefacts => crate::store::SYSTEM_TAG_ARTEFACTS,
         }
     }
 }

@@ -204,11 +204,16 @@
     modal_fg:          "#cdd6f4"
     modal_border:      "#cba6f7"
 
-    // Places / Characters overlay tints. Words that match a paragraph
-    // title nested under the Places (resp. Characters) book light up in
-    // these colours inside the editor.
-    places_fg:         "#89dceb"
-    characters_fg:     "#f9e2af"
+    // Places / Characters / Artefacts overlay tints. Words that match a
+    // paragraph title nested under the Places (cyan) / Characters (amber)
+    // / Artefacts (peach) book light up in these colours inside the
+    // editor. Notes matches get a plain underline tinted with the
+    // `notes_underline_fg` colour below (default = pane_fg so the
+    // underline reads as text).
+    places_fg:           "#89dceb"
+    characters_fg:       "#f9e2af"
+    artefacts_fg:        "#fab387"
+    notes_underline_fg:  "#cdd6f4"
 
     // In-buffer Ctrl+F search highlights (every match / the current one).
     search_match_bg:   "#f38ba8"
