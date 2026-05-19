@@ -3683,37 +3683,29 @@ impl App {
         };
         // Editor viewport height in lines — `layout_editor` is cached
         // from the last draw and includes the two border rows.
-        // Zero before the first frame; centering then becomes a no-op
-        // and only the Jump fires.
         let viewport_h =
             (self.layout_editor.height as usize).saturating_sub(2);
         if let Some(doc) = self.opened.as_mut() {
-            // tui-textarea's viewport top updates lazily at render time
-            // via `next_scroll_top(prev_top, cursor, height)`, which is
-            // a no-op when the cursor is already inside `prev_top..top+h`.
-            // That means a plain `move_cursor(Jump)` leaves the viewport
-            // pinned to its previous top — the cursor just lands wherever
-            // is closest to that window (often the bottom edge when
-            // jumping forward), which is exactly the symptom we saw.
-            //
-            // To force a real recentering we drive the viewport directly:
-            // (1) scroll to the very top of the buffer with a saturating
-            // negative delta, (2) scroll down so the desired top row is
-            // the viewport's top, (3) Jump to the target. Each scroll
-            // also calls `CursorMove::InViewport` internally, which
-            // clamps the cursor into the new viewport — harmless because
-            // the final Jump puts the cursor exactly where we want.
-            if viewport_h > 0 {
-                let half = viewport_h / 2;
-                let desired_top = row.saturating_sub(half);
-                doc.textarea.scroll((i16::MIN, 0));
-                // i16 caps at ~32k — fine for any literary book; clamp
-                // defensively for absurdly long buffers.
-                let down = desired_top.min(i16::MAX as usize) as i16;
-                doc.textarea.scroll((down, 0));
-            }
             doc.textarea
                 .move_cursor(CursorMove::Jump(row as u16, col as u16));
+            // The editor draws itself — it doesn't render the
+            // tui-textarea widget — so the actual viewport top is
+            // `doc.scroll_row`, not anything inside tui-textarea. The
+            // per-render auto-scroll only nudges `scroll_row` when the
+            // cursor falls outside `[scroll_row, scroll_row + h)`,
+            // which after a forward Jump lands the cursor at the
+            // BOTTOM edge of the viewport. Pre-pinning scroll_row to
+            // `target - h/2` keeps the cursor inside the new viewport,
+            // so the auto-scroll leaves it alone and the match lands
+            // in the middle.
+            //
+            // Both renderers track scroll_row this way (unwrapped uses
+            // source rows verbatim; wrapped uses visual rows but for
+            // typical short-line literary content the two agree).
+            if viewport_h > 0 {
+                let half = viewport_h / 2;
+                doc.scroll_row = row.saturating_sub(half);
+            }
         }
     }
 
