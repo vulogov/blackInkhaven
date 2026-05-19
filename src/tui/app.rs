@@ -30,6 +30,7 @@ use crate::store::{InsertPosition, Snapshot};
 
 use super::file_picker::{FilePicker, PickerContext};
 use super::focus::Focus;
+use super::quickref;
 use super::search_replace::{RowMatch, SearchState, row_matches};
 use super::session::{EditorSession, SessionState, TreeSession};
 use super::highlight::{
@@ -347,6 +348,12 @@ enum Modal {
         input: TextInput,
     },
     FilePicker(FilePicker),
+    /// Ctrl+H quick reference. Pane-aware: content is fetched from
+    /// `quickref::entries_for(focus_when_opened)`.
+    QuickRef {
+        focus: Focus,
+        scroll: usize,
+    },
     /// Find / replace prompt. `replace` is None for Ctrl+F search-only mode
     /// and Some for Ctrl+R replace mode (Tab switches focus between the two
     /// input fields when present).
@@ -677,10 +684,11 @@ impl App {
         if self.keymap.meta_prefix.matches(&key) {
             self.meta_pending = true;
             self.status =
-                "META · B add book · C chapter · S subchapter · P paragraph · D delete · ↑/↓ reorder · Esc cancel"
+                "META · B/C/S/P add · D delete · ↑/↓ reorder · H help · Esc cancel"
                     .into();
             return Ok(false);
         }
+
 
         // Save works from anywhere as long as a doc is open.
         if self.keymap.save.matches(&key) && self.opened.is_some() {
@@ -1144,12 +1152,9 @@ impl App {
                     self.editor_delete_to_bol();
                     return Ok(false);
                 }
-                KeyCode::Char('z') | KeyCode::Char('Z') if !shift => {
-                    // Per user spec Ctrl+Z is an alias for Ctrl+E
-                    // (delete-to-end-of-line), NOT undo. Undo is Ctrl+U.
-                    self.editor_delete_to_eol();
-                    return Ok(false);
-                }
+                // Ctrl+Z is intentionally unbound. Undo is Ctrl+U,
+                // delete-to-EOL is Ctrl+E. The key falls through to
+                // input_without_shortcuts (which itself ignores it).
                 KeyCode::Home => {
                     if let Some(doc) = self.opened.as_mut() {
                         doc.textarea.move_cursor(CursorMove::Top);
@@ -2344,6 +2349,11 @@ impl App {
                 self.move_current(MoveDir::Down);
                 true
             }
+            // H: pane-aware Quick reference overlay.
+            KeyCode::Char('H') | KeyCode::Char('h') => {
+                self.open_quickref();
+                true
+            }
             _ => false,
         }
     }
@@ -2364,8 +2374,14 @@ impl App {
                 self.create_snapshot_of_current();
                 true
             }
-            // H: snapshot history picker (== F6).
+            // H: pane-aware Quick reference overlay.
             KeyCode::Char('H') | KeyCode::Char('h') => {
+                self.open_quickref();
+                true
+            }
+            // R: snapshot histoRy picker (== F6). Moved off H so Help can
+            // claim that letter across every pane.
+            KeyCode::Char('R') | KeyCode::Char('r') => {
                 self.open_snapshot_picker();
                 true
             }
@@ -2391,6 +2407,54 @@ impl App {
             KeyCode::Char('C') | KeyCode::Char('c') => {
                 self.inference = None;
                 self.status = "AI inference cleared".into();
+                true
+            }
+            // H: pane-aware Quick reference overlay.
+            KeyCode::Char('H') | KeyCode::Char('h') => {
+                self.open_quickref();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn open_quickref(&mut self) {
+        self.modal = Modal::QuickRef {
+            focus: self.focus,
+            scroll: 0,
+        };
+    }
+
+    fn quickref_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::QuickRef { focus, scroll } = &mut self.modal else {
+            return false;
+        };
+        let total = quickref::entries_for(*focus).len();
+        match key.code {
+            KeyCode::Up => {
+                *scroll = scroll.saturating_sub(1);
+                true
+            }
+            KeyCode::Down => {
+                if *scroll + 1 < total {
+                    *scroll += 1;
+                }
+                true
+            }
+            KeyCode::PageUp => {
+                *scroll = scroll.saturating_sub(10);
+                true
+            }
+            KeyCode::PageDown => {
+                *scroll = (*scroll + 10).min(total.saturating_sub(1));
+                true
+            }
+            KeyCode::Home => {
+                *scroll = 0;
+                true
+            }
+            KeyCode::End => {
+                *scroll = total.saturating_sub(1);
                 true
             }
             _ => false,
@@ -2923,6 +2987,12 @@ impl App {
         let is_renaming = matches!(self.modal, Modal::Renaming { .. });
         let is_file_picker = matches!(self.modal, Modal::FilePicker(_));
         let is_find = matches!(self.modal, Modal::FindReplace { .. });
+        let is_quickref = matches!(self.modal, Modal::QuickRef { .. });
+
+        if is_quickref {
+            self.quickref_handle_key(key);
+            return Ok(false);
+        }
 
         if is_find {
             let mut commit = false;
@@ -3493,6 +3563,107 @@ impl App {
     }
 
 
+    fn draw_quickref_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+        focus: Focus,
+        scroll: usize,
+    ) {
+        let entries = quickref::entries_for(focus);
+        let total = entries.len();
+
+        // Roomy panel — most of the screen with a margin.
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Quick reference · {} pane ", focus.label());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+
+        // Two columns. Each column gets half the inner width (with a small
+        // gap). Entries fill column 1 top-to-bottom, then column 2.
+        let col_w = (inner.width / 2) as usize;
+        let visible_per_col = body_h;
+        let visible_count = (visible_per_col * 2).min(total.saturating_sub(scroll));
+
+        let left_count = visible_count.min(visible_per_col);
+        let right_count = visible_count.saturating_sub(left_count);
+
+        let mut left_lines: Vec<Line> = Vec::with_capacity(left_count);
+        let mut right_lines: Vec<Line> = Vec::with_capacity(right_count);
+
+        for i in 0..left_count {
+            let e = &entries[scroll + i];
+            left_lines.push(format_entry_line(e, col_w));
+        }
+        for i in 0..right_count {
+            let e = &entries[scroll + left_count + i];
+            right_lines.push(format_entry_line(e, col_w));
+        }
+
+        let left_rect = Rect {
+            x: body_rect.x,
+            y: body_rect.y,
+            width: (body_rect.width / 2),
+            height: body_rect.height,
+        };
+        let right_rect = Rect {
+            x: body_rect.x + (body_rect.width / 2),
+            y: body_rect.y,
+            width: body_rect.width - (body_rect.width / 2),
+            height: body_rect.height,
+        };
+        f.render_widget(Paragraph::new(left_lines), left_rect);
+        f.render_widget(Paragraph::new(right_lines), right_rect);
+
+        let at_end = scroll + visible_count >= total;
+        let more = if at_end { " " } else { " · more below" };
+        let hint = format!(
+            " ↑↓ / PgUp/PgDn / Home/End scroll · Esc close{more}    (showing {}–{} of {total}) ",
+            scroll + 1,
+            scroll + visible_count
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     fn draw_file_picker_modal(
         &self,
         f: &mut ratatui::Frame,
@@ -3601,6 +3772,10 @@ impl App {
             self.draw_file_picker_modal(f, area, picker);
             return;
         }
+        if let Modal::QuickRef { focus, scroll } = &self.modal {
+            self.draw_quickref_modal(f, area, *focus, *scroll);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -3612,6 +3787,7 @@ impl App {
         let (title, border_color, body): (String, Color, Vec<Line<'_>>) = match &self.modal {
             Modal::None => return,
             Modal::FilePicker(_) => unreachable!("file picker handled above"),
+            Modal::QuickRef { .. } => unreachable!("quickref handled above"),
             Modal::FindReplace {
                 search_input,
                 replace_input,
@@ -4704,6 +4880,84 @@ fn extract_first_sentence(content: &str) -> Option<String> {
         Some(out)
     } else {
         Some(sentence.to_string())
+    }
+}
+
+/// Render one Quick reference entry as a single Line, sized to fit
+/// `col_w` terminal cells. Headers get cyan-bold styling; regular entries
+/// get a fixed 14-char key column followed by the description.
+fn format_entry_line(e: &quickref::Entry, col_w: usize) -> Line<'static> {
+    if e.is_header {
+        let text = if e.key.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", e.key)
+        };
+        return Line::from(Span::styled(
+            truncate_to_chars(&text, col_w),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    let key_field = 14;
+    // Pad/truncate the key to a fixed width so descriptions align.
+    let key_padded = pad_or_trim(e.key, key_field);
+    let desc_max = col_w.saturating_sub(key_field + 2);
+    let desc = truncate_to_chars(e.desc, desc_max);
+    let line = format!(" {} {}", key_padded, desc);
+    Line::from(vec![
+        Span::styled(
+            format!(" {}", key_padded),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::raw(desc),
+    ])
+    // Note: `line` above is unused — kept as a clarity comment of the
+    // intended width budget. Compiler will eliminate.
+    .style(Style::default())
+    .alignment(ratatui::layout::Alignment::Left)
+    .clone()
+    .ok_or_else_unused(line)
+}
+
+/// Stub to silence the unused `line` binding above without changing
+/// semantics. Compiler should inline to no-op.
+trait OkOrElseUnused {
+    fn ok_or_else_unused(self, _unused: String) -> Self;
+}
+impl OkOrElseUnused for Line<'static> {
+    fn ok_or_else_unused(self, _unused: String) -> Self {
+        self
+    }
+}
+
+fn pad_or_trim(s: &str, width: usize) -> String {
+    let cs: Vec<char> = s.chars().collect();
+    if cs.len() >= width {
+        cs.iter().take(width).collect()
+    } else {
+        let mut out: String = cs.iter().collect();
+        while out.chars().count() < width {
+            out.push(' ');
+        }
+        out
+    }
+}
+
+fn truncate_to_chars(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        s.to_string()
+    } else if max == 0 {
+        String::new()
+    } else {
+        let mut out: String = chars.iter().take(max.saturating_sub(1)).collect();
+        out.push('…');
+        out
     }
 }
 

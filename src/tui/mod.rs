@@ -4,6 +4,7 @@ mod focus;
 mod highlight;
 mod input;
 mod keymap;
+mod quickref;
 mod search_replace;
 mod search_results;
 mod session;
