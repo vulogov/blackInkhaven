@@ -803,6 +803,38 @@ mod book_info_tests {
     }
 
     #[test]
+    fn body_to_lines_strips_crlf() {
+        // CRLF (DOS / Windows / RFC dumps): trailing `\r` must not
+        // survive into the line list.
+        let body = "Network Working Group\r\nRequest for Comments: 1\r\n";
+        let lines = body_to_lines(body);
+        assert_eq!(lines.len(), 3); // last `\n` produces a trailing "" entry
+        assert_eq!(lines[0], "Network Working Group");
+        assert_eq!(lines[1], "Request for Comments: 1");
+        assert_eq!(lines[2], "");
+    }
+
+    #[test]
+    fn body_to_lines_strips_bare_cr() {
+        // Old-Mac files used bare `\r`. Treat them as line breaks too.
+        let body = "first\rsecond\rthird";
+        let lines = body_to_lines(body);
+        assert_eq!(lines, vec!["first", "second", "third"]);
+    }
+
+    #[test]
+    fn body_to_lines_unix_passthrough() {
+        let body = "alpha\nbeta\ngamma";
+        let lines = body_to_lines(body);
+        assert_eq!(lines, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn body_to_lines_empty_yields_single_empty() {
+        assert_eq!(body_to_lines(""), vec![String::new()]);
+    }
+
+    #[test]
     fn format_age_minutes_hours_days() {
         assert_eq!(
             format_age_humantime(std::time::Duration::from_secs(7 * 60)),
@@ -4752,12 +4784,7 @@ impl App {
                 "no paragraph open — open one first, then F3 to replace its body".into();
             return;
         };
-        let lines: Vec<String> = if body.is_empty() {
-            vec![String::new()]
-        } else {
-            body.split('\n').map(String::from).collect()
-        };
-        let mut new_textarea = TextArea::new(lines);
+        let mut new_textarea = TextArea::new(body_to_lines(&body));
         new_textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
         new_textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
         doc.textarea = new_textarea;
@@ -5094,7 +5121,19 @@ impl App {
         progress: &mut dyn FnMut(usize, &Path),
     ) -> InkResult<()> {
         let title = derive_paragraph_title_from_path(file);
-        let bytes = std::fs::read(file).map_err(Error::Io)?;
+        let raw = std::fs::read(file).map_err(Error::Io)?;
+        // Normalise line endings so DOS / old-Mac dumps don't keep
+        // their `\r` bytes on disk — those survive into the editor
+        // load path and render as control glyphs. Only touched when
+        // the content decodes as UTF-8; binary payloads are written
+        // verbatim and will simply fail to render meaningfully.
+        let bytes: Vec<u8> = match std::str::from_utf8(&raw) {
+            Ok(text) if text.contains('\r') => text
+                .replace("\r\n", "\n")
+                .replace('\r', "\n")
+                .into_bytes(),
+            _ => raw,
+        };
         let hierarchy = Hierarchy::load(&self.store)?;
         let parent = hierarchy
             .get(parent_id)
@@ -5231,12 +5270,7 @@ impl App {
             self.modal = Modal::None;
             return;
         };
-        let lines: Vec<String> = if body.is_empty() {
-            vec![String::new()]
-        } else {
-            body.split('\n').map(String::from).collect()
-        };
-        let mut new_textarea = TextArea::new(lines);
+        let mut new_textarea = TextArea::new(body_to_lines(&body));
         new_textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
         new_textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
         doc.textarea = new_textarea;
@@ -5770,11 +5804,7 @@ impl App {
             }
         };
 
-        let lines: Vec<String> = if body.is_empty() {
-            vec![String::new()]
-        } else {
-            body.split('\n').map(String::from).collect()
-        };
+        let lines = body_to_lines(&body);
         let saved_lines = lines.clone();
         let mut textarea = TextArea::new(lines);
         textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
@@ -7742,6 +7772,22 @@ fn format_age_humantime(dur: std::time::Duration) -> String {
     } else {
         format!("{minutes}m")
     }
+}
+
+/// Split a file body into editor lines, normalising CRLF (`\r\n`) and
+/// bare CR (`\r`) line endings to LF first so trailing `\r` bytes never
+/// survive into the textarea (where ratatui would render them as
+/// control glyphs that look like vertical bars and visually offset the
+/// following characters). Triggered by Windows / DOS / old-Mac text
+/// dumps the user might import (e.g. the RFC corpus).
+fn body_to_lines(body: &str) -> Vec<String> {
+    if body.is_empty() {
+        return vec![String::new()];
+    }
+    // CRLF first so we don't double-split, then any remaining bare CR
+    // (pre-OS-X Mac files). After this every line break is one `\n`.
+    let normalised = body.replace("\r\n", "\n").replace('\r', "\n");
+    normalised.split('\n').map(String::from).collect()
 }
 
 fn extract_first_sentence(content: &str) -> Option<String> {
