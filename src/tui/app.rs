@@ -242,6 +242,7 @@ pub fn run(project: &Path) -> Result<()> {
     if kbd_enhanced {
         let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
     }
+    let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -822,6 +823,16 @@ struct App {
     /// prefix on Enter.
     pending_rag_prefix: Option<String>,
 
+    /// Per-pane rectangles cached from the most recent `draw()` so the
+    /// mouse handler can map a click coordinate to the right pane. Empty
+    /// `Rect`s before the first frame is drawn — every handler checks
+    /// `contains` so a click during that window safely no-ops.
+    layout_search: Rect,
+    layout_tree: Rect,
+    layout_editor: Rect,
+    layout_ai: Rect,
+    layout_ai_prompt: Rect,
+
     /// Active AI "scope" picker. Cycled with F9. When set to anything but
     /// `None`, the next AI-prompt submission prepends the matching context
     /// (selection text, paragraph body, subchapter / chapter / book
@@ -975,6 +986,11 @@ impl App {
             chat_history: Vec::new(),
             pending_chat_user_msg: None,
             pending_rag_prefix: None,
+            layout_search: Rect::default(),
+            layout_tree: Rect::default(),
+            layout_editor: Rect::default(),
+            layout_ai: Rect::default(),
+            layout_ai_prompt: Rect::default(),
             ai_mode: AiMode::None,
             inference_mode: InferenceMode::Full,
         })
@@ -993,13 +1009,17 @@ impl App {
                 Duration::from_millis(200)
             };
             if event::poll(timeout)? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+                match event::read()? {
+                    Event::Key(key) => {
+                        if key.kind != KeyEventKind::Press {
+                            continue;
+                        }
+                        if self.handle_key(key)? {
+                            return Ok(());
+                        }
                     }
-                    if self.handle_key(key)? {
-                        return Ok(());
-                    }
+                    Event::Mouse(mouse) => self.handle_mouse(mouse),
+                    _ => {}
                 }
             }
         }
@@ -1093,6 +1113,154 @@ impl App {
     }
 
     // -------- key dispatch ------------------------------------------------
+
+    /// Dispatch a crossterm mouse event. Left-click moves focus to the
+    /// clicked pane and positions the cursor inside it where possible.
+    /// Scroll wheel scrolls the pane under the pointer. Other kinds
+    /// (middle-click, drag, motion) are ignored for now.
+    ///
+    /// Modals / overlays (file picker, prompt picker, modal stack) eat
+    /// mouse input — clicking through a modal feels wrong and the
+    /// keyboard flow for those is well-trodden. We early-return if any
+    /// modal is up so the click can't accidentally focus a pane that's
+    /// hidden behind the floating panel.
+    fn handle_mouse(&mut self, ev: MouseEvent) {
+        if !matches!(self.modal, Modal::None) {
+            return;
+        }
+        if self.show_results_overlay || self.show_prompt_picker {
+            return;
+        }
+        let (col, row) = (ev.column, ev.row);
+        let pane = self.pane_at(col, row);
+        match ev.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(target) = pane {
+                    if self.focus != target {
+                        self.change_focus(target);
+                    }
+                    match target {
+                        Focus::Tree => self.mouse_position_tree(row),
+                        Focus::Editor => self.mouse_position_editor(col, row),
+                        _ => {}
+                    }
+                }
+            }
+            MouseEventKind::ScrollUp => match pane {
+                Some(Focus::Tree) => self.move_cursor(-3),
+                Some(Focus::Editor) => self.mouse_scroll_editor(-3),
+                _ => {}
+            },
+            MouseEventKind::ScrollDown => match pane {
+                Some(Focus::Tree) => self.move_cursor(3),
+                Some(Focus::Editor) => self.mouse_scroll_editor(3),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    /// Map a terminal coordinate to the pane that owns it, if any. Uses
+    /// the rectangles cached by the most recent `draw()`.
+    fn pane_at(&self, col: u16, row: u16) -> Option<Focus> {
+        if rect_contains(self.layout_tree, col, row) {
+            return Some(Focus::Tree);
+        }
+        if rect_contains(self.layout_editor, col, row) {
+            return Some(Focus::Editor);
+        }
+        if rect_contains(self.layout_ai, col, row) {
+            return Some(Focus::Ai);
+        }
+        if rect_contains(self.layout_search, col, row) {
+            return Some(Focus::SearchBar);
+        }
+        if rect_contains(self.layout_ai_prompt, col, row) {
+            return Some(Focus::AiPrompt);
+        }
+        None
+    }
+
+    /// Move the tree cursor to whatever row was clicked. Accounts for
+    /// the 1-row top border and the current scroll offset.
+    fn mouse_position_tree(&mut self, row: u16) {
+        if self.rows.is_empty() {
+            return;
+        }
+        let body_y = self.layout_tree.y.saturating_add(1);
+        if row < body_y {
+            return;
+        }
+        let row_in_view = (row - body_y) as usize;
+        let idx = self.tree_scroll + row_in_view;
+        if idx < self.rows.len() {
+            self.tree_cursor = idx;
+        }
+    }
+
+    /// Position the editor cursor under the click. Accounts for the
+    /// pane border (1 row top, 1 col left), the line-number gutter, and
+    /// the current scroll. Wrapped-line clicks degrade gracefully by
+    /// snapping to the closest source row.
+    fn mouse_position_editor(&mut self, col: u16, row: u16) {
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        let inner_x = self.layout_editor.x.saturating_add(1);
+        let inner_y = self.layout_editor.y.saturating_add(1);
+        if row < inner_y || col < inner_x {
+            return;
+        }
+        // Gutter width: digits in line count + 1 trailing space (see
+        // `digit_count` + `gutter_width` in the editor renderer).
+        let total_lines = doc.textarea.lines().len().max(1);
+        let lineno_chars = digit_count(total_lines);
+        let gutter = (lineno_chars + 1) as u16;
+        let inner_cursor_x = inner_x.saturating_add(gutter);
+        // Click inside the gutter or borders → ignore.
+        if col < inner_cursor_x {
+            return;
+        }
+        let rel_row = (row - inner_y) as usize;
+        let rel_col = (col - inner_cursor_x) as usize;
+        let src_row = (doc.scroll_row + rel_row).min(total_lines - 1);
+        let line_len = doc
+            .textarea
+            .lines()
+            .get(src_row)
+            .map_or(0, |s| s.chars().count());
+        let src_col = (doc.scroll_col + rel_col).min(line_len);
+        doc.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(src_row as u16, src_col as u16));
+        doc.last_activity = std::time::Instant::now();
+    }
+
+    /// Scroll the editor by `delta` source rows (positive = down).
+    /// Updates the cursor too so the visible window doesn't snap back on
+    /// the next render — the renderer keeps the cursor in view, which
+    /// would otherwise undo a pure scroll-only adjustment.
+    fn mouse_scroll_editor(&mut self, delta: i32) {
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        let total = doc.textarea.lines().len().max(1);
+        if delta < 0 {
+            let n = (-delta) as usize;
+            doc.scroll_row = doc.scroll_row.saturating_sub(n);
+            use tui_textarea::CursorMove;
+            for _ in 0..n {
+                doc.textarea.move_cursor(CursorMove::Up);
+            }
+        } else {
+            let n = delta as usize;
+            doc.scroll_row = (doc.scroll_row + n).min(total.saturating_sub(1));
+            use tui_textarea::CursorMove;
+            for _ in 0..n {
+                doc.textarea.move_cursor(CursorMove::Down);
+            }
+        }
+        doc.last_activity = std::time::Instant::now();
+    }
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         // Hard quit works from anywhere, including inside a modal.
@@ -5139,6 +5307,15 @@ impl App {
             ])
             .split(outer[1]);
 
+        // Cache pane rects for the mouse handler. Done before drawing so
+        // a draw that bails (e.g. tiny terminal) still leaves the rects
+        // self-consistent for whatever pane managed to render.
+        self.layout_search = outer[0];
+        self.layout_tree = body[0];
+        self.layout_editor = body[1];
+        self.layout_ai = body[2];
+        self.layout_ai_prompt = outer[2];
+
         self.draw_search_bar(f, outer[0]);
         self.draw_tree(f, body[0]);
         self.draw_editor(f, body[1]);
@@ -7021,6 +7198,19 @@ Rules:
 - If multiple excerpts cover the topic, synthesise them; do not list them \
   as separate answers.
 - Plain text only — no markdown headings beyond `#`/`-` lists.";
+
+/// Inclusive on the top-left, exclusive on the bottom-right — matches
+/// ratatui's Rect semantics where width/height are spans (the column at
+/// `x + width` is one past the rect's last column).
+fn rect_contains(rect: Rect, col: u16, row: u16) -> bool {
+    if rect.width == 0 || rect.height == 0 {
+        return false;
+    }
+    col >= rect.x
+        && col < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
+}
 
 fn digit_count(n: usize) -> usize {
     let mut x = n.max(1);
