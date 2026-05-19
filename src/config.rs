@@ -132,6 +132,22 @@ pub struct ThemeConfig {
 
     // Tree pane chrome.
     pub tree_open_marker: String,
+    // Per-kind row colour in the Tree pane. The row title (book /
+    // chapter / etc.) renders in the matching colour; the open-paragraph
+    // marker and cursor REVERSED still take precedence on the active row.
+    pub tree_book_fg: String,
+    pub tree_chapter_fg: String,
+    pub tree_subchapter_fg: String,
+    pub tree_paragraph_fg: String,
+
+    // Editor pane header — the trailing `L{row} C{col}` cursor read-out
+    // gets this colour so it's distinguishable from the title.
+    pub editor_position_fg: String,
+
+    // AI pane header — the `scope=…` and `infer=…` chips light up in
+    // these colours so the active modes are visible at a glance.
+    pub ai_scope_fg: String,
+    pub ai_infer_fg: String,
 
     // Foreground colour applied to characters that differ from the
     // pre-grammar-check baseline after `T` overwrites the buffer with the
@@ -183,6 +199,14 @@ impl Default for ThemeConfig {
             search_current_bg: "#f5c2e7".into(),
 
             tree_open_marker: "#a6e3a1".into(),
+            tree_book_fg: "#f5c2e7".into(),       // pink — books pop at the top
+            tree_chapter_fg: "#89b4fa".into(),    // blue — chapter rhythm
+            tree_subchapter_fg: "#94e2d5".into(), // teal — subchapter
+            tree_paragraph_fg: "#cdd6f4".into(),  // base text — keep prose calm
+
+            editor_position_fg: "#89dceb".into(), // sky — cursor read-out
+            ai_scope_fg: "#fab387".into(),        // peach — F9 scope chip
+            ai_infer_fg: "#94e2d5".into(),        // teal — F10 inference chip
 
             grammar_change_fg: "#f38ba8".into(),
 

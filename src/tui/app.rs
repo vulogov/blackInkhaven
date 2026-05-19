@@ -5810,6 +5810,13 @@ impl App {
     }
 
     fn pane_block<'a>(&self, title: &'a str, focus: Focus) -> Block<'a> {
+        self.pane_block_line(Line::from(title), focus)
+    }
+
+    /// Same as `pane_block` but accepts a pre-built styled `Line` as the
+    /// title — used by the AI pane to colourise the `scope=` / `infer=`
+    /// mode chips.
+    fn pane_block_line<'a>(&self, title: Line<'a>, focus: Focus) -> Block<'a> {
         let border_color = if self.focus == focus {
             self.theme.border_focused
         } else {
@@ -5834,7 +5841,17 @@ impl App {
     /// state when the pane has focus: green when saved, yellow when dirty,
     /// teal when the open paragraph is read-only (Help subtree). Unfocused
     /// uses the theme's neutral border colour.
+    #[allow(dead_code)] // string-title convenience; the live renderer
+    // uses `editor_block_line` for the coloured cursor read-out, but the
+    // string overload stays available for non-styled callers.
     fn editor_block<'a>(&self, title: &'a str) -> Block<'a> {
+        self.editor_block_line(Line::from(title))
+    }
+
+    /// Variant of `editor_block` that takes a pre-built styled `Line` for
+    /// the title. Lets the renderer mix theme colours into the header
+    /// (used for the `L… C…` cursor read-out chip).
+    fn editor_block_line<'a>(&self, title: Line<'a>) -> Block<'a> {
         let border_color = if self.focus == Focus::Editor {
             let dirty = self.opened.as_ref().is_some_and(|d| d.dirty);
             let ro = self.opened.as_ref().is_some_and(|d| d.read_only);
@@ -5984,12 +6001,20 @@ impl App {
                     }
                 }
             };
-            let mut row_style = Style::default();
+            // Per-kind row colour; override with `tree_open_marker` for
+            // the currently-loaded paragraph so the editor pane's clean-
+            // state border has a matching visual cue in the tree.
+            let kind_fg = match node.kind {
+                NodeKind::Book => self.theme.tree_book_fg,
+                NodeKind::Chapter => self.theme.tree_chapter_fg,
+                NodeKind::Subchapter => self.theme.tree_subchapter_fg,
+                NodeKind::Paragraph => self.theme.tree_paragraph_fg,
+            };
+            let mut row_style = Style::default().fg(kind_fg);
+            if matches!(node.kind, NodeKind::Book | NodeKind::Chapter) {
+                row_style = row_style.add_modifier(Modifier::BOLD);
+            }
             if is_open {
-                // Green + bold matches the editor's clean-state border so the
-                // user can mentally connect the two. Even when the editor is
-                // dirty (yellow border), this stays green — it's marking the
-                // "what is loaded", not the dirty state.
                 row_style = row_style
                     .fg(self.theme.tree_open_marker)
                     .add_modifier(Modifier::BOLD);
@@ -6022,25 +6047,27 @@ impl App {
     }
 
     fn draw_editor(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let title = match &self.opened {
+        // Build the title as a Line of styled spans so the `L… C…`
+        // cursor read-out can carry its own theme colour. ratatui's
+        // Block accepts a Line title directly.
+        let title_line: Line<'_> = match &self.opened {
             Some(d) => {
                 let (row, col) = d.textarea.cursor();
                 let dirty = if d.dirty { " [modified]" } else { "" };
                 let ro = if d.read_only { " [read-only]" } else { "" };
-                // Line/column are 1-indexed in the title for human readers,
-                // even though the internal representation is 0-indexed.
-                format!(
-                    "Editor — {}{}{} · L{} C{}",
-                    d.title,
-                    ro,
-                    dirty,
-                    row + 1,
-                    col + 1
-                )
+                Line::from(vec![
+                    Span::raw(format!(" Editor — {}{}{} · ", d.title, ro, dirty)),
+                    Span::styled(
+                        format!("L{} C{} ", row + 1, col + 1),
+                        Style::default()
+                            .fg(self.theme.editor_position_fg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ])
             }
-            None => String::from("Editor"),
+            None => Line::from(" Editor "),
         };
-        let block = self.editor_block(&title);
+        let block = self.editor_block_line(title_line);
         let inner = block.inner(area);
         f.render_widget(block, area);
 
@@ -6493,33 +6520,41 @@ impl App {
         //   - active InferenceMode (Local/Full) — always shown so F10's
         //     effect is visible
         let chat_turns = self.chat_history.len() / 2;
-        let chat_chip = if chat_turns > 0 {
-            format!(" · {chat_turns} turn(s)")
-        } else {
-            String::new()
-        };
-        let scope_chip = if self.ai_mode == AiMode::None {
-            String::new()
-        } else {
-            format!(" · scope={}", self.ai_mode.label())
-        };
-        let infer_chip = format!(" · infer={}", self.inference_mode.label());
-        let mode_chips = format!("{scope_chip}{infer_chip}{chat_chip}");
-        let title = match &self.inference {
-            None => format!("AI{mode_chips}"),
-            Some(inf) => match &inf.status {
-                InferenceStatus::Streaming => {
-                    format!("AI — {} · streaming…{mode_chips}", inf.provider)
-                }
-                InferenceStatus::Done => {
-                    format!("AI — {} · done{mode_chips}", inf.provider)
-                }
-                InferenceStatus::Error(_) => {
-                    format!("AI — {} · error{mode_chips}", inf.provider)
-                }
-            },
-        };
-        let block = self.pane_block(&title, Focus::Ai);
+        // Build the title as a styled Line so the scope= / infer= chips
+        // can carry their own theme colours (F9 / F10 effects are
+        // visible at a glance).
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        spans.push(Span::raw(" AI".to_string()));
+        if let Some(inf) = &self.inference {
+            let status_text = match &inf.status {
+                InferenceStatus::Streaming => format!(" — {} · streaming…", inf.provider),
+                InferenceStatus::Done => format!(" — {} · done", inf.provider),
+                InferenceStatus::Error(_) => format!(" — {} · error", inf.provider),
+            };
+            spans.push(Span::raw(status_text));
+        }
+        if self.ai_mode != AiMode::None {
+            spans.push(Span::raw(" · scope="));
+            spans.push(Span::styled(
+                self.ai_mode.label().to_string(),
+                Style::default()
+                    .fg(self.theme.ai_scope_fg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+        spans.push(Span::raw(" · infer="));
+        spans.push(Span::styled(
+            self.inference_mode.label().to_string(),
+            Style::default()
+                .fg(self.theme.ai_infer_fg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        if chat_turns > 0 {
+            spans.push(Span::raw(format!(" · {chat_turns} turn(s)")));
+        }
+        spans.push(Span::raw(" "));
+        let title_line = Line::from(spans);
+        let block = self.pane_block_line(title_line, Focus::Ai);
         let inner = block.inner(area);
         f.render_widget(block, area);
 
