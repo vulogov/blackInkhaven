@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crate::ai::AiClient;
 use crate::ai::prompts::{Prompt, PromptLibrary};
-use crate::ai::stream::{StreamMsg, spawn_chat_stream};
+use crate::ai::stream::{ChatTurn, StreamMsg, spawn_chat_stream};
 use crate::config::Config;
 use crate::error::{Error, Result as InkResult};
 use crate::project::ProjectLayout;
@@ -354,6 +354,12 @@ enum Modal {
         focus: Focus,
         scroll: usize,
     },
+    /// F1 help-manual query. Asks a free-form question against the Help
+    /// system book (RAG), then streams the constrained LLM answer into the
+    /// AI pane. Esc cancels; Enter submits.
+    HelpQuery {
+        input: TextInput,
+    },
     /// Find / replace prompt. `replace` is None for Ctrl+F search-only mode
     /// and Some for Ctrl+R replace mode (Tab switches focus between the two
     /// input fields when present).
@@ -425,6 +431,22 @@ struct App {
     /// paragraphs, and at exit. Loaded from `.session.json` on startup so
     /// positions survive across runs.
     paragraph_cursors: std::collections::HashMap<Uuid, ParagraphCursor>,
+
+    /// Cumulative AI chat history for the current session. Each prompt the
+    /// user sends from the AI prompt bar appends a User turn, and the
+    /// resulting assistant response (when streaming finishes) appends an
+    /// Assistant turn. The full history is replayed back to the model on
+    /// every follow-up so the conversation is continuous. Cleared by F9 or
+    /// the meta-prefix Ctrl+B C.
+    ///
+    /// Help (F1 / `Help!`) inferences are deliberately *not* added here —
+    /// they're one-shot RAG flows with a separate strict system prompt and
+    /// don't benefit from carrying chat context.
+    chat_history: Vec<ChatTurn>,
+    /// Captures the user message of the currently-streaming chat inference
+    /// so we can record the matching Assistant turn into `chat_history`
+    /// once the stream finishes. None during one-shot (Help) inferences.
+    pending_chat_user_msg: Option<String>,
 }
 
 #[derive(Debug)]
@@ -556,6 +578,8 @@ impl App {
             show_prompt_picker: false,
             prompt_picker_cursor: 0,
             paragraph_cursors: std::collections::HashMap::new(),
+            chat_history: Vec::new(),
+            pending_chat_user_msg: None,
         })
     }
 
@@ -614,6 +638,9 @@ impl App {
         if !matches!(inf.status, InferenceStatus::Streaming) {
             return;
         }
+        // Track terminal state of this poll so we can commit to chat history
+        // exactly once when the stream completes successfully.
+        let mut just_finished = false;
         loop {
             match inf.rx.try_recv() {
                 Ok(StreamMsg::Token(t)) => inf.response.push_str(&t),
@@ -625,6 +652,7 @@ impl App {
                         inf.provider,
                         elapsed.as_secs_f32()
                     );
+                    just_finished = true;
                     break;
                 }
                 Ok(StreamMsg::Error(e)) => {
@@ -634,11 +662,30 @@ impl App {
                 }
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                    // Task ended without a final message — treat as done.
+                    // Task ended without a final message — treat as done so
+                    // the assistant turn still gets recorded.
                     if matches!(inf.status, InferenceStatus::Streaming) {
                         inf.status = InferenceStatus::Done;
+                        just_finished = true;
                     }
                     break;
+                }
+            }
+        }
+        if just_finished {
+            // Pair the pending user message with this assistant response
+            // and append both to chat_history. Help one-shots leave
+            // `pending_chat_user_msg = None`, so they're skipped here.
+            let assistant_text = self
+                .inference
+                .as_ref()
+                .map(|i| i.response.clone())
+                .unwrap_or_default();
+            if let Some(user_msg) = self.pending_chat_user_msg.take() {
+                if !assistant_text.trim().is_empty() {
+                    self.chat_history.push(ChatTurn::User(user_msg));
+                    self.chat_history
+                        .push(ChatTurn::Assistant(assistant_text));
                 }
             }
         }
@@ -707,6 +754,23 @@ impl App {
             return Ok(false);
         }
 
+
+        // F1 anywhere opens the help-manual query modal. Modal eats every
+        // other key until Enter (submit) / Esc (cancel).
+        if matches!(key.code, KeyCode::F(1))
+            && !key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
+            self.open_help_query_modal();
+            return Ok(false);
+        }
+
+        // F9 clears the AI chat history AND the current inference. Use this
+        // to start a fresh research conversation; previous turns are not
+        // replayed to the model after this.
+        if matches!(key.code, KeyCode::F(9)) {
+            self.clear_chat_history();
+            return Ok(false);
+        }
 
         // Save works from anywhere as long as a doc is open.
         if self.keymap.save.matches(&key) && self.opened.is_some() {
@@ -1389,6 +1453,13 @@ impl App {
     }
 
     fn handle_passive_key(&mut self, key: KeyEvent) -> Result<bool> {
+        // Esc bounces AI pane → AI prompt so the user can edit / send the
+        // next message without an extra Tab. Mirror of the AiPrompt → Ai
+        // bounce in handle_input_key.
+        if self.focus == Focus::Ai && matches!(key.code, KeyCode::Esc) {
+            self.change_focus(Focus::AiPrompt);
+            return Ok(false);
+        }
         // When the AI pane has a completed inference and is focused, single-
         // letter keys apply the result to the editor.
         if self.focus == Focus::Ai && self.inference_done_with_text() {
@@ -1650,13 +1721,19 @@ impl App {
                 } else {
                     self.show_results_overlay = false;
                     self.show_prompt_picker = false;
-                    // Return to the Editor pane when a paragraph is open,
-                    // otherwise fall back to Tree. Saves a Tab press in the
-                    // common write-search-write workflow.
-                    let target = if self.opened.is_some() {
-                        Focus::Editor
+                    // AI prompt → AI pane (so the user can scroll/read the
+                    // answer or apply r/i/t/b/c). The mirror jump back lives
+                    // in `handle_passive_key`. Search bar keeps its original
+                    // "return to Editor/Tree" behaviour because there is no
+                    // matching read-pane to bounce to.
+                    let target = if is_search {
+                        if self.opened.is_some() {
+                            Focus::Editor
+                        } else {
+                            Focus::Tree
+                        }
                     } else {
-                        Focus::Tree
+                        Focus::Ai
                     };
                     self.change_focus(target);
                 }
@@ -1827,6 +1904,19 @@ impl App {
             self.status = "empty prompt".into();
             return;
         }
+        // "Help!" prefix (case-sensitive) reroutes through the F1 Help-book
+        // RAG flow. The rest of the line becomes the question; the AI pane
+        // shows the same grounded answer the F1 modal produces.
+        if let Some(rest) = raw.strip_prefix("Help!") {
+            let question = rest.trim().to_string();
+            self.ai_input.clear();
+            if question.is_empty() {
+                self.status = "Help: type a question after `Help!`".into();
+                return;
+            }
+            self.start_help_inference(&question);
+            return;
+        }
         let prompt_text = if raw.starts_with('/') {
             // Resolve `/name [extra args]` form by name lookup.
             let after = raw.trim_start_matches('/').trim();
@@ -1852,7 +1942,16 @@ impl App {
         let model = model.to_string();
         let provider = self.ai.default_provider.clone();
 
-        let rx = spawn_chat_stream(self.ai.client.clone(), model.clone(), None, prompt_text);
+        // Replay the accumulated chat history before this new user message
+        // so the model has continuous context across turns.
+        let history = self.chat_history.clone();
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            None,
+            history,
+            prompt_text.clone(),
+        );
 
         self.inference = Some(Inference {
             provider: provider.clone(),
@@ -1862,8 +1961,14 @@ impl App {
             rx,
             started_at: std::time::Instant::now(),
         });
-        self.change_focus(Focus::Ai);
-        self.status = format!("streaming from {provider}…");
+        // Remember the user message so we can pair it with the assistant
+        // turn once the stream finishes.
+        self.pending_chat_user_msg = Some(prompt_text);
+        // Stay on the AI prompt pane so follow-up questions are one keystroke
+        // away. Esc bounces to the AI pane to read/scroll the answer.
+        self.change_focus(Focus::AiPrompt);
+        let depth = self.chat_history.len() / 2 + 1;
+        self.status = format!("streaming from {provider} (chat turn #{depth})…");
         // Clear the prompt so the next inference starts fresh.
         self.ai_input.clear();
     }
@@ -2513,12 +2618,11 @@ impl App {
 
     fn dispatch_meta_ai(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            // C: clear the current inference state (cancels streaming /
-            // discards a finished result so the AI pane returns to its
-            // empty placeholder).
+            // C: clear the current inference + chat history (same as F9).
+            // Cancels streaming, discards the finished result, and drops the
+            // accumulated turns so the next prompt starts a fresh chat.
             KeyCode::Char('C') | KeyCode::Char('c') => {
-                self.inference = None;
-                self.status = "AI inference cleared".into();
+                self.clear_chat_history();
                 true
             }
             // H: pane-aware Quick reference overlay.
@@ -2535,6 +2639,141 @@ impl App {
             focus: self.focus,
             scroll: 0,
         };
+    }
+
+    fn clear_chat_history(&mut self) {
+        let turns = self.chat_history.len();
+        self.chat_history.clear();
+        self.pending_chat_user_msg = None;
+        self.inference = None;
+        self.status = if turns == 0 {
+            "AI chat history already empty".into()
+        } else {
+            format!("AI chat cleared ({turns} turn(s) discarded)")
+        };
+    }
+
+    fn open_help_query_modal(&mut self) {
+        self.modal = Modal::HelpQuery {
+            input: TextInput::new(),
+        };
+        self.status = "Help — type a question, Enter to ask, Esc to cancel".into();
+    }
+
+    /// Run a Help-book RAG inference for `query`. Builds a constrained
+    /// prompt — the model is instructed to answer using ONLY the supplied
+    /// Help excerpts and to admit when the context is insufficient — then
+    /// streams the result into the AI pane. The AI pane is read-only by
+    /// construction (no editor lives there), so the user can scroll the
+    /// answer but can't edit it.
+    fn start_help_inference(&mut self, query: &str) {
+        let query = query.trim();
+        if query.is_empty() {
+            self.status = "Help: empty question".into();
+            return;
+        }
+
+        // Locate the Help book; required as the RAG source.
+        let Some(help_id) = self.system_book_id(crate::store::SYSTEM_TAG_HELP) else {
+            self.status = "Help book not present — re-open the project to seed it".into();
+            return;
+        };
+        let help_subtree: std::collections::HashSet<Uuid> =
+            self.hierarchy.collect_subtree(help_id).into_iter().collect();
+
+        // Search broadly, then filter to nodes inside the Help subtree. We
+        // ask for more than we'll actually feed to the LLM so the post-filter
+        // doesn't starve us if many hits are outside Help.
+        let raw_hits = match self.store.search_text(query, 40) {
+            Ok(hits) => hits,
+            Err(e) => {
+                self.status = format!("Help: search failed: {e}");
+                return;
+            }
+        };
+        let mut chosen: Vec<SearchHit> = raw_hits
+            .iter()
+            .filter_map(SearchHit::parse)
+            .filter(|h| help_subtree.contains(&h.id))
+            .collect();
+        // Keep only paragraphs — branches don't have prose to ground on.
+        chosen.retain(|h| h.kind == NodeKind::Paragraph);
+        // Cap context size to avoid blowing the model's window.
+        const MAX_CONTEXT_PARAGRAPHS: usize = 8;
+        const MAX_CHARS_PER_PARAGRAPH: usize = 2000;
+        chosen.truncate(MAX_CONTEXT_PARAGRAPHS);
+
+        // Fetch full content for the chosen paragraphs and assemble the
+        // grounded context block.
+        let mut context = String::new();
+        let mut included = 0usize;
+        for hit in &chosen {
+            let body = match self.store.get_content(hit.id) {
+                Ok(Some(bytes)) => String::from_utf8_lossy(&bytes).to_string(),
+                _ => continue,
+            };
+            let trimmed = if body.chars().count() > MAX_CHARS_PER_PARAGRAPH {
+                let mut t: String = body.chars().take(MAX_CHARS_PER_PARAGRAPH).collect();
+                t.push('…');
+                t
+            } else {
+                body
+            };
+            context.push_str(&format!(
+                "── Help excerpt: {} (path: {}) ──\n{}\n\n",
+                hit.title, hit.slug_path, trimmed
+            ));
+            included += 1;
+        }
+
+        if included == 0 {
+            self.status = format!(
+                "Help: no entries found for `{}`. Try a different question.",
+                query
+            );
+            return;
+        }
+
+        let system_prompt = HELP_SYSTEM_PROMPT.to_string();
+        let user_prompt = format!(
+            "Question: {query}\n\nContext (Inkhaven Help excerpts — your ONLY allowed source):\n\n{context}\nAnswer using only the context above. If it does not contain the answer, say so plainly and suggest which part of the Help book might be relevant."
+        );
+
+        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("Help: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+
+        // Help is a one-shot RAG inference — no chat history is replayed
+        // (so the strict grounding system prompt isn't diluted), and the
+        // turn does not accumulate into `chat_history`.
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            Some(system_prompt),
+            Vec::new(),
+            user_prompt,
+        );
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        // Land on the AI prompt pane so the user can immediately ask a
+        // follow-up Help question; Esc flips to the AI pane to read.
+        self.change_focus(Focus::AiPrompt);
+        self.status = format!(
+            "Help: streaming answer from {provider} (grounded on {included} excerpt(s))…"
+        );
     }
 
     fn quickref_handle_key(&mut self, key: KeyEvent) -> bool {
@@ -3132,9 +3371,28 @@ impl App {
         let is_file_picker = matches!(self.modal, Modal::FilePicker(_));
         let is_find = matches!(self.modal, Modal::FindReplace { .. });
         let is_quickref = matches!(self.modal, Modal::QuickRef { .. });
+        let is_help_query = matches!(self.modal, Modal::HelpQuery { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_help_query {
+            // Enter submits, anything else feeds the input box. Esc was
+            // already handled at the top of this function.
+            if matches!(key.code, KeyCode::Enter) {
+                let query = match &self.modal {
+                    Modal::HelpQuery { input } => input.as_str().to_string(),
+                    _ => String::new(),
+                };
+                self.modal = Modal::None;
+                self.start_help_inference(&query);
+                return Ok(false);
+            }
+            if let Modal::HelpQuery { input } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
             return Ok(false);
         }
 
@@ -3975,6 +4233,22 @@ impl App {
             Modal::None => return,
             Modal::FilePicker(_) => unreachable!("file picker handled above"),
             Modal::QuickRef { .. } => unreachable!("quickref handled above"),
+            Modal::HelpQuery { input } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Ask the Help book:",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter to ask · Esc to cancel · answer streams into the AI pane",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (" Help — F1 ".to_string(), Color::Cyan, body)
+            }
             Modal::FindReplace {
                 search_input,
                 replace_input,
@@ -5244,6 +5518,58 @@ fn build_lexicon(hierarchy: &Hierarchy, cfg: &Config) -> super::lexicon::Lexicon
         .collect();
     super::lexicon::Lexicon::build(hierarchy, places, characters, algos)
 }
+
+/// Standard text-input key dispatch: typing, navigation, deletion. Shared
+/// helper so new modals don't have to re-implement the pattern that older
+/// modals (Add, Rename, FindReplace) inline.
+fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) {
+    use KeyCode::*;
+    match key.code {
+        Backspace => input.backspace(),
+        Delete => input.delete(),
+        Left => input.move_left(),
+        Right => input.move_right(),
+        Home => input.move_home(),
+        End => input.move_end(),
+        Char(c) => {
+            let mut residual = key.modifiers;
+            residual.remove(KeyModifiers::SHIFT);
+            if residual.is_empty() {
+                let final_c = if key.modifiers.contains(KeyModifiers::SHIFT)
+                    && c.is_ascii_alphabetic()
+                {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                };
+                input.insert_char(final_c);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// System prompt for the F1 / "Help!" RAG flow. We force the model to
+/// stick to the supplied excerpts so the help feature behaves like a
+/// retrieval-grounded manual and not a general LLM chat — it should admit
+/// ignorance rather than confabulate Inkhaven features.
+const HELP_SYSTEM_PROMPT: &str = "\
+You are the Inkhaven help-manual assistant. Your job is to answer the \
+user's question about Inkhaven (a Rust TUI literary editor for Typst \
+books) using ONLY the Help excerpts the user provides below.
+
+Rules:
+- Use only the supplied excerpts. Do not invent commands, keybindings, \
+  features, or file paths that are not present in the excerpts.
+- Do not fall back on general LLM knowledge or assumptions about other \
+  editors. If the excerpts do not answer the question, say so plainly \
+  and suggest which area of the Help book might cover it.
+- Quote keybindings, command names, and option labels verbatim from the \
+  excerpts where useful.
+- Be concise. Prefer short paragraphs and bulleted lists. Skip pleasantries.
+- If multiple excerpts cover the topic, synthesise them; do not list them \
+  as separate answers.
+- Plain text only — no markdown headings beyond `#`/`-` lists.";
 
 fn digit_count(n: usize) -> usize {
     let mut x = n.max(1);

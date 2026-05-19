@@ -32,24 +32,28 @@ impl AiClient {
         })
     }
 
-    /// Resolve a provider name to (model, env_var). Returns an error if the
-    /// API key env var is unset — we surface this up front so the TUI can show
-    /// a clean status message instead of waiting for a 401.
+    /// Resolve a provider name to (model, env_var_or_none). Returns an
+    /// error only when the provider declares an `api_key_env` and that env
+    /// var is unset — local providers like Ollama omit `api_key_env` and
+    /// bypass the check entirely.
     pub fn resolve_provider<'a>(
         &self,
         cfg: &'a LlmConfig,
         provider: Option<&str>,
-    ) -> Result<(&'a str, &'a str)> {
+    ) -> Result<(&'a str, Option<&'a str>)> {
         let name = provider.unwrap_or(&self.default_provider);
         let prov = cfg.providers.get(name).ok_or_else(|| {
             Error::Config(format!("unknown llm provider `{name}` — check inkhaven.hjson"))
         })?;
-        if std::env::var(&prov.api_key_env).is_err() {
-            return Err(Error::Config(format!(
-                "{} not set in environment — `export {}=...`",
-                prov.api_key_env, prov.api_key_env
-            )));
+        if let Some(env_var) = prov.api_key_env.as_deref() {
+            if std::env::var(env_var).is_err() {
+                return Err(Error::Config(format!(
+                    "{env_var} not set in environment — `export {env_var}=...`"
+                )));
+            }
+            Ok((&prov.model, Some(env_var)))
+        } else {
+            Ok((&prov.model, None))
         }
-        Ok((&prov.model, &prov.api_key_env))
     }
 }

@@ -81,14 +81,14 @@ impl Default for LlmConfig {
             "gemini".into(),
             LlmProvider {
                 model: "gemini-2.5-pro".into(),
-                api_key_env: "GEMINI_API_KEY".into(),
+                api_key_env: Some("GEMINI_API_KEY".into()),
             },
         );
         providers.insert(
             "deepseek".into(),
             LlmProvider {
                 model: "deepseek-chat".into(),
-                api_key_env: "DEEPSEEK_API_KEY".into(),
+                api_key_env: Some("DEEPSEEK_API_KEY".into()),
             },
         );
         Self {
@@ -101,7 +101,11 @@ impl Default for LlmConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmProvider {
     pub model: String,
-    pub api_key_env: String,
+    /// Environment variable that holds the provider's API key. Omit for
+    /// local providers like Ollama that don't need authentication — when
+    /// absent, the auth check is skipped.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
