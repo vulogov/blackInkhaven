@@ -30,3 +30,8 @@ target
 /book_sources
 /inkhaven-artefacts
 /inkhaven-backups
+
+# PDFs dropped by Ctrl+B O ("take the book") into the launch cwd.
+# Filename pattern is `<book-slug>-YYYYDDMM-HHMM.pdf`; these are
+# generated outputs, never source.
+*.pdf
