@@ -445,8 +445,15 @@ impl App {
     }
 
     fn handle_tree_key(&mut self, key: KeyEvent) -> Result<bool> {
+        // For plain-letter / punctuation shortcuts we ignore the SHIFT modifier
+        // (uppercase letters require Shift on most layouts) but reject Ctrl /
+        // Alt / Super so e.g. Ctrl+A doesn't accidentally trigger Add-subchapter.
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+
         match key.code {
-            KeyCode::Char('q') | KeyCode::Char('Q') => return Ok(true),
+            KeyCode::Char('q') | KeyCode::Char('Q') if plain => return Ok(true),
             KeyCode::Up => self.move_cursor(-1),
             KeyCode::Down => self.move_cursor(1),
             KeyCode::Home => self.tree_cursor = 0,
@@ -456,11 +463,70 @@ impl App {
                 }
             }
             KeyCode::Enter => self.open_selected()?,
+
+            // Tree-pane add shortcuts. These exist alongside the global
+            // Ctrl+Shift+* chords because terminals and multiplexers
+            // commonly eat those (Ctrl+S = XOFF, tmux prefix, etc.).
+            KeyCode::Char('B') | KeyCode::Char('b') if plain => {
+                self.open_add_modal(NodeKind::Book);
+            }
+            KeyCode::Char('C') | KeyCode::Char('c') if plain => {
+                self.open_add_modal(NodeKind::Chapter);
+            }
+            KeyCode::Char('A') | KeyCode::Char('a') if plain => {
+                self.open_add_modal(NodeKind::Subchapter);
+            }
+            KeyCode::Char('+') if plain => {
+                self.open_add_modal(NodeKind::Paragraph);
+            }
+
+            // Kind-specific delete: D for branches, - for paragraphs. This is
+            // a safety feature — `-` won't nuke a whole chapter by accident.
+            KeyCode::Char('D') | KeyCode::Char('d') if plain => self.delete_branch_only(),
+            KeyCode::Char('-') if plain => self.delete_paragraph_only(),
+
             _ if self.keymap.page_up.matches(&key) => self.move_cursor(-10),
             _ if self.keymap.page_down.matches(&key) => self.move_cursor(10),
             _ => {}
         }
         Ok(false)
+    }
+
+    fn delete_branch_only(&mut self) {
+        let Some(&(id, _)) = self.rows.get(self.tree_cursor) else {
+            self.status = "nothing selected".into();
+            return;
+        };
+        let Some(node) = self.hierarchy.get(id) else {
+            return;
+        };
+        if node.kind == NodeKind::Paragraph {
+            self.status = format!(
+                "`{}` is a paragraph — press `-` (or Ctrl+Shift+D) to delete it",
+                node.title
+            );
+            return;
+        }
+        self.open_delete_modal();
+    }
+
+    fn delete_paragraph_only(&mut self) {
+        let Some(&(id, _)) = self.rows.get(self.tree_cursor) else {
+            self.status = "nothing selected".into();
+            return;
+        };
+        let Some(node) = self.hierarchy.get(id) else {
+            return;
+        };
+        if node.kind != NodeKind::Paragraph {
+            self.status = format!(
+                "`{}` is a {} — press `D` (or Ctrl+Shift+D) to delete it",
+                node.title,
+                node.kind.as_str()
+            );
+            return;
+        }
+        self.open_delete_modal();
     }
 
     fn handle_editor_key(&mut self, key: KeyEvent) -> Result<bool> {
@@ -518,6 +584,37 @@ impl App {
 
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
+        // Plain arrow keys + Home/End/PageUp/PageDown. `input_without_shortcuts`
+        // (which we use to silence tui-textarea's emacs defaults) also treats
+        // these as shortcuts and drops them — so we route them ourselves.
+        // Shift extends a linear selection; plain cancels any selection.
+        if !alt && !ctrl {
+            let cmove = match key.code {
+                KeyCode::Up => Some(CursorMove::Up),
+                KeyCode::Down => Some(CursorMove::Down),
+                KeyCode::Left => Some(CursorMove::Back),
+                KeyCode::Right => Some(CursorMove::Forward),
+                KeyCode::Home => Some(CursorMove::Head),
+                KeyCode::End => Some(CursorMove::End),
+                KeyCode::PageUp => Some(CursorMove::ParagraphBack),
+                KeyCode::PageDown => Some(CursorMove::ParagraphForward),
+                _ => None,
+            };
+            if let Some(cmove) = cmove {
+                if let Some(doc) = self.opened.as_mut() {
+                    if shift {
+                        if doc.textarea.selection_range().is_none() {
+                            doc.textarea.start_selection();
+                        }
+                    } else {
+                        doc.textarea.cancel_selection();
+                    }
+                    doc.textarea.move_cursor(cmove);
+                }
+                return Ok(false);
+            }
+        }
 
         // Modern conventional shortcuts: intercept before reaching the
         // textarea so emacs-style defaults don't fire.
@@ -1221,7 +1318,7 @@ impl App {
     }
 
     fn commit_add(&mut self) {
-        let (kind, parent_id, title) = match &self.modal {
+        let (kind, parent_id, raw_title) = match &self.modal {
             Modal::Adding {
                 kind,
                 parent_id,
@@ -1230,10 +1327,23 @@ impl App {
             } => (*kind, *parent_id, input.as_str().trim().to_string()),
             _ => return,
         };
-        if title.is_empty() {
-            self.status = format!("title required — type something or Esc to cancel");
-            return;
-        }
+
+        // Paragraphs can be added with an empty title — they'll be given a
+        // placeholder ("Untitled paragraph") that the next save replaces with
+        // the first sentence of the body. Branches still require a title
+        // because they have no content from which to derive one.
+        let title = if raw_title.is_empty() {
+            if kind == NodeKind::Paragraph {
+                PARAGRAPH_PLACEHOLDER_TITLE.to_string()
+            } else {
+                self.status =
+                    format!("a {} needs a title — type one or Esc to cancel", kind.as_str());
+                return;
+            }
+        } else {
+            raw_title
+        };
+
         let parent = parent_id.and_then(|id| self.hierarchy.get(id)).cloned();
         match self.store.create_node(
             &self.cfg,
@@ -1410,6 +1520,17 @@ impl App {
             return Ok(());
         };
 
+        // If this paragraph still has the placeholder title, derive a real one
+        // from the body's first sentence and stamp it onto the node — that
+        // becomes the displayed name in the tree pane.
+        let title_was_placeholder = node.title == PARAGRAPH_PLACEHOLDER_TITLE;
+        if title_was_placeholder {
+            if let Some(derived) = extract_first_sentence(&body) {
+                node.title = derived.clone();
+                doc.title = derived;
+            }
+        }
+
         if let Err(e) = self
             .store
             .update_paragraph_content(&mut node, body.as_bytes())
@@ -1424,7 +1545,16 @@ impl App {
 
         doc.dirty = false;
         let words = node.word_count;
-        self.status = format!("saved {} ({} words, re-embedded)", abs.display(), words);
+        if title_was_placeholder && node.title != PARAGRAPH_PLACEHOLDER_TITLE {
+            self.status = format!(
+                "saved {} ({} words) · named `{}` from first sentence",
+                abs.display(),
+                words,
+                node.title
+            );
+        } else {
+            self.status = format!("saved {} ({} words, re-embedded)", abs.display(), words);
+        }
         self.reload_hierarchy();
         Ok(())
     }
@@ -1663,8 +1793,12 @@ impl App {
                 row_style = row_style.add_modifier(Modifier::REVERSED);
             }
 
+            // Truncate very long titles (typical for paragraphs whose name
+            // was auto-derived from the first sentence) so they don't push
+            // the word count off the pane.
+            let display_title = truncate_title(&node.title, TITLE_MAX_DISPLAY);
             let mut spans = vec![Span::styled(
-                format!("{indent}{marker}{}", node.title),
+                format!("{indent}{marker}{display_title}"),
                 row_style,
             )];
             if matches!(node.kind, NodeKind::Paragraph) {
@@ -1719,8 +1853,13 @@ impl App {
         let (cur_row, cur_col) = opened.textarea.cursor();
         let selection = opened.textarea.selection_range();
 
+        let total_lines = highlighted.len().max(1);
+        let lineno_chars = digit_count(total_lines);
+        let gutter_width = (lineno_chars + 1) as u16;
+
         let h = inner.height as usize;
-        let w = inner.width as usize;
+        let w = inner.width.saturating_sub(gutter_width) as usize;
+
         if h > 0 {
             if cur_row < opened.scroll_row {
                 opened.scroll_row = cur_row;
@@ -1736,11 +1875,40 @@ impl App {
             }
         }
 
+        let lineno_style = Style::default().fg(Color::DarkGray);
+        let current_bg = Color::Indexed(236);
+
         let mut visible_lines: Vec<Line> = Vec::with_capacity(h);
         let row_end = (opened.scroll_row + h).min(highlighted.len());
         for row in opened.scroll_row..row_end {
-            let spans =
+            let is_current = row == cur_row;
+            let lineno_text = format!("{:>chars$} ", row + 1, chars = lineno_chars);
+            let mut lineno_span_style = lineno_style;
+            if is_current {
+                lineno_span_style = lineno_span_style
+                    .bg(current_bg)
+                    .add_modifier(Modifier::BOLD);
+            }
+
+            let mut text_spans =
                 build_row_spans(&highlighted[row], row, opened.scroll_col, w, selection, block);
+            if is_current {
+                for s in &mut text_spans {
+                    if s.style.bg.is_none() {
+                        s.style = s.style.bg(current_bg);
+                    }
+                }
+            }
+
+            let text_chars: usize = text_spans.iter().map(|s| s.content.chars().count()).sum();
+            let mut spans = vec![Span::styled(lineno_text, lineno_span_style)];
+            spans.extend(text_spans);
+            if is_current && text_chars < w {
+                spans.push(Span::styled(
+                    " ".repeat(w - text_chars),
+                    Style::default().bg(current_bg),
+                ));
+            }
             visible_lines.push(Line::from(spans));
         }
         f.render_widget(Paragraph::new(visible_lines), inner);
@@ -1753,7 +1921,7 @@ impl App {
             && cur_col >= opened.scroll_col
             && cur_col < opened.scroll_col + w
         {
-            let x = inner.x + (cur_col - opened.scroll_col) as u16;
+            let x = inner.x + gutter_width + (cur_col - opened.scroll_col) as u16;
             let y = inner.y + (cur_row - opened.scroll_row) as u16;
             f.set_cursor_position((x, y));
         }
@@ -1768,11 +1936,14 @@ impl App {
 
         let (cur_row, cur_col) = opened.textarea.cursor();
         let selection = opened.textarea.selection_range();
-        let h = inner.height as usize;
-        let w = inner.width as usize;
 
-        // Build the full wrapped view. For literary-scale paragraphs (<10k
-        // chars) this is well under a millisecond per render.
+        let total_lines = highlighted.len().max(1);
+        let lineno_chars = digit_count(total_lines);
+        let gutter_width = (lineno_chars + 1) as u16;
+
+        let h = inner.height as usize;
+        let w = inner.width.saturating_sub(gutter_width) as usize;
+
         let mut visual: Vec<super::highlight::VisualRow> = Vec::new();
         for (src_row, runs) in highlighted.iter().enumerate() {
             for vr in wrap_line(runs, src_row, w) {
@@ -1780,12 +1951,8 @@ impl App {
             }
         }
 
-        // Find the visual row that contains the cursor.
         let cursor_visual = find_cursor_visual(&visual, cur_row, cur_col);
 
-        // Scroll so the cursor visual row stays in viewport. `scroll_row`
-        // doubles as `scroll_visual_row` when wrap is on — same field, the
-        // unit shifts with `cfg.editor.wrap`. Caller never mixes them.
         if h > 0 {
             if cursor_visual.0 < opened.scroll_row {
                 opened.scroll_row = cursor_visual.0;
@@ -1795,10 +1962,47 @@ impl App {
         }
         opened.scroll_col = 0;
 
+        let lineno_style = Style::default().fg(Color::DarkGray);
+        let current_bg = Color::Indexed(236);
+
         let mut lines: Vec<Line> = Vec::with_capacity(h);
         let row_end = (opened.scroll_row + h).min(visual.len());
-        for v in &visual[opened.scroll_row..row_end] {
-            lines.push(Line::from(build_visual_row_spans(v, selection, block)));
+        for (i, v) in visual[opened.scroll_row..row_end].iter().enumerate() {
+            let visual_row_idx = opened.scroll_row + i;
+            let is_current = visual_row_idx == cursor_visual.0;
+
+            // Line number only on the first visual row of each source row.
+            let lineno_text = if v.src_col_start == 0 {
+                format!("{:>chars$} ", v.src_row + 1, chars = lineno_chars)
+            } else {
+                format!("{:>chars$} ", "", chars = lineno_chars)
+            };
+            let mut lineno_span_style = lineno_style;
+            if is_current {
+                lineno_span_style = lineno_span_style
+                    .bg(current_bg)
+                    .add_modifier(Modifier::BOLD);
+            }
+
+            let mut text_spans = build_visual_row_spans(v, selection, block);
+            if is_current {
+                for s in &mut text_spans {
+                    if s.style.bg.is_none() {
+                        s.style = s.style.bg(current_bg);
+                    }
+                }
+            }
+
+            let text_chars: usize = text_spans.iter().map(|s| s.content.chars().count()).sum();
+            let mut spans = vec![Span::styled(lineno_text, lineno_span_style)];
+            spans.extend(text_spans);
+            if is_current && text_chars < w {
+                spans.push(Span::styled(
+                    " ".repeat(w - text_chars),
+                    Style::default().bg(current_bg),
+                ));
+            }
+            lines.push(Line::from(spans));
         }
         f.render_widget(Paragraph::new(lines), inner);
 
@@ -1809,7 +2013,7 @@ impl App {
             && cursor_visual.0 < opened.scroll_row + h
             && cursor_visual.1 < w
         {
-            let x = inner.x + cursor_visual.1 as u16;
+            let x = inner.x + gutter_width + cursor_visual.1 as u16;
             let y = inner.y + (cursor_visual.0 - opened.scroll_row) as u16;
             f.set_cursor_position((x, y));
         }
@@ -2077,6 +2281,85 @@ fn find_cursor_visual(
         return (i, cur_col.saturating_sub(v.src_col_start));
     }
     (0, 0)
+}
+
+/// Placeholder title for paragraphs added without one. The next save replaces
+/// it with the first sentence of the body.
+const PARAGRAPH_PLACEHOLDER_TITLE: &str = "Untitled paragraph";
+
+/// Maximum number of characters a node title is allowed to occupy in the
+/// tree pane. Beyond that, the title is truncated with an ellipsis so the
+/// `Nw` word-count suffix stays visible on a single row.
+const TITLE_MAX_DISPLAY: usize = 60;
+
+fn truncate_title(title: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = title.chars().collect();
+    if chars.len() <= max_chars {
+        return title.to_string();
+    }
+    let mut out: String = chars.iter().take(max_chars - 1).collect();
+    out.push('…');
+    out
+}
+
+/// Try to derive a usable title from a paragraph body. Skips Typst heading
+/// lines (`= …`), comments (`// …`), and blank lines. Looks for the first
+/// `.`, `!`, or `?` followed by whitespace or end-of-text. Truncates the
+/// result to fit `TITLE_MAX_DISPLAY` chars (with ellipsis if cut). Returns
+/// None if no usable text is found.
+fn extract_first_sentence(content: &str) -> Option<String> {
+    let prose: String = content
+        .lines()
+        .filter_map(|l| {
+            let t = l.trim();
+            if t.is_empty() || t.starts_with("=") || t.starts_with("//") {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if prose.is_empty() {
+        return None;
+    }
+
+    let chars: Vec<char> = prose.chars().collect();
+    let mut end = chars.len();
+    for (i, c) in chars.iter().enumerate() {
+        if matches!(*c, '.' | '!' | '?') {
+            let next_is_space_or_end = i + 1 >= chars.len() || chars[i + 1].is_whitespace();
+            if next_is_space_or_end {
+                end = i + 1;
+                break;
+            }
+        }
+    }
+    let sentence: String = chars.iter().take(end).collect();
+    let sentence = sentence.trim();
+    if sentence.is_empty() {
+        return None;
+    }
+
+    let s_chars: Vec<char> = sentence.chars().collect();
+    if s_chars.len() > TITLE_MAX_DISPLAY {
+        let mut out: String = s_chars.iter().take(TITLE_MAX_DISPLAY - 1).collect();
+        out.push('…');
+        Some(out)
+    } else {
+        Some(sentence.to_string())
+    }
+}
+
+fn digit_count(n: usize) -> usize {
+    let mut x = n.max(1);
+    let mut d = 0;
+    while x > 0 {
+        d += 1;
+        x /= 10;
+    }
+    d
 }
 
 fn reverse_chip(fg: Color) -> Style {

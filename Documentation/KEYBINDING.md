@@ -51,6 +51,8 @@ Focused on launch. Shows the project hierarchy with depth indentation, kind
 glyphs (`📖` book, `▸` chapter, `▹` subchapter, `¶` paragraph), and a dim
 `Nw` word-count suffix for paragraphs.
 
+### 2.1 Navigation
+
 | Key                  | Action                                                      |
 | -------------------- | ----------------------------------------------------------- |
 | `↑` / `↓`            | Move cursor one row up/down (within scroll).                |
@@ -61,7 +63,33 @@ glyphs (`📖` book, `▸` chapter, `▹` subchapter, `¶` paragraph), and a dim
 | `Enter`              | Open the cursor's node. Paragraphs load into the editor and shift focus there. Branches print a status hint and stay in Tree. |
 | `q` or `Q`           | Quit (no save prompt — Ctrl+S first if dirty).              |
 
-All global chords also fire here.
+### 2.2 Tree-pane shortcuts (modifier-free)
+
+These plain-key shortcuts work only when the Tree pane has focus. They exist
+alongside the global `Ctrl+Shift+*` chords because terminals and
+multiplexers commonly intercept those (see §13 for details). All four open
+the same modals as their global equivalents — no destructive action without
+confirmation.
+
+| Key       | Action                                                                                  |
+| --------- | --------------------------------------------------------------------------------------- |
+| `B` / `b` | Open Add modal for a new **book** at the root level. Equivalent to global `Ctrl+Shift+B`. |
+| `C` / `c` | Open Add modal for a new **chapter**. Equivalent to global `Ctrl+Shift+C`.              |
+| `A` / `a` | Open Add modal for a new **subchapter**. Equivalent to global `Ctrl+Shift+S`.           |
+| `+`       | Open Add modal for a new **paragraph**. Equivalent to global `Ctrl+Shift+P`.            |
+| `D` / `d` | Open Delete modal — but only if the cursor is on a **branch** (book/chapter/subchapter). On a paragraph, shows a hint to press `-` instead. |
+| `-`       | Open Delete modal — but only if the cursor is on a **paragraph**. On a branch, shows a hint to press `D` instead. |
+
+Why kind-specific delete? Safety. `-` won't nuke an entire chapter if your
+cursor accidentally landed on it, and `D` won't kill a paragraph you meant
+to keep. If you want delete that doesn't care about kind, use the global
+`Ctrl+Shift+D`.
+
+Shortcuts ignore the `Shift` modifier (uppercase implies Shift on most
+layouts) but reject `Ctrl` / `Alt` / `Super` — so `Ctrl+A` will *not* fire
+Add-subchapter.
+
+All global chords also fire from the Tree pane.
 
 ---
 
@@ -356,7 +384,44 @@ configurable.
 
 ---
 
-## 12. Quick cheat sheet
+## 12. When chords don't reach Inkhaven
+
+Some of the configured chords — especially `Ctrl+S`, `Ctrl+Q`, and the
+`Ctrl+Shift+*` family — can be eaten by your terminal emulator, your shell,
+or a terminal multiplexer (tmux / screen) before they reach Inkhaven. This
+is not a bug in Inkhaven; it's a layer above us deciding the chord means
+something else.
+
+Common interceptors:
+
+| Chord                  | Often intercepted by                                                |
+| ---------------------- | ------------------------------------------------------------------- |
+| `Ctrl+S`               | Terminal flow control (XOFF / freeze output). Run `stty -ixon` in your shell to disable. |
+| `Ctrl+Q`               | Terminal flow control (XON). Same `stty -ixon` fix.                |
+| `Ctrl+Shift+...`       | macOS Terminal.app / iTerm2 may remap these to window/tab shortcuts. Check Preferences → Keys. |
+| `Ctrl+B*`              | tmux default prefix. `Ctrl+Shift+B` may also be eaten depending on tmux config. |
+| `Ctrl+Shift+Up/Down`   | Some terminals don't transmit the Ctrl modifier with arrow keys. Try the symbol/letter alternatives (`A`, `+`, `D`, `-`) in the Tree pane. |
+
+**Workarounds Inkhaven provides:**
+
+- The Tree pane has modifier-free `A` / `+` / `D` / `-` shortcuts (§2.2) for
+  the most common add/delete operations.
+- For reorder, both `Ctrl+Shift+Up`/`Down` (TUI) and `inkhaven mv ... up`
+  /`down` (CLI) exist; use the CLI in a second pane if the TUI chord is
+  blocked.
+- Save is also reachable via the CLI: open the `.typ` in an external
+  editor, save there, then `inkhaven reindex` from a shell.
+
+**If your terminal swallows Ctrl+S**, the simplest fix is to add this to
+your shell rc:
+
+```bash
+stty -ixon
+```
+
+Then `Ctrl+S` reaches applications normally.
+
+## 13. Quick cheat sheet
 
 For when you just want the high-level map:
 
@@ -370,8 +435,12 @@ GLOBAL          Ctrl+Q       quit
 TREE            ↑↓ Home End  navigate
                 PgUp PgDn    by 10
                 Enter        open paragraph in editor
-                C-S-B/C/S/P  add book/chapter/subchapter/paragraph
-                C-S-D        delete subtree
+                B            add book               (or Ctrl+Shift+B)
+                C            add chapter            (or Ctrl+Shift+C)
+                A            add subchapter         (or Ctrl+Shift+S)
+                +            add paragraph          (or Ctrl+Shift+P)
+                D            delete branch          (or Ctrl+Shift+D)
+                -            delete paragraph       (or Ctrl+Shift+D)
                 C-S-Up/Down  reorder within siblings
                 q            quit
 
