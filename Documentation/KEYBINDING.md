@@ -72,6 +72,9 @@ cancels with a status hint telling you which pane's table it consulted.
 | `R` / `r`  | Open the snapshot histo**R**y picker (== F6). Moved off `H` so Help can claim that letter across every pane. |
 | `L` / `l`  | Open the **load file** dialog (== F3).                          |
 | `F` / `f`  | Toggle **split-edit** mode (== F4). See §3.9.                   |
+| `T` / `t`  | **Retitle paragraph** — re-derive the displayed title from the buffer's first sentence (same logic that fires on save for placeholder titles, but runnable on demand). |
+| `P` / `p`  | **Place-RAG inference** — treats the editor's current selection (or word under cursor) as a place name, sweeps matching paragraphs in the **Places** system book, and prepends them as RAG context to the next AI prompt. If the AI prompt is non-empty, the inference fires immediately and focus jumps to the AI pane. If empty, the context is stashed and focus jumps to the **AI prompt** so you can type your question. |
+| `C` / `c`  | **Character-RAG inference** — same flow as `P` but against the **Characters** system book. |
 | `H` / `h`  | Open the pane-aware **Quick reference** overlay.                |
 
 **AI pane (and AI prompt focus)** — inference management:
@@ -408,6 +411,7 @@ keystroke away. Pane title shows provider, streaming status, and a
 | `r` / `R` | inference done, doc open        | Replace editor selection (or entire doc if no selection) with the AI text. Marks dirty, refocuses Editor. |
 | `i` / `I` | inference done, doc open        | Insert AI text at cursor. Marks dirty.              |
 | `t` / `T` | inference done, doc open        | Prepend AI text to top of paragraph (with blank line separator). |
+| `g` / `G` | inference done, doc open        | **Grammar-check apply**: lifts only the corrected paragraph from the response (between `<<<CORRECTED>>>` / `<<<END>>>` markers, or last fenced code, or after a "Corrected …" heading) and overwrites the editor buffer wholesale (constructs a fresh `TextArea` so nothing of the old buffer survives). Skips the markdown→Typst conversion because the grammar prompt preserves Typst markup verbatim. Changed characters render in `theme.grammar_change_fg` (default red) and the highlight **survives saves** — dismiss it explicitly with `Ctrl+B` then `C`, or by switching paragraphs. Refuses with a status message if no extraction pattern matches. |
 | `b` / `B` | inference done, doc open        | Append AI text to bottom of paragraph.              |
 | `c` / `C` | inference done                  | Copy AI text to system clipboard only (no editor change). |
 | `q` / `Q` | always                          | Quit.                                               |

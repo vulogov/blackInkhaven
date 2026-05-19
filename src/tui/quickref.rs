@@ -100,7 +100,7 @@ fn tree_entries() -> [Entry; 27] {
     ]
 }
 
-fn editor_entries() -> [Entry; 35] {
+fn editor_entries() -> [Entry; 43] {
     [
         entry("arrows", "Move cursor"),
         entry("Ctrl+arrows", "Word back/forward / top / bottom"),
@@ -136,15 +136,24 @@ fn editor_entries() -> [Entry; 35] {
         entry("F4 / Ctrl+F4", "Toggle split / accept snapshot"),
         entry("F5 / F6", "Create / list snapshots"),
         entry("Ctrl+H / Ctrl+J", "(split only) scroll lower pane up/down"),
+        header(""),
+        header("─ Editor meta (Ctrl+B …) ─"),
+        entry("Ctrl+B S", "Save (alternative to Ctrl+S)"),
+        entry("Ctrl+B N / R", "New snapshot / open snapshot history"),
+        entry("Ctrl+B L / F", "Load file / toggle split-edit"),
+        entry("Ctrl+B T", "Retitle paragraph from its first sentence"),
+        entry("Ctrl+B P", "Place RAG — selection → Places book → AI pane"),
+        entry("Ctrl+B C", "Character RAG — selection → Characters book → AI pane"),
         entry("Ctrl+B H", "Open this Quick reference"),
     ]
 }
 
-fn ai_entries() -> [Entry; 18] {
+fn ai_entries() -> [Entry; 19] {
     [
         entry("r / R", "Replace editor selection with AI text"),
         entry("i / I", "Insert AI text at cursor"),
         entry("t / T", "Prepend AI text to top of paragraph"),
+        entry("g / G", "Grammar check: replace buffer w/ corrected only"),
         entry("b / B", "Append AI text to bottom"),
         entry("c / C", "Copy AI text to clipboard"),
         entry("Esc", "Bounce to AI prompt (mirror of AI prompt's Esc)"),

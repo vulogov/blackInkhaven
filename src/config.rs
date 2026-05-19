@@ -133,6 +133,12 @@ pub struct ThemeConfig {
     // Tree pane chrome.
     pub tree_open_marker: String,
 
+    // Foreground colour applied to characters that differ from the
+    // pre-grammar-check baseline after `T` overwrites the buffer with the
+    // model's corrected paragraph. Stays visible until the user saves
+    // (the user implicitly accepts the changes) or switches paragraphs.
+    pub grammar_change_fg: String,
+
     // Typst syntax colours.
     pub syntax_heading: String,
     pub syntax_bold: String,
@@ -177,6 +183,8 @@ impl Default for ThemeConfig {
             search_current_bg: "#f5c2e7".into(),
 
             tree_open_marker: "#a6e3a1".into(),
+
+            grammar_change_fg: "#f38ba8".into(),
 
             syntax_heading: "#cba6f7".into(),
             syntax_bold: "#f9e2af".into(),

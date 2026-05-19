@@ -32,6 +32,7 @@ pub struct Theme {
     pub search_current_bg: Color,
 
     pub tree_open_marker: Color,
+    pub grammar_change_fg: Color,
 
     pub syntax_heading: Color,
     pub syntax_bold: Color,
@@ -77,6 +78,13 @@ impl Theme {
             search_current_bg: color_or(&cfg.search_current_bg, Color::Rgb(0xf5, 0xc2, 0xe7)),
 
             tree_open_marker: color_or(&cfg.tree_open_marker, Color::Rgb(0xa6, 0xe3, 0xa1)),
+            grammar_change_fg: color_or(
+                &cfg.grammar_change_fg,
+                // Catppuccin Mocha red; user's spec defaults to "red" so
+                // this honours that intent while keeping palette
+                // consistency.
+                Color::Rgb(0xf3, 0x8b, 0xa8),
+            ),
 
             syntax_heading: color_or(&cfg.syntax_heading, Color::Rgb(0xcb, 0xa6, 0xf7)),
             syntax_bold: color_or(&cfg.syntax_bold, Color::Rgb(0xf9, 0xe2, 0xaf)),
