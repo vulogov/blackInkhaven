@@ -46,12 +46,17 @@ pub enum Command {
         /// Display title.
         title: String,
         /// Slash-separated slug path to the parent (e.g. `my-book/01-chapter`).
-        /// Required for everything except `book`.
+        /// Required for everything except `book` when not using --after.
         #[arg(long)]
         parent: Option<String>,
         /// Override the auto-assigned slug (defaults to slugified title).
         #[arg(long)]
         slug: Option<String>,
+        /// Insert the new node immediately after an existing sibling of the
+        /// same kind. Pass the sibling's slug path here; --parent is then
+        /// implicit (taken from the anchor's parent).
+        #[arg(long)]
+        after: Option<String>,
     },
 
     /// Print the hierarchy as a tree.
@@ -152,8 +157,16 @@ impl Cli {
                 title,
                 parent,
                 slug,
-            } => add::run(&project, kind.into(), &title, parent.as_deref(), slug.as_deref())
-                .map_err(Into::into),
+                after,
+            } => add::run(
+                &project,
+                kind.into(),
+                &title,
+                parent.as_deref(),
+                slug.as_deref(),
+                after.as_deref(),
+            )
+            .map_err(Into::into),
             Command::List => list::run(&project).map_err(Into::into),
             Command::Delete { path, yes } => delete::run(&project, &path, yes).map_err(Into::into),
             Command::Mv { path, direction } => {

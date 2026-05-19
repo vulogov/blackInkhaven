@@ -6,6 +6,7 @@ use crate::project::ProjectLayout;
 use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::NodeKind;
+use crate::store::InsertPosition;
 
 pub fn run(
     project: &Path,
@@ -13,6 +14,7 @@ pub fn run(
     title: &str,
     parent_path: Option<&str>,
     slug_override: Option<&str>,
+    after_path: Option<&str>,
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
@@ -21,27 +23,54 @@ pub fn run(
     let store = Store::open(layout.clone(), &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
 
-    let parent = match (kind, parent_path) {
-        (NodeKind::Book, None) => None,
-        (NodeKind::Book, Some(_)) => {
-            return Err(Error::Store(
-                "books are root nodes; do not pass --parent".into(),
-            ));
-        }
-        (_, None) => {
+    // --after takes precedence and implies the parent.
+    let (parent, position) = if let Some(after) = after_path {
+        let anchor = hierarchy
+            .find_by_path(after)
+            .ok_or_else(|| Error::Store(format!("--after anchor not found: `{after}`")))?;
+        if anchor.kind != kind {
             return Err(Error::Store(format!(
-                "--parent is required when adding a {}",
-                kind.as_str()
+                "--after expects a sibling of kind `{}`, got `{}`",
+                kind.as_str(),
+                anchor.kind.as_str()
             )));
         }
-        (_, Some(path)) => Some(
-            hierarchy
-                .find_by_path(path)
-                .ok_or_else(|| Error::Store(format!("parent not found: `{path}`")))?,
-        ),
+        let parent_node = anchor
+            .parent_id
+            .and_then(|pid| hierarchy.get(pid));
+        (parent_node, InsertPosition::After(anchor.id))
+    } else {
+        let parent = match (kind, parent_path) {
+            (NodeKind::Book, None) => None,
+            (NodeKind::Book, Some(_)) => {
+                return Err(Error::Store(
+                    "books are root nodes; do not pass --parent".into(),
+                ));
+            }
+            (_, None) => {
+                return Err(Error::Store(format!(
+                    "--parent is required when adding a {}",
+                    kind.as_str()
+                )));
+            }
+            (_, Some(path)) => Some(
+                hierarchy
+                    .find_by_path(path)
+                    .ok_or_else(|| Error::Store(format!("parent not found: `{path}`")))?,
+            ),
+        };
+        (parent, InsertPosition::End)
     };
 
-    let node = store.create_node(&cfg, &hierarchy, kind, title, parent, slug_override)?;
+    let node = store.create_node(
+        &cfg,
+        &hierarchy,
+        kind,
+        title,
+        parent,
+        slug_override,
+        position,
+    )?;
 
     let display_path = {
         let mut parts: Vec<String> = node.path.clone();

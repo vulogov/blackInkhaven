@@ -26,10 +26,12 @@ use crate::project::ProjectLayout;
 use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::{Node, NodeKind};
+use crate::store::{InsertPosition, Snapshot};
 
 use super::focus::Focus;
 use super::highlight::{
-    BlockSelection, TypstHighlighter, build_row_spans, build_visual_row_spans, wrap_line,
+    BlockSelection, TypstHighlighter, build_row_spans, build_visual_row_spans, diff_added,
+    wrap_line,
 };
 use super::input::TextInput;
 use super::keymap::KeyChord;
@@ -146,6 +148,8 @@ enum Modal {
         parent_id: Option<Uuid>,
         parent_label: String,
         input: TextInput,
+        /// Where in the parent's children list the new node lands.
+        position: InsertPosition,
     },
     Deleting {
         root_id: Uuid,
@@ -153,6 +157,19 @@ enum Modal {
         title: String,
         descendant_count: usize,
         ids: Vec<Uuid>,
+    },
+    Renaming {
+        node_id: Uuid,
+        kind: NodeKind,
+        input: TextInput,
+    },
+    SnapshotPicker {
+        /// Kept for potential refresh ops after future snapshot mutations.
+        #[allow(dead_code)]
+        paragraph_id: Uuid,
+        paragraph_title: String,
+        snapshots: Vec<Snapshot>,
+        cursor: usize,
     },
 }
 
@@ -226,6 +243,12 @@ struct OpenedDoc {
     /// While Some, the cursor's current position plus this anchor define a
     /// rectangular selection drawn with REVERSED style.
     block_anchor: Option<(usize, usize)>,
+    /// Wall-clock of the last key event handled by the editor. Idle autosave
+    /// fires when (now - last_activity) >= editor.autosave_seconds.
+    last_activity: std::time::Instant,
+    /// Snapshot of `textarea.lines()` at the most recent save / load. Used to
+    /// bold characters added since then.
+    saved_lines: Vec<String>,
 }
 
 impl App {
@@ -281,6 +304,7 @@ impl App {
     fn run<B: ratatui::backend::Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
         loop {
             self.pump_inference();
+            self.tick_autosave();
             terminal.draw(|f| self.draw(f))?;
             // Shorter poll interval while streaming so tokens render with low
             // latency without burning CPU when idle.
@@ -299,6 +323,22 @@ impl App {
                     }
                 }
             }
+        }
+    }
+
+    fn tick_autosave(&mut self) {
+        let secs = self.cfg.editor.autosave_seconds;
+        if secs == 0 {
+            return;
+        }
+        let due = match self.opened.as_ref() {
+            Some(doc) if doc.dirty => {
+                doc.last_activity.elapsed().as_secs() >= secs
+            }
+            _ => false,
+        };
+        if due {
+            let _ = self.save_current();
         }
     }
 
@@ -353,12 +393,45 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'))
         {
-            return Ok(true);
+            return Ok(self.request_quit());
         }
 
         // Modal eats every other key.
         if !matches!(self.modal, Modal::None) {
             return self.handle_modal_key(key);
+        }
+
+        // Ctrl+1..5 — direct focus jumps. Most terminals send these as
+        // Char(digit) + CONTROL. But Ctrl+2 on US-layout terminals is often
+        // re-encoded as Ctrl+@ → KeyCode::Char('@') with CONTROL, or as
+        // KeyCode::Null. Try every variant we've seen in the wild.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
+            let target = match key.code {
+                KeyCode::Char('1') => Some(Focus::Editor),
+                // Ctrl+2 alternates:
+                KeyCode::Char('2') | KeyCode::Char('@') => Some(Focus::Tree),
+                KeyCode::Char('3') => Some(Focus::Ai),
+                KeyCode::Char('4') => Some(Focus::SearchBar),
+                KeyCode::Char('5') => Some(Focus::AiPrompt),
+                // Ctrl+T also focuses Tree — mnemonic and not terminal-eaten.
+                KeyCode::Char('t') | KeyCode::Char('T') => Some(Focus::Tree),
+                _ => None,
+            };
+            if let Some(focus) = target {
+                self.focus = focus;
+                return Ok(false);
+            }
+        }
+        // KeyCode::Null with no modifiers is what some terminals report for
+        // Ctrl+2 / Ctrl+Space. Catch that separately because the inner block
+        // requires the CONTROL modifier flag.
+        if matches!(key.code, KeyCode::Null) {
+            self.focus = Focus::Tree;
+            return Ok(false);
         }
 
         // Tree-management chords. Work from any focus so the user doesn't
@@ -453,7 +526,8 @@ impl App {
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
 
         match key.code {
-            KeyCode::Char('q') | KeyCode::Char('Q') if plain => return Ok(true),
+            KeyCode::Char('q') | KeyCode::Char('Q') if plain => return Ok(self.request_quit()),
+            KeyCode::F(2) => self.open_rename_modal(),
             KeyCode::Up => self.move_cursor(-1),
             KeyCode::Down => self.move_cursor(1),
             KeyCode::Home => self.tree_cursor = 0,
@@ -470,14 +544,25 @@ impl App {
             KeyCode::Char('B') | KeyCode::Char('b') if plain => {
                 self.open_add_modal(NodeKind::Book);
             }
+            // C/A/+ append at the end of the parent's children;
+            // V/S/P insert immediately after the cursor's same-kind ancestor.
             KeyCode::Char('C') | KeyCode::Char('c') if plain => {
                 self.open_add_modal(NodeKind::Chapter);
+            }
+            KeyCode::Char('V') | KeyCode::Char('v') if plain => {
+                self.open_add_modal_after(NodeKind::Chapter);
             }
             KeyCode::Char('A') | KeyCode::Char('a') if plain => {
                 self.open_add_modal(NodeKind::Subchapter);
             }
+            KeyCode::Char('S') | KeyCode::Char('s') if plain => {
+                self.open_add_modal_after(NodeKind::Subchapter);
+            }
             KeyCode::Char('+') if plain => {
                 self.open_add_modal(NodeKind::Paragraph);
+            }
+            KeyCode::Char('P') | KeyCode::Char('p') if plain => {
+                self.open_add_modal_after(NodeKind::Paragraph);
             }
 
             // Kind-specific delete: D for branches, - for paragraphs. This is
@@ -532,8 +617,25 @@ impl App {
     fn handle_editor_key(&mut self, key: KeyEvent) -> Result<bool> {
         if self.opened.is_none() {
             if matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q')) {
-                return Ok(true);
+                return Ok(self.request_quit());
             }
+            return Ok(false);
+        }
+
+        // Stamp last_activity so idle autosave only fires after the user
+        // actually pauses. Done first so every branch below benefits.
+        if let Some(doc) = self.opened.as_mut() {
+            doc.last_activity = std::time::Instant::now();
+        }
+
+        // F5 creates a snapshot of the current paragraph; F6 opens the picker.
+        // Function keys are rarely intercepted by terminals or multiplexers.
+        if matches!(key.code, KeyCode::F(5)) {
+            self.create_snapshot_of_current();
+            return Ok(false);
+        }
+        if matches!(key.code, KeyCode::F(6)) {
+            self.open_snapshot_picker();
             return Ok(false);
         }
 
@@ -797,6 +899,9 @@ impl App {
         doc.textarea.move_cursor(CursorMove::Top);
         doc.textarea.start_selection();
         doc.textarea.move_cursor(CursorMove::Bottom);
+        // CursorMove::Bottom lands at (last_row, 0). Without this End move
+        // the selection would exclude the last line's content entirely.
+        doc.textarea.move_cursor(CursorMove::End);
     }
 
     fn handle_passive_key(&mut self, key: KeyEvent) -> Result<bool> {
@@ -829,9 +934,26 @@ impl App {
         }
 
         if matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q')) {
-            return Ok(true);
+            return Ok(self.request_quit());
         }
         Ok(false)
+    }
+
+    /// Centralized exit gate. If the open paragraph is dirty, autosave it
+    /// before returning true. If the save fails, abort the exit and leave a
+    /// status message so the user can recover. Called from every quit chord
+    /// (Ctrl+Q, plain q in Tree / Editor-empty / AI).
+    fn request_quit(&mut self) -> bool {
+        if self.opened.as_ref().is_some_and(|d| d.dirty) {
+            // save_current writes its own status. If it can't save, doc.dirty
+            // stays true and we refuse to quit so the user can see the error
+            // and recover.
+            let _ = self.save_current();
+            if self.opened.as_ref().is_some_and(|d| d.dirty) {
+                return false;
+            }
+        }
+        true
     }
 
     fn inference_done_with_text(&self) -> bool {
@@ -907,7 +1029,14 @@ impl App {
                 } else {
                     self.show_results_overlay = false;
                     self.show_prompt_picker = false;
-                    self.focus = Focus::Tree;
+                    // Return to the Editor pane when a paragraph is open,
+                    // otherwise fall back to Tree. Saves a Tab press in the
+                    // common write-search-write workflow.
+                    self.focus = if self.opened.is_some() {
+                        Focus::Editor
+                    } else {
+                        Focus::Tree
+                    };
                 }
             }
             KeyCode::Enter => {
@@ -967,10 +1096,17 @@ impl App {
             KeyCode::Home => self.current_input(is_search).move_home(),
             KeyCode::End => self.current_input(is_search).move_end(),
             KeyCode::Char(c) => {
-                let mut mods = key.modifiers;
-                mods.remove(KeyModifiers::SHIFT);
-                if mods.is_empty() {
-                    self.current_input(is_search).insert_char(c);
+                let mut residual = key.modifiers;
+                residual.remove(KeyModifiers::SHIFT);
+                if residual.is_empty() {
+                    let final_c = if key.modifiers.contains(KeyModifiers::SHIFT)
+                        && c.is_ascii_alphabetic()
+                    {
+                        c.to_ascii_uppercase()
+                    } else {
+                        c
+                    };
+                    self.current_input(is_search).insert_char(final_c);
                     if is_search {
                         self.show_results_overlay = false;
                     } else {
@@ -1182,12 +1318,54 @@ impl App {
     // -------- modal -------------------------------------------------------
 
     fn open_add_modal(&mut self, kind: NodeKind) {
+        self.open_add_modal_inner(kind, InsertPosition::End);
+    }
+
+    /// Insert-after variant: walks up from the tree cursor to find a node of
+    /// the same `kind` as the one being added; if found, the new node will be
+    /// placed immediately after it. Falls back to append-at-end if no
+    /// same-kind ancestor exists (e.g. pressing P with cursor on a book).
+    fn open_add_modal_after(&mut self, kind: NodeKind) {
         let cursor_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
-        let parent_node = match self.hierarchy.pick_parent_for(&self.cfg, cursor_id, kind) {
-            Ok(p) => p,
-            Err(e) => {
-                self.status = format!("can't add {}: {e}", kind.as_str());
-                return;
+        let anchor = cursor_id.and_then(|id| {
+            let mut cur = Some(id);
+            while let Some(c) = cur {
+                let node = self.hierarchy.get(c)?;
+                if node.kind == kind {
+                    return Some(node.id);
+                }
+                cur = node.parent_id;
+            }
+            None
+        });
+        let position = match anchor {
+            Some(id) => InsertPosition::After(id),
+            None => InsertPosition::End,
+        };
+        self.open_add_modal_inner(kind, position);
+    }
+
+    fn open_add_modal_inner(&mut self, kind: NodeKind, position: InsertPosition) {
+        // For After(anchor), the parent is anchor.parent_id (always valid
+        // because the anchor's a same-kind node). For End, walk up to find a
+        // valid parent.
+        let parent_node = match position {
+            InsertPosition::After(anchor_id) => match self.hierarchy.get(anchor_id) {
+                Some(anchor) => anchor.parent_id.and_then(|pid| self.hierarchy.get(pid)),
+                None => {
+                    self.status = format!("anchor for insert-after vanished from hierarchy");
+                    return;
+                }
+            },
+            InsertPosition::End => {
+                let cursor_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
+                match self.hierarchy.pick_parent_for(&self.cfg, cursor_id, kind) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        self.status = format!("can't add {}: {e}", kind.as_str());
+                        return;
+                    }
+                }
             }
         };
         let parent_label = parent_node.map_or_else(
@@ -1200,6 +1378,7 @@ impl App {
             parent_id,
             parent_label,
             input: TextInput::new(),
+            position,
         };
     }
 
@@ -1255,6 +1434,167 @@ impl App {
         }
     }
 
+    fn create_snapshot_of_current(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "no paragraph open".into();
+            return;
+        };
+        let body = doc.textarea.lines().join("\n");
+        let id = doc.id;
+        let Some(node) = self.hierarchy.get(id).cloned() else {
+            self.status = "node missing from hierarchy".into();
+            return;
+        };
+        match self.store.create_snapshot(&node, body.as_bytes()) {
+            Ok(snap_id) => {
+                let n_snaps = self
+                    .store
+                    .list_snapshots(id)
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+                self.status = format!(
+                    "snapshot {} created ({} total) — F6 to view",
+                    snap_id.simple(),
+                    n_snaps
+                );
+            }
+            Err(e) => {
+                self.status = format!("snapshot failed: {e}");
+            }
+        }
+    }
+
+    fn open_rename_modal(&mut self) {
+        let Some(&(id, _)) = self.rows.get(self.tree_cursor) else {
+            self.status = "nothing selected to rename".into();
+            return;
+        };
+        let Some(node) = self.hierarchy.get(id) else {
+            return;
+        };
+        let mut input = TextInput::new();
+        for c in node.title.chars() {
+            input.insert_char(c);
+        }
+        self.modal = Modal::Renaming {
+            node_id: id,
+            kind: node.kind,
+            input,
+        };
+    }
+
+    fn commit_rename(&mut self) {
+        let (node_id, new_title) = match &self.modal {
+            Modal::Renaming { node_id, input, .. } => {
+                (*node_id, input.as_str().trim().to_string())
+            }
+            _ => return,
+        };
+        if new_title.is_empty() {
+            self.status = "rename: title can't be empty — type one or Esc to cancel".into();
+            return;
+        }
+        match self.store.rename_node(&self.hierarchy, node_id, &new_title) {
+            Ok(()) => {
+                // Refresh editor's title if the renamed node is the open one.
+                if let Some(doc) = self.opened.as_mut() {
+                    if doc.id == node_id {
+                        doc.title = new_title.clone();
+                    }
+                }
+                self.modal = Modal::None;
+                self.status = format!("renamed to `{new_title}`");
+                self.reload_hierarchy();
+            }
+            Err(e) => {
+                self.status = format!("rename failed: {e}");
+            }
+        }
+    }
+
+    fn open_snapshot_picker(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "no paragraph open".into();
+            return;
+        };
+        let id = doc.id;
+        let title = doc.title.clone();
+        match self.store.list_snapshots(id) {
+            Ok(snapshots) => {
+                if snapshots.is_empty() {
+                    self.status =
+                        format!("no snapshots yet for `{title}` — press F5 to create one");
+                    return;
+                }
+                self.modal = Modal::SnapshotPicker {
+                    paragraph_id: id,
+                    paragraph_title: title,
+                    snapshots,
+                    cursor: 0,
+                };
+            }
+            Err(e) => {
+                self.status = format!("snapshot list failed: {e}");
+            }
+        }
+    }
+
+    fn commit_snapshot_load(&mut self) {
+        let (snap_id, when) = match &self.modal {
+            Modal::SnapshotPicker {
+                snapshots, cursor, ..
+            } => {
+                let Some(snap) = snapshots.get(*cursor) else {
+                    self.modal = Modal::None;
+                    return;
+                };
+                (snap.id, snap.created_at)
+            }
+            _ => return,
+        };
+        let content = match self.store.snapshot_content(snap_id) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                self.status = "snapshot has no body".into();
+                self.modal = Modal::None;
+                return;
+            }
+            Err(e) => {
+                self.status = format!("snapshot load failed: {e}");
+                self.modal = Modal::None;
+                return;
+            }
+        };
+
+        let body = String::from_utf8_lossy(&content).into_owned();
+        let Some(doc) = self.opened.as_mut() else {
+            self.modal = Modal::None;
+            return;
+        };
+        let lines: Vec<String> = if body.is_empty() {
+            vec![String::new()]
+        } else {
+            body.split('\n').map(String::from).collect()
+        };
+        let mut new_textarea = TextArea::new(lines);
+        new_textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
+        new_textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
+        doc.textarea = new_textarea;
+        doc.dirty = true;
+        doc.scroll_row = 0;
+        doc.scroll_col = 0;
+        doc.last_activity = std::time::Instant::now();
+        // saved_lines stays at the previously-saved on-disk version, so the
+        // snapshot text shows as "added" (bold) until the user accepts it
+        // by hitting Ctrl+S.
+        self.modal = Modal::None;
+        self.focus = Focus::Editor;
+        self.status = format!(
+            "loaded snapshot from {} — bold marks the change vs saved",
+            when.format("%Y-%m-%d %H:%M:%S")
+        );
+    }
+
     fn open_delete_modal(&mut self) {
         let Some(&(id, _)) = self.rows.get(self.tree_cursor) else {
             self.status = "nothing selected to delete".into();
@@ -1282,6 +1622,73 @@ impl App {
 
         let is_adding = matches!(self.modal, Modal::Adding { .. });
         let is_deleting = matches!(self.modal, Modal::Deleting { .. });
+        let is_snapshot = matches!(self.modal, Modal::SnapshotPicker { .. });
+        let is_renaming = matches!(self.modal, Modal::Renaming { .. });
+
+        if is_renaming {
+            let mut commit = false;
+            if let Modal::Renaming { input, .. } = &mut self.modal {
+                match key.code {
+                    KeyCode::Enter => commit = true,
+                    KeyCode::Backspace => input.backspace(),
+                    KeyCode::Delete => input.delete(),
+                    KeyCode::Left => input.move_left(),
+                    KeyCode::Right => input.move_right(),
+                    KeyCode::Home => input.move_home(),
+                    KeyCode::End => input.move_end(),
+                    KeyCode::Char(c) => {
+                        let mut residual = key.modifiers;
+                        residual.remove(KeyModifiers::SHIFT);
+                        if residual.is_empty() {
+                            let final_c = if key.modifiers.contains(KeyModifiers::SHIFT)
+                                && c.is_ascii_alphabetic()
+                            {
+                                c.to_ascii_uppercase()
+                            } else {
+                                c
+                            };
+                            input.insert_char(final_c);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if commit {
+                self.commit_rename();
+            }
+            return Ok(false);
+        }
+
+        if is_snapshot {
+            let mut commit = false;
+            if let Modal::SnapshotPicker {
+                snapshots, cursor, ..
+            } = &mut self.modal
+            {
+                match key.code {
+                    KeyCode::Up => {
+                        if *cursor > 0 {
+                            *cursor -= 1;
+                        }
+                    }
+                    KeyCode::Down => {
+                        if *cursor + 1 < snapshots.len() {
+                            *cursor += 1;
+                        }
+                    }
+                    KeyCode::Home => *cursor = 0,
+                    KeyCode::End => {
+                        *cursor = snapshots.len().saturating_sub(1);
+                    }
+                    KeyCode::Enter => commit = true,
+                    _ => {}
+                }
+            }
+            if commit {
+                self.commit_snapshot_load();
+            }
+            return Ok(false);
+        }
 
         if is_adding {
             let mut commit = false;
@@ -1295,10 +1702,21 @@ impl App {
                     KeyCode::Home => input.move_home(),
                     KeyCode::End => input.move_end(),
                     KeyCode::Char(c) => {
-                        let mut mods = key.modifiers;
-                        mods.remove(KeyModifiers::SHIFT);
-                        if mods.is_empty() {
-                            input.insert_char(c);
+                        let mut residual = key.modifiers;
+                        residual.remove(KeyModifiers::SHIFT);
+                        if residual.is_empty() {
+                            // Some terminals report Shift+letter as lowercase
+                            // char + SHIFT modifier; others as uppercase char
+                            // + SHIFT. Normalize so capital letters always go
+                            // into the buffer when Shift was held.
+                            let final_c = if key.modifiers.contains(KeyModifiers::SHIFT)
+                                && c.is_ascii_alphabetic()
+                            {
+                                c.to_ascii_uppercase()
+                            } else {
+                                c
+                            };
+                            input.insert_char(final_c);
                         }
                     }
                     _ => {}
@@ -1318,13 +1736,19 @@ impl App {
     }
 
     fn commit_add(&mut self) {
-        let (kind, parent_id, raw_title) = match &self.modal {
+        let (kind, parent_id, raw_title, position) = match &self.modal {
             Modal::Adding {
                 kind,
                 parent_id,
                 input,
+                position,
                 ..
-            } => (*kind, *parent_id, input.as_str().trim().to_string()),
+            } => (
+                *kind,
+                *parent_id,
+                input.as_str().trim().to_string(),
+                *position,
+            ),
             _ => return,
         };
 
@@ -1352,6 +1776,7 @@ impl App {
             &title,
             parent.as_ref(),
             None,
+            position,
         ) {
             Ok(node) => {
                 let new_id = node.id;
@@ -1455,12 +1880,18 @@ impl App {
                 self.focus = Focus::Editor;
                 return Ok(());
             }
+            // Auto-save any pending edits in the previous paragraph before
+            // swapping to the new one. If the save fails (disk error etc.),
+            // keep the old doc open so the user can see and fix it.
             if prev.dirty {
-                self.status = format!(
-                    "unsaved changes in `{}` — Ctrl+S to save, then reopen",
-                    prev.title
-                );
-                return Ok(());
+                let _ = self.save_current();
+                if self.opened.as_ref().is_some_and(|d| d.dirty) {
+                    self.status = format!(
+                        "couldn't autosave `{}` — opening blocked. Fix the error or Ctrl+S manually.",
+                        self.opened.as_ref().map(|d| d.title.as_str()).unwrap_or("")
+                    );
+                    return Ok(());
+                }
             }
         }
 
@@ -1482,6 +1913,7 @@ impl App {
         } else {
             body.split('\n').map(String::from).collect()
         };
+        let saved_lines = lines.clone();
         let mut textarea = TextArea::new(lines);
         textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
         textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
@@ -1495,6 +1927,8 @@ impl App {
             scroll_row: 0,
             scroll_col: 0,
             block_anchor: None,
+            last_activity: std::time::Instant::now(),
+            saved_lines,
         });
         self.focus = Focus::Editor;
         self.status = format!("opened {}", abs.display());
@@ -1544,6 +1978,10 @@ impl App {
         }
 
         doc.dirty = false;
+        // Refresh the saved-lines snapshot so the bold-new-additions overlay
+        // resets, and stamp last_activity to "now" so idle autosave restarts.
+        doc.saved_lines = doc.textarea.lines().to_vec();
+        doc.last_activity = std::time::Instant::now();
         let words = node.word_count;
         if title_was_placeholder && node.title != PARAGRAPH_PLACEHOLDER_TITLE {
             self.status = format!(
@@ -1632,7 +2070,7 @@ impl App {
 
     fn draw_modal(&self, f: &mut ratatui::Frame, area: Rect) {
         let width = area.width.saturating_sub(8).clamp(30, 80);
-        let height: u16 = 7;
+        let height: u16 = 8;
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
         let rect = Rect { x, y, width, height };
@@ -1644,16 +2082,34 @@ impl App {
                 kind,
                 parent_label,
                 input,
+                position,
                 ..
             } => {
-                let header = format!(" Add {} ", kind.as_str());
+                let header = match position {
+                    InsertPosition::End => format!(" Add {} ", kind.as_str()),
+                    InsertPosition::After(_) => format!(" Insert {} after current ", kind.as_str()),
+                };
                 let parent = format!(" Parent: {}", parent_label);
-                let title_line = format!(" Title : {}│", input.as_str());
+                let where_line = match position {
+                    InsertPosition::End => "    Where: append at end".to_string(),
+                    InsertPosition::After(anchor_id) => {
+                        let anchor_name = self
+                            .hierarchy
+                            .get(*anchor_id)
+                            .map(|n| n.title.clone())
+                            .unwrap_or_else(|| "<gone>".to_string());
+                        format!("    Where: after `{anchor_name}`")
+                    }
+                };
+                let title_line = format!(" Title : {}", input.render_with_cursor('│'));
                 let body = vec![
                     Line::from(""),
                     Line::from(Span::styled(parent, Style::default().add_modifier(Modifier::DIM))),
+                    Line::from(Span::styled(
+                        where_line,
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
                     Line::from(title_line),
-                    Line::from(""),
                     Line::from(Span::styled(
                         " Enter to confirm · Esc to cancel ",
                         Style::default().add_modifier(Modifier::DIM),
@@ -1698,6 +2154,62 @@ impl App {
                 ];
                 (" Confirm delete ".into(), Color::Red, body)
             }
+            Modal::Renaming { kind, input, .. } => {
+                let header = format!(" Rename {} ", kind.as_str());
+                let title_line = format!(" Title : {}", input.render_with_cursor('│'));
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!("    Renaming a {} — its slug and filesystem entry don't change.", kind.as_str()),
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                    Line::from(""),
+                    Line::from(title_line),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Enter to confirm · Esc to cancel ",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (header, Color::Blue, body)
+            }
+            Modal::SnapshotPicker {
+                paragraph_title,
+                snapshots,
+                cursor,
+                ..
+            } => {
+                let header = format!(" Snapshots — {} ", paragraph_title);
+                let mut body: Vec<Line> = Vec::with_capacity(snapshots.len() + 2);
+                body.push(Line::from(""));
+                for (i, snap) in snapshots.iter().enumerate() {
+                    let selected = i == *cursor;
+                    let ts = snap.created_at.format("%Y-%m-%d %H:%M:%S");
+                    let head = format!(
+                        " {ts}   {}w   {}",
+                        snap.word_count,
+                        if snap.preview.is_empty() {
+                            "(no body yet)"
+                        } else {
+                            snap.preview.as_str()
+                        }
+                    );
+                    let style = if selected {
+                        Style::default()
+                            .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+                            .fg(Color::Cyan)
+                    } else {
+                        Style::default()
+                    };
+                    body.push(Line::from(Span::styled(head, style)));
+                }
+                body.push(Line::from(""));
+                body.push(Line::from(Span::styled(
+                    " ↑↓ navigate · Enter loads (current edits become dirty) · Esc cancel ",
+                    Style::default().add_modifier(Modifier::DIM),
+                )));
+                (header, Color::Cyan, body)
+            }
         };
 
         f.render_widget(
@@ -1720,13 +2232,31 @@ impl App {
         block
     }
 
-    fn draw_search_bar(&self, f: &mut ratatui::Frame, area: Rect) {
-        let mut text = self.search_input.as_str().to_string();
-        if self.focus == Focus::SearchBar {
-            text.push('│');
-        } else if text.is_empty() {
-            text = String::from("(press Ctrl+/ to search)");
+    /// Editor pane block. Border color carries the document's clean/dirty
+    /// state: green when saved, yellow when there are unsaved changes. The
+    /// focus chip in the status bar still indicates which pane has focus, so
+    /// the border can be dedicated to dirty signaling.
+    fn editor_block<'a>(&self, title: &'a str) -> Block<'a> {
+        let dirty = self.opened.as_ref().is_some_and(|d| d.dirty);
+        let color = if dirty { Color::Yellow } else { Color::Green };
+        let mut style = Style::default().fg(color);
+        if self.focus == Focus::Editor {
+            style = style.add_modifier(Modifier::BOLD);
         }
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(style)
+    }
+
+    fn draw_search_bar(&self, f: &mut ratatui::Frame, area: Rect) {
+        let text = if self.focus == Focus::SearchBar {
+            self.search_input.render_with_cursor('│')
+        } else if self.search_input.is_empty() {
+            String::from("(press Ctrl+/ to search)")
+        } else {
+            self.search_input.as_str().to_string()
+        };
         let style = if self.focus == Focus::SearchBar {
             Style::default()
         } else {
@@ -1739,12 +2269,13 @@ impl App {
     }
 
     fn draw_ai_prompt(&self, f: &mut ratatui::Frame, area: Rect) {
-        let mut text = self.ai_input.as_str().to_string();
-        if self.focus == Focus::AiPrompt {
-            text.push('│');
-        } else if text.is_empty() {
-            text = String::from("(press Ctrl+I for AI; `/` lists prompts)");
-        }
+        let text = if self.focus == Focus::AiPrompt {
+            self.ai_input.render_with_cursor('│')
+        } else if self.ai_input.is_empty() {
+            String::from("(press Ctrl+I for AI; `/` lists prompts)")
+        } else {
+            self.ai_input.as_str().to_string()
+        };
         let style = if self.focus == Focus::AiPrompt {
             Style::default()
         } else {
@@ -1776,19 +2307,38 @@ impl App {
             scroll = self.tree_cursor + 1 - height;
         }
 
+        let open_id: Option<Uuid> = self.opened.as_ref().map(|d| d.id);
+
         let mut lines: Vec<Line> = Vec::new();
         for (i, (id, depth)) in self.rows.iter().enumerate().skip(scroll).take(height) {
             let Some(node) = self.hierarchy.get(*id) else {
                 continue;
             };
             let indent = "  ".repeat(*depth);
-            let marker = match node.kind {
-                NodeKind::Paragraph => "¶ ",
-                NodeKind::Book => "📖 ",
-                NodeKind::Chapter => "▸ ",
-                NodeKind::Subchapter => "▹ ",
+            // When this row is the paragraph currently open in the editor,
+            // swap its kind glyph for a "►" arrow so it's obvious at a
+            // glance which paragraph the editor pane is showing.
+            let is_open = open_id.is_some_and(|o| o == node.id);
+            let marker = if is_open {
+                "►"
+            } else {
+                match node.kind {
+                    NodeKind::Paragraph => "¶ ",
+                    NodeKind::Book => "📖 ",
+                    NodeKind::Chapter => "▸ ",
+                    NodeKind::Subchapter => "▹ ",
+                }
             };
             let mut row_style = Style::default();
+            if is_open {
+                // Green + bold matches the editor's clean-state border so the
+                // user can mentally connect the two. Even when the editor is
+                // dirty (yellow border), this stays green — it's marking the
+                // "what is loaded", not the dirty state.
+                row_style = row_style
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD);
+            }
             if i == self.tree_cursor {
                 row_style = row_style.add_modifier(Modifier::REVERSED);
             }
@@ -1802,7 +2352,7 @@ impl App {
                 row_style,
             )];
             if matches!(node.kind, NodeKind::Paragraph) {
-                let count_style = if i == self.tree_cursor {
+                let count_style = if i == self.tree_cursor || is_open {
                     row_style
                 } else {
                     Style::default().add_modifier(Modifier::DIM)
@@ -1822,7 +2372,7 @@ impl App {
             Some(d) => format!("Editor — {}", d.title),
             None => String::from("Editor"),
         };
-        let block = self.pane_block(&title, Focus::Editor);
+        let block = self.editor_block(&title);
         let inner = block.inner(area);
         f.render_widget(block, area);
 
@@ -1847,8 +2397,25 @@ impl App {
         let block = self.current_block();
         let opened = self.opened.as_mut().expect("opened checked above");
         let highlighter = &mut self.highlighter;
-        let source = opened.textarea.lines().join("\n");
+        let current_lines: Vec<String> = opened.textarea.lines().to_vec();
+        let source = current_lines.join("\n");
         let highlighted = highlighter.highlight_lines(&source);
+
+        // Precompute "added since last save" bitmaps per source row.
+        let saved = &opened.saved_lines;
+        let added_per_row: Vec<Vec<bool>> = current_lines
+            .iter()
+            .enumerate()
+            .map(|(i, line)| {
+                let saved_line = saved.get(i).map(String::as_str).unwrap_or("");
+                if saved.get(i).is_none() {
+                    // Line beyond the saved snapshot: everything is new.
+                    vec![true; line.chars().count()]
+                } else {
+                    diff_added(saved_line, line)
+                }
+            })
+            .collect();
 
         let (cur_row, cur_col) = opened.textarea.cursor();
         let selection = opened.textarea.selection_range();
@@ -1890,8 +2457,16 @@ impl App {
                     .add_modifier(Modifier::BOLD);
             }
 
-            let mut text_spans =
-                build_row_spans(&highlighted[row], row, opened.scroll_col, w, selection, block);
+            let added_flags = added_per_row.get(row).map(Vec::as_slice);
+            let mut text_spans = build_row_spans(
+                &highlighted[row],
+                row,
+                opened.scroll_col,
+                w,
+                selection,
+                block,
+                added_flags,
+            );
             if is_current {
                 for s in &mut text_spans {
                     if s.style.bg.is_none() {
@@ -1931,8 +2506,22 @@ impl App {
         let block = self.current_block();
         let opened = self.opened.as_mut().expect("opened checked above");
         let highlighter = &mut self.highlighter;
-        let source = opened.textarea.lines().join("\n");
+        let current_lines: Vec<String> = opened.textarea.lines().to_vec();
+        let source = current_lines.join("\n");
         let highlighted = highlighter.highlight_lines(&source);
+
+        let saved = &opened.saved_lines;
+        let added_per_row: Vec<Vec<bool>> = current_lines
+            .iter()
+            .enumerate()
+            .map(|(i, line)| {
+                if saved.get(i).is_none() {
+                    vec![true; line.chars().count()]
+                } else {
+                    diff_added(&saved[i], line)
+                }
+            })
+            .collect();
 
         let (cur_row, cur_col) = opened.textarea.cursor();
         let selection = opened.textarea.selection_range();
@@ -1984,7 +2573,8 @@ impl App {
                     .add_modifier(Modifier::BOLD);
             }
 
-            let mut text_spans = build_visual_row_spans(v, selection, block);
+            let added_flags = added_per_row.get(v.src_row).map(Vec::as_slice);
+            let mut text_spans = build_visual_row_spans(v, selection, block, added_flags);
             if is_current {
                 for s in &mut text_spans {
                     if s.style.bg.is_none() {
@@ -2150,18 +2740,27 @@ impl App {
     }
 
     fn draw_status(&self, f: &mut ratatui::Frame, area: Rect) {
-        let line = Line::from(vec![
-            Span::styled(
-                format!(" [{}] ", self.focus.label()),
+        let dirty = self.opened.as_ref().is_some_and(|d| d.dirty);
+        let mut spans: Vec<Span<'_>> = Vec::new();
+        if dirty {
+            spans.push(Span::styled(
+                " ● ",
                 Style::default()
-                    .bg(Color::Cyan)
-                    .fg(Color::Black)
+                    .bg(Color::Red)
+                    .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
-            Span::raw(self.status.clone()),
-        ]);
-        f.render_widget(Paragraph::new(line), area);
+            ));
+        }
+        spans.push(Span::styled(
+            format!(" [{}] ", self.focus.label()),
+            Style::default()
+                .bg(Color::Cyan)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw("  "));
+        spans.push(Span::raw(self.status.clone()));
+        f.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 
     fn draw_search_overlay(&self, f: &mut ratatui::Frame, area: Rect) {

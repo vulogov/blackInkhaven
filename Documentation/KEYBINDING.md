@@ -20,12 +20,17 @@ These chords work from any focus except where noted. Chords marked
 
 | Chord                | Action                                                      | Configurable |
 | -------------------- | ----------------------------------------------------------- | ------------ |
-| `Ctrl+Q`             | Hard quit. Works even inside a modal.                       | no           |
 | `Tab`                | Cycle focus Tree → Editor → AI → Tree.                      | `next_pane`  |
 | `Shift+Tab`          | Cycle in reverse.                                           | `prev_pane`  |
 | `Ctrl+/`             | Focus the top Search bar.                                   | `search`     |
 | `Ctrl+I`             | Focus the bottom AI prompt bar.                             | `ai_prompt`  |
 | `Ctrl+S`             | Save current paragraph + re-embed (no-op if nothing open).  | `save`       |
+| `Ctrl+Q`             | Hard quit. Auto-saves the open paragraph first if dirty; if the save fails, refuses to quit so the error stays visible. | no |
+| `Ctrl+1`             | Focus the **Editor** pane.                                  | no           |
+| `Ctrl+2` / `Ctrl+T`  | Focus the **Tree** pane. Use `Ctrl+T` if your terminal re-encodes `Ctrl+2` as NUL or `Ctrl+@`. | no |
+| `Ctrl+3`             | Focus the **AI** pane.                                      | no           |
+| `Ctrl+4`             | Focus the **Search** bar (top).                             | no           |
+| `Ctrl+5`             | Focus the **AI prompt** bar (bottom).                       | no           |
 | `Ctrl+Shift+B`       | Open the Add modal seeded for a new book.                   | `add_book`   |
 | `Ctrl+Shift+C`       | Open the Add modal seeded for a new chapter.                | `add_chapter`|
 | `Ctrl+Shift+S`       | Open the Add modal seeded for a new subchapter.             | `add_subchapter` |
@@ -60,8 +65,17 @@ glyphs (`📖` book, `▸` chapter, `▹` subchapter, `¶` paragraph), and a dim
 | `End`                | Jump to last row.                                           |
 | `PageUp`             | Move cursor 10 rows up (configurable: `page_up`).           |
 | `PageDown`           | Move cursor 10 rows down (configurable: `page_down`).       |
-| `Enter`              | Open the cursor's node. Paragraphs load into the editor and shift focus there. Branches print a status hint and stay in Tree. |
-| `q` or `Q`           | Quit (no save prompt — Ctrl+S first if dirty).              |
+| `Enter`              | Open the cursor's node. Paragraphs load into the editor and shift focus there; if a different paragraph was open with unsaved edits, it's autosaved first. Branches print a status hint and stay in Tree. |
+| `F2`                 | Open the **Rename** modal pre-filled with the current node's title. Slug + filesystem entry stay; only the displayed title changes (re-embeds for search). |
+| `q` or `Q`           | Quit (autosaves the open paragraph first if dirty).         |
+
+**Open-paragraph indicator** — the row of the paragraph currently loaded in
+the Editor is rendered with a **green bold "►"** marker (instead of the
+usual `¶` glyph) regardless of focus. The marker stays visible whether the
+Editor or Tree pane has focus, so you can always see which paragraph is
+loaded. If your tree cursor happens to land on the open paragraph, the
+REVERSED cursor highlight wins visually but the green color underneath
+still marks the row.
 
 ### 2.2 Tree-pane shortcuts (modifier-free)
 
@@ -71,14 +85,23 @@ multiplexers commonly intercept those (see §13 for details). All four open
 the same modals as their global equivalents — no destructive action without
 confirmation.
 
+**Append at end** — `B`, `C`, `A`, `+` open the Add modal and place the new node at the end of its parent's children. The parent is chosen by walking up from the tree cursor to the nearest node that can host the requested kind.
+
+**Insert after current** — `V`, `S`, `P` open the same Add modal but place the new node immediately after the cursor's same-kind ancestor. All subsequent siblings get their `order` bumped by `+1` and their filesystem entries renamed. If no same-kind ancestor exists (e.g. pressing `P` on a book with no paragraphs), falls back to append-at-end so the action still does something.
+
 | Key       | Action                                                                                  |
 | --------- | --------------------------------------------------------------------------------------- |
-| `B` / `b` | Open Add modal for a new **book** at the root level. Equivalent to global `Ctrl+Shift+B`. |
-| `C` / `c` | Open Add modal for a new **chapter**. Equivalent to global `Ctrl+Shift+C`.              |
-| `A` / `a` | Open Add modal for a new **subchapter**. Equivalent to global `Ctrl+Shift+S`.           |
-| `+`       | Open Add modal for a new **paragraph**. Equivalent to global `Ctrl+Shift+P`.            |
-| `D` / `d` | Open Delete modal — but only if the cursor is on a **branch** (book/chapter/subchapter). On a paragraph, shows a hint to press `-` instead. |
-| `-`       | Open Delete modal — but only if the cursor is on a **paragraph**. On a branch, shows a hint to press `D` instead. |
+| `B` / `b` | Add a new **book** at the root (always append; books have no anchors). Equivalent to `Ctrl+Shift+B`. |
+| `C` / `c` | **Append** a chapter at the end of the book's children. Equivalent to `Ctrl+Shift+C`.   |
+| `V` / `v` | **Insert** a chapter immediately after the cursor's enclosing chapter.                  |
+| `A` / `a` | **Append** a subchapter at the end of the chapter's children. Equivalent to `Ctrl+Shift+S`. |
+| `S` / `s` | **Insert** a subchapter immediately after the cursor's enclosing subchapter.            |
+| `+`       | **Append** a paragraph at the end of the parent's children. Equivalent to `Ctrl+Shift+P`. |
+| `P` / `p` | **Insert** a paragraph immediately after the cursor's enclosing paragraph.              |
+| `D` / `d` | Delete the cursor's node — only if it's a **branch** (book/chapter/subchapter). On a paragraph, shows a hint to press `-` instead. |
+| `-`       | Delete the cursor's node — only if it's a **paragraph**. On a branch, shows a hint to press `D` instead. |
+
+Empty paragraph titles are allowed for `+` and `P` — the first sentence of the body becomes the title on next save.
 
 Why kind-specific delete? Safety. `-` won't nuke an entire chapter if your
 cursor accidentally landed on it, and `D` won't kill a paragraph you meant
@@ -100,6 +123,16 @@ Focused automatically when a paragraph is opened. Backing widget is
 (Ctrl+A → start of line, Ctrl+P → previous line, etc.) are **off**. We
 intercept the modern conventional shortcuts ourselves; everything else falls
 through to tui-textarea's typing / cursor handling.
+
+**Border color** carries the dirty state at a glance:
+
+- **Green** — the open paragraph is in sync with disk + bdslib (saved).
+- **Yellow** — the open paragraph has unsaved edits.
+
+The border is **bold** when the Editor pane has focus and dim otherwise — so
+you can tell focus and dirtiness independently. The status bar additionally
+shows a red `●` chip when dirty, and the editor's title gains a `[modified]`
+suffix.
 
 ### 3.1 Cursor movement
 
@@ -166,7 +199,40 @@ bulk character-deletion across multiple lines, which tui-textarea doesn't
 expose cleanly. Copy-only covers the common cases (extracting a column of
 leading numbers, a list of names, a verse stanza).
 
-### 3.5 Pane management while focused
+### 3.5 Snapshots
+
+| Key  | Action                                                              |
+| ---- | ------------------------------------------------------------------- |
+| `F5` | Save a versioned **snapshot** of the open paragraph's current body (stored as a bdslib document with `kind:"snapshot"` and a `parent_id` back-reference; doesn't appear in vector search). |
+| `F6` | Open the **snapshot picker** overlay listing every snapshot for the open paragraph, newest first. `↑↓` navigates, `Enter` loads the selected snapshot into the editor (marks dirty so the next save commits the rollback), `Esc` cancels. |
+
+Snapshots are independent documents — they survive paragraph saves and aren't
+deleted when their parent is deleted, so they can act as a recovery hatch.
+Currently they're not surfaced from the CLI; that's an easy follow-up if you
+need scripted access.
+
+### 3.6 Autosave
+
+Three triggers, plus manual `Ctrl+S`:
+
+- **Idle**: when the editor has unsaved edits and the user hasn't pressed a
+  key for `editor.autosave_seconds` (default 5; set to 0 to disable).
+- **Paragraph switch**: opening another paragraph from the Tree pane
+  autosaves the current one first.
+- **Quit**: `Ctrl+Q` and the `q` quit chords autosave before exiting.
+
+Every save also resets the bold "added since last save" overlay (§3.7).
+
+### 3.7 Visual change tracking
+
+Characters added to the editor since the last save (Ctrl+S, autosave, or
+load) are rendered **bold** on top of the syntax highlighting. The marker
+goes away the moment you save. Implemented with a per-line longest-common-
+prefix/suffix diff — fast at literary scale, accurate for the common case
+of typing within or appending to a line. Cross-line inserts may
+misattribute briefly until the next save resets the snapshot.
+
+### 3.8 Pane management while focused
 
 | Key                  | Action                                                      |
 | -------------------- | ----------------------------------------------------------- |
@@ -222,7 +288,7 @@ character at the buffer's character position.
 | `↑`                  | (overlay open) Move result cursor up.                       |
 | `↓`                  | (overlay open) Move result cursor down.                     |
 | `Enter`              | If results overlay is open: open the highlighted result. Otherwise: run `Store::search_text(query, 10)` and show results. |
-| `Esc`                | If overlay open, close it (one press); else defocus to Tree.|
+| `Esc`                | If overlay open, close it (one press); else defocus back to **Editor** if a paragraph is open, otherwise to Tree.|
 
 Opening a result from this overlay positions the tree cursor on the target
 node. Paragraphs additionally load into the editor (focus moves to Editor).
@@ -246,7 +312,7 @@ action and the `/`-triggered Prompt picker overlay.
 | `↓`                  | (picker open) Move selection down.                          |
 | `Tab`                | (picker open) Expand selected prompt template into the buffer with `{{selection}}` / `{{context}}` substituted. |
 | `Enter`              | If picker open: same as Tab — expand selected template. Otherwise: spawn a streaming inference. The buffer is sent verbatim, except a leading `/name` is resolved against the prompt library and substituted first. |
-| `Esc`                | If picker open, close it; else defocus to Tree.             |
+| `Esc`                | If picker open, close it; else defocus back to **Editor** if a paragraph is open, otherwise to Tree. |
 
 Submitting a query when no API key is set in the environment surfaces a
 status-line error like `GEMINI_API_KEY not set in environment — `export
@@ -426,7 +492,8 @@ Then `Ctrl+S` reaches applications normally.
 For when you just want the high-level map:
 
 ```
-GLOBAL          Ctrl+Q       quit
+GLOBAL          Ctrl+Q       quit (autosaves if dirty)
+                Ctrl+1..5    focus Editor / Tree / AI / Search / AI prompt
                 Tab/S-Tab    cycle Tree / Editor / AI panes
                 Ctrl+/       focus search
                 Ctrl+I       focus AI prompt
@@ -434,15 +501,16 @@ GLOBAL          Ctrl+Q       quit
 
 TREE            ↑↓ Home End  navigate
                 PgUp PgDn    by 10
-                Enter        open paragraph in editor
-                B            add book               (or Ctrl+Shift+B)
-                C            add chapter            (or Ctrl+Shift+C)
-                A            add subchapter         (or Ctrl+Shift+S)
-                +            add paragraph          (or Ctrl+Shift+P)
+                Enter        open paragraph (autosaves the previous one)
+                F2           rename current node
+                B            add book at root
+                C            append chapter         (V = insert after current)
+                A            append subchapter      (S = insert after current)
+                +            append paragraph       (P = insert after current)
                 D            delete branch          (or Ctrl+Shift+D)
                 -            delete paragraph       (or Ctrl+Shift+D)
                 C-S-Up/Down  reorder within siblings
-                q            quit
+                q            quit (autosaves if dirty)
 
 EDITOR          arrows       move cursor
                 Ctrl+arrows  word / top / bottom
@@ -453,7 +521,11 @@ EDITOR          arrows       move cursor
                 Alt+arrows   extend rectangular block selection
                 Alt+C        copy rectangular block
                 Ctrl+S       save + re-embed
+                F5           create snapshot
+                F6           open snapshot picker
                 Esc          defocus to tree
+                (idle autosave fires after editor.autosave_seconds)
+                (new text since last save is rendered bold)
 
 AI              r            replace selection / doc
                 i            insert at cursor

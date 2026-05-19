@@ -10,6 +10,8 @@ use crate::project::ProjectLayout;
 use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::{Node, NodeKind};
+#[allow(unused_imports)]
+use crate::store::InsertPosition;
 
 pub fn run(project: &Path, prune: bool, adopt: bool) -> Result<()> {
     let layout = ProjectLayout::new(project);

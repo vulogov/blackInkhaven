@@ -17,7 +17,6 @@ impl TextInput {
         &self.buffer
     }
 
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
     }
@@ -25,6 +24,25 @@ impl TextInput {
     #[allow(dead_code)]
     pub fn cursor(&self) -> usize {
         self.cursor
+    }
+
+    /// Render the buffer for display with `cursor_char` placed at the actual
+    /// cursor position. Use this everywhere we draw a single-line text input
+    /// — otherwise the visual cursor lags behind the real position and edits
+    /// in the middle of the buffer look like characters are being scrambled.
+    pub fn render_with_cursor(&self, cursor_char: char) -> String {
+        let chars: Vec<char> = self.buffer.chars().collect();
+        let mut out = String::with_capacity(self.buffer.len() + 1);
+        for (i, c) in chars.iter().enumerate() {
+            if i == self.cursor {
+                out.push(cursor_char);
+            }
+            out.push(*c);
+        }
+        if self.cursor >= chars.len() {
+            out.push(cursor_char);
+        }
+        out
     }
 
     pub fn clear(&mut self) {
@@ -115,5 +133,75 @@ mod tests {
         t.move_left();
         t.backspace();
         assert_eq!(t.as_str(), "уро");
+    }
+
+    #[test]
+    fn middle_insert_round_trip() {
+        let mut t = TextInput::new();
+        for c in "Hello".chars() {
+            t.insert_char(c);
+        }
+        // Move cursor between 'e' and 'l'.
+        t.move_home();
+        t.move_right();
+        t.move_right();
+        t.insert_char('X');
+        assert_eq!(t.as_str(), "HeXllo");
+        assert_eq!(t.cursor(), 3);
+    }
+
+    #[test]
+    fn render_with_cursor_in_middle() {
+        let mut t = TextInput::new();
+        for c in "Hi".chars() {
+            t.insert_char(c);
+        }
+        // Cursor at end.
+        assert_eq!(t.render_with_cursor('│'), "Hi│");
+        // Cursor at start.
+        t.move_home();
+        assert_eq!(t.render_with_cursor('│'), "│Hi");
+        // Cursor in middle.
+        t.move_right();
+        assert_eq!(t.render_with_cursor('│'), "H│i");
+    }
+
+    #[test]
+    fn home_end_move_cursor() {
+        let mut t = TextInput::new();
+        for c in "hello world".chars() {
+            t.insert_char(c);
+        }
+        assert_eq!(t.cursor(), 11);
+        t.move_home();
+        assert_eq!(t.cursor(), 0);
+        assert_eq!(t.render_with_cursor('│'), "│hello world");
+        t.move_end();
+        assert_eq!(t.cursor(), 11);
+        assert_eq!(t.render_with_cursor('│'), "hello world│");
+    }
+
+    #[test]
+    fn delete_at_cursor() {
+        let mut t = TextInput::new();
+        for c in "abcde".chars() {
+            t.insert_char(c);
+        }
+        t.move_home();
+        t.move_right(); // cursor between a and b
+        t.delete(); // removes 'b'
+        assert_eq!(t.as_str(), "acde");
+        assert_eq!(t.cursor(), 1);
+    }
+
+    #[test]
+    fn render_with_cursor_unicode() {
+        let mut t = TextInput::new();
+        for c in "утро".chars() {
+            t.insert_char(c);
+        }
+        t.move_left();
+        t.move_left();
+        assert_eq!(t.render_with_cursor('│'), "ут│ро");
     }
 }

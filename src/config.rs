@@ -100,6 +100,10 @@ pub struct EditorConfig {
     pub theme: String,
     pub tab_width: usize,
     pub wrap: bool,
+    /// Number of seconds of editor inactivity after which the current
+    /// paragraph is automatically saved. 0 disables idle autosave (the
+    /// quit-time and paragraph-switch autosaves still fire).
+    pub autosave_seconds: u64,
 }
 
 impl Default for EditorConfig {
@@ -108,6 +112,7 @@ impl Default for EditorConfig {
             theme: "default".into(),
             tab_width: 2,
             wrap: true,
+            autosave_seconds: 5,
         }
     }
 }

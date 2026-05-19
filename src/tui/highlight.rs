@@ -228,6 +228,36 @@ pub fn wrap_line(runs: &[StyledRun], src_row: usize, width: usize) -> Vec<Visual
     out
 }
 
+/// Per-character "added since last save" bitmap for a single source line.
+/// True means the char is new (will be rendered bold).
+pub type AddedFlags<'a> = Option<&'a [bool]>;
+
+/// Compute which characters in `current` differ from `saved`, returning a
+/// bool-per-char vector aligned with `current`. Uses the longest common
+/// prefix + suffix method: characters between the two unchanged regions are
+/// marked added. Works well for the common case of typing inside one line;
+/// for cross-line inserts the per-line index alignment may misattribute, but
+/// the next save resets the snapshot so drift is bounded.
+pub fn diff_added(saved: &str, current: &str) -> Vec<bool> {
+    let s: Vec<char> = saved.chars().collect();
+    let c: Vec<char> = current.chars().collect();
+    let prefix = s.iter().zip(c.iter()).take_while(|(a, b)| a == b).count();
+    let s_rem = &s[prefix..];
+    let c_rem = &c[prefix..];
+    let suffix = s_rem
+        .iter()
+        .rev()
+        .zip(c_rem.iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut flags = vec![false; c.len()];
+    let end = c.len().saturating_sub(suffix);
+    for f in &mut flags[prefix..end] {
+        *f = true;
+    }
+    flags
+}
+
 /// Build spans for a wrapped visual row. Unlike `build_row_spans`, no
 /// horizontal scrolling applies (the row already fits the viewport). Selection
 /// is in source coordinates and intersected with this row's source range.
@@ -235,6 +265,7 @@ pub fn build_visual_row_spans(
     row: &VisualRow,
     selection: Option<((usize, usize), (usize, usize))>,
     block: Option<BlockSelection>,
+    added: AddedFlags,
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
 
@@ -256,51 +287,37 @@ pub fn build_visual_row_spans(
         }
     });
 
+    // Process per-char so the "added" bitmap can give different styles to
+    // adjacent characters. Sibling spans merge when their styles match, so
+    // the cell count is at most O(chars).
     let mut out: Vec<Span<'static>> = Vec::new();
-    let mut col = 0usize;
+    let mut visual_col = 0usize;
     for run in &row.runs {
-        let chars: Vec<char> = run.text.chars().collect();
-        let run_start = col;
-        let run_end = col + chars.len();
-        let mut i = run_start;
-        while i < run_end {
-            // Translate visual-relative position back to source col.
-            let src_col = row.src_col_start + i;
-            let is_selected = sel_range_in_row.is_some_and(|(s, e)| i >= s && i < e);
+        for c in run.text.chars() {
+            let src_col = row.src_col_start + visual_col;
+            let is_selected =
+                sel_range_in_row.is_some_and(|(s, e)| visual_col >= s && visual_col < e);
             let is_block = block.is_some_and(|b| b.contains(row.src_row, src_col));
-            let mut j = run_end;
-            if let Some((s, e)) = sel_range_in_row {
-                if i < s && s < j {
-                    j = s;
-                }
-                if i < e && e < j {
-                    j = e;
-                }
-            }
-            // Break at block-selection edges too.
-            if let Some(b) = block {
-                if row.src_row >= b.row_min && row.src_row <= b.row_max {
-                    let row_b_start = b.col_min.saturating_sub(row.src_col_start);
-                    let row_b_end = b.col_max.saturating_sub(row.src_col_start) + 1;
-                    if i < row_b_start && row_b_start < j {
-                        j = row_b_start;
-                    }
-                    if i < row_b_end && row_b_end < j {
-                        j = row_b_end;
-                    }
-                }
-            }
-            let rel_start = i - run_start;
-            let rel_end = j - run_start;
-            let text: String = chars[rel_start..rel_end].iter().collect();
+            let is_added = added
+                .and_then(|flags| flags.get(src_col).copied())
+                .unwrap_or(false);
             let mut style = run.style;
+            if is_added {
+                style = style.add_modifier(Modifier::BOLD);
+            }
             if is_selected || is_block {
                 style = style.add_modifier(Modifier::REVERSED);
             }
-            out.push(Span::styled(text, style));
-            i = j;
+            if let Some(last) = out.last_mut() {
+                if last.style == style {
+                    last.content.to_mut().push(c);
+                    visual_col += 1;
+                    continue;
+                }
+            }
+            out.push(Span::styled(c.to_string(), style));
+            visual_col += 1;
         }
-        col = run_end;
     }
     out
 }
@@ -315,6 +332,7 @@ pub fn build_row_spans(
     width: usize,
     selection: Option<((usize, usize), (usize, usize))>,
     block: Option<BlockSelection>,
+    added: AddedFlags,
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
 
@@ -356,39 +374,28 @@ pub fn build_row_spans(
         let chunk_start = run_start.max(scroll_col);
         let chunk_end = run_end.min(viewport_end);
 
-        let mut i = chunk_start;
-        while i < chunk_end {
-            let is_selected = sel_range.is_some_and(|(s, e)| i >= s && i < e);
-            let is_block = block.is_some_and(|b| b.contains(row, i));
-            let mut j = chunk_end;
-            if let Some((s, e)) = sel_range {
-                if i < s && s < j {
-                    j = s;
-                }
-                if i < e && e < j {
-                    j = e;
-                }
-            }
-            if let Some(b) = block {
-                if row >= b.row_min && row <= b.row_max {
-                    if i < b.col_min && b.col_min < j {
-                        j = b.col_min;
-                    }
-                    let b_end = b.col_max + 1;
-                    if i < b_end && b_end < j {
-                        j = b_end;
-                    }
-                }
-            }
-            let rel_start = i - run_start;
-            let rel_end = j - run_start;
-            let text: String = chars[rel_start..rel_end].iter().collect();
+        for src_col in chunk_start..chunk_end {
+            let rel = src_col - run_start;
+            let ch = chars[rel];
+            let is_selected = sel_range.is_some_and(|(s, e)| src_col >= s && src_col < e);
+            let is_block = block.is_some_and(|b| b.contains(row, src_col));
+            let is_added = added
+                .and_then(|flags| flags.get(src_col).copied())
+                .unwrap_or(false);
             let mut style = run.style;
+            if is_added {
+                style = style.add_modifier(Modifier::BOLD);
+            }
             if is_selected || is_block {
                 style = style.add_modifier(Modifier::REVERSED);
             }
-            out.push(Span::styled(text, style));
-            i = j;
+            if let Some(last) = out.last_mut() {
+                if last.style == style {
+                    last.content.to_mut().push(ch);
+                    continue;
+                }
+            }
+            out.push(Span::styled(ch.to_string(), style));
         }
         col = run_end;
     }
