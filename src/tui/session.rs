@@ -5,6 +5,7 @@
 //! Loaders ignore missing/corrupt files quietly — sessions are a UX nicety,
 //! not a correctness requirement.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,24 @@ pub struct SessionState {
     /// is treated as "Tree" on restore.
     #[serde(default)]
     pub focus: String,
+    /// Cursor/scroll positions per paragraph UUID. Updated whenever the
+    /// editor loses focus, the user switches paragraphs, or the app exits —
+    /// so re-opening any paragraph drops the cursor back where the user
+    /// left it, even after a full restart.
+    #[serde(default)]
+    pub paragraph_cursors: HashMap<String, ParagraphCursor>,
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+pub struct ParagraphCursor {
+    #[serde(default)]
+    pub cursor_row: usize,
+    #[serde(default)]
+    pub cursor_col: usize,
+    #[serde(default)]
+    pub scroll_row: usize,
+    #[serde(default)]
+    pub scroll_col: usize,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

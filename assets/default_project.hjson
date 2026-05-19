@@ -32,6 +32,22 @@
     // autosaved. Set to 0 to disable idle autosave; Ctrl+S, Ctrl+Q, and
     // paragraph-switch autosaves still fire.
     autosave_seconds: 5
+
+    // Snowball stemmer languages used to expand the Places / Characters
+    // highlight overlay. With `russian` configured a paragraph titled
+    // "Москва" also lights up "Москве", "Москвою", etc.; with `english`
+    // a paragraph titled "cities" matches "city".
+    //
+    // Supported: arabic, danish, dutch, english, finnish, french, german,
+    // greek, hungarian, italian, norwegian, portuguese, romanian, russian,
+    // spanish, swedish, tamil, turkish. Empty list disables stemming and
+    // falls back to exact-phrase matching.
+    stemming: {
+      languages: [
+        "english"
+        "russian"
+      ]
+    }
   }
 
   hierarchy: {

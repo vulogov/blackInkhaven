@@ -32,7 +32,7 @@ use super::file_picker::{FilePicker, PickerContext};
 use super::focus::Focus;
 use super::quickref;
 use super::search_replace::{RowMatch, SearchState, row_matches};
-use super::session::{EditorSession, SessionState, TreeSession};
+use super::session::{EditorSession, ParagraphCursor, SessionState, TreeSession};
 use super::highlight::{
     BlockSelection, RowHit, TypstHighlighter, build_row_spans, build_visual_row_spans,
     diff_added, wrap_line,
@@ -419,6 +419,12 @@ struct App {
     inference: Option<Inference>,
     show_prompt_picker: bool,
     prompt_picker_cursor: usize,
+
+    /// Saved (cursor_row, cursor_col, scroll_row, scroll_col) per paragraph
+    /// UUID. Updated when the editor loses focus, when the user switches
+    /// paragraphs, and at exit. Loaded from `.session.json` on startup so
+    /// positions survive across runs.
+    paragraph_cursors: std::collections::HashMap<Uuid, ParagraphCursor>,
 }
 
 #[derive(Debug)]
@@ -481,7 +487,7 @@ impl App {
     fn new(layout: ProjectLayout, cfg: Config, store: Store) -> Result<Self> {
         let keymap = Keymap::from_config(&cfg).map_err(anyhow::Error::from)?;
         let hierarchy = Hierarchy::load(&store).map_err(anyhow::Error::from)?;
-        let lexicon = build_lexicon(&hierarchy);
+        let lexicon = build_lexicon(&hierarchy, &cfg);
         let collapsed_nodes: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
         let rows: Vec<(Uuid, usize)> = hierarchy
             .flatten_with_collapsed(&collapsed_nodes)
@@ -549,6 +555,7 @@ impl App {
             inference: None,
             show_prompt_picker: false,
             prompt_picker_cursor: 0,
+            paragraph_cursors: std::collections::HashMap::new(),
         })
     }
 
@@ -1426,7 +1433,12 @@ impl App {
         true
     }
 
-    fn save_session(&self) -> std::io::Result<()> {
+    fn save_session(&mut self) -> std::io::Result<()> {
+        // Snapshot the live paragraph's cursor into the persistent map before
+        // we serialise — otherwise an exit (or focus-loss session save) right
+        // after a cursor move would lose the latest position.
+        self.snapshot_open_paragraph_cursor();
+
         let cursor_id = self
             .rows
             .get(self.tree_cursor)
@@ -1444,6 +1456,11 @@ impl App {
                 cursor_col: col,
             }
         });
+        let paragraph_cursors: std::collections::HashMap<String, ParagraphCursor> = self
+            .paragraph_cursors
+            .iter()
+            .map(|(id, pc)| (id.to_string(), *pc))
+            .collect();
         let state = SessionState {
             tree: TreeSession {
                 cursor_id,
@@ -1451,8 +1468,29 @@ impl App {
             },
             editor: editor_session,
             focus: format!("{:?}", self.focus),
+            paragraph_cursors,
         };
         state.save(&self.layout.root)
+    }
+
+    /// Copy the currently-open paragraph's cursor + scroll into the
+    /// in-memory `paragraph_cursors` map. Called on focus loss, on
+    /// paragraph switch, and right before `save_session` writes to disk.
+    /// No-op when no paragraph is open.
+    fn snapshot_open_paragraph_cursor(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            return;
+        };
+        let (row, col) = doc.textarea.cursor();
+        self.paragraph_cursors.insert(
+            doc.id,
+            ParagraphCursor {
+                cursor_row: row,
+                cursor_col: col,
+                scroll_row: doc.scroll_row,
+                scroll_col: doc.scroll_col,
+            },
+        );
     }
 
     /// Re-apply a saved session on startup. Silently ignores anything that
@@ -1462,6 +1500,15 @@ impl App {
         let Some(state) = SessionState::load(&self.layout.root) else {
             return;
         };
+
+        // Per-paragraph cursor map. We restore this BEFORE opening the
+        // last-active paragraph so `load_paragraph` finds an entry and seeds
+        // the cursor immediately.
+        for (key, pc) in &state.paragraph_cursors {
+            if let Ok(id) = Uuid::parse_str(key) {
+                self.paragraph_cursors.insert(id, *pc);
+            }
+        }
 
         // Collapsed branches.
         for s in &state.tree.collapsed_nodes {
@@ -1482,17 +1529,24 @@ impl App {
             }
         }
 
-        // Open paragraph + cursor.
+        // Open paragraph + cursor. The per-paragraph map (above) takes
+        // precedence over the legacy single-cursor field — load_paragraph
+        // restores from the map automatically.
         if let Some(ed) = &state.editor {
             if let Ok(id) = Uuid::parse_str(&ed.opened_id) {
                 if let Some(node) = self.hierarchy.get(id).cloned() {
                     if node.kind == NodeKind::Paragraph {
                         let _ = self.load_paragraph(&node);
-                        if let Some(doc) = self.opened.as_mut() {
-                            doc.textarea.move_cursor(CursorMove::Jump(
-                                ed.cursor_row as u16,
-                                ed.cursor_col as u16,
-                            ));
+                        // If a fresh load didn't find a per-paragraph entry
+                        // (older session file), fall back to the legacy
+                        // single-cursor coordinates.
+                        if !self.paragraph_cursors.contains_key(&id) {
+                            if let Some(doc) = self.opened.as_mut() {
+                                doc.textarea.move_cursor(CursorMove::Jump(
+                                    ed.cursor_row as u16,
+                                    ed.cursor_col as u16,
+                                ));
+                            }
                         }
                     }
                 }
@@ -3439,6 +3493,9 @@ impl App {
                     return Ok(());
                 }
             }
+            // Memorise the outgoing paragraph's cursor so re-opening it
+            // (now or next session) lands back where the user left it.
+            self.snapshot_open_paragraph_cursor();
         }
 
         let Some(rel) = node.file.as_ref() else {
@@ -3468,14 +3525,35 @@ impl App {
             a.protected && a.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_HELP)
         });
 
+        // Restore the saved cursor + scroll for this paragraph if we've
+        // seen it before. Coords are clamped against the loaded buffer so a
+        // shorter post-edit body can't crash the cursor.
+        let saved_cursor = self.paragraph_cursors.get(&node.id).copied();
+        let (init_row, init_col, init_scroll_row, init_scroll_col) = match saved_cursor {
+            Some(pc) => {
+                let max_row = textarea.lines().len().saturating_sub(1);
+                let row = pc.cursor_row.min(max_row);
+                let line_len = textarea
+                    .lines()
+                    .get(row)
+                    .map_or(0, |s| s.chars().count());
+                let col = pc.cursor_col.min(line_len);
+                (row, col, pc.scroll_row.min(max_row), pc.scroll_col)
+            }
+            None => (0, 0, 0, 0),
+        };
+        if init_row > 0 || init_col > 0 {
+            textarea.move_cursor(CursorMove::Jump(init_row as u16, init_col as u16));
+        }
+
         self.opened = Some(OpenedDoc {
             id: node.id,
             title: node.title.clone(),
             rel_path: rel.clone(),
             textarea,
             dirty: false,
-            scroll_row: 0,
-            scroll_col: 0,
+            scroll_row: init_scroll_row,
+            scroll_col: init_scroll_col,
             block_anchor: None,
             last_activity: std::time::Instant::now(),
             saved_lines,
@@ -3585,9 +3663,9 @@ impl App {
                 }
                 // Lexicon depends on Places/Characters paragraph titles, so
                 // any hierarchy change is potentially a lexicon change. The
-                // recompute is cheap (a few regex compiles) at literary
-                // scale.
-                self.lexicon = build_lexicon(&self.hierarchy);
+                // recompute is cheap at literary scale (a few hundred names
+                // stemmed once per language).
+                self.lexicon = build_lexicon(&self.hierarchy, &self.cfg);
             }
             Err(e) => {
                 self.status = format!("hierarchy reload failed: {e}");
@@ -4098,6 +4176,14 @@ impl App {
         if self.focus == Focus::Editor && new != Focus::Editor {
             if self.opened.as_ref().is_some_and(|d| d.dirty) {
                 let _ = self.save_current();
+            }
+            // Snapshot the cursor before defocusing so re-opening this
+            // paragraph (now or in a future run) lands the cursor back where
+            // the user left it. Persisting to disk here makes the position
+            // survive a crash or kill, not just a graceful exit.
+            self.snapshot_open_paragraph_cursor();
+            if let Err(e) = self.save_session() {
+                tracing::warn!("focus-loss session save failed: {e}");
             }
         }
         self.focus = new;
@@ -5080,8 +5166,11 @@ fn truncate_to_chars(s: &str, max: usize) -> String {
 
 /// Locate the Places and Characters system books in the loaded hierarchy
 /// and compile a fresh `Lexicon` from their nested paragraph titles. Called
-/// at startup and after every successful save.
-fn build_lexicon(hierarchy: &Hierarchy) -> super::lexicon::Lexicon {
+/// at startup and after every successful save. Stemmer languages come from
+/// `editor.stemming.languages` in the project config. Unknown language
+/// names are skipped silently (with a tracing warning) so a typo doesn't
+/// break the editor.
+fn build_lexicon(hierarchy: &Hierarchy, cfg: &Config) -> super::lexicon::Lexicon {
     let mut places = None;
     let mut characters = None;
     for node in hierarchy.iter() {
@@ -5091,7 +5180,22 @@ fn build_lexicon(hierarchy: &Hierarchy) -> super::lexicon::Lexicon {
             _ => {}
         }
     }
-    super::lexicon::Lexicon::build(hierarchy, places, characters)
+    let algos: Vec<rust_stemmers::Algorithm> = cfg
+        .editor
+        .stemming
+        .languages
+        .iter()
+        .filter_map(|name| match crate::config::parse_stemmer_language(name) {
+            Some(a) => Some(a),
+            None => {
+                tracing::warn!(
+                    "editor.stemming.languages: unknown language `{name}` — skipped"
+                );
+                None
+            }
+        })
+        .collect();
+    super::lexicon::Lexicon::build(hierarchy, places, characters, algos)
 }
 
 fn digit_count(n: usize) -> usize {
