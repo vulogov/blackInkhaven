@@ -216,10 +216,27 @@ pub fn run(project: &Path) -> Result<()> {
         }
     };
 
+    // Keep a copy of the config and layout for the auto-backup hook below;
+    // App takes ownership of the originals.
+    let cfg_for_exit = cfg.clone();
+    let layout_for_exit = layout.clone();
+
     let mut app = App::new(layout, cfg, store)?;
     app.restore_session();
 
     let result = app.run(&mut terminal);
+
+    // Drop the App (and its Store handle) BEFORE running the auto-backup so
+    // duckdb/HNSW checkpoint state is flushed to disk and the zip captures
+    // a consistent snapshot rather than mid-write WAL data.
+    drop(app);
+
+    if let Err(e) = maybe_auto_backup(&mut terminal, &layout_for_exit, &cfg_for_exit) {
+        // Backup failures must not eat the editor's own exit status — just
+        // log them to stderr (which routes to .inkhaven.log in TUI mode)
+        // and let the user retry with `inkhaven backup` manually.
+        tracing::warn!("auto-backup on exit failed: {e}");
+    }
 
     if kbd_enhanced {
         let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
@@ -231,6 +248,128 @@ pub fn run(project: &Path) -> Result<()> {
     let _ = std::panic::take_hook();
 
     result
+}
+
+/// Render the centered "Performing database backup" splash with a progress
+/// bar. Called from the exit hook each time another batch of files has
+/// been zipped so the bar visibly advances. `done`/`total` are file counts.
+fn draw_backup_splash(
+    f: &mut ratatui::Frame,
+    project_display: &str,
+    done: usize,
+    total: usize,
+) {
+    let area = f.area();
+    let width = area.width.saturating_sub(8).clamp(50, 90);
+    let height: u16 = 9;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let rect = Rect { x, y, width, height };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Inkhaven · backup ")
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let bar_width = (inner.width as usize).saturating_sub(8).max(20);
+    let pct = if total == 0 {
+        0.0
+    } else {
+        (done as f32 / total as f32).clamp(0.0, 1.0)
+    };
+    let filled = (pct * bar_width as f32).round() as usize;
+    let bar = format!(
+        "  [{}{}]  {}/{} ({:>3.0}%)",
+        "█".repeat(filled),
+        "·".repeat(bar_width.saturating_sub(filled)),
+        done,
+        total,
+        pct * 100.0,
+    );
+
+    let body = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Performing database backup…".to_string(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  Project: {project_display}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(Span::styled(
+            bar,
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+    ];
+    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
+}
+
+/// Check whether the project is overdue for a backup and run one if so,
+/// streaming progress into the splash drawn over the alternate screen.
+/// Returns `Ok(())` when no backup was required OR the backup succeeded;
+/// `Err(_)` if the zip failed mid-flight.
+fn maybe_auto_backup<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    layout: &ProjectLayout,
+    cfg: &Config,
+) -> Result<()> {
+    // Config must opt in: empty out_dir or zero max_age → never auto-backup.
+    let bcfg = &cfg.backup;
+    if bcfg.out_dir.trim().is_empty() || bcfg.max_age.as_secs() == 0 {
+        return Ok(());
+    }
+    // If we already backed up recently, do nothing.
+    let now = chrono::Utc::now();
+    if let Some(state) = crate::backup::BackupState::load(&layout.root) {
+        let age = now.signed_duration_since(state.last_at);
+        if age.num_seconds() >= 0
+            && (age.num_seconds() as u64) < bcfg.max_age.as_secs()
+        {
+            return Ok(());
+        }
+    }
+
+    let out_dir = {
+        let raw = std::path::PathBuf::from(&bcfg.out_dir);
+        if raw.is_absolute() {
+            raw
+        } else {
+            layout.root.join(raw)
+        }
+    };
+    let abs_project = std::fs::canonicalize(&layout.root)
+        .unwrap_or_else(|_| layout.root.clone());
+    let abs_out = std::fs::canonicalize(&out_dir).unwrap_or_else(|_| out_dir.clone());
+    let skip = crate::cli::backup::skip_dirs_for(&abs_project, &abs_out);
+
+    let project_display = layout.root.display().to_string();
+    // First frame: 0/0 so the bar shows immediately even before file
+    // enumeration completes.
+    let _ = terminal.draw(|f| draw_backup_splash(f, &project_display, 0, 0));
+    let mut last_redraw = std::time::Instant::now();
+    let mut progress = |done: usize, total: usize| {
+        // Throttle redraws to ~30Hz so a tiny project doesn't drown the
+        // terminal in noise on a fast disk.
+        if last_redraw.elapsed() < std::time::Duration::from_millis(33) {
+            return;
+        }
+        last_redraw = std::time::Instant::now();
+        let _ = terminal.draw(|f| draw_backup_splash(f, &project_display, done, total));
+    };
+
+    crate::backup::create_backup(&abs_project, &abs_out, &skip, Some(&mut progress))
+        .map_err(anyhow::Error::from)?;
+    Ok(())
 }
 
 struct Keymap {
@@ -368,6 +507,37 @@ impl AiMode {
             AiMode::Subchapter => AiMode::Chapter,
             AiMode::Chapter => AiMode::Book,
             AiMode::Book => AiMode::None,
+        }
+    }
+}
+
+/// How aggressively the model is allowed to draw on its own knowledge.
+/// F10 toggles between the two values. Help inferences always run as
+/// `Local` regardless of the user's current toggle — the Help book is the
+/// authoritative source and we don't want the model paraphrasing from
+/// general training data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InferenceMode {
+    /// Only the supplied RAG / scope context (and prior chat turns) may be
+    /// used. The system prompt instructs the model to refuse rather than
+    /// fall back on outside knowledge.
+    Local,
+    /// Context is treated as ground truth where present, but the model
+    /// may augment with general knowledge. Default for fresh chats.
+    Full,
+}
+
+impl InferenceMode {
+    fn label(self) -> &'static str {
+        match self {
+            InferenceMode::Local => "Local",
+            InferenceMode::Full => "Full",
+        }
+    }
+    fn toggle(self) -> Self {
+        match self {
+            InferenceMode::Local => InferenceMode::Full,
+            InferenceMode::Full => InferenceMode::Local,
         }
     }
 }
@@ -557,6 +727,11 @@ struct App {
     /// (selection text, paragraph body, subchapter / chapter / book
     /// concatenation) to the user's query, then auto-resets to `None`.
     ai_mode: AiMode,
+
+    /// How aggressively the model may draw on its own knowledge. Toggled
+    /// globally by F10. Help inferences pin this to `Local` regardless of
+    /// the current value (see `start_help_inference`).
+    inference_mode: InferenceMode,
 }
 
 #[derive(Debug)]
@@ -693,6 +868,7 @@ impl App {
             chat_history: Vec::new(),
             pending_chat_user_msg: None,
             ai_mode: AiMode::None,
+            inference_mode: InferenceMode::Full,
         })
     }
 
@@ -884,6 +1060,14 @@ impl App {
         // (Chat history is cleared via Ctrl+B C, not F9.)
         if matches!(key.code, KeyCode::F(9)) {
             self.cycle_ai_mode();
+            return Ok(false);
+        }
+        // F10 toggles the inference mode (Local ↔ Full). Local constrains
+        // the model to supplied context only; Full lets it augment with
+        // general knowledge. Help-RAG inferences are pinned to Local
+        // regardless of this setting.
+        if matches!(key.code, KeyCode::F(10)) {
+            self.toggle_inference_mode();
             return Ok(false);
         }
 
@@ -2280,10 +2464,17 @@ impl App {
         // Replay the accumulated chat history before this new user message
         // so the model has continuous context across turns.
         let history = self.chat_history.clone();
+        // System prompt depends on the inference mode. Local clamps the
+        // model to supplied context only; Full lets it augment with
+        // general knowledge while still treating context as ground truth.
+        let system_prompt = match self.inference_mode {
+            InferenceMode::Local => Some(LOCAL_SYSTEM_PROMPT.to_string()),
+            InferenceMode::Full => Some(FULL_SYSTEM_PROMPT.to_string()),
+        };
         let rx = spawn_chat_stream(
             self.ai.client.clone(),
             model.clone(),
-            None,
+            system_prompt,
             history,
             prompt_text.clone(),
         );
@@ -3013,6 +3204,18 @@ impl App {
                 "AI scope: {} (will prepend matching context to next prompt)",
                 other.label()
             ),
+        };
+    }
+
+    fn toggle_inference_mode(&mut self) {
+        self.inference_mode = self.inference_mode.toggle();
+        self.status = match self.inference_mode {
+            InferenceMode::Local => {
+                "Inference: Local (model uses only supplied context)".into()
+            }
+            InferenceMode::Full => {
+                "Inference: Full (model uses context + its own knowledge)".into()
+            }
         };
     }
 
@@ -5611,32 +5814,37 @@ impl App {
     }
 
     fn draw_ai(&self, f: &mut ratatui::Frame, area: Rect) {
-        // Title carries the inference state plus a `(N turns)` chip when a
-        // continuous chat is in progress, so the user always knows how much
-        // context is being replayed to the model on the next prompt.
+        // Title carries the inference state plus mode chips so the user
+        // can see at a glance:
+        //   - provider + streaming/done/error status
+        //   - chat history depth (N turns) when non-empty
+        //   - active AI scope (Selection/Paragraph/...) when non-None
+        //   - active InferenceMode (Local/Full) — always shown so F10's
+        //     effect is visible
         let chat_turns = self.chat_history.len() / 2;
         let chat_chip = if chat_turns > 0 {
             format!(" · {chat_turns} turn(s)")
         } else {
             String::new()
         };
+        let scope_chip = if self.ai_mode == AiMode::None {
+            String::new()
+        } else {
+            format!(" · scope={}", self.ai_mode.label())
+        };
+        let infer_chip = format!(" · infer={}", self.inference_mode.label());
+        let mode_chips = format!("{scope_chip}{infer_chip}{chat_chip}");
         let title = match &self.inference {
-            None => {
-                if chat_turns > 0 {
-                    format!("AI{chat_chip}")
-                } else {
-                    String::from("AI")
-                }
-            }
+            None => format!("AI{mode_chips}"),
             Some(inf) => match &inf.status {
                 InferenceStatus::Streaming => {
-                    format!("AI — {} · streaming…{chat_chip}", inf.provider)
+                    format!("AI — {} · streaming…{mode_chips}", inf.provider)
                 }
                 InferenceStatus::Done => {
-                    format!("AI — {} · done{chat_chip}", inf.provider)
+                    format!("AI — {} · done{mode_chips}", inf.provider)
                 }
                 InferenceStatus::Error(_) => {
-                    format!("AI — {} · error{chat_chip}", inf.provider)
+                    format!("AI — {} · error{mode_chips}", inf.provider)
                 }
             },
         };
@@ -6149,6 +6357,30 @@ fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) {
         _ => {}
     }
 }
+
+/// System prompt used by regular chat when InferenceMode is Local. The
+/// model is told to treat any "── … context ──" blocks the user prepends
+/// (via the AI scope cycle) as the sole admissible source and to refuse
+/// rather than fall back on general knowledge. Empty context just means
+/// the conversation itself is the source.
+const LOCAL_SYSTEM_PROMPT: &str = "\
+You are Inkhaven's writing assistant. The user may prepend `── … context ──` \
+blocks (a selection, a paragraph, or whole chapters from their book). When \
+present, treat those blocks as the sole admissible source of information. \
+Do NOT introduce facts, names, or claims that are absent from the context. \
+If the context is insufficient, say so plainly rather than improvising. \
+Without an explicit context block, rely only on prior conversation turns; \
+do not draw on general knowledge.";
+
+/// System prompt used by regular chat when InferenceMode is Full. Context
+/// blocks (when present) are still ground truth, but the model is free to
+/// augment with general knowledge — the typical chat / brainstorm mode.
+const FULL_SYSTEM_PROMPT: &str = "\
+You are Inkhaven's writing assistant. If the user prepends `── … context ──` \
+blocks, treat that text as ground truth and prefer it to any conflicting \
+general knowledge. Otherwise, answer freely using your general knowledge \
+of writing craft, world-building, and the relevant subject matter. Be \
+concise; favour short paragraphs and concrete suggestions.";
 
 /// System prompt for the F1 / "Help!" RAG flow. We force the model to
 /// stick to the supplied excerpts so the help feature behaves like a

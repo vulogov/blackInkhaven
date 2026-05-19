@@ -65,6 +65,19 @@ pub fn run(project: &Path, documents_dir: &Path) -> Result<()> {
             )
         })?;
 
+    // Wipe Help's existing contents before importing so repeated runs
+    // don't accumulate stale chapters or duplicate paragraphs. The Help
+    // book itself stays (it's a system book and other features depend on
+    // its tagged identity); only its descendants are removed.
+    let wiped = wipe_help_contents(&store, &hierarchy, help.id)?;
+    if wiped > 0 {
+        eprintln!("cleared {wiped} existing item(s) from Help");
+    }
+    // Reload the hierarchy so subsequent `import_*` paths see the now-empty
+    // Help book instead of the stale snapshot they'd otherwise inherit
+    // from the in-memory `hierarchy` we captured above.
+    let _ = Hierarchy::load(&store)?;
+
     let mut counts = Counts::default();
 
     // Children of the source directory become either branches or paragraphs
@@ -92,6 +105,59 @@ pub fn run(project: &Path, documents_dir: &Path) -> Result<()> {
         documents_dir.display()
     );
     Ok(())
+}
+
+/// Remove every direct child of the Help book (along with their entire
+/// subtrees) so a fresh `import-help` produces a clean view. The Help book
+/// itself is preserved — it's a system book whose identity (tag, protected
+/// flag, fixed root position) other features rely on.
+///
+/// Returns the count of top-level subtrees that were wiped. Per-child
+/// failures are logged to stderr but do not abort the wipe — partial
+/// cleanup is better than aborting and leaving the project half-imported.
+fn wipe_help_contents(store: &Store, hierarchy: &Hierarchy, help_id: Uuid) -> Result<usize> {
+    let layout = store.project_root().to_path_buf();
+    let direct_children: Vec<Uuid> = hierarchy
+        .iter()
+        .filter(|n| n.parent_id == Some(help_id))
+        .map(|n| n.id)
+        .collect();
+    let mut wiped = 0usize;
+    for child_id in direct_children {
+        let Some(node) = hierarchy.get(child_id) else {
+            continue;
+        };
+        // The subtree to delete: this child plus every descendant.
+        let ids = hierarchy.collect_subtree(child_id);
+        let fs_rel = match node.kind {
+            NodeKind::Paragraph => node
+                .file
+                .as_ref()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default(),
+            _ => {
+                // Branch fs path: walk the hierarchy's `fs_path` against the
+                // stored layout. We can't borrow `ProjectLayout` directly
+                // from the store, so we reconstruct the relative path from
+                // its absolute form below.
+                let abs = layout.join(
+                    hierarchy.fs_path(node, &crate::project::ProjectLayout::new(&layout)),
+                );
+                abs.strip_prefix(&layout)
+                    .unwrap_or(&abs)
+                    .to_path_buf()
+            }
+        };
+        if let Err(e) = store.delete_subtree(&fs_rel, &ids) {
+            eprintln!(
+                "warning: couldn't fully wipe `{}` from Help: {e}",
+                node.title
+            );
+            continue;
+        }
+        wiped += 1;
+    }
+    Ok(wiped)
 }
 
 /// Create a branch for `source` under `parent_id` and recurse into its

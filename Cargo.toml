@@ -64,6 +64,11 @@ unicode-segmentation = "1"
 # markdown→Typst translator that runs when the user applies an AI result to
 # a paragraph via r/i/t/b.
 pulldown-cmark = { version = "0.13", default-features = false }
+# Zip backup / restore commands and the TUI auto-backup-on-exit path.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# Human-friendly duration parsing for the auto-backup `max_age` config knob.
+humantime = "2"
+humantime-serde = "1"
 
 [dev-dependencies]
 tempfile = "3"
