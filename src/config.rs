@@ -21,6 +21,16 @@ pub struct Config {
     pub theme: ThemeConfig,
     #[serde(default)]
     pub backup: BackupConfig,
+    /// Primary writing language of the project. Drives:
+    /// * Snowball stemmers for the editor's Places/Characters highlight
+    ///   overlay (overrides `editor.stemming.languages` when non-empty).
+    /// * The default F7 grammar-check prompt's grammar rules.
+    ///
+    /// Accepts any name handled by `parse_stemmer_language` (`english`,
+    /// `russian`, `french`, …). Empty string falls back to
+    /// `editor.stemming.languages`.
+    #[serde(default = "default_language")]
+    pub language: String,
     #[serde(default = "default_prompts_path")]
     pub prompts_file: PathBuf,
     /// Seconds between background calls to `Store::sync()` (flushes HNSW
@@ -38,6 +48,10 @@ fn default_prompts_path() -> PathBuf {
     PathBuf::from("prompts.hjson")
 }
 
+fn default_language() -> String {
+    "english".into()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -48,6 +62,7 @@ impl Default for Config {
             hierarchy: HierarchyConfig::default(),
             theme: ThemeConfig::default(),
             backup: BackupConfig::default(),
+            language: default_language(),
             prompts_file: default_prompts_path(),
             sync_interval_seconds: default_sync_interval(),
         }

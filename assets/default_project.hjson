@@ -2,6 +2,16 @@
 // HJSON: comments, unquoted keys, optional commas.
 
 {
+  // Primary writing language of this project. Drives Snowball stemmers
+  // for the Places / Characters highlight overlay AND the default F7
+  // grammar-check prompt. Accepts any name handled by the Snowball
+  // algorithm picker — arabic, danish, dutch, english, finnish, french,
+  // german, greek, hungarian, italian, norwegian, portuguese, romanian,
+  // russian, spanish, swedish, tamil, turkish.
+  //
+  // Empty string falls back to `editor.stemming.languages`.
+  language: english
+
   embeddings: {
     // fastembed model. Defaults to a multilingual model with strong Russian
     // support. Other options: MultilingualE5Base, MultilingualE5Large, BGEM3.
