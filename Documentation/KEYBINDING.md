@@ -61,13 +61,15 @@ glyphs (`📖` book, `▸` chapter, `▹` subchapter, `¶` paragraph), and a dim
 | Key                  | Action                                                      |
 | -------------------- | ----------------------------------------------------------- |
 | `↑` / `↓`            | Move cursor one row up/down (within scroll).                |
+| `→`                  | **Expand** the cursor's branch (book/chapter/subchapter), revealing its children. No-op on a paragraph or an already-expanded branch. |
+| `←`                  | **Collapse** the cursor's expanded branch. If already collapsed (or on a paragraph), moves the cursor to the parent node. Same semantics as the F3 file picker. |
 | `Home`               | Jump to first row.                                          |
 | `End`                | Jump to last row.                                           |
 | `PageUp`             | Move cursor 10 rows up (configurable: `page_up`).           |
 | `PageDown`           | Move cursor 10 rows down (configurable: `page_down`).       |
 | `Enter`              | Open the cursor's node. Paragraphs load into the editor and shift focus there; if a different paragraph was open with unsaved edits, it's autosaved first. Branches print a status hint and stay in Tree. |
 | `F2`                 | Open the **Rename** modal pre-filled with the current node's title. Slug + filesystem entry stay; only the displayed title changes (re-embeds for search). |
-| `F3`                 | Open the **file picker** dialog. Enter on a file creates a new paragraph (inserted after the current cursor) with that file's content. Enter on a directory **recursively imports** the tree — subdirectories become subchapters, files become paragraphs. See §12. |
+| `F3`                 | Open the **file picker** dialog. Enter on a file creates a new paragraph (inserted after the current cursor) with that file's content. Enter on a directory **recursively imports** the tree — subdirectories become branches one level deeper (Book→Chapter→Subchapter), files become paragraphs. If the directory tree exceeds the hierarchy depth, the deeper files are flattened into the deepest legal branch (with `unbounded_subchapters: false`). See §12. |
 | `q` or `Q`           | Quit (autosaves the open paragraph first if dirty).         |
 
 **Open-paragraph indicator** — the row of the paragraph currently loaded in
@@ -544,6 +546,7 @@ GLOBAL          Ctrl+Q       quit (autosaves if dirty)
                 Ctrl+S       save current paragraph
 
 TREE            ↑↓ Home End  navigate
+                ←/→          collapse/expand branch (← steps to parent if not expanded)
                 PgUp PgDn    by 10
                 Enter        open paragraph (autosaves the previous one)
                 F2           rename current node

@@ -73,11 +73,46 @@ impl Hierarchy {
         out
     }
 
+    /// Same as `flatten`, but the children of any node whose id is in
+    /// `collapsed` are hidden. The collapsed nodes themselves are still
+    /// present in the output — they just don't expand into their subtree.
+    pub fn flatten_with_collapsed(
+        &self,
+        collapsed: &std::collections::HashSet<Uuid>,
+    ) -> Vec<(&Node, usize)> {
+        let mut out: Vec<(&Node, usize)> = Vec::new();
+        for root in self.children_of(None) {
+            self.walk_into_collapsed(root, 0, collapsed, &mut out);
+        }
+        out
+    }
+
     fn walk_into<'a>(&'a self, node: &'a Node, depth: usize, out: &mut Vec<(&'a Node, usize)>) {
         out.push((node, depth));
         for child in self.children_of(Some(node.id)) {
             self.walk_into(child, depth + 1, out);
         }
+    }
+
+    fn walk_into_collapsed<'a>(
+        &'a self,
+        node: &'a Node,
+        depth: usize,
+        collapsed: &std::collections::HashSet<Uuid>,
+        out: &mut Vec<(&'a Node, usize)>,
+    ) {
+        out.push((node, depth));
+        if collapsed.contains(&node.id) {
+            return;
+        }
+        for child in self.children_of(Some(node.id)) {
+            self.walk_into_collapsed(child, depth + 1, collapsed, out);
+        }
+    }
+
+    /// True when `node_id` has at least one child in the hierarchy.
+    pub fn has_children(&self, node_id: Uuid) -> bool {
+        !self.children_of(Some(node_id)).is_empty()
     }
 
     pub fn next_order(&self, parent_id: Option<Uuid>) -> u32 {
