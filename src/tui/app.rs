@@ -30,26 +30,139 @@ use crate::store::{InsertPosition, Snapshot};
 
 use super::file_picker::{FilePicker, PickerContext};
 use super::focus::Focus;
+use super::search_replace::{RowMatch, SearchState, row_matches};
+use super::session::{EditorSession, SessionState, TreeSession};
 use super::highlight::{
-    BlockSelection, TypstHighlighter, build_row_spans, build_visual_row_spans, diff_added,
-    wrap_line,
+    BlockSelection, RowHit, TypstHighlighter, build_row_spans, build_visual_row_spans,
+    diff_added, wrap_line,
 };
 use super::input::TextInput;
 use super::keymap::KeyChord;
 use super::search_results::SearchHit;
+
+enum StartupError {
+    UserAborted,
+    Store(anyhow::Error),
+}
+
+/// Spawn `Store::open` on a worker thread and animate a "Please wait" splash
+/// while it runs. Returns the opened store, or `UserAborted` if Ctrl+Q is
+/// pressed during the splash.
+fn open_store_with_splash<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    layout: ProjectLayout,
+    cfg: Config,
+) -> std::result::Result<Store, StartupError> {
+    use std::sync::mpsc;
+
+    let project_display = layout.root.display().to_string();
+    let (tx, rx) = mpsc::channel::<crate::error::Result<Store>>();
+    let layout_for_thread = layout.clone();
+    let cfg_for_thread = cfg.clone();
+    let _ = std::thread::Builder::new()
+        .name("store-open".into())
+        .spawn(move || {
+            let result = Store::open(layout_for_thread, &cfg_for_thread);
+            let _ = tx.send(result);
+        });
+
+    let started_at = std::time::Instant::now();
+    let spinner_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let mut spinner_idx: usize = 0;
+
+    loop {
+        let elapsed = started_at.elapsed().as_secs();
+        let frame = spinner_frames[spinner_idx % spinner_frames.len()];
+        spinner_idx = spinner_idx.wrapping_add(1);
+
+        terminal
+            .draw(|f| draw_splash(f, &project_display, frame, elapsed))
+            .map_err(|e| StartupError::Store(anyhow::anyhow!("draw splash: {e}")))?;
+
+        // Honor Ctrl+Q during the splash so a stuck DB load can be cancelled.
+        if event::poll(std::time::Duration::from_millis(80))
+            .map_err(|e| StartupError::Store(anyhow::anyhow!("event poll: {e}")))?
+        {
+            if let Event::Key(key) = event::read()
+                .map_err(|e| StartupError::Store(anyhow::anyhow!("event read: {e}")))?
+            {
+                if key.kind == KeyEventKind::Press
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'))
+                {
+                    return Err(StartupError::UserAborted);
+                }
+            }
+        }
+
+        match rx.try_recv() {
+            Ok(Ok(store)) => return Ok(store),
+            Ok(Err(e)) => return Err(StartupError::Store(anyhow::Error::from(e))),
+            Err(mpsc::TryRecvError::Empty) => continue,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return Err(StartupError::Store(anyhow::anyhow!(
+                    "store-open worker thread died without sending a result"
+                )));
+            }
+        }
+    }
+}
+
+fn draw_splash(f: &mut ratatui::Frame, project_display: &str, spinner: char, elapsed_s: u64) {
+    let area = f.area();
+    // Center a small panel.
+    let width = area.width.saturating_sub(8).clamp(40, 80);
+    let height: u16 = 9;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let rect = Rect { x, y, width, height };
+
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Inkhaven ")
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let body = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  {} Please wait for database to open…", spinner),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  Project: {project_display}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(Span::styled(
+            format!("  Elapsed: {elapsed_s}s (first-run model download can take a minute)"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Ctrl+Q to abort startup",
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+    ];
+    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
+}
 
 pub fn run(project: &Path) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized().map_err(anyhow::Error::from)?;
 
     let cfg = Config::load(&layout.config_path()).map_err(anyhow::Error::from)?;
-    let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
 
-    let mut app = App::new(layout, cfg, store)?;
-
-    // Install a panic hook that restores the terminal before re-panicking
-    // through the user's hook. Otherwise a panic inside the TUI leaves the
-    // shell in raw-mode + alt-screen and the message is invisible.
+    // Install the panic hook BEFORE we touch the terminal so a panic during
+    // DB load (or anywhere later) still restores the screen.
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
@@ -62,6 +175,30 @@ pub fn run(project: &Path) -> Result<()> {
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+
+    // Open the document store on a worker thread so the TUI can draw a
+    // "Please wait" splash immediately. First-time runs of fastembed download
+    // a ~120 MB model, which takes long enough to look like a hang otherwise.
+    let store_result = open_store_with_splash(&mut terminal, layout.clone(), cfg.clone());
+
+    let store = match store_result {
+        Ok(s) => s,
+        Err(StartupError::UserAborted) => {
+            disable_raw_mode()?;
+            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+            terminal.show_cursor()?;
+            return Ok(());
+        }
+        Err(StartupError::Store(e)) => {
+            disable_raw_mode()?;
+            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+            terminal.show_cursor()?;
+            return Err(e);
+        }
+    };
+
+    let mut app = App::new(layout, cfg, store)?;
+    app.restore_session();
 
     let result = app.run(&mut terminal);
 
@@ -82,13 +219,7 @@ struct Keymap {
     save: KeyChord,
     page_up: KeyChord,
     page_down: KeyChord,
-    add_book: KeyChord,
-    add_chapter: KeyChord,
-    add_subchapter: KeyChord,
-    add_paragraph: KeyChord,
-    delete_node: KeyChord,
-    move_up: KeyChord,
-    move_down: KeyChord,
+    meta_prefix: KeyChord,
 }
 
 impl Keymap {
@@ -104,13 +235,7 @@ impl Keymap {
             save: parse("save", &cfg.keys.save)?,
             page_up: parse("page_up", &cfg.keys.page_up)?,
             page_down: parse("page_down", &cfg.keys.page_down)?,
-            add_book: parse("add_book", &cfg.keys.add_book)?,
-            add_chapter: parse("add_chapter", &cfg.keys.add_chapter)?,
-            add_subchapter: parse("add_subchapter", &cfg.keys.add_subchapter)?,
-            add_paragraph: parse("add_paragraph", &cfg.keys.add_paragraph)?,
-            delete_node: parse("delete_node", &cfg.keys.delete_node)?,
-            move_up: parse("move_up", &cfg.keys.move_up)?,
-            move_down: parse("move_down", &cfg.keys.move_down)?,
+            meta_prefix: parse("meta_prefix", &cfg.keys.meta_prefix)?,
         })
     }
 }
@@ -222,6 +347,14 @@ enum Modal {
         input: TextInput,
     },
     FilePicker(FilePicker),
+    /// Find / replace prompt. `replace` is None for Ctrl+F search-only mode
+    /// and Some for Ctrl+R replace mode (Tab switches focus between the two
+    /// input fields when present).
+    FindReplace {
+        search_input: TextInput,
+        replace_input: Option<TextInput>,
+        focus_replace: bool,
+    },
     SnapshotPicker {
         /// Kept for potential refresh ops after future snapshot mutations.
         #[allow(dead_code)]
@@ -246,6 +379,9 @@ struct App {
     /// itself stays visible; only its subtree is collapsed. Left arrow adds
     /// to this set, Right removes from it.
     collapsed_nodes: std::collections::HashSet<Uuid>,
+    /// True after the user pressed the meta-prefix chord (default Ctrl+B).
+    /// The next key is interpreted as an action selector and clears this.
+    meta_pending: bool,
     modal: Modal,
 
     focus: Focus,
@@ -312,6 +448,17 @@ struct OpenedDoc {
     /// Snapshot of `textarea.lines()` at the most recent save / load. Used to
     /// bold characters added since then.
     saved_lines: Vec<String>,
+    /// Set when split-edit mode is active. The lower pane shows a read-only
+    /// copy of `snapshot_lines`, scrolled independently of the live editor.
+    split: Option<SplitView>,
+    /// Active find / replace session (Ctrl+F / Ctrl+R). While Some, matches
+    /// are highlighted red and Ctrl+G advances or replaces.
+    search: Option<SearchState>,
+}
+
+struct SplitView {
+    snapshot_lines: Vec<String>,
+    scroll_row: usize,
 }
 
 impl App {
@@ -324,6 +471,26 @@ impl App {
             .into_iter()
             .map(|(n, d)| (n.id, d))
             .collect();
+
+        // Background sync: every `sync_interval_seconds` call store.sync().
+        // Store is Send+Sync and cheap to clone (Arc inside), so we share it
+        // with the task. 0 disables.
+        if cfg.sync_interval_seconds > 0 {
+            let store_for_sync = store.clone();
+            let interval_secs = cfg.sync_interval_seconds;
+            tokio::spawn(async move {
+                let period = std::time::Duration::from_secs(interval_secs);
+                let mut ticker = tokio::time::interval(period);
+                // Skip the immediate first tick (interval fires at t=0).
+                ticker.tick().await;
+                loop {
+                    ticker.tick().await;
+                    if let Err(e) = store_for_sync.sync() {
+                        tracing::warn!("background sync failed: {e}");
+                    }
+                }
+            });
+        }
 
         let ai = AiClient::from_config(&cfg.llm).map_err(anyhow::Error::from)?;
 
@@ -345,6 +512,7 @@ impl App {
             rows,
             modal: Modal::None,
             collapsed_nodes,
+            meta_pending: false,
             focus: Focus::Tree,
             tree_cursor: 0,
             tree_scroll: 0,
@@ -352,7 +520,7 @@ impl App {
             ai_input: TextInput::new(),
             opened: None,
             status: String::from(
-                "Tab=panes · Enter=open · Ctrl+S=save · Ctrl+Shift+B/C/S/P=add · Ctrl+Shift+D=delete · Ctrl+Q=quit",
+                "Tab=panes · Enter=open · Ctrl+S=save · Ctrl+B then B/C/S/P add · D delete · ↑/↓ reorder · Ctrl+Q quit",
             ),
             show_results_overlay: false,
             results: Vec::new(),
@@ -499,34 +667,18 @@ impl App {
             return Ok(false);
         }
 
-        // Tree-management chords. Work from any focus so the user doesn't
-        // have to defocus the editor to add a chapter.
-        if self.keymap.add_book.matches(&key) {
-            self.open_add_modal(NodeKind::Book);
+        // Meta-prefix dispatch. If we're already inside meta mode, the next
+        // key is the action selector. Otherwise check whether THIS key is
+        // the meta prefix and enter the mode.
+        if self.meta_pending {
+            self.handle_meta_action(key);
             return Ok(false);
         }
-        if self.keymap.add_chapter.matches(&key) {
-            self.open_add_modal(NodeKind::Chapter);
-            return Ok(false);
-        }
-        if self.keymap.add_subchapter.matches(&key) {
-            self.open_add_modal(NodeKind::Subchapter);
-            return Ok(false);
-        }
-        if self.keymap.add_paragraph.matches(&key) {
-            self.open_add_modal(NodeKind::Paragraph);
-            return Ok(false);
-        }
-        if self.keymap.delete_node.matches(&key) {
-            self.open_delete_modal();
-            return Ok(false);
-        }
-        if self.keymap.move_up.matches(&key) {
-            self.move_current(MoveDir::Up);
-            return Ok(false);
-        }
-        if self.keymap.move_down.matches(&key) {
-            self.move_current(MoveDir::Down);
+        if self.keymap.meta_prefix.matches(&key) {
+            self.meta_pending = true;
+            self.status =
+                "META · B add book · C chapter · S subchapter · P paragraph · D delete · ↑/↓ reorder · Esc cancel"
+                    .into();
             return Ok(false);
         }
 
@@ -724,7 +876,7 @@ impl App {
         };
         if node.kind == NodeKind::Paragraph {
             self.status = format!(
-                "`{}` is a paragraph — press `-` (or Ctrl+Shift+D) to delete it",
+                "`{}` is a paragraph — press `-` (or Ctrl+B then D) to delete it",
                 node.title
             );
             return;
@@ -742,7 +894,7 @@ impl App {
         };
         if node.kind != NodeKind::Paragraph {
             self.status = format!(
-                "`{}` is a {} — press `D` (or Ctrl+Shift+D) to delete it",
+                "`{}` is a {} — press `D` (or Ctrl+B then D) to delete it",
                 node.title,
                 node.kind.as_str()
             );
@@ -780,6 +932,74 @@ impl App {
         if matches!(key.code, KeyCode::F(3)) {
             self.open_file_picker(PickerContext::EditorLoad);
             return Ok(false);
+        }
+        // Ctrl+F / Ctrl+G / Ctrl+R: regex search & replace.
+        let ctrl_no_shift = key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::SHIFT)
+            && !key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER);
+        if ctrl_no_shift {
+            match key.code {
+                KeyCode::Char('f') | KeyCode::Char('F') => {
+                    self.open_find_modal(false);
+                    return Ok(false);
+                }
+                KeyCode::Char('g') | KeyCode::Char('G') => {
+                    self.search_advance_or_replace();
+                    return Ok(false);
+                }
+                KeyCode::Char('r') | KeyCode::Char('R') => {
+                    if self
+                        .opened
+                        .as_ref()
+                        .and_then(|d| d.search.as_ref())
+                        .is_some_and(|s| s.replace_with.is_some())
+                    {
+                        self.replace_all_remaining();
+                    } else {
+                        self.open_find_modal(true);
+                    }
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
+        // Esc in editor (when search is active) clears the search state.
+        if matches!(key.code, KeyCode::Esc)
+            && self.opened.as_ref().is_some_and(|d| d.search.is_some())
+        {
+            if let Some(doc) = self.opened.as_mut() {
+                doc.search = None;
+            }
+            self.status = "search cleared".into();
+            return Ok(false);
+        }
+
+        // F4 toggles split-edit mode; Ctrl+F4 accepts the snapshot and
+        // replaces the live buffer with it.
+        if matches!(key.code, KeyCode::F(4)) {
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                self.accept_split_snapshot();
+            } else {
+                self.toggle_split();
+            }
+            return Ok(false);
+        }
+        // Ctrl+H / Ctrl+J scroll the lower (read-only) pane while split is
+        // open. Without split, they fall through to normal editor handling
+        // (tui-textarea / our backspace-word / etc.).
+        let split_active = self.opened.as_ref().is_some_and(|d| d.split.is_some());
+        if split_active && key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('h') | KeyCode::Char('H') => {
+                    self.scroll_split_up();
+                    return Ok(false);
+                }
+                KeyCode::Char('j') | KeyCode::Char('J') => {
+                    self.scroll_split_down();
+                    return Ok(false);
+                }
+                _ => {}
+            }
         }
 
         // Alt+arrows enter / extend vertical-block selection. Alt+C copies it.
@@ -1096,7 +1316,97 @@ impl App {
                 return false;
             }
         }
+        // Persist session state regardless of save outcome path above.
+        // Failure is silent — sessions are a UX nicety, not correctness.
+        let _ = self.save_session();
         true
+    }
+
+    fn save_session(&self) -> std::io::Result<()> {
+        let cursor_id = self
+            .rows
+            .get(self.tree_cursor)
+            .map(|(id, _)| id.to_string());
+        let collapsed: Vec<String> = self
+            .collapsed_nodes
+            .iter()
+            .map(|u| u.to_string())
+            .collect();
+        let editor_session = self.opened.as_ref().map(|d| {
+            let (row, col) = d.textarea.cursor();
+            EditorSession {
+                opened_id: d.id.to_string(),
+                cursor_row: row,
+                cursor_col: col,
+            }
+        });
+        let state = SessionState {
+            tree: TreeSession {
+                cursor_id,
+                collapsed_nodes: collapsed,
+            },
+            editor: editor_session,
+            focus: format!("{:?}", self.focus),
+        };
+        state.save(&self.layout.root)
+    }
+
+    /// Re-apply a saved session on startup. Silently ignores anything that
+    /// no longer makes sense (missing UUIDs, corrupt fields). Should be
+    /// called after `Hierarchy::load` so the lookups can resolve.
+    fn restore_session(&mut self) {
+        let Some(state) = SessionState::load(&self.layout.root) else {
+            return;
+        };
+
+        // Collapsed branches.
+        for s in &state.tree.collapsed_nodes {
+            if let Ok(id) = Uuid::parse_str(s) {
+                if self.hierarchy.get(id).is_some() {
+                    self.collapsed_nodes.insert(id);
+                }
+            }
+        }
+        self.rebuild_rows_preserving_cursor();
+
+        // Tree cursor.
+        if let Some(cid) = &state.tree.cursor_id {
+            if let Ok(id) = Uuid::parse_str(cid) {
+                if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == id) {
+                    self.tree_cursor = i;
+                }
+            }
+        }
+
+        // Open paragraph + cursor.
+        if let Some(ed) = &state.editor {
+            if let Ok(id) = Uuid::parse_str(&ed.opened_id) {
+                if let Some(node) = self.hierarchy.get(id).cloned() {
+                    if node.kind == NodeKind::Paragraph {
+                        let _ = self.load_paragraph(&node);
+                        if let Some(doc) = self.opened.as_mut() {
+                            doc.textarea.move_cursor(CursorMove::Jump(
+                                ed.cursor_row as u16,
+                                ed.cursor_col as u16,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Focus.
+        let restored_focus = match state.focus.as_str() {
+            "Tree" => Some(Focus::Tree),
+            "Editor" => Some(Focus::Editor),
+            "Ai" => Some(Focus::Ai),
+            "SearchBar" => Some(Focus::SearchBar),
+            "AiPrompt" => Some(Focus::AiPrompt),
+            _ => None,
+        };
+        if let Some(f) = restored_focus {
+            self.focus = f;
+        }
     }
 
     fn inference_done_with_text(&self) -> bool {
@@ -1577,6 +1887,295 @@ impl App {
         }
     }
 
+    fn open_find_modal(&mut self, with_replace: bool) {
+        if self.opened.is_none() {
+            self.status = "no paragraph open".into();
+            return;
+        }
+        // Pre-fill with the last pattern if we have one open already.
+        let mut search_input = TextInput::new();
+        let mut replace_input = TextInput::new();
+        if let Some(state) = self.opened.as_ref().and_then(|d| d.search.as_ref()) {
+            for c in state.pattern.chars() {
+                search_input.insert_char(c);
+            }
+            if with_replace {
+                if let Some(r) = &state.replace_with {
+                    for c in r.chars() {
+                        replace_input.insert_char(c);
+                    }
+                }
+            }
+        }
+        self.modal = Modal::FindReplace {
+            search_input,
+            replace_input: if with_replace {
+                Some(replace_input)
+            } else {
+                None
+            },
+            focus_replace: false,
+        };
+    }
+
+    fn commit_find(&mut self) {
+        let (pattern, replace_with) = match &self.modal {
+            Modal::FindReplace {
+                search_input,
+                replace_input,
+                ..
+            } => (
+                search_input.as_str().to_string(),
+                replace_input.as_ref().map(|i| i.as_str().to_string()),
+            ),
+            _ => return,
+        };
+        if pattern.is_empty() {
+            self.status = "search pattern is empty".into();
+            return;
+        }
+        let Some(doc) = self.opened.as_mut() else {
+            self.modal = Modal::None;
+            return;
+        };
+        let lines = doc.textarea.lines().to_vec();
+        match SearchState::build(&pattern, replace_with.clone(), &lines) {
+            Ok(state) => {
+                let n = state.matches.len();
+                doc.search = Some(state);
+                self.modal = Modal::None;
+                if n == 0 {
+                    self.status = format!("no matches for /{pattern}/");
+                    return;
+                }
+                // Jump cursor to first match
+                self.jump_to_current_match();
+                if replace_with.is_some() {
+                    // Replace mode: do the FIRST replacement automatically so
+                    // user sees immediate effect; subsequent Ctrl+G keep going.
+                    self.do_replace_current();
+                    let remaining = self
+                        .opened
+                        .as_ref()
+                        .and_then(|d| d.search.as_ref())
+                        .map_or(0, |s| s.matches.len());
+                    self.status = format!(
+                        "/{pattern}/ → replaced 1 · {remaining} left · Ctrl+G next · Ctrl+R replace all · Esc clear"
+                    );
+                } else {
+                    self.status = format!(
+                        "/{pattern}/ → {n} match(es) · Ctrl+G next · Ctrl+R add replacement · Esc clear"
+                    );
+                }
+            }
+            Err(e) => {
+                self.status = format!("regex error: {e}");
+                // Leave the modal open so the user can fix the pattern.
+            }
+        }
+    }
+
+    fn jump_to_current_match(&mut self) {
+        let target = self
+            .opened
+            .as_ref()
+            .and_then(|d| d.search.as_ref())
+            .and_then(|s| s.current_match())
+            .map(|m| (m.row, m.col_start));
+        let Some((row, col)) = target else {
+            return;
+        };
+        if let Some(doc) = self.opened.as_mut() {
+            doc.textarea
+                .move_cursor(CursorMove::Jump(row as u16, col as u16));
+        }
+    }
+
+    fn search_advance_or_replace(&mut self) {
+        let is_replace = self
+            .opened
+            .as_ref()
+            .and_then(|d| d.search.as_ref())
+            .is_some_and(|s| s.replace_with.is_some());
+        if is_replace {
+            // Replace the current match, refresh hits, jump to new first.
+            self.do_replace_current();
+            self.refresh_search_after_edit();
+            let remaining = self
+                .opened
+                .as_ref()
+                .and_then(|d| d.search.as_ref())
+                .map_or(0, |s| s.matches.len());
+            if remaining == 0 {
+                if let Some(doc) = self.opened.as_mut() {
+                    doc.search = None;
+                }
+                self.status = "replace done — no more matches".into();
+            } else {
+                self.jump_to_current_match();
+                self.status = format!("replaced · {remaining} left · Ctrl+R replace all");
+            }
+        } else {
+            // Search-only: advance to next match (wraps).
+            if let Some(doc) = self.opened.as_mut() {
+                if let Some(state) = doc.search.as_mut() {
+                    state.advance();
+                }
+            }
+            self.jump_to_current_match();
+            let n = self
+                .opened
+                .as_ref()
+                .and_then(|d| d.search.as_ref())
+                .map_or(0, |s| s.matches.len());
+            let i = self
+                .opened
+                .as_ref()
+                .and_then(|d| d.search.as_ref())
+                .map_or(0, |s| s.current);
+            if n > 0 {
+                self.status = format!("match {} / {}", i + 1, n);
+            }
+        }
+    }
+
+    fn do_replace_current(&mut self) {
+        let (row, col_start, col_end, replacement) = {
+            let Some(doc) = self.opened.as_ref() else {
+                return;
+            };
+            let Some(state) = &doc.search else {
+                return;
+            };
+            let Some(replacement) = state.replace_with.clone() else {
+                return;
+            };
+            let Some(m) = state.current_match() else {
+                return;
+            };
+            (m.row, m.col_start, m.col_end, replacement)
+        };
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        // Select [col_start..col_end] in row, cut, insert replacement.
+        doc.textarea
+            .move_cursor(CursorMove::Jump(row as u16, col_start as u16));
+        doc.textarea.start_selection();
+        doc.textarea
+            .move_cursor(CursorMove::Jump(row as u16, col_end as u16));
+        doc.textarea.cut();
+        doc.textarea.insert_str(&replacement);
+        doc.dirty = true;
+    }
+
+    fn refresh_search_after_edit(&mut self) {
+        let lines = self
+            .opened
+            .as_ref()
+            .map(|d| d.textarea.lines().to_vec());
+        let Some(lines) = lines else { return };
+        if let Some(doc) = self.opened.as_mut() {
+            if let Some(state) = doc.search.as_mut() {
+                state.refresh(&lines);
+            }
+        }
+    }
+
+    fn replace_all_remaining(&mut self) {
+        let mut count = 0;
+        loop {
+            let has_any = self
+                .opened
+                .as_ref()
+                .and_then(|d| d.search.as_ref())
+                .map_or(false, |s| !s.matches.is_empty());
+            if !has_any {
+                break;
+            }
+            self.do_replace_current();
+            self.refresh_search_after_edit();
+            count += 1;
+            if count > 100_000 {
+                break;
+            }
+        }
+        if let Some(doc) = self.opened.as_mut() {
+            doc.search = None;
+        }
+        self.status = format!("replaced {count} match(es) and cleared search");
+    }
+
+    /// Toggle split-edit mode. When entering, capture the current buffer as
+    /// the lower-pane snapshot; when leaving, drop the snapshot and restore
+    /// full-size editor.
+    fn toggle_split(&mut self) {
+        let Some(doc) = self.opened.as_mut() else {
+            self.status = "no paragraph open".into();
+            return;
+        };
+        if doc.split.is_some() {
+            doc.split = None;
+            self.status = "split closed".into();
+        } else {
+            let snapshot_lines = doc.textarea.lines().to_vec();
+            doc.split = Some(SplitView {
+                snapshot_lines,
+                scroll_row: 0,
+            });
+            self.status =
+                "split open · upper r/w · lower r/o · Ctrl+H/J scroll · Ctrl+F4 accept · F4 close"
+                    .into();
+        }
+    }
+
+    /// Replace the live buffer with the split snapshot and exit split mode.
+    /// Used to "roll back" to the captured version after experimenting.
+    fn accept_split_snapshot(&mut self) {
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        let Some(split) = doc.split.take() else {
+            self.status = "split is not open".into();
+            return;
+        };
+        let lines = if split.snapshot_lines.is_empty() {
+            vec![String::new()]
+        } else {
+            split.snapshot_lines
+        };
+        let mut new_ta = TextArea::new(lines);
+        new_ta.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
+        new_ta.set_line_number_style(Style::default().fg(Color::DarkGray));
+        doc.textarea = new_ta;
+        doc.dirty = true;
+        doc.scroll_row = 0;
+        doc.scroll_col = 0;
+        doc.last_activity = std::time::Instant::now();
+        self.status =
+            "split snapshot accepted — buffer replaced; Ctrl+S to commit · bold shows the diff"
+                .into();
+    }
+
+    fn scroll_split_up(&mut self) {
+        if let Some(doc) = self.opened.as_mut() {
+            if let Some(split) = &mut doc.split {
+                split.scroll_row = split.scroll_row.saturating_sub(1);
+            }
+        }
+    }
+
+    fn scroll_split_down(&mut self) {
+        if let Some(doc) = self.opened.as_mut() {
+            if let Some(split) = &mut doc.split {
+                let max = split.snapshot_lines.len().saturating_sub(1);
+                if split.scroll_row < max {
+                    split.scroll_row += 1;
+                }
+            }
+        }
+    }
+
     fn create_snapshot_of_current(&mut self) {
         let Some(doc) = self.opened.as_ref() else {
             self.status = "no paragraph open".into();
@@ -1604,6 +2203,121 @@ impl App {
             Err(e) => {
                 self.status = format!("snapshot failed: {e}");
             }
+        }
+    }
+
+    /// Dispatch the keystroke that follows the meta-prefix. Each pane has
+    /// its own action table:
+    ///   * Tree (and Search bar): hierarchy operations
+    ///   * Editor: save / snapshots / file load / split-edit
+    ///   * AI (and AI prompt): inference management
+    fn handle_meta_action(&mut self, key: KeyEvent) {
+        self.meta_pending = false;
+        if matches!(key.code, KeyCode::Esc) {
+            self.status = "meta cancelled".into();
+            return;
+        }
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        if !plain {
+            self.status = "meta cancelled".into();
+            return;
+        }
+
+        let consumed = match self.focus {
+            Focus::Tree | Focus::SearchBar => self.dispatch_meta_tree(key),
+            Focus::Editor => self.dispatch_meta_editor(key),
+            Focus::Ai | Focus::AiPrompt => self.dispatch_meta_ai(key),
+        };
+        if !consumed {
+            self.status = format!(
+                "meta {}: unknown action — use Ctrl+B again to retry",
+                self.focus.label()
+            );
+        }
+    }
+
+    fn dispatch_meta_tree(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char('B') | KeyCode::Char('b') => {
+                self.open_add_modal(NodeKind::Book);
+                true
+            }
+            KeyCode::Char('C') | KeyCode::Char('c') => {
+                self.open_add_modal(NodeKind::Chapter);
+                true
+            }
+            KeyCode::Char('S') | KeyCode::Char('s') => {
+                self.open_add_modal(NodeKind::Subchapter);
+                true
+            }
+            KeyCode::Char('P') | KeyCode::Char('p') => {
+                self.open_add_modal(NodeKind::Paragraph);
+                true
+            }
+            KeyCode::Char('D') | KeyCode::Char('d') => {
+                self.open_delete_modal();
+                true
+            }
+            KeyCode::Up => {
+                self.move_current(MoveDir::Up);
+                true
+            }
+            KeyCode::Down => {
+                self.move_current(MoveDir::Down);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn dispatch_meta_editor(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            // S: save (alternative when Ctrl+S is eaten by the terminal).
+            KeyCode::Char('S') | KeyCode::Char('s') => {
+                if self.opened.is_some() {
+                    let _ = self.save_current();
+                } else {
+                    self.status = "no paragraph open".into();
+                }
+                true
+            }
+            // N: new snapshot (== F5).
+            KeyCode::Char('N') | KeyCode::Char('n') => {
+                self.create_snapshot_of_current();
+                true
+            }
+            // H: snapshot history picker (== F6).
+            KeyCode::Char('H') | KeyCode::Char('h') => {
+                self.open_snapshot_picker();
+                true
+            }
+            // L: load file into editor (== F3).
+            KeyCode::Char('L') | KeyCode::Char('l') => {
+                self.open_file_picker(PickerContext::EditorLoad);
+                true
+            }
+            // F: toggle split-edit mode (== F4).
+            KeyCode::Char('F') | KeyCode::Char('f') => {
+                self.toggle_split();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn dispatch_meta_ai(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            // C: clear the current inference state (cancels streaming /
+            // discards a finished result so the AI pane returns to its
+            // empty placeholder).
+            KeyCode::Char('C') | KeyCode::Char('c') => {
+                self.inference = None;
+                self.status = "AI inference cleared".into();
+                true
+            }
+            _ => false,
         }
     }
 
@@ -2132,6 +2846,106 @@ impl App {
         let is_snapshot = matches!(self.modal, Modal::SnapshotPicker { .. });
         let is_renaming = matches!(self.modal, Modal::Renaming { .. });
         let is_file_picker = matches!(self.modal, Modal::FilePicker(_));
+        let is_find = matches!(self.modal, Modal::FindReplace { .. });
+
+        if is_find {
+            let mut commit = false;
+            if let Modal::FindReplace {
+                search_input,
+                replace_input,
+                focus_replace,
+            } = &mut self.modal
+            {
+                match key.code {
+                    KeyCode::Enter => commit = true,
+                    KeyCode::Tab => {
+                        if replace_input.is_some() {
+                            *focus_replace = !*focus_replace;
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        if *focus_replace {
+                            if let Some(r) = replace_input.as_mut() {
+                                r.backspace();
+                            }
+                        } else {
+                            search_input.backspace();
+                        }
+                    }
+                    KeyCode::Delete => {
+                        if *focus_replace {
+                            if let Some(r) = replace_input.as_mut() {
+                                r.delete();
+                            }
+                        } else {
+                            search_input.delete();
+                        }
+                    }
+                    KeyCode::Left => {
+                        if *focus_replace {
+                            if let Some(r) = replace_input.as_mut() {
+                                r.move_left();
+                            }
+                        } else {
+                            search_input.move_left();
+                        }
+                    }
+                    KeyCode::Right => {
+                        if *focus_replace {
+                            if let Some(r) = replace_input.as_mut() {
+                                r.move_right();
+                            }
+                        } else {
+                            search_input.move_right();
+                        }
+                    }
+                    KeyCode::Home => {
+                        if *focus_replace {
+                            if let Some(r) = replace_input.as_mut() {
+                                r.move_home();
+                            }
+                        } else {
+                            search_input.move_home();
+                        }
+                    }
+                    KeyCode::End => {
+                        if *focus_replace {
+                            if let Some(r) = replace_input.as_mut() {
+                                r.move_end();
+                            }
+                        } else {
+                            search_input.move_end();
+                        }
+                    }
+                    KeyCode::Char(c) => {
+                        let mut residual = key.modifiers;
+                        residual.remove(KeyModifiers::SHIFT);
+                        if residual.is_empty() {
+                            let final_c = if key.modifiers.contains(KeyModifiers::SHIFT)
+                                && c.is_ascii_alphabetic()
+                            {
+                                c.to_ascii_uppercase()
+                            } else {
+                                c
+                            };
+                            if *focus_replace {
+                                if let Some(r) = replace_input.as_mut() {
+                                    r.insert_char(final_c);
+                                }
+                            } else {
+                                search_input.insert_char(final_c);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if commit {
+                self.commit_find();
+            }
+            return Ok(false);
+        }
+
 
         if is_file_picker {
             let mut commit = false;
@@ -2459,6 +3273,8 @@ impl App {
             block_anchor: None,
             last_activity: std::time::Instant::now(),
             saved_lines,
+            split: None,
+            search: None,
         });
         self.focus = Focus::Editor;
         self.status = format!("opened {}", abs.display());
@@ -2720,6 +3536,60 @@ impl App {
         let (title, border_color, body): (String, Color, Vec<Line<'_>>) = match &self.modal {
             Modal::None => return,
             Modal::FilePicker(_) => unreachable!("file picker handled above"),
+            Modal::FindReplace {
+                search_input,
+                replace_input,
+                focus_replace,
+            } => {
+                let cursor_char = '│';
+                let search_marker = if *focus_replace { " " } else { ">" };
+                let replace_marker = if *focus_replace { ">" } else { " " };
+                let mut body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(
+                            " {} Search:  {}",
+                            search_marker,
+                            search_input.render_with_cursor(cursor_char)
+                        ),
+                        if !*focus_replace {
+                            Style::default()
+                        } else {
+                            Style::default().add_modifier(Modifier::DIM)
+                        },
+                    )),
+                ];
+                if let Some(r) = replace_input {
+                    body.push(Line::from(Span::styled(
+                        format!(
+                            " {} Replace: {}",
+                            replace_marker,
+                            r.render_with_cursor(cursor_char)
+                        ),
+                        if *focus_replace {
+                            Style::default()
+                        } else {
+                            Style::default().add_modifier(Modifier::DIM)
+                        },
+                    )));
+                }
+                body.push(Line::from(""));
+                let hint = if replace_input.is_some() {
+                    " Enter run · Tab switch field · Esc cancel "
+                } else {
+                    " Enter find · Esc cancel "
+                };
+                body.push(Line::from(Span::styled(
+                    hint,
+                    Style::default().add_modifier(Modifier::DIM),
+                )));
+                let header = if replace_input.is_some() {
+                    " Find & Replace (regex) "
+                } else {
+                    " Find (regex) "
+                };
+                (header.into(), Color::Magenta, body)
+            }
             Modal::Adding {
                 kind,
                 parent_label,
@@ -3017,8 +3887,13 @@ impl App {
 
     fn draw_editor(&mut self, f: &mut ratatui::Frame, area: Rect) {
         let title = match &self.opened {
-            Some(d) if d.dirty => format!("Editor — {} [modified]", d.title),
-            Some(d) => format!("Editor — {}", d.title),
+            Some(d) => {
+                let (row, col) = d.textarea.cursor();
+                let dirty = if d.dirty { " [modified]" } else { "" };
+                // Line/column are 1-indexed in the title for human readers,
+                // even though the internal representation is 0-indexed.
+                format!("Editor — {}{} · L{} C{}", d.title, dirty, row + 1, col + 1)
+            }
             None => String::from("Editor"),
         };
         let block = self.editor_block(&title);
@@ -3035,11 +3910,103 @@ impl App {
             return;
         }
 
-        if self.cfg.editor.wrap {
+        // Split-edit mode: divide the editor area into two halves; upper is
+        // the live editor, lower is the read-only snapshot.
+        let split_active = self.opened.as_ref().is_some_and(|d| d.split.is_some());
+        if split_active {
+            let halves = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(inner);
+            let upper = halves[0];
+            let lower = halves[1];
+            if self.cfg.editor.wrap {
+                self.draw_editor_wrapped(f, upper);
+            } else {
+                self.draw_editor_unwrapped(f, upper);
+            }
+            self.draw_split_snapshot(f, lower);
+        } else if self.cfg.editor.wrap {
             self.draw_editor_wrapped(f, inner);
         } else {
             self.draw_editor_unwrapped(f, inner);
         }
+    }
+
+    /// Render the lower (read-only) pane of split-edit mode. No cursor,
+    /// no diff/bold, no current-line highlight — it's a frozen view of the
+    /// buffer at the moment F4 was pressed.
+    fn draw_split_snapshot(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Some(doc) = self.opened.as_ref() else {
+            return;
+        };
+        let Some(split) = &doc.split else {
+            return;
+        };
+
+        // 1 row for the separator/hint header, the rest for content.
+        if area.height < 2 {
+            return;
+        }
+        let header_rect = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 1,
+        };
+        let content_rect = Rect {
+            x: area.x,
+            y: area.y + 1,
+            width: area.width,
+            height: area.height - 1,
+        };
+
+        let header = format!(
+            "── snapshot · Ctrl+H/J scroll · Ctrl+F4 accept · F4 close (line {}/{}) ──",
+            split.scroll_row + 1,
+            split.snapshot_lines.len().max(1)
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                header,
+                Style::default().fg(Color::DarkGray),
+            ))),
+            header_rect,
+        );
+
+        let lineno_chars = digit_count(split.snapshot_lines.len().max(1));
+        let gutter_width = (lineno_chars + 1) as u16;
+        let visible = content_rect.height as usize;
+        let body_w = content_rect.width.saturating_sub(gutter_width) as usize;
+
+        let lineno_style = Style::default().fg(Color::DarkGray);
+        let body_style = Style::default()
+            .fg(Color::Gray)
+            .add_modifier(Modifier::DIM);
+
+        let mut lines: Vec<Line> = Vec::with_capacity(visible);
+        for (i, line) in split
+            .snapshot_lines
+            .iter()
+            .enumerate()
+            .skip(split.scroll_row)
+            .take(visible)
+        {
+            // Clip line to body_w chars so long lines don't overflow into
+            // the pane border.
+            let chars: Vec<char> = line.chars().collect();
+            let shown: String = if chars.len() > body_w {
+                chars.iter().take(body_w).collect()
+            } else {
+                chars.iter().collect()
+            };
+            let lineno = format!("{:>w$} ", i + 1, w = lineno_chars);
+            lines.push(Line::from(vec![
+                Span::styled(lineno, lineno_style),
+                Span::styled(shown, body_style),
+            ]));
+        }
+        f.render_widget(Paragraph::new(lines), content_rect);
     }
 
     fn draw_editor_unwrapped(&mut self, f: &mut ratatui::Frame, inner: Rect) {
@@ -3063,6 +4030,21 @@ impl App {
                 } else {
                     diff_added(saved_line, line)
                 }
+            })
+            .collect();
+
+        // Per-row regex hits for the match-highlight overlay.
+        let matches_per_row: Vec<Vec<RowHit>> = (0..current_lines.len())
+            .map(|row| match &opened.search {
+                Some(state) => row_matches(state, row)
+                    .into_iter()
+                    .map(|h: RowMatch| RowHit {
+                        col_start: h.col_start,
+                        col_end: h.col_end,
+                        is_current: h.is_current,
+                    })
+                    .collect(),
+                None => Vec::new(),
             })
             .collect();
 
@@ -3107,6 +4089,10 @@ impl App {
             }
 
             let added_flags = added_per_row.get(row).map(Vec::as_slice);
+            let row_hits = matches_per_row
+                .get(row)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             let mut text_spans = build_row_spans(
                 &highlighted[row],
                 row,
@@ -3115,6 +4101,7 @@ impl App {
                 selection,
                 block,
                 added_flags,
+                row_hits,
             );
             if is_current {
                 for s in &mut text_spans {
@@ -3172,6 +4159,20 @@ impl App {
             })
             .collect();
 
+        let matches_per_row: Vec<Vec<RowHit>> = (0..current_lines.len())
+            .map(|row| match &opened.search {
+                Some(state) => row_matches(state, row)
+                    .into_iter()
+                    .map(|h: RowMatch| RowHit {
+                        col_start: h.col_start,
+                        col_end: h.col_end,
+                        is_current: h.is_current,
+                    })
+                    .collect(),
+                None => Vec::new(),
+            })
+            .collect();
+
         let (cur_row, cur_col) = opened.textarea.cursor();
         let selection = opened.textarea.selection_range();
 
@@ -3223,7 +4224,12 @@ impl App {
             }
 
             let added_flags = added_per_row.get(v.src_row).map(Vec::as_slice);
-            let mut text_spans = build_visual_row_spans(v, selection, block, added_flags);
+            let row_hits = matches_per_row
+                .get(v.src_row)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            let mut text_spans =
+                build_visual_row_spans(v, selection, block, added_flags, row_hits);
             if is_current {
                 for s in &mut text_spans {
                     if s.style.bg.is_none() {
@@ -3399,6 +4405,16 @@ impl App {
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             ));
+        }
+        if self.meta_pending {
+            spans.push(Span::styled(
+                " META ",
+                Style::default()
+                    .bg(Color::Yellow)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::raw(" "));
         }
         spans.push(Span::styled(
             format!(" [{}] ", self.focus.label()),

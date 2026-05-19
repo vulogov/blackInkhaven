@@ -31,18 +31,51 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+3`             | Focus the **AI** pane.                                      | no           |
 | `Ctrl+4`             | Focus the **Search** bar (top).                             | no           |
 | `Ctrl+5`             | Focus the **AI prompt** bar (bottom).                       | no           |
-| `Ctrl+Shift+B`       | Open the Add modal seeded for a new book.                   | `add_book`   |
-| `Ctrl+Shift+C`       | Open the Add modal seeded for a new chapter.                | `add_chapter`|
-| `Ctrl+Shift+S`       | Open the Add modal seeded for a new subchapter.             | `add_subchapter` |
-| `Ctrl+Shift+P`       | Open the Add modal seeded for a new paragraph.              | `add_paragraph` |
-| `Ctrl+Shift+D`       | Open the Delete confirm modal for the tree cursor's node.   | `delete_node`|
-| `Ctrl+Shift+Up`      | Swap the cursor's node with its previous sibling.           | `move_up`    |
-| `Ctrl+Shift+Down`    | Swap the cursor's node with its next sibling.               | `move_down`  |
+| `Ctrl+B`             | Enter **meta mode**. The next keystroke is the action selector (see §1.1). | `meta_prefix` |
 
-Add/delete/move chords pick the parent or target by walking up from the tree
-cursor's current node until they find a node that can accept the requested
-kind (or the node itself for delete/move). They surface an explanatory error
-on the status line if no valid target exists.
+### 1.1 Meta mode (Ctrl+B prefix)
+
+The meta prefix is a single `Ctrl+B`; the second key selects the action.
+**The action table is pane-specific** — `Ctrl+B` then `S` means different
+things depending on whether the Tree, Editor, or AI pane has focus. The
+status bar shows a yellow **META** chip and a prompt listing the actions
+for the current pane while it's pending.
+
+`Esc` cancels meta mode without running anything. Any unrecognized key
+cancels with a status hint telling you which pane's table it consulted.
+
+**Tree pane (and Search bar focus)** — hierarchy management:
+
+| Second key | Action                                              |
+| ---------- | --------------------------------------------------- |
+| `B` / `b`  | Open Add modal — new **book** at the root.          |
+| `C` / `c`  | Open Add modal — new **chapter**.                   |
+| `S` / `s`  | Open Add modal — new **subchapter**.                |
+| `P` / `p`  | Open Add modal — new **paragraph**.                 |
+| `D` / `d`  | Open Delete confirm modal for the cursor's node.    |
+| `↑`        | Swap the cursor's node with its previous sibling.   |
+| `↓`        | Swap the cursor's node with its next sibling.       |
+
+**Editor pane** — paragraph operations:
+
+| Second key | Action                                                          |
+| ---------- | --------------------------------------------------------------- |
+| `S` / `s`  | **Save** the open paragraph (alternative to Ctrl+S).            |
+| `N` / `n`  | **New snapshot** of the current buffer (== F5).                 |
+| `H` / `h`  | Open the **snapshot history** picker (== F6).                   |
+| `L` / `l`  | Open the **load file** dialog (== F3).                          |
+| `F` / `f`  | Toggle **split-edit** mode (== F4). See §3.9.                   |
+
+**AI pane (and AI prompt focus)** — inference management:
+
+| Second key | Action                                              |
+| ---------- | --------------------------------------------------- |
+| `C` / `c`  | **Clear** the current inference (cancel streaming or discard a finished result). |
+
+The Tree pane's plain-letter shortcuts (`B`, `C`, `V`, `A`, `S`, `+`, `P`,
+`D`, `-`) still work directly without the meta prefix when Tree has focus —
+see §2.2. To run a tree action from the Editor, switch focus first
+(`Ctrl+2` or `Tab`) and then use either the plain letter or meta.
 
 `Tab` / `Shift+Tab` do **not** cycle focus when the editor pane has an open
 paragraph — they cycle anyway in our implementation because we intercept them
@@ -83,7 +116,7 @@ still marks the row.
 ### 2.2 Tree-pane shortcuts (modifier-free)
 
 These plain-key shortcuts work only when the Tree pane has focus. They exist
-alongside the global `Ctrl+Shift+*` chords because terminals and
+alongside the global meta-prefix chords (§1.1) because terminals and
 multiplexers commonly intercept those (see §13 for details). All four open
 the same modals as their global equivalents — no destructive action without
 confirmation.
@@ -94,12 +127,12 @@ confirmation.
 
 | Key       | Action                                                                                  |
 | --------- | --------------------------------------------------------------------------------------- |
-| `B` / `b` | Add a new **book** at the root (always append; books have no anchors). Equivalent to `Ctrl+Shift+B`. |
-| `C` / `c` | **Append** a chapter at the end of the book's children. Equivalent to `Ctrl+Shift+C`.   |
+| `B` / `b` | Add a new **book** at the root (always append; books have no anchors). Equivalent to `Ctrl+B` then `B`. |
+| `C` / `c` | **Append** a chapter at the end of the book's children. Equivalent to `Ctrl+B` then `C`. |
 | `V` / `v` | **Insert** a chapter immediately after the cursor's enclosing chapter.                  |
-| `A` / `a` | **Append** a subchapter at the end of the chapter's children. Equivalent to `Ctrl+Shift+S`. |
+| `A` / `a` | **Append** a subchapter at the end of the chapter's children. Equivalent to `Ctrl+B` then `S`. |
 | `S` / `s` | **Insert** a subchapter immediately after the cursor's enclosing subchapter.            |
-| `+`       | **Append** a paragraph at the end of the parent's children. Equivalent to `Ctrl+Shift+P`. |
+| `+`       | **Append** a paragraph at the end of the parent's children. Equivalent to `Ctrl+B` then `P`. |
 | `P` / `p` | **Insert** a paragraph immediately after the cursor's enclosing paragraph.              |
 | `D` / `d` | Delete the cursor's node — only if it's a **branch** (book/chapter/subchapter). On a paragraph, shows a hint to press `-` instead. |
 | `-`       | Delete the cursor's node — only if it's a **paragraph**. On a branch, shows a hint to press `D` instead. |
@@ -109,7 +142,7 @@ Empty paragraph titles are allowed for `+` and `P` — the first sentence of the
 Why kind-specific delete? Safety. `-` won't nuke an entire chapter if your
 cursor accidentally landed on it, and `D` won't kill a paragraph you meant
 to keep. If you want delete that doesn't care about kind, use the global
-`Ctrl+Shift+D`.
+`Ctrl+B` then `D`.
 
 Shortcuts ignore the `Shift` modifier (uppercase implies Shift on most
 layouts) but reject `Ctrl` / `Alt` / `Super` — so `Ctrl+A` will *not* fire
@@ -176,7 +209,7 @@ it. The standard conventional chords operate on this range.
 | `Ctrl+X`             | Cut selection to clipboard. Marks doc dirty.                |
 | `Ctrl+V`             | Paste from clipboard at cursor (or replace selection). Marks dirty. |
 | `Ctrl+Z`             | Undo.                                                       |
-| `Ctrl+Y` or `Ctrl+Shift+Z` | Redo.                                                 |
+| `Ctrl+Y`                   | Redo.                                                 |
 
 If `arboard::Clipboard::new()` fails at startup (typical on headless or some
 Wayland setups), copy/cut/paste silently fall back to tui-textarea's
@@ -202,11 +235,68 @@ bulk character-deletion across multiple lines, which tui-textarea doesn't
 expose cleanly. Copy-only covers the common cases (extracting a column of
 leading numbers, a list of names, a verse stanza).
 
+### 3.9 Split-edit mode
+
+A two-pane "edit with lookback" view. Toggle with `F4`. While split is
+active the editor area is divided 50/50 horizontally: the **upper pane** is
+your normal read-write editor and the **lower pane** is a read-only
+snapshot of the buffer captured at the moment you pressed F4. The lower
+pane scrolls independently so you can keep an earlier passage visible
+while you rewrite it above.
+
+| Key       | Action                                                                  |
+| --------- | ----------------------------------------------------------------------- |
+| `F4`      | Toggle split. Capture the buffer on enter; drop the snapshot on exit.   |
+| `Ctrl+F4` | **Accept** the snapshot — replace the live buffer with the captured copy, exit split, mark dirty (bold marks the diff; Ctrl+S commits the rollback). |
+| `Ctrl+H`  | Scroll the lower (snapshot) pane up by one line. Only active in split.  |
+| `Ctrl+J`  | Scroll the lower pane down by one line. Only active in split.           |
+
+The upper pane behaves exactly like the full editor — same shortcuts, same
+syntax highlighting, same selection / clipboard / undo, same idle autosave,
+same diff bolding. The lower pane is fully passive: no cursor, no
+highlighting, dim grey text. Its header shows the current visible line and
+the snapshot's total line count, plus a reminder of the available keys.
+
+`Ctrl+H` and `Ctrl+J` are routed to the split pane **only while split is
+active**. When split is off they fall through to normal editor handling
+(tui-textarea's defaults), so they don't shadow anything in regular use.
+
+### 3.10 Find and replace (regex)
+
+In-buffer regex search with optional replacement. Matches are highlighted
+in **red** on top of the syntax coloring; the cursor's current match gets a
+brighter **LightRed + bold** style so it stands out among siblings.
+
+| Key                | Action                                                                |
+| ------------------ | --------------------------------------------------------------------- |
+| `Ctrl+F`           | Open the **Find** modal (magenta-bordered). Type a regex, Enter to run. Cursor jumps to the first match; all matches stay highlighted. Status bar reports `match 1 / N`. |
+| `Ctrl+G`           | **In search mode**: jump to the next match (wraps to start at end).   |
+| `Ctrl+R`           | **First press**: open the **Find & Replace** modal (search + replace fields, `Tab` switches between them). Enter applies the **first** replacement automatically and stays in replace mode. **Second press while in replace mode**: replace every remaining match and exit replace mode. |
+| `Ctrl+G`           | **In replace mode**: replace the current match, advance to the next. Status shows remaining count. When no more matches remain, search clears. |
+| `Esc` (in editor)  | Clear the active search (drops the highlights, exits replace mode).   |
+
+**Regex flavor:** full Rust [`regex`](https://docs.rs/regex) syntax. Use
+flags via `(?i)` (case-insensitive), `(?s)` (dot matches newlines), etc.
+
+**Per-line matching:** v1 searches line-by-line so cross-line patterns
+won't match. Most literary search/replace tasks (word substitution, name
+changes) are within-line anyway.
+
+**Layer order in the renderer:** syntax color → `[modified]` bold → match
+red bg → current-line highlight → selection REVERSED. Selection wins
+visually when a char is both selected and matched; matches win over the
+subtle current-line highlight.
+
+**Pre-fill:** opening `Ctrl+F` or `Ctrl+R` again after an active search
+pre-populates the modal inputs with the previous pattern (and replacement).
+Edit them and Enter to re-run.
+
 ### 3.5 Snapshots and file loading
 
 | Key  | Action                                                              |
 | ---- | ------------------------------------------------------------------- |
 | `F3` | Open the **file picker** dialog. Pick a file with Enter to replace the open paragraph's editor buffer (bold marks the change vs the saved version). Directories are rejected in this context. See §12 for navigation. |
+| `F4` | Toggle **split-edit** mode — see §3.9. |
 | `F5` | Save a versioned **snapshot** of the open paragraph's current body (stored as a bdslib document with `kind:"snapshot"` and a `parent_id` back-reference; doesn't appear in vector search). |
 | `F6` | Open the **snapshot picker** overlay listing every snapshot for the open paragraph, newest first. `↑↓` navigates, `Enter` loads the selected snapshot into the editor (marks dirty so the next save commits the rollback), `Esc` cancels. |
 
@@ -215,15 +305,19 @@ deleted when their parent is deleted, so they can act as a recovery hatch.
 Currently they're not surfaced from the CLI; that's an easy follow-up if you
 need scripted access.
 
-### 3.6 Autosave
+### 3.6 Autosave and background sync
 
-Three triggers, plus manual `Ctrl+S`:
+Three save triggers, plus manual `Ctrl+S`:
 
 - **Idle**: when the editor has unsaved edits and the user hasn't pressed a
   key for `editor.autosave_seconds` (default 5; set to 0 to disable).
 - **Paragraph switch**: opening another paragraph from the Tree pane
   autosaves the current one first.
 - **Quit**: `Ctrl+Q` and the `q` quit chords autosave before exiting.
+
+In addition, a background task calls `Store::sync()` every
+`sync_interval_seconds` (default 60). This flushes the HNSW vector index +
+DuckDB checkpoint without blocking the UI. Set to 0 to disable.
 
 Every save also resets the bold "added since last save" overlay (§3.7).
 
@@ -362,7 +456,7 @@ Routed to the AI prompt bar (§6) — the picker has no separate focus.
 
 ## 9. Add modal
 
-Triggered by `Ctrl+Shift+B/C/S/P`. Green-bordered floating box.
+Triggered by `Ctrl+B` followed by `B`/`C`/`S`/`P` (or by the Tree pane's plain-letter shortcuts, §2.2). Green-bordered floating box.
 
 ```
 ┌── Add chapter ──────────────────────────────────┐
@@ -391,7 +485,7 @@ display the error in the status line.
 
 ## 10. Delete confirm modal
 
-Triggered by `Ctrl+Shift+D`. Red-bordered floating box. Shows the kind,
+Triggered by `Ctrl+B` then `D` (or the Tree pane's `D`/`-` shortcuts). Red-bordered floating box. Shows the kind,
 title, and descendant count.
 
 ```
@@ -423,8 +517,9 @@ recognizes:
 - **single characters**: any printable ASCII character
 
 Modifiers are case-insensitive; named keys are case-insensitive; single-letter
-chars are normalized (Ctrl+Shift+P, Ctrl+Shift+p, and Ctrl+Shift+P with
-either `P` or `p` payload all match).
+chars are normalized (Ctrl+s, Ctrl+S, and Ctrl+Shift+S all parse and match
+the same way — useful because terminals vary in how they report case with
+modifiers).
 
 Defaults shipped in `assets/default_project.hjson`:
 
@@ -433,19 +528,24 @@ keys: {
   save:             Ctrl+s
   search:           Ctrl+/
   ai_prompt:        Ctrl+i
-  add_book:         Ctrl+Shift+b
-  add_chapter:      Ctrl+Shift+c
-  add_subchapter:   Ctrl+Shift+s
-  add_paragraph:    Ctrl+Shift+p
-  delete_node:      Ctrl+Shift+d
   next_pane:        Tab
   prev_pane:        Shift+Tab
   page_up:          PageUp
   page_down:        PageDown
-  move_up:          Ctrl+Shift+Up
-  move_down:        Ctrl+Shift+Down
+  meta_prefix:      Ctrl+b
 }
+
+editor: {
+  // ...
+  autosave_seconds: 5      // idle-trigger save in editor; 0 disables
+}
+
+// Background flush interval. 0 disables.
+sync_interval_seconds: 60
 ```
+
+The add/delete/reorder actions don't have direct chords any more — they
+fire through the `meta_prefix` followed by the action letter (§1.1).
 
 Non-configurable bindings (the editor's modern shortcut overrides, the
 AI-action `r/i/t/b/c` keys, the modal `y/n` confirmations, etc.) are
@@ -499,7 +599,7 @@ alphabetical. Hidden entries (names starting with `.`) are skipped.
 ## 13. When chords don't reach Inkhaven
 
 Some of the configured chords — especially `Ctrl+S`, `Ctrl+Q`, and the
-`Ctrl+Shift+*` family — can be eaten by your terminal emulator, your shell,
+`Ctrl+B` meta prefix — can be eaten by your terminal emulator, your shell,
 or a terminal multiplexer (tmux / screen) before they reach Inkhaven. This
 is not a bug in Inkhaven; it's a layer above us deciding the chord means
 something else.
@@ -510,15 +610,14 @@ Common interceptors:
 | ---------------------- | ------------------------------------------------------------------- |
 | `Ctrl+S`               | Terminal flow control (XOFF / freeze output). Run `stty -ixon` in your shell to disable. |
 | `Ctrl+Q`               | Terminal flow control (XON). Same `stty -ixon` fix.                |
-| `Ctrl+Shift+...`       | macOS Terminal.app / iTerm2 may remap these to window/tab shortcuts. Check Preferences → Keys. |
-| `Ctrl+B*`              | tmux default prefix. `Ctrl+Shift+B` may also be eaten depending on tmux config. |
-| `Ctrl+Shift+Up/Down`   | Some terminals don't transmit the Ctrl modifier with arrow keys. Try the symbol/letter alternatives (`A`, `+`, `D`, `-`) in the Tree pane. |
+| `Ctrl+B`               | **tmux default prefix.** If you run inkhaven inside tmux, either rebind tmux's prefix (`set -g prefix C-a`) or remap inkhaven's `meta_prefix` in `inkhaven.hjson` to something tmux doesn't eat (e.g. `Ctrl+g`). |
+| `Ctrl+Shift+Up/Down`   | Some terminals don't transmit the Ctrl modifier with arrow keys. Use the plain-letter shortcuts (`B`, `C`, `A`, `+`, `D`, `-`) in the Tree pane instead. |
 
 **Workarounds Inkhaven provides:**
 
 - The Tree pane has modifier-free `A` / `+` / `D` / `-` shortcuts (§2.2) for
   the most common add/delete operations.
-- For reorder, both `Ctrl+Shift+Up`/`Down` (TUI) and `inkhaven mv ... up`
+- For reorder, both `Ctrl+B ↑/↓` (TUI) and `inkhaven mv ... up`
   /`down` (CLI) exist; use the CLI in a second pane if the TUI chord is
   blocked.
 - Save is also reachable via the CLI: open the `.typ` in an external
@@ -544,6 +643,11 @@ GLOBAL          Ctrl+Q       quit (autosaves if dirty)
                 Ctrl+/       focus search
                 Ctrl+I       focus AI prompt
                 Ctrl+S       save current paragraph
+                Ctrl+B       meta prefix (table depends on focused pane):
+                  Tree:       B/C/S/P add · D delete · ↑/↓ reorder
+                  Editor:     S save · N snapshot · H history · L load · F split
+                  AI:         C clear inference
+                  Esc         cancel meta
 
 TREE            ↑↓ Home End  navigate
                 ←/→          collapse/expand branch (← steps to parent if not expanded)
@@ -555,9 +659,9 @@ TREE            ↑↓ Home End  navigate
                 C            append chapter         (V = insert after current)
                 A            append subchapter      (S = insert after current)
                 +            append paragraph       (P = insert after current)
-                D            delete branch          (or Ctrl+Shift+D)
-                -            delete paragraph       (or Ctrl+Shift+D)
-                C-S-Up/Down  reorder within siblings
+                D            delete branch          (or Ctrl+B then D)
+                -            delete paragraph       (or Ctrl+B then D)
+                Ctrl+B ↑/↓   reorder within siblings
                 q            quit (autosaves if dirty)
 
 EDITOR          arrows       move cursor
@@ -569,10 +673,15 @@ EDITOR          arrows       move cursor
                 Alt+arrows   extend rectangular block selection
                 Alt+C        copy rectangular block
                 Ctrl+S       save + re-embed
+                Ctrl+F       open find (regex)
+                Ctrl+G       next match (replace+next in replace mode)
+                Ctrl+R       open find&replace · replace all (in replace mode)
                 F3           load file → replaces buffer
+                F4 / Ctrl+F4 toggle split / accept snapshot
+                Ctrl+H/J     (split only) scroll lower pane up/down
                 F5           create snapshot
                 F6           open snapshot picker
-                Esc          defocus to tree
+                Esc          clear search (if active) · else defocus to tree
                 (idle autosave fires after editor.autosave_seconds)
                 (new text since last save is rendered bold)
 

@@ -49,6 +49,7 @@ After `inkhaven init <root>`:
 my-novel/
 ├── inkhaven.hjson      HJSON config: embedding model, LLM providers, keys, etc.
 ├── prompts.hjson       Prompt library for the AI (/ picker in the TUI).
+├── .session.json       TUI session state (cursor, opened paragraph, etc.) — auto-saved on quit
 ├── metadata.db         bdslib DuckDB store: hierarchy node metadata as JSON.
 ├── blobs.db            bdslib BLOB store: paragraph bodies.
 ├── frequency.db        bdslib auxiliary store.
@@ -177,19 +178,24 @@ A short cheat sheet:
 | Jump to specific pane             | `Ctrl+1`/`2`/`3`/`4`/`5`     |
 | Search                            | `Ctrl+/`                     |
 | AI prompt                         | `Ctrl+I`                     |
-| Add book (tree pane)              | `B`  (or `Ctrl+Shift+B`)     |
-| Add chapter (tree pane)           | `C`  (or `Ctrl+Shift+C`)     |
-| Add subchapter (tree pane)        | `A`  (or `Ctrl+Shift+S`)     |
-| Add paragraph (tree pane)         | `+`  (or `Ctrl+Shift+P`)     |
-| Delete branch (tree pane)         | `D`  (or `Ctrl+Shift+D`)     |
-| Delete paragraph (tree pane)      | `-`  (or `Ctrl+Shift+D`)     |
-| Reorder current node              | `Ctrl+Shift+Up`/`Down`       |
+| Add book (tree pane)              | `B`  (or `Ctrl+B` then `B`)  |
+| Add chapter (tree pane)           | `C`  (or `Ctrl+B` then `C`)  |
+| Add subchapter (tree pane)        | `A`  (or `Ctrl+B` then `S`)  |
+| Add paragraph (tree pane)         | `+`  (or `Ctrl+B` then `P`)  |
+| Delete branch (tree pane)         | `D`  (or `Ctrl+B` then `D`)  |
+| Delete paragraph (tree pane)      | `-`  (or `Ctrl+B` then `D`)  |
+| Reorder current node              | `Ctrl+B` then `↑`/`↓`        |
 | Vertical-block selection          | `Alt+arrows` then `Alt+C`    |
 
-If a `Ctrl+Shift+*` chord doesn't fire, it's almost certainly being
-intercepted by your terminal, shell (XOFF on `Ctrl+S` — fix with
-`stty -ixon`), or tmux. The modifier-free Tree-pane shortcuts (`A`, `+`,
-`D`, `-`) sidestep all of that.
+All add/delete/reorder operations go through a meta-prefix chord
+(`Ctrl+B` by default). Press `Ctrl+B`, then the action letter (`B`, `C`,
+`S`, `P`, `D`) or arrow. This replaces the old `Ctrl+Shift+*` chords that
+terminals and multiplexers were eating. The Tree-pane plain-letter
+shortcuts (`B`, `C`, `V`, `A`, `S`, `+`, `P`, `D`, `-`) still work
+directly without the meta prefix.
+
+If `Ctrl+B` itself is intercepted (tmux uses it as default prefix), set
+`meta_prefix` to something else in `inkhaven.hjson` (e.g. `Ctrl+g`).
 
 Full reference: **[KEYBINDING.md](KEYBINDING.md)** — covers every chord in
 every pane / overlay, plus the configurable bindings and §12 on terminal
@@ -240,17 +246,11 @@ keeps working when new fields are added.
     save:             Ctrl+s
     search:           Ctrl+/
     ai_prompt:        Ctrl+i
-    add_book:         Ctrl+Shift+b
-    add_chapter:      Ctrl+Shift+c
-    add_subchapter:   Ctrl+Shift+s
-    add_paragraph:    Ctrl+Shift+p
-    delete_node:      Ctrl+Shift+d
     next_pane:        Tab
     prev_pane:        Shift+Tab
     page_up:          PageUp
     page_down:        PageDown
-    move_up:          Ctrl+Shift+Up
-    move_down:        Ctrl+Shift+Down
+    meta_prefix:      Ctrl+b
   }
 
   prompts_file: prompts.hjson
