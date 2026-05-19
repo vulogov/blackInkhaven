@@ -1,0 +1,469 @@
+# Configuration
+
+Every Inkhaven project carries its own configuration file:
+`<project-root>/inkhaven.hjson`. It is written verbatim by `inkhaven init`
+from the template that ships with the binary (`assets/default_project.hjson`)
+and is hot-reloadable per-session — change a value and restart the TUI to
+see it pick up.
+
+Inkhaven uses [HJSON](https://hjson.github.io/), a strict-JSON superset that
+allows comments, unquoted keys, optional commas, and multiline strings.
+Examples in this document are real HJSON syntax that you can paste straight
+into your file.
+
+## Table of contents
+
+- [How the config is read](#how-the-config-is-read)
+- [Top-level fields](#top-level-fields)
+- [`embeddings`](#embeddings)
+- [`llm`](#llm)
+- [`editor`](#editor)
+- [`theme`](#theme)
+- [`hierarchy`](#hierarchy)
+- [`keys`](#keys)
+- [`backup`](#backup)
+- [`prompts_file` and `language`](#prompts_file-and-language)
+- [`sync_interval_seconds`](#sync_interval_seconds)
+- [Migration and forward compatibility](#migration-and-forward-compatibility)
+
+## How the config is read
+
+- The TUI loads `inkhaven.hjson` once on startup and clones the parsed
+  result so every subsystem (editor, AI client, theme renderer, backup
+  hook) reads it independently.
+- Every field is `#[serde(default)]`. Missing fields silently fall back to
+  the compiled-in default, so a config written by an older release keeps
+  working when new fields are added.
+- Unknown fields are ignored. A typo (`heigth: 24`) does not crash the
+  loader, but the value has no effect — check `KEYBINDING.md` and this
+  document for the canonical names.
+
+You can validate a config without launching the TUI:
+
+```bash
+inkhaven --project ~/Books/my-novel list >/dev/null
+```
+
+If the config is malformed the CLI prints an error like
+`inkhaven: config error: found a punctuator character when expecting a quoteless string` and exits.
+
+## Top-level fields
+
+```hjson
+{
+  language: english
+  prompts_file: prompts.hjson
+  sync_interval_seconds: 60
+
+  embeddings: { … }
+  llm: { … }
+  editor: { … }
+  theme: { … }
+  hierarchy: { … }
+  keys: { … }
+  backup: { … }
+}
+```
+
+## `embeddings`
+
+Controls how paragraph bodies are converted into vectors for semantic
+search. Inkhaven uses [fastembed](https://github.com/Anush008/fastembed-rs)
+under the hood.
+
+```hjson
+embeddings: {
+  model: MultilingualE5Small
+  chunk_size: 800
+  chunk_overlap: 0.15
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `model` | string | `MultilingualE5Small` | Which fastembed model to download / use. Pick a multilingual one (E5) if you write in any non-English language. |
+| `chunk_size` | int | `800` | Approximate characters per chunk fed to the embedder. Larger chunks → more context but coarser similarity. |
+| `chunk_overlap` | float | `0.15` | Overlap fraction between adjacent chunks. `0.15` = 15 % overlap, smoothing chunk boundaries. |
+
+Supported model names:
+
+- `MultilingualE5Small` (default) — 384-dim, ~120 MB, fast, good
+  multilingual recall including Russian
+- `MultilingualE5Base` — 768-dim, ~300 MB, higher quality
+- `MultilingualE5Large` — 1024-dim, ~1.1 GB, best multilingual quality
+- `BGEM3` — 1024-dim, multilingual, strong English performance
+- `BGESmallENV15`, `BGEBaseENV15`, `BGELargeENV15` — English-only,
+  smaller binaries
+
+Changing the model triggers a one-time download on next start (the
+existing index is rebuilt next time you save a paragraph). If you switch
+models you should run `inkhaven reindex` so the new embedder reprocesses
+your prose.
+
+## `llm`
+
+Lists AI providers and picks one as the default.
+
+```hjson
+llm: {
+  default: gemini
+  providers: {
+    gemini: {
+      model: gemini-2.5-pro
+      api_key_env: GEMINI_API_KEY
+    }
+    deepseek: {
+      model: deepseek-chat
+      api_key_env: DEEPSEEK_API_KEY
+    }
+    ollama: {
+      model: llama3.2
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `default` | string | `gemini` | Which entry in `providers` is used when no `--provider` flag is passed (CLI) and no override is hard-coded (TUI). |
+| `providers.<name>.model` | string | varies | Model identifier passed to [genai](https://github.com/jeremychone/rust-genai). genai picks the adapter (Gemini / OpenAI / Anthropic / Ollama / …) from this string. |
+| `providers.<name>.api_key_env` | string \| absent | varies | Environment variable that holds the API key. **Omit entirely** for local providers like Ollama. |
+
+If `api_key_env` is set and that env var is unset at runtime, Inkhaven
+refuses to spawn the inference with a clean status message — no crash,
+no half-formed request.
+
+To add an OpenAI provider:
+
+```hjson
+openai: {
+  model: gpt-4.1-mini
+  api_key_env: OPENAI_API_KEY
+}
+```
+
+To add an Anthropic provider:
+
+```hjson
+claude: {
+  model: claude-3-7-sonnet-latest
+  api_key_env: ANTHROPIC_API_KEY
+}
+```
+
+Switching the default is one edit: `default: claude` and you're done.
+
+## `editor`
+
+Controls the editor pane's behaviour. The visual look lives in
+[`theme`](#theme).
+
+```hjson
+editor: {
+  theme: default
+  tab_width: 2
+  wrap: true
+  autosave_seconds: 5
+  stemming: {
+    languages: [
+      "english"
+      "russian"
+    ]
+  }
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `theme` | string | `default` | Reserved; the visual theme is configured under top-level `theme`. |
+| `tab_width` | int | `2` | Currently informational — tui-textarea inserts a literal `\t`. |
+| `wrap` | bool | `true` | Soft word-wrap inside the editor. `false` → horizontal scroll on long lines. |
+| `autosave_seconds` | int | `5` | Seconds of editor inactivity after which a dirty paragraph is auto-saved. `0` disables idle autosave (Ctrl+S, paragraph-switch and quit-time autosaves still fire). Suspended while a grammar-correction highlight is active. |
+| `stemming.languages` | list of strings | `["english", "russian"]` | **Legacy** — superseded by top-level `language` when that is non-empty. See [`language`](#prompts_file-and-language). |
+
+The grammar-correction-highlight interaction: while you have an active
+`g`-apply diff visible, idle autosave is suspended so the red overlay
+doesn't disappear under you. Manual save (Ctrl+S) or leaving the editor
+pane (focus loss) explicitly clears the overlay and resumes the normal
+autosave cadence.
+
+## `theme`
+
+Every colour Inkhaven uses is configurable through this block. Values
+are RGB hex strings (`#RRGGBB`) or the short `#RGB` form. Empty string
+or an unparseable value falls back to the baked-in default.
+
+The shipping defaults are
+[Catppuccin Mocha](https://catppuccin.com/palette/) — a dark, balanced
+palette tested on plenty of terminals.
+
+```hjson
+theme: {
+  // Pane chrome
+  pane_bg:           "#1e1e2e"
+  pane_fg:           "#cdd6f4"
+  line_number_fg:    "#6c7086"
+  current_line_bg:   "#313244"
+
+  // Borders
+  border_focused:    "#cba6f7"
+  border_unfocused:  "#45475a"
+  border_dirty:      "#f9e2af"
+  border_saved:      "#a6e3a1"
+  border_readonly:   "#94e2d5"
+
+  // Floating windows
+  modal_bg:          "#181825"
+  modal_fg:          "#cdd6f4"
+  modal_border:      "#cba6f7"
+
+  // Lexicon overlay
+  places_fg:         "#89dceb"
+  characters_fg:     "#f9e2af"
+
+  // In-buffer search
+  search_match_bg:   "#f38ba8"
+  search_current_bg: "#f5c2e7"
+
+  // Tree pane chrome
+  tree_open_marker:  "#a6e3a1"
+  tree_book_fg:      "#f5c2e7"
+  tree_chapter_fg:   "#89b4fa"
+  tree_subchapter_fg:"#94e2d5"
+  tree_paragraph_fg: "#cdd6f4"
+
+  // Editor header
+  editor_position_fg:"#89dceb"
+
+  // AI header chips
+  ai_scope_fg:       "#fab387"
+  ai_infer_fg:       "#94e2d5"
+
+  // Grammar-check change overlay
+  grammar_change_fg: "#f38ba8"
+
+  // Typst syntax
+  syntax_heading:    "#cba6f7"
+  syntax_bold:       "#f9e2af"
+  syntax_italic:     "#94e2d5"
+  syntax_string:     "#a6e3a1"
+  syntax_number:     "#fab387"
+  syntax_comment:    "#6c7086"
+  syntax_keyword:    "#cba6f7"
+  syntax_function:   "#89dceb"
+  syntax_operator:   "#94e2d5"
+  syntax_list_marker:"#cba6f7"
+  syntax_raw:        "#fab387"
+  syntax_tag:        "#89b4fa"
+  syntax_quote:      "#9399b2"
+}
+```
+
+### Pane chrome
+
+| Field | What it paints |
+| ----- | -------------- |
+| `pane_bg` | The background fill of every pane (Tree, Editor, AI, Search, AI prompt). |
+| `pane_fg` | Default foreground inside panes. |
+| `line_number_fg` | The dim gutter to the left of editor text. |
+| `current_line_bg` | The horizontal stripe behind the cursor's line in the editor. |
+
+### Borders
+
+`border_focused` and `border_unfocused` apply to every non-editor pane.
+The editor swaps in `border_saved` (green), `border_dirty` (yellow), or
+`border_readonly` (teal) **only while focused** so the buffer state is
+glanceable.
+
+### Floating windows
+
+Every modal (Add / Delete / Rename / FindReplace / QuickRef /
+FilePicker / Help / PromptPicker / SnapshotPicker) shares `modal_bg`,
+`modal_fg`, and `modal_border`.
+
+### Lexicon overlay (Places / Characters)
+
+`places_fg` colours any token in the editor that matches a paragraph
+title in the **Places** system book; `characters_fg` does the same for
+**Characters**. Stemming is applied per the project `language`, so a
+Russian project's place "Москва" lights up "Москвы", "Москве", and so on
+automatically. See [`LOCATIONS.md`](LOCATIONS.md) and
+[`CHARACTERS.md`](CHARACTERS.md).
+
+### In-buffer search (Ctrl+F)
+
+`search_match_bg` paints every match; `search_current_bg` highlights the
+one the cursor is sitting on (Ctrl+X advances). Both apply on top of the
+syntax colour, so the underlying text stays readable.
+
+### Tree pane
+
+`tree_open_marker` is the colour of the ▸ glyph that flags the
+currently-loaded paragraph. The four per-kind colours
+(`tree_book_fg`, `tree_chapter_fg`, `tree_subchapter_fg`,
+`tree_paragraph_fg`) drive each row's title colour; books and chapters
+also get bold so the upper hierarchy has visual weight.
+
+### Editor header chip
+
+`editor_position_fg` colours the trailing `L… C…` cursor read-out in the
+Editor pane's title.
+
+### AI header chips
+
+`ai_scope_fg` is the F9 scope chip; `ai_infer_fg` is the F10 inference
+mode chip. The chips are always shown (`infer=…` is always visible so an
+accidentally-armed Local mode is obvious; `scope=…` appears only when
+non-None).
+
+### Grammar-check overlay
+
+`grammar_change_fg` colours every character that differs from the
+pre-correction baseline after a `g`-apply in the AI pane. Persists until
+save, paragraph switch, or `Ctrl+B C`.
+
+### Typst syntax
+
+The thirteen `syntax_*` fields drive the editor's tree-sitter-based Typst
+highlighter. Adjust them to match an external colour scheme you like.
+
+## `hierarchy`
+
+```hjson
+hierarchy: {
+  unbounded_subchapters: false
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `unbounded_subchapters` | bool | `false` | When `false` the hierarchy is exactly **Book → Chapter → Subchapter → Paragraph**. When `true`, subchapters may nest under subchapters arbitrarily — useful for legal documents, deeply structured manuals, etc. |
+
+## `keys`
+
+Several global chords are configurable. Everything else is hard-coded.
+
+```hjson
+keys: {
+  save:             Ctrl+s
+  search:           Ctrl+/
+  ai_prompt:        Ctrl+i
+  next_pane:        Tab
+  prev_pane:        Shift+Tab
+  page_up:          PageUp
+  page_down:        PageDown
+  meta_prefix:      Ctrl+b
+}
+```
+
+| Field | Default | What it does |
+| ----- | ------- | ------------ |
+| `save`        | `Ctrl+s`     | Save current paragraph. |
+| `search`      | `Ctrl+/`     | Focus the top Search bar. |
+| `ai_prompt`   | `Ctrl+i`     | Focus the bottom AI prompt bar. |
+| `next_pane`   | `Tab`        | Cycle focus Tree → Editor → AI. |
+| `prev_pane`   | `Shift+Tab`  | Cycle in reverse. |
+| `page_up`     | `PageUp`     | PageUp (used in Tree + Editor; configurable for users on terminals that re-encode it). |
+| `page_down`   | `PageDown`   | PageDown. |
+| `meta_prefix` | `Ctrl+b`     | The Meta prefix chord. The action table is pane-specific — see [`KEYBINDING.md`](KEYBINDING.md) §1.1. |
+
+If your terminal multiplexer eats `Ctrl+B` (tmux uses it as the default
+prefix), set `meta_prefix: Ctrl+g` or `Ctrl+;` or similar.
+
+Chord syntax accepts:
+
+- modifier prefixes: `Ctrl+`, `Shift+`, `Alt+`
+- bare key names: `Tab`, `Enter`, `Esc`, `PageUp`, `PageDown`, `Home`,
+  `End`, `Up`, `Down`, `Left`, `Right`, `Backspace`, `Delete`
+- function keys: `F1` … `F12`
+- printable characters: literal letter / digit / symbol
+
+Multiple modifiers stack (`Ctrl+Shift+m`).
+
+## `backup`
+
+Drives the `inkhaven backup` CLI and the TUI's auto-backup-on-exit hook.
+
+```hjson
+backup: {
+  out_dir: "backups"
+  max_age: "7d"
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `out_dir` | string | `"backups"` | Where `.zip` snapshots land. Relative paths resolve against the project root; absolute paths are used as-is. Created if missing. Empty string disables auto-backup. |
+| `max_age` | [humantime](https://docs.rs/humantime) duration | `"7d"` | Maximum age of the last successful backup before the TUI's exit hook creates a fresh one. Values like `"24h"`, `"12h"`, `"30m"`, `"1w"` all work. `"0s"` disables auto-backup but keeps the manual `inkhaven backup` command active. |
+
+When the on-exit hook fires you see a splash:
+
+```
+┌── Inkhaven · backup ──────────────────┐
+│  Performing database backup…          │
+│  Project: /home/you/Books/my-novel    │
+│  [████████····]  321/512 ( 63%)       │
+└───────────────────────────────────────┘
+```
+
+The store handle is dropped before the zip runs so DuckDB / HNSW have
+checkpointed to disk and the archive captures a consistent snapshot.
+
+See [`MAINTENANCE.md`](MAINTENANCE.md) for backup / restore commands.
+
+## `prompts_file` and `language`
+
+```hjson
+prompts_file: prompts.hjson
+language: english
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `prompts_file` | string | `"prompts.hjson"` | Path to the prompt library (resolved against the project root). See [`PROMPTS.md`](PROMPTS.md). |
+| `language` | string | `"english"` | Primary writing language. Drives Snowball stemmers for the Places / Characters highlight overlay AND the default F7 grammar-check prompt. Accepts: `arabic, danish, dutch, english, finnish, french, german, greek, hungarian, italian, norwegian, portuguese, romanian, russian, spanish, swedish, tamil, turkish`. Empty string falls back to `editor.stemming.languages`. |
+
+To write a Russian-language novel:
+
+```hjson
+language: russian
+```
+
+To write multilingual content where the stemmer should know about more
+than one language:
+
+```hjson
+language: ""
+editor: {
+  stemming: { languages: ["english", "russian"] }
+}
+```
+
+## `sync_interval_seconds`
+
+```hjson
+sync_interval_seconds: 60
+```
+
+| Type | Default | Description |
+| ---- | ------- | ----------- |
+| int | `60` | Seconds between background calls to `Store::sync()` — flushes the HNSW vector index and checkpoints DuckDB. `0` disables the background timer; saves still trigger sync explicitly. |
+
+You rarely need to touch this. The default is conservative.
+
+## Migration and forward compatibility
+
+- Every field is `#[serde(default)]`. Old configs work with new releases
+  out of the box.
+- When a field becomes obsolete it remains parseable (silently ignored)
+  so downgrading also doesn't break.
+- Inkhaven never edits your `inkhaven.hjson` in place. New fields are
+  exposed via the documented defaults; you opt in by adding them
+  yourself, copying from `assets/default_project.hjson` (or this file).
+- To reset the config to shipping defaults: rename the existing
+  `inkhaven.hjson`, run `inkhaven init --force` against the same
+  project, then re-merge any customisations.
+
+Full annotated template lives at
+[`assets/default_project.hjson`](../assets/default_project.hjson) — that
+is the same file `inkhaven init` writes verbatim.
