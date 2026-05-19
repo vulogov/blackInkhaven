@@ -331,6 +331,7 @@ pub fn build_visual_row_spans(
     added: AddedFlags,
     matches: &[RowHit],
     lex_hits: &[super::lexicon::LexHit],
+    correction: AddedFlags,
     theme: &super::theme::Theme,
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
@@ -374,6 +375,19 @@ pub fn build_visual_row_spans(
             if let Some(lex_style) = lex_style_at(lex_hits, src_col, theme) {
                 style = style.patch(lex_style);
             }
+            // Grammar-correction changes paint the foreground in the
+            // theme's grammar_change colour. Applied after lex so a
+            // newly-introduced character name in a correction still
+            // reads as a correction; before search match so an active
+            // search highlight still wins.
+            let is_corrected = correction
+                .and_then(|flags| flags.get(src_col).copied())
+                .unwrap_or(false);
+            if is_corrected {
+                style = style
+                    .fg(theme.grammar_change_fg)
+                    .add_modifier(Modifier::BOLD);
+            }
             if let Some(match_style) = match_style_at(matches, src_col, theme) {
                 style = style.patch(match_style);
             }
@@ -407,6 +421,7 @@ pub fn build_row_spans(
     added: AddedFlags,
     matches: &[RowHit],
     lex_hits: &[super::lexicon::LexHit],
+    correction: AddedFlags,
     theme: &super::theme::Theme,
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
@@ -463,6 +478,14 @@ pub fn build_row_spans(
             }
             if let Some(lex_style) = lex_style_at(lex_hits, src_col, theme) {
                 style = style.patch(lex_style);
+            }
+            let is_corrected = correction
+                .and_then(|flags| flags.get(src_col).copied())
+                .unwrap_or(false);
+            if is_corrected {
+                style = style
+                    .fg(theme.grammar_change_fg)
+                    .add_modifier(Modifier::BOLD);
             }
             if let Some(match_style) = match_style_at(matches, src_col, theme) {
                 style = style.patch(match_style);

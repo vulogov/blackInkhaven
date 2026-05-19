@@ -159,6 +159,12 @@
     // paragraph row.
     tree_open_marker:  "#a6e3a1"
 
+    // Foreground colour applied to characters that differ from the
+    // pre-grammar-check baseline after `T` in the AI pane overwrites the
+    // buffer with the model's corrected paragraph. Stays visible until
+    // save (implicit accept) or paragraph switch.
+    grammar_change_fg: "#f38ba8"
+
     // Typst syntax highlight palette. Drives the colours applied to
     // tree-sitter-typst's tagged regions in the editor buffer.
     syntax_heading:     "#cba6f7"

@@ -4,8 +4,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{
-    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent,
+    KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, MouseButton,
+    MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
     PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
@@ -177,7 +178,7 @@ pub fn run(project: &Path) -> Result<()> {
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     // Try to enable the kitty keyboard protocol. Without it, legacy
     // terminal encoding can't distinguish e.g. `Ctrl+1` from a bare `1`
     // (the TTY only has dedicated bytes for Ctrl+A..Z + a handful of
@@ -471,6 +472,12 @@ enum InferenceAction {
     Top,
     Bottom,
     CopyOnly,
+    /// Grammar-check-aware replace: lifts ONLY the corrected paragraph
+    /// from the response (between `<<<CORRECTED>>>` / `<<<END>>>` markers,
+    /// or fenced code, or a "Corrected …" heading) and overwrites the
+    /// editor buffer with it. No markdown→typst conversion runs — the
+    /// grammar prompt instructs the model to keep Typst markup verbatim.
+    ReplaceCorrected,
 }
 
 /// Scope of context an AI prompt sweeps in along with the user's query.
@@ -550,7 +557,92 @@ impl InferenceAction {
             InferenceAction::Top => "prepended to top",
             InferenceAction::Bottom => "appended to bottom",
             InferenceAction::CopyOnly => "copied",
+            InferenceAction::ReplaceCorrected => "replaced with corrected text",
         }
+    }
+}
+
+/// Extract only the corrected-paragraph text from a grammar-check
+/// response. Tries in order: marker block (preferred), last fenced code
+/// block, then everything after a "Corrected …" line. Returns `None` if
+/// none of those patterns match so callers can refuse rather than paste
+/// commentary by mistake.
+fn extract_corrected_text(response: &str) -> Option<String> {
+    if let Some(begin) = response.find(CORRECTED_BEGIN) {
+        let after = &response[begin + CORRECTED_BEGIN.len()..];
+        if let Some(end_offset) = after.find(CORRECTED_END) {
+            let inner = &after[..end_offset];
+            let cleaned = inner.trim_matches(|c: char| c == '\n' || c == '\r' || c == ' ');
+            if !cleaned.is_empty() {
+                return Some(cleaned.to_string());
+            }
+        }
+    }
+    if let Some(last_close) = response.rfind("```") {
+        let before = &response[..last_close];
+        if let Some(open) = before.rfind("```") {
+            let body = &response[open + 3..last_close];
+            let (first_nl, rest) = match body.find('\n') {
+                Some(i) => (&body[..i], &body[i + 1..]),
+                None => (body, ""),
+            };
+            // Drop a short alphanumeric language tag on the first line.
+            let cleaned = if !first_nl.is_empty()
+                && first_nl.len() < 16
+                && first_nl.chars().all(|c| c.is_ascii_alphanumeric())
+            {
+                rest.to_string()
+            } else {
+                body.to_string()
+            };
+            let trimmed = cleaned.trim_matches(|c: char| c == '\n' || c == '\r' || c == ' ');
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    let lower = response.to_ascii_lowercase();
+    if let Some(idx) = lower.rfind("corrected") {
+        if let Some(line_end) = response[idx..].find('\n') {
+            let after = response[idx + line_end + 1..]
+                .trim_matches(|c: char| c == '\n' || c == '\r' || c == ' ');
+            if !after.is_empty() {
+                return Some(after.to_string());
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod corrected_tests {
+    use super::*;
+
+    #[test]
+    fn marker_block_wins() {
+        let r = "Summary: 1 issue.\n\n<<<CORRECTED>>>\n= Heading\n\nThe rain in Spain.\n<<<END>>>\n";
+        let got = extract_corrected_text(r).unwrap();
+        assert_eq!(got, "= Heading\n\nThe rain in Spain.");
+    }
+
+    #[test]
+    fn falls_back_to_code_fence() {
+        let r = "Summary.\n\n```typst\n= Heading\n\nFixed body.\n```\n";
+        let got = extract_corrected_text(r).unwrap();
+        assert_eq!(got, "= Heading\n\nFixed body.");
+    }
+
+    #[test]
+    fn falls_back_to_corrected_heading() {
+        let r = "Summary line.\n- issue 1\n\nCorrected paragraph:\n= Heading\n\nFixed body.\n";
+        let got = extract_corrected_text(r).unwrap();
+        assert_eq!(got, "= Heading\n\nFixed body.");
+    }
+
+    #[test]
+    fn returns_none_on_empty_or_unmatched() {
+        assert!(extract_corrected_text("").is_none());
+        assert!(extract_corrected_text("Just commentary, no markers.").is_none());
     }
 }
 
@@ -722,6 +814,14 @@ struct App {
     /// once the stream finishes. None during one-shot (Help) inferences.
     pending_chat_user_msg: Option<String>,
 
+    /// RAG context block (e.g. a place/character lookup) that the next
+    /// AI-prompt submission should prepend to the user's typed query.
+    /// Used by the Ctrl+B P / Ctrl+B C editor flows when the AI prompt is
+    /// empty: the context is stashed, focus jumps to the AI prompt so the
+    /// user can type their question, and `start_inference` lifts the
+    /// prefix on Enter.
+    pending_rag_prefix: Option<String>,
+
     /// Active AI "scope" picker. Cycled with F9. When set to anything but
     /// `None`, the next AI-prompt submission prepends the matching context
     /// (selection text, paragraph body, subchapter / chapter / book
@@ -783,6 +883,13 @@ struct OpenedDoc {
     /// renders it normally (so the user can read it, scroll, search), but
     /// every mutating keystroke is intercepted with a status message.
     read_only: bool,
+    /// Pre-correction baseline captured when the AI pane's `T` (grammar-
+    /// check apply) overwrites the buffer with the model's corrected text.
+    /// Lines that differ from this baseline render in `theme.grammar_change_fg`
+    /// so the user can eyeball what changed. Cleared on the next save
+    /// (implicit "accept the corrections") or when the user opens a
+    /// different paragraph.
+    correction_baseline: Option<Vec<String>>,
 }
 
 struct SplitView {
@@ -867,6 +974,7 @@ impl App {
             paragraph_cursors: std::collections::HashMap::new(),
             chat_history: Vec::new(),
             pending_chat_user_msg: None,
+            pending_rag_prefix: None,
             ai_mode: AiMode::None,
             inference_mode: InferenceMode::Full,
         })
@@ -903,7 +1011,11 @@ impl App {
             return;
         }
         let due = match self.opened.as_ref() {
-            Some(doc) if doc.dirty => {
+            // Suspend idle autosave while a grammar-correction overlay is
+            // active so it doesn't disappear under the user's nose. The
+            // overlay is dismissed by Ctrl+S (manual save), focus-out, or
+            // Ctrl+B C — each of those resumes normal autosave.
+            Some(doc) if doc.dirty && doc.correction_baseline.is_none() => {
                 doc.last_activity.elapsed().as_secs() >= secs
             }
             _ => false,
@@ -1037,9 +1149,22 @@ impl App {
         }
         if self.keymap.meta_prefix.matches(&key) {
             self.meta_pending = true;
-            self.status =
-                "META · B/C/S/P add · D delete · ↑/↓ reorder · H help · Esc cancel"
-                    .into();
+            // The meta action table is pane-specific (see dispatch_meta_*),
+            // so the hint shown in the status bar should match the focused
+            // pane. Generic suffix (· H help · Esc cancel) is shared.
+            self.status = match self.focus {
+                Focus::Tree | Focus::SearchBar => {
+                    "META · B/C/S/P add · D delete · U/J ↑/↓ reorder · H help · Esc cancel"
+                        .into()
+                }
+                Focus::Editor => {
+                    "META · S save · N snapshot · R history · L load · F split · T retitle · P place · C character · H help · Esc cancel"
+                        .into()
+                }
+                Focus::Ai | Focus::AiPrompt => {
+                    "META · C clear chat · H help · Esc cancel".into()
+                }
+            };
             return Ok(false);
         }
 
@@ -1871,8 +1996,21 @@ impl App {
                     self.apply_inference(InferenceAction::Insert);
                     return Ok(false);
                 }
+                // `t` / `T` — prepend the AI response to the top of the
+                // paragraph (markdown→Typst conversion applied).
                 KeyCode::Char('t') | KeyCode::Char('T') => {
                     self.apply_inference(InferenceAction::Top);
+                    return Ok(false);
+                }
+                // `g` / `G` — grammar-check apply: lift only the
+                // corrected paragraph (between `<<<CORRECTED>>>` /
+                // `<<<END>>>` markers, or last fenced code, or after a
+                // "Corrected …" heading) and overwrite the buffer
+                // wholesale. No markdown→Typst conversion runs because
+                // the grammar prompt instructs the model to preserve
+                // Typst markup verbatim.
+                KeyCode::Char('g') | KeyCode::Char('G') => {
+                    self.apply_inference(InferenceAction::ReplaceCorrected);
                     return Ok(false);
                 }
                 KeyCode::Char('b') | KeyCode::Char('B') => {
@@ -2072,6 +2210,57 @@ impl App {
             self.status = "no paragraph open — apply needs a focused paragraph".into();
             return;
         };
+
+        // ReplaceCorrected has its own pipeline: pull just the corrected
+        // paragraph (no commentary), skip the markdown→typst conversion
+        // because the grammar prompt instructs the model to keep Typst
+        // markup verbatim, and overwrite the buffer wholesale. Before
+        // overwriting, snapshot the pre-correction buffer into
+        // `correction_baseline` so the renderer can highlight what
+        // changed in `theme.grammar_change_fg`. The highlight survives
+        // saves (autosave or manual) and is dismissed only by switching
+        // paragraphs or by Ctrl+B C — saving an accepted correction
+        // shouldn't yank the visual diff out from under the user.
+        if matches!(action, InferenceAction::ReplaceCorrected) {
+            let Some(corrected) = extract_corrected_text(&raw) else {
+                self.status =
+                    "couldn't find corrected text in the response \
+                     (expected `<<<CORRECTED>>>` block or fenced code)"
+                        .into();
+                return;
+            };
+            let baseline = doc.textarea.lines().to_vec();
+            // Build a fresh TextArea from the corrected text rather than
+            // shuffling cursor + selection inside the existing one — the
+            // cut/select dance was leaving stray characters in the buffer
+            // (the "In _The H" duplication seen in user reports).
+            let corrected_lines: Vec<String> = if corrected.is_empty() {
+                vec![String::new()]
+            } else {
+                corrected.split('\n').map(String::from).collect()
+            };
+            let mut new_ta = TextArea::new(corrected_lines);
+            new_ta.set_cursor_line_style(
+                Style::default().add_modifier(Modifier::REVERSED),
+            );
+            new_ta.set_line_number_style(
+                Style::default().fg(self.theme.line_number_fg),
+            );
+            doc.textarea = new_ta;
+            doc.correction_baseline = Some(baseline);
+            doc.dirty = true;
+            // Bump activity so idle autosave doesn't fire on the very
+            // next tick (which would otherwise lose the freshness of
+            // the diff before the user has had a chance to read it).
+            doc.last_activity = std::time::Instant::now();
+            self.status = format!(
+                "applied AI result ({}) — changes highlighted; Ctrl+B C dismisses",
+                action.label()
+            );
+            self.change_focus(Focus::Editor);
+            return;
+        }
+
         // Translate markdown to Typst for editor-bound applies; the AI tends
         // to respond in markdown (`# Heading`, `**bold**`) but our buffer is
         // Typst (`= Heading`, `*bold*`). Conversion is best-effort — anything
@@ -2110,7 +2299,7 @@ impl App {
                 doc.textarea.set_yank_text(format!("\n\n{text}"));
                 doc.textarea.paste();
             }
-            InferenceAction::CopyOnly => unreachable!(),
+            InferenceAction::CopyOnly | InferenceAction::ReplaceCorrected => unreachable!(),
         }
         doc.dirty = true;
         self.status = format!("applied AI result ({})", action.label());
@@ -2459,6 +2648,12 @@ impl App {
                 self.status = reason;
                 return;
             }
+        };
+        // Lift any pending Place/Character RAG prefix (set by Ctrl+B P / C
+        // when the AI prompt was empty). Consumes it — one-shot.
+        let prompt_text = match self.pending_rag_prefix.take() {
+            Some(rag) => format!("{rag}\n\n{prompt_text}"),
+            None => prompt_text,
         };
         let mode_used = self.ai_mode;
 
@@ -3178,6 +3373,26 @@ impl App {
                 self.toggle_split();
                 true
             }
+            // T: re-derive the paragraph's display title from its first
+            // sentence (same logic that fires on save for placeholder-
+            // named paragraphs, but explicit so the user can re-run it
+            // after editing the lead).
+            KeyCode::Char('T') | KeyCode::Char('t') => {
+                self.rename_paragraph_to_first_sentence();
+                true
+            }
+            // P: place-RAG inference. Sweeps the editor selection (or
+            // word under cursor) and queries the Places system book.
+            KeyCode::Char('P') | KeyCode::Char('p') => {
+                self.start_lexicon_inference(LexiconKind::Places);
+                true
+            }
+            // C: character-RAG inference. Same as P but against the
+            // Characters book.
+            KeyCode::Char('C') | KeyCode::Char('c') => {
+                self.start_lexicon_inference(LexiconKind::Characters);
+                true
+            }
             _ => false,
         }
     }
@@ -3358,6 +3573,12 @@ impl App {
         self.chat_history.clear();
         self.pending_chat_user_msg = None;
         self.inference = None;
+        // Also dismiss any active grammar-correction overlay — the AI
+        // result it derived from is being discarded, so keeping a
+        // baseline tied to a forgotten correction is confusing.
+        if let Some(doc) = self.opened.as_mut() {
+            doc.correction_baseline = None;
+        }
         self.status = if turns == 0 {
             "AI chat history already empty".into()
         } else {
@@ -3378,6 +3599,132 @@ impl App {
     /// streams the result into the AI pane. The AI pane is read-only by
     /// construction (no editor lives there), so the user can scroll the
     /// answer but can't edit it.
+    /// Editor meta `Ctrl+B T`: rerun the placeholder-title derivation on
+    /// the currently-open paragraph. Same logic that fires on save when
+    /// the title is still `PARAGRAPH_PLACEHOLDER_TITLE`, but exposed
+    /// explicitly so the user can refresh the tree-display name after
+    /// rewriting the lead. Bails out cleanly if no first sentence can be
+    /// extracted (paragraph is empty or only contains headings).
+    fn rename_paragraph_to_first_sentence(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "no paragraph open".into();
+            return;
+        };
+        let body = doc.textarea.lines().join("\n");
+        let Some(new_title) = extract_first_sentence(&body) else {
+            self.status =
+                "couldn't derive a title — paragraph is empty or only headings".into();
+            return;
+        };
+        let id = doc.id;
+        match self.store.rename_node(&self.hierarchy, id, &new_title) {
+            Ok(()) => {
+                if let Some(d) = self.opened.as_mut() {
+                    d.title = new_title.clone();
+                }
+                self.status = format!("renamed paragraph to `{new_title}`");
+                self.reload_hierarchy();
+            }
+            Err(e) => {
+                self.status = format!("rename failed: {e}");
+            }
+        }
+    }
+
+    /// Editor meta `Ctrl+B P` (Places) / `Ctrl+B C` (Characters). Treats
+    /// the editor's selection (or the word under the cursor) as a lookup
+    /// term, sweeps matching paragraphs in the named system book, builds
+    /// a RAG context block, and either fires the inference immediately
+    /// (if the AI prompt already has a query) or stashes the context as
+    /// `pending_rag_prefix` and refocuses the AI prompt for the user to
+    /// type a query (item 4 in the spec).
+    fn start_lexicon_inference(&mut self, kind: LexiconKind) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = format!("{} RAG needs an open paragraph", kind.label());
+            return;
+        };
+        let lookup = current_word_or_selection(doc);
+        if lookup.trim().is_empty() {
+            self.status = format!(
+                "{} RAG: select a name or place the cursor on one first",
+                kind.label()
+            );
+            return;
+        }
+
+        let Some(book_id) = self.system_book_id(kind.system_tag()) else {
+            self.status = format!(
+                "{} book is missing — re-open the project to seed it",
+                kind.label()
+            );
+            return;
+        };
+
+        // Case-insensitive substring match against paragraph titles. A
+        // selection of "Москва" finds both "Москва" and "Москва-Сити",
+        // which is usually the user's intent.
+        let needle = lookup.to_lowercase();
+        let mut chunks: Vec<String> = Vec::new();
+        for id in self.hierarchy.collect_subtree(book_id) {
+            if id == book_id {
+                continue;
+            }
+            let Some(node) = self.hierarchy.get(id) else {
+                continue;
+            };
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            if !node.title.to_lowercase().contains(&needle) {
+                continue;
+            }
+            let body = match self.store.get_content(node.id) {
+                Ok(Some(b)) => String::from_utf8_lossy(&b).to_string(),
+                _ => continue,
+            };
+            chunks.push(format!(
+                "── {}: {} ──\n{}\n── end {} ──",
+                kind.label(),
+                node.title,
+                body,
+                kind.label().to_lowercase()
+            ));
+        }
+        if chunks.is_empty() {
+            self.status = format!(
+                "{} RAG: no entry titled like `{lookup}` in the {} book",
+                kind.label(),
+                kind.label()
+            );
+            return;
+        }
+        let prefix = format!(
+            "── {} context for `{lookup}` ({} match(es)) ──\n\n{}",
+            kind.label(),
+            chunks.len(),
+            chunks.join("\n\n")
+        );
+
+        // Item 4: if the AI prompt is empty, arm the prefix and let the
+        // user type their question. Otherwise send immediately with the
+        // current prompt as the question.
+        let prompt_present = !self.ai_input.as_str().trim().is_empty();
+        if prompt_present {
+            self.pending_rag_prefix = Some(prefix);
+            self.start_inference();
+            // start_inference moves focus to AiPrompt; bounce to AI pane
+            // so the user can watch the streamed answer per spec.
+            self.change_focus(Focus::Ai);
+        } else {
+            self.pending_rag_prefix = Some(prefix);
+            self.change_focus(Focus::AiPrompt);
+            self.status = format!(
+                "{} RAG armed for `{lookup}` — type your question and Enter",
+                kind.label()
+            );
+        }
+    }
+
     /// Run a grammar check on the currently-open paragraph. Resolves a
     /// "Grammar check" prompt template by precedence:
     ///   1. Paragraph titled / slugged `grammar-check` (or `Grammar check`)
@@ -4652,6 +4999,7 @@ impl App {
             split: None,
             search: None,
             read_only,
+            correction_baseline: None,
         });
         self.change_focus(Focus::Editor);
         self.status = format!("opened {}", abs.display());
@@ -4712,7 +5060,11 @@ impl App {
         doc.dirty = false;
         // Refresh the saved-lines snapshot so the bold-new-additions overlay
         // resets, and stamp last_activity to "now" so idle autosave restarts.
+        // Save is the explicit "I've reviewed and accepted the
+        // corrections" signal — drop the highlight + resume normal
+        // autosave cadence.
         doc.saved_lines = doc.textarea.lines().to_vec();
+        doc.correction_baseline = None;
         doc.last_activity = std::time::Instant::now();
         let words = node.word_count;
         if title_was_placeholder && node.title != PARAGRAPH_PLACEHOLDER_TITLE {
@@ -5340,6 +5692,12 @@ impl App {
     /// underlying `save_current` writes to disk + bdslib + re-embeds.
     fn change_focus(&mut self, new: Focus) {
         if self.focus == Focus::Editor && new != Focus::Editor {
+            // Focus-out also counts as "I'm done reviewing the
+            // corrections" — drop the highlight so the next time the
+            // user comes back the paragraph reads clean.
+            if let Some(doc) = self.opened.as_mut() {
+                doc.correction_baseline = None;
+            }
             if self.opened.as_ref().is_some_and(|d| d.dirty) {
                 let _ = self.save_current();
             }
@@ -5644,6 +6002,21 @@ impl App {
             })
             .collect();
 
+        // Grammar-correction changes: same diff function against the
+        // pre-correction baseline (set by `T` apply). Empty when no
+        // correction is pending — the renderer then short-circuits.
+        let correction_per_row: Vec<Vec<bool>> = match opened.correction_baseline.as_ref() {
+            Some(base) => current_lines
+                .iter()
+                .enumerate()
+                .map(|(i, line)| match base.get(i) {
+                    Some(b) => diff_added(b, line),
+                    None => vec![true; line.chars().count()],
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+
         // Per-row regex hits for the match-highlight overlay.
         let matches_per_row: Vec<Vec<RowHit>> = (0..current_lines.len())
             .map(|row| match &opened.search {
@@ -5712,6 +6085,7 @@ impl App {
             }
 
             let added_flags = added_per_row.get(row).map(Vec::as_slice);
+            let correction_flags = correction_per_row.get(row).map(Vec::as_slice);
             let row_hits = matches_per_row
                 .get(row)
                 .map(Vec::as_slice)
@@ -5730,6 +6104,7 @@ impl App {
                 added_flags,
                 row_hits,
                 lex_hits,
+                correction_flags,
                 theme,
             );
             if is_current {
@@ -5789,6 +6164,18 @@ impl App {
                 }
             })
             .collect();
+
+        let correction_per_row: Vec<Vec<bool>> = match opened.correction_baseline.as_ref() {
+            Some(base) => current_lines
+                .iter()
+                .enumerate()
+                .map(|(i, line)| match base.get(i) {
+                    Some(b) => diff_added(b, line),
+                    None => vec![true; line.chars().count()],
+                })
+                .collect(),
+            None => Vec::new(),
+        };
 
         let matches_per_row: Vec<Vec<RowHit>> = (0..current_lines.len())
             .map(|row| match &opened.search {
@@ -5866,6 +6253,8 @@ impl App {
             }
 
             let added_flags = added_per_row.get(v.src_row).map(Vec::as_slice);
+            let correction_flags =
+                correction_per_row.get(v.src_row).map(Vec::as_slice);
             let row_hits = matches_per_row
                 .get(v.src_row)
                 .map(Vec::as_slice)
@@ -5875,7 +6264,14 @@ impl App {
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
             let mut text_spans = build_visual_row_spans(
-                v, selection, block, added_flags, row_hits, lex_hits, theme,
+                v,
+                selection,
+                block,
+                added_flags,
+                row_hits,
+                lex_hits,
+                correction_flags,
+                theme,
             );
             if is_current {
                 for s in &mut text_spans {
@@ -6003,7 +6399,9 @@ impl App {
                         Span::styled(" b ", reverse_chip(Color::Yellow)),
                         Span::raw("bottom  "),
                         Span::styled(" c ", reverse_chip(Color::Yellow)),
-                        Span::raw("copy"),
+                        Span::raw("copy  "),
+                        Span::styled(" g ", reverse_chip(Color::Green)),
+                        Span::raw("grammar"),
                     ]);
                     f.render_widget(Paragraph::new(hints), hints_rect);
                 }
@@ -6269,6 +6667,34 @@ fn truncate_title(title: &str, max_chars: usize) -> String {
 /// `.`, `!`, or `?` followed by whitespace or end-of-text. Truncates the
 /// result to fit `TITLE_MAX_DISPLAY` chars (with ellipsis if cut). Returns
 /// None if no usable text is found.
+/// Lift the lookup term for a Ctrl+B P / Ctrl+B C inference: the
+/// selection if any, otherwise the (Unicode) word under the cursor. The
+/// word boundaries respect Cyrillic / CJK punctuation via
+/// `unicode-segmentation`, so a selection of "Москва" works the same as
+/// dropping the cursor inside it. Trailing apostrophes / quotes are
+/// trimmed so "King's" doesn't pull in an extra quote.
+fn current_word_or_selection(doc: &OpenedDoc) -> String {
+    if let Some(((r1, c1), (r2, c2))) = doc.textarea.selection_range() {
+        return slice_lines(doc.textarea.lines(), r1, c1, r2, c2)
+            .trim()
+            .to_string();
+    }
+    let (row, col) = doc.textarea.cursor();
+    let lines = doc.textarea.lines();
+    let Some(line) = lines.get(row) else {
+        return String::new();
+    };
+    use unicode_segmentation::UnicodeSegmentation;
+    for (byte_off, w) in line.unicode_word_indices() {
+        let start_col = line[..byte_off].chars().count();
+        let end_col = start_col + w.chars().count();
+        if col >= start_col && col <= end_col {
+            return w.trim_matches(|c: char| c == '\'' || c == '"').to_string();
+        }
+    }
+    String::new()
+}
+
 fn extract_first_sentence(content: &str) -> Option<String> {
     let prose: String = content
         .lines()
@@ -6473,6 +6899,29 @@ fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) {
     }
 }
 
+/// Which system book a lexicon-RAG inference draws context from. Picked
+/// by the meta chord (P for Places, C for Characters) in the editor.
+#[derive(Debug, Clone, Copy)]
+enum LexiconKind {
+    Places,
+    Characters,
+}
+
+impl LexiconKind {
+    fn label(self) -> &'static str {
+        match self {
+            LexiconKind::Places => "Place",
+            LexiconKind::Characters => "Character",
+        }
+    }
+    fn system_tag(self) -> &'static str {
+        match self {
+            LexiconKind::Places => crate::store::SYSTEM_TAG_PLACES,
+            LexiconKind::Characters => crate::store::SYSTEM_TAG_CHARACTERS,
+        }
+    }
+}
+
 /// System prompt used by regular chat when InferenceMode is Local. The
 /// model is told to treat any "── … context ──" blocks the user prepends
 /// (via the AI scope cycle) as the sole admissible source and to refuse
@@ -6497,9 +6946,11 @@ general knowledge. Otherwise, answer freely using your general knowledge \
 of writing craft, world-building, and the relevant subject matter. Be \
 concise; favour short paragraphs and concrete suggestions.";
 
-/// Grammar-check system prompt. Bounds the model to a copy-editor role and
-/// reminds it that Typst markup (`= Heading`, `*bold*`, `_italic_`,
-/// `#link[...]`, raw blocks, etc.) must round-trip unchanged.
+/// Grammar-check system prompt. Bounds the model to a copy-editor role,
+/// keeps Typst markup intact, and emits the final corrected paragraph
+/// inside machine-parseable markers (`<<<CORRECTED>>>` / `<<<END>>>`) so
+/// the AI pane's `T` action can lift it out without dragging the
+/// summary / issue list along.
 const GRAMMAR_CHECK_SYSTEM_PROMPT: &str = "\
 You are a meticulous copy-editor reviewing a paragraph from a Typst-formatted \
 manuscript. Check for grammar, syntax, and punctuation issues only. \
@@ -6507,15 +6958,29 @@ Preserve every Typst markup token verbatim — `= Heading`, `== Subheading`, \
 `*bold*`, `_italic_`, `#link(\"…\")[…]`, raw / code blocks, and any other \
 Typst-specific syntax must round-trip unchanged. Do not rewrite for style, \
 do not change voice, do not propose structural edits unless the original \
-sentence is grammatically broken. \
-\
-Output format: \
+sentence is grammatically broken.
+
+Output format (follow exactly):
 1. Start with a short summary line (e.g. \"3 grammar issues, 1 punctuation \
-issue, otherwise clean\"). \
+issue, otherwise clean\").
 2. Then list each issue with the exact original phrase and a suggested \
-correction. \
-3. Finish with the fully corrected paragraph, ready to paste back into the \
-editor. The corrected text must keep every Typst markup token in place.";
+correction.
+3. Finally, emit the fully corrected paragraph between the literal markers \
+shown below — nothing else may appear inside the markers, and the markers \
+themselves must appear on their own lines:
+
+<<<CORRECTED>>>
+(the corrected paragraph, with every Typst markup token preserved)
+<<<END>>>
+
+Do not place commentary inside the markers. The editor pipeline will lift \
+the text between the markers and overwrite the paragraph buffer with it.";
+
+/// Markers the grammar-check system prompt instructs the model to wrap
+/// the corrected paragraph in. Kept as named constants so the parser and
+/// the prompt stay in sync.
+const CORRECTED_BEGIN: &str = "<<<CORRECTED>>>";
+const CORRECTED_END: &str = "<<<END>>>";
 
 /// Fallback prompt body for F7 grammar check when no user-defined
 /// `Grammar check` prompt exists in the Prompts book or `prompts.hjson`.
