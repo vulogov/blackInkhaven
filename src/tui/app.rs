@@ -5056,12 +5056,33 @@ impl App {
     }
 
     fn draw_ai(&self, f: &mut ratatui::Frame, area: Rect) {
+        // Title carries the inference state plus a `(N turns)` chip when a
+        // continuous chat is in progress, so the user always knows how much
+        // context is being replayed to the model on the next prompt.
+        let chat_turns = self.chat_history.len() / 2;
+        let chat_chip = if chat_turns > 0 {
+            format!(" · {chat_turns} turn(s)")
+        } else {
+            String::new()
+        };
         let title = match &self.inference {
-            None => String::from("AI"),
+            None => {
+                if chat_turns > 0 {
+                    format!("AI{chat_chip}")
+                } else {
+                    String::from("AI")
+                }
+            }
             Some(inf) => match &inf.status {
-                InferenceStatus::Streaming => format!("AI — {} · streaming…", inf.provider),
-                InferenceStatus::Done => format!("AI — {} · done", inf.provider),
-                InferenceStatus::Error(_) => format!("AI — {} · error", inf.provider),
+                InferenceStatus::Streaming => {
+                    format!("AI — {} · streaming…{chat_chip}", inf.provider)
+                }
+                InferenceStatus::Done => {
+                    format!("AI — {} · done{chat_chip}", inf.provider)
+                }
+                InferenceStatus::Error(_) => {
+                    format!("AI — {} · error{chat_chip}", inf.provider)
+                }
             },
         };
         let block = self.pane_block(&title, Focus::Ai);

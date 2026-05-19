@@ -33,7 +33,8 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+5`             | Focus the **AI prompt** bar (bottom).                       | no           |
 | `Ctrl+B`             | Enter **meta mode**. The next keystroke is the action selector (see §1.1). | `meta_prefix` |
 | `Ctrl+B H`           | Open the pane-aware **Quick reference** floating pane. Works from every pane (Tree / Editor / AI). Scroll with arrows / PgUp / PgDn; close with `Esc`. Routed through the meta prefix so it never collides with the editor's `Ctrl+H` split-scroll. | no |
-| `F1`                 | Open the **Help-manual** query pane (RAG over the Help book). Type a question, Enter to ask. The default LLM provider streams a grounded answer into the AI pane; the model is constrained to use only the Help excerpts (no external knowledge). Same flow as typing `Help! <question>` into the AI prompt bar. | no |
+| `F1`                 | Open the **Help-manual** query pane (RAG over the Help book). Type a question, Enter to ask. The default LLM provider streams a grounded answer into the AI pane; the model is constrained to use only the Help excerpts (no external knowledge). Same flow as typing `Help! <question>` into the AI prompt bar. Help answers are **one-shot** and do not enter the AI chat history. | no |
+| `F9`                 | **Clear AI chat history** + the currently displayed inference. Use this to start a fresh research conversation; previously sent turns are not replayed to the model after this. The meta-prefix form `Ctrl+B` then `C` is identical. | no |
 
 ### 1.1 Meta mode (Ctrl+B prefix)
 
@@ -390,12 +391,14 @@ Plus all global chords.
 
 ## 4. AI pane
 
-Focused automatically when an inference starts (Enter in the AI prompt bar).
-Shows provider, streaming status, accumulated tokens, and — once streaming
-completes — a one-line hint with the action keys.
+Focus lands here automatically only via the AI prompt's `Esc` bounce — when
+you submit a query the prompt bar **keeps** focus so follow-ups are one
+keystroke away. Pane title shows provider, streaming status, and a
+`· N turn(s)` chip whenever the chat history has accumulated content.
 
 | Key       | Condition                       | Action                                              |
 | --------- | ------------------------------- | --------------------------------------------------- |
+| `Esc`     | always                          | Bounce focus back to the **AI prompt** bar (mirror of the AI-prompt → AI Esc). |
 | `r` / `R` | inference done, doc open        | Replace editor selection (or entire doc if no selection) with the AI text. Marks dirty, refocuses Editor. |
 | `i` / `I` | inference done, doc open        | Insert AI text at cursor. Marks dirty.              |
 | `t` / `T` | inference done, doc open        | Prepend AI text to top of paragraph (with blank line separator). |
@@ -405,7 +408,17 @@ completes — a one-line hint with the action keys.
 
 Action keys fire only when `inference.status == Done` and the response is
 non-empty. While streaming or on error, single-character keys do nothing
-(except `q` to quit).
+(except `q` to quit and `Esc` to bounce).
+
+**Chat history.** Each non-Help inference appends a `(User, Assistant)` pair
+to the in-memory chat history; the next prompt replays the whole history to
+the model so the conversation is continuous. The title's `· N turn(s)` chip
+shows the current depth. Press `F9` (or `Ctrl+B` then `C`) at any time to
+clear both the history and the currently displayed inference.
+
+Help (`F1` / `Help! …`) inferences are deliberately **one-shot** — they use
+a strict RAG system prompt and are not added to the chat history, so a
+prior set of chat turns won't dilute their grounding.
 
 ---
 
@@ -448,13 +461,21 @@ action and the `/`-triggered Prompt picker overlay.
 | `↑`                  | (picker open) Move selection up.                            |
 | `↓`                  | (picker open) Move selection down.                          |
 | `Tab`                | (picker open) Expand selected prompt template into the buffer with `{{selection}}` / `{{context}}` substituted. |
-| `Enter`              | If picker open: same as Tab — expand selected template. Otherwise: spawn a streaming inference. The buffer is sent verbatim, except a leading `/name` is resolved against the prompt library and substituted first. |
-| `Esc`                | If picker open, close it; else defocus back to **Editor** if a paragraph is open, otherwise to Tree. |
+| `Enter`              | If picker open: same as Tab — expand selected template. Otherwise: spawn a streaming inference. Focus **stays** on the AI prompt bar (it does not jump to the AI pane). The buffer is sent verbatim, except: a leading `/name` is resolved against the prompt library, and a leading `Help!` (case-sensitive) routes the rest of the line through the F1 Help-RAG flow. |
+| `Esc`                | If picker open, close it; else bounce focus to the **AI pane** so you can read or scroll the answer. Pressing `Esc` again from the AI pane brings you straight back here. |
 
 Submitting a query when no API key is set in the environment surfaces a
 status-line error like `GEMINI_API_KEY not set in environment — `export
-GEMINI_API_KEY=...`` and does not spawn a request. Provider, model, and API
-key env var are all driven by the `llm` block in `inkhaven.hjson`.
+GEMINI_API_KEY=...`` and does not spawn a request. **Local providers** like
+Ollama omit `api_key_env` in their `llm.providers` block entirely; the
+check is skipped and genai routes to `http://localhost:11434/` from the
+model name. Provider, model, and API key env var are all driven by the
+`llm` block in `inkhaven.hjson`.
+
+**Continuous chat.** Each submitted query plus its assistant response is
+appended to the chat history and replayed back on the next prompt. The AI
+pane title shows the current `· N turn(s)`. Press `F9` (or `Ctrl+B` then
+`C`) to clear it.
 
 ---
 
