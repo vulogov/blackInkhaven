@@ -52,6 +52,17 @@ pub struct Node {
     #[serde(default)]
     pub word_count: u64,
     pub modified_at: chrono::DateTime<chrono::Utc>,
+    /// True for nodes the user is not allowed to delete or rename. Set by
+    /// `Store::ensure_system_books` and persisted via the metadata JSON. Old
+    /// projects (which don't have the field) round-trip as `false`.
+    #[serde(default)]
+    pub protected: bool,
+    /// Stable identifier for system-created books (e.g. `"places"`,
+    /// `"help"`). Lets callers find Places/Characters/Help by tag rather than
+    /// by display title, so the lexicon highlighting and read-only behaviour
+    /// survive a hypothetical future rename.
+    #[serde(default)]
+    pub system_tag: Option<String>,
 }
 
 impl Node {
@@ -66,6 +77,8 @@ impl Node {
             "file":        self.file,
             "word_count":  self.word_count,
             "modified_at": self.modified_at.to_rfc3339(),
+            "protected":   self.protected,
+            "system_tag":  self.system_tag,
         })
     }
 
@@ -134,6 +147,16 @@ impl Node {
             .map(|dt| dt.with_timezone(&chrono::Utc))
             .unwrap_or_else(chrono::Utc::now);
 
+        let protected = obj
+            .get("protected")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let system_tag = obj
+            .get("system_tag")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+
         Ok(Self {
             id,
             kind,
@@ -145,6 +168,8 @@ impl Node {
             file,
             word_count,
             modified_at,
+            protected,
+            system_tag,
         })
     }
 

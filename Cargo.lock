@@ -3758,6 +3758,7 @@ dependencies = [
  "genai",
  "ratatui",
  "regex",
+ "rust-stemmers",
  "serde 1.0.228",
  "serde-hjson 1.1.0",
  "serde_json",
@@ -3772,6 +3773,7 @@ dependencies = [
  "tree-sitter-highlight",
  "tree-sitter-typst",
  "tui-textarea",
+ "unicode-segmentation",
  "uuid 1.23.1",
  "walkdir",
 ]

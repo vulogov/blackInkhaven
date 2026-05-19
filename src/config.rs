@@ -114,6 +114,12 @@ pub struct EditorConfig {
     /// paragraph is automatically saved. 0 disables idle autosave (the
     /// quit-time and paragraph-switch autosaves still fire).
     pub autosave_seconds: u64,
+    /// Snowball stemmer languages used to expand the Places/Characters
+    /// highlight overlay so morphological variants light up too — e.g.
+    /// "Москва" also matches "Москве", "Москвою". Each entry is one of the
+    /// names accepted by `rust-stemmers::Algorithm` (lowercased), see
+    /// `parse_stemmer_language` for the supported set.
+    pub stemming: StemmingConfig,
 }
 
 impl Default for EditorConfig {
@@ -123,8 +129,54 @@ impl Default for EditorConfig {
             tab_width: 2,
             wrap: true,
             autosave_seconds: 5,
+            stemming: StemmingConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StemmingConfig {
+    /// Languages whose Snowball stemmer is used for the highlight overlay.
+    /// The default covers Vladimir's writing languages (English + Russian).
+    /// Empty disables stemming and falls back to exact-phrase matching.
+    pub languages: Vec<String>,
+}
+
+impl Default for StemmingConfig {
+    fn default() -> Self {
+        Self {
+            languages: vec!["english".into(), "russian".into()],
+        }
+    }
+}
+
+/// Map an HJSON-friendly language name onto a `rust_stemmers::Algorithm`.
+/// Unknown names return `None`; callers surface a config error to the user.
+pub fn parse_stemmer_language(name: &str) -> Option<rust_stemmers::Algorithm> {
+    use rust_stemmers::Algorithm;
+    let lower = name.trim().to_ascii_lowercase();
+    Some(match lower.as_str() {
+        "arabic" => Algorithm::Arabic,
+        "danish" => Algorithm::Danish,
+        "dutch" => Algorithm::Dutch,
+        "english" | "en" => Algorithm::English,
+        "finnish" => Algorithm::Finnish,
+        "french" => Algorithm::French,
+        "german" => Algorithm::German,
+        "greek" => Algorithm::Greek,
+        "hungarian" => Algorithm::Hungarian,
+        "italian" => Algorithm::Italian,
+        "norwegian" => Algorithm::Norwegian,
+        "portuguese" => Algorithm::Portuguese,
+        "romanian" => Algorithm::Romanian,
+        "russian" | "ru" => Algorithm::Russian,
+        "spanish" => Algorithm::Spanish,
+        "swedish" => Algorithm::Swedish,
+        "tamil" => Algorithm::Tamil,
+        "turkish" => Algorithm::Turkish,
+        _ => return None,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

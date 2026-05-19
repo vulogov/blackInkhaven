@@ -411,6 +411,11 @@ struct App {
 
     highlighter: TypstHighlighter,
 
+    /// Place/Character names recompiled into regexes for the editor highlight
+    /// overlay. Rebuilt after every save and at startup. None means an empty
+    /// lexicon — render path skips work.
+    lexicon: super::lexicon::Lexicon,
+
     inference: Option<Inference>,
     show_prompt_picker: bool,
     prompt_picker_cursor: usize,
@@ -461,6 +466,10 @@ struct OpenedDoc {
     /// Active find / replace session (Ctrl+F / Ctrl+R). While Some, matches
     /// are highlighted red and Ctrl+G advances or replaces.
     search: Option<SearchState>,
+    /// True when this paragraph lives inside the Help book. The editor still
+    /// renders it normally (so the user can read it, scroll, search), but
+    /// every mutating keystroke is intercepted with a status message.
+    read_only: bool,
 }
 
 struct SplitView {
@@ -472,6 +481,7 @@ impl App {
     fn new(layout: ProjectLayout, cfg: Config, store: Store) -> Result<Self> {
         let keymap = Keymap::from_config(&cfg).map_err(anyhow::Error::from)?;
         let hierarchy = Hierarchy::load(&store).map_err(anyhow::Error::from)?;
+        let lexicon = build_lexicon(&hierarchy);
         let collapsed_nodes: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
         let rows: Vec<(Uuid, usize)> = hierarchy
             .flatten_with_collapsed(&collapsed_nodes)
@@ -535,6 +545,7 @@ impl App {
             clipboard: arboard::Clipboard::new().ok(),
             highlighter: TypstHighlighter::new()
                 .map_err(|e| anyhow::anyhow!("typst highlighter init: {e}"))?,
+            lexicon,
             inference: None,
             show_prompt_picker: false,
             prompt_picker_cursor: 0,
@@ -924,6 +935,19 @@ impl App {
         // actually pauses. Done first so every branch below benefits.
         if let Some(doc) = self.opened.as_mut() {
             doc.last_activity = std::time::Instant::now();
+        }
+
+        // Read-only gate (Help subtree): allow navigation, search, copy, and
+        // focus-related chords; refuse anything that would touch the buffer
+        // or the store.
+        if self
+            .opened
+            .as_ref()
+            .is_some_and(|d| d.read_only)
+            && !is_read_only_safe_key(&key)
+        {
+            self.status = "Help is read-only".into();
+            return Ok(false);
         }
 
         // F5 creates a snapshot of the current paragraph; F6 opens the picker.
@@ -2833,6 +2857,10 @@ impl App {
         let Some(node) = self.hierarchy.get(id) else {
             return;
         };
+        if let Some(reason) = self.protected_block_reason(node) {
+            self.status = reason;
+            return;
+        }
         let mut input = TextInput::new();
         for c in node.title.chars() {
             input.insert_char(c);
@@ -2964,6 +2992,10 @@ impl App {
         let Some(node) = self.hierarchy.get(id) else {
             return;
         };
+        if let Some(reason) = self.protected_block_reason(node) {
+            self.status = reason;
+            return;
+        }
         let ids = self.hierarchy.collect_subtree(id);
         let descendant_count = ids.len().saturating_sub(1);
         self.modal = Modal::Deleting {
@@ -2973,6 +3005,30 @@ impl App {
             descendant_count,
             ids,
         };
+    }
+
+    /// Returns `Some(reason)` if the given node (or any ancestor) is a
+    /// system-protected node — used to block destructive operations from
+    /// the UI and surface a status message to the user. `None` means the
+    /// node is fully mutable.
+    fn protected_block_reason(&self, node: &Node) -> Option<String> {
+        if node.protected {
+            return Some(format!(
+                "“{}” is a system book — it can't be deleted or renamed",
+                node.title
+            ));
+        }
+        // Walk ancestors so a paragraph inside Help is also blocked.
+        for anc in self.hierarchy.ancestors(node) {
+            if anc.protected && anc.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_HELP)
+            {
+                return Some(format!(
+                    "“{}” lives inside the read-only Help book",
+                    node.title
+                ));
+            }
+        }
+        None
     }
 
     fn handle_modal_key(&mut self, key: KeyEvent) -> Result<bool> {
@@ -3408,6 +3464,10 @@ impl App {
         textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
         textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
 
+        let read_only = self.hierarchy.ancestors(node).iter().any(|a| {
+            a.protected && a.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_HELP)
+        });
+
         self.opened = Some(OpenedDoc {
             id: node.id,
             title: node.title.clone(),
@@ -3421,6 +3481,7 @@ impl App {
             saved_lines,
             split: None,
             search: None,
+            read_only,
         });
         self.change_focus(Focus::Editor);
         self.status = format!("opened {}", abs.display());
@@ -3431,6 +3492,15 @@ impl App {
         let Some(doc) = self.opened.as_mut() else {
             return Ok(());
         };
+        if doc.read_only {
+            // Quietly clear the dirty bit so the autosave loop doesn't keep
+            // retrying. Nothing got mutated anyway — the editor's key handler
+            // blocks every write — but a stray block_anchor or focus blur
+            // could still flip dirty=true on a corner case.
+            doc.dirty = false;
+            self.status = "Help is read-only — nothing to save".into();
+            return Ok(());
+        }
         let body = doc.textarea.lines().join("\n");
         let abs = self.layout.root.join(&doc.rel_path);
 
@@ -3513,6 +3583,11 @@ impl App {
                 if !self.rows.is_empty() {
                     self.tree_cursor = self.tree_cursor.min(self.rows.len() - 1);
                 }
+                // Lexicon depends on Places/Characters paragraph titles, so
+                // any hierarchy change is potentially a lexicon change. The
+                // recompute is cheap (a few regex compiles) at literary
+                // scale.
+                self.lexicon = build_lexicon(&self.hierarchy);
             }
             Err(e) => {
                 self.status = format!("hierarchy reload failed: {e}");
@@ -4157,9 +4232,17 @@ impl App {
             Some(d) => {
                 let (row, col) = d.textarea.cursor();
                 let dirty = if d.dirty { " [modified]" } else { "" };
+                let ro = if d.read_only { " [read-only]" } else { "" };
                 // Line/column are 1-indexed in the title for human readers,
                 // even though the internal representation is 0-indexed.
-                format!("Editor — {}{} · L{} C{}", d.title, dirty, row + 1, col + 1)
+                format!(
+                    "Editor — {}{}{} · L{} C{}",
+                    d.title,
+                    ro,
+                    dirty,
+                    row + 1,
+                    col + 1
+                )
             }
             None => String::from("Editor"),
         };
@@ -4278,6 +4361,7 @@ impl App {
 
     fn draw_editor_unwrapped(&mut self, f: &mut ratatui::Frame, inner: Rect) {
         let block = self.current_block();
+        let lexicon = &self.lexicon;
         let opened = self.opened.as_mut().expect("opened checked above");
         let highlighter = &mut self.highlighter;
         let current_lines: Vec<String> = opened.textarea.lines().to_vec();
@@ -4312,6 +4396,18 @@ impl App {
                     })
                     .collect(),
                 None => Vec::new(),
+            })
+            .collect();
+
+        // Per-row Place/Character matches.
+        let lex_per_row: Vec<Vec<super::lexicon::LexHit>> = current_lines
+            .iter()
+            .map(|line| {
+                if lexicon.is_empty() {
+                    Vec::new()
+                } else {
+                    lexicon.row_hits(line)
+                }
             })
             .collect();
 
@@ -4360,6 +4456,10 @@ impl App {
                 .get(row)
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
+            let lex_hits = lex_per_row
+                .get(row)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             let mut text_spans = build_row_spans(
                 &highlighted[row],
                 row,
@@ -4369,6 +4469,7 @@ impl App {
                 block,
                 added_flags,
                 row_hits,
+                lex_hits,
             );
             if is_current {
                 for s in &mut text_spans {
@@ -4407,6 +4508,7 @@ impl App {
 
     fn draw_editor_wrapped(&mut self, f: &mut ratatui::Frame, inner: Rect) {
         let block = self.current_block();
+        let lexicon = &self.lexicon;
         let opened = self.opened.as_mut().expect("opened checked above");
         let highlighter = &mut self.highlighter;
         let current_lines: Vec<String> = opened.textarea.lines().to_vec();
@@ -4437,6 +4539,17 @@ impl App {
                     })
                     .collect(),
                 None => Vec::new(),
+            })
+            .collect();
+
+        let lex_per_row: Vec<Vec<super::lexicon::LexHit>> = current_lines
+            .iter()
+            .map(|line| {
+                if lexicon.is_empty() {
+                    Vec::new()
+                } else {
+                    lexicon.row_hits(line)
+                }
             })
             .collect();
 
@@ -4495,8 +4608,12 @@ impl App {
                 .get(v.src_row)
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
+            let lex_hits = lex_per_row
+                .get(v.src_row)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             let mut text_spans =
-                build_visual_row_spans(v, selection, block, added_flags, row_hits);
+                build_visual_row_spans(v, selection, block, added_flags, row_hits, lex_hits);
             if is_current {
                 for s in &mut text_spans {
                     if s.style.bg.is_none() {
@@ -4961,6 +5078,22 @@ fn truncate_to_chars(s: &str, max: usize) -> String {
     }
 }
 
+/// Locate the Places and Characters system books in the loaded hierarchy
+/// and compile a fresh `Lexicon` from their nested paragraph titles. Called
+/// at startup and after every successful save.
+fn build_lexicon(hierarchy: &Hierarchy) -> super::lexicon::Lexicon {
+    let mut places = None;
+    let mut characters = None;
+    for node in hierarchy.iter() {
+        match node.system_tag.as_deref() {
+            Some(crate::store::SYSTEM_TAG_PLACES) => places = Some(node.id),
+            Some(crate::store::SYSTEM_TAG_CHARACTERS) => characters = Some(node.id),
+            _ => {}
+        }
+    }
+    super::lexicon::Lexicon::build(hierarchy, places, characters)
+}
+
 fn digit_count(n: usize) -> usize {
     let mut x = n.max(1);
     let mut d = 0;
@@ -4969,6 +5102,58 @@ fn digit_count(n: usize) -> usize {
         x /= 10;
     }
     d
+}
+
+/// Allowlist of keystrokes that are non-mutating in the editor pane. Used to
+/// gate the editor when an open paragraph lives inside the read-only Help
+/// subtree. Anything not listed here is rejected with a status message.
+fn is_read_only_safe_key(key: &KeyEvent) -> bool {
+    use KeyCode::*;
+    // Pure navigation / scrolling / selection — always safe.
+    if matches!(
+        key.code,
+        Left | Right | Up | Down | Home | End | PageUp | PageDown | Esc | Tab | BackTab,
+    ) {
+        return true;
+    }
+    // F-keys: F3/F4/F6 are viewers (file picker, split toggle, snapshot
+    // picker) — picking a file or snapshot WOULD mutate, but we gate the
+    // actual replace in those flows. F5 (new snapshot) and Ctrl+F4 (accept
+    // snapshot) mutate, so they're blocked here.
+    if matches!(key.code, F(1) | F(3) | F(4) | F(6)) {
+        // F4 with Ctrl is "accept snapshot" → block.
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        return !(matches!(key.code, F(4)) && ctrl);
+    }
+    // Alt+arrows and Alt+C are block-selection / block-copy — safe.
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        if matches!(key.code, Left | Right | Up | Down) {
+            return true;
+        }
+        if matches!(key.code, Char('c') | Char('C')) {
+            return true;
+        }
+        return false;
+    }
+    // Ctrl combos: an explicit allowlist of read-safe operations.
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return matches!(
+            key.code,
+            Char('a') | Char('A')                // select all
+            | Char('c') | Char('C')              // copy
+            | Char('f') | Char('F')              // find
+            | Char('x') | Char('X')              // repeat (next match)
+            | Char('s') | Char('S')              // save (no-op + status)
+            | Char('h') | Char('H')              // split-scroll up (only effective in split)
+            | Char('j') | Char('J')              // split-scroll down
+            | Char('q') | Char('Q')              // quit
+            | Char('b') | Char('B')              // meta prefix
+            | Char('t') | Char('T')              // focus Tree alias
+            | Char('1') | Char('2') | Char('3') | Char('4') | Char('5') // focus jumps
+            | Char('@') | Char('/')              // Ctrl+2 alternates / search focus
+        );
+    }
+    false
 }
 
 fn reverse_chip(fg: Color) -> Style {

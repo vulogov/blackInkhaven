@@ -55,6 +55,11 @@ arboard = "3"
 slug = "0.1"
 walkdir = "2"
 regex = "1"
+# Snowball stemmers (English, Russian, and 17 other languages). Used by the
+# editor's Place/Character highlight overlay so a paragraph named
+# "Москва" lights up "Москве", "Москвою", etc.
+rust-stemmers = "1.2"
+unicode-segmentation = "1"
 
 [dev-dependencies]
 tempfile = "3"
