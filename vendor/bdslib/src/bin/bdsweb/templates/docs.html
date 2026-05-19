@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Documents · bdsnode{% endblock %}
+{% block nav_docs %}active{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-xl font-semibold text-slate-200">Document Search</h1>
+  <span class="text-xs text-slate-500">Semantic vector search over the document store</span>
+</div>
+
+<div class="card rounded-lg p-5 mb-6">
+  <form hx-get="/docs/results"
+        hx-target="#results"
+        hx-swap="innerHTML"
+        hx-indicator="#spinner"
+        class="flex flex-wrap gap-3 items-end">
+    <div class="flex-1 min-w-64">
+      <label class="block text-xs text-slate-500 mb-1">Semantic Query</label>
+      <input type="text" name="q" value="{{ q }}"
+             placeholder="e.g. circuit breaker payment service runbook…"
+             class="w-full rounded px-3 py-2 text-sm"
+             hx-get="/docs/results"
+             hx-trigger="input changed delay:500ms"
+             hx-target="#results"
+             hx-include="closest form" />
+    </div>
+    <div class="w-24">
+      <label class="block text-xs text-slate-500 mb-1">Limit</label>
+      <select name="limit" class="w-full rounded px-3 py-2 text-sm">
+        <option value="5"  {% if limit == 5  %}selected{% endif %}>5</option>
+        <option value="10" {% if limit == 10 %}selected{% endif %}>10</option>
+        <option value="20" {% if limit == 20 %}selected{% endif %}>20</option>
+        <option value="50" {% if limit == 50 %}selected{% endif %}>50</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Search</button>
+    <span id="spinner" class="htmx-indicator text-blue-400 text-sm self-center">Searching…</span>
+  </form>
+</div>
+
+<div id="results">
+  {% if q.is_empty() %}
+  <div class="text-center py-16 text-slate-600 text-sm">Enter a query to search stored documents, runbooks, and tickets.</div>
+  {% else %}
+  <div class="text-center py-8 text-slate-500 text-sm"
+       hx-get="/docs/results?q={{ q }}&limit={{ limit }}"
+       hx-trigger="load"
+       hx-target="#results"
+       hx-swap="innerHTML">Loading…</div>
+  {% endif %}
+</div>
+{% endblock %}

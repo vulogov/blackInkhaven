@@ -1,0 +1,111 @@
+// 10_full_program.bund
+// A larger example combining functions, lists, loops, conditionals,
+// string operations, and the workbench to build a small statistics tool.
+//
+// Given a list of numeric measurements, this program computes:
+//   - count, sum, mean
+//   - min, max
+//   - a text classification (low / medium / high) based on the mean
+
+// ── HELPER FUNCTIONS ──────────────────────────────────────────────────────────
+
+// sum_list: recursively sum a list of numbers
+:sum_list {
+    dup len 0 ==
+    { drop 0 }
+    { dup car swap cdr sum_list + }
+    ifthenelse
+} register
+
+// max_list: maximum value in a list
+:max_list {
+    dup len 1 ==
+    { car }
+    { dup car swap cdr max_list
+      // stack: first_max rest_max
+      dup . swap          // workbench = rest_max; stack: first_max
+      >                   // first_max > rest_max ?
+      { . }               // yes: restore workbench (rest_max is smaller, first_max on stack)
+      { +. }              // no: workbench is larger, bring it back
+      ifthenelse
+    }
+    ifthenelse
+} register
+
+// min_list: minimum value in a list
+:min_list {
+    dup len 1 ==
+    { car }
+    { dup car swap cdr min_list
+      dup . swap
+      <
+      { . }
+      { +. }
+      ifthenelse
+    }
+    ifthenelse
+} register
+
+// classify: pop a float, push a category string
+:classify {
+    dup 33.0 <
+    { drop "low" }
+    { dup 66.0 <
+      { drop "medium" }
+      { drop "high"   }
+      ifthenelse
+    }
+    ifthenelse
+} register
+
+// print_stat: pop value, print label (from workbench), then value
+:print_stat {
+    convert.to_string
+    print.              // print the label (from workbench)
+    println             // print the value
+} register
+
+// ── MAIN PROGRAM ──────────────────────────────────────────────────────────────
+
+// Our dataset
+[ 12.5 45.0 78.3 23.1 65.4 90.2 34.8 55.6 ]
+
+// Count
+dup len .               // workbench = count
+"Count : " .            // save label
+dup len print_stat
+
+// Sum
+dup sum_list .          // workbench = sum
+"Sum   : " .
+dup sum_list print_stat
+
+// Mean  (sum / count)
+dup len convert.to_float .  // workbench = count as float
+dup sum_list
+/                            // sum / count
+.                            // workbench = mean
+"Mean  : " .
++. print_stat
+
+// Min
+dup min_list .
+"Min   : " .
++. print_stat
+
+// Max
+dup max_list .
+"Max   : " .
++. print_list
+
+// Classification based on mean
+dup sum_list
+dup len convert.to_float
+/           // recompute mean
+classify .  // workbench = classification string
+"Class : " .
++. println  // print label + classification
+
+// Done
+drop        // discard the original list
+"Analysis complete." println

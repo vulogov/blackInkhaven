@@ -1,0 +1,27 @@
+{% if has_context_note %}
+<div class="chat-msg">
+  <div class="bubble-context">
+    <svg xmlns="http://www.w3.org/2000/svg" class="inline h-3 w-3 mr-1 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="vertical-align:-1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    {{ context_note }}
+  </div>
+</div>
+{% endif %}
+
+{% if !user_query.is_empty() %}
+<div class="chat-msg">
+  <div class="bubble-label label-user">You</div>
+  <div class="bubble-user">{{ user_query }}</div>
+</div>
+{% endif %}
+
+{% if has_error %}
+<div class="chat-msg">
+  <div class="bubble-label label-assistant">Error</div>
+  <div class="bubble-error">{{ error_msg }}</div>
+</div>
+{% else if !response.is_empty() %}
+<div class="chat-msg">
+  <div class="bubble-label label-assistant">Assistant</div>
+  <div class="bubble-assistant">{{ response }}</div>
+</div>
+{% endif %}

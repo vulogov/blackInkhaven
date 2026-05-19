@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Denoise primaries · bdsnode{% endblock %}
+{% block nav_denoise_recent %}active{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="text-xl font-semibold text-slate-200">Denoise primaries</h1>
+    <p class="text-xs text-slate-500 mt-0.5">N-gram noise removal — separate signal from heartbeat-style repetition</p>
+  </div>
+  <span class="text-xs text-slate-600 font-mono">v2/denoise.recent</span>
+</div>
+
+<!-- Form -->
+<div class="card rounded-lg p-5 mb-4">
+  <form id="denoise-form"
+        hx-get="/denoise_recent/results"
+        hx-target="#denoise-result"
+        hx-swap="innerHTML"
+        hx-indicator="#spinner"
+        class="flex flex-wrap gap-3 items-end">
+
+    <div class="w-32">
+      <label class="block text-xs text-slate-500 mb-1">Duration</label>
+      <select name="duration" class="w-full rounded px-3 py-2 text-sm">
+        <option value="15min" {% if duration == "15min" %}selected{% endif %}>15 min</option>
+        <option value="30min" {% if duration == "30min" %}selected{% endif %}>30 min</option>
+        <option value="1h"    {% if duration == "1h"    %}selected{% endif %}>1 h</option>
+        <option value="2h"    {% if duration == "2h"    %}selected{% endif %}>2 h</option>
+        <option value="4h"    {% if duration == "4h"    %}selected{% endif %}>4 h</option>
+        <option value="6h"    {% if duration == "6h"    %}selected{% endif %}>6 h</option>
+        <option value="12h"   {% if duration == "12h"   %}selected{% endif %}>12 h</option>
+        <option value="24h"   {% if duration == "24h"   %}selected{% endif %}>24 h</option>
+        <option value="7days" {% if duration == "7days" %}selected{% endif %}>7 days</option>
+      </select>
+    </div>
+
+    <div class="w-28">
+      <label class="block text-xs text-slate-500 mb-1">N-gram</label>
+      <select name="n" class="w-full rounded px-3 py-2 text-sm">
+        <option value="1" {% if n == 1 %}selected{% endif %}>1 (unigram)</option>
+        <option value="2" {% if n == 2 %}selected{% endif %}>2 (bigram)</option>
+        <option value="3" {% if n == 3 %}selected{% endif %}>3 (trigram)</option>
+      </select>
+    </div>
+
+    <div class="w-32">
+      <label class="block text-xs text-slate-500 mb-1">Min word len</label>
+      <select name="min_word_len" class="w-full rounded px-3 py-2 text-sm">
+        <option value="2" {% if min_word_len == 2 %}selected{% endif %}>2</option>
+        <option value="3" {% if min_word_len == 3 %}selected{% endif %}>3</option>
+        <option value="4" {% if min_word_len == 4 %}selected{% endif %}>4</option>
+      </select>
+    </div>
+
+    <div class="w-36">
+      <label class="block text-xs text-slate-500 mb-1">Threshold</label>
+      <input type="number" name="noise_threshold" step="0.05" min="0" max="1"
+             value="{{ noise_threshold }}"
+             class="w-full rounded px-3 py-2 text-sm font-mono">
+    </div>
+
+    <div class="w-24">
+      <label class="block text-xs text-slate-500 mb-1">Max kept</label>
+      <input type="number" name="max_kept" min="1" value="{{ max_kept }}"
+             class="w-full rounded px-3 py-2 text-sm font-mono">
+    </div>
+
+    <div class="w-28">
+      <label class="block text-xs text-slate-500 mb-1">Max removed</label>
+      <input type="number" name="max_removed" min="1" value="{{ max_removed }}"
+             class="w-full rounded px-3 py-2 text-sm font-mono">
+    </div>
+
+    <button type="submit" class="btn btn-primary">Denoise</button>
+    <span id="spinner" class="htmx-indicator text-blue-400 text-sm self-center">Analysing…</span>
+  </form>
+</div>
+
+<!-- Explainer -->
+<div class="card rounded-lg px-4 py-3 mb-6 text-xs text-slate-500 leading-relaxed">
+  <span class="text-slate-400 font-medium">How it works:</span>
+  Every primary record in the chosen window is fingerprinted (key +
+  <code class="text-slate-400">json_fingerprint(data)</code>), and the
+  resulting strings are scored by mean n-gram <span class="text-slate-300">commonness</span>
+  — lines built from phrases that recur across the rest of the corpus.
+  Anything scoring at or above the threshold is classified as
+  <span class="text-red-300">noise</span> and shown in the lower table; the
+  rest is <span class="text-green-300">kept</span> as signal in the upper
+  table. Default threshold <code>0.85</code> is intentionally strict — for
+  most operational streams a value in the <code>0.3–0.6</code> range will
+  surface meaningful denoising.
+</div>
+
+<!-- Result area -->
+<div id="denoise-result"
+     hx-get="/denoise_recent/results?duration={{ duration }}&n={{ n }}&min_word_len={{ min_word_len }}&noise_threshold={{ noise_threshold }}&max_kept={{ max_kept }}&max_removed={{ max_removed }}"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+  <div class="text-center py-12 text-slate-500 text-sm">Scanning recent primaries…</div>
+</div>
+{% endblock %}

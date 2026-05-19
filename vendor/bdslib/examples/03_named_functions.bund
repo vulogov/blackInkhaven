@@ -1,0 +1,38 @@
+// 03_named_functions.bund
+// Defining and calling named functions (lambdas registered with a name).
+// Pattern: :name { body } register
+
+// --- simple greet function ---
+:greet { "Hello from a named function!" println } register
+
+greet     // call it
+greet     // call it again — functions are reusable
+
+// --- function that operates on the stack ---
+// square: pops a number, pushes its square
+:square { dup * } register
+
+5 square println    // 25
+12 square println   // 144
+
+// --- function with multiple stack effects ---
+// add_and_double: pops two numbers, adds them, doubles the result
+:add_and_double { + 2 * } register
+
+3 4 add_and_double println    // (3+4)*2 = 14
+10 5 add_and_double println   // (10+5)*2 = 30
+
+// --- alias: alternative name for an existing function ---
+:square :sq alias
+7 sq println    // 49  (same as square)
+
+// --- recursive countdown ---
+:countdown {
+    dup 0 >
+    { dup println 1 - countdown }
+    { drop }
+    ifthenelse
+} register
+
+5 countdown
+"done" println

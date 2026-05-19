@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Signals · bdsnode{% endblock %}
+{% block nav_signals %}active{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-xl font-semibold text-slate-200">Signals</h1>
+  <span class="text-xs text-slate-500">Recent signals or semantic search</span>
+</div>
+
+<div class="card rounded-lg p-5 mb-6">
+  <form hx-get="/signals/results"
+        hx-target="#results"
+        hx-swap="innerHTML"
+        hx-indicator="#spinner"
+        class="flex flex-wrap gap-3 items-end">
+    <div class="flex-1 min-w-64">
+      <label class="block text-xs text-slate-500 mb-1">Search Query (leave empty for recent)</label>
+      <input type="text" name="q" value="{{ q }}"
+             placeholder="e.g. payment timeout critical…"
+             class="w-full rounded px-3 py-2 text-sm"
+             hx-get="/signals/results"
+             hx-trigger="input changed delay:500ms"
+             hx-target="#results"
+             hx-include="closest form" />
+    </div>
+    <div class="w-28">
+      <label class="block text-xs text-slate-500 mb-1">Recent window</label>
+      <select name="duration" class="w-full rounded px-3 py-2 text-sm">
+        <option value="15m"  {% if duration == "15m"  %}selected{% endif %}>15 min</option>
+        <option value="1h"   {% if duration == "1h"   %}selected{% endif %}>1 hour</option>
+        <option value="6h"   {% if duration == "6h"   %}selected{% endif %}>6 hours</option>
+        <option value="24h"  {% if duration == "24h"  %}selected{% endif %}>24 hours</option>
+        <option value="7d"   {% if duration == "7d"   %}selected{% endif %}>7 days</option>
+      </select>
+    </div>
+    <div class="w-24">
+      <label class="block text-xs text-slate-500 mb-1">Limit</label>
+      <select name="limit" class="w-full rounded px-3 py-2 text-sm">
+        <option value="10"  {% if limit == 10  %}selected{% endif %}>10</option>
+        <option value="20"  {% if limit == 20  %}selected{% endif %}>20</option>
+        <option value="50"  {% if limit == 50  %}selected{% endif %}>50</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Search</button>
+    <span id="spinner" class="htmx-indicator text-blue-400 text-sm self-center">Loading…</span>
+  </form>
+</div>
+
+<div id="results"
+     hx-get="/signals/results?q={{ q }}&duration={{ duration }}&limit={{ limit }}"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+  <div class="text-center py-8 text-slate-500 text-sm">Loading…</div>
+</div>
+{% endblock %}

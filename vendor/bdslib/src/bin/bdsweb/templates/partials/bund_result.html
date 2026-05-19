@@ -1,0 +1,21 @@
+{% if has_error %}
+<div class="flex items-start gap-2 bg-red-950 border border-red-800 rounded-lg px-4 py-3">
+  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mt-0.5 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+  </svg>
+  <pre class="text-red-300 text-xs font-mono whitespace-pre-wrap break-all">{{ error_msg }}</pre>
+</div>
+{% else if results.is_empty() %}
+<div class="text-center py-8 text-slate-600 text-sm italic">
+  Script ran — workbench is empty.
+</div>
+{% else %}
+<div class="space-y-1">
+  {% for result in results %}
+  <div class="flex items-start gap-3 group">
+    <span class="text-slate-600 text-xs font-mono pt-0.5 select-none w-6 text-right shrink-0">{{ loop.index0 }}</span>
+    <pre class="flex-1 text-xs font-mono text-slate-200 bg-slate-900 border border-slate-800 rounded px-3 py-2 whitespace-pre-wrap break-all group-hover:border-slate-700 transition-colors">{{ result }}</pre>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

@@ -1,0 +1,2 @@
+# How to send logs to bdsnode
+./send_logs_to_node.sh --bdscli ./target/debug/bdscli  -c bds.hjson -n 1000 --duplicate 0.1

@@ -1,0 +1,17 @@
+{% if keys.is_empty() %}
+<span class="text-slate-600 text-xs italic">No keys found for duration <strong>{{ duration }}</strong>.</span>
+{% else %}
+<div class="flex flex-wrap gap-1.5">
+  {% for k in keys %}
+  <a href="{{ href_base }}?q={{ k }}&duration={{ duration }}"
+     hx-get="{{ href_base }}/results?q={{ k }}&duration={{ duration }}"
+     hx-target="#results"
+     hx-swap="innerHTML"
+     hx-push-url="{{ href_base }}?q={{ k }}&duration={{ duration }}"
+     class="inline-block px-2.5 py-1 rounded-full text-xs font-mono
+            bg-slate-800 text-blue-300 border border-slate-700
+            hover:bg-blue-950 hover:border-blue-600 hover:text-blue-100
+            transition-colors cursor-pointer no-underline">{{ k }}</a>
+  {% endfor %}
+</div>
+{% endif %}

@@ -1,0 +1,42 @@
+{% if rows.is_empty() %}
+<div class="text-center py-12 text-slate-500 text-sm">
+  No results for <span class="text-slate-300">"{{ q }}"</span> in the last <strong>{{ duration }}</strong>.
+</div>
+{% else %}
+<div class="card rounded-lg overflow-hidden">
+  <div class="px-4 py-3 border-b border-slate-800 flex justify-between items-center">
+    <span class="text-xs text-slate-400">
+      <span class="text-white font-semibold">{{ rows.len() }}</span> results for
+      "<span class="text-blue-300">{{ q }}</span>" — last {{ duration }}
+    </span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:160px" class="sortable" data-col="timestamp" onclick="sortResults(this)">Timestamp<span class="sort-ind">⇅</span></th>
+        <th style="width:200px" class="sortable" data-col="key"       onclick="sortResults(this)">Key<span class="sort-ind">⇅</span></th>
+        <th>Data</th>
+        <th style="width:70px" class="text-right sortable" data-col="score" onclick="sortResults(this)">Score<span class="sort-ind">⇅</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="font-mono text-xs text-slate-400">{{ r.timestamp }}</td>
+        <td class="font-mono text-xs">
+          {% if r.key == "—" %}
+          <span class="text-slate-500">—</span>
+          {% else %}
+          <a href="/trends?key={{ r.key }}&duration={{ duration }}"
+             class="text-blue-300 hover:text-blue-100 underline-offset-2 hover:underline transition-colors"
+             title="Open in Trends">{{ r.key }}</a>
+          {% endif %}
+        </td>
+        <td class="text-xs text-slate-300 break-all">{{ r.data }}</td>
+        <td class="text-right font-mono text-xs text-green-400">{{ r.score }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}

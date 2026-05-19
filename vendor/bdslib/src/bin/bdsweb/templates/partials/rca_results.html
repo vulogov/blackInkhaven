@@ -1,0 +1,170 @@
+{# Prefetch dynamic Tailwind classes so the Play CDN generates them #}
+<span class="hidden bg-green-600 bg-blue-600 bg-amber-600 bg-slate-600
+             bg-green-900 text-green-300 bg-blue-900 text-blue-300
+             text-green-400 text-amber-400"></span>
+
+{% if summary.n_events == 0 %}
+<div class="text-center py-16 text-slate-500 text-sm">
+  No events found in the last <span class="text-slate-300 font-medium">{{ duration }}</span>.
+  Try extending the duration or lowering <code class="text-slate-400">min_support</code>.
+</div>
+
+{% else %}
+
+{# ── Summary strip ─────────────────────────────────────────────────────────── #}
+<div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+  <div class="card rounded-lg p-3 col-span-2">
+    <div class="text-xs text-slate-500 uppercase tracking-wide mb-1">Analysis window</div>
+    <div class="text-xs font-mono text-slate-300">{{ summary.window_start }}</div>
+    <div class="text-xs font-mono text-slate-500">→ {{ summary.window_end }}</div>
+  </div>
+  <div class="card rounded-lg p-3">
+    <div class="text-xs text-slate-500 uppercase tracking-wide mb-1">Events</div>
+    <div class="text-2xl font-bold text-white">{{ summary.n_events }}</div>
+    <div class="text-xs text-slate-600 mt-0.5">non-telemetry</div>
+  </div>
+  <div class="card rounded-lg p-3">
+    <div class="text-xs text-slate-500 uppercase tracking-wide mb-1">Keys</div>
+    <div class="text-2xl font-bold text-white">{{ summary.n_keys }}</div>
+    <div class="text-xs text-slate-600 mt-0.5">distinct</div>
+  </div>
+  <div class="card rounded-lg p-3">
+    <div class="text-xs text-slate-500 uppercase tracking-wide mb-1">Clusters</div>
+    <div class="text-2xl font-bold text-white">{{ summary.cluster_count }}</div>
+    <div class="text-xs text-slate-600 mt-0.5">co-occurrence groups</div>
+  </div>
+</div>
+
+{# ── Probable causes (only when failure_key was given) ─────────────────────── #}
+{% if summary.has_failure %}
+<div class="card rounded-lg overflow-hidden mb-6">
+  <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <span class="text-sm font-medium text-slate-200">Probable Root Causes</span>
+      <span class="text-xs text-slate-500">for</span>
+      <code class="text-xs text-blue-300 bg-slate-800 px-2 py-0.5 rounded">{{ summary.failure_key }}</code>
+    </div>
+    {% if summary.cause_count > 0 %}
+    <span class="text-xs text-slate-600">{{ summary.cause_count }} candidates · ranked by lead time ↑</span>
+    {% endif %}
+  </div>
+
+  {% if summary.cause_count == 0 %}
+  <div class="px-4 py-6 text-sm text-slate-500 text-center">
+    <code class="text-slate-300">"{{ summary.failure_key }}"</code>
+    was not observed in this window, or had no co-occurring events.<br>
+    <span class="text-xs text-slate-600 mt-1 block">
+      Try a longer duration, lower min_support, or check the key spelling.
+    </span>
+  </div>
+
+  {% else %}
+  <table style="table-layout:fixed;width:100%">
+    <thead>
+      <tr>
+        <th style="width:28px">#</th>
+        <th>Event Key</th>
+        <th style="width:64px" class="text-right">Co-occ</th>
+        <th style="width:64px" class="text-right">Jaccard</th>
+        <th>Lead Time</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in causes %}
+      <tr>
+        <td class="font-mono text-xs text-slate-600">{{ c.rank }}</td>
+        <td>
+          <button class="font-mono text-xs text-blue-300 hover:text-blue-100 text-left transition-colors"
+                  onclick="setFailureKey('{{ c.key }}')">{{ c.key }}</button>
+        </td>
+        <td class="text-right font-mono text-xs text-slate-400">{{ c.co_count }}</td>
+        <td class="text-right font-mono text-xs text-slate-400">{{ c.jaccard }}</td>
+        <td>
+          <div class="flex items-center gap-2">
+            {# Lead-time bar — width normalized to max lead across all candidates #}
+            <div class="rounded-full h-1.5 bg-slate-800 shrink-0" style="width:96px">
+              <div class="{{ c.bar_cls }} rounded-full h-1.5"
+                   style="width:{{ c.lead_bar_pct }}%"></div>
+            </div>
+            <span class="text-xs {{ c.lead_cls }} whitespace-nowrap">
+              {% if c.is_precursor %}↑{% else %}↓{% endif %}
+              {{ c.lead_label }}
+            </span>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="px-4 py-2 border-t border-slate-800 text-xs text-slate-600 flex gap-4">
+    <span><span class="text-green-400">↑ before</span> = probable root cause (fires before the failure)</span>
+    <span><span class="text-amber-400">↓ after</span> = consequence (fires after the failure)</span>
+  </div>
+  {% endif %}
+</div>
+{% endif %} {# /has_failure #}
+
+{# ── Co-occurrence clusters ─────────────────────────────────────────────────── #}
+{% if clusters.is_empty() %}
+<div class="card rounded-lg p-6 text-center text-slate-500 text-sm">
+  No co-occurrence clusters detected.
+  Try lowering the <span class="text-slate-400">Jaccard threshold</span> or <span class="text-slate-400">min_support</span>.
+</div>
+
+{% else %}
+<div class="flex items-center justify-between mb-3">
+  <h2 class="text-sm font-medium text-slate-300">
+    Co-occurrence Clusters
+    <span class="text-slate-500 font-normal ml-1">({{ summary.cluster_count }})</span>
+  </h2>
+  <span class="text-xs text-slate-600">sorted by cohesion · click any key to run RCA for it</span>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+  {% for cluster in clusters %}
+  <div class="card rounded-lg p-4">
+
+    {# Card header #}
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center gap-2">
+        <span class="text-xs font-semibold text-slate-300">Cluster #{{ cluster.id }}</span>
+        <span class="text-xs text-slate-600">{{ cluster.members.len() }} keys</span>
+      </div>
+      <span class="badge {{ cluster.cohesion_badge_cls }} font-mono">{{ cluster.cohesion }}</span>
+    </div>
+
+    {# Cohesion bar #}
+    <div class="mb-3">
+      <div class="flex items-center justify-between text-xs text-slate-600 mb-1">
+        <span>Cohesion</span>
+        <span>{{ cluster.cohesion_pct }}%</span>
+      </div>
+      <div class="bg-slate-800 rounded-full h-1.5">
+        <div class="{{ cluster.cohesion_bar_cls }} rounded-full h-1.5 transition-all"
+             style="width:{{ cluster.cohesion_pct }}%"></div>
+      </div>
+    </div>
+
+    {# Support #}
+    <div class="text-xs text-slate-500 mb-3">
+      Support: <span class="text-slate-300 font-medium">{{ cluster.support }}</span>
+      <span class="text-slate-600">time buckets</span>
+    </div>
+
+    {# Member tags #}
+    <div class="flex flex-wrap gap-1">
+      {% for m in cluster.members %}
+      <button onclick="setFailureKey('{{ m }}')"
+              class="font-mono text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300
+                     hover:bg-blue-900 hover:text-blue-200 transition-colors border border-slate-700
+                     hover:border-blue-700">
+        {{ m }}
+      </button>
+      {% endfor %}
+    </div>
+
+  </div>
+  {% endfor %}
+</div>
+{% endif %} {# /clusters #}
+
+{% endif %} {# /n_events > 0 #}

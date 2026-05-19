@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Templates · bdsnode{% endblock %}
+{% block nav_templates %}active{% endblock %}
+
+{% block head %}
+<style>
+  .body-cell {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.78rem;
+    color: #93c5fd;
+    overflow-wrap: break-word;
+    word-break: break-all;
+  }
+  .wildcard { color: #f59e0b; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-xl font-semibold text-slate-200">Templates</h1>
+  <span class="text-xs text-slate-500">drain3 log-template store · recent or semantic search</span>
+</div>
+
+<!-- Search / filter form -->
+<div class="card rounded-lg p-5 mb-5">
+  <form id="tpl-form"
+        hx-get="/templates/results"
+        hx-target="#results"
+        hx-swap="innerHTML"
+        hx-indicator="#spinner"
+        class="flex flex-wrap gap-3 items-end">
+
+    <div class="flex-1 min-w-56">
+      <label class="block text-xs text-slate-500 mb-1">Query <span class="text-slate-600">(empty = show recent)</span></label>
+      <input id="q-input"
+             type="text"
+             name="q"
+             value="{{ q }}"
+             placeholder="e.g. disk error, auth login, service restart…"
+             class="w-full rounded px-3 py-2 text-sm"
+             hx-get="/templates/results"
+             hx-trigger="input changed delay:400ms"
+             hx-target="#results"
+             hx-swap="innerHTML"
+             hx-indicator="#spinner"
+             hx-include="closest form" />
+    </div>
+
+    <div class="w-32">
+      <label class="block text-xs text-slate-500 mb-1">Duration</label>
+      <select name="duration"
+              class="w-full rounded px-3 py-2 text-sm"
+              hx-get="/templates/results"
+              hx-trigger="change"
+              hx-target="#results"
+              hx-swap="innerHTML"
+              hx-indicator="#spinner"
+              hx-include="closest form">
+        <option value="15min" {% if duration == "15min" %}selected{% endif %}>15 min</option>
+        <option value="30min" {% if duration == "30min" %}selected{% endif %}>30 min</option>
+        <option value="1h"    {% if duration == "1h"    %}selected{% endif %}>1 h</option>
+        <option value="4h"    {% if duration == "4h"    %}selected{% endif %}>4 h</option>
+        <option value="12h"   {% if duration == "12h"   %}selected{% endif %}>12 h</option>
+        <option value="24h"   {% if duration == "24h"   %}selected{% endif %}>24 h</option>
+        <option value="7days" {% if duration == "7days" %}selected{% endif %}>7 days</option>
+      </select>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Search</button>
+    <span id="spinner" class="htmx-indicator text-blue-400 text-sm self-center">Loading…</span>
+  </form>
+</div>
+
+<!-- Results — auto-loaded on page open -->
+<div id="results"
+     hx-get="/templates/results?duration={{ duration }}{% if !q.is_empty() %}&q={{ q }}{% endif %}"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+  <div class="text-center py-12 text-slate-600 text-sm">Loading templates…</div>
+</div>
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+  // Highlight <*> wildcards in template body cells after each HTMX swap
+  function highlightWildcards(root) {
+    (root || document).querySelectorAll('.body-cell').forEach(function(cell) {
+      if (cell.dataset.highlighted) return;
+      cell.dataset.highlighted = '1';
+      cell.innerHTML = cell.textContent.replace(
+        /(<\*>)/g,
+        '<span class="wildcard">$1</span>'
+      );
+    });
+  }
+  document.addEventListener('htmx:afterSwap', function(e) { highlightWildcards(e.detail.target); });
+  document.addEventListener('DOMContentLoaded', function() { highlightWildcards(); });
+</script>
+{% endblock %}

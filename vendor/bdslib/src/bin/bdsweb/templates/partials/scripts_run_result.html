@@ -1,0 +1,40 @@
+<div class="run-result-header">
+  <span class="text-xs text-slate-500 uppercase tracking-wide">Run output</span>
+  {% if !queue_id.is_empty() %}
+  <span class="text-xs text-slate-600 ml-auto">
+    elapsed: <span class="font-mono text-slate-400">{{ elapsed_ms }} ms</span>
+  </span>
+  {% endif %}
+</div>
+
+{% if !queue_id.is_empty() %}
+<div class="run-result-meta">
+  queue: <code class="text-blue-300 break-all">{{ queue_id }}</code>
+</div>
+{% endif %}
+
+{% if has_error %}
+<div class="run-result-error">{{ error }}</div>
+{% else if timed_out %}
+<div class="run-result-warn">
+  No workbench output within {{ elapsed_ms }} ms.<br>
+  <span class="text-xs text-slate-500">
+    The script may still be running or may have produced no `.` (workbench)
+    output. Use the queue id above with <code>v2/results.pull</code> to check
+    later.
+  </span>
+</div>
+{% else if !has_values %}
+<div class="run-result-warn">
+  Script completed but produced no workbench values.
+</div>
+{% else %}
+<div class="run-result-list">
+  {% for v in values %}
+  <div class="run-result-card">
+    <div class="run-result-index">{{ loop.index }}</div>
+    <pre class="run-result-value">{{ v }}</pre>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

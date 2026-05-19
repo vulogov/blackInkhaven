@@ -1,0 +1,48 @@
+// 07_strings.bund
+// String values, case conversion, pattern matching, and formatting.
+
+// --- basic string output ---
+"Hello, BUND!" println
+
+// --- string length ---
+"Hello" len println    // 5
+
+// --- case conversion ---
+"hello world" string.upper println    // HELLO WORLD
+"HELLO WORLD" string.lower println    // hello world
+"hello world" string.title println    // Hello World
+"HelloWorld"  string.snake println    // hello_world
+"hello_world" string.camel println    // helloWorld
+
+// --- type inspection ---
+"some text" type println              // STRING
+
+// --- convert other types to string ---
+42      convert.to_string println     // "42"
+3.14    convert.to_string println     // "3.14"
+true    convert.to_string println     // "true"
+[ 1 2 ] convert.to_string println     // "[1, 2]" (representation)
+
+// --- wildcard matching ---
+// string.wildmatch: pops (pattern, string), pushes bool
+"server.cpu.usage" "server.*" string.wildmatch
+{ "matched server namespace" println } if
+
+"http.request" "server.*" string.wildmatch
+{ "matched" println } if.false     // does not match → if.false fires
+
+// --- regex matching ---
+"user@example.com" "[a-z]+@[a-z]+\\.[a-z]+" string.regex
+{ "looks like an email" println } if
+
+// --- tokenise into words ---
+"the quick brown fox" string.tokenize println
+// → [ "the" "quick" "brown" "fox" ]
+
+// --- string comparison ---
+"alpha" "beta" ==  { "equal"     println } if
+"alpha" "beta" ==  { "not equal" println } if.false
+
+// --- literals vs strings ---
+// Literals use single quotes — no escape processing
+'raw\text\nno escapes' println    // printed verbatim

@@ -1,0 +1,52 @@
+// 06_lists.bund
+// Working with the LIST type: construction, access, transformation.
+
+// --- literal list construction ---
+[ 10 20 30 40 50 ] println
+
+// --- mixed-type list ---
+[ 42 "hello" true 3.14 ] println
+
+// --- nested lists ---
+[ [ 1 2 3 ] [ 4 5 6 ] [ 7 8 9 ] ] println
+
+// --- car: first element, cdr: rest ---
+[ 10 20 30 ] car println    // 10
+[ 10 20 30 ] cdr println    // [ 20 30 ]
+
+// --- at: element by zero-based index ---
+[ "a" "b" "c" "d" ] 2 at println    // "c"
+
+// --- head and tail ---
+[ 1 2 3 4 5 ] 3 head println    // [ 1 2 3 ]
+[ 1 2 3 4 5 ] 2 tail println    // [ 4 5 ]
+
+// --- len: number of elements (non-destructive) ---
+[ 1 2 3 4 5 6 7 ] len println   // 7  (list remains on stack)
+drop                             // discard the list
+
+// --- push: append an element ---
+[ 1 2 3 ] 4 push println        // [ 1 2 3 4 ]
+
+// --- map: transform each element ---
+[ 1 2 3 4 ] { dup * } map println     // [ 1 4 9 16 ]  (squares)
+
+// --- filter pattern: map + conditional ---
+// Keep only even numbers (replace odds with a sentinel, then filter)
+[ 1 2 3 4 5 6 7 8 ]
+{ dup 2 / 2 * ==   // is it divisible by 2?
+  { }              // keep it (identity lambda)
+  { drop [ ] }     // replace odd with empty list
+  ifthenelse
+} map
+println            // [ 2 [ ] 4 [ ] 6 [ ] 8 [ ] ]  (simplified)
+
+// --- recursive sum of a list ---
+:sum_list {
+    dup len 0 ==
+    { drop 0 }
+    { dup car swap cdr sum_list + }
+    ifthenelse
+} register
+
+[ 1 2 3 4 5 ] sum_list println    // 15

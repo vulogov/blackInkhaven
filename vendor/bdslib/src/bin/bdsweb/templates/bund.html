@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+{% block title %}BUND · bdsnode{% endblock %}
+{% block nav_bund %}active{% endblock %}
+
+{% block head %}
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<style>
+/* ── Editor chrome ─────────────────────────────────── */
+.CodeMirror {
+  height: 500px;
+  background: #0d1017;
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono','Fira Code','Cascadia Code','Menlo',monospace;
+  font-size: 13.5px;
+  line-height: 1.6;
+  border: none;
+}
+.CodeMirror-scroll        { box-sizing: border-box; }
+.CodeMirror-gutters       { background: #080b10; border-right: 1px solid #1a2030; }
+.CodeMirror-linenumber    { color: #3d4a5c; padding: 0 10px 0 6px; }
+.CodeMirror-cursor        { border-left: 2px solid #93c5fd; }
+.CodeMirror-selected,
+.CodeMirror-focused .CodeMirror-selected { background: rgba(59,130,246,0.18); }
+.CodeMirror-activeline-background { background: rgba(255,255,255,0.025); }
+.CodeMirror-matchingbracket {
+  background: rgba(59,130,246,0.22) !important;
+  outline: 1px solid rgba(59,130,246,0.45) !important;
+  color: inherit !important;
+}
+
+/* ── Bund token colours (theme: "bund") ────────────── */
+.cm-s-bund .cm-comment    { color: #465060; font-style: italic; }
+.cm-s-bund .cm-string     { color: #86efac; }   /* green-300   "string"  */
+.cm-s-bund .cm-string-2   { color: #6ee7b7; }   /* emerald-300 'literal' */
+.cm-s-bund .cm-number     { color: #fdba74; }   /* orange-300            */
+.cm-s-bund .cm-keyword    { color: #93c5fd; font-weight: 600; } /* blue-300 */
+.cm-s-bund .cm-atom       { color: #f9a8d4; }   /* pink-300    :atom     */
+.cm-s-bund .cm-meta       { color: #c4b5fd; }   /* violet-300  `ptr      */
+.cm-s-bund .cm-variable-2 { color: #67e8f9; }   /* cyan-300    @context  */
+.cm-s-bund .cm-builtin    { color: #fca5a5; }   /* red-300     builtins  */
+.cm-s-bund .cm-operator   { color: #5eead4; }   /* teal-300              */
+.cm-s-bund .cm-bracket    { color: #fcd34d; }   /* amber-300             */
+.cm-s-bund .cm-variable   { color: #cbd5e1; }   /* slate-300   commands  */
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-xl font-semibold text-slate-200">BUND</h1>
+  <span class="text-xs text-slate-500">stack-based scripting · <code class="text-slate-400">v2/eval</code></span>
+</div>
+
+<form id="bund-form"
+      hx-post="/bund/eval"
+      hx-target="#bund-output"
+      hx-swap="innerHTML"
+      hx-indicator="#eval-spinner">
+
+  <!-- Toolbar -->
+  <div class="flex items-center gap-3 mb-2">
+    <label class="text-xs text-slate-500 shrink-0">Context</label>
+    <input type="text" name="context" id="context-input"
+           value="default"
+           class="w-40 rounded px-2 py-1.5 text-xs font-mono"
+           title="Named VM — state accumulates between runs" />
+    <button type="button" onclick="newCtx()"
+            class="text-slate-500 hover:text-slate-300 transition-colors text-base leading-none px-1"
+            title="Fresh context">↺</button>
+    <div class="flex-1"></div>
+    <span id="eval-spinner" class="htmx-indicator text-blue-400 text-xs">Evaluating…</span>
+    <button type="submit" class="btn btn-primary text-xs flex items-center gap-1.5">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="currentColor" viewBox="0 0 24 24">
+        <polygon points="5,3 19,12 5,21"/>
+      </svg>
+      Run
+      <kbd class="ml-1 text-blue-300 opacity-60 font-sans text-xs normal-case font-normal">⌘↵</kbd>
+    </button>
+    <!-- synced from CM5 before every submit -->
+    <textarea name="script" id="script-hidden" style="display:none"></textarea>
+  </div>
+
+  <!-- Editor container -->
+  <div class="rounded-lg overflow-hidden mb-4" style="border:1px solid #1e2535">
+    <div id="cm-editor"></div>
+  </div>
+
+</form>
+
+<!-- Output -->
+<div class="card rounded-lg px-4 py-3">
+  <div class="text-xs text-slate-500 uppercase tracking-wide mb-3">Workbench output</div>
+  <div id="bund-output">
+    <div class="text-center py-6 text-slate-600 text-sm italic">
+      Run a script to see the workbench stack.
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block page_scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+<script>
+// ── Bund language mode ────────────────────────────────────────────────────────
+
+CodeMirror.defineMode('bund', function() {
+
+  const KEYWORDS = new Set([
+    'if','ifthenelse','if.false',
+    'while','for','times','do','map','loop',
+    'register','alias','endcontext',
+  ]);
+
+  const BUILTINS = new Set([
+    // stack manipulation
+    'dup','drop','swap','over','rot','pick','nip','tuck',
+    // i/o
+    'println','print','println.','print.',
+    // list / sequence
+    'push','car','cdr','len','head','tail','at',
+    'list.zip','list.flatten','list.reverse','list.sort','list.unique',
+    // type inspection
+    'type','?type',
+    // logic
+    'not','and','or','true','false','null',
+    // conversion
+    'convert.to_string','convert.to_int','convert.to_float','convert.to_bool',
+    // string
+    'string.upper','string.lower','string.title','string.snake','string.camel',
+    'string.wildmatch','string.regex','string.tokenize',
+    'string.regex_matches','string.regex_split','string.grok',
+    // float constants & math
+    'float.sqrt','float.abs','float.cbrt','float.floor','float.ceil','float.round',
+    'float.Pi','float.E','float.NaN','float.+Inf','float.-Inf',
+    // map
+    'map.get','map.set','map.keys','map.values','map.merge',
+    // json
+    'json.encode','json.decode','json.get',
+    // time
+    'time.now','time.format','time.parse',
+  ]);
+
+  return {
+    startState: () => ({}),
+
+    token(stream) {
+      if (stream.eatSpace()) return null;
+
+      // single-line comment  //
+      if (stream.match('//')) { stream.skipToEnd(); return 'comment'; }
+
+      // double-quoted string  "..."
+      if (stream.match('"')) {
+        while (!stream.eol()) {
+          const ch = stream.next();
+          if (ch === '\\') stream.next();   // skip escaped char
+          else if (ch === '"') break;
+        }
+        return 'string';
+      }
+
+      // single-quoted literal  '...'  (no escapes)
+      if (stream.match("'")) {
+        while (!stream.eol()) { if (stream.next() === "'") break; }
+        return 'string-2';
+      }
+
+      // :atom
+      if (stream.match(/^:[a-zA-Z_][a-zA-Z0-9_.?-]*/)) return 'atom';
+
+      // `pointer
+      if (stream.match(/^`[a-zA-Z_][a-zA-Z0-9_.?-]*/)) return 'meta';
+
+      // @named-stack
+      if (stream.match(/^@[a-zA-Z_][a-zA-Z0-9_]*/)) return 'variable-2';
+
+      // number (optional sign, optional decimal, optional exponent)
+      // lookahead ensures we don't eat the sign of a following operator word
+      if (stream.match(/^[+-]?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?(?=[\s\]})({,]|$)/))
+        return 'number';
+
+      // brackets  { } [ ] ( )
+      if (stream.match(/^[{}\[\]()]/)) return 'bracket';
+
+      // multi-char operators first to avoid partial matches
+      if (stream.match(/^(\*\+|\+\.|-\.|>=|<=|==|!=)/)) return 'operator';
+      // single-char operators
+      if (stream.match(/^[+\-*\/<>.]/)) return 'operator';
+
+      // word: keyword, builtin, or user-defined command
+      const m = stream.match(/^[^\s{}\[\]()"'`@:+\-*\/<>=!]+/);
+      if (m) {
+        const w = m[0];
+        if (KEYWORDS.has(w)) return 'keyword';
+        if (BUILTINS.has(w)) return 'builtin';
+        return 'variable';
+      }
+
+      stream.next();
+      return null;
+    },
+  };
+});
+
+// ── Initialise editor ────────────────────────────────────────────────────────
+
+const hidden = document.getElementById('script-hidden');
+const form   = document.getElementById('bund-form');
+
+const editor = CodeMirror(document.getElementById('cm-editor'), {
+  value:         '',
+  mode:          'bund',
+  theme:         'bund',
+  lineNumbers:   true,
+  matchBrackets: true,
+  indentUnit:    2,
+  tabSize:       2,
+  lineWrapping:  true,
+  autofocus:     true,
+  extraKeys: {
+    'Ctrl-Enter': () => form.requestSubmit(),
+    'Cmd-Enter':  () => form.requestSubmit(),
+  },
+});
+
+// keep hidden textarea in sync at all times
+editor.on('change', () => { hidden.value = editor.getValue(); });
+
+// belt-and-suspenders: sync again the moment HTMX is about to fire
+form.addEventListener('htmx:configRequest', () => {
+  hidden.value = editor.getValue();
+});
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+window.newCtx = () => {
+  document.getElementById('context-input').value =
+    'ctx-' + Math.random().toString(36).slice(2, 10);
+};
+</script>
+{% endblock %}

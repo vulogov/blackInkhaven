@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Template RCA · bdsnode{% endblock %}
+{% block nav_rca_templates %}active{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="text-xl font-semibold text-slate-200">Template Root Cause Analysis</h1>
+    <p class="text-xs text-slate-500 mt-0.5">drain3 template-level co-occurrence · Causal ranking · Jaccard similarity</p>
+  </div>
+  <span class="text-xs text-slate-600 font-mono">v2/rca.templates</span>
+</div>
+
+<!-- Search form -->
+<div class="card rounded-lg p-5 mb-4">
+  <form id="rca-tpl-form"
+        hx-get="/rca/templates/results"
+        hx-target="#results"
+        hx-swap="innerHTML"
+        hx-indicator="#spinner"
+        class="space-y-3">
+
+    <div class="flex flex-wrap gap-3 items-end">
+      <!-- Failure body -->
+      <div class="flex-1 min-w-56">
+        <label class="block text-xs text-slate-500 mb-1">
+          Failure Template Body
+          <span class="text-slate-600 ml-1">— optional; leave blank for general cluster analysis</span>
+        </label>
+        <input id="failure-body-input"
+               type="text"
+               name="failure_body"
+               value="{{ failure_body }}"
+               placeholder="e.g. error <*> in module <*>: <*>"
+               class="w-full rounded px-3 py-2 text-sm font-mono" />
+      </div>
+      <!-- Duration -->
+      <div class="w-32">
+        <label class="block text-xs text-slate-500 mb-1">Duration</label>
+        <select name="duration" class="w-full rounded px-3 py-2 text-sm">
+          <option value="15min" {% if duration == "15min" %}selected{% endif %}>15 min</option>
+          <option value="30min" {% if duration == "30min" %}selected{% endif %}>30 min</option>
+          <option value="1h"    {% if duration == "1h"    %}selected{% endif %}>1 h</option>
+          <option value="2h"    {% if duration == "2h"    %}selected{% endif %}>2 h</option>
+          <option value="4h"    {% if duration == "4h"    %}selected{% endif %}>4 h</option>
+          <option value="6h"    {% if duration == "6h"    %}selected{% endif %}>6 h</option>
+          <option value="12h"   {% if duration == "12h"   %}selected{% endif %}>12 h</option>
+          <option value="24h"   {% if duration == "24h"   %}selected{% endif %}>24 h</option>
+          <option value="7days" {% if duration == "7days" %}selected{% endif %}>7 days</option>
+        </select>
+      </div>
+      <!-- Submit -->
+      <div class="flex items-center gap-3">
+        <button type="submit" class="btn btn-primary">Analyze</button>
+        <span id="spinner" class="htmx-indicator text-blue-400 text-sm">Analyzing…</span>
+      </div>
+    </div>
+
+    <!-- Advanced options -->
+    <details class="group">
+      <summary class="text-xs text-slate-600 cursor-pointer hover:text-slate-400 transition-colors w-fit select-none">
+        Advanced options
+      </summary>
+      <div class="flex flex-wrap gap-3 mt-3 pt-3 border-t border-slate-800">
+        <div class="w-40">
+          <label class="block text-xs text-slate-500 mb-1">Bucket width (seconds)</label>
+          <input type="number" name="bucket_secs" value="{{ bucket_secs }}"
+                 min="30" step="30" class="w-full rounded px-2 py-1.5 text-xs" />
+          <p class="text-xs text-slate-600 mt-0.5">Templates in the same bucket are co-occurrences</p>
+        </div>
+        <div class="w-32">
+          <label class="block text-xs text-slate-500 mb-1">Min support</label>
+          <input type="number" name="min_support" value="{{ min_support }}"
+                 min="1" step="1" class="w-full rounded px-2 py-1.5 text-xs" />
+          <p class="text-xs text-slate-600 mt-0.5">Min buckets a template must appear in</p>
+        </div>
+        <div class="w-40">
+          <label class="block text-xs text-slate-500 mb-1">Jaccard threshold</label>
+          <input type="number" name="jaccard_threshold" value="{{ jaccard_threshold }}"
+                 min="0.05" max="1.0" step="0.05" class="w-full rounded px-2 py-1.5 text-xs" />
+          <p class="text-xs text-slate-600 mt-0.5">Lower → larger, looser clusters</p>
+        </div>
+        <div class="w-32">
+          <label class="block text-xs text-slate-500 mb-1">Max templates</label>
+          <input type="number" name="max_keys" value="{{ max_keys }}"
+                 min="10" step="10" class="w-full rounded px-2 py-1.5 text-xs" />
+          <p class="text-xs text-slate-600 mt-0.5">Cap on distinct template bodies analysed</p>
+        </div>
+      </div>
+    </details>
+
+  </form>
+</div>
+
+<!-- Algorithm explainer -->
+<div class="card rounded-lg px-4 py-3 mb-6 text-xs text-slate-500 leading-relaxed">
+  <span class="text-slate-400 font-medium">How it works:</span>
+  Each <code class="text-slate-400">drain3</code> template observation is treated as an event
+  <code class="text-slate-400">(template_body, log_timestamp)</code>. Bodies that fire in the same time bucket
+  are linked by Jaccard similarity; pairs above the threshold are merged into clusters.
+  When a <span class="text-slate-300">failure body</span> is given, co-occurring templates are ranked by how
+  consistently they fire <span class="text-green-400">before</span> the failure —
+  positive lead time means a probable root cause,
+  <span class="text-amber-400">negative</span> means a downstream consequence.
+  Click any template in a cluster to instantly run RCA for it.
+</div>
+
+<!-- Results area -->
+<div id="results">
+  <div class="text-center py-16 text-slate-600 text-sm">
+    Select a duration and click <span class="text-slate-400">Analyze</span> to discover template-level co-occurrence clusters.<br>
+    Add a <span class="text-slate-400">failure template body</span> to rank probable root causes.
+  </div>
+</div>
+
+<script>
+function setFailureBody(body) {
+  var input = document.getElementById('failure-body-input');
+  if (!input) return;
+  input.value = body;
+  document.getElementById('rca-tpl-form').requestSubmit();
+}
+// Wire data-body click handlers (delegated; survives htmx swaps).
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-body]');
+  if (!btn) return;
+  setFailureBody(btn.getAttribute('data-body'));
+});
+</script>
+{% endblock %}

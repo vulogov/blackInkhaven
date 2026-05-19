@@ -1,0 +1,50 @@
+{% if cards.is_empty() %}
+  {% if is_recent %}
+  <div class="text-center py-16 text-slate-600 text-sm">No signals found in the last {{ duration }}.</div>
+  {% else %}
+  <div class="text-center py-16 text-slate-600 text-sm">No signals matched <span class="text-slate-400">"{{ q }}"</span>.</div>
+  {% endif %}
+{% else %}
+<div class="flex items-center justify-between mb-3">
+  {% if is_recent %}
+  <span class="text-xs text-slate-500">{{ cards.len() }} signal(s) in the last {{ duration }}</span>
+  {% else %}
+  <span class="text-xs text-slate-500">{{ cards.len() }} result(s) for <span class="text-slate-300">"{{ q }}"</span></span>
+  {% endif %}
+</div>
+<div class="card rounded-lg overflow-hidden">
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Severity</th>
+        <th>Timestamp</th>
+        {% if !is_recent %}<th class="text-right">Score</th>{% endif %}
+        <th>ID</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in cards %}
+      <tr class="cursor-pointer" onclick="toggleMeta('meta-{{ c.id }}')">
+        <td class="text-slate-200 font-medium">{{ c.name }}</td>
+        <td><span class="{{ c.severity_class }} font-medium">{{ c.severity }}</span></td>
+        <td class="font-mono text-xs text-slate-400">{{ c.timestamp }}</td>
+        {% if !is_recent %}<td class="text-right font-mono text-xs text-slate-300">{{ c.score }}</td>{% endif %}
+        <td class="font-mono text-xs text-blue-300 truncate max-w-xs" title="{{ c.id }}">{{ c.id }}</td>
+      </tr>
+      <tr id="meta-{{ c.id }}" style="display:none">
+        <td colspan="{% if is_recent %}4{% else %}5{% endif %}" class="bg-slate-900 p-0">
+          <pre class="text-xs text-slate-300 p-4 overflow-x-auto">{{ c.metadata_json }}</pre>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<script>
+function toggleMeta(id) {
+  var row = document.getElementById(id);
+  if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+}
+</script>
+{% endif %}
