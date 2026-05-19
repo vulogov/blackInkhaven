@@ -5655,8 +5655,67 @@ impl App {
         self.change_focus(Focus::Editor);
         self.status = format!(
             "loaded snapshot from {} — bold marks the change vs saved",
-            when.format("%Y-%m-%d %H:%M:%S")
+            when.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S %z")
         );
+    }
+
+    fn delete_current_snapshot(&mut self) {
+        let (snap_id, when, paragraph_id, paragraph_title) = match &self.modal {
+            Modal::SnapshotPicker {
+                snapshots,
+                cursor,
+                paragraph_id,
+                paragraph_title,
+            } => {
+                let Some(snap) = snapshots.get(*cursor).cloned() else {
+                    return;
+                };
+                (snap.id, snap.created_at, *paragraph_id, paragraph_title.clone())
+            }
+            _ => return,
+        };
+
+        if let Err(e) = self.store.delete_snapshot(snap_id) {
+            self.status = format!("delete snapshot failed: {e}");
+            return;
+        }
+
+        let when_local = when
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S %z");
+
+        match self.store.list_snapshots(paragraph_id) {
+            Ok(snapshots) => {
+                if snapshots.is_empty() {
+                    self.modal = Modal::None;
+                    self.status = format!(
+                        "deleted snapshot {when_local} — no snapshots left for `{paragraph_title}`"
+                    );
+                } else {
+                    // Keep the cursor on the same row index, clamped
+                    // to the new (shorter) list — feels like "the row
+                    // below the deleted one slid up".
+                    let new_cursor = match &self.modal {
+                        Modal::SnapshotPicker { cursor, .. } => {
+                            (*cursor).min(snapshots.len() - 1)
+                        }
+                        _ => 0,
+                    };
+                    self.modal = Modal::SnapshotPicker {
+                        paragraph_id,
+                        paragraph_title,
+                        snapshots,
+                        cursor: new_cursor,
+                    };
+                    self.status = format!("deleted snapshot {when_local}");
+                }
+            }
+            Err(e) => {
+                self.modal = Modal::None;
+                self.status =
+                    format!("deleted snapshot, but couldn't refresh list: {e}");
+            }
+        }
     }
 
     fn open_delete_modal(&mut self) {
@@ -5916,6 +5975,7 @@ impl App {
 
         if is_snapshot {
             let mut commit = false;
+            let mut delete = false;
             if let Modal::SnapshotPicker {
                 snapshots, cursor, ..
             } = &mut self.modal
@@ -5936,11 +5996,20 @@ impl App {
                         *cursor = snapshots.len().saturating_sub(1);
                     }
                     KeyCode::Enter => commit = true,
+                    // D (case-insensitive) or the Delete key removes
+                    // the cursor's snapshot. No further confirmation —
+                    // snapshots are explicit creations (F5 / Ctrl+B N),
+                    // and refreshing the list keeps the cursor sane.
+                    KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Delete => {
+                        delete = true;
+                    }
                     _ => {}
                 }
             }
             if commit {
                 self.commit_snapshot_load();
+            } else if delete {
+                self.delete_current_snapshot();
             }
             return Ok(false);
         }
@@ -6930,7 +6999,7 @@ impl App {
                 }
                 body.push(Line::from(""));
                 body.push(Line::from(Span::styled(
-                    " ↑↓ navigate · Enter loads (current edits become dirty) · Esc cancel ",
+                    " ↑↓ navigate · Enter loads (current edits become dirty) · D / Del delete · Esc cancel ",
                     Style::default().add_modifier(Modifier::DIM),
                 )));
                 (header, Color::Cyan, body)
