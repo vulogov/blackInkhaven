@@ -32,6 +32,13 @@ pub struct Theme {
     pub search_current_bg: Color,
 
     pub tree_open_marker: Color,
+    pub tree_book_fg: Color,
+    pub tree_chapter_fg: Color,
+    pub tree_subchapter_fg: Color,
+    pub tree_paragraph_fg: Color,
+    pub editor_position_fg: Color,
+    pub ai_scope_fg: Color,
+    pub ai_infer_fg: Color,
     pub grammar_change_fg: Color,
 
     pub syntax_heading: Color,
@@ -78,6 +85,13 @@ impl Theme {
             search_current_bg: color_or(&cfg.search_current_bg, Color::Rgb(0xf5, 0xc2, 0xe7)),
 
             tree_open_marker: color_or(&cfg.tree_open_marker, Color::Rgb(0xa6, 0xe3, 0xa1)),
+            tree_book_fg: color_or(&cfg.tree_book_fg, Color::Rgb(0xf5, 0xc2, 0xe7)),
+            tree_chapter_fg: color_or(&cfg.tree_chapter_fg, Color::Rgb(0x89, 0xb4, 0xfa)),
+            tree_subchapter_fg: color_or(&cfg.tree_subchapter_fg, Color::Rgb(0x94, 0xe2, 0xd5)),
+            tree_paragraph_fg: color_or(&cfg.tree_paragraph_fg, Color::Rgb(0xcd, 0xd6, 0xf4)),
+            editor_position_fg: color_or(&cfg.editor_position_fg, Color::Rgb(0x89, 0xdc, 0xeb)),
+            ai_scope_fg: color_or(&cfg.ai_scope_fg, Color::Rgb(0xfa, 0xb3, 0x87)),
+            ai_infer_fg: color_or(&cfg.ai_infer_fg, Color::Rgb(0x94, 0xe2, 0xd5)),
             grammar_change_fg: color_or(
                 &cfg.grammar_change_fg,
                 // Catppuccin Mocha red; user's spec defaults to "red" so

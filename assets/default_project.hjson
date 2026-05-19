@@ -159,6 +159,22 @@
     // paragraph row.
     tree_open_marker:  "#a6e3a1"
 
+    // Tree pane row colour by kind. The cursor REVERSED highlight and
+    // the open-paragraph marker still take precedence on the active row.
+    tree_book_fg:        "#f5c2e7"
+    tree_chapter_fg:     "#89b4fa"
+    tree_subchapter_fg:  "#94e2d5"
+    tree_paragraph_fg:   "#cdd6f4"
+
+    // Editor pane header — the trailing `L… C…` cursor read-out uses
+    // this colour so it pops out of the title.
+    editor_position_fg:  "#89dceb"
+
+    // AI pane header — the `scope=` (F9) and `infer=` (F10) chips use
+    // these colours so the active modes are visible at a glance.
+    ai_scope_fg:         "#fab387"
+    ai_infer_fg:         "#94e2d5"
+
     // Foreground colour applied to characters that differ from the
     // pre-grammar-check baseline after `T` in the AI pane overwrites the
     // buffer with the model's corrected paragraph. Stays visible until
