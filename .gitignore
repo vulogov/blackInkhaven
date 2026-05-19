@@ -28,3 +28,5 @@ target
 # travel with commits.
 /.claude
 /book_sources
+/inkhaven-artefacts
+/inkhaven-backusp
