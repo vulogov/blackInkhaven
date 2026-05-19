@@ -316,6 +316,113 @@ fn draw_backup_splash(
     f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
 }
 
+/// Render the centered "Importing directory" splash for the tree-pane
+/// directory import. Mirrors `draw_backup_splash` but adds a third line
+/// showing the file currently being imported so the user can see the
+/// walk advance through the tree.
+fn draw_import_splash(
+    f: &mut ratatui::Frame,
+    source_display: &str,
+    done: usize,
+    total: usize,
+    current: &str,
+) {
+    let area = f.area();
+    let width = area.width.saturating_sub(8).clamp(50, 100);
+    let height: u16 = 11;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let rect = Rect { x, y, width, height };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Inkhaven · import directory ")
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let bar_width = (inner.width as usize).saturating_sub(8).max(20);
+    let pct = if total == 0 {
+        0.0
+    } else {
+        (done as f32 / total as f32).clamp(0.0, 1.0)
+    };
+    let filled = (pct * bar_width as f32).round() as usize;
+    let bar = format!(
+        "  [{}{}]  {}/{} ({:>3.0}%)",
+        "█".repeat(filled),
+        "·".repeat(bar_width.saturating_sub(filled)),
+        done,
+        total,
+        pct * 100.0,
+    );
+
+    // Clip the current-file line so the splash never wraps and shoves
+    // the bar off-screen on narrow terminals.
+    let label_budget = inner.width.saturating_sub(4) as usize;
+    let current_clipped: String = if current.chars().count() > label_budget {
+        let mut s: String = current
+            .chars()
+            .rev()
+            .take(label_budget.saturating_sub(1))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        s.insert(0, '…');
+        s
+    } else {
+        current.to_string()
+    };
+
+    let body = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Importing directory…".to_string(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  Source:  {source_display}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(Span::styled(
+            format!("  Current: {current_clipped}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            bar,
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+    ];
+    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
+}
+
+/// Walk `root` and count regular files that would be imported as
+/// paragraphs (mirrors the importer's hidden-entry filter so the total
+/// matches the progress callbacks).
+fn count_importable_files(root: &Path) -> usize {
+    walkdir::WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            e.file_name()
+                .to_str()
+                .map(|s| !s.starts_with('.'))
+                .unwrap_or(true)
+        })
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .count()
+}
+
 /// Check whether the project is overdue for a backup and run one if so,
 /// streaming progress into the splash drawn over the alternate screen.
 /// Returns `Ok(())` when no backup was required OR the backup succeeded;
@@ -931,6 +1038,12 @@ struct App {
     /// globally by F10. Help inferences pin this to `Local` regardless of
     /// the current value (see `start_help_inference`).
     inference_mode: InferenceMode,
+
+    /// Set by `commit_file_pick` when the user picks a directory to
+    /// import. The main loop picks this up, renders a progress splash,
+    /// and runs the (synchronous) import with periodic redraws. None
+    /// during normal operation.
+    pending_import: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug)]
@@ -1081,6 +1194,7 @@ impl App {
             layout_ai_prompt: Rect::default(),
             ai_mode: AiMode::None,
             inference_mode: InferenceMode::Full,
+            pending_import: None,
         })
     }
 
@@ -1088,6 +1202,13 @@ impl App {
         loop {
             self.pump_inference();
             self.tick_autosave();
+            // Drive any deferred directory import — `commit_file_pick`
+            // sets `pending_import` so the splash can be drawn directly
+            // via the terminal handle (which `commit_file_pick` doesn't
+            // own). Runs synchronously: same UX as the backup splash.
+            if let Some(root) = self.pending_import.take() {
+                self.run_pending_import(terminal, &root);
+            }
             terminal.draw(|f| self.draw(f))?;
             // Shorter poll interval while streaming so tokens render with low
             // latency without burning CPU when idle.
@@ -4607,8 +4728,12 @@ impl App {
                 self.modal = Modal::None;
             }
             (PickerContext::TreeInsertOrImport, true) => {
-                self.import_directory_tree(&path);
+                // Defer the actual import to the main loop so it can run
+                // with a progress splash drawn directly via the terminal
+                // handle. `commit_file_pick` doesn't own the terminal —
+                // see `App::run`.
                 self.modal = Modal::None;
+                self.pending_import = Some(path);
             }
         }
     }
@@ -4733,7 +4858,53 @@ impl App {
         }
     }
 
-    fn import_directory_tree(&mut self, root: &std::path::Path) {
+    /// Drive a deferred directory import set up by `commit_file_pick`.
+    /// Pre-counts files so the splash has a meaningful denominator, then
+    /// runs the (synchronous) import with a progress callback that
+    /// throttles `terminal.draw` to ~30 Hz. Status bar is updated when
+    /// the import finishes; the next mainloop frame paints over the
+    /// splash automatically.
+    fn run_pending_import<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        root: &Path,
+    ) {
+        let total = count_importable_files(root);
+        let source_display = root.display().to_string();
+        let progress_root = root.to_path_buf();
+
+        // Initial 0/total frame so the splash appears even if the
+        // first file takes a moment (e.g. fastembed cold-loading on
+        // first import in a session).
+        let _ = terminal.draw(|f| {
+            draw_import_splash(f, &source_display, 0, total, "scanning…")
+        });
+
+        let mut last_redraw = std::time::Instant::now();
+        {
+            let source_display = source_display.clone();
+            let mut progress = move |done: usize, file: &Path| {
+                if last_redraw.elapsed() < std::time::Duration::from_millis(33) {
+                    return;
+                }
+                last_redraw = std::time::Instant::now();
+                let rel = file
+                    .strip_prefix(&progress_root)
+                    .unwrap_or(file);
+                let label = rel.display().to_string();
+                let _ = terminal.draw(|f| {
+                    draw_import_splash(f, &source_display, done, total, &label)
+                });
+            };
+            self.import_directory_tree(root, &mut progress);
+        }
+    }
+
+    fn import_directory_tree(
+        &mut self,
+        root: &std::path::Path,
+        progress: &mut dyn FnMut(usize, &Path),
+    ) {
         // The top-level dir's "kind" adapts to where the tree cursor sits:
         //   Book      → top dir becomes a Chapter
         //   Chapter   → top dir becomes a Subchapter
@@ -4758,7 +4929,7 @@ impl App {
         });
 
         let mut counts = ImportCounts::default();
-        let result = self.import_dir_recursive(root, parent_id, &mut counts);
+        let result = self.import_dir_recursive(root, parent_id, &mut counts, progress);
 
         // Always reload — even on partial failure the new branches/paragraphs
         // that DID get created should be visible in the tree.
@@ -4789,6 +4960,7 @@ impl App {
         source: &std::path::Path,
         parent_id: Option<Uuid>,
         counts: &mut ImportCounts,
+        progress: &mut dyn FnMut(usize, &Path),
     ) -> InkResult<()> {
         // Resolve parent against a freshly loaded hierarchy so prior creates
         // in this import are visible.
@@ -4822,7 +4994,7 @@ impl App {
             // point are lost (the bounded hierarchy can't represent them),
             // but the prose comes through.
             let pid = parent_id.expect("None parent already handled by kind match");
-            return self.flatten_files_into(source, pid, counts);
+            return self.flatten_files_into(source, pid, counts, progress);
         };
 
         let title = source
@@ -4850,9 +5022,9 @@ impl App {
         let mut first_err: Option<Error> = None;
         for child_path in children {
             let res = if child_path.is_dir() {
-                self.import_dir_recursive(&child_path, Some(created_id), counts)
+                self.import_dir_recursive(&child_path, Some(created_id), counts, progress)
             } else {
-                self.import_file_as_paragraph_by_id(&child_path, created_id, counts)
+                self.import_file_as_paragraph_by_id(&child_path, created_id, counts, progress)
             };
             if let Err(e) = res {
                 if first_err.is_none() {
@@ -4874,6 +5046,7 @@ impl App {
         source: &std::path::Path,
         parent_id: Uuid,
         counts: &mut ImportCounts,
+        progress: &mut dyn FnMut(usize, &Path),
     ) -> InkResult<()> {
         let mut first_err: Option<Error> = None;
         for entry in walkdir::WalkDir::new(source)
@@ -4896,7 +5069,12 @@ impl App {
             if name.starts_with('.') {
                 continue;
             }
-            if let Err(e) = self.import_file_as_paragraph_by_id(entry.path(), parent_id, counts) {
+            if let Err(e) = self.import_file_as_paragraph_by_id(
+                entry.path(),
+                parent_id,
+                counts,
+                progress,
+            ) {
                 if first_err.is_none() {
                     first_err = Some(e);
                 }
@@ -4913,6 +5091,7 @@ impl App {
         file: &std::path::Path,
         parent_id: Uuid,
         counts: &mut ImportCounts,
+        progress: &mut dyn FnMut(usize, &Path),
     ) -> InkResult<()> {
         let title = derive_paragraph_title_from_path(file);
         let bytes = std::fs::read(file).map_err(Error::Io)?;
@@ -4937,6 +5116,7 @@ impl App {
             self.store.update_paragraph_content(&mut node, &bytes)?;
         }
         counts.paragraphs += 1;
+        progress(counts.paragraphs, file);
         Ok(())
     }
 
