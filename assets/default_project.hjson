@@ -85,12 +85,17 @@
   // zip is written to `out_dir`. `inkhaven backup --out <dir>` triggers
   // the same flow manually at any time.
   //
-  // - `out_dir`: relative paths resolve against the project root; empty
-  //   string disables auto-backup.
-  // - `max_age`: humantime — "1d", "12h", "30m", "1w" all work.
-  //   Set to "0s" (or unset) to disable the on-exit hook entirely.
+  // - `out_dir`: empty string (default) → resolved at runtime to
+  //   `<parent-of-project>/inkhaven-backups/<project-basename>/`
+  //   (sibling directory next to the project — visible in any file
+  //   manager so backups are easy to copy off to external storage).
+  //   Absolute paths used verbatim; relative paths resolve against the
+  //   project root if you really want backups inside the project.
+  // - `max_age`: humantime — "1d", "12h", "30m", "1w" all work. Set to
+  //   "0s" to disable the on-exit hook entirely (manual
+  //   `inkhaven backup` still works).
   backup: {
-    out_dir: "backups"
+    out_dir: ""
     max_age: "7d"
   }
 
@@ -116,10 +121,14 @@
   prompts_file: prompts.hjson
 
   // Where per-book artefacts (rendered PDFs, build intermediates, …)
-  // land. Each new user book gets its own subdirectory under here
-  // (e.g. `artefacts/my-novel/`). Created on project open if missing;
-  // relative paths resolve against the project root.
-  artefacts_directory: artefacts
+  // land. Empty string → resolved at runtime to
+  // `<parent-of-project>/inkhaven-artefacts/<project-basename>/`
+  // (sibling directory next to the project, mirroring `backup.out_dir`
+  // so both user-visible outputs sit next to the project in a file
+  // manager). Override with an absolute path for a custom location, or
+  // a relative path to keep artefacts inside the project tree (legacy
+  // behaviour — remember they're ephemeral and don't belong in backups).
+  artefacts_directory: ""
 
   // Visual theme — every value is a hex RGB triple like "#RRGGBB" (or the
   // short "#RGB" form). Empty strings fall back to the shipped Catppuccin

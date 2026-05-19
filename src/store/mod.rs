@@ -102,32 +102,39 @@ impl Store {
         Ok(store)
     }
 
-    /// Create the per-project artefacts root (config field
-    /// `artefacts_directory`) if it doesn't exist yet. Each user book
-    /// gets its own subdirectory under here for PDFs / build
-    /// intermediates / etc. Empty `artefacts_directory` disables the
-    /// hook.
+    /// Create the per-project artefacts root if it doesn't exist yet.
+    /// Each user book gets its own subdirectory under here for PDFs /
+    /// build intermediates / etc. With the empty-string default the
+    /// directory lives in the OS per-user cache (see
+    /// `resolve_artefacts_dir`).
     fn ensure_artefacts_directory(&self, cfg: &Config) -> Result<()> {
-        let dir = cfg.artefacts_directory.trim();
-        if dir.is_empty() {
-            return Ok(());
-        }
         let abs = self.resolve_artefacts_dir(cfg);
         std::fs::create_dir_all(&abs).map_err(Error::Io)?;
         Ok(())
     }
 
-    /// Resolve `cfg.artefacts_directory` against the project root.
-    /// Absolute paths are used verbatim; relative paths join the layout
-    /// root.
+    /// Resolve `cfg.artefacts_directory` to an absolute path. Precedence:
+    ///   1. **Empty string** — use the OS-appropriate per-user cache
+    ///      directory: `<cache_dir>/inkhaven/artefacts/<project-basename>`.
+    ///      This is the default behaviour because build artefacts are
+    ///      ephemeral and don't belong inside the project tree.
+    ///   2. **Absolute path** — used verbatim.
+    ///   3. **Relative path** — joined to the project root (legacy
+    ///      behaviour; useful if the user explicitly wants artefacts
+    ///      tracked alongside the manuscript).
     pub fn resolve_artefacts_dir(&self, cfg: &Config) -> std::path::PathBuf {
-        let raw = std::path::PathBuf::from(&cfg.artefacts_directory);
-        if raw.is_absolute() {
-            raw
+        let raw = cfg.artefacts_directory.trim();
+        if raw.is_empty() {
+            return default_user_artefacts_dir(&self.layout.root);
+        }
+        let p = std::path::PathBuf::from(raw);
+        if p.is_absolute() {
+            p
         } else {
-            self.layout.root.join(raw)
+            self.layout.root.join(p)
         }
     }
+
 
     /// Provision the side-effects of creating a user book at the root
     /// level: an artefacts subdirectory matching the book's slug, and a
@@ -157,11 +164,10 @@ impl Store {
             return Ok(());
         }
 
-        // (a) Artefacts subdirectory: <artefacts_directory>/<book-slug>/
-        if !cfg.artefacts_directory.trim().is_empty() {
-            let sub = self.resolve_artefacts_dir(cfg).join(&book_node.slug);
-            std::fs::create_dir_all(&sub).map_err(Error::Io)?;
-        }
+        // (a) Artefacts subdirectory under the resolved root
+        // (per-user cache by default — see `resolve_artefacts_dir`).
+        let sub = self.resolve_artefacts_dir(cfg).join(&book_node.slug);
+        std::fs::create_dir_all(&sub).map_err(Error::Io)?;
 
         // (b) Typst-book chapter + three starter paragraphs.
         self.ensure_typst_skeleton(cfg, &book_node.title)?;
@@ -905,4 +911,55 @@ fn embedding_cache_dir() -> Option<std::path::PathBuf> {
     let path = dirs.cache_dir().join("embeddings");
     let _ = std::fs::create_dir_all(&path);
     Some(path)
+}
+
+/// Default backup directory for a given project. Lives **next to** the
+/// project (sibling directory in the same parent), in a shared
+/// `inkhaven-backups/` folder with a `<project-basename>` subfolder so
+/// multiple projects in the same parent don't collide.
+///
+/// Why sibling-of-project rather than an OS cache directory: backups
+/// are user-facing artefacts that need to be obvious when listing files.
+/// Hiding them in `~/Library/Caches/...` makes them hard to find and
+/// hard to copy to external storage.
+///
+/// Layout for a project at `~/Books/my-novel/`:
+/// ```text
+/// ~/Books/
+/// ├── inkhaven-backups/
+/// │   └── my-novel/         ← snapshots land here
+/// └── my-novel/
+/// ```
+pub fn default_user_backup_dir(project_root: &std::path::Path) -> std::path::PathBuf {
+    let project_id = project_basename(project_root);
+    project_root
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("inkhaven-backups")
+        .join(project_id)
+}
+
+/// Default artefacts directory — same sibling-of-project pattern as
+/// `default_user_backup_dir`. PDFs, build intermediates, and other
+/// per-book outputs land under `<parent>/inkhaven-artefacts/<project-basename>/<book-slug>/`.
+pub fn default_user_artefacts_dir(project_root: &std::path::Path) -> std::path::PathBuf {
+    let project_id = project_basename(project_root);
+    project_root
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("inkhaven-artefacts")
+        .join(project_id)
+}
+
+/// Project identifier for the default-path resolvers. The bare filename
+/// of the project root works in practice; collisions between same-named
+/// projects in different parents are surfaced quickly by the user and
+/// can be resolved by setting an explicit `backup.out_dir` /
+/// `artefacts_directory` in their HJSON.
+fn project_basename(project_root: &std::path::Path) -> String {
+    project_root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "default".into())
 }
