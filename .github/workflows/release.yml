@@ -73,6 +73,23 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # Linux: install system libs that bdslib's transitive native deps
+      # need. fontconfig comes in via yeslogic-fontconfig-sys; the xcb-*
+      # set covers arboard's X11 clipboard backend; libssl-dev is a common
+      # baseline. macOS and Windows runners use platform-native equivalents.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libfontconfig1-dev \
+            libssl-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev
+
       # Caches `~/.cargo` + `target/` between runs. Critical: bdslib
       # pulls in duckdb / tantivy / fastembed / augurs, so a cold build
       # is 10–15 minutes. The cache key includes Cargo.lock so a real
