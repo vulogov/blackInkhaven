@@ -1053,6 +1053,17 @@ impl App {
             return Ok(false);
         }
 
+        // F7 runs a grammar check on the currently-open paragraph. The
+        // prompt template is resolved with precedence: Prompts book entry
+        // titled "Grammar check" > prompts.hjson entry of the same name >
+        // a built-in fallback that asks the model to check syntax /
+        // punctuation in the configured `language` while preserving any
+        // Typst markup.
+        if matches!(key.code, KeyCode::F(7)) {
+            self.start_grammar_check();
+            return Ok(false);
+        }
+
         // F9 cycles the AI scope mode (None → Selection → Paragraph →
         // Subchapter → Chapter → Book → None). The next prompt sent from
         // the AI prompt bar will prepend that context, then auto-reset to
@@ -3367,6 +3378,93 @@ impl App {
     /// streams the result into the AI pane. The AI pane is read-only by
     /// construction (no editor lives there), so the user can scroll the
     /// answer but can't edit it.
+    /// Run a grammar check on the currently-open paragraph. Resolves a
+    /// "Grammar check" prompt template by precedence:
+    ///   1. Paragraph titled / slugged `grammar-check` (or `Grammar check`)
+    ///      under the Prompts system book.
+    ///   2. Same-named entry in `prompts.hjson` (`name: "grammar-check"`).
+    ///   3. Built-in fallback that constrains the LLM to checking syntax
+    ///      and punctuation in `cfg.language` while preserving any Typst
+    ///      formatting.
+    ///
+    /// In all three cases the paragraph body is appended verbatim. After
+    /// streaming starts focus jumps to the AI pane so the user can watch
+    /// the result render in real time.
+    fn start_grammar_check(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "grammar check needs an open paragraph".into();
+            return;
+        };
+        let body = doc.textarea.lines().join("\n");
+        if body.trim().is_empty() {
+            self.status = "grammar check: paragraph is empty".into();
+            return;
+        }
+
+        // Resolver precedence. `grammar-check` is the canonical slug —
+        // case-insensitive match against both slug and title catches the
+        // common variants ("Grammar check", "GRAMMAR CHECK", etc.).
+        const NAME: &str = "grammar-check";
+        const TITLE: &str = "grammar check";
+        let template = if let Some(t) = self.lookup_book_prompt_template(NAME) {
+            t
+        } else if let Some(t) = self.lookup_book_prompt_template(TITLE) {
+            t
+        } else if let Some(p) = self.prompts.find(NAME) {
+            p.template.clone()
+        } else if let Some(p) = self.prompts.find(TITLE) {
+            p.template.clone()
+        } else {
+            grammar_check_default_prompt(&self.cfg.language)
+        };
+
+        // Render placeholders ({{selection}} / {{context}}) and then
+        // append the paragraph body so the model has a single trailing
+        // block to work on regardless of whether the template already
+        // referenced it.
+        let rendered = self.render_template(&template);
+        let prompt_text = format!(
+            "{rendered}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──",
+            title = doc.title
+        );
+
+        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("grammar check: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        // Grammar check is a one-shot: don't replay chat history, don't
+        // append the turn to history. Behaviour matches Help in that
+        // sense.
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            Some(GRAMMAR_CHECK_SYSTEM_PROMPT.to_string()),
+            Vec::new(),
+            prompt_text,
+        );
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        // Per spec: focus moves to the AI pane so the user can watch the
+        // streamed result. Esc bounces back to AiPrompt for follow-ups.
+        self.change_focus(Focus::Ai);
+        self.status = format!(
+            "Grammar check: streaming from {provider} ({})…",
+            self.cfg.language
+        );
+    }
+
     fn start_help_inference(&mut self, query: &str) {
         let query = query.trim();
         if query.is_empty() {
@@ -6310,21 +6408,38 @@ fn build_lexicon(hierarchy: &Hierarchy, cfg: &Config) -> super::lexicon::Lexicon
             _ => {}
         }
     }
-    let algos: Vec<rust_stemmers::Algorithm> = cfg
-        .editor
-        .stemming
-        .languages
-        .iter()
-        .filter_map(|name| match crate::config::parse_stemmer_language(name) {
-            Some(a) => Some(a),
+    // Precedence: top-level `language` (when non-empty) wins over the
+    // legacy `editor.stemming.languages` list. The former is the one-knob
+    // primary setting; the latter stays for power users who want to
+    // stem across multiple languages simultaneously.
+    let algos: Vec<rust_stemmers::Algorithm> = if !cfg.language.trim().is_empty() {
+        match crate::config::parse_stemmer_language(&cfg.language) {
+            Some(a) => vec![a],
             None => {
                 tracing::warn!(
-                    "editor.stemming.languages: unknown language `{name}` — skipped"
+                    "language `{}` is not a known Snowball algorithm — \
+                     stemmer disabled (falling back to exact-phrase matching)",
+                    cfg.language
                 );
-                None
+                Vec::new()
             }
-        })
-        .collect();
+        }
+    } else {
+        cfg.editor
+            .stemming
+            .languages
+            .iter()
+            .filter_map(|name| match crate::config::parse_stemmer_language(name) {
+                Some(a) => Some(a),
+                None => {
+                    tracing::warn!(
+                        "editor.stemming.languages: unknown language `{name}` — skipped"
+                    );
+                    None
+                }
+            })
+            .collect()
+    };
     super::lexicon::Lexicon::build(hierarchy, places, characters, algos)
 }
 
@@ -6381,6 +6496,44 @@ blocks, treat that text as ground truth and prefer it to any conflicting \
 general knowledge. Otherwise, answer freely using your general knowledge \
 of writing craft, world-building, and the relevant subject matter. Be \
 concise; favour short paragraphs and concrete suggestions.";
+
+/// Grammar-check system prompt. Bounds the model to a copy-editor role and
+/// reminds it that Typst markup (`= Heading`, `*bold*`, `_italic_`,
+/// `#link[...]`, raw blocks, etc.) must round-trip unchanged.
+const GRAMMAR_CHECK_SYSTEM_PROMPT: &str = "\
+You are a meticulous copy-editor reviewing a paragraph from a Typst-formatted \
+manuscript. Check for grammar, syntax, and punctuation issues only. \
+Preserve every Typst markup token verbatim — `= Heading`, `== Subheading`, \
+`*bold*`, `_italic_`, `#link(\"…\")[…]`, raw / code blocks, and any other \
+Typst-specific syntax must round-trip unchanged. Do not rewrite for style, \
+do not change voice, do not propose structural edits unless the original \
+sentence is grammatically broken. \
+\
+Output format: \
+1. Start with a short summary line (e.g. \"3 grammar issues, 1 punctuation \
+issue, otherwise clean\"). \
+2. Then list each issue with the exact original phrase and a suggested \
+correction. \
+3. Finish with the fully corrected paragraph, ready to paste back into the \
+editor. The corrected text must keep every Typst markup token in place.";
+
+/// Fallback prompt body for F7 grammar check when no user-defined
+/// `Grammar check` prompt exists in the Prompts book or `prompts.hjson`.
+/// The configured `language` from the HJSON drives the grammar rules.
+fn grammar_check_default_prompt(language: &str) -> String {
+    let lang = if language.trim().is_empty() {
+        "English"
+    } else {
+        language.trim()
+    };
+    format!(
+        "Run a copy-edit pass on the paragraph below. Treat it as {lang} \
+prose. Check syntax, agreement, tense, and punctuation; flag anything \
+that's grammatically incorrect according to standard {lang} grammar. \
+Typst markup may be present — preserve it verbatim in any corrected \
+output. After listing issues, give the fully corrected paragraph."
+    )
+}
 
 /// System prompt for the F1 / "Help!" RAG flow. We force the model to
 /// stick to the supplied excerpts so the help feature behaves like a
