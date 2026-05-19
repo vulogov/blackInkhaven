@@ -17,6 +17,8 @@ pub struct Config {
     pub keys: KeyBindings,
     #[serde(default)]
     pub hierarchy: HierarchyConfig,
+    #[serde(default)]
+    pub theme: ThemeConfig,
     #[serde(default = "default_prompts_path")]
     pub prompts_file: PathBuf,
     /// Seconds between background calls to `Store::sync()` (flushes HNSW
@@ -42,10 +44,145 @@ impl Default for Config {
             editor: EditorConfig::default(),
             keys: KeyBindings::default(),
             hierarchy: HierarchyConfig::default(),
+            theme: ThemeConfig::default(),
             prompts_file: default_prompts_path(),
             sync_interval_seconds: default_sync_interval(),
         }
     }
+}
+
+/// Visual theme for the TUI. Every field is a hex colour string (`#RRGGBB`),
+/// or the empty string for "fall back to terminal default" (only meaningful
+/// for background fields). Defaults form a Catppuccin Mocha-style dark theme;
+/// see `assets/default_project.hjson` for a complete annotated example.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemeConfig {
+    // Pane backgrounds and foregrounds.
+    pub pane_bg: String,
+    pub pane_fg: String,
+    pub line_number_fg: String,
+    pub current_line_bg: String,
+
+    // Pane borders (focused / unfocused / saved / dirty / read-only).
+    pub border_focused: String,
+    pub border_unfocused: String,
+    pub border_dirty: String,
+    pub border_saved: String,
+    pub border_readonly: String,
+
+    // Modal / floating windows.
+    pub modal_bg: String,
+    pub modal_border: String,
+    pub modal_fg: String,
+
+    // Lexicon highlights overlay.
+    pub places_fg: String,
+    pub characters_fg: String,
+
+    // Search-match overlay in the editor.
+    pub search_match_bg: String,
+    pub search_current_bg: String,
+
+    // Tree pane chrome.
+    pub tree_open_marker: String,
+
+    // Typst syntax colours.
+    pub syntax_heading: String,
+    pub syntax_bold: String,
+    pub syntax_italic: String,
+    pub syntax_string: String,
+    pub syntax_number: String,
+    pub syntax_comment: String,
+    pub syntax_keyword: String,
+    pub syntax_function: String,
+    pub syntax_operator: String,
+    pub syntax_list_marker: String,
+    pub syntax_raw: String,
+    pub syntax_tag: String,
+    pub syntax_quote: String,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        // Catppuccin Mocha — chosen for low eye-strain on a dark background
+        // and broad community familiarity. All values are RGB hex strings so
+        // they re-serialise cleanly into HJSON.
+        Self {
+            pane_bg: "#1e1e2e".into(),
+            pane_fg: "#cdd6f4".into(),
+            line_number_fg: "#6c7086".into(),
+            current_line_bg: "#313244".into(),
+
+            border_focused: "#cba6f7".into(),
+            border_unfocused: "#45475a".into(),
+            border_dirty: "#f9e2af".into(),
+            border_saved: "#a6e3a1".into(),
+            border_readonly: "#94e2d5".into(),
+
+            modal_bg: "#181825".into(),
+            modal_border: "#cba6f7".into(),
+            modal_fg: "#cdd6f4".into(),
+
+            places_fg: "#89dceb".into(),
+            characters_fg: "#f9e2af".into(),
+
+            search_match_bg: "#f38ba8".into(),
+            search_current_bg: "#f5c2e7".into(),
+
+            tree_open_marker: "#a6e3a1".into(),
+
+            syntax_heading: "#cba6f7".into(),
+            syntax_bold: "#f9e2af".into(),
+            syntax_italic: "#94e2d5".into(),
+            syntax_string: "#a6e3a1".into(),
+            syntax_number: "#fab387".into(),
+            syntax_comment: "#6c7086".into(),
+            syntax_keyword: "#cba6f7".into(),
+            syntax_function: "#89dceb".into(),
+            syntax_operator: "#94e2d5".into(),
+            syntax_list_marker: "#cba6f7".into(),
+            syntax_raw: "#fab387".into(),
+            syntax_tag: "#89b4fa".into(),
+            syntax_quote: "#9399b2".into(),
+        }
+    }
+}
+
+/// Parse a colour spec into a ratatui `Color`. Accepts `#RRGGBB` /
+/// `#RGB` / `RRGGBB`. Empty string returns `None` (caller decides what to
+/// use as a fallback — typically `Color::Reset`). On parse failure returns
+/// `None` and the caller falls back; we never panic on a malformed theme.
+pub fn parse_color(s: &str) -> Option<ratatui::style::Color> {
+    use ratatui::style::Color;
+    let t = s.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let hex = t.strip_prefix('#').unwrap_or(t);
+    let parse_byte = |h: &str| u8::from_str_radix(h, 16).ok();
+    match hex.len() {
+        3 => {
+            let r = parse_byte(&hex[0..1])? * 17;
+            let g = parse_byte(&hex[1..2])? * 17;
+            let b = parse_byte(&hex[2..3])? * 17;
+            Some(Color::Rgb(r, g, b))
+        }
+        6 => {
+            let r = parse_byte(&hex[0..2])?;
+            let g = parse_byte(&hex[2..4])?;
+            let b = parse_byte(&hex[4..6])?;
+            Some(Color::Rgb(r, g, b))
+        }
+        _ => None,
+    }
+}
+
+/// Convenience: parse the field, fall back to `default` when empty/invalid.
+/// Used everywhere a theme colour gets applied so the renderer never panics
+/// because the user typed `pane_fg: ""`.
+pub fn color_or(s: &str, default: ratatui::style::Color) -> ratatui::style::Color {
+    parse_color(s).unwrap_or(default)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

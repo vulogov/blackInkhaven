@@ -34,7 +34,8 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+B`             | Enter **meta mode**. The next keystroke is the action selector (see §1.1). | `meta_prefix` |
 | `Ctrl+B H`           | Open the pane-aware **Quick reference** floating pane. Works from every pane (Tree / Editor / AI). Scroll with arrows / PgUp / PgDn; close with `Esc`. Routed through the meta prefix so it never collides with the editor's `Ctrl+H` split-scroll. | no |
 | `F1`                 | Open the **Help-manual** query pane (RAG over the Help book). Type a question, Enter to ask. The default LLM provider streams a grounded answer into the AI pane; the model is constrained to use only the Help excerpts (no external knowledge). Same flow as typing `Help! <question>` into the AI prompt bar. Help answers are **one-shot** and do not enter the AI chat history. | no |
-| `F9`                 | **Clear AI chat history** + the currently displayed inference. Use this to start a fresh research conversation; previously sent turns are not replayed to the model after this. The meta-prefix form `Ctrl+B` then `C` is identical. | no |
+| `F9`                 | **Cycle the AI scope** through `None → Selection → Paragraph → Subchapter → Chapter → Book → None`. The next prompt sent from the AI prompt bar prepends the matching context (selection text / open paragraph / enclosing branch contents) then **auto-resets to `None`**. Mode is shown in the AI prompt title (`AI prompt · scope: Paragraph`) and the status bar. Works from every pane. | no |
+| `Ctrl+B C`           | Clear the AI chat history + currently displayed inference. (F9's old behaviour; F9 now drives the scope cycle.) | no |
 
 ### 1.1 Meta mode (Ctrl+B prefix)
 
@@ -110,6 +111,7 @@ glyphs (`📖` book, `▸` chapter, `▹` subchapter, `¶` paragraph), and a dim
 | `F2`                 | Open the **Rename** modal pre-filled with the current node's title. Slug + filesystem entry stay; only the displayed title changes (re-embeds for search). |
 | `F3`                 | Open the **file picker** dialog. Enter on a file creates a new paragraph (inserted after the current cursor) with that file's content. Enter on a directory **recursively imports** the tree — subdirectories become branches one level deeper (Book→Chapter→Subchapter), files become paragraphs. If the directory tree exceeds the hierarchy depth, the deeper files are flattened into the deepest legal branch (with `unbounded_subchapters: false`). See §12. |
 | `q` or `Q`           | Quit (autosaves the open paragraph first if dirty).         |
+| `Esc`                | Cycle focus to the **Search bar** (second leg of the Editor → Tree → Search → Editor rotation). |
 
 **Open-paragraph indicator** — the row of the paragraph currently loaded in
 the Editor is rendered with a **green bold "►"** marker (instead of the
@@ -144,6 +146,8 @@ confirmation.
 | `-`       | Delete the cursor's node — only if it's a **paragraph**. On a branch, shows a hint to press `D` instead. |
 | `U` / `u` | **Move up** — swap the cursor's node with its previous sibling. Plain-letter form of `Ctrl+B ↑`. |
 | `J` / `j` | **Move down** — swap the cursor's node with its next sibling. Plain-letter form of `Ctrl+B ↓`. |
+| `Z` / `z` | **Collapse subchapter** — folds the cursor's enclosing Subchapter (or the cursor's node itself if it IS a Subchapter). Lands the tree cursor on the folded row. |
+| `X` / `x` | **Collapse all** — folds every expanded branch in the tree. Empty branches and paragraphs are untouched. |
 
 Empty paragraph titles are allowed for `+` and `P` — the first sentence of the body becomes the title on next save.
 
@@ -438,7 +442,7 @@ character at the buffer's character position.
 | `↑`                  | (overlay open) Move result cursor up.                       |
 | `↓`                  | (overlay open) Move result cursor down.                     |
 | `Enter`              | If results overlay is open: open the highlighted result. Otherwise: run `Store::search_text(query, 10)` and show results. |
-| `Esc`                | If overlay open, close it (one press); else defocus back to **Editor** if a paragraph is open, otherwise to Tree.|
+| `Esc`                | If results overlay is open, close it (one press); else cycle focus to the **Editor** pane (third leg of the Editor → Tree → Search → Editor rotation). |
 
 Opening a result from this overlay positions the tree cursor on the target
 node. Paragraphs additionally load into the editor (focus moves to Editor).
@@ -463,6 +467,8 @@ action and the `/`-triggered Prompt picker overlay.
 | `Tab`                | (picker open) Expand selected prompt template into the buffer with `{{selection}}` / `{{context}}` substituted. |
 | `Enter`              | If picker open: same as Tab — expand selected template. Otherwise: spawn a streaming inference. Focus **stays** on the AI prompt bar (it does not jump to the AI pane). The buffer is sent verbatim, except: a leading `/name` is resolved against the prompt library, and a leading `Help!` (case-sensitive) routes the rest of the line through the F1 Help-RAG flow. |
 | `Esc`                | If picker open, close it; else bounce focus to the **AI pane** so you can read or scroll the answer. Pressing `Esc` again from the AI pane brings you straight back here. |
+| `Ctrl+1`             | Focus the **Editor** pane (global shortcut, works from this input too). |
+| `Ctrl+T`             | Focus the **Tree** pane (global shortcut, works from this input too). |
 
 Submitting a query when no API key is set in the environment surfaces a
 status-line error like `GEMINI_API_KEY not set in environment — `export
@@ -499,9 +505,18 @@ bar is focused (see §5). The pane's own keys are:
 
 ## 8. Prompt picker overlay
 
-Floating magenta panel anchored just above the AI prompt bar. Shows every
-prompt from `prompts.hjson` whose name or description contains the text
-after `/` in the bar (case-insensitive).
+Floating magenta panel anchored just above the AI prompt bar. Two sources
+are merged, in this order:
+
+1. **System prompts** from `prompts.hjson` — well-known templates that ship
+   with the project. Shown with a cyan `[ system ]` chip.
+2. **Book prompts** — every paragraph nested under the **Prompts** system
+   book. The paragraph's slug supplies the `/name` identifier and the
+   title supplies the description. Body is the template. Shown with a
+   green `[ book ]` chip.
+
+A name or description that contains the text after `/` in the bar (case-
+insensitive) is included. Filter updates live as you type.
 
 Routed to the AI prompt bar (§6) — the picker has no separate focus.
 
@@ -511,6 +526,14 @@ Routed to the AI prompt bar (§6) — the picker has no separate focus.
 | `Enter` or `Tab`     | Expand the selected prompt's template into the buffer.      |
 | `Esc`                | Close the picker without expanding.                         |
 | Backspace / Delete   | Modify the filter; picker re-filters live.                  |
+
+The leading `= Title` Typst heading is stripped from book-prompt bodies on
+expansion so it doesn't end up in the LLM prompt — the heading is editor
+chrome, not prose. `{{selection}}` / `{{context}}` substitutions in the
+expanded body still fire for both sources.
+
+A direct `/name` typed into the AI prompt bar and submitted with `Enter`
+(no picker open) is also resolved against both sources, system-first.
 
 ---
 
@@ -745,7 +768,7 @@ EDITOR          arrows       move cursor
                 Ctrl+B H     open Quick reference overlay (global)
                 F5           create snapshot
                 F6           open snapshot picker
-                Esc          clear search (if active) · else defocus to tree
+                Esc          clear search (if active) · else cycle to Tree
                 (idle autosave fires after editor.autosave_seconds)
                 (new text since last save is rendered bold)
 

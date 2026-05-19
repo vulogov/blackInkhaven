@@ -61,12 +61,12 @@ fn global_entries() -> [Entry; 13] {
         entry("Ctrl+B", "Meta prefix (next key = action)"),
         entry("Ctrl+B H", "This Quick reference (works from every pane)"),
         entry("F1", "Help-manual question (RAG over the Help book)"),
-        entry("F9", "Clear AI chat history + current inference"),
+        entry("F9", "Cycle AI scope: None→Sel→Para→Sub→Chap→Book→None"),
         entry("Esc", "Close overlay / cancel"),
     ]
 }
 
-fn tree_entries() -> [Entry; 22] {
+fn tree_entries() -> [Entry; 27] {
     [
         entry("↑ / ↓ / Home / End", "Navigate"),
         entry("PageUp / PageDown", "Jump by 10"),
@@ -84,6 +84,11 @@ fn tree_entries() -> [Entry; 22] {
         header("─ Reorder ─"),
         entry("U", "Move current node up among siblings"),
         entry("J", "Move current node down among siblings"),
+        header(""),
+        header("─ Folding ─"),
+        entry("← / →", "Collapse / expand cursor's branch"),
+        entry("Z", "Collapse cursor's enclosing subchapter"),
+        entry("X", "Collapse every expanded branch"),
         header(""),
         header("─ Meta prefix ─"),
         entry("Ctrl+B B/C/S/P", "Add book/chapter/subchapter/paragraph"),
@@ -149,8 +154,8 @@ fn ai_entries() -> [Entry; 17] {
         entry("Esc", "Bounce to AI pane to read the answer"),
         header(""),
         header("─ Chat session ─"),
-        entry("F9", "Clear chat history + current inference"),
-        entry("Ctrl+B C", "Same as F9 (meta-prefix form)"),
+        entry("F9", "Cycle scope: None/Sel/Para/Sub/Chap/Book"),
+        entry("Ctrl+B C", "Clear chat history + current inference"),
         entry("Ctrl+B H", "Open Quick reference"),
     ]
 }

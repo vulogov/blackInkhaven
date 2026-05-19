@@ -32,6 +32,7 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
 ];
 
 pub const SYSTEM_TAG_NOTES: &str = "notes";
+pub const SYSTEM_TAG_PROMPTS: &str = "prompts";
 pub const SYSTEM_TAG_PLACES: &str = "places";
 pub const SYSTEM_TAG_CHARACTERS: &str = "characters";
 pub const SYSTEM_TAG_HELP: &str = "help";

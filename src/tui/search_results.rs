@@ -12,6 +12,11 @@ pub struct SearchHit {
     pub score: f64,
     pub kind: NodeKind,
     pub title: String,
+    /// Slug-derived filesystem path; kept around for diagnostics and for
+    /// the parse test, but the UI renders a title-based breadcrumb instead
+    /// (see `App::title_breadcrumb`). The CLI search subcommand still
+    /// displays it.
+    #[allow(dead_code)]
     pub slug_path: String,
     pub snippet: String,
 }
