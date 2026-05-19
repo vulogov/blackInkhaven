@@ -211,24 +211,27 @@ impl Store {
             )?,
         };
 
-        // Each paragraph needs a deterministic title and a starter body.
-        const SEEDS: &[(&str, &str)] = &[
+        // Each paragraph needs a deterministic title and a starter
+        // body. globals.typ ships the four wrap_* functions used by the
+        // Book assembly procedure (Ctrl+B A) — pulled from
+        // `cfg.typst_templates` so the user can pre-customise them in
+        // HJSON.
+        let globals_body = cfg.typst_templates.globals_typ_body();
+        let seeds: [(&str, String); 3] = [
             (
                 "index.typ",
-                "= index.typ\n\n#import \"globals.typ\": *\n#import \"settings.typ\": *\n",
+                "= index.typ\n\n#import \"globals.typ\": *\n#import \"settings.typ\": *\n"
+                    .into(),
             ),
             (
                 "settings.typ",
-                "= settings.typ\n\n// Document-wide #set / #show rules go here.\n",
+                "= settings.typ\n\n// Document-wide #set / #show rules go here.\n".into(),
             ),
-            (
-                "globals.typ",
-                "= globals.typ\n\n// Project-wide values and helpers go here.\n",
-            ),
+            ("globals.typ", globals_body),
         ];
         // Reload hierarchy after each create so subsequent lookups see
         // freshly-added siblings.
-        for (title, body) in SEEDS {
+        for (title, body) in &seeds {
             let h = Hierarchy::load(self)?;
             let already = h.iter().any(|n| {
                 n.kind == NK::Paragraph

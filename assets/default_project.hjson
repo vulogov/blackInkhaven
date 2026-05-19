@@ -113,6 +113,23 @@
     volume: 0.6
   }
 
+  // Typst wrap function templates used by Book assembly (Ctrl+B A).
+  // The strings below are inlined verbatim into the per-book
+  // `globals.typ` paragraph the first time a user book is created —
+  // edit them here BEFORE running `add book` (or copy your customised
+  // wrap_* defs into Typst → <bookname> → globals.typ in the TUI).
+  //
+  // An empty string falls back to inkhaven's baked-in default for that
+  // wrap (`heading(level: ...) ; body` for chapter/subchapter; passthrough
+  // for book / paragraph). Leave the defaults until you know what
+  // headings, page breaks, and layout you want.
+  typst_templates: {
+    wrap_book: ""
+    wrap_chapter: ""
+    wrap_subchapter: ""
+    wrap_paragraph: ""
+  }
+
   keys: {
     save:             Ctrl+s
     search:           Ctrl+/
