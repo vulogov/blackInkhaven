@@ -18,6 +18,20 @@ pub fn run(project: &Path, node_path: &str, yes: bool) -> Result<()> {
     let node = h
         .find_by_path(node_path)
         .ok_or_else(|| Error::Store(format!("node not found: `{node_path}`")))?;
+    if node.protected {
+        return Err(Error::Store(format!(
+            "`{}` is a system book — it can't be deleted",
+            node.title
+        )));
+    }
+    if let Some(help_anc) = h.ancestors(node).into_iter().find(|a| {
+        a.protected && a.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_HELP)
+    }) {
+        return Err(Error::Store(format!(
+            "`{}` lives inside the read-only Help book (`{}`)",
+            node.title, help_anc.title
+        )));
+    }
     let ids = h.collect_subtree(node.id);
     let descendant_count = ids.len().saturating_sub(1);
 

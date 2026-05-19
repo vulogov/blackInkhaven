@@ -258,6 +258,33 @@ fn match_style_at(row_hits: &[RowHit], col: usize) -> Option<Style> {
     None
 }
 
+/// Foreground style for a Place/Character lexicon hit at the given column,
+/// or None if the column doesn't fall inside any hit. Place wins over
+/// Character if both categories match the same column (shouldn't happen at
+/// the lexicon-build layer, but cheap to be defensive).
+fn lex_style_at(hits: &[super::lexicon::LexHit], col: usize) -> Option<Style> {
+    use super::lexicon::LexCategory;
+    let mut chosen: Option<LexCategory> = None;
+    for hit in hits {
+        if col >= hit.col_start && col < hit.col_end {
+            // Prefer Place if we already saw it; otherwise keep the first
+            // category that hits.
+            match (chosen, hit.category) {
+                (Some(LexCategory::Place), _) => {}
+                (_, cat) => chosen = Some(cat),
+            }
+        }
+    }
+    chosen.map(|cat| match cat {
+        LexCategory::Place => Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+        LexCategory::Character => Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    })
+}
+
 /// Compute which characters in `current` differ from `saved`, returning a
 /// bool-per-char vector aligned with `current`. Uses the longest common
 /// prefix + suffix method: characters between the two unchanged regions are
@@ -293,6 +320,7 @@ pub fn build_visual_row_spans(
     block: Option<BlockSelection>,
     added: AddedFlags,
     matches: &[RowHit],
+    lex_hits: &[super::lexicon::LexHit],
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
 
@@ -332,6 +360,12 @@ pub fn build_visual_row_spans(
             if is_added {
                 style = style.add_modifier(Modifier::BOLD);
             }
+            // Lexicon (cyan/yellow) sits between added-bold and search
+            // match: search hits override the colour for the current
+            // search session, but cyan/yellow show through otherwise.
+            if let Some(lex_style) = lex_style_at(lex_hits, src_col) {
+                style = style.patch(lex_style);
+            }
             // Match highlight applies AFTER added-bold but BEFORE selection
             // (so selection's REVERSED wins on cells that are both).
             if let Some(match_style) = match_style_at(matches, src_col) {
@@ -367,6 +401,7 @@ pub fn build_row_spans(
     block: Option<BlockSelection>,
     added: AddedFlags,
     matches: &[RowHit],
+    lex_hits: &[super::lexicon::LexHit],
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
 
@@ -419,6 +454,9 @@ pub fn build_row_spans(
             let mut style = run.style;
             if is_added {
                 style = style.add_modifier(Modifier::BOLD);
+            }
+            if let Some(lex_style) = lex_style_at(lex_hits, src_col) {
+                style = style.patch(lex_style);
             }
             if let Some(match_style) = match_style_at(matches, src_col) {
                 style = style.patch(match_style);

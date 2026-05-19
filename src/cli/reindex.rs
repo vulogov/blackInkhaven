@@ -224,6 +224,8 @@ fn adopt_orphans(
             file: Some(rel),
             word_count,
             modified_at: chrono::Utc::now(),
+            protected: false,
+            system_tag: None,
         };
 
         store.put_node(&mut node, &bytes)?;

@@ -18,6 +18,23 @@ use crate::store::node::{Node, NodeKind as NK};
 
 pub use node::NodeKind;
 
+/// Canonical ordering of the six project-managed books. The tag is the
+/// `system_tag` we write into metadata; the second element is the human-
+/// facing default title used when the book is freshly created. Display order
+/// matches array order (Notes first, Help last).
+pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
+    ("notes", "Notes"),
+    ("research", "Research"),
+    ("prompts", "Prompts"),
+    ("places", "Places"),
+    ("characters", "Characters"),
+    ("help", "Help"),
+];
+
+pub const SYSTEM_TAG_PLACES: &str = "places";
+pub const SYSTEM_TAG_CHARACTERS: &str = "characters";
+pub const SYSTEM_TAG_HELP: &str = "help";
+
 /// Where a newly-created node lands among its parent's existing children.
 #[derive(Debug, Clone, Copy)]
 pub enum InsertPosition {
@@ -68,10 +85,87 @@ impl Store {
             ))
         })?;
 
-        Ok(Self {
+        let store = Self {
             inner,
             layout: Arc::new(layout),
-        })
+        };
+        store.ensure_system_books(cfg)?;
+        Ok(store)
+    }
+
+    /// Six books that every project keeps at the root, in this order:
+    /// Notes, Research, Prompts, Places, Characters, Help. They are created
+    /// on first open (or on upgrade from a pre-feature project), tagged with
+    /// `system_tag`, and marked `protected=true`. Help is additionally read-
+    /// only — enforced by the editor layer, not the store, so the underlying
+    /// content can still be authored by tooling or future bundled-help logic.
+    fn ensure_system_books(&self, cfg: &Config) -> Result<()> {
+        let hierarchy = Hierarchy::load(self)?;
+        let mut existing_by_tag: std::collections::HashMap<String, Node> =
+            std::collections::HashMap::new();
+        for node in hierarchy.iter() {
+            if node.kind == NK::Book {
+                if let Some(tag) = node.system_tag.as_deref() {
+                    existing_by_tag.insert(tag.to_string(), node.clone());
+                }
+            }
+        }
+
+        for (idx, (tag, title)) in SYSTEM_BOOKS.iter().enumerate() {
+            let target_order = idx as u32;
+            match existing_by_tag.get(*tag).cloned() {
+                Some(mut node) => {
+                    // Project is already aware of this system book — make sure
+                    // its order matches the canonical sequence and the flags
+                    // are still set (in case an old project ever wrote them
+                    // out via a path we don't control).
+                    let mut needs_meta_update = false;
+                    if !node.protected {
+                        node.protected = true;
+                        needs_meta_update = true;
+                    }
+                    if node.order != target_order {
+                        // Sibling collision is fine here — the canonical order
+                        // is fixed; existing siblings (legacy user books, if
+                        // any) keep whatever orders they happen to have. We
+                        // rewrite metadata only, not the filesystem entry,
+                        // because system-book directories are bare slugs and
+                        // don't carry an `NN-` prefix.
+                        node.order = target_order;
+                        needs_meta_update = true;
+                    }
+                    if needs_meta_update {
+                        self.inner
+                            .update_metadata(node.id, node.to_json())
+                            .map_err(|e| {
+                                Error::Store(format!("update_metadata: {e}"))
+                            })?;
+                    }
+                }
+                None => {
+                    // Reload before each create so subsequent slugs see prior
+                    // creates and don't collide.
+                    let h = Hierarchy::load(self)?;
+                    let mut node = self.create_node(
+                        cfg,
+                        &h,
+                        NK::Book,
+                        title,
+                        None,
+                        None,
+                        InsertPosition::End,
+                    )?;
+                    node.order = target_order;
+                    node.protected = true;
+                    node.system_tag = Some(tag.to_string());
+                    self.inner
+                        .update_metadata(node.id, node.to_json())
+                        .map_err(|e| Error::Store(format!("update_metadata: {e}")))?;
+                }
+            }
+        }
+        self.sync()?;
+        Ok(())
     }
 
     pub fn raw(&self) -> &DocumentStorage {
@@ -204,6 +298,8 @@ impl Store {
             file: None,
             word_count: 0,
             modified_at: chrono::Utc::now(),
+            protected: false,
+            system_tag: None,
         };
 
         let rel_path = match parent {
