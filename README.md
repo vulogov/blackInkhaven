@@ -14,20 +14,7 @@ provider (Gemini, DeepSeek, Ollama, or anything else
 [genai](https://github.com/jeremychone/rust-genai) understands) right next
 to the paragraph you're working on.
 
-```
-┌── Tree ──────────┬── Editor — Opening Scene · L4 C18 ───────┬── AI — gemini · done · scope=Paragraph · infer=Full ──┐
-│ ▾ My Novel     │  = Opening Scene                          │ Suggestion: tighten the second sentence — the          │
-│   ▾ The Begi…  │                                            │ phrase "thunderstruck mariner" reads dated. Try         │
-│   ► Opening …  │  The thunderstruck mariner stood at        │ "stunned sailor" or "shaken helmsman" if you want the   │
-│ ▸ Notes        │  the rail. The rain had been falling       │ alliteration. Three more candidates below.              │
-│ ▸ Research     │  for three days, and the deck was…         │                                                         │
-│ ▸ Prompts      │                                            │                                                         │
-│ ▸ Places       │                                            │  r replace  i insert  t top  b bottom  c copy  g grammar│
-│ ▸ Characters   │                                            │                                                         │
-│ ▸ Help         │                                            │                                                         │
-└──────────────────┴────────────────────────────────────────────┴─────────────────────────────────────────────────────────┘
-[Search │ ]                                              [AI prompt · scope=Paragraph │ ]                                [✓ saved 412 words · gemini responded in 1.8s]
-```
+![Inkhaven screenshot](screen.png)
 
 ## Why Inkhaven
 
