@@ -104,7 +104,8 @@ jobs:
             libxcb1-dev \
             libxcb-render0-dev \
             libxcb-shape0-dev \
-            libxcb-xfixes0-dev
+            libxcb-xfixes0-dev \
+            libasound2-dev
 
       # Caches `~/.cargo` + `target/` between runs. Critical: bdslib
       # pulls in duckdb / tantivy / fastembed / augurs, so a cold build
