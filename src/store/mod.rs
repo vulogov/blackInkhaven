@@ -18,6 +18,29 @@ use crate::store::node::{Node, NodeKind as NK};
 
 pub use node::NodeKind;
 
+/// Where a newly-created node lands among its parent's existing children.
+#[derive(Debug, Clone, Copy)]
+pub enum InsertPosition {
+    /// Append after the last existing sibling (typical "add at end" behavior).
+    End,
+    /// Insert immediately after the given sibling; all siblings with order >
+    /// the anchor's get bumped by +1 and have their fs entries renamed.
+    After(Uuid),
+}
+
+/// A versioned snapshot of a paragraph's body at a point in time. Stored as a
+/// separate bdslib document with `kind: "snapshot"` so it doesn't pollute the
+/// hierarchy listing or vector search.
+#[derive(Debug, Clone)]
+pub struct Snapshot {
+    pub id: Uuid,
+    #[allow(dead_code)]
+    pub parent_id: Uuid,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub word_count: u64,
+    pub preview: String,
+}
+
 /// Thin wrapper over bdslib's DocumentStorage with the project's chosen
 /// embedding engine attached.
 #[derive(Clone)]
@@ -91,6 +114,12 @@ impl Store {
     /// slug, compute the filesystem path, write a .typ template (paragraphs) or
     /// create a directory (branches), insert into bdslib, sync. Returns the
     /// fully-populated `Node`. Callers should reload `Hierarchy` afterward.
+    ///
+    /// `position` controls where among existing siblings the new node lands:
+    ///   * `InsertPosition::End` — appended after the last sibling (default).
+    ///   * `InsertPosition::After(uuid)` — placed immediately after the named
+    ///     sibling; all later siblings get their `order` bumped by +1 and
+    ///     their filesystem entries renamed.
     pub fn create_node(
         &self,
         cfg: &Config,
@@ -99,6 +128,7 @@ impl Store {
         title: &str,
         parent: Option<&Node>,
         slug_override: Option<&str>,
+        position: InsertPosition,
     ) -> Result<Node> {
         hierarchy.validate_placement(cfg, parent, kind)?;
 
@@ -121,7 +151,35 @@ impl Store {
             }
         }
 
-        let order = hierarchy.next_order(parent_id);
+        // Decide the new node's `order`. For After(anchor), shift every
+        // sibling strictly after the anchor by +1 (highest order first so
+        // filesystem renames never collide).
+        let order = match position {
+            InsertPosition::End => hierarchy.next_order(parent_id),
+            InsertPosition::After(anchor_id) => {
+                let Some(anchor) = hierarchy.get(anchor_id) else {
+                    return Err(Error::Store(format!("insert-after: missing anchor {anchor_id}")));
+                };
+                if anchor.parent_id != parent_id {
+                    return Err(Error::Store(
+                        "insert-after: anchor does not share the requested parent".into(),
+                    ));
+                }
+                let anchor_order = anchor.order;
+                let mut to_shift: Vec<(Uuid, u32)> = hierarchy
+                    .children_of(parent_id)
+                    .into_iter()
+                    .filter(|n| n.order > anchor_order && n.id != anchor_id)
+                    .map(|n| (n.id, n.order))
+                    .collect();
+                to_shift.sort_by_key(|(_, ord)| std::cmp::Reverse(*ord));
+                for (id, old_order) in to_shift {
+                    self.shift_sibling_order(hierarchy, id, old_order + 1)?;
+                }
+                anchor_order + 1
+            }
+        };
+
         let path_chain: Vec<String> = match parent {
             None => Vec::new(),
             Some(p) => {
@@ -174,6 +232,85 @@ impl Store {
         self.put_node(&mut node, &content)?;
         self.sync()?;
         Ok(node)
+    }
+
+    /// Change a single node's `order` by renaming its filesystem entry and
+    /// updating bdslib metadata (plus descendant `file` paths for branches).
+    /// Errors if a sibling already occupies the target slot — callers are
+    /// expected to process shifts highest-order-first to avoid this.
+    fn shift_sibling_order(
+        &self,
+        hierarchy: &Hierarchy,
+        node_id: Uuid,
+        new_order: u32,
+    ) -> Result<()> {
+        let node = hierarchy
+            .get(node_id)
+            .cloned()
+            .ok_or_else(|| Error::Store(format!("shift_sibling_order: missing {node_id}")))?;
+        if node.order == new_order {
+            return Ok(());
+        }
+        let old_rel = hierarchy.fs_path(&node, &self.layout);
+        let old_abs = self.layout.root.join(&old_rel);
+
+        let mut new_node = node.clone();
+        new_node.order = new_order;
+        let new_name = new_node.fs_name();
+        let parent_dir = old_abs
+            .parent()
+            .ok_or_else(|| Error::Store("filesystem entry has no parent directory".into()))?;
+        let new_abs = parent_dir.join(&new_name);
+
+        if new_abs.exists() {
+            return Err(Error::Store(format!(
+                "shift_sibling_order: target `{}` already exists",
+                new_abs.display()
+            )));
+        }
+
+        std::fs::rename(&old_abs, &new_abs)?;
+
+        let new_rel = new_abs
+            .strip_prefix(&self.layout.root)
+            .unwrap_or(&new_abs)
+            .to_string_lossy()
+            .into_owned();
+        if new_node.file.is_some() {
+            new_node.file = Some(new_rel.clone());
+        }
+        self.inner
+            .update_metadata(new_node.id, new_node.to_json())
+            .map_err(|e| Error::Store(format!("update_metadata: {e}")))?;
+        if node.kind != NK::Paragraph {
+            self.rewrite_descendant_files(hierarchy, &node, &old_rel, &new_rel)?;
+        }
+        Ok(())
+    }
+
+    /// Change a node's displayed `title` without touching the filesystem.
+    /// Slug, order, parent, file path all stay the same — only the
+    /// `metadata.title` JSON field is updated in bdslib. Re-embeds so the
+    /// new title participates in semantic search.
+    pub fn rename_node(&self, hierarchy: &Hierarchy, node_id: Uuid, new_title: &str) -> Result<()> {
+        let mut node = hierarchy
+            .get(node_id)
+            .cloned()
+            .ok_or_else(|| Error::Store(format!("rename_node: missing {node_id}")))?;
+        let trimmed = new_title.trim();
+        if trimmed.is_empty() {
+            return Err(Error::Store("rename: title cannot be empty".into()));
+        }
+        node.title = trimmed.to_string();
+        node.modified_at = chrono::Utc::now();
+        self.inner
+            .update_metadata(node.id, node.to_json())
+            .map_err(|e| Error::Store(format!("update_metadata: {e}")))?;
+        self.inner
+            .reembed_document(node.id)
+            .map_err(|e| Error::Store(format!("reembed_document: {e}")))?;
+        self.sync()?;
+        Ok(())
     }
 
     /// Swap two sibling nodes in the hierarchy: exchange their `order` fields,
@@ -319,6 +456,83 @@ impl Store {
         Ok(())
     }
 
+    // -------- snapshots ---------------------------------------------------
+
+    /// Create a versioned snapshot of `parent`'s current content. Stored as a
+    /// bdslib document with `kind:"snapshot"` and a `parent_id` back-reference.
+    /// Snapshots are added via `add_document_no_embed` so they don't appear in
+    /// vector search results — only the live paragraph version does.
+    pub fn create_snapshot(&self, parent: &Node, content: &[u8]) -> Result<Uuid> {
+        let preview = first_prose_line(content);
+        let word_count = std::str::from_utf8(content)
+            .map(|s| s.split_whitespace().count() as u64)
+            .unwrap_or(0);
+        let meta = serde_json::json!({
+            "kind": "snapshot",
+            "parent_id": parent.id.to_string(),
+            "parent_title": parent.title,
+            "created_at": chrono::Utc::now().to_rfc3339(),
+            "word_count": word_count,
+            "preview": preview,
+        });
+        let id = self
+            .inner
+            .add_document_no_embed(meta, content)
+            .map_err(|e| Error::Store(format!("create_snapshot: {e}")))?;
+        self.sync()?;
+        Ok(id)
+    }
+
+    /// Every snapshot whose `parent_id` matches the given paragraph,
+    /// returned newest first.
+    pub fn list_snapshots(&self, parent_id: Uuid) -> Result<Vec<Snapshot>> {
+        let pid = parent_id.to_string();
+        let raw = self
+            .inner
+            .list_metadata()
+            .map_err(|e| Error::Store(format!("list_metadata: {e}")))?;
+        let mut out: Vec<Snapshot> = raw
+            .into_iter()
+            .filter_map(|(id, meta)| {
+                let kind = meta.get("kind").and_then(|v| v.as_str())?;
+                if kind != "snapshot" {
+                    return None;
+                }
+                let pid_in = meta.get("parent_id").and_then(|v| v.as_str())?;
+                if pid_in != pid {
+                    return None;
+                }
+                let created_at = meta
+                    .get("created_at")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(chrono::Utc::now);
+                let word_count = meta.get("word_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                let preview = meta
+                    .get("preview")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                Some(Snapshot {
+                    id,
+                    parent_id,
+                    created_at,
+                    word_count,
+                    preview,
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(out)
+    }
+
+    pub fn snapshot_content(&self, snapshot_id: Uuid) -> Result<Option<Vec<u8>>> {
+        self.inner
+            .get_content(snapshot_id)
+            .map_err(|e| Error::Store(format!("snapshot_content: {e}")))
+    }
+
     /// Delete the on-disk subtree at `fs_rel` (relative to project root) and
     /// remove every UUID in `ids` from bdslib. Errors from individual bdslib
     /// deletes are logged but don't abort the loop — orphans get caught by
@@ -360,6 +574,24 @@ impl Store {
             .map_err(|e| Error::Store(format!("reembed_document: {e}")))?;
         Ok(())
     }
+}
+
+fn first_prose_line(content: &[u8]) -> String {
+    let s = std::str::from_utf8(content).unwrap_or("");
+    for line in s.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('=') || t.starts_with("//") {
+            continue;
+        }
+        let chars: Vec<char> = t.chars().collect();
+        if chars.len() > 80 {
+            let mut o: String = chars.iter().take(79).collect();
+            o.push('…');
+            return o;
+        }
+        return t.to_string();
+    }
+    String::new()
 }
 
 fn build_embedding_engine(model_name: &str) -> Result<EmbeddingEngine> {

@@ -28,6 +28,10 @@
     theme: default
     tab_width: 2
     wrap: true
+    // Seconds of editor inactivity before the current paragraph is
+    // autosaved. Set to 0 to disable idle autosave; Ctrl+S, Ctrl+Q, and
+    // paragraph-switch autosaves still fire.
+    autosave_seconds: 5
   }
 
   hierarchy: {

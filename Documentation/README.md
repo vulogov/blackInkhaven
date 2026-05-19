@@ -171,9 +171,10 @@ A short cheat sheet:
 
 | Want to…                          | Key                          |
 | --------------------------------- | ---------------------------- |
-| Quit                              | `Ctrl+Q`                     |
+| Quit (autosaves if dirty)         | `Ctrl+Q`                     |
 | Save the paragraph                | `Ctrl+S`                     |
 | Cycle panes                       | `Tab` / `Shift+Tab`          |
+| Jump to specific pane             | `Ctrl+1`/`2`/`3`/`4`/`5`     |
 | Search                            | `Ctrl+/`                     |
 | AI prompt                         | `Ctrl+I`                     |
 | Add book (tree pane)              | `B`  (or `Ctrl+Shift+B`)     |
