@@ -67,6 +67,7 @@ glyphs (`📖` book, `▸` chapter, `▹` subchapter, `¶` paragraph), and a dim
 | `PageDown`           | Move cursor 10 rows down (configurable: `page_down`).       |
 | `Enter`              | Open the cursor's node. Paragraphs load into the editor and shift focus there; if a different paragraph was open with unsaved edits, it's autosaved first. Branches print a status hint and stay in Tree. |
 | `F2`                 | Open the **Rename** modal pre-filled with the current node's title. Slug + filesystem entry stay; only the displayed title changes (re-embeds for search). |
+| `F3`                 | Open the **file picker** dialog. Enter on a file creates a new paragraph (inserted after the current cursor) with that file's content. Enter on a directory **recursively imports** the tree — subdirectories become subchapters, files become paragraphs. See §12. |
 | `q` or `Q`           | Quit (autosaves the open paragraph first if dirty).         |
 
 **Open-paragraph indicator** — the row of the paragraph currently loaded in
@@ -199,10 +200,11 @@ bulk character-deletion across multiple lines, which tui-textarea doesn't
 expose cleanly. Copy-only covers the common cases (extracting a column of
 leading numbers, a list of names, a verse stanza).
 
-### 3.5 Snapshots
+### 3.5 Snapshots and file loading
 
 | Key  | Action                                                              |
 | ---- | ------------------------------------------------------------------- |
+| `F3` | Open the **file picker** dialog. Pick a file with Enter to replace the open paragraph's editor buffer (bold marks the change vs the saved version). Directories are rejected in this context. See §12 for navigation. |
 | `F5` | Save a versioned **snapshot** of the open paragraph's current body (stored as a bdslib document with `kind:"snapshot"` and a `parent_id` back-reference; doesn't appear in vector search). |
 | `F6` | Open the **snapshot picker** overlay listing every snapshot for the open paragraph, newest first. `↑↓` navigates, `Enter` loads the selected snapshot into the editor (marks dirty so the next save commits the rollback), `Esc` cancels. |
 
@@ -450,7 +452,49 @@ configurable.
 
 ---
 
-## 12. When chords don't reach Inkhaven
+## 12. File picker dialog (F3)
+
+Tree-style filesystem browser overlay, rooted at the shell's current working
+directory. Same navigation in both contexts (Editor F3 and Tree F3); only
+the Enter action differs.
+
+```
+┌── Pick file — /Users/you/some/dir ────────────────────────────────────────┐
+│  ▸ 📁 books                                                               │
+│  ▾ 📁 imports                                                             │
+│      ▸ 📁 chapter-one                                                     │
+│      ▸ 📁 chapter-two                                                     │
+│        📄 preface.md                                                      │
+│    📄 README.md                                                           │
+│    📄 todo.txt                                                            │
+│                                                                           │
+│ ↑↓ navigate · → expand · ← collapse/parent · Enter pick · Esc cancel      │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+| Key                  | Action                                                      |
+| -------------------- | ----------------------------------------------------------- |
+| `↑` / `↓`            | Move cursor one entry up / down.                            |
+| `PageUp` / `PageDown`| Jump by 10.                                                 |
+| `Home` / `End`       | First / last entry.                                         |
+| `→`                  | If cursor is on a directory: expand it (children inline immediately below). No-op for files or already-expanded directories. |
+| `←`                  | If cursor is on an *expanded* directory: collapse it. Otherwise: move cursor to the parent entry. |
+| `Enter`              | Commit (see action table below).                            |
+| `Esc`                | Cancel; modal closes, nothing happens.                      |
+
+**Sort order within each level**: directories first, then files, each
+alphabetical. Hidden entries (names starting with `.`) are skipped.
+
+**Action on Enter:**
+
+| Context (F3 fired in) | Picked entry | What happens |
+| --------------------- | ------------ | ------------ |
+| Editor pane           | file         | Replaces the open paragraph's buffer with the file content. Marks the document dirty so the next save commits the change (a save will also re-create the snapshot baseline). |
+| Editor pane           | directory    | Rejected — status hint says to pick a file. |
+| Tree pane             | file         | Creates a new paragraph inserted **after** the cursor's same-kind ancestor (same as the `P` shortcut), titled from the filename, body = the file's bytes. |
+| Tree pane             | directory    | **Recursive import**: the directory itself becomes a subchapter under the cursor's nearest valid host, every subdirectory becomes a nested subchapter, every file becomes a paragraph inside its containing subchapter. Sorted alphabetically with dirs-first. Requires `hierarchy.unbounded_subchapters: true` if the dir tree is deeper than two levels under a chapter. |
+
+## 13. When chords don't reach Inkhaven
 
 Some of the configured chords — especially `Ctrl+S`, `Ctrl+Q`, and the
 `Ctrl+Shift+*` family — can be eaten by your terminal emulator, your shell,
@@ -487,7 +531,7 @@ stty -ixon
 
 Then `Ctrl+S` reaches applications normally.
 
-## 13. Quick cheat sheet
+## 14. Quick cheat sheet
 
 For when you just want the high-level map:
 
@@ -503,6 +547,7 @@ TREE            ↑↓ Home End  navigate
                 PgUp PgDn    by 10
                 Enter        open paragraph (autosaves the previous one)
                 F2           rename current node
+                F3           file picker → insert file or import dir
                 B            add book at root
                 C            append chapter         (V = insert after current)
                 A            append subchapter      (S = insert after current)
@@ -521,6 +566,7 @@ EDITOR          arrows       move cursor
                 Alt+arrows   extend rectangular block selection
                 Alt+C        copy rectangular block
                 Ctrl+S       save + re-embed
+                F3           load file → replaces buffer
                 F5           create snapshot
                 F6           open snapshot picker
                 Esc          defocus to tree

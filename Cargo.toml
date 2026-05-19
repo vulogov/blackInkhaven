@@ -55,6 +55,9 @@ arboard = "3"
 slug = "0.1"
 walkdir = "2"
 
+[dev-dependencies]
+tempfile = "3"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
