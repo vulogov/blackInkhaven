@@ -128,6 +128,34 @@ struct ImportCounts {
     paragraphs: usize,
 }
 
+/// Read a directory's immediate children, filter hidden entries, sort dirs
+/// first then alphabetical. Returns owned paths so the caller doesn't carry
+/// a borrow against the DirEntry iterator.
+fn read_sorted_children(source: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(rd) = std::fs::read_dir(source) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<_> = rd
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .map(|s| !s.starts_with('.'))
+                .unwrap_or(true)
+        })
+        .collect();
+    entries.sort_by(|a, b| {
+        let a_dir = a.path().is_dir();
+        let b_dir = b.path().is_dir();
+        match (a_dir, b_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.file_name().cmp(&b.file_name()),
+        }
+    });
+    entries.into_iter().map(|e| e.path()).collect()
+}
+
 fn derive_paragraph_title_from_path(path: &std::path::Path) -> String {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("imported");
     let pretty: String = stem
@@ -214,6 +242,10 @@ struct App {
 
     hierarchy: Hierarchy,
     rows: Vec<(Uuid, usize)>,
+    /// Branches whose children are hidden in the tree pane. The branch
+    /// itself stays visible; only its subtree is collapsed. Left arrow adds
+    /// to this set, Right removes from it.
+    collapsed_nodes: std::collections::HashSet<Uuid>,
     modal: Modal,
 
     focus: Focus,
@@ -286,8 +318,9 @@ impl App {
     fn new(layout: ProjectLayout, cfg: Config, store: Store) -> Result<Self> {
         let keymap = Keymap::from_config(&cfg).map_err(anyhow::Error::from)?;
         let hierarchy = Hierarchy::load(&store).map_err(anyhow::Error::from)?;
+        let collapsed_nodes: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
         let rows: Vec<(Uuid, usize)> = hierarchy
-            .flatten()
+            .flatten_with_collapsed(&collapsed_nodes)
             .into_iter()
             .map(|(n, d)| (n.id, d))
             .collect();
@@ -311,6 +344,7 @@ impl App {
             hierarchy,
             rows,
             modal: Modal::None,
+            collapsed_nodes,
             focus: Focus::Tree,
             tree_cursor: 0,
             tree_scroll: 0,
@@ -572,6 +606,13 @@ impl App {
             }
             KeyCode::Enter => self.open_selected()?,
 
+            // Right arrow: expand cursor's branch (no-op for leaves).
+            // Left arrow: collapse cursor's branch if expanded, else move
+            // cursor to its parent in the hierarchy. Same semantics as the
+            // F3 file picker (§11 in KEYBINDING.md).
+            KeyCode::Right => self.tree_expand_at_cursor(),
+            KeyCode::Left => self.tree_collapse_or_step_out(),
+
             // Tree-pane add shortcuts. These exist alongside the global
             // Ctrl+Shift+* chords because terminals and multiplexers
             // commonly eat those (Ctrl+S = XOFF, tmux prefix, etc.).
@@ -609,6 +650,68 @@ impl App {
             _ => {}
         }
         Ok(false)
+    }
+
+    fn tree_expand_at_cursor(&mut self) {
+        let Some(&(id, _)) = self.rows.get(self.tree_cursor) else {
+            return;
+        };
+        let Some(node) = self.hierarchy.get(id) else {
+            return;
+        };
+        if node.kind == NodeKind::Paragraph {
+            return;
+        }
+        if self.collapsed_nodes.remove(&id) {
+            self.rebuild_rows_preserving_cursor();
+        }
+    }
+
+    fn tree_collapse_or_step_out(&mut self) {
+        let Some(&(id, _)) = self.rows.get(self.tree_cursor) else {
+            return;
+        };
+        let Some(node) = self.hierarchy.get(id) else {
+            return;
+        };
+
+        let is_branch = node.kind != NodeKind::Paragraph;
+        let has_children = is_branch && self.hierarchy.has_children(id);
+        let is_currently_collapsed = self.collapsed_nodes.contains(&id);
+
+        if is_branch && has_children && !is_currently_collapsed {
+            self.collapsed_nodes.insert(id);
+            self.rebuild_rows_preserving_cursor();
+            return;
+        }
+
+        // Otherwise step out to parent.
+        if let Some(parent_id) = node.parent_id {
+            if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == parent_id) {
+                self.tree_cursor = i;
+            }
+        }
+    }
+
+    fn rebuild_rows_preserving_cursor(&mut self) {
+        let prev_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
+        self.rows = self
+            .hierarchy
+            .flatten_with_collapsed(&self.collapsed_nodes)
+            .into_iter()
+            .map(|(n, d)| (n.id, d))
+            .collect();
+        if let Some(id) = prev_id {
+            if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == id) {
+                self.tree_cursor = i;
+                return;
+            }
+        }
+        if !self.rows.is_empty() {
+            self.tree_cursor = self.tree_cursor.min(self.rows.len() - 1);
+        } else {
+            self.tree_cursor = 0;
+        }
     }
 
     fn delete_branch_only(&mut self) {
@@ -1718,25 +1821,23 @@ impl App {
         parent_id: Option<Uuid>,
         counts: &mut ImportCounts,
     ) -> InkResult<()> {
-        // Resolve the parent against a freshly loaded hierarchy so prior
-        // creates in this import are visible.
+        // Resolve parent against a freshly loaded hierarchy so prior creates
+        // in this import are visible.
         let hierarchy = Hierarchy::load(&self.store)?;
         let parent = parent_id.and_then(|id| hierarchy.get(id).cloned());
 
-        let kind = match parent.as_ref().map(|p| p.kind) {
-            None => NodeKind::Book,
-            Some(NodeKind::Book) => NodeKind::Chapter,
-            Some(NodeKind::Chapter) => NodeKind::Subchapter,
+        // Decide what kind of branch this directory becomes. None means we've
+        // bottomed out under a bounded hierarchy and should flatten files
+        // into the current parent instead of failing.
+        let kind: Option<NodeKind> = match parent.as_ref().map(|p| p.kind) {
+            None => Some(NodeKind::Book),
+            Some(NodeKind::Book) => Some(NodeKind::Chapter),
+            Some(NodeKind::Chapter) => Some(NodeKind::Subchapter),
             Some(NodeKind::Subchapter) => {
                 if self.cfg.hierarchy.unbounded_subchapters {
-                    NodeKind::Subchapter
+                    Some(NodeKind::Subchapter)
                 } else {
-                    return Err(Error::Store(format!(
-                        "max hierarchy depth reached at `{}` — enable `hierarchy.unbounded_subchapters: true` in inkhaven.hjson to allow deeper nesting",
-                        source.file_name()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("(unnamed)")
-                    )));
+                    None
                 }
             }
             Some(NodeKind::Paragraph) => {
@@ -1744,6 +1845,15 @@ impl App {
                     "can't import under a paragraph — move cursor to a branch first".into(),
                 ));
             }
+        };
+
+        let Some(kind) = kind else {
+            // Max depth reached. Walk the rest of the subtree and import every
+            // file as a paragraph in the current parent. Branches beyond this
+            // point are lost (the bounded hierarchy can't represent them),
+            // but the prose comes through.
+            let pid = parent_id.expect("None parent already handled by kind match");
+            return self.flatten_files_into(source, pid, counts);
         };
 
         let title = source
@@ -1763,39 +1873,70 @@ impl App {
         counts.branches += 1;
         let created_id = created.id;
 
-        let mut children: Vec<std::path::PathBuf> = {
-            let Ok(rd) = std::fs::read_dir(source) else {
-                return Ok(());
-            };
-            let mut entries: Vec<_> = rd
-                .filter_map(Result::ok)
-                .filter(|e| {
-                    e.file_name()
-                        .to_str()
-                        .map(|s| !s.starts_with('.'))
-                        .unwrap_or(true)
-                })
-                .collect();
-            entries.sort_by(|a, b| {
-                let a_dir = a.path().is_dir();
-                let b_dir = b.path().is_dir();
-                match (a_dir, b_dir) {
-                    (true, false) => std::cmp::Ordering::Less,
-                    (false, true) => std::cmp::Ordering::Greater,
-                    _ => a.file_name().cmp(&b.file_name()),
-                }
-            });
-            entries.into_iter().map(|e| e.path()).collect()
-        };
+        let children = read_sorted_children(source);
 
-        for child_path in children.drain(..) {
-            if child_path.is_dir() {
-                self.import_dir_recursive(&child_path, Some(created_id), counts)?;
+        // Don't bail on the first failing child — record the error but
+        // continue so siblings still get imported. The user gets a partial-
+        // import status with counts; orphan dirs get reported in the message.
+        let mut first_err: Option<Error> = None;
+        for child_path in children {
+            let res = if child_path.is_dir() {
+                self.import_dir_recursive(&child_path, Some(created_id), counts)
             } else {
-                self.import_file_as_paragraph_by_id(&child_path, created_id, counts)?;
+                self.import_file_as_paragraph_by_id(&child_path, created_id, counts)
+            };
+            if let Err(e) = res {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
             }
         }
-        Ok(())
+        match first_err {
+            None => Ok(()),
+            Some(e) => Err(e),
+        }
+    }
+
+    /// Walk `source` recursively and import every regular file as a paragraph
+    /// under `parent_id`. Used when we've hit the depth limit and can no
+    /// longer create deeper branches.
+    fn flatten_files_into(
+        &mut self,
+        source: &std::path::Path,
+        parent_id: Uuid,
+        counts: &mut ImportCounts,
+    ) -> InkResult<()> {
+        let mut first_err: Option<Error> = None;
+        for entry in walkdir::WalkDir::new(source)
+            .sort_by_file_name()
+            .follow_links(false)
+        {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(Error::Store(format!("walkdir: {e}")));
+                    }
+                    continue;
+                }
+            };
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_str().unwrap_or("");
+            if name.starts_with('.') {
+                continue;
+            }
+            if let Err(e) = self.import_file_as_paragraph_by_id(entry.path(), parent_id, counts) {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+        match first_err {
+            None => Ok(()),
+            Some(e) => Err(e),
+        }
     }
 
     fn import_file_as_paragraph_by_id(
@@ -2393,9 +2534,12 @@ impl App {
         match Hierarchy::load(&self.store) {
             Ok(h) => {
                 self.hierarchy = h;
+                // Prune collapsed-state for nodes that no longer exist.
+                self.collapsed_nodes
+                    .retain(|id| self.hierarchy.get(*id).is_some());
                 self.rows = self
                     .hierarchy
-                    .flatten()
+                    .flatten_with_collapsed(&self.collapsed_nodes)
                     .into_iter()
                     .map(|(n, d)| (n.id, d))
                     .collect();
@@ -2817,14 +2961,21 @@ impl App {
             // swap its kind glyph for a "►" arrow so it's obvious at a
             // glance which paragraph the editor pane is showing.
             let is_open = open_id.is_some_and(|o| o == node.id);
+            let is_collapsed = self.collapsed_nodes.contains(&node.id);
             let marker = if is_open {
                 "►"
             } else {
                 match node.kind {
                     NodeKind::Paragraph => "¶ ",
-                    NodeKind::Book => "📖 ",
-                    NodeKind::Chapter => "▸ ",
-                    NodeKind::Subchapter => "▹ ",
+                    // For branches, use ▾ (expanded) / ▸ (collapsed) glyphs
+                    // so the expand/collapse state is visible at a glance.
+                    _ => {
+                        if is_collapsed {
+                            "▸ "
+                        } else {
+                            "▾ "
+                        }
+                    }
                 }
             };
             let mut row_style = Style::default();
