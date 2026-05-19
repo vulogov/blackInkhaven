@@ -824,6 +824,16 @@ impl App {
             KeyCode::Char('D') | KeyCode::Char('d') if plain => self.delete_branch_only(),
             KeyCode::Char('-') if plain => self.delete_paragraph_only(),
 
+            // Sibling reorder, plain-letter form. Equivalent to the meta-
+            // prefix chord `Ctrl+B ↑` / `Ctrl+B ↓` but reachable without a
+            // chord — handy when reorganising a long list of paragraphs.
+            KeyCode::Char('U') | KeyCode::Char('u') if plain => {
+                self.move_current(MoveDir::Up);
+            }
+            KeyCode::Char('J') | KeyCode::Char('j') if plain => {
+                self.move_current(MoveDir::Down);
+            }
+
             _ if self.keymap.page_up.matches(&key) => self.move_cursor(-10),
             _ if self.keymap.page_down.matches(&key) => self.move_cursor(10),
             _ => {}
@@ -1930,7 +1940,29 @@ impl App {
     // -------- modal -------------------------------------------------------
 
     fn open_add_modal(&mut self, kind: NodeKind) {
+        // User-added Books at root always slot ABOVE the system block
+        // ([Notes, Research, Prompts, Places, Characters, Help]) so the
+        // user's own content stays at the top of the tree.
+        if kind == NodeKind::Book {
+            if let Some(notes_id) = self.system_book_id(crate::store::SYSTEM_TAG_NOTES) {
+                self.open_add_modal_inner(kind, InsertPosition::Before(notes_id));
+                return;
+            }
+        }
         self.open_add_modal_inner(kind, InsertPosition::End);
+    }
+
+    /// Look up a system book's UUID by tag. Returns None if the project
+    /// pre-dates the system-book feature and the book hasn't been seeded
+    /// yet (shouldn't happen in practice — ensure_system_books runs on
+    /// every Store::open).
+    fn system_book_id(&self, tag: &str) -> Option<Uuid> {
+        self.hierarchy
+            .iter()
+            .find(|n| {
+                n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(tag)
+            })
+            .map(|n| n.id)
     }
 
     /// Insert-after variant: walks up from the tree cursor to find a node of
@@ -1962,13 +1994,15 @@ impl App {
         // because the anchor's a same-kind node). For End, walk up to find a
         // valid parent.
         let parent_node = match position {
-            InsertPosition::After(anchor_id) => match self.hierarchy.get(anchor_id) {
-                Some(anchor) => anchor.parent_id.and_then(|pid| self.hierarchy.get(pid)),
-                None => {
-                    self.status = format!("anchor for insert-after vanished from hierarchy");
-                    return;
+            InsertPosition::After(anchor_id) | InsertPosition::Before(anchor_id) => {
+                match self.hierarchy.get(anchor_id) {
+                    Some(anchor) => anchor.parent_id.and_then(|pid| self.hierarchy.get(pid)),
+                    None => {
+                        self.status = "anchor for insert-around vanished from hierarchy".into();
+                        return;
+                    }
                 }
-            },
+            }
             InsertPosition::End => {
                 let cursor_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
                 match self.hierarchy.pick_parent_for(&self.cfg, cursor_id, kind) {
@@ -2628,7 +2662,7 @@ impl App {
             None => InsertPosition::End,
         };
         let parent = match position {
-            InsertPosition::After(anchor_id) => self
+            InsertPosition::After(anchor_id) | InsertPosition::Before(anchor_id) => self
                 .hierarchy
                 .get(anchor_id)
                 .and_then(|n| n.parent_id)
@@ -4004,7 +4038,12 @@ impl App {
             } => {
                 let header = match position {
                     InsertPosition::End => format!(" Add {} ", kind.as_str()),
-                    InsertPosition::After(_) => format!(" Insert {} after current ", kind.as_str()),
+                    InsertPosition::After(_) => {
+                        format!(" Insert {} after current ", kind.as_str())
+                    }
+                    InsertPosition::Before(_) => {
+                        format!(" Insert {} before anchor ", kind.as_str())
+                    }
                 };
                 let parent = format!(" Parent: {}", parent_label);
                 let where_line = match position {
@@ -4016,6 +4055,14 @@ impl App {
                             .map(|n| n.title.clone())
                             .unwrap_or_else(|| "<gone>".to_string());
                         format!("    Where: after `{anchor_name}`")
+                    }
+                    InsertPosition::Before(anchor_id) => {
+                        let anchor_name = self
+                            .hierarchy
+                            .get(*anchor_id)
+                            .map(|n| n.title.clone())
+                            .unwrap_or_else(|| "<gone>".to_string());
+                        format!("    Where: before `{anchor_name}`")
                     }
                 };
                 let title_line = format!(" Title : {}", input.render_with_cursor('│'));

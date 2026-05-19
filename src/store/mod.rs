@@ -31,6 +31,7 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("help", "Help"),
 ];
 
+pub const SYSTEM_TAG_NOTES: &str = "notes";
 pub const SYSTEM_TAG_PLACES: &str = "places";
 pub const SYSTEM_TAG_CHARACTERS: &str = "characters";
 pub const SYSTEM_TAG_HELP: &str = "help";
@@ -43,6 +44,10 @@ pub enum InsertPosition {
     /// Insert immediately after the given sibling; all siblings with order >
     /// the anchor's get bumped by +1 and have their fs entries renamed.
     After(Uuid),
+    /// Insert immediately BEFORE the given sibling; the anchor and every
+    /// sibling at or after its order get bumped by +1, and the new node
+    /// takes the anchor's old order. Mirror of `After`.
+    Before(Uuid),
 }
 
 /// A versioned snapshot of a paragraph's body at a point in time. Stored as a
@@ -115,26 +120,13 @@ impl Store {
             let target_order = idx as u32;
             match existing_by_tag.get(*tag).cloned() {
                 Some(mut node) => {
-                    // Project is already aware of this system book — make sure
-                    // its order matches the canonical sequence and the flags
-                    // are still set (in case an old project ever wrote them
-                    // out via a path we don't control).
-                    let mut needs_meta_update = false;
+                    // System book already exists. Only re-stamp the flags
+                    // that should never go missing (protected). Leave its
+                    // `order` alone — user-added books may have shifted it
+                    // away from the canonical position and we must not undo
+                    // those shifts on every project open.
                     if !node.protected {
                         node.protected = true;
-                        needs_meta_update = true;
-                    }
-                    if node.order != target_order {
-                        // Sibling collision is fine here — the canonical order
-                        // is fixed; existing siblings (legacy user books, if
-                        // any) keep whatever orders they happen to have. We
-                        // rewrite metadata only, not the filesystem entry,
-                        // because system-book directories are bare slugs and
-                        // don't carry an `NN-` prefix.
-                        node.order = target_order;
-                        needs_meta_update = true;
-                    }
-                    if needs_meta_update {
                         self.inner
                             .update_metadata(node.id, node.to_json())
                             .map_err(|e| {
@@ -143,8 +135,9 @@ impl Store {
                     }
                 }
                 None => {
-                    // Reload before each create so subsequent slugs see prior
-                    // creates and don't collide.
+                    // First-time creation: the canonical order matches the
+                    // SYSTEM_BOOKS array index. Reload before each create so
+                    // subsequent slugs see prior creates and don't collide.
                     let h = Hierarchy::load(self)?;
                     let mut node = self.create_node(
                         cfg,
@@ -272,6 +265,33 @@ impl Store {
                 }
                 anchor_order + 1
             }
+            InsertPosition::Before(anchor_id) => {
+                let Some(anchor) = hierarchy.get(anchor_id) else {
+                    return Err(Error::Store(format!(
+                        "insert-before: missing anchor {anchor_id}"
+                    )));
+                };
+                if anchor.parent_id != parent_id {
+                    return Err(Error::Store(
+                        "insert-before: anchor does not share the requested parent".into(),
+                    ));
+                }
+                let anchor_order = anchor.order;
+                // Shift the anchor and everything after it up by 1, highest
+                // first so renames never collide. The new node then takes
+                // the anchor's old order.
+                let mut to_shift: Vec<(Uuid, u32)> = hierarchy
+                    .children_of(parent_id)
+                    .into_iter()
+                    .filter(|n| n.order >= anchor_order)
+                    .map(|n| (n.id, n.order))
+                    .collect();
+                to_shift.sort_by_key(|(_, ord)| std::cmp::Reverse(*ord));
+                for (id, old_order) in to_shift {
+                    self.shift_sibling_order(hierarchy, id, old_order + 1)?;
+                }
+                anchor_order
+            }
         };
 
         let path_chain: Vec<String> = match parent {
@@ -358,14 +378,20 @@ impl Store {
             .ok_or_else(|| Error::Store("filesystem entry has no parent directory".into()))?;
         let new_abs = parent_dir.join(&new_name);
 
-        if new_abs.exists() {
-            return Err(Error::Store(format!(
-                "shift_sibling_order: target `{}` already exists",
-                new_abs.display()
-            )));
+        // Books carry no `NN-` order prefix in their filesystem name, so a
+        // reorder produces an identical path. Skip the rename in that case;
+        // only metadata changes. (The `new_abs.exists()` guard would
+        // otherwise reject the no-op as a collision.)
+        let needs_rename = old_abs != new_abs;
+        if needs_rename {
+            if new_abs.exists() {
+                return Err(Error::Store(format!(
+                    "shift_sibling_order: target `{}` already exists",
+                    new_abs.display()
+                )));
+            }
+            std::fs::rename(&old_abs, &new_abs)?;
         }
-
-        std::fs::rename(&old_abs, &new_abs)?;
 
         let new_rel = new_abs
             .strip_prefix(&self.layout.root)
