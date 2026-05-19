@@ -6906,7 +6906,10 @@ impl App {
                 body.push(Line::from(""));
                 for (i, snap) in snapshots.iter().enumerate() {
                     let selected = i == *cursor;
-                    let ts = snap.created_at.format("%Y-%m-%d %H:%M:%S");
+                    let ts = snap
+                        .created_at
+                        .with_timezone(&chrono::Local)
+                        .format("%Y-%m-%d %H:%M:%S %z");
                     let head = format!(
                         " {ts}   {}w   {}",
                         snap.word_count,
