@@ -7,6 +7,7 @@ mod keymap;
 mod lexicon;
 mod markdown;
 mod quickref;
+mod sound;
 mod theme;
 mod search_replace;
 mod search_results;

@@ -21,6 +21,8 @@ pub struct Config {
     pub theme: ThemeConfig,
     #[serde(default)]
     pub backup: BackupConfig,
+    #[serde(default)]
+    pub sound: SoundConfig,
     /// Primary writing language of the project. Drives:
     /// * Snowball stemmers for the editor's Places/Characters highlight
     ///   overlay (overrides `editor.stemming.languages` when non-empty).
@@ -77,6 +79,7 @@ impl Default for Config {
             hierarchy: HierarchyConfig::default(),
             theme: ThemeConfig::default(),
             backup: BackupConfig::default(),
+            sound: SoundConfig::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
             artefacts_directory: default_artefacts_directory(),
@@ -115,6 +118,30 @@ impl Default for BackupConfig {
             // weekly snapshot pairs sensibly with the per-paragraph
             // snapshots the editor already supports.
             max_age: std::time::Duration::from_secs(7 * 24 * 3600),
+        }
+    }
+}
+
+/// Typewriter sound effects (Enter key, focus-out). Synthesised at
+/// runtime — no audio assets needed. `enabled` is toggled live with
+/// Ctrl+B E; the chord rewrites this stanza in place so the choice
+/// survives the next launch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SoundConfig {
+    pub enabled: bool,
+    /// Master volume 0.0–1.0 applied uniformly to every synthesised
+    /// sample. Clamped at load time.
+    pub volume: f32,
+}
+
+impl Default for SoundConfig {
+    fn default() -> Self {
+        Self {
+            // Default off so new users aren't surprised by audio at
+            // launch. Ctrl+B E opts in once they're settled.
+            enabled: false,
+            volume: 0.6,
         }
     }
 }

@@ -48,7 +48,7 @@ pub fn entries_for(focus: Focus) -> Vec<Entry> {
     out
 }
 
-fn global_entries() -> [Entry; 18] {
+fn global_entries() -> [Entry; 19] {
     [
         header("─── Global ───"),
         entry("Ctrl+Q", "Quit (autosaves dirty paragraph)"),
@@ -63,6 +63,7 @@ fn global_entries() -> [Entry; 18] {
         entry("Ctrl+B V", "Version, author, and component credits"),
         entry("Ctrl+B I", "Current book info (paths · stats · PDF status)"),
         entry("Ctrl+B L", "Switch LLM provider (writes to inkhaven.hjson)"),
+        entry("Ctrl+B E", "Toggle typewriter SFX (writes to inkhaven.hjson)"),
         entry("F1", "Help-manual question (RAG over the Help book)"),
         entry("F7", "Grammar check the open paragraph (→ AI pane)"),
         entry("F9", "Cycle AI scope: None→Sel→Para→Sub→Chap→Book→None"),
@@ -71,7 +72,7 @@ fn global_entries() -> [Entry; 18] {
     ]
 }
 
-fn tree_entries() -> [Entry; 31] {
+fn tree_entries() -> [Entry; 32] {
     [
         entry("↑ / ↓ / Home / End", "Navigate"),
         entry("PageUp / PageDown", "Jump by 10"),
@@ -103,11 +104,12 @@ fn tree_entries() -> [Entry; 31] {
         entry("Ctrl+B V", "Version / author / credits panel"),
         entry("Ctrl+B I", "Current book info (paths · stats · PDF status)"),
         entry("Ctrl+B L", "Switch LLM provider (writes to inkhaven.hjson)"),
+        entry("Ctrl+B E", "Toggle typewriter SFX (writes to inkhaven.hjson)"),
         entry("q", "Quit (autosaves if dirty)"),
     ]
 }
 
-fn editor_entries() -> [Entry; 50] {
+fn editor_entries() -> [Entry; 51] {
     [
         entry("arrows", "Move cursor"),
         entry("Ctrl+← / →", "Word back / forward"),
@@ -162,10 +164,11 @@ fn editor_entries() -> [Entry; 50] {
         entry("Ctrl+B V", "Version / author / credits panel"),
         entry("Ctrl+B I", "Current book info (paths · stats · PDF status)"),
         entry("Ctrl+B L", "Switch LLM provider (writes to inkhaven.hjson)"),
+        entry("Ctrl+B E", "Toggle typewriter SFX (writes to inkhaven.hjson)"),
     ]
 }
 
-fn ai_entries() -> [Entry; 24] {
+fn ai_entries() -> [Entry; 25] {
     [
         header("─ AI pane (apply a finished inference) ─"),
         entry("r / R", "Replace editor selection with AI text"),
@@ -191,5 +194,6 @@ fn ai_entries() -> [Entry; 24] {
         entry("Ctrl+B V", "Version / author / credits panel"),
         entry("Ctrl+B I", "Current book info (paths · stats · PDF status)"),
         entry("Ctrl+B L", "Switch LLM provider (writes to inkhaven.hjson)"),
+        entry("Ctrl+B E", "Toggle typewriter SFX (writes to inkhaven.hjson)"),
     ]
 }

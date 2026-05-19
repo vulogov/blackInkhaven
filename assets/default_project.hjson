@@ -99,6 +99,20 @@
     max_age: "7d"
   }
 
+  // Typewriter-style sound effects. Two events emit a synthesised
+  // click: pressing Enter in the editor ("end of line, hit Enter") and
+  // the editor pane losing focus ("remove page from machine"). The
+  // sounds are generated at runtime — no audio assets needed. Toggle
+  // live with Ctrl+B E; the change is written back here.
+  //
+  // - `enabled`: false by default so new users aren't surprised by
+  //   audio on first launch.
+  // - `volume`: master multiplier, clamped to 0.0–1.0.
+  sound: {
+    enabled: false
+    volume: 0.6
+  }
+
   keys: {
     save:             Ctrl+s
     search:           Ctrl+/

@@ -938,6 +938,54 @@ llm: {
     }
 
     #[test]
+    fn set_sound_enabled_rewrites_existing_block() {
+        let raw = "\
+sound: {
+  enabled: false
+  volume: 0.6
+}
+";
+        let out = set_sound_enabled_in_hjson(raw, true).unwrap();
+        assert!(out.contains("enabled: true"));
+        assert!(out.contains("volume: 0.6"));
+        // And toggling back.
+        let back = set_sound_enabled_in_hjson(&out, false).unwrap();
+        assert!(back.contains("enabled: false"));
+    }
+
+    #[test]
+    fn set_sound_enabled_roundtrips_shipped_template() {
+        let raw = crate::config::DEFAULT_PROJECT_CONFIG;
+        let edited = set_sound_enabled_in_hjson(raw, true).unwrap();
+        let cfg: crate::config::Config =
+            serde_hjson::from_str(&edited).expect("edited HJSON should still parse");
+        assert!(cfg.sound.enabled);
+        // Sound-unrelated stanzas untouched.
+        assert_eq!(cfg.language, "english");
+        assert!(edited.contains("// Typewriter-style sound effects"));
+    }
+
+    #[test]
+    fn set_sound_enabled_inserts_block_when_missing() {
+        // Older configs without a sound block — the helper appends a
+        // minimal one rather than failing.
+        let raw = "language: english\n";
+        let out = set_sound_enabled_in_hjson(raw, true).unwrap();
+        assert!(out.contains("sound: {"));
+        assert!(out.contains("enabled: true"));
+    }
+
+    #[test]
+    fn format_reading_time_thresholds() {
+        assert_eq!(format_reading_time(0), "<1m");
+        assert_eq!(format_reading_time(1), "~1m");          // ceil(1/250) = 1
+        assert_eq!(format_reading_time(250), "~1m");
+        assert_eq!(format_reading_time(251), "~2m");
+        assert_eq!(format_reading_time(250 * 60), "~1h");   // exact hour, no "0m"
+        assert_eq!(format_reading_time(250 * 75), "~1h 15m");
+    }
+
+    #[test]
     fn set_llm_default_does_not_match_provider_internals() {
         // A `default:` key inside a nested provider block must NOT be
         // mistaken for `llm.default`. Our scanner requires depth==1.
@@ -1211,6 +1259,12 @@ struct App {
     /// and runs the (synchronous) import with periodic redraws. None
     /// during normal operation.
     pending_import: Option<std::path::PathBuf>,
+
+    /// Typewriter-style SFX (Enter key + editor-pane focus-out). None
+    /// when the host has no audio device — every play call then
+    /// silently no-ops, so a headless / SSH-without-audio session
+    /// behaves identically to a desktop with `sound.enabled = false`.
+    sound: Option<super::sound::SoundPlayer>,
 }
 
 #[derive(Debug)]
@@ -1318,6 +1372,11 @@ impl App {
         };
 
         let theme = super::theme::Theme::from_config(&cfg.theme);
+        // Try to claim the default audio device. None on hosts without
+        // one — the player then silently no-ops, mirroring
+        // `sound.enabled = false`.
+        let sound =
+            super::sound::SoundPlayer::try_new(cfg.sound.enabled, cfg.sound.volume);
         Ok(Self {
             layout,
             store,
@@ -1362,6 +1421,7 @@ impl App {
             ai_mode: AiMode::None,
             inference_mode: InferenceMode::Full,
             pending_import: None,
+            sound,
         })
     }
 
@@ -1698,15 +1758,15 @@ impl App {
             // pane. Generic suffix (· H help · Esc cancel) is shared.
             self.status = match self.focus {
                 Focus::Tree | Focus::SearchBar => {
-                    "META · B/C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I book info · L LLM · Esc cancel"
+                    "META · B/C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I book info · L LLM · E sound · Esc cancel"
                         .into()
                 }
                 Focus::Editor => {
-                    "META · S save · N snapshot · R history · F split · T retitle · P place · C character · H help · V credits · I book info · L LLM · Esc cancel"
+                    "META · S save · N snapshot · R history · F split · T retitle · P place · C character · H help · V credits · I book info · L LLM · E sound · Esc cancel"
                         .into()
                 }
                 Focus::Ai | Focus::AiPrompt => {
-                    "META · C clear chat · H help · V credits · I book info · L LLM · Esc cancel".into()
+                    "META · C clear chat · H help · V credits · I book info · L LLM · E sound · Esc cancel".into()
                 }
             };
             return Ok(false);
@@ -2093,6 +2153,19 @@ impl App {
         {
             self.status = "Help is read-only".into();
             return Ok(false);
+        }
+
+        // Typewriter SFX — plain Enter (end-of-line click). Fires after
+        // the read-only gate so refused keystrokes in Help don't click.
+        // No-op when sound is disabled or the host has no audio device.
+        if matches!(key.code, KeyCode::Enter)
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
+            if let Some(sp) = &self.sound {
+                sp.play_enter();
+            }
         }
 
         // F5 creates a snapshot of the current paragraph; F6 opens the picker.
@@ -3588,7 +3661,30 @@ impl App {
         let Some((row, col)) = target else {
             return;
         };
+        // Editor viewport height in lines — `layout_editor` is cached
+        // from the last draw, and we subtract the top + bottom border
+        // rows. May be zero before the first frame; the centering then
+        // becomes a no-op (the Jump below still moves the cursor).
+        let viewport_h =
+            (self.layout_editor.height as usize).saturating_sub(2);
         if let Some(doc) = self.opened.as_mut() {
+            // Center the match: pull the viewport so `row` sits ~halfway
+            // through it. tui-textarea exposes no "scroll to viewport
+            // top" API, but `CursorMove::Jump` does scroll the viewport
+            // to keep the cursor visible — so we jump first to the
+            // bottom of the desired window, then to the top, then to
+            // the target. The middle Jump pins the viewport top; the
+            // final Jump lands on the match without rescrolling.
+            if viewport_h > 0 {
+                let half = viewport_h / 2;
+                let total = doc.textarea.lines().len();
+                let bottom_row = (row + half).min(total.saturating_sub(1));
+                let top_row = row.saturating_sub(half);
+                doc.textarea
+                    .move_cursor(CursorMove::Jump(bottom_row as u16, 0));
+                doc.textarea
+                    .move_cursor(CursorMove::Jump(top_row as u16, 0));
+            }
             doc.textarea
                 .move_cursor(CursorMove::Jump(row as u16, col as u16));
         }
@@ -3847,6 +3943,12 @@ impl App {
         // inkhaven.hjson in place.
         if matches!(key.code, KeyCode::Char('L') | KeyCode::Char('l')) {
             self.open_llm_picker();
+            return;
+        }
+        // E toggles typewriter sound effects (Enter / focus-out) and
+        // persists the choice to inkhaven.hjson in place.
+        if matches!(key.code, KeyCode::Char('E') | KeyCode::Char('e')) {
+            self.toggle_sound();
             return;
         }
 
@@ -4429,6 +4531,51 @@ impl App {
             "LLM provider switched to `{chosen}` · saved to {}",
             config_path.display()
         );
+    }
+
+    /// Ctrl+B E — flip `sound.enabled` in the live config + on disk,
+    /// and toggle the live SoundPlayer's enabled flag. No-ops on hosts
+    /// without an audio device beyond updating the config (so the
+    /// preference persists for a future launch on a host that does).
+    fn toggle_sound(&mut self) {
+        let new_value = !self.cfg.sound.enabled;
+        let config_path = self.layout.config_path();
+        let raw = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(e) => {
+                self.status =
+                    format!("sound toggle aborted: read {}: {e}", config_path.display());
+                return;
+            }
+        };
+        let updated = match set_sound_enabled_in_hjson(&raw, new_value) {
+            Ok(s) => s,
+            Err(reason) => {
+                self.status = format!(
+                    "sound toggle aborted: can't rewrite {}: {reason}",
+                    config_path.display()
+                );
+                return;
+            }
+        };
+        if let Err(e) = std::fs::write(&config_path, &updated) {
+            self.status =
+                format!("sound toggle aborted: write {}: {e}", config_path.display());
+            return;
+        }
+
+        self.cfg.sound.enabled = new_value;
+        if let Some(sp) = self.sound.as_mut() {
+            sp.enabled = new_value;
+        }
+        let label = if new_value { "ON" } else { "OFF" };
+        let audio_note = if self.sound.is_some() {
+            ""
+        } else {
+            " (no audio device — silent, but preference saved)"
+        };
+        self.status =
+            format!("Typewriter sound {label}{audio_note} · saved to {}", config_path.display());
     }
 
     fn draw_llm_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
@@ -7120,6 +7267,12 @@ impl App {
             if let Err(e) = self.save_session() {
                 tracing::warn!("focus-loss session save failed: {e}");
             }
+            // Typewriter SFX — "remove page from machine" when the
+            // editor pane loses focus. No-op when sound is disabled or
+            // the host has no audio device.
+            if let Some(sp) = &self.sound {
+                sp.play_focus_out();
+            }
         }
         self.focus = new;
     }
@@ -7272,14 +7425,27 @@ impl App {
                 let (row, col) = d.textarea.cursor();
                 let dirty = if d.dirty { " [modified]" } else { "" };
                 let ro = if d.read_only { " [read-only]" } else { "" };
+                // Live word count + reading-time estimate (250 wpm —
+                // matches the Ctrl+B I book-info modal). Computed each
+                // frame from the textarea so it tracks edits.
+                let words: usize = d
+                    .textarea
+                    .lines()
+                    .iter()
+                    .map(|l| l.split_whitespace().count())
+                    .sum();
+                let reading = format_reading_time(words);
+                let stats_style = Style::default()
+                    .fg(self.theme.editor_position_fg)
+                    .add_modifier(Modifier::BOLD);
                 Line::from(vec![
                     Span::raw(format!(" Editor — {}{}{} · ", d.title, ro, dirty)),
-                    Span::styled(
-                        format!("L{} C{} ", row + 1, col + 1),
-                        Style::default()
-                            .fg(self.theme.editor_position_fg)
-                            .add_modifier(Modifier::BOLD),
-                    ),
+                    Span::styled(format!("L{} C{} ", row + 1, col + 1), stats_style),
+                    Span::raw("· "),
+                    Span::styled(format!("{words}w"), stats_style),
+                    Span::raw(" · "),
+                    Span::styled(reading, stats_style),
+                    Span::raw(" "),
                 ])
             }
             None => Line::from(" Editor "),
@@ -8197,6 +8363,28 @@ fn count_sentences(content: &str) -> usize {
     count
 }
 
+/// Compact reading-time estimate for the editor header. 250 wpm
+/// (educational adult silent-reading baseline) rounded up to whole
+/// minutes; short paragraphs collapse to `<1m`. Matches the per-book
+/// figure in the Ctrl+B I info panel — same constant, same rounding.
+fn format_reading_time(words: usize) -> String {
+    if words == 0 {
+        return "<1m".to_string();
+    }
+    let minutes = ((words as f64) / 250.0).ceil() as u64;
+    if minutes < 60 {
+        format!("~{minutes}m")
+    } else {
+        let h = minutes / 60;
+        let m = minutes % 60;
+        if m == 0 {
+            format!("~{h}h")
+        } else {
+            format!("~{h}h {m}m")
+        }
+    }
+}
+
 /// Format a `Duration` as a coarse "N units ago" string using only the
 /// largest two units (days+hours, hours+minutes, etc.). humantime's
 /// default formatter prints every non-zero unit down to nanoseconds,
@@ -8226,41 +8414,48 @@ fn format_age_humantime(dur: std::time::Duration) -> String {
     }
 }
 
-/// Rewrite the `llm.default` value in an existing HJSON config file in
-/// place, preserving every other byte — comments, key ordering,
-/// indentation, trailing comments on the rewritten line. Returns the
-/// new file contents. The strategy is a targeted text edit (no full
-/// re-serialisation) so the carefully-annotated default HJSON template
-/// survives a provider switch.
+/// Rewrite `<block>.<key> = <value_lit>` in an existing HJSON config
+/// file in place, preserving every other byte — comments, key
+/// ordering, indentation, trailing comments on the rewritten line.
+/// Returns the new file contents. The strategy is a targeted text
+/// edit (no full re-serialisation) so the carefully-annotated default
+/// HJSON template survives an update.
+///
+/// `value_lit` is the literal text to write (already quoted /
+/// formatted by the caller — e.g. `"ollama"` for a string, `true` for
+/// a bool). When the key isn't present we insert it right after the
+/// opening `{` of the block.
 ///
 /// Returns Err with a human-readable reason when the file shape
-/// doesn't match our expectations (no `llm:` block, no `default:`
-/// inside it, unterminated braces). The caller surfaces this in the
-/// status bar without touching the file.
-///
-/// The brace counter doesn't understand HJSON strings — it would
-/// miscount a `{` / `}` inside a quoted string. This is acceptable for
-/// the llm block, which only ever contains nested objects and simple
-/// identifier values.
-fn set_llm_default_in_hjson(raw: &str, new_default: &str) -> Result<String, String> {
+/// doesn't match our expectations (no block of that name, unterminated
+/// braces). The brace counter doesn't understand HJSON strings — it
+/// would miscount a `{` / `}` inside a quoted string. Fine for our
+/// shipped template, which uses braces only for nested objects.
+fn set_key_in_hjson_block(
+    raw: &str,
+    block: &str,
+    key: &str,
+    value_lit: &str,
+) -> Result<String, String> {
     let lines: Vec<&str> = raw.split_inclusive('\n').collect();
     if lines.is_empty() {
         return Err("config file is empty".into());
     }
 
-    // Find the line that introduces the `llm:` key.
-    let llm_open_idx = lines.iter().position(|l| {
+    let block_prefix = format!("{block}:");
+    let block_open_idx = lines.iter().position(|l| {
         let trimmed = l.trim_start();
-        !trimmed.starts_with("//") && trimmed.starts_with("llm:")
+        !trimmed.starts_with("//") && trimmed.starts_with(&block_prefix)
     });
-    let llm_open_idx = llm_open_idx.ok_or_else(|| "no `llm:` block found in HJSON".to_string())?;
+    let block_open_idx = block_open_idx
+        .ok_or_else(|| format!("no `{block}:` block found in HJSON"))?;
 
     // Walk forward tracking brace depth (ignoring `//` line comments)
-    // so we know where the llm block ends.
+    // so we know where the block ends.
     let mut depth: i32 = 0;
     let mut block_started = false;
     let mut block_end: Option<usize> = None;
-    for (i, line) in lines.iter().enumerate().skip(llm_open_idx) {
+    for (i, line) in lines.iter().enumerate().skip(block_open_idx) {
         let code = line.split("//").next().unwrap_or("");
         for c in code.chars() {
             match c {
@@ -8277,14 +8472,16 @@ fn set_llm_default_in_hjson(raw: &str, new_default: &str) -> Result<String, Stri
             break;
         }
     }
-    let block_end =
-        block_end.ok_or_else(|| "unterminated `llm: {` block — check brace balance".to_string())?;
+    let block_end = block_end
+        .ok_or_else(|| format!("unterminated `{block}: {{` block — check brace balance"))?;
 
-    // Now scan for the `default:` line that's a *direct* child of the
-    // llm block (depth == 1 at the time the line starts being read).
+    // Scan for the target key as a *direct* child of the block
+    // (depth == 1 at the time the line starts being read).
+    let key_unquoted = format!("{key}:");
+    let key_quoted = format!("\"{key}\":");
     let mut depth: i32 = 0;
     let mut target_idx: Option<usize> = None;
-    for (i, line) in lines.iter().enumerate().take(block_end + 1).skip(llm_open_idx) {
+    for (i, line) in lines.iter().enumerate().take(block_end + 1).skip(block_open_idx) {
         let depth_before = depth;
         let code = line.split("//").next().unwrap_or("");
         for c in code.chars() {
@@ -8294,7 +8491,7 @@ fn set_llm_default_in_hjson(raw: &str, new_default: &str) -> Result<String, Stri
                 _ => {}
             }
         }
-        if i == llm_open_idx {
+        if i == block_open_idx {
             continue;
         }
         if depth_before == 1 {
@@ -8302,27 +8499,12 @@ fn set_llm_default_in_hjson(raw: &str, new_default: &str) -> Result<String, Stri
             if trimmed.starts_with("//") {
                 continue;
             }
-            // HJSON allows `key:` and `"key":`. The shipped template
-            // uses the unquoted form for `default:`; accept either.
-            if trimmed.starts_with("default:") || trimmed.starts_with("\"default\":") {
+            if trimmed.starts_with(&key_unquoted) || trimmed.starts_with(&key_quoted) {
                 target_idx = Some(i);
                 break;
             }
         }
     }
-
-    // Format the new value. HJSON accepts unquoted strings as long as
-    // they don't contain whitespace or punctuation that would terminate
-    // the value. Quote anything outside [A-Za-z0-9_-] to be safe.
-    let quote_needed = new_default.is_empty()
-        || !new_default
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-    let value_lit = if quote_needed {
-        format!("\"{}\"", new_default.replace('\\', "\\\\").replace('"', "\\\""))
-    } else {
-        new_default.to_string()
-    };
 
     let mut out = String::with_capacity(raw.len() + value_lit.len());
     match target_idx {
@@ -8331,9 +8513,6 @@ fn set_llm_default_in_hjson(raw: &str, new_default: &str) -> Result<String, Stri
             for (i, line) in lines.iter().enumerate() {
                 if i == idx {
                     rewrote = true;
-                    // Preserve EOL, leading whitespace, and trailing
-                    // comment. Replace only the value between `:` and
-                    // the comment (or EOL).
                     let (eol, core): (&str, &str) =
                         if let Some(stripped) = line.strip_suffix("\r\n") {
                             ("\r\n", stripped)
@@ -8342,9 +8521,8 @@ fn set_llm_default_in_hjson(raw: &str, new_default: &str) -> Result<String, Stri
                         } else {
                             ("", *line)
                         };
-                    // Find the `:` that ends the key.
                     let colon_pos = core.find(':').ok_or_else(|| {
-                        "default line missing `:` separator — unexpected HJSON".to_string()
+                        format!("`{key}` line missing `:` separator — unexpected HJSON")
                     })?;
                     let head = &core[..=colon_pos]; // includes ":"
                     let tail = &core[colon_pos + 1..];
@@ -8356,8 +8534,8 @@ fn set_llm_default_in_hjson(raw: &str, new_default: &str) -> Result<String, Stri
                     if comment_suffix.is_empty() {
                         out.push_str(&format!("{head} {value_lit}{eol}"));
                     } else {
-                        // Keep one space of separation between the new
-                        // value and the trailing comment for readability.
+                        // Keep one space between the new value and the
+                        // trailing comment so it doesn't slide left.
                         out.push_str(&format!("{head} {value_lit}  {comment_suffix}{eol}"));
                     }
                 } else {
@@ -8370,17 +8548,17 @@ fn set_llm_default_in_hjson(raw: &str, new_default: &str) -> Result<String, Stri
             Ok(out)
         }
         None => {
-            // No existing `default:` key — insert one immediately after
-            // the `llm: {` line, using two extra spaces of indentation
-            // relative to the `llm:` line itself.
-            let llm_indent: String = lines[llm_open_idx]
+            // Insert the missing key right after the block-opening
+            // line, using two extra spaces of indentation relative to
+            // it.
+            let block_indent: String = lines[block_open_idx]
                 .chars()
                 .take_while(|c| *c == ' ' || *c == '\t')
                 .collect();
-            let child_indent = format!("{llm_indent}  ");
+            let child_indent = format!("{block_indent}  ");
             for (i, line) in lines.iter().enumerate() {
                 out.push_str(line);
-                if i == llm_open_idx {
+                if i == block_open_idx {
                     let eol = if line.ends_with("\r\n") {
                         "\r\n"
                     } else if line.ends_with('\n') {
@@ -8388,11 +8566,49 @@ fn set_llm_default_in_hjson(raw: &str, new_default: &str) -> Result<String, Stri
                     } else {
                         "\n"
                     };
-                    out.push_str(&format!("{child_indent}default: {value_lit}{eol}"));
+                    out.push_str(&format!("{child_indent}{key}: {value_lit}{eol}"));
                 }
             }
             Ok(out)
         }
+    }
+}
+
+/// Wrapper that quotes `new_default` if needed and delegates to
+/// `set_key_in_hjson_block` for the `llm.default` slot.
+fn set_llm_default_in_hjson(raw: &str, new_default: &str) -> Result<String, String> {
+    let quote_needed = new_default.is_empty()
+        || !new_default
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    let value_lit = if quote_needed {
+        format!("\"{}\"", new_default.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        new_default.to_string()
+    };
+    set_key_in_hjson_block(raw, "llm", "default", &value_lit)
+}
+
+/// Set `sound.enabled = true|false` in inkhaven.hjson. Inserts the
+/// key (and synthesises the block when missing) when the user has
+/// stripped them from an older config.
+fn set_sound_enabled_in_hjson(raw: &str, enabled: bool) -> Result<String, String> {
+    let value_lit = if enabled { "true" } else { "false" };
+    match set_key_in_hjson_block(raw, "sound", "enabled", value_lit) {
+        Ok(s) => Ok(s),
+        Err(reason) if reason.contains("no `sound:` block") => {
+            // Old config — no sound block at all. Append a minimal one
+            // at the end so the toggle persists.
+            let mut out = raw.to_string();
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str(&format!(
+                "\n  // Typewriter SFX (Ctrl+B E to toggle).\n  sound: {{\n    enabled: {value_lit}\n    volume: 0.6\n  }}\n"
+            ));
+            Ok(out)
+        }
+        Err(other) => Err(other),
     }
 }
 
@@ -8770,6 +8986,7 @@ const CREDITS_COMPONENTS: &[(&str, &str, &str)] = &[
     ("serde-hjson",           "MIT",             "HJSON parser — friendly config file format"),
     ("humantime",             "MIT / Apache-2.0", "human-readable duration parsing — backup max_age"),
     ("humantime-serde",       "MIT / Apache-2.0", "serde glue for humantime durations"),
+    ("rodio",                 "MIT / Apache-2.0", "audio playback — typewriter SFX (Ctrl+B E)"),
     ("chrono",                "MIT / Apache-2.0", "timestamps, RFC-3339 formatting"),
     ("uuid",                  "Apache-2.0",      "UUIDv7 paragraph IDs"),
     ("zip",                   "MIT",             "backup / restore archive format"),
