@@ -59,7 +59,12 @@ fn default_language() -> String {
 }
 
 fn default_artefacts_directory() -> String {
-    "artefacts".into()
+    // Empty string → resolved at runtime to the OS per-user cache
+    // directory (`<cache_dir>/inkhaven/artefacts/<project-basename>/`).
+    // Build artefacts are ephemeral; keeping them outside the project
+    // tree means `git status` / backups / shell tab completion don't
+    // see them.
+    String::new()
 }
 
 impl Default for Config {
@@ -99,7 +104,13 @@ pub struct BackupConfig {
 impl Default for BackupConfig {
     fn default() -> Self {
         Self {
-            out_dir: "backups".into(),
+            // Empty string → use the OS per-user data directory
+            // (`<data_dir>/inkhaven/backups/<project-basename>/`). Set
+            // to an explicit path to override — see
+            // `Store::resolve_backup_dir`. Keeping backups out of the
+            // project tree by default avoids "snapshot contains itself"
+            // recursion.
+            out_dir: String::new(),
             // Roughly a week. Vladimir's books move fast enough that a
             // weekly snapshot pairs sensibly with the per-paragraph
             // snapshots the editor already supports.

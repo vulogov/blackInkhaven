@@ -133,8 +133,11 @@ pub enum Command {
     /// (`blackinkhaven_YYYYDDMM_HHMMSS.zip`).
     Backup {
         /// Output directory for the archive. Created if missing.
+        /// Omit to use the project-relative default
+        /// (`<parent-of-project>/inkhaven-backups/<project-basename>/`)
+        /// — same location the TUI's exit hook writes to.
         #[arg(long)]
-        out: PathBuf,
+        out: Option<PathBuf>,
     },
 
     /// Restore a backup archive into a fresh directory.
@@ -221,7 +224,7 @@ impl Cli {
             Command::ImportHelp {
                 documents_directory,
             } => import_help::run(&project, &documents_directory).map_err(Into::into),
-            Command::Backup { out } => backup::run(&project, &out).map_err(Into::into),
+            Command::Backup { out } => backup::run(&project, out.as_deref()).map_err(Into::into),
             Command::Restore { archive, to } => {
                 restore::run(&archive, &to).map_err(Into::into)
             }

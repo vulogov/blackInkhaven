@@ -325,9 +325,10 @@ fn maybe_auto_backup<B: ratatui::backend::Backend>(
     layout: &ProjectLayout,
     cfg: &Config,
 ) -> Result<()> {
-    // Config must opt in: empty out_dir or zero max_age → never auto-backup.
+    // Auto-backup opts out only via `max_age = 0s` now — `out_dir` empty
+    // means "use the per-user default" (see `default_user_backup_dir`).
     let bcfg = &cfg.backup;
-    if bcfg.out_dir.trim().is_empty() || bcfg.max_age.as_secs() == 0 {
+    if bcfg.max_age.as_secs() == 0 {
         return Ok(());
     }
     // If we already backed up recently, do nothing.
@@ -341,14 +342,24 @@ fn maybe_auto_backup<B: ratatui::backend::Backend>(
         }
     }
 
+    // Resolve the backup directory. Empty `out_dir` → per-user data
+    // location; absolute path → used as-is; relative → resolved against
+    // the project root (legacy override for users who explicitly want
+    // backups inside the project).
     let out_dir = {
-        let raw = std::path::PathBuf::from(&bcfg.out_dir);
-        if raw.is_absolute() {
-            raw
+        let raw = bcfg.out_dir.trim();
+        if raw.is_empty() {
+            crate::store::default_user_backup_dir(&layout.root)
         } else {
-            layout.root.join(raw)
+            let p = std::path::PathBuf::from(raw);
+            if p.is_absolute() {
+                p
+            } else {
+                layout.root.join(p)
+            }
         }
     };
+    std::fs::create_dir_all(&out_dir).ok();
     let abs_project = std::fs::canonicalize(&layout.root)
         .unwrap_or_else(|_| layout.root.clone());
     let abs_out = std::fs::canonicalize(&out_dir).unwrap_or_else(|_| out_dir.clone());
