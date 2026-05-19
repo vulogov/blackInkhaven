@@ -79,15 +79,14 @@ pub fn assemble_book(
     let total = count_work(&hierarchy, book_node);
     let mut done: usize = 0;
 
-    // Wipe the previous `book/` tree but keep the sibling configs in
-    // place — `<slug>.typ`, `settings.typ`, `globals.typ` are
-    // overwritten further down, but anything else the user dropped in
-    // (e.g. fonts/) survives.
-    if out_book_subtree.exists() {
-        std::fs::remove_dir_all(&out_book_subtree).map_err(Error::Io)?;
+    // Wipe the entire `<artefacts>/<book-slug>/` directory and start
+    // fresh. The user asked for a clean slate every time so stale
+    // chapters, paragraphs, or PDFs from previous runs don't linger
+    // and confuse a follow-up `typst compile`.
+    if out_book.exists() {
+        std::fs::remove_dir_all(&out_book).map_err(Error::Io)?;
     }
     std::fs::create_dir_all(&out_book_subtree).map_err(Error::Io)?;
-    std::fs::create_dir_all(&out_book).map_err(Error::Io)?;
 
     // Walk the book's children and emit the subtree.
     write_branch(

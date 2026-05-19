@@ -25,6 +25,8 @@ pub struct Config {
     pub sound: SoundConfig,
     #[serde(default)]
     pub typst_templates: TypstTemplatesConfig,
+    #[serde(default)]
+    pub typst_compile: TypstCompileConfig,
     /// Primary writing language of the project. Drives:
     /// * Snowball stemmers for the editor's Places/Characters highlight
     ///   overlay (overrides `editor.stemming.languages` when non-empty).
@@ -83,6 +85,7 @@ impl Default for Config {
             backup: BackupConfig::default(),
             sound: SoundConfig::default(),
             typst_templates: TypstTemplatesConfig::default(),
+            typst_compile: TypstCompileConfig::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
             artefacts_directory: default_artefacts_directory(),
@@ -246,6 +249,53 @@ impl TypstTemplatesConfig {
         out.push_str(&self.resolved_wrap_paragraph());
         out
     }
+}
+
+/// Behaviour of the `typst compile` step driven by Ctrl+B B / Ctrl+B O.
+/// Today only the AI error-analysis prompt is configurable, but the
+/// stanza is its own struct so new knobs (timeouts, custom typst path,
+/// extra args) can land without breaking serde compatibility.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TypstCompileConfig {
+    /// System prompt fed to the AI when `typst compile` returns
+    /// non-zero. Empty → falls back to the baked-in default.
+    pub error_system_prompt: String,
+}
+
+impl Default for TypstCompileConfig {
+    fn default() -> Self {
+        Self {
+            error_system_prompt: String::new(),
+        }
+    }
+}
+
+impl TypstCompileConfig {
+    pub fn resolved_error_system_prompt(&self) -> String {
+        if self.error_system_prompt.trim().is_empty() {
+            default_typst_error_system_prompt().into()
+        } else {
+            self.error_system_prompt.clone()
+        }
+    }
+}
+
+pub fn default_typst_error_system_prompt() -> &'static str {
+    "You are an expert Typst typesetter helping debug `typst compile` failures \
+     for books assembled by inkhaven. Inkhaven generates a tree of `.typ` files:\n\
+     - `<slug>.typ` — root, imports globals.typ + settings.typ, calls wrap_book(include \"book/index.typ\").\n\
+     - `globals.typ` — defines wrap_book / wrap_chapter / wrap_subchapter / wrap_paragraph functions.\n\
+     - `settings.typ` — document-wide #set / #show rules.\n\
+     - `book/index.typ` — sequence of `#include` for chapters at markup scope.\n\
+     - `book/<NN-chapter>/index.typ` — calls `#wrap_chapter(\"title\", { include … })` in code mode.\n\
+     - `book/<NN-chapter>/<NN-paragraph>.typ` — the user's prose (leading `= title` stripped).\n\n\
+     When you receive an error, walk through:\n\
+     1. What the error means in plain language.\n\
+     2. Which of the file categories above most likely caused it.\n\
+     3. The smallest concrete fix the user can apply — either in their inkhaven \
+        paragraph (via the editor) or in HJSON config (`typst_templates.wrap_*`).\n\n\
+     Be concise. The user wants to ship a PDF, not a tutorial."
 }
 
 /// Visual theme for the TUI. Every field is a hex colour string (`#RRGGBB`),

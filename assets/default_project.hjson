@@ -130,6 +130,19 @@
     wrap_paragraph: ""
   }
 
+  // `typst compile` integration used by Ctrl+B B (build) and
+  // Ctrl+B O (take). When the compile fails, inkhaven opens a fresh
+  // AI chat with this system prompt and the captured stderr — the
+  // analysis streams into the AI pane automatically.
+  //
+  // - `error_system_prompt`: empty string falls back to inkhaven's
+  //   baked-in default (knows the inkhaven file layout: globals.typ,
+  //   book/index.typ, etc.). Override to tighten the prompt to your
+  //   own conventions or to a different language.
+  typst_compile: {
+    error_system_prompt: ""
+  }
+
   keys: {
     save:             Ctrl+s
     search:           Ctrl+/

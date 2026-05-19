@@ -48,7 +48,7 @@ pub fn entries_for(focus: Focus) -> Vec<Entry> {
     out
 }
 
-fn global_entries() -> [Entry; 20] {
+fn global_entries() -> [Entry; 22] {
     [
         header("─── Global ───"),
         entry("Ctrl+Q", "Quit (autosaves dirty paragraph)"),
@@ -65,6 +65,8 @@ fn global_entries() -> [Entry; 20] {
         entry("Ctrl+B L", "Switch LLM provider (writes to inkhaven.hjson)"),
         entry("Ctrl+B E", "Toggle typewriter SFX (writes to inkhaven.hjson)"),
         entry("Ctrl+B A", "Book assembly — emit a typst-compilable tree"),
+        entry("Ctrl+B B", "Build the book — assemble + typst compile"),
+        entry("Ctrl+B O", "Take the book — build + copy PDF to cwd"),
         entry("F1", "Help-manual question (RAG over the Help book)"),
         entry("F7", "Grammar check the open paragraph (→ AI pane)"),
         entry("F9", "Cycle AI scope: None→Sel→Para→Sub→Chap→Book→None"),
@@ -73,7 +75,7 @@ fn global_entries() -> [Entry; 20] {
     ]
 }
 
-fn tree_entries() -> [Entry; 33] {
+fn tree_entries() -> [Entry; 35] {
     [
         entry("↑ / ↓ / Home / End", "Navigate"),
         entry("PageUp / PageDown", "Jump by 10"),
@@ -98,7 +100,7 @@ fn tree_entries() -> [Entry; 33] {
         entry("X", "Collapse every expanded branch"),
         header(""),
         header("─ Tree meta (Ctrl+B …) ─"),
-        entry("Ctrl+B B/C/S/P", "Add book / chapter / subchapter / paragraph"),
+        entry("Ctrl+B C/S/P", "Add chapter / subchapter / paragraph (plain B adds book)"),
         entry("Ctrl+B D", "Delete cursor's node"),
         entry("Ctrl+B ↑ / ↓", "Reorder within siblings (chord form of U / J)"),
         entry("Ctrl+B H", "Open this Quick reference"),
@@ -107,11 +109,13 @@ fn tree_entries() -> [Entry; 33] {
         entry("Ctrl+B L", "Switch LLM provider (writes to inkhaven.hjson)"),
         entry("Ctrl+B E", "Toggle typewriter SFX (writes to inkhaven.hjson)"),
         entry("Ctrl+B A", "Book assembly — emit a typst-compilable tree"),
+        entry("Ctrl+B B", "Build the book (assemble + typst compile)"),
+        entry("Ctrl+B O", "Take the book — copy PDF to cwd"),
         entry("q", "Quit (autosaves if dirty)"),
     ]
 }
 
-fn editor_entries() -> [Entry; 52] {
+fn editor_entries() -> [Entry; 54] {
     [
         entry("arrows", "Move cursor"),
         entry("Ctrl+← / →", "Word back / forward"),
@@ -168,10 +172,12 @@ fn editor_entries() -> [Entry; 52] {
         entry("Ctrl+B L", "Switch LLM provider (writes to inkhaven.hjson)"),
         entry("Ctrl+B E", "Toggle typewriter SFX (writes to inkhaven.hjson)"),
         entry("Ctrl+B A", "Book assembly — emit a typst-compilable tree"),
+        entry("Ctrl+B B", "Build the book (assemble + typst compile)"),
+        entry("Ctrl+B O", "Take the book — copy PDF to cwd"),
     ]
 }
 
-fn ai_entries() -> [Entry; 26] {
+fn ai_entries() -> [Entry; 28] {
     [
         header("─ AI pane (apply a finished inference) ─"),
         entry("r / R", "Replace editor selection with AI text"),
@@ -199,5 +205,7 @@ fn ai_entries() -> [Entry; 26] {
         entry("Ctrl+B L", "Switch LLM provider (writes to inkhaven.hjson)"),
         entry("Ctrl+B E", "Toggle typewriter SFX (writes to inkhaven.hjson)"),
         entry("Ctrl+B A", "Book assembly — emit a typst-compilable tree"),
+        entry("Ctrl+B B", "Build the book (assemble + typst compile)"),
+        entry("Ctrl+B O", "Take the book — copy PDF to cwd"),
     ]
 }
