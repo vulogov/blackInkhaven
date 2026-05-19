@@ -967,12 +967,32 @@ sound: {
 
     #[test]
     fn set_sound_enabled_inserts_block_when_missing() {
-        // Older configs without a sound block — the helper appends a
-        // minimal one rather than failing.
-        let raw = "language: english\n";
+        // Older configs without a sound block — the helper inserts a
+        // minimal one just inside the root closing brace, so the file
+        // stays valid HJSON.
+        let raw = "{\n  language: english\n}\n";
         let out = set_sound_enabled_in_hjson(raw, true).unwrap();
-        assert!(out.contains("sound: {"));
+        assert!(out.contains("sound: {"), "got:\n{out}");
         assert!(out.contains("enabled: true"));
+        let cfg: crate::config::Config =
+            serde_hjson::from_str(&out).expect("inserted HJSON should still parse");
+        assert!(cfg.sound.enabled);
+    }
+
+    #[test]
+    fn set_sound_enabled_insertion_lands_before_root_close() {
+        // Regression: the previous version appended after the root `}`
+        // which made the file invalid HJSON. Verify the new block lives
+        // strictly before the root close, and the file round-trips.
+        let raw = "{\n  language: english\n  theme: {\n    pane_bg: \"#1e1e2e\"\n  }\n}\n";
+        let out = set_sound_enabled_in_hjson(raw, true).unwrap();
+        let sound_idx = out.find("sound:").expect("sound block inserted");
+        let last_close = out.rfind('}').expect("root close present");
+        assert!(
+            sound_idx < last_close,
+            "sound block must be before root close — got:\n{out}"
+        );
+        let _: crate::config::Config = serde_hjson::from_str(&out).expect("must parse");
     }
 
     #[test]
@@ -8604,19 +8624,48 @@ fn set_sound_enabled_in_hjson(raw: &str, enabled: bool) -> Result<String, String
     match set_key_in_hjson_block(raw, "sound", "enabled", value_lit) {
         Ok(s) => Ok(s),
         Err(reason) if reason.contains("no `sound:` block") => {
-            // Old config — no sound block at all. Append a minimal one
-            // at the end so the toggle persists.
-            let mut out = raw.to_string();
-            if !out.ends_with('\n') {
-                out.push('\n');
-            }
-            out.push_str(&format!(
-                "\n  // Typewriter SFX (Ctrl+B E to toggle).\n  sound: {{\n    enabled: {value_lit}\n    volume: 0.6\n  }}\n"
-            ));
-            Ok(out)
+            insert_sound_block_before_root_close(raw, value_lit)
         }
         Err(other) => Err(other),
     }
+}
+
+/// Append a fresh `sound: { ... }` block just *inside* the root
+/// object's closing `}`. Older configs predating the sound feature
+/// don't have the block at all — the toggle synthesises one. The
+/// previous version of this helper appended after the file end, which
+/// landed the block *outside* the root and broke parsing on next
+/// launch.
+fn insert_sound_block_before_root_close(raw: &str, value_lit: &str) -> Result<String, String> {
+    let lines: Vec<&str> = raw.split_inclusive('\n').collect();
+    // Scan backward for the root object's closing brace — the last
+    // line whose first non-whitespace character is `}` and whose code
+    // (stripped of `//` comments) contains *only* whitespace + `}`.
+    let root_close_idx = lines.iter().enumerate().rev().find_map(|(i, l)| {
+        let code = l.split("//").next().unwrap_or("");
+        let trimmed = code.trim();
+        if trimmed == "}" {
+            Some(i)
+        } else {
+            None
+        }
+    });
+    let root_close_idx = root_close_idx.ok_or_else(|| {
+        "no root closing `}` found — file shape unrecognised".to_string()
+    })?;
+
+    let block = format!(
+        "\n  // Typewriter SFX (Ctrl+B E to toggle).\n  sound: {{\n    enabled: {value_lit}\n    volume: 0.6\n  }}\n"
+    );
+
+    let mut out = String::with_capacity(raw.len() + block.len());
+    for (i, line) in lines.iter().enumerate() {
+        if i == root_close_idx {
+            out.push_str(&block);
+        }
+        out.push_str(line);
+    }
+    Ok(out)
 }
 
 /// Split a file body into editor lines, normalising CRLF (`\r\n`) and
