@@ -15,23 +15,28 @@ readme = "README.md"
 keywords = ["tui", "editor", "typst", "writing", "ai"]
 categories = ["command-line-utilities", "text-editors", "text-processing"]
 
-# Files shipped in the published `.crate` tarball. Whitelist rather than
-# blacklist so a stray `db/`, `backup/`, or `target/` directory can never
-# leak. `assets/` is required at build time because `config.rs` reads the
-# default HJSON via `include_str!`. `vendor/` carries the bdslib +
-# tree-sitter-typst sources (see workspace block below) and must travel
-# with the package.
-include = [
-    "src/**/*.rs",
-    "assets/**",
-    "vendor/bdslib/**",
-    "vendor/tree-sitter-typst/**",
-    "Cargo.toml",
-    "Cargo.lock",
-    "README.md",
-    "LICENSE",
-    "Documentation/**/*.md",
-]
+# Distribution model: binary releases via GitHub Actions
+# (`.github/workflows/release.yml`) on tag push. Users install with:
+#   * `cargo install --git https://github.com/vulogov/blackInkhaven`
+#   * `cargo binstall inkhaven` (prebuilts; see [package.metadata.binstall])
+#   * Direct download from https://github.com/vulogov/blackInkhaven/releases
+#
+# crates.io publishing is intentionally disabled — see `publish = false`
+# below. If you ever want to flip to crates.io, bdslib and
+# tree-sitter-typst would need to be published first (see git history
+# for the path-dep arrangement that almost-works).
+publish = false
+
+# `cargo-binstall` metadata: tells `cargo binstall inkhaven` where to
+# fetch a prebuilt for the current host triple. The asset filenames
+# below must match what `.github/workflows/release.yml` uploads.
+[package.metadata.binstall]
+pkg-url = "{repo}/releases/download/v{version}/{name}-{target}{archive-suffix}"
+bin-dir = "{name}-{target}/{bin}{binary-ext}"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
 
 [[bin]]
 name = "inkhaven"
@@ -39,10 +44,10 @@ path = "src/main.rs"
 
 [dependencies]
 # Storage / search. Vendored at `vendor/bdslib/` (cloned from
-# github.com/vulogov/bdslib). The `path` is used by local builds and
-# `cargo package`; the `version` is what crates.io would resolve against
-# if/when bdslib is published. See the publishing note further down.
-bdslib = { path = "vendor/bdslib", version = "0.12" }
+# github.com/vulogov/bdslib) so the source tree is self-contained and
+# `cargo install --git` works in one shot without resolving against
+# crates.io.
+bdslib = { path = "vendor/bdslib" }
 
 # CLI
 clap = { version = "4", features = ["derive", "wrap_help"] }
@@ -80,10 +85,8 @@ tui-textarea = { version = "0.7", default-features = false, features = [
 tree-sitter = "0.20"
 tree-sitter-highlight = "0.20"
 # Vendored at `vendor/tree-sitter-typst/` (cloned from
-# github.com/uben0/tree-sitter-typst). The `path` is used by local
-# builds and `cargo package`; the `version` mirrors the upstream
-# Cargo.toml. See the publishing note further down.
-tree-sitter-typst = { path = "vendor/tree-sitter-typst", version = "0.0.1" }
+# github.com/uben0/tree-sitter-typst). Same rationale as bdslib above.
+tree-sitter-typst = { path = "vendor/tree-sitter-typst" }
 
 # AI clients (one crate covers Gemini, DeepSeek, OpenAI, Anthropic, …)
 genai = "=0.6.0-beta.20"
@@ -126,24 +129,7 @@ strip = "symbols"
 # Exclude the vendored crates from any ambient workspace discovery — the
 # parent repository contains them only as source for our path deps, not
 # as workspace members. Without this, Cargo would try to build / lint
-# them on every `cargo` invocation, and `cargo publish` would refuse
-# because of nested manifests in the published tarball.
+# them on every `cargo` invocation.
 [workspace]
 members = ["."]
 exclude = ["vendor/bdslib", "vendor/tree-sitter-typst"]
-
-# Publishing note ---------------------------------------------------------
-#
-# `cargo package` / `cargo publish` strip the `path` from `bdslib` and
-# `tree-sitter-typst` and leave only the `version`. crates.io then
-# expects to resolve those versions from the registry, so the actual
-# publish step **still requires the two crates to exist on crates.io**:
-#
-#   1. Publish `bdslib` to crates.io at version 0.12.x.
-#   2. Publish `tree-sitter-typst` (or a fork under a new name) at the
-#      version pinned above.
-#   3. Then `cargo publish -p inkhaven` works straight from this manifest.
-#
-# Until that happens, vendoring is purely for build self-containment:
-# `cargo build` / `cargo test` work offline against the vendored copies,
-# and the source tree no longer carries git URLs in dependency specs.

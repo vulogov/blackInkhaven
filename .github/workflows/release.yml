@@ -1,0 +1,182 @@
+name: release
+
+# Builds release binaries on every `v*` tag, packages them per platform,
+# and publishes them to a GitHub Release. Users then install via:
+#   * `cargo binstall inkhaven` (uses [package.metadata.binstall] in
+#     Cargo.toml to fetch the matching prebuilt)
+#   * Direct download from the Releases page
+#   * `cargo install --git https://github.com/vulogov/blackInkhaven`
+#     (compiles from source against vendored deps)
+#
+# Manual run is also possible via the Actions tab → "Run workflow".
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v1.0.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: write   # needed to create the Release and upload assets
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ----------------------------------------------------------------------
+  # Build a release binary on each target platform. Each matrix job
+  # produces one tarball / zip uploaded as a workflow artifact; the
+  # `release` job below collects them and posts the GitHub Release.
+  # ----------------------------------------------------------------------
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    steps:
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "value=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.value }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Caches `~/.cargo` + `target/` between runs. Critical: bdslib
+      # pulls in duckdb / tantivy / fastembed / augurs, so a cold build
+      # is 10–15 minutes. The cache key includes Cargo.lock so a real
+      # dep change still rebuilds.
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Linux glibc target — Ubuntu's default toolchain is fine.
+      # Windows / macOS pick the platform compilers automatically.
+      - name: Build (release)
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # Strip & package. The on-disk layout inside the archive is
+      # `inkhaven-<target>/inkhaven[.exe]` so the cargo-binstall
+      # `bin-dir` in Cargo.toml ("{name}-{target}/{bin}{binary-ext}")
+      # resolves cleanly.
+      - name: Package (unix)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIR="inkhaven-${{ matrix.target }}"
+          mkdir -p "$DIR"
+          cp "target/${{ matrix.target }}/release/inkhaven" "$DIR/"
+          cp README.md LICENSE "$DIR/" 2>/dev/null || true
+          strip "$DIR/inkhaven" || true
+          tar -czf "$DIR.tar.gz" "$DIR"
+          ls -la "$DIR.tar.gz"
+
+      - name: Package (windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $dir = "inkhaven-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/inkhaven.exe" "$dir/"
+          if (Test-Path README.md) { Copy-Item README.md "$dir/" }
+          if (Test-Path LICENSE)   { Copy-Item LICENSE "$dir/" }
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: inkhaven-${{ matrix.target }}
+          path: |
+            inkhaven-${{ matrix.target }}.tar.gz
+            inkhaven-${{ matrix.target }}.zip
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ----------------------------------------------------------------------
+  # Collect every artifact and publish a single GitHub Release.
+  # ----------------------------------------------------------------------
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "value=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.value }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.value }}
+          name: ${{ steps.tag.outputs.value }}
+          draft: false
+          prerelease: ${{ contains(steps.tag.outputs.value, '-') }}
+          generate_release_notes: true
+          files: |
+            dist/inkhaven-*.tar.gz
+            dist/inkhaven-*.zip
+          body: |
+            Inkhaven ${{ steps.tag.outputs.value }} — TUI literary editor.
+
+            ## Install
+
+            * `cargo binstall inkhaven` (downloads the prebuilt matching your host triple)
+            * `cargo install --git https://github.com/vulogov/blackInkhaven --tag ${{ steps.tag.outputs.value }}` (compiles from source)
+            * Or pick the right archive below and unpack it into `$PATH`.
+
+            ## Docs
+
+            * Quick start: [README](https://github.com/vulogov/blackInkhaven/blob/${{ steps.tag.outputs.value }}/README.md)
+            * Full manual: [Documentation/](https://github.com/vulogov/blackInkhaven/tree/${{ steps.tag.outputs.value }}/Documentation)
