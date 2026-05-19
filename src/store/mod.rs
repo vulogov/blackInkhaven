@@ -822,6 +822,17 @@ impl Store {
             .map_err(|e| Error::Store(format!("snapshot_content: {e}")))
     }
 
+    /// Delete a single snapshot by id. Snapshots have no on-disk file
+    /// (they live entirely in bdslib as `add_document_no_embed`), so
+    /// this is just a bdslib delete + a sync to flush the change.
+    pub fn delete_snapshot(&self, snapshot_id: Uuid) -> Result<()> {
+        self.inner
+            .delete_document(snapshot_id)
+            .map_err(|e| Error::Store(format!("delete_snapshot {snapshot_id}: {e}")))?;
+        self.sync()?;
+        Ok(())
+    }
+
     /// Delete the on-disk subtree at `fs_rel` (relative to project root) and
     /// remove every UUID in `ids` from bdslib. Errors from individual bdslib
     /// deletes are logged but don't abort the loop — orphans get caught by

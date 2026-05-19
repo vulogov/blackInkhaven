@@ -137,7 +137,7 @@ fn editor_entries() -> [Entry; 43] {
         header("─ Files & snapshots ─"),
         entry("F3", "Load file → replace buffer"),
         entry("F4 / Ctrl+F4", "Toggle split / accept snapshot"),
-        entry("F5 / F6", "Create / list snapshots"),
+        entry("F5 / F6", "Create / list snapshots (D / Del deletes in picker)"),
         entry("Ctrl+H / Ctrl+J", "(split only) scroll lower pane up/down"),
         header(""),
         header("─ Editor meta (Ctrl+B …) ─"),
