@@ -54,9 +54,17 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            archive: zip
+          # Windows is temporarily disabled. yeslogic-fontconfig-sys
+          # (pulled in transitively by bdslib) is a wrapper over the
+          # POSIX fontconfig C library; on Windows it needs a vcpkg /
+          # custom-toolchain install that hasn't been worked out yet.
+          # Re-enable once the Windows build path is sorted — likely via
+          # `vcpkg install fontconfig:x64-windows-static` + appropriate
+          # env vars, or by trimming bdslib's font-using features. See
+          # github issue / log for the failing v1.0.0 / v1.0.1 runs.
+          # - os: windows-latest
+          #   target: x86_64-pc-windows-msvc
+          #   archive: zip
     steps:
       - name: Resolve tag
         id: tag
