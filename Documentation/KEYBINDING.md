@@ -160,15 +160,20 @@ Focused automatically when a paragraph is opened. Backing widget is
 intercept the modern conventional shortcuts ourselves; everything else falls
 through to tui-textarea's typing / cursor handling.
 
-**Border color** carries the dirty state at a glance:
+**Border color** carries the dirty state at a glance — but only while the
+pane has focus:
 
-- **Green** — the open paragraph is in sync with disk + bdslib (saved).
-- **Yellow** — the open paragraph has unsaved edits.
+- **Green (bold)** — focused, in sync with disk + bdslib (saved).
+- **Yellow (bold)** — focused, with unsaved edits.
+- **White** — pane is *unfocused*. Dirty signaling moves to the title's
+  `[modified]` suffix and the red `●` chip in the status bar (both
+  always-on indicators).
 
-The border is **bold** when the Editor pane has focus and dim otherwise — so
-you can tell focus and dirtiness independently. The status bar additionally
-shows a red `●` chip when dirty, and the editor's title gains a `[modified]`
-suffix.
+**Focus-loss autosave**: whenever focus moves away from the Editor pane —
+via `Tab`, `Ctrl+1..5`, `Ctrl+T`, `Ctrl+/`, `Ctrl+I`, `Esc` from another
+input, etc. — the open paragraph is automatically saved if dirty. So you
+can shift focus mid-edit without worrying about losing work; the next save
+trigger (idle/quit/switch) won't catch the same change twice.
 
 ### 3.1 Cursor movement
 
@@ -195,21 +200,27 @@ suffix.
 | `Ctrl+Backspace`     | Delete previous word.                                       |
 | `Ctrl+S`             | Save current paragraph to disk and re-embed in bdslib. Triggers a tree reload so word counts refresh. |
 
-### 3.3 Selection and clipboard (continuous range)
+### 3.3 Selection, clipboard, undo
 
 `tui-textarea` maintains a single linear selection range. Shift+arrows extend
-it. The standard conventional chords operate on this range.
+it. **Note:** the editor uses non-standard keys for cut and paste because the
+conventional bindings now do other things (`Ctrl+X` is "repeat" for search,
+`Ctrl+Z` is delete-to-end-of-line). The mapping below has been chosen so
+each operation lives on a distinct key with no overlap.
 
 | Key                  | Action                                                      |
 | -------------------- | ----------------------------------------------------------- |
 | `Shift+←` / `Shift+→`| Extend selection left / right one character.                |
 | `Shift+↑` / `Shift+↓`| Extend selection up / down one line.                        |
 | `Ctrl+A`             | Select entire document.                                     |
-| `Ctrl+C`             | Copy selection to system clipboard (falls back to internal yank if `arboard` failed to init). |
-| `Ctrl+X`             | Cut selection to clipboard. Marks doc dirty.                |
-| `Ctrl+V`             | Paste from clipboard at cursor (or replace selection). Marks dirty. |
-| `Ctrl+Z`             | Undo.                                                       |
-| `Ctrl+Y`                   | Redo.                                                 |
+| `Ctrl+C`             | **Copy** selection to system clipboard (falls back to internal yank if `arboard` failed to init). |
+| `Ctrl+K`             | **Cut** selection to clipboard. Marks doc dirty.            |
+| `Ctrl+P`             | **Paste** from clipboard at cursor (or replace selection). Marks dirty. |
+| `Ctrl+U`             | **Undo.**                                                   |
+| `Ctrl+Y`             | **Redo.**                                                   |
+
+The line-targeted delete shortcuts (§3.11) all preserve the yank buffer so
+they don't clobber clipboard state.
 
 If `arboard::Clipboard::new()` fails at startup (typical on headless or some
 Wayland setups), copy/cut/paste silently fall back to tui-textarea's
@@ -234,6 +245,25 @@ the syntax highlighting.
 bulk character-deletion across multiple lines, which tui-textarea doesn't
 expose cleanly. Copy-only covers the common cases (extracting a column of
 leading numbers, a list of names, a verse stanza).
+
+### 3.11 Line-targeted delete shortcuts
+
+Four chords that delete chunks of the current line without touching the
+clipboard. Each saves and restores the yank buffer around the operation, so
+`Ctrl+P` paste still produces the last copy.
+
+| Key       | Action                                                                 |
+| --------- | ---------------------------------------------------------------------- |
+| `Ctrl+D`  | **Delete current line** — removes the entire line + its trailing newline; cursor lands on the line that takes its place. On the very last line, the content is cleared and an empty line remains (no newline to delete). |
+| `Ctrl+E`  | **Delete to end of line** — removes from the cursor to the line end.   |
+| `Ctrl+W`  | **Delete to start of line** — removes from the cursor back to column 0. |
+| `Ctrl+Z`  | **Delete to end of line** — alias for `Ctrl+E` per user spec. (Undo is `Ctrl+U`.) |
+
+**Note on `Ctrl+W`**: bash, tmux, and some terminals interpret `Ctrl+W` as
+"delete previous word" before forwarding the keystroke. If your shell layer
+eats `Ctrl+W`, use the meta prefix path (`Ctrl+B`, then a future-defined
+alias) or rebind the chord in `inkhaven.hjson` once configurable bindings
+for it are added.
 
 ### 3.9 Split-edit mode
 
@@ -270,9 +300,8 @@ brighter **LightRed + bold** style so it stands out among siblings.
 | Key                | Action                                                                |
 | ------------------ | --------------------------------------------------------------------- |
 | `Ctrl+F`           | Open the **Find** modal (magenta-bordered). Type a regex, Enter to run. Cursor jumps to the first match; all matches stay highlighted. Status bar reports `match 1 / N`. |
-| `Ctrl+G`           | **In search mode**: jump to the next match (wraps to start at end).   |
+| `Ctrl+X`           | **"Repeat"** (multifunction). In search mode: jump to the next match (wraps). In replace mode: replace the current match and advance to the next. Only active while a search is in progress; otherwise the keystroke falls through. |
 | `Ctrl+R`           | **First press**: open the **Find & Replace** modal (search + replace fields, `Tab` switches between them). Enter applies the **first** replacement automatically and stays in replace mode. **Second press while in replace mode**: replace every remaining match and exit replace mode. |
-| `Ctrl+G`           | **In replace mode**: replace the current match, advance to the next. Status shows remaining count. When no more matches remain, search clears. |
 | `Esc` (in editor)  | Clear the active search (drops the highlights, exits replace mode).   |
 
 **Regex flavor:** full Rust [`regex`](https://docs.rs/regex) syntax. Use
@@ -667,14 +696,18 @@ TREE            ↑↓ Home End  navigate
 EDITOR          arrows       move cursor
                 Ctrl+arrows  word / top / bottom
                 Shift+arrows extend linear selection
-                Ctrl+Z/Y     undo / redo
-                Ctrl+X/C/V   cut / copy / paste (system clipboard)
+                Ctrl+U/Y     undo / redo
+                Ctrl+K/C/P   cut / copy / paste (system clipboard)
                 Ctrl+A       select all
+                Ctrl+D       delete current line
+                Ctrl+E       delete cursor → end of line
+                Ctrl+W       delete cursor → start of line
+                Ctrl+Z       delete cursor → end of line (alias of Ctrl+E)
                 Alt+arrows   extend rectangular block selection
                 Alt+C        copy rectangular block
                 Ctrl+S       save + re-embed
                 Ctrl+F       open find (regex)
-                Ctrl+G       next match (replace+next in replace mode)
+                Ctrl+X       "repeat" (next match / replace+next, search active only)
                 Ctrl+R       open find&replace · replace all (in replace mode)
                 F3           load file → replaces buffer
                 F4 / Ctrl+F4 toggle split / accept snapshot

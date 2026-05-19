@@ -655,7 +655,7 @@ impl App {
                 _ => None,
             };
             if let Some(focus) = target {
-                self.focus = focus;
+                self.change_focus(focus);
                 return Ok(false);
             }
         }
@@ -663,7 +663,7 @@ impl App {
         // Ctrl+2 / Ctrl+Space. Catch that separately because the inner block
         // requires the CONTROL modifier flag.
         if matches!(key.code, KeyCode::Null) {
-            self.focus = Focus::Tree;
+            self.change_focus(Focus::Tree);
             return Ok(false);
         }
 
@@ -690,11 +690,11 @@ impl App {
 
         // Focus jumps from anywhere.
         if self.keymap.search.matches(&key) {
-            self.focus = Focus::SearchBar;
+            self.change_focus(Focus::SearchBar);
             return Ok(false);
         }
         if self.keymap.ai_prompt.matches(&key) {
-            self.focus = Focus::AiPrompt;
+            self.change_focus(Focus::AiPrompt);
             return Ok(false);
         }
 
@@ -703,11 +703,11 @@ impl App {
         let cycling_blocked = self.focus.is_input() || in_editor_with_doc;
         if !cycling_blocked {
             if self.keymap.next_pane.matches(&key) {
-                self.focus = self.focus.next();
+                self.change_focus(self.focus.next());
                 return Ok(false);
             }
             if self.keymap.prev_pane.matches(&key) {
-                self.focus = self.focus.prev();
+                self.change_focus(self.focus.prev());
                 return Ok(false);
             }
         } else if in_editor_with_doc
@@ -717,11 +717,12 @@ impl App {
             // the user really meant to (no other modifiers were on). If we
             // didn't intercept here, Tab would insert a literal tab via
             // tui-textarea.
-            self.focus = if self.keymap.next_pane.matches(&key) {
+            let next = if self.keymap.next_pane.matches(&key) {
                 self.focus.next()
             } else {
                 self.focus.prev()
             };
+            self.change_focus(next);
             return Ok(false);
         }
 
@@ -933,18 +934,27 @@ impl App {
             self.open_file_picker(PickerContext::EditorLoad);
             return Ok(false);
         }
-        // Ctrl+F / Ctrl+G / Ctrl+R: regex search & replace.
+        // Ctrl+F open find, Ctrl+X "repeat" (advance / replace+advance),
+        // Ctrl+R open replace dialog or "replace all" when already in
+        // replace mode.
         let ctrl_no_shift = key.modifiers.contains(KeyModifiers::CONTROL)
             && !key.modifiers.contains(KeyModifiers::SHIFT)
             && !key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER);
         if ctrl_no_shift {
+            // Ctrl+X is "Repeat" only while a search is active. Otherwise
+            // it falls through (currently no-op — was cut, now Ctrl+K).
+            if matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X'))
+                && self
+                    .opened
+                    .as_ref()
+                    .map_or(false, |d| d.search.is_some())
+            {
+                self.search_advance_or_replace();
+                return Ok(false);
+            }
             match key.code {
                 KeyCode::Char('f') | KeyCode::Char('F') => {
                     self.open_find_modal(false);
-                    return Ok(false);
-                }
-                KeyCode::Char('g') | KeyCode::Char('G') => {
-                    self.search_advance_or_replace();
                     return Ok(false);
                 }
                 KeyCode::Char('r') | KeyCode::Char('R') => {
@@ -1036,7 +1046,7 @@ impl App {
                     return Ok(false);
                 }
             }
-            self.focus = Focus::Tree;
+            self.change_focus(Focus::Tree);
             return Ok(false);
         }
 
@@ -1081,18 +1091,17 @@ impl App {
             }
         }
 
-        // Modern conventional shortcuts: intercept before reaching the
-        // textarea so emacs-style defaults don't fire.
+        // Editor key map (intercepted before tui-textarea so its emacs
+        // defaults don't fire). Note the rebinds from earlier conventions:
+        //   Ctrl+U undo  (was Ctrl+Z)
+        //   Ctrl+K cut   (was Ctrl+X — now "repeat" for search/replace)
+        //   Ctrl+P paste (was Ctrl+V)
+        //   Ctrl+D/E/W/Z delete-line / delete-to-end / delete-to-start /
+        //                delete-to-end (Z duplicates E per spec)
         if ctrl {
-            // Ctrl+Shift+Z → redo. Also accept Ctrl+Y.
-            if shift && matches!(key.code, KeyCode::Char('z') | KeyCode::Char('Z')) {
-                if let Some(doc) = self.opened.as_mut() {
-                    doc.textarea.redo();
-                }
-                return Ok(false);
-            }
             match key.code {
-                KeyCode::Char('z') | KeyCode::Char('Z') if !shift => {
+                // Undo / Redo
+                KeyCode::Char('u') | KeyCode::Char('U') if !shift => {
                     if let Some(doc) = self.opened.as_mut() {
                         doc.textarea.undo();
                     }
@@ -1104,7 +1113,8 @@ impl App {
                     }
                     return Ok(false);
                 }
-                KeyCode::Char('x') | KeyCode::Char('X') if !shift => {
+                // Clipboard
+                KeyCode::Char('k') | KeyCode::Char('K') if !shift => {
                     self.editor_cut();
                     return Ok(false);
                 }
@@ -1112,12 +1122,32 @@ impl App {
                     self.editor_copy();
                     return Ok(false);
                 }
-                KeyCode::Char('v') | KeyCode::Char('V') if !shift => {
+                KeyCode::Char('p') | KeyCode::Char('P') if !shift => {
                     self.editor_paste();
                     return Ok(false);
                 }
                 KeyCode::Char('a') | KeyCode::Char('A') if !shift => {
                     self.editor_select_all();
+                    return Ok(false);
+                }
+                // Line-targeted deletes. All four operations preserve the
+                // yank buffer so they don't clobber Ctrl+C / Ctrl+P state.
+                KeyCode::Char('d') | KeyCode::Char('D') if !shift => {
+                    self.editor_delete_line();
+                    return Ok(false);
+                }
+                KeyCode::Char('e') | KeyCode::Char('E') if !shift => {
+                    self.editor_delete_to_eol();
+                    return Ok(false);
+                }
+                KeyCode::Char('w') | KeyCode::Char('W') if !shift => {
+                    self.editor_delete_to_bol();
+                    return Ok(false);
+                }
+                KeyCode::Char('z') | KeyCode::Char('Z') if !shift => {
+                    // Per user spec Ctrl+Z is an alias for Ctrl+E
+                    // (delete-to-end-of-line), NOT undo. Undo is Ctrl+U.
+                    self.editor_delete_to_eol();
                     return Ok(false);
                 }
                 KeyCode::Home => {
@@ -1253,6 +1283,51 @@ impl App {
             anchor,
             doc.textarea.cursor(),
         ))
+    }
+
+    /// Delete the current line entirely (content + trailing newline). Cursor
+    /// lands on the line that took its place. Preserves the yank buffer.
+    fn editor_delete_line(&mut self) {
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        let saved_yank = doc.textarea.yank_text();
+        // Move to start of line, clear to end, then remove the newline so
+        // the next line collapses up.
+        doc.textarea.move_cursor(CursorMove::Head);
+        doc.textarea.delete_line_by_end();
+        // delete_next_char removes the newline; on the last line it's a
+        // no-op which leaves an empty line where the deleted one was. That's
+        // an acceptable quirk — the user can hit Ctrl+D again to remove it,
+        // or move up and delete the previous newline.
+        doc.textarea.delete_next_char();
+        doc.textarea.set_yank_text(saved_yank);
+        doc.dirty = true;
+    }
+
+    /// Delete from the cursor to the end of the current line. Used by both
+    /// Ctrl+E and Ctrl+Z (the user requested both bindings for the same op).
+    fn editor_delete_to_eol(&mut self) {
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        let saved_yank = doc.textarea.yank_text();
+        if doc.textarea.delete_line_by_end() {
+            doc.dirty = true;
+        }
+        doc.textarea.set_yank_text(saved_yank);
+    }
+
+    /// Delete from the cursor back to the beginning of the current line.
+    fn editor_delete_to_bol(&mut self) {
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        let saved_yank = doc.textarea.yank_text();
+        if doc.textarea.delete_line_by_head() {
+            doc.dirty = true;
+        }
+        doc.textarea.set_yank_text(saved_yank);
     }
 
     fn editor_select_all(&mut self) {
@@ -1469,7 +1544,7 @@ impl App {
         }
         doc.dirty = true;
         self.status = format!("applied AI result ({})", action.label());
-        self.focus = Focus::Editor;
+        self.change_focus(Focus::Editor);
     }
 
     fn handle_input_key(&mut self, key: KeyEvent, is_search: bool) -> Result<bool> {
@@ -1485,11 +1560,12 @@ impl App {
                     // Return to the Editor pane when a paragraph is open,
                     // otherwise fall back to Tree. Saves a Tab press in the
                     // common write-search-write workflow.
-                    self.focus = if self.opened.is_some() {
+                    let target = if self.opened.is_some() {
                         Focus::Editor
                     } else {
                         Focus::Tree
                     };
+                    self.change_focus(target);
                 }
             }
             KeyCode::Enter => {
@@ -1693,7 +1769,7 @@ impl App {
             rx,
             started_at: std::time::Instant::now(),
         });
-        self.focus = Focus::Ai;
+        self.change_focus(Focus::Ai);
         self.status = format!("streaming from {provider}…");
         // Clear the prompt so the next inference starts fresh.
         self.ai_input.clear();
@@ -1742,7 +1818,7 @@ impl App {
                 self.status = format!("open failed: {e}");
             }
         } else {
-            self.focus = Focus::Tree;
+            self.change_focus(Focus::Tree);
             self.status = format!(
                 "`{}` is a {} — its paragraph children are editable",
                 node.title,
@@ -2385,7 +2461,7 @@ impl App {
         doc.scroll_row = 0;
         doc.scroll_col = 0;
         doc.last_activity = std::time::Instant::now();
-        self.focus = Focus::Editor;
+        self.change_focus(Focus::Editor);
         self.status = format!("loaded `{}` — bold marks the change vs saved", path.display());
     }
 
@@ -2809,7 +2885,7 @@ impl App {
         // snapshot text shows as "added" (bold) until the user accepts it
         // by hitting Ctrl+S.
         self.modal = Modal::None;
-        self.focus = Focus::Editor;
+        self.change_focus(Focus::Editor);
         self.status = format!(
             "loaded snapshot from {} — bold marks the change vs saved",
             when.format("%Y-%m-%d %H:%M:%S")
@@ -3221,7 +3297,7 @@ impl App {
     fn load_paragraph(&mut self, node: &Node) -> Result<()> {
         if let Some(prev) = &self.opened {
             if prev.id == node.id {
-                self.focus = Focus::Editor;
+                self.change_focus(Focus::Editor);
                 return Ok(());
             }
             // Auto-save any pending edits in the previous paragraph before
@@ -3276,7 +3352,7 @@ impl App {
             split: None,
             search: None,
         });
-        self.focus = Focus::Editor;
+        self.change_focus(Focus::Editor);
         self.status = format!("opened {}", abs.display());
         Ok(())
     }
@@ -3745,20 +3821,35 @@ impl App {
     }
 
     /// Editor pane block. Border color carries the document's clean/dirty
-    /// state: green when saved, yellow when there are unsaved changes. The
-    /// focus chip in the status bar still indicates which pane has focus, so
-    /// the border can be dedicated to dirty signaling.
+    /// state when the pane has focus: green when saved, yellow when there
+    /// are unsaved changes (bolded). When the pane is unfocused, the border
+    /// is plain white — the status bar's red `●` chip and the `[modified]`
+    /// suffix in the title still signal dirty state independent of focus.
     fn editor_block<'a>(&self, title: &'a str) -> Block<'a> {
-        let dirty = self.opened.as_ref().is_some_and(|d| d.dirty);
-        let color = if dirty { Color::Yellow } else { Color::Green };
-        let mut style = Style::default().fg(color);
-        if self.focus == Focus::Editor {
-            style = style.add_modifier(Modifier::BOLD);
-        }
+        let style = if self.focus == Focus::Editor {
+            let dirty = self.opened.as_ref().is_some_and(|d| d.dirty);
+            let color = if dirty { Color::Yellow } else { Color::Green };
+            Style::default().fg(color).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
         Block::default()
             .borders(Borders::ALL)
             .title(title)
             .border_style(style)
+    }
+
+    /// Centralized focus change. When leaving the Editor pane, autosave the
+    /// open paragraph (best-effort) so unsaved edits are persisted even
+    /// across Tab cycles, Ctrl+1..5 jumps, or any other focus shift. The
+    /// underlying `save_current` writes to disk + bdslib + re-embeds.
+    fn change_focus(&mut self, new: Focus) {
+        if self.focus == Focus::Editor && new != Focus::Editor {
+            if self.opened.as_ref().is_some_and(|d| d.dirty) {
+                let _ = self.save_current();
+            }
+        }
+        self.focus = new;
     }
 
     fn draw_search_bar(&self, f: &mut ratatui::Frame, area: Rect) {
