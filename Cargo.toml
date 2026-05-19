@@ -35,8 +35,13 @@ pkg-url = "{repo}/releases/download/v{version}/{name}-{target}{archive-suffix}"
 bin-dir = "{name}-{target}/{bin}{binary-ext}"
 pkg-fmt = "tgz"
 
-[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
-pkg-fmt = "zip"
+# Windows override kept commented so it's a one-line revert when the
+# windows-latest matrix entry comes back in release.yml. While disabled,
+# `cargo binstall inkhaven` on a Windows host correctly errors with
+# "no prebuilt for target" — users on Windows can still
+# `cargo install --git`.
+# [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+# pkg-fmt = "zip"
 
 [[bin]]
 name = "inkhaven"
