@@ -48,7 +48,7 @@ pub fn entries_for(focus: Focus) -> Vec<Entry> {
     out
 }
 
-fn global_entries() -> [Entry; 13] {
+fn global_entries() -> [Entry; 14] {
     [
         header("─── Global ───"),
         entry("Ctrl+Q", "Quit (autosaves dirty paragraph)"),
@@ -62,6 +62,7 @@ fn global_entries() -> [Entry; 13] {
         entry("Ctrl+B H", "This Quick reference (works from every pane)"),
         entry("F1", "Help-manual question (RAG over the Help book)"),
         entry("F9", "Cycle AI scope: None→Sel→Para→Sub→Chap→Book→None"),
+        entry("F10", "Toggle inference: Local↔Full (Help locked to Local)"),
         entry("Esc", "Close overlay / cancel"),
     ]
 }
@@ -138,7 +139,7 @@ fn editor_entries() -> [Entry; 35] {
     ]
 }
 
-fn ai_entries() -> [Entry; 17] {
+fn ai_entries() -> [Entry; 18] {
     [
         entry("r / R", "Replace editor selection with AI text"),
         entry("i / I", "Insert AI text at cursor"),
@@ -155,6 +156,7 @@ fn ai_entries() -> [Entry; 17] {
         header(""),
         header("─ Chat session ─"),
         entry("F9", "Cycle scope: None/Sel/Para/Sub/Chap/Book"),
+        entry("F10", "Toggle inference: Local ↔ Full"),
         entry("Ctrl+B C", "Clear chat history + current inference"),
         entry("Ctrl+B H", "Open Quick reference"),
     ]

@@ -19,6 +19,8 @@ pub struct Config {
     pub hierarchy: HierarchyConfig,
     #[serde(default)]
     pub theme: ThemeConfig,
+    #[serde(default)]
+    pub backup: BackupConfig,
     #[serde(default = "default_prompts_path")]
     pub prompts_file: PathBuf,
     /// Seconds between background calls to `Store::sync()` (flushes HNSW
@@ -45,8 +47,37 @@ impl Default for Config {
             keys: KeyBindings::default(),
             hierarchy: HierarchyConfig::default(),
             theme: ThemeConfig::default(),
+            backup: BackupConfig::default(),
             prompts_file: default_prompts_path(),
             sync_interval_seconds: default_sync_interval(),
+        }
+    }
+}
+
+/// Where backups land and how often the TUI should make one on exit. Empty
+/// `out_dir` disables auto-backup (manual `inkhaven backup` still works);
+/// `max_age = "0s"` (or unset) means "never auto-trigger".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BackupConfig {
+    /// Directory where `.zip` snapshots are written. May be a relative path
+    /// (resolved against the project root) or absolute. Created if missing.
+    pub out_dir: String,
+    /// Maximum age of the last backup before the TUI's exit hook creates a
+    /// fresh one. Parsed via the `humantime` crate, so values like `"7d"`,
+    /// `"24h"`, `"30m"` are all accepted. Empty string or `"0s"` disables.
+    #[serde(with = "humantime_serde")]
+    pub max_age: std::time::Duration,
+}
+
+impl Default for BackupConfig {
+    fn default() -> Self {
+        Self {
+            out_dir: "backups".into(),
+            // Roughly a week. Vladimir's books move fast enough that a
+            // weekly snapshot pairs sensibly with the per-paragraph
+            // snapshots the editor already supports.
+            max_age: std::time::Duration::from_secs(7 * 24 * 3600),
         }
     }
 }

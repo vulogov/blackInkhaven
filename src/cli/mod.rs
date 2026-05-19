@@ -1,5 +1,6 @@
 pub mod add;
 pub mod ai;
+pub mod backup;
 pub mod delete;
 pub mod export;
 pub mod import_help;
@@ -7,6 +8,7 @@ pub mod init;
 pub mod list;
 pub mod mv;
 pub mod reindex;
+pub mod restore;
 pub mod search;
 
 use std::path::PathBuf;
@@ -118,13 +120,32 @@ pub enum Command {
     /// Import a directory tree into the Help system book. Subdirectories
     /// become chapters / subchapters / (flattened) and files become
     /// paragraphs. Filenames and directory names supply the displayed
-    /// titles.
+    /// titles. Wipes Help's existing contents first.
     ImportHelp {
         /// Source directory whose contents will be ingested under the Help
         /// system book. Files at the root land as paragraphs directly under
         /// Help; subdirectories become chapters (then subchapters, etc.).
         #[arg(long)]
         documents_directory: PathBuf,
+    },
+
+    /// Zip the project into a dated backup archive
+    /// (`blackinkhaven_YYYYDDMM_HHMMSS.zip`).
+    Backup {
+        /// Output directory for the archive. Created if missing.
+        #[arg(long)]
+        out: PathBuf,
+    },
+
+    /// Restore a backup archive into a fresh directory.
+    Restore {
+        /// Path to the `.zip` backup file.
+        archive: PathBuf,
+        /// Destination directory. Must not already contain
+        /// `inkhaven.hjson` — pick a fresh directory or wipe the old one
+        /// first.
+        #[arg(long)]
+        to: PathBuf,
     },
 
     /// Launch the TUI editor (default if no subcommand is given).
@@ -200,6 +221,10 @@ impl Cli {
             Command::ImportHelp {
                 documents_directory,
             } => import_help::run(&project, &documents_directory).map_err(Into::into),
+            Command::Backup { out } => backup::run(&project, &out).map_err(Into::into),
+            Command::Restore { archive, to } => {
+                restore::run(&archive, &to).map_err(Into::into)
+            }
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
         }
     }

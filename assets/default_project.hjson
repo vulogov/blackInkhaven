@@ -69,6 +69,21 @@
   // DuckDB checkpoint). 0 disables; saves still trigger sync explicitly.
   sync_interval_seconds: 60
 
+  // Auto-backup on TUI exit. The TUI checks `.inkhaven-backup.json` for
+  // the last successful backup timestamp; if older than `max_age`, the
+  // store is closed, a splash with a progress bar is shown, and a fresh
+  // zip is written to `out_dir`. `inkhaven backup --out <dir>` triggers
+  // the same flow manually at any time.
+  //
+  // - `out_dir`: relative paths resolve against the project root; empty
+  //   string disables auto-backup.
+  // - `max_age`: humantime — "1d", "12h", "30m", "1w" all work.
+  //   Set to "0s" (or unset) to disable the on-exit hook entirely.
+  backup: {
+    out_dir: "backups"
+    max_age: "7d"
+  }
+
   keys: {
     save:             Ctrl+s
     search:           Ctrl+/

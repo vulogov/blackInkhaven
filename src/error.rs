@@ -8,6 +8,9 @@ pub enum Error {
     ProjectNotFound(PathBuf),
 
     #[error("project already exists at {0}")]
+    #[allow(dead_code)] // kept as a stable diagnostic kind; init's
+    // confirmation flow surfaces a different message but third-party
+    // callers may still match on this variant.
     ProjectExists(PathBuf),
 
     #[error("config error: {0}")]
