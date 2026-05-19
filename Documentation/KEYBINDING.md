@@ -13,6 +13,20 @@ its visual focus state but does not see input until the overlay closes.
 
 ---
 
+## 0. Mouse
+
+Inkhaven captures mouse input on startup. Left-click moves focus to the
+clicked pane; in the Tree pane the click positions the row cursor, in the
+Editor it positions the character cursor (clicks in the gutter are
+ignored). The scroll wheel scrolls Tree and Editor under the pointer.
+Floating overlays (search results, prompt picker, modal stack) swallow
+mouse input so a stray click can't focus a hidden pane.
+
+Terminal-side text selection still works while the alternate screen is
+up — hold **Shift** (or Option, depending on the terminal) while
+selecting to bypass mouse capture and copy text through the terminal's
+own clipboard integration.
+
 ## 1. Global
 
 These chords work from any focus except where noted. Chords marked
