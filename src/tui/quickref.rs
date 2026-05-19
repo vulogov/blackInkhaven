@@ -48,7 +48,7 @@ pub fn entries_for(focus: Focus) -> Vec<Entry> {
     out
 }
 
-fn global_entries() -> [Entry; 12] {
+fn global_entries() -> [Entry; 13] {
     [
         header("─── Global ───"),
         entry("Ctrl+Q", "Quit (autosaves dirty paragraph)"),
@@ -61,6 +61,7 @@ fn global_entries() -> [Entry; 12] {
         entry("Ctrl+B", "Meta prefix (next key = action)"),
         entry("Ctrl+B H", "This Quick reference (works from every pane)"),
         entry("F1", "Help-manual question (RAG over the Help book)"),
+        entry("F9", "Clear AI chat history + current inference"),
         entry("Esc", "Close overlay / cancel"),
     ]
 }
@@ -132,20 +133,24 @@ fn editor_entries() -> [Entry; 35] {
     ]
 }
 
-fn ai_entries() -> [Entry; 13] {
+fn ai_entries() -> [Entry; 17] {
     [
         entry("r / R", "Replace editor selection with AI text"),
         entry("i / I", "Insert AI text at cursor"),
         entry("t / T", "Prepend AI text to top of paragraph"),
         entry("b / B", "Append AI text to bottom"),
         entry("c / C", "Copy AI text to clipboard"),
+        entry("Esc", "Bounce to AI prompt (mirror of AI prompt's Esc)"),
         header(""),
         header("─ AI prompt input ─"),
         entry("/", "Show prompt library picker"),
         entry("Help! …", "Help-manual question (same as F1)"),
-        entry("Enter", "Send to LLM"),
+        entry("Enter", "Send (chat history is replayed automatically)"),
+        entry("Esc", "Bounce to AI pane to read the answer"),
         header(""),
-        entry("Ctrl+B C", "Clear current inference"),
+        header("─ Chat session ─"),
+        entry("F9", "Clear chat history + current inference"),
+        entry("Ctrl+B C", "Same as F9 (meta-prefix form)"),
         entry("Ctrl+B H", "Open Quick reference"),
     ]
 }
