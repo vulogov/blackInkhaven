@@ -7,6 +7,7 @@ mod error;
 mod project;
 mod store;
 mod tui;
+mod typst_compile;
 
 use clap::Parser;
 

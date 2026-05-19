@@ -493,6 +493,59 @@ fn draw_assembly_splash(
     f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
 }
 
+/// Splash for the `typst compile` step (Ctrl+B B / Ctrl+B O). Static
+/// "Please wait" body plus an animated spinner the caller advances
+/// each frame so the user can tell the TUI is still alive while the
+/// child process churns.
+fn draw_typst_compile_splash(
+    f: &mut ratatui::Frame,
+    book_display: &str,
+    elapsed_secs: u64,
+    spinner: char,
+) {
+    let area = f.area();
+    let width = area.width.saturating_sub(8).clamp(50, 100);
+    let height: u16 = 9;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let rect = Rect { x, y, width, height };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Inkhaven · typst compile ")
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let body = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  {spinner}  Please wait while PDF is generated…"),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  Book:    {book_display}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(Span::styled(
+            format!("  Elapsed: {elapsed_secs}s"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+    ];
+    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
+}
+
+const TYPST_COMPILE_SPINNER: &[char] = &[
+    '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏',
+];
+
 /// Walk `root` and count regular files that would be imported as
 /// paragraphs (mirrors the importer's hidden-entry filter so the total
 /// matches the progress callbacks).
@@ -1372,6 +1425,14 @@ struct App {
     /// synchronous book-assembly procedure with a progress splash.
     pending_assembly: Option<Uuid>,
 
+    /// Set by Ctrl+B B — run assembly + `typst compile`, surface
+    /// errors via a fresh AI chat tuned for typst diagnostics.
+    pending_build: Option<Uuid>,
+
+    /// Set by Ctrl+B O — Ctrl+B B + copy the resulting PDF into the
+    /// inkhaven launch cwd with a timestamped filename.
+    pending_take: Option<Uuid>,
+
     /// Typewriter-style SFX (Enter key + editor-pane focus-out). None
     /// when the host has no audio device — every play call then
     /// silently no-ops, so a headless / SSH-without-audio session
@@ -1534,6 +1595,8 @@ impl App {
             inference_mode: InferenceMode::Full,
             pending_import: None,
             pending_assembly: None,
+            pending_build: None,
+            pending_take: None,
             sound,
         })
     }
@@ -1554,6 +1617,12 @@ impl App {
             // and drives the splash redraws.
             if let Some(book_id) = self.pending_assembly.take() {
                 self.run_pending_assembly(terminal, book_id);
+            }
+            if let Some(book_id) = self.pending_build.take() {
+                self.run_pending_build(terminal, book_id, false);
+            }
+            if let Some(book_id) = self.pending_take.take() {
+                self.run_pending_build(terminal, book_id, true);
             }
             terminal.draw(|f| self.draw(f))?;
             // Shorter poll interval while streaming so tokens render with low
@@ -1877,15 +1946,15 @@ impl App {
             // pane. Generic suffix (· H help · Esc cancel) is shared.
             self.status = match self.focus {
                 Focus::Tree | Focus::SearchBar => {
-                    "META · B/C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I info · L LLM · E sound · A assemble · Esc cancel"
+                    "META · C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · Esc cancel"
                         .into()
                 }
                 Focus::Editor => {
-                    "META · S save · N snapshot · R history · F split · T retitle · P place · C character · H help · V credits · I info · L LLM · E sound · A assemble · Esc cancel"
+                    "META · S save · N snapshot · R history · F split · T retitle · P place · C character · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · Esc cancel"
                         .into()
                 }
                 Focus::Ai | Focus::AiPrompt => {
-                    "META · C clear chat · H help · V credits · I info · L LLM · E sound · A assemble · Esc cancel".into()
+                    "META · C clear chat · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · Esc cancel".into()
                 }
             };
             return Ok(false);
@@ -4075,6 +4144,18 @@ impl App {
             self.schedule_assembly();
             return;
         }
+        // B runs Book assembly + `typst compile`. On error, opens a
+        // fresh AI chat tuned to diagnose the typst stderr.
+        if matches!(key.code, KeyCode::Char('B') | KeyCode::Char('b')) {
+            self.schedule_build();
+            return;
+        }
+        // O = "take the book": build, then copy the resulting PDF into
+        // the launch cwd with a timestamped filename.
+        if matches!(key.code, KeyCode::Char('O') | KeyCode::Char('o')) {
+            self.schedule_take();
+            return;
+        }
 
         let consumed = match self.focus {
             Focus::Tree | Focus::SearchBar => self.dispatch_meta_tree(key),
@@ -4091,10 +4172,9 @@ impl App {
 
     fn dispatch_meta_tree(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            KeyCode::Char('B') | KeyCode::Char('b') => {
-                self.open_add_modal(NodeKind::Book);
-                true
-            }
+            // Note: `B` is now the global "build the book" chord (see
+            // `handle_meta_action`). Plain `B` in the tree pane still
+            // adds a book — see `handle_tree_key`.
             KeyCode::Char('C') | KeyCode::Char('c') => {
                 self.open_add_modal(NodeKind::Chapter);
                 true
@@ -5661,6 +5741,261 @@ impl App {
                 self.status = format!("Book assembly failed: {e}");
             }
         }
+    }
+
+    /// Ctrl+B B — schedule a Book "build": assembly + `typst compile`.
+    /// On error the build path opens a fresh AI chat for analysis.
+    fn schedule_build(&mut self) {
+        let Some(book_id) = self.resolve_current_user_book("Book build") else {
+            return;
+        };
+        self.pending_build = Some(book_id);
+        self.status = "Book build: assembling + compiling…".into();
+    }
+
+    /// Ctrl+B O — schedule a Book "take": build, then copy the PDF
+    /// into the launch cwd with a timestamped filename.
+    fn schedule_take(&mut self) {
+        let Some(book_id) = self.resolve_current_user_book("Take the book") else {
+            return;
+        };
+        self.pending_take = Some(book_id);
+        self.status = "Take the book: assembling + compiling + copying…".into();
+    }
+
+    /// Common preflight for Ctrl+B A / B / O. Returns the uuid of the
+    /// user book the cursor is inside, or surfaces an error status and
+    /// returns None when the cursor isn't on a user book.
+    fn resolve_current_user_book(&mut self, ctx: &str) -> Option<Uuid> {
+        let hierarchy = match Hierarchy::load(&self.store) {
+            Ok(h) => h,
+            Err(e) => {
+                self.status = format!("{ctx}: hierarchy load failed: {e}");
+                return None;
+            }
+        };
+        let book = self.current_book_node(&hierarchy)?;
+        if book.system_tag.is_some() {
+            self.status =
+                format!("{ctx}: `{}` is a system book — pick a user book.", book.title);
+            return None;
+        }
+        Some(book.id)
+    }
+
+    /// Run assembly + typst compile for `book_id`. If `take` is true,
+    /// the resulting PDF is also copied into the launch cwd with a
+    /// timestamped filename. A typst-error opens a fresh AI chat with
+    /// the configured error-system-prompt; the user gets streamed
+    /// analysis on the AI pane without any extra keystroke.
+    fn run_pending_build<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        book_id: Uuid,
+        take: bool,
+    ) {
+        // Step 1: assembly (re-uses the existing splash + procedure).
+        self.run_pending_assembly(terminal, book_id);
+        // run_pending_assembly returns silently on failure — figure
+        // out whether it succeeded by re-checking the artefacts path.
+        let book = match Hierarchy::load(&self.store) {
+            Ok(h) => match h.get(book_id).cloned() {
+                Some(n) => n,
+                None => {
+                    self.status =
+                        "Book build aborted: book vanished mid-assembly".into();
+                    return;
+                }
+            },
+            Err(e) => {
+                self.status = format!("Book build aborted: hierarchy reload: {e}");
+                return;
+            }
+        };
+        let artefacts_root = self.store.resolve_artefacts_dir(&self.cfg);
+        let root_typ = artefacts_root
+            .join(&book.slug)
+            .join(format!("{}.typ", book.slug));
+        if !root_typ.is_file() {
+            // Assembly didn't produce a root .typ — its status message
+            // already explains why, leave it in place.
+            return;
+        }
+
+        // Step 2: spawn `typst compile` and animate the splash while
+        // the child runs.
+        let book_display = book.title.clone();
+        let outcome = match self.run_typst_compile(terminal, &book_display, &root_typ) {
+            Some(o) => o,
+            None => return, // spawn failed; status already set
+        };
+
+        if outcome.success {
+            let pdf_msg = format!(
+                "Build OK · PDF: {}",
+                outcome.pdf_path.display()
+            );
+            if take {
+                match self.take_book_pdf(&book, &outcome.pdf_path) {
+                    Ok(dest) => {
+                        self.status = format!(
+                            "Took the book · {}  (source PDF: {})",
+                            dest.display(),
+                            outcome.pdf_path.display()
+                        );
+                    }
+                    Err(e) => {
+                        self.status = format!("{pdf_msg} · take failed: {e}");
+                    }
+                }
+            } else {
+                self.status = pdf_msg;
+            }
+            return;
+        }
+
+        // Compile failed — surface the stderr through the AI pane and
+        // leave a status hint mentioning where to read the answer.
+        let error_text = if outcome.stderr.trim().is_empty() {
+            outcome.stdout.clone()
+        } else {
+            outcome.stderr.clone()
+        };
+        self.start_typst_error_analysis(&book, &root_typ, &error_text);
+    }
+
+    /// Drive a typst-compile child to completion with the spinner
+    /// splash. Returns the outcome on success-or-failure of the
+    /// compile itself; returns None when even spawning the binary
+    /// failed (status bar is set in that case).
+    fn run_typst_compile<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        book_display: &str,
+        root_typ: &Path,
+    ) -> Option<crate::typst_compile::CompileOutcome> {
+        let (child, pdf_path) = match crate::typst_compile::spawn(root_typ) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("typst compile: {e}");
+                return None;
+            }
+        };
+        // Animate the splash while the child runs. ~80ms per frame
+        // keeps the spinner readable without burning CPU.
+        let started = std::time::Instant::now();
+        let mut spin_idx: usize = 0;
+        let mut child = child;
+        loop {
+            let elapsed = started.elapsed().as_secs();
+            let spinner = TYPST_COMPILE_SPINNER[spin_idx % TYPST_COMPILE_SPINNER.len()];
+            let _ = terminal.draw(|f| {
+                draw_typst_compile_splash(f, book_display, elapsed, spinner)
+            });
+            spin_idx = spin_idx.wrapping_add(1);
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => {
+                    std::thread::sleep(std::time::Duration::from_millis(80));
+                }
+                Err(e) => {
+                    self.status = format!("typst compile: try_wait: {e}");
+                    return None;
+                }
+            }
+        }
+        match crate::typst_compile::finish(child, pdf_path) {
+            Ok(o) => Some(o),
+            Err(e) => {
+                self.status = format!("typst compile: {e}");
+                None
+            }
+        }
+    }
+
+    /// Copy `pdf_src` into the launch cwd as
+    /// `<book-slug>-YYYYDDMM-HHMM.pdf`. Returns the destination path
+    /// on success. The cwd is inkhaven's `current_dir()` at the
+    /// moment of the call — same path the shell-launched binary saw.
+    fn take_book_pdf(
+        &self,
+        book: &Node,
+        pdf_src: &Path,
+    ) -> std::io::Result<std::path::PathBuf> {
+        let cwd = std::env::current_dir()?;
+        let now = chrono::Local::now();
+        // Match the existing backup filename style: YYYYDDMM_HHMMSS.
+        // User asked for YYYYDDMM-HHMM specifically — slight variant.
+        let stamp = now.format("%Y%d%m-%H%M");
+        let dest = cwd.join(format!("{}-{stamp}.pdf", book.slug));
+        std::fs::copy(pdf_src, &dest)?;
+        Ok(dest)
+    }
+
+    /// Open a fresh AI chat (cleared history, system prompt tuned for
+    /// typst errors, inference mode forced to Full) and auto-send the
+    /// compile error so the user gets streamed analysis without an
+    /// extra keystroke.
+    fn start_typst_error_analysis(
+        &mut self,
+        book: &Node,
+        root_typ: &Path,
+        error_text: &str,
+    ) {
+        // Wipe any in-flight chat so the new system prompt isn't
+        // diluted by unrelated turns.
+        self.chat_history.clear();
+        self.inference = None;
+        self.pending_chat_user_msg = None;
+        // Force Full mode per the user's spec; auto-reset scope.
+        self.inference_mode = InferenceMode::Full;
+        self.ai_mode = AiMode::None;
+
+        let system_prompt = self.cfg.typst_compile.resolved_error_system_prompt();
+        let user_prompt = format!(
+            "Book: `{book_title}` (slug `{slug}`)\n\
+             Root file: {root}\n\n\
+             `typst compile` failed with the following error. Please diagnose \
+             it using the inkhaven file-layout knowledge from the system \
+             prompt and tell me the smallest concrete fix.\n\n\
+             --- typst stderr ---\n{err}",
+            book_title = book.title,
+            slug = book.slug,
+            root = root_typ.display(),
+            err = error_text.trim(),
+        );
+
+        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("typst error: can't reach LLM ({e})");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            Some(system_prompt),
+            Vec::new(),
+            user_prompt.clone(),
+        );
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        // Record the user turn so the assistant's reply ends up in
+        // chat_history when streaming finishes.
+        self.pending_chat_user_msg = Some(user_prompt);
+        self.change_focus(Focus::Ai);
+        self.status = format!(
+            "typst compile failed · {provider} is analysing the error in the AI pane…"
+        );
     }
 
     fn import_directory_tree(
