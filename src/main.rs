@@ -1,4 +1,5 @@
 mod ai;
+mod assemble;
 mod backup;
 mod cli;
 mod config;

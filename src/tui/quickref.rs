@@ -48,7 +48,7 @@ pub fn entries_for(focus: Focus) -> Vec<Entry> {
     out
 }
 
-fn global_entries() -> [Entry; 19] {
+fn global_entries() -> [Entry; 20] {
     [
         header("─── Global ───"),
         entry("Ctrl+Q", "Quit (autosaves dirty paragraph)"),
@@ -64,6 +64,7 @@ fn global_entries() -> [Entry; 19] {
         entry("Ctrl+B I", "Current book info (paths · stats · PDF status)"),
         entry("Ctrl+B L", "Switch LLM provider (writes to inkhaven.hjson)"),
         entry("Ctrl+B E", "Toggle typewriter SFX (writes to inkhaven.hjson)"),
+        entry("Ctrl+B A", "Book assembly — emit a typst-compilable tree"),
         entry("F1", "Help-manual question (RAG over the Help book)"),
         entry("F7", "Grammar check the open paragraph (→ AI pane)"),
         entry("F9", "Cycle AI scope: None→Sel→Para→Sub→Chap→Book→None"),
@@ -72,7 +73,7 @@ fn global_entries() -> [Entry; 19] {
     ]
 }
 
-fn tree_entries() -> [Entry; 32] {
+fn tree_entries() -> [Entry; 33] {
     [
         entry("↑ / ↓ / Home / End", "Navigate"),
         entry("PageUp / PageDown", "Jump by 10"),
@@ -105,11 +106,12 @@ fn tree_entries() -> [Entry; 32] {
         entry("Ctrl+B I", "Current book info (paths · stats · PDF status)"),
         entry("Ctrl+B L", "Switch LLM provider (writes to inkhaven.hjson)"),
         entry("Ctrl+B E", "Toggle typewriter SFX (writes to inkhaven.hjson)"),
+        entry("Ctrl+B A", "Book assembly — emit a typst-compilable tree"),
         entry("q", "Quit (autosaves if dirty)"),
     ]
 }
 
-fn editor_entries() -> [Entry; 51] {
+fn editor_entries() -> [Entry; 52] {
     [
         entry("arrows", "Move cursor"),
         entry("Ctrl+← / →", "Word back / forward"),
@@ -165,10 +167,11 @@ fn editor_entries() -> [Entry; 51] {
         entry("Ctrl+B I", "Current book info (paths · stats · PDF status)"),
         entry("Ctrl+B L", "Switch LLM provider (writes to inkhaven.hjson)"),
         entry("Ctrl+B E", "Toggle typewriter SFX (writes to inkhaven.hjson)"),
+        entry("Ctrl+B A", "Book assembly — emit a typst-compilable tree"),
     ]
 }
 
-fn ai_entries() -> [Entry; 25] {
+fn ai_entries() -> [Entry; 26] {
     [
         header("─ AI pane (apply a finished inference) ─"),
         entry("r / R", "Replace editor selection with AI text"),
@@ -195,5 +198,6 @@ fn ai_entries() -> [Entry; 25] {
         entry("Ctrl+B I", "Current book info (paths · stats · PDF status)"),
         entry("Ctrl+B L", "Switch LLM provider (writes to inkhaven.hjson)"),
         entry("Ctrl+B E", "Toggle typewriter SFX (writes to inkhaven.hjson)"),
+        entry("Ctrl+B A", "Book assembly — emit a typst-compilable tree"),
     ]
 }

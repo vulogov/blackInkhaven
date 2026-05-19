@@ -405,6 +405,94 @@ fn draw_import_splash(
     f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
 }
 
+/// Splash for the Book-assembly procedure (Ctrl+B A). Mirrors the
+/// import splash visually but the body line is "Assembling …" and the
+/// per-file readout is relative to `<artefacts-root>` so the user sees
+/// `inkhaven-artefacts/<project>/<book>/book/<chapter>/index.typ`-shape
+/// paths scroll past.
+fn draw_assembly_splash(
+    f: &mut ratatui::Frame,
+    book_display: &str,
+    done: usize,
+    total: usize,
+    current: &str,
+) {
+    let area = f.area();
+    let width = area.width.saturating_sub(8).clamp(50, 100);
+    let height: u16 = 11;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let rect = Rect { x, y, width, height };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Inkhaven · Book assembly ")
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let bar_width = (inner.width as usize).saturating_sub(8).max(20);
+    let pct = if total == 0 {
+        0.0
+    } else {
+        (done as f32 / total as f32).clamp(0.0, 1.0)
+    };
+    let filled = (pct * bar_width as f32).round() as usize;
+    let bar = format!(
+        "  [{}{}]  {}/{} ({:>3.0}%)",
+        "█".repeat(filled),
+        "·".repeat(bar_width.saturating_sub(filled)),
+        done,
+        total,
+        pct * 100.0,
+    );
+
+    let label_budget = inner.width.saturating_sub(4) as usize;
+    let current_clipped: String = if current.chars().count() > label_budget {
+        let mut s: String = current
+            .chars()
+            .rev()
+            .take(label_budget.saturating_sub(1))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        s.insert(0, '…');
+        s
+    } else {
+        current.to_string()
+    };
+
+    let body = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Assembling book…".to_string(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  Book:    {book_display}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(Span::styled(
+            format!("  Writing: {current_clipped}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            bar,
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+    ];
+    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
+}
+
 /// Walk `root` and count regular files that would be imported as
 /// paragraphs (mirrors the importer's hidden-entry filter so the total
 /// matches the progress callbacks).
@@ -1280,6 +1368,10 @@ struct App {
     /// during normal operation.
     pending_import: Option<std::path::PathBuf>,
 
+    /// Set by Ctrl+B A (`schedule_assembly`). Main loop drives the
+    /// synchronous book-assembly procedure with a progress splash.
+    pending_assembly: Option<Uuid>,
+
     /// Typewriter-style SFX (Enter key + editor-pane focus-out). None
     /// when the host has no audio device — every play call then
     /// silently no-ops, so a headless / SSH-without-audio session
@@ -1441,6 +1533,7 @@ impl App {
             ai_mode: AiMode::None,
             inference_mode: InferenceMode::Full,
             pending_import: None,
+            pending_assembly: None,
             sound,
         })
     }
@@ -1455,6 +1548,12 @@ impl App {
             // own). Runs synchronously: same UX as the backup splash.
             if let Some(root) = self.pending_import.take() {
                 self.run_pending_import(terminal, &root);
+            }
+            // Same pattern for Book assembly (Ctrl+B A): the dispatcher
+            // stashes the book uuid, the main loop runs the procedure
+            // and drives the splash redraws.
+            if let Some(book_id) = self.pending_assembly.take() {
+                self.run_pending_assembly(terminal, book_id);
             }
             terminal.draw(|f| self.draw(f))?;
             // Shorter poll interval while streaming so tokens render with low
@@ -1778,15 +1877,15 @@ impl App {
             // pane. Generic suffix (· H help · Esc cancel) is shared.
             self.status = match self.focus {
                 Focus::Tree | Focus::SearchBar => {
-                    "META · B/C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I book info · L LLM · E sound · Esc cancel"
+                    "META · B/C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I info · L LLM · E sound · A assemble · Esc cancel"
                         .into()
                 }
                 Focus::Editor => {
-                    "META · S save · N snapshot · R history · F split · T retitle · P place · C character · H help · V credits · I book info · L LLM · E sound · Esc cancel"
+                    "META · S save · N snapshot · R history · F split · T retitle · P place · C character · H help · V credits · I info · L LLM · E sound · A assemble · Esc cancel"
                         .into()
                 }
                 Focus::Ai | Focus::AiPrompt => {
-                    "META · C clear chat · H help · V credits · I book info · L LLM · E sound · Esc cancel".into()
+                    "META · C clear chat · H help · V credits · I info · L LLM · E sound · A assemble · Esc cancel".into()
                 }
             };
             return Ok(false);
@@ -3970,6 +4069,12 @@ impl App {
             self.toggle_sound();
             return;
         }
+        // A starts Book assembly — generates a typst-compilable tree
+        // for the current user book under <artefacts>/<book-slug>/.
+        if matches!(key.code, KeyCode::Char('A') | KeyCode::Char('a')) {
+            self.schedule_assembly();
+            return;
+        }
 
         let consumed = match self.focus {
             Focus::Tree | Focus::SearchBar => self.dispatch_meta_tree(key),
@@ -5460,6 +5565,101 @@ impl App {
                 });
             };
             self.import_directory_tree(root, &mut progress);
+        }
+    }
+
+    /// Ctrl+B A — resolve "current book" the same way Ctrl+B I does
+    /// (open paragraph's book, or the tree-cursor's book), validate
+    /// it's a user book, then stash the uuid so the main loop drives
+    /// the assembly with the splash.
+    fn schedule_assembly(&mut self) {
+        let hierarchy = match Hierarchy::load(&self.store) {
+            Ok(h) => h,
+            Err(e) => {
+                self.status = format!("Book assembly: hierarchy load failed: {e}");
+                return;
+            }
+        };
+        let Some(book) = self.current_book_node(&hierarchy) else {
+            self.status =
+                "Book assembly: move the tree cursor onto a user book (or any node inside one) first."
+                    .into();
+            return;
+        };
+        if book.system_tag.is_some() {
+            self.status = format!(
+                "Book assembly: `{}` is a system book — pick a user book.",
+                book.title
+            );
+            return;
+        }
+        self.pending_assembly = Some(book.id);
+        self.status = format!("Book assembly: assembling `{}`…", book.title);
+    }
+
+    /// Drive a deferred Book assembly. Pre-renders the splash at 0%,
+    /// runs the synchronous assembler with a 30 Hz-throttled progress
+    /// callback, and surfaces the final result (root .typ path or
+    /// error) in the status bar.
+    fn run_pending_assembly<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        book_id: Uuid,
+    ) {
+        let book = match Hierarchy::load(&self.store) {
+            Ok(h) => match h.get(book_id).cloned() {
+                Some(n) => n,
+                None => {
+                    self.status = "Book assembly: book vanished from hierarchy".into();
+                    return;
+                }
+            },
+            Err(e) => {
+                self.status = format!("Book assembly: hierarchy load failed: {e}");
+                return;
+            }
+        };
+
+        let book_display = book.title.clone();
+        let initial_total = 0;
+        let _ = terminal.draw(|f| {
+            draw_assembly_splash(f, &book_display, 0, initial_total, "preparing…")
+        });
+
+        let mut last_redraw = std::time::Instant::now();
+        let book_display_for_cb = book_display.clone();
+        let report = {
+            let mut progress = move |done: usize, total: usize, file: &Path| {
+                if last_redraw.elapsed() < std::time::Duration::from_millis(33) {
+                    return;
+                }
+                last_redraw = std::time::Instant::now();
+                let label = file.display().to_string();
+                let _ = terminal.draw(|f| {
+                    draw_assembly_splash(f, &book_display_for_cb, done, total, &label)
+                });
+            };
+            crate::assemble::assemble_book(
+                &self.store,
+                &self.layout,
+                &self.cfg,
+                &book,
+                &mut progress,
+            )
+        };
+
+        match report {
+            Ok(r) => {
+                self.status = format!(
+                    "Book assembly: wrote {} files · root: {}  (typst compile `{}`)",
+                    r.files_written,
+                    r.root_typ.display(),
+                    r.root_typ.display(),
+                );
+            }
+            Err(e) => {
+                self.status = format!("Book assembly failed: {e}");
+            }
         }
     }
 

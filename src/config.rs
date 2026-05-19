@@ -23,6 +23,8 @@ pub struct Config {
     pub backup: BackupConfig,
     #[serde(default)]
     pub sound: SoundConfig,
+    #[serde(default)]
+    pub typst_templates: TypstTemplatesConfig,
     /// Primary writing language of the project. Drives:
     /// * Snowball stemmers for the editor's Places/Characters highlight
     ///   overlay (overrides `editor.stemming.languages` when non-empty).
@@ -80,6 +82,7 @@ impl Default for Config {
             theme: ThemeConfig::default(),
             backup: BackupConfig::default(),
             sound: SoundConfig::default(),
+            typst_templates: TypstTemplatesConfig::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
             artefacts_directory: default_artefacts_directory(),
@@ -143,6 +146,105 @@ impl Default for SoundConfig {
             enabled: false,
             volume: 0.6,
         }
+    }
+}
+
+/// Typst function templates used during Book assembly (Ctrl+B A).
+/// Each field is the raw Typst source code for a wrap function — they
+/// get inlined verbatim into the per-book `globals.typ` paragraph the
+/// first time a user book is created. Customise them to taste; the
+/// shipped defaults are minimal "show content as-is with a heading"
+/// wrappers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TypstTemplatesConfig {
+    pub wrap_book: String,
+    pub wrap_chapter: String,
+    pub wrap_subchapter: String,
+    pub wrap_paragraph: String,
+}
+
+impl Default for TypstTemplatesConfig {
+    fn default() -> Self {
+        Self {
+            wrap_book: default_wrap_book().into(),
+            wrap_chapter: default_wrap_chapter().into(),
+            wrap_subchapter: default_wrap_subchapter().into(),
+            wrap_paragraph: default_wrap_paragraph().into(),
+        }
+    }
+}
+
+/// Baked-in defaults for the four wrap functions. Used both for
+/// `TypstTemplatesConfig::default()` and as a fallback in the Book
+/// assembly procedure when the HJSON entry is empty / missing.
+pub fn default_wrap_book() -> &'static str {
+    "#let wrap_book(body) = {\n  body\n}\n"
+}
+pub fn default_wrap_chapter() -> &'static str {
+    "#let wrap_chapter(title, body) = {\n  heading(level: 1, title)\n  body\n}\n"
+}
+pub fn default_wrap_subchapter() -> &'static str {
+    "#let wrap_subchapter(title, body) = {\n  heading(level: 2, title)\n  body\n}\n"
+}
+pub fn default_wrap_paragraph() -> &'static str {
+    "#let wrap_paragraph(body) = {\n  body\n  parbreak()\n}\n"
+}
+
+impl TypstTemplatesConfig {
+    /// Per-template fallback to the shipped default when the user has
+    /// emptied the HJSON entry. Returns owned strings so callers can
+    /// stitch them into a `globals.typ` file without worrying about
+    /// lifetimes.
+    pub fn resolved_wrap_book(&self) -> String {
+        if self.wrap_book.trim().is_empty() {
+            default_wrap_book().into()
+        } else {
+            self.wrap_book.clone()
+        }
+    }
+    pub fn resolved_wrap_chapter(&self) -> String {
+        if self.wrap_chapter.trim().is_empty() {
+            default_wrap_chapter().into()
+        } else {
+            self.wrap_chapter.clone()
+        }
+    }
+    pub fn resolved_wrap_subchapter(&self) -> String {
+        if self.wrap_subchapter.trim().is_empty() {
+            default_wrap_subchapter().into()
+        } else {
+            self.wrap_subchapter.clone()
+        }
+    }
+    pub fn resolved_wrap_paragraph(&self) -> String {
+        if self.wrap_paragraph.trim().is_empty() {
+            default_wrap_paragraph().into()
+        } else {
+            self.wrap_paragraph.clone()
+        }
+    }
+
+    /// Concatenated body for the per-book `globals.typ` paragraph: the
+    /// editor-chrome heading line, a brief comment header explaining
+    /// the four functions, then each wrap function in order.
+    pub fn globals_typ_body(&self) -> String {
+        let mut out = String::new();
+        out.push_str("= globals.typ\n\n");
+        out.push_str(
+            "// Wrap functions used by inkhaven's `Book assembly` (Ctrl+B A).\n\
+             // Each level of the manuscript tree is fed through the matching\n\
+             // wrap_* call when the assembler synthesises index.typ files.\n\
+             // Customise to taste — page breaks, headings, fonts, etc.\n\n",
+        );
+        out.push_str(&self.resolved_wrap_book());
+        out.push('\n');
+        out.push_str(&self.resolved_wrap_chapter());
+        out.push('\n');
+        out.push_str(&self.resolved_wrap_subchapter());
+        out.push('\n');
+        out.push_str(&self.resolved_wrap_paragraph());
+        out
     }
 }
 
