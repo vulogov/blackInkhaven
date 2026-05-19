@@ -59,7 +59,21 @@ pub fn run(
                     .ok_or_else(|| Error::Store(format!("parent not found: `{path}`")))?,
             ),
         };
-        (parent, InsertPosition::End)
+        // User-added Books at root slot ABOVE the system block (Notes,
+        // Research, Prompts, Places, Characters, Help) — same behaviour as
+        // the TUI's Tree-pane `B` shortcut.
+        let position = if kind == NodeKind::Book && parent.is_none() {
+            match hierarchy.iter().find(|n| {
+                n.kind == NodeKind::Book
+                    && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_NOTES)
+            }) {
+                Some(notes) => InsertPosition::Before(notes.id),
+                None => InsertPosition::End,
+            }
+        } else {
+            InsertPosition::End
+        };
+        (parent, position)
     };
 
     let node = store.create_node(

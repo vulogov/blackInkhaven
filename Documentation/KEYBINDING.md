@@ -131,7 +131,7 @@ confirmation.
 
 | Key       | Action                                                                                  |
 | --------- | --------------------------------------------------------------------------------------- |
-| `B` / `b` | Add a new **book** at the root (always append; books have no anchors). Equivalent to `Ctrl+B` then `B`. |
+| `B` / `b` | Add a new **book** at the root. User books are inserted **above** the system block (Notes, Research, Prompts, Places, Characters, Help) by shifting it down; the new book takes Notes' old order. Equivalent to `Ctrl+B` then `B`. |
 | `C` / `c` | **Append** a chapter at the end of the book's children. Equivalent to `Ctrl+B` then `C`. |
 | `V` / `v` | **Insert** a chapter immediately after the cursor's enclosing chapter.                  |
 | `A` / `a` | **Append** a subchapter at the end of the chapter's children. Equivalent to `Ctrl+B` then `S`. |
@@ -140,6 +140,8 @@ confirmation.
 | `P` / `p` | **Insert** a paragraph immediately after the cursor's enclosing paragraph.              |
 | `D` / `d` | Delete the cursor's node — only if it's a **branch** (book/chapter/subchapter). On a paragraph, shows a hint to press `-` instead. |
 | `-`       | Delete the cursor's node — only if it's a **paragraph**. On a branch, shows a hint to press `D` instead. |
+| `U` / `u` | **Move up** — swap the cursor's node with its previous sibling. Plain-letter form of `Ctrl+B ↑`. |
+| `J` / `j` | **Move down** — swap the cursor's node with its next sibling. Plain-letter form of `Ctrl+B ↓`. |
 
 Empty paragraph titles are allowed for `+` and `P` — the first sentence of the body becomes the title on next save.
 

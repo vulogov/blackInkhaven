@@ -64,7 +64,7 @@ fn global_entries() -> [Entry; 11] {
     ]
 }
 
-fn tree_entries() -> [Entry; 18] {
+fn tree_entries() -> [Entry; 22] {
     [
         entry("↑ / ↓ / Home / End", "Navigate"),
         entry("PageUp / PageDown", "Jump by 10"),
@@ -79,10 +79,14 @@ fn tree_entries() -> [Entry; 18] {
         entry("D", "Delete branch at cursor"),
         entry("-", "Delete paragraph at cursor"),
         header(""),
+        header("─ Reorder ─"),
+        entry("U", "Move current node up among siblings"),
+        entry("J", "Move current node down among siblings"),
+        header(""),
         header("─ Meta prefix ─"),
         entry("Ctrl+B B/C/S/P", "Add book/chapter/subchapter/paragraph"),
         entry("Ctrl+B D", "Delete cursor's node"),
-        entry("Ctrl+B ↑/↓", "Reorder within siblings"),
+        entry("Ctrl+B ↑/↓", "Reorder within siblings (chord form of U/J)"),
         entry("q", "Quit (autosaves if dirty)"),
     ]
 }
