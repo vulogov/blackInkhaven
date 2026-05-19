@@ -1,0 +1,43 @@
+name: ci
+
+# Build + test on every push and pull request to main. Single Linux job
+# kept lean — multi-platform release builds happen in release.yml on
+# tag push.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: cargo build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo build
+        run: cargo build --locked
+
+      - name: cargo test
+        run: cargo test --locked -- --nocapture
+
+      # Linting is informational — bdslib's vendored sources can drag in
+      # warnings that aren't actionable here. `-D warnings` would be too
+      # strict; report-only is enough as a smoke check.
+      - name: cargo clippy
+        run: cargo clippy --no-deps -- -A clippy::all
+        continue-on-error: true

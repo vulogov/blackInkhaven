@@ -126,10 +126,51 @@ depth, language, snowball stemmers, the full visual theme (per-pane
 backgrounds and foregrounds, all syntax colours, lexicon highlight
 colours), key bindings, and backup policy.
 
+## Install
+
+Inkhaven ships as a single static binary per platform. Three install paths:
+
+### 1. `cargo binstall` (no compile)
+
+If you already have [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall):
+
+```bash
+cargo binstall inkhaven
+```
+
+`cargo-binstall` reads `[package.metadata.binstall]` from `Cargo.toml`,
+picks the right asset off GitHub Releases, and drops the binary into
+`~/.cargo/bin`. Works on Linux (x86_64), macOS (Intel + Apple Silicon),
+and Windows (x86_64).
+
+### 2. GitHub Releases (direct download)
+
+Grab the tarball for your platform from
+[Releases](https://github.com/vulogov/blackInkhaven/releases), unpack,
+and put `inkhaven` somewhere on your `PATH`. Builds are produced by
+the [`release.yml`](.github/workflows/release.yml) workflow on every
+tag push.
+
+### 3. `cargo install --git` (compile from source)
+
+```bash
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v1.0.0
+```
+
+This works because every dependency (including `bdslib` and
+`tree-sitter-typst`) is vendored under `vendor/` — no separate registry
+fetches, no GitHub auth needed. The first build takes ~10 minutes on a
+modern laptop because of DuckDB + Tantivy + fastembed compilation; the
+release binary above is the fast path.
+
+> Inkhaven is **not** published on crates.io. See `Cargo.toml`'s
+> `publish = false` line and the [`Documentation/`](Documentation/)
+> notes for the rationale.
+
 ## Quick start
 
 ```bash
-# Build
+# Build (if installing from source)
 cargo build --release
 
 # Initialise a project (asks for confirmation if the directory exists)
