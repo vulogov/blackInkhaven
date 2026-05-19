@@ -1,0 +1,71 @@
+// 09_stack_and_workbench.bund
+// The workbench, stack manipulation, and named stacks.
+
+// ── WORKBENCH ─────────────────────────────────────────────────────────────────
+
+// The `.` command moves the top of the current stack to the workbench.
+// Commands with `.` suffix read one argument from the workbench instead.
+
+42 .                // move 42 to workbench; stack is now empty
+"value from workbench: " print
+println.            // print the workbench value (42) with newline
+
+// Workbench + arithmetic: one operand from stack, one from workbench
+100 .               // workbench = 100
+58 +.               // 58 + workbench(100) = 158
+println             // 158
+
+// Workbench as a temporary holding register while building up a computation
+"intermediate result" .     // stash a label
+10 7 *                      // 70 on stack
+convert.to_string           // "70"
+concat_with_space           // join stashed label + "70"
+println                     // "intermediate result 70"
+
+// ── DUP AND SWAP ──────────────────────────────────────────────────────────────
+
+// dup: copy the top value
+7 dup * println             // 7*7 = 49
+
+// swap: exchange top two values
+1 2 swap                    // stack: [ 1 | 2 ] → [ 2 | 1 ]
+- println                   // 2 - 1 = 1  (TOS is 2, next is 1)
+
+// ── NAMED STACKS ──────────────────────────────────────────────────────────────
+
+// @name switches the active stack to the named stack.
+// Values pushed afterward go onto that stack.
+
+@scratch             // switch to "scratch" stack
+"value on scratch stack" println
+
+@main                // switch back to main stack
+"back on main stack" println
+
+// Named stacks allow parallel workspaces.
+@accumulator
+0                    // push initial accumulator value
+
+1 + . +.             // add workbench value — simplified pattern
+// (detailed accumulator patterns use while/for)
+
+@main
+"done with accumulator stack" println
+
+// ── EXECUTE FROM STACK ────────────────────────────────────────────────────────
+
+// execute: run a value that happens to be a command name or lambda
+"println" execute           // ERROR illustration — push a string that IS a command name
+                            // and execute resolves it as a command
+
+// More typical: store a lambda reference and execute later
+`square                     // push pointer to "square" (must be registered earlier)
+                            // execute.  ← would call it
+
+// ── COMBINING STACK TECHNIQUES ────────────────────────────────────────────────
+
+// Compute (a² + b²) for a=3, b=4 using dup and arithmetic
+3 dup * .       // a² = 9, saved to workbench
+4 dup *         // b² = 16, on stack
++.              // 16 + workbench(9) = 25
+println         // 25

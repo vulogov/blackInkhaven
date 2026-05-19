@@ -1,0 +1,24 @@
+{% if topics.is_empty() %}
+<span class="text-slate-600 text-xs italic">No topics found — needs more log data or a wider duration window.</span>
+{% else %}
+<div class="space-y-3">
+  {% for topic in topics %}
+  <div>
+    <div class="text-xs text-slate-600 font-mono mb-1">{{ topic.key }}</div>
+    <div class="flex flex-wrap gap-1.5">
+      {% for kw in topic.keywords %}
+      <a href="/logs?q={{ kw }}&duration={{ duration }}"
+         hx-get="/logs/results?q={{ kw }}&duration={{ duration }}"
+         hx-target="#results"
+         hx-swap="innerHTML"
+         hx-push-url="/logs?q={{ kw }}&duration={{ duration }}"
+         class="inline-block px-2.5 py-1 rounded-full text-xs
+                bg-purple-950 text-purple-300 border border-purple-900
+                hover:bg-purple-900 hover:border-purple-500 hover:text-purple-100
+                transition-colors cursor-pointer no-underline">{{ kw }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

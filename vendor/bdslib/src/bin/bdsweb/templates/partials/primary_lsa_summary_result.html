@@ -1,0 +1,25 @@
+{% if !has_summary %}
+<div class="card rounded-lg p-6 text-center text-slate-500 text-sm">
+  No text-bearing primary records were observed in the last <span class="text-slate-300 font-medium">{{ duration }}</span>.<br>
+  <span class="text-xs text-slate-600 mt-1 block">
+    The summariser skips records where <code class="text-slate-400">data</code>
+    is a bare number or <code class="text-slate-400">data["value"]</code> is
+    numeric — those are telemetry measurements meant for the Trends view.
+  </span>
+</div>
+{% else %}
+<div class="card rounded-lg overflow-hidden">
+  <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between gap-3">
+    <span class="text-sm font-medium text-slate-200">LSA Summary</span>
+    <span class="text-xs text-slate-600">
+      window: <span class="text-slate-300 font-mono">{{ duration }}</span>
+      {% if max_sentences == 0 %}
+        · sized: <span class="text-slate-300">auto</span>
+      {% else %}
+        · max sentences: <span class="text-slate-300 font-mono">{{ max_sentences }}</span>
+      {% endif %}
+    </span>
+  </div>
+  <div class="px-4 py-4 text-sm text-slate-200 leading-relaxed font-mono whitespace-pre-wrap break-words">{{ summary }}</div>
+</div>
+{% endif %}

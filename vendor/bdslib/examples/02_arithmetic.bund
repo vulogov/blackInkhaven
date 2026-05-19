@@ -1,0 +1,29 @@
+// 02_arithmetic.bund
+// Stack-based arithmetic. Values accumulate on the stack;
+// operators consume two values and push one result.
+
+// Basic operations
+3 4 +    println    // 7
+10 3 -   println    // 7
+6 7 *    println    // 42
+84 2 /   println    // 42
+
+// Operator precedence is execution order — no hidden rules
+// (3 + 4) * 2  written as postfix:
+3 4 + 2 * println   // 14
+
+// 10 - (2 * 3)  written as postfix:
+2 3 * 10 swap - println   // 4
+
+// Floating-point arithmetic
+2.0 float.sqrt println     // ~1.414...
+float.Pi 2.0 / println     // ~1.5707... (π/2)
+-5.0 float.abs println     // 5.0
+9.0 float.cbrt println     // ~2.08...  (∛9)
+
+// Integer vs float promotion
+10 3 /    println           // 3  (integer division)
+10.0 3.0 / println          // 3.333...  (float division)
+
+// Bulk sum of all values on stack
+1 2 3 4 5 *+ println        // 15

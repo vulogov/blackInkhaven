@@ -1,0 +1,42 @@
+// 04_conditionals.bund
+// Conditional execution with if, if.false, and ifthenelse.
+
+// --- basic if ---
+// if: pops (lambda, bool). Executes lambda only when bool is true.
+true  { "condition is true"  println } if
+false { "this never prints"  println } if
+
+// --- if.false ---
+// if.false: executes the lambda when the condition is false
+false { "condition was false" println } if.false
+true  { "this never prints"   println } if.false
+
+// --- ifthenelse: two-branch conditional ---
+// Stack before ifthenelse: ... bool then-lambda else-lambda
+42 0 >
+{ "42 is positive"    println }
+{ "42 is not positive" println }
+ifthenelse
+
+-5 0 >
+{ "positive" println }
+{ "non-positive" println }
+ifthenelse
+
+// --- comparisons producing booleans ---
+10 20 <   { "10 < 20"  println } if
+10 10 ==  { "10 == 10" println } if
+10 10 !=  { "different" println } if.false    // 10 == 10, so != is false → executes
+
+// --- combining conditions with and / or ---
+true false and  { "both true"   println } if        // false branch
+true false or   { "at least one" println } if        // true branch
+false not       { "negated false is true" println } if
+
+// --- type-guarded conditional ---
+// ?type peeks at TOS and pushes bool based on type name match
+42 "INTEGER" ?type
+{ "top of stack is an integer" println }
+if
+// stack still has 42 underneath
+println

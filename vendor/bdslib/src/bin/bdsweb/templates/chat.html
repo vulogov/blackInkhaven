@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% block title %}Chat · bdsnode{% endblock %}
+{% block nav_chat %}active{% endblock %}
+
+{% block head %}
+<style>
+/* ── Chat layout ──────────────────────────────────────────────────────────── */
+#chat-wrap {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 11rem);   /* full viewport minus nav + page padding */
+  min-height: 400px;
+}
+
+#chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* Auto-scroll to bottom after new messages are inserted */
+#chat-messages:has(.chat-msg:last-child) {
+  scroll-behavior: smooth;
+}
+
+#chat-input-area {
+  border-top: 1px solid #1e2535;
+  padding-top: 0.875rem;
+  flex-shrink: 0;
+}
+
+/* ── Message bubbles ──────────────────────────────────────────────────────── */
+.chat-msg { display: flex; flex-direction: column; gap: 0.25rem; }
+
+.bubble-user {
+  align-self: flex-end;
+  max-width: 72%;
+  background: rgba(37,99,235,0.18);
+  border: 1px solid rgba(59,130,246,0.30);
+  border-radius: 1rem 1rem 0.25rem 1rem;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.8125rem;
+  color: #bfdbfe;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bubble-assistant {
+  align-self: flex-start;
+  max-width: 80%;
+  background: #161b27;
+  border: 1px solid #1e2535;
+  border-radius: 1rem 1rem 1rem 0.25rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.8125rem;
+  color: #e2e8f0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.65;
+}
+
+.bubble-label {
+  font-size: 0.65rem;
+  color: #475569;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0 0.25rem;
+}
+
+.label-user      { text-align: right; }
+.label-assistant { text-align: left;  }
+
+.bubble-error {
+  align-self: flex-start;
+  max-width: 80%;
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.3);
+  border-radius: 1rem;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.8125rem;
+  color: #fca5a5;
+  white-space: pre-wrap;
+}
+
+/* ── Spinner animation ────────────────────────────────────────────────────── */
+@keyframes pulse-dot {
+  0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+  40%           { opacity: 1;   transform: scale(1);   }
+}
+.dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #60a5fa; animation: pulse-dot 1.2s infinite; }
+.dot:nth-child(2) { animation-delay: 0.2s; }
+.dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* ── Context / system note bubble ────────────────────────────────────────── */
+.bubble-context {
+  align-self: center;
+  background: rgba(16,185,129,0.07);
+  border: 1px solid rgba(16,185,129,0.22);
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.72rem;
+  color: #6ee7b7;
+  max-width: 90%;
+  text-align: center;
+}
+
+/* ── Query textarea: black text on white background ──────────────────────── */
+#chat-query {
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid #d1d5db;
+}
+#chat-query::placeholder { color: #9ca3af; }
+#chat-query:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.15); outline: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-3">
+  <div>
+    <h1 class="text-xl font-semibold text-slate-200">AI Chat</h1>
+    <p class="text-xs text-slate-500 mt-0.5">
+      RAG over observability data · model: <code class="text-slate-400">{{ model }}</code>
+    </p>
+  </div>
+  <button id="new-session-btn"
+          hx-post="/chat/new"
+          hx-target="#chat-messages"
+          hx-swap="innerHTML"
+          hx-include="[name='duration']"
+          hx-indicator="#chat-spinner"
+          class="text-xs text-slate-500 hover:text-slate-300 transition-colors border border-slate-700 hover:border-slate-500 rounded px-2.5 py-1 cursor-pointer">
+    New session
+  </button>
+</div>
+
+<div id="chat-wrap" class="card rounded-xl px-4 py-3">
+
+  <!-- ── Conversation area ── -->
+  <div id="chat-messages">
+    <div class="text-center py-10 text-slate-600 text-sm italic" id="chat-empty">
+      Ask anything about your telemetry — the last <span id="dur-display">1h</span> of data will be used as context.
+    </div>
+  </div>
+
+  <!-- ── Thinking indicator (htmx) ── -->
+  <div id="chat-spinner" class="htmx-indicator flex items-center gap-2 py-2 text-slate-500 text-xs">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span>Thinking…</span>
+  </div>
+
+  <!-- ── Input form ── -->
+  <div id="chat-input-area">
+    <form id="chat-form"
+          hx-post="/chat/query"
+          hx-target="#chat-messages"
+          hx-swap="beforeend"
+          hx-indicator="#chat-spinner">
+
+      <div class="flex items-end gap-2">
+        <!-- Duration -->
+        <div class="shrink-0">
+          <label class="block text-xs text-slate-500 mb-1">Context window</label>
+          <select name="duration" id="duration-sel"
+                  class="rounded px-2 py-2 text-xs w-24"
+                  onchange="document.getElementById('dur-display').textContent=this.value">
+            <option value="15m">15 min</option>
+            <option value="30m">30 min</option>
+            <option value="1h" selected>1 hour</option>
+            <option value="3h">3 hours</option>
+            <option value="6h">6 hours</option>
+            <option value="12h">12 hours</option>
+            <option value="1day">1 day</option>
+          </select>
+        </div>
+
+        <!-- Query textarea -->
+        <div class="flex-1">
+          <label class="block text-xs text-slate-500 mb-1">Your question</label>
+          <textarea name="query" id="chat-query"
+                    rows="2"
+                    placeholder="e.g. Which services had elevated error rates in the last hour?"
+                    class="w-full rounded px-3 py-2 text-sm resize-none"
+                    style="min-height:3.25rem; max-height:10rem;"></textarea>
+        </div>
+
+        <!-- Send button -->
+        <button type="submit"
+                class="btn btn-primary shrink-0 flex items-center gap-1.5 self-end"
+                style="height:2.5rem">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+          </svg>
+          Send
+        </button>
+      </div>
+
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+// Submit on Ctrl/Cmd+Enter
+document.getElementById('chat-query').addEventListener('keydown', function(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    document.getElementById('chat-form').requestSubmit();
+  }
+});
+
+// Auto-grow textarea
+document.getElementById('chat-query').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 160) + 'px';
+});
+
+function scrollChatToBottom() {
+  var msgs = document.getElementById('chat-messages');
+  if (!msgs) return;
+  msgs.scrollTop = msgs.scrollHeight;
+  var last = msgs.lastElementChild;
+  if (last && last.scrollIntoView) {
+    last.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }
+}
+
+function clearChatQuery() {
+  var q = document.getElementById('chat-query');
+  if (!q) return;
+  q.value = '';
+  q.style.height = '';
+}
+
+// Clear the input the instant the user submits — don't wait for the response.
+document.getElementById('chat-form').addEventListener('htmx:beforeRequest', clearChatQuery);
+
+// After any swap into chat-messages: drop empty placeholder, clear input
+// (defensive in case beforeRequest didn't fire), and scroll to the latest message.
+document.body.addEventListener('htmx:afterSwap', function(evt) {
+  var target = evt.detail.target;
+  if (!target || target.id !== 'chat-messages') return;
+
+  var empty = document.getElementById('chat-empty');
+  if (empty) empty.remove();
+
+  var triggerEl = evt.detail.elt;
+  var fromForm = triggerEl && (
+    triggerEl.id === 'chat-form' ||
+    (triggerEl.closest && triggerEl.closest('#chat-form'))
+  );
+  if (fromForm) clearChatQuery();
+
+  // Double scroll: once at next paint, once after layout settles, so that
+  // long assistant responses (markdown, code blocks) reliably end up in view
+  // even when their final height is computed asynchronously.
+  requestAnimationFrame(scrollChatToBottom);
+  setTimeout(scrollChatToBottom, 80);
+});
+</script>
+{% endblock %}

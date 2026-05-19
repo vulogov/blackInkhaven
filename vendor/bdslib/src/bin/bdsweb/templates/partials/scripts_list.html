@@ -1,0 +1,27 @@
+<div class="px-3 py-2 border-b border-slate-800 flex items-center justify-between">
+  <span class="text-xs text-slate-500 uppercase tracking-wide">Scripts</span>
+  <a href="#"
+     class="text-xs text-blue-400 hover:text-blue-300"
+     hx-get="/scripts/editor"
+     hx-target="#script-editor"
+     hx-swap="innerHTML"
+     title="New script">+ New</a>
+</div>
+
+{% if is_empty %}
+<div class="px-3 py-6 text-slate-500 text-xs italic text-center">
+  No scripts yet — click <span class="text-slate-300">+ New</span>.
+</div>
+{% else %}
+{% for s in scripts %}
+<a href="#"
+   class="item"
+   hx-get="/scripts/editor/{{ s.id }}"
+   hx-target="#script-editor"
+   hx-swap="innerHTML"
+   onclick="document.querySelectorAll('.script-list .item').forEach(function(e){e.classList.remove('active');});this.classList.add('active');return false;">
+  <div class="name">{{ s.name }}</div>
+  <div class="schedule">{{ s.schedule }}</div>
+</a>
+{% endfor %}
+{% endif %}

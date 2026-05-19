@@ -1,0 +1,56 @@
+// 05_loops.bund
+// Looping constructs: while, for, times, do, map
+
+// --- times: repeat a lambda N times ---
+{ "tick" println } 4 times
+// prints "tick" four times
+
+// --- do: execute a lambda once ---
+{ "one-shot execution" println } do
+
+// --- map: apply a lambda to every element of a list ---
+// result is a new list with each element transformed
+[ 1 2 3 4 5 ] { 2 * } map println
+// → [ 2 4 6 8 10 ]
+
+[ "hello" "world" "bund" ] { string.upper } map println
+// → [ "HELLO" "WORLD" "BUND" ]
+
+// --- while: loop while the lambda leaves true on the stack ---
+// Prints 0 through 4, stopping when counter reaches 5.
+// The lambda must leave a bool on the stack each iteration.
+0
+{ dup 5 <
+  { dup println  1 +  true  }
+  { false }
+  ifthenelse
+} while
+// discard the final counter value
+convert.to_string . "final counter:" print println.
+
+// --- for: loop, re-run lambda as long as it returns true ---
+// Accumulate squares of 1..5 into a list
+[ ]
+1
+{ dup 5 <=
+  { dup dup * push  1 +  true }
+  { false }
+  ifthenelse
+} for
+// discard counter, print result list
+swap drop
+println   // → [ 1 4 9 16 25 ]
+
+// --- fibonacci using while ---
+:fib {
+    0 1           // f0=0, f1=1
+    { swap dup 100 <=
+      { over + true }
+      { false }
+      ifthenelse
+    } while
+    println       // print the last fibonacci number ≤ 100
+    drop drop
+} register
+
+fib

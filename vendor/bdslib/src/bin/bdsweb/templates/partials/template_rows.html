@@ -1,0 +1,71 @@
+{% if rows.is_empty() %}
+  {% if searching %}
+  <div class="text-center py-12 text-slate-500 text-sm">
+    No templates matching <span class="text-slate-300 font-medium">"{{ q }}"</span>
+    in the last <strong>{{ duration }}</strong>.
+    <p class="mt-2 text-slate-600 text-xs">Try a broader query or a longer duration.</p>
+  </div>
+  {% else %}
+  <div class="text-center py-12 text-slate-500 text-sm">
+    No templates observed in the last <strong>{{ duration }}</strong>.
+    <p class="mt-2 text-slate-600 text-xs">Try a longer duration, or enable drain3 (<code>drain_enabled: true</code>) in bdsnode.</p>
+  </div>
+  {% endif %}
+{% else %}
+<div class="card rounded-lg overflow-hidden">
+  <!-- Header bar -->
+  <div class="px-4 py-2.5 flex items-center justify-between" style="border-bottom:1px solid #1e2535; background:#0e1520;">
+    <span class="text-xs text-slate-400">
+      {% if searching %}
+        <span class="text-white font-semibold">{{ rows.len() }}</span>
+        result{% if rows.len() != 1 %}s{% endif %} for
+        <span class="text-blue-300 font-medium">"{{ q }}"</span>
+        · last <span class="text-slate-300">{{ duration }}</span>
+        · <span class="text-slate-500">semantic search</span>
+      {% else %}
+        <span class="text-white font-semibold">{{ rows.len() }}</span>
+        template{% if rows.len() != 1 %}s{% endif %} observed in the last
+        <span class="text-slate-300">{{ duration }}</span>
+        · <span class="text-slate-500">v2/tpl.templates_recent</span>
+      {% endif %}
+    </span>
+  </div>
+
+  <table style="table-layout:fixed; width:100%">
+    <colgroup>
+      <col style="width:155px">
+      <col>
+      <col style="width:180px">
+      {% if searching %}<col style="width:72px">{% endif %}
+    </colgroup>
+    <thead>
+      <tr>
+        <th class="sortable" data-col="timestamp" onclick="sortResults(this)">
+          Timestamp<span class="sort-ind">⇅</span>
+        </th>
+        <th>Template body</th>
+        <th class="sortable" data-col="name" onclick="sortResults(this)">
+          Name<span class="sort-ind">⇅</span>
+        </th>
+        {% if searching %}
+        <th class="text-right sortable" data-col="score" onclick="sortResults(this)">
+          Score<span class="sort-ind">⇅</span>
+        </th>
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="font-mono text-xs text-slate-400 whitespace-nowrap">{{ r.timestamp }}</td>
+        <td class="body-cell">{{ r.body }}</td>
+        <td class="text-xs text-slate-300" style="overflow-wrap:break-word">{{ r.name }}</td>
+        {% if searching %}
+        <td class="text-right font-mono text-xs text-green-400">{{ r.score }}</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}

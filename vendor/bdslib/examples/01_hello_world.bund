@@ -1,0 +1,14 @@
+// 01_hello_world.bund
+// The simplest possible BUND program: push a string, print it.
+
+"Hello, world!" println
+
+// Multiple lines of output
+"BUND is stack-based." println
+"Values are pushed left to right." println
+"Commands consume values from the top of the stack." println
+
+// Numbers are also values; println converts them to text
+42 println
+3.14159 println
+true println

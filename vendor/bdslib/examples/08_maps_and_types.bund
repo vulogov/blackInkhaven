@@ -1,0 +1,64 @@
+// 08_maps_and_types.bund
+// MAP (dictionary) operations and type system exploration.
+
+// --- building a map with set ---
+// set pops: value, key, map → pushes updated map
+// Start with an empty map using a fresh lambda/structure
+// and populate it with set operations.
+
+"Alice"  "name" set
+30       "age"  set
+"London" "city" set
+
+// The map is now on the stack.
+// get retrieves a value by key (non-destructively? — depends on impl)
+
+// --- inspect the map type ---
+type println    // MAP
+
+// --- check for key existence ---
+"name"   has_key { "has name"  println } if    // fires
+"email"  has_key { "has email" println } if     // does not fire
+
+// --- retrieve values ---
+"name" get println    // Alice
+"age"  get println    // 30
+"city" get println    // London
+
+// --- type inspection for various values ---
+42         type println     // INTEGER
+3.14       type println     // FLOAT
+"hello"    type println     // STRING
+true       type println     // BOOL
+[ 1 2 3 ]  type println     // LIST
+{ 1 + }    type println     // LAMBDA
+
+// --- type discriminants (numeric) ---
+42         type.of println  // 2  (INTEGER discriminant)
+3.14       type.of println  // 3  (FLOAT discriminant)
+"hello"    type.of println  // 4  (STRING discriminant)
+
+// --- convert integer to different types ---
+42 convert.to_float   println   // 42.0
+42 convert.to_string  println   // "42"
+0  convert.to_bool    println   // false
+1  convert.to_bool    println   // true
+
+// --- convert string to number ---
+"100"  convert.to_int   println   // 100
+"3.14" convert.to_float println   // 3.14
+
+// --- working with pairs and structured data ---
+// Store structured records as named lambdas
+:make_person {
+    // expects: name age on stack
+    "age"  set
+    "name" set
+} register
+
+// Build two person maps
+"Bob"   25 make_person
+"Carol" 32 make_person
+
+// Retrieve and print a field
+"name" get println    // Carol

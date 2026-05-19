@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Trends · bdsnode{% endblock %}
+{% block nav_trends %}active{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-xl font-semibold text-slate-200">Telemetry Trends</h1>
+  <span class="text-xs text-slate-500">Statistical analysis + time-series chart</span>
+</div>
+
+<div class="card rounded-lg p-5 mb-6">
+  <form hx-get="/trends/results"
+        hx-target="#results"
+        hx-swap="innerHTML"
+        hx-indicator="#spinner"
+        class="flex flex-wrap gap-3 items-end">
+    <div class="flex-1 min-w-48">
+      <label class="block text-xs text-slate-500 mb-1">Metric Key</label>
+      <input type="text" name="key" value="{{ key }}"
+             placeholder="e.g. cpu.usage, mem.used_pct, http.latency_ms"
+             class="w-full rounded px-3 py-2 text-sm" />
+    </div>
+    <div class="w-32">
+      <label class="block text-xs text-slate-500 mb-1">Duration</label>
+      <select name="duration" class="w-full rounded px-3 py-2 text-sm">
+        <option value="15min" {% if duration == "15min" %}selected{% endif %}>15min</option>
+        <option value="30min" {% if duration == "30min" %}selected{% endif %}>30min</option>
+        <option value="1h"    {% if duration == "1h"    %}selected{% endif %}>1h</option>
+        <option value="2h"    {% if duration == "2h"    %}selected{% endif %}>2h</option>
+        <option value="4h"    {% if duration == "4h"    %}selected{% endif %}>4h</option>
+        <option value="6h"    {% if duration == "6h"    %}selected{% endif %}>6h</option>
+        <option value="12h"   {% if duration == "12h"   %}selected{% endif %}>12h</option>
+        <option value="24h"   {% if duration == "24h"   %}selected{% endif %}>24h</option>
+        <option value="7days" {% if duration == "7days" %}selected{% endif %}>7days</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Analyze</button>
+    <span id="spinner" class="htmx-indicator text-blue-400 text-sm self-center">Analyzing…</span>
+  </form>
+</div>
+
+<div id="results">
+  {% if key.is_empty() %}
+  <div class="text-center py-16 text-slate-600 text-sm">
+    Enter a metric key to compute statistics and render the time-series chart.
+  </div>
+  {% else %}
+  <div class="text-center py-8 text-slate-500 text-sm"
+       hx-get="/trends/results?key={{ key }}&duration={{ duration }}"
+       hx-trigger="load"
+       hx-target="#results"
+       hx-swap="innerHTML">Analyzing…</div>
+  {% endif %}
+</div>
+{% endblock %}

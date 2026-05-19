@@ -1,0 +1,31 @@
+{% if no_query %}
+<div class="text-center py-12 text-slate-500 text-sm">
+  Enter a query above and click <span class="text-slate-400">Summarise</span> to build a query-focused LSA summary.
+</div>
+{% else if !has_summary %}
+<div class="card rounded-lg p-6 text-center text-slate-500 text-sm">
+  No text-bearing primary records matched <code class="text-slate-300">"{{ q }}"</code>.<br>
+  <span class="text-xs text-slate-600 mt-1 block">
+    Numeric measurements are skipped; either no matching records exist or every
+    match was a numeric telemetry value.
+  </span>
+</div>
+{% else %}
+<div class="card rounded-lg overflow-hidden">
+  <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between gap-3">
+    <div class="flex items-center gap-2 min-w-0">
+      <span class="text-sm font-medium text-slate-200 shrink-0">LSA Summary</span>
+      <span class="text-xs text-slate-500 shrink-0">for</span>
+      <code class="text-xs text-blue-300 bg-slate-800 px-2 py-0.5 rounded break-all">{{ q }}</code>
+    </div>
+    <span class="text-xs text-slate-600 shrink-0">
+      {% if max_sentences == 0 %}
+        sized: <span class="text-slate-300">auto</span>
+      {% else %}
+        max sentences: <span class="text-slate-300 font-mono">{{ max_sentences }}</span>
+      {% endif %}
+    </span>
+  </div>
+  <div class="px-4 py-4 text-sm text-slate-200 leading-relaxed font-mono whitespace-pre-wrap break-words">{{ summary }}</div>
+</div>
+{% endif %}

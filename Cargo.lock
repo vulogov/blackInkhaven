@@ -876,7 +876,6 @@ dependencies = [
 [[package]]
 name = "bdslib"
 version = "0.12.0"
-source = "git+https://github.com/vulogov/bdslib?branch=main#fe709ba62e21dd7347f81fc1347be2a5f0f043c1"
 dependencies = [
  "anomaly_detection",
  "anyhow",
@@ -960,6 +959,7 @@ dependencies = [
  "sys_metrics",
  "ta",
  "tantivy",
+ "tempfile",
  "termimad",
  "textwrap",
  "time-graph",
@@ -3755,7 +3755,7 @@ checksum = "f80ec91439747afc38510dd9ddac3d776f3485197b9b7d6cc81c719db5cd8faa"
 
 [[package]]
 name = "inkhaven"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -8894,7 +8894,6 @@ dependencies = [
 [[package]]
 name = "tree-sitter-typst"
 version = "0.0.1"
-source = "git+https://github.com/uben0/tree-sitter-typst?branch=master#46cf4ded12ee974a70bf8457263b67ad7ee0379d"
 dependencies = [
  "cc",
  "tree-sitter",

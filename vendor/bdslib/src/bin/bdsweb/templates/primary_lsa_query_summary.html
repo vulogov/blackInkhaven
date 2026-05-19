@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Primary LSA Query Summary · bdsnode{% endblock %}
+{% block nav_primary_lsa_query_summary %}active{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="text-xl font-semibold text-slate-200">Primary LSA Query Summary</h1>
+    <p class="text-xs text-slate-500 mt-0.5">Extractive LSA summary over primary records matching a vector query</p>
+  </div>
+  <span class="text-xs text-slate-600 font-mono">v2/summary_lsa_for_query</span>
+</div>
+
+<!-- Form -->
+<div class="card rounded-lg p-5 mb-4">
+  <form id="primary-lsa-query-summary-form"
+        hx-get="/primary_lsa_query_summary/results"
+        hx-target="#summary-result"
+        hx-swap="innerHTML"
+        hx-indicator="#spinner"
+        class="flex flex-wrap gap-3 items-end">
+    <div class="flex-1 min-w-56">
+      <label class="block text-xs text-slate-500 mb-1">Query</label>
+      <input type="text" name="q" value="{{ q }}"
+             placeholder="e.g. nginx upstream timeout, login failed, oom kill"
+             class="w-full rounded px-3 py-2 text-sm" />
+    </div>
+    <div class="w-36">
+      <label class="block text-xs text-slate-500 mb-1">Max sentences</label>
+      <select name="max_sentences" class="w-full rounded px-3 py-2 text-sm">
+        <option value="0"  {% if max_sentences == 0  %}selected{% endif %}>auto (~30%)</option>
+        <option value="1"  {% if max_sentences == 1  %}selected{% endif %}>1</option>
+        <option value="3"  {% if max_sentences == 3  %}selected{% endif %}>3</option>
+        <option value="5"  {% if max_sentences == 5  %}selected{% endif %}>5</option>
+        <option value="10" {% if max_sentences == 10 %}selected{% endif %}>10</option>
+        <option value="20" {% if max_sentences == 20 %}selected{% endif %}>20</option>
+      </select>
+    </div>
+    <div class="w-32">
+      <label class="block text-xs text-slate-500 mb-1">Min word len</label>
+      <select name="min_word_len" class="w-full rounded px-3 py-2 text-sm">
+        <option value="2" {% if min_word_len == 2 %}selected{% endif %}>2</option>
+        <option value="3" {% if min_word_len == 3 %}selected{% endif %}>3</option>
+        <option value="4" {% if min_word_len == 4 %}selected{% endif %}>4</option>
+        <option value="5" {% if min_word_len == 5 %}selected{% endif %}>5</option>
+      </select>
+    </div>
+    <div class="w-32">
+      <label class="block text-xs text-slate-500 mb-1">Concepts</label>
+      <select name="n_concepts" class="w-full rounded px-3 py-2 text-sm">
+        <option value="1" {% if n_concepts == 1 %}selected{% endif %}>1</option>
+        <option value="2" {% if n_concepts == 2 %}selected{% endif %}>2</option>
+        <option value="3" {% if n_concepts == 3 %}selected{% endif %}>3 (default)</option>
+        <option value="5" {% if n_concepts == 5 %}selected{% endif %}>5</option>
+        <option value="8" {% if n_concepts == 8 %}selected{% endif %}>8</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Summarise</button>
+    <span id="spinner" class="htmx-indicator text-blue-400 text-sm self-center">Summarising…</span>
+  </form>
+</div>
+
+<!-- Explainer -->
+<div class="card rounded-lg px-4 py-3 mb-6 text-xs text-slate-500 leading-relaxed">
+  <span class="text-slate-400 font-medium">How it works:</span>
+  The query is embedded with the same vector model used for telemetry search.
+  Matching primary records are pulled from across all shards (default lookback
+  365 days), numeric measurements are skipped, and the remaining text bodies —
+  read from <code class="text-slate-400">data["value"]</code> or
+  <code class="text-slate-400">data["raw"]</code> — are ranked by Latent
+  Semantic Analysis into a single focused summary.
+</div>
+
+<!-- Result area -->
+<div id="summary-result"
+     {% if !q.is_empty() %}
+     hx-get="/primary_lsa_query_summary/results?q={{ q }}&max_sentences={{ max_sentences }}&min_word_len={{ min_word_len }}&n_concepts={{ n_concepts }}"
+     hx-trigger="load"
+     hx-swap="innerHTML"
+     {% endif %}>
+  {% if q.is_empty() %}
+  <div class="text-center py-12 text-slate-500 text-sm">
+    Enter a query above and click <span class="text-slate-400">Summarise</span> to build a query-focused LSA summary.
+  </div>
+  {% else %}
+  <div class="text-center py-12 text-slate-500 text-sm">Loading summary…</div>
+  {% endif %}
+</div>
+{% endblock %}

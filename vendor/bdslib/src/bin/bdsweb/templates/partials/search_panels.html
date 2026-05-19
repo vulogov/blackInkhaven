@@ -1,0 +1,80 @@
+{% if obs.is_empty() && docs.is_empty() %}
+<div class="text-center py-12 text-slate-500 text-sm">
+  No results for <span class="text-slate-300">"{{ q }}"</span> in the last <strong>{{ duration }}</strong>.
+</div>
+{% else %}
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+  <!-- Observability panel -->
+  <div>
+    <div class="flex items-center gap-2 mb-3">
+      <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wide">Observability</h2>
+      <span class="badge bg-blue-900 text-blue-300">{{ obs.len() }} hits</span>
+    </div>
+    {% if obs.is_empty() %}
+    <div class="card rounded-lg p-6 text-center text-slate-500 text-sm">No telemetry hits.</div>
+    {% else %}
+    <div class="card rounded-lg overflow-hidden">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:130px">Time</th>
+            <th>Key / Data</th>
+            <th style="width:60px" class="text-right">Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in obs %}
+          <tr>
+            <td class="font-mono text-xs text-slate-400 whitespace-nowrap">{{ h.timestamp }}</td>
+            <td>
+              <div class="font-mono text-xs text-blue-300 mb-0.5">{{ h.key }}</div>
+              <div class="text-xs text-slate-400 break-all">{{ h.data }}</div>
+            </td>
+            <td class="text-right font-mono text-xs text-green-400">{{ h.score }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Documents panel -->
+  <div>
+    <div class="flex items-center gap-2 mb-3">
+      <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wide">Documents</h2>
+      <span class="badge bg-purple-900 text-purple-300">{{ docs.len() }} hits</span>
+    </div>
+    {% if docs.is_empty() %}
+    <div class="card rounded-lg p-6 text-center text-slate-500 text-sm">No document hits.</div>
+    {% else %}
+    <div class="space-y-3">
+      {% for d in docs %}
+      <div class="card rounded-lg p-4">
+        <div class="flex items-start justify-between gap-3 mb-2">
+          <div>
+            <div class="text-sm font-medium text-slate-200">{{ d.name }}</div>
+            {% if d.category == "runbook" %}
+            <span class="badge mt-1 bg-blue-900 text-blue-300">runbook</span>
+            {% elif d.category == "ticket" %}
+            <span class="badge mt-1 bg-yellow-900 text-yellow-300">ticket</span>
+            {% elif d.category == "postmortem" %}
+            <span class="badge mt-1 bg-red-900 text-red-300">postmortem</span>
+            {% elif d.category == "kb" %}
+            <span class="badge mt-1 bg-green-900 text-green-300">kb</span>
+            {% else %}
+            <span class="badge mt-1 bg-slate-700 text-slate-300">{{ d.category }}</span>
+            {% endif %}
+          </div>
+          <span class="text-lg font-bold text-green-400 shrink-0">{{ d.score }}</span>
+        </div>
+        <p class="text-xs text-slate-400 leading-relaxed">{{ d.preview }}</p>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endif %}
