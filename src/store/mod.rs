@@ -28,6 +28,7 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("prompts", "Prompts"),
     ("places", "Places"),
     ("characters", "Characters"),
+    ("typst", "Typst"),
     ("help", "Help"),
 ];
 
@@ -35,6 +36,7 @@ pub const SYSTEM_TAG_NOTES: &str = "notes";
 pub const SYSTEM_TAG_PROMPTS: &str = "prompts";
 pub const SYSTEM_TAG_PLACES: &str = "places";
 pub const SYSTEM_TAG_CHARACTERS: &str = "characters";
+pub const SYSTEM_TAG_TYPST: &str = "typst";
 pub const SYSTEM_TAG_HELP: &str = "help";
 
 /// Where a newly-created node lands among its parent's existing children.
@@ -96,7 +98,159 @@ impl Store {
             layout: Arc::new(layout),
         };
         store.ensure_system_books(cfg)?;
+        store.ensure_artefacts_directory(cfg)?;
         Ok(store)
+    }
+
+    /// Create the per-project artefacts root (config field
+    /// `artefacts_directory`) if it doesn't exist yet. Each user book
+    /// gets its own subdirectory under here for PDFs / build
+    /// intermediates / etc. Empty `artefacts_directory` disables the
+    /// hook.
+    fn ensure_artefacts_directory(&self, cfg: &Config) -> Result<()> {
+        let dir = cfg.artefacts_directory.trim();
+        if dir.is_empty() {
+            return Ok(());
+        }
+        let abs = self.resolve_artefacts_dir(cfg);
+        std::fs::create_dir_all(&abs).map_err(Error::Io)?;
+        Ok(())
+    }
+
+    /// Resolve `cfg.artefacts_directory` against the project root.
+    /// Absolute paths are used verbatim; relative paths join the layout
+    /// root.
+    pub fn resolve_artefacts_dir(&self, cfg: &Config) -> std::path::PathBuf {
+        let raw = std::path::PathBuf::from(&cfg.artefacts_directory);
+        if raw.is_absolute() {
+            raw
+        } else {
+            self.layout.root.join(raw)
+        }
+    }
+
+    /// Provision the side-effects of creating a user book at the root
+    /// level: an artefacts subdirectory matching the book's slug, and a
+    /// Typst-book chapter (same display name as the new book) carrying
+    /// three starter paragraphs — `index.typ`, `settings.typ`,
+    /// `globals.typ`. `index.typ` is seeded with `import` statements
+    /// pulling in the other two so a fresh book's Typst skeleton is
+    /// ready to render.
+    ///
+    /// Idempotent: re-calling with the same book is a no-op for any
+    /// piece that's already in place.
+    ///
+    /// Called from both the TUI's `commit_add` (when creating a Book at
+    /// root via the Tree pane) and the CLI's `add` subcommand.
+    pub fn provision_user_book(
+        &self,
+        cfg: &Config,
+        book_node: &Node,
+    ) -> Result<()> {
+        // Only root-level Books trigger provisioning.
+        if book_node.kind != NK::Book || book_node.parent_id.is_some() {
+            return Ok(());
+        }
+        // Skip system books — they shouldn't get artefact subdirs or a
+        // self-referential Typst entry.
+        if book_node.system_tag.is_some() {
+            return Ok(());
+        }
+
+        // (a) Artefacts subdirectory: <artefacts_directory>/<book-slug>/
+        if !cfg.artefacts_directory.trim().is_empty() {
+            let sub = self.resolve_artefacts_dir(cfg).join(&book_node.slug);
+            std::fs::create_dir_all(&sub).map_err(Error::Io)?;
+        }
+
+        // (b) Typst-book chapter + three starter paragraphs.
+        self.ensure_typst_skeleton(cfg, &book_node.title)?;
+        Ok(())
+    }
+
+    /// Ensure a chapter named after `book_title` exists inside the
+    /// Typst system book, and that it contains paragraphs `index.typ`,
+    /// `settings.typ`, `globals.typ`. Each part is created only if
+    /// missing — safe to call repeatedly.
+    fn ensure_typst_skeleton(&self, cfg: &Config, book_title: &str) -> Result<()> {
+        let hierarchy = Hierarchy::load(self)?;
+        let Some(typst_book) = hierarchy
+            .iter()
+            .find(|n| n.kind == NK::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_TYPST))
+            .cloned()
+        else {
+            // Typst system book is missing — shouldn't happen because
+            // ensure_system_books seeds it on every open, but bail
+            // cleanly rather than panic if the hierarchy is unusual.
+            return Ok(());
+        };
+
+        // Find or create the chapter matching the book's title.
+        let chapter = match hierarchy
+            .iter()
+            .find(|n| n.kind == NK::Chapter
+                && n.parent_id == Some(typst_book.id)
+                && n.title == book_title)
+            .cloned()
+        {
+            Some(n) => n,
+            None => self.create_node(
+                cfg,
+                &hierarchy,
+                NK::Chapter,
+                book_title,
+                Some(&typst_book),
+                None,
+                InsertPosition::End,
+            )?,
+        };
+
+        // Each paragraph needs a deterministic title and a starter body.
+        const SEEDS: &[(&str, &str)] = &[
+            (
+                "index.typ",
+                "= index.typ\n\n#import \"globals.typ\": *\n#import \"settings.typ\": *\n",
+            ),
+            (
+                "settings.typ",
+                "= settings.typ\n\n// Document-wide #set / #show rules go here.\n",
+            ),
+            (
+                "globals.typ",
+                "= globals.typ\n\n// Project-wide values and helpers go here.\n",
+            ),
+        ];
+        // Reload hierarchy after each create so subsequent lookups see
+        // freshly-added siblings.
+        for (title, body) in SEEDS {
+            let h = Hierarchy::load(self)?;
+            let already = h.iter().any(|n| {
+                n.kind == NK::Paragraph
+                    && n.parent_id == Some(chapter.id)
+                    && n.title == *title
+            });
+            if already {
+                continue;
+            }
+            let mut created = self.create_node(
+                cfg,
+                &h,
+                NK::Paragraph,
+                title,
+                Some(&chapter),
+                None,
+                InsertPosition::End,
+            )?;
+            // Overwrite the auto-generated `= Title\n\n` body with the
+            // seeded content. The fs file already exists from
+            // `create_node`'s paragraph branch.
+            if let Some(rel) = &created.file {
+                let abs = self.layout.root.join(rel);
+                std::fs::write(&abs, body.as_bytes()).map_err(Error::Io)?;
+                self.update_paragraph_content(&mut created, body.as_bytes())?;
+            }
+        }
+        Ok(())
     }
 
     /// Six books that every project keeps at the root, in this order:

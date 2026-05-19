@@ -717,6 +717,12 @@ enum Modal {
         focus: Focus,
         scroll: usize,
     },
+    /// Ctrl+B V — version, author, and credits panel. Scrollable.
+    /// Content is rendered fresh each frame so it picks up the current
+    /// `CARGO_PKG_VERSION` / `CARGO_PKG_AUTHORS` env vars.
+    Credits {
+        scroll: usize,
+    },
     /// F1 help-manual query. Asks a free-form question against the Help
     /// system book (RAG), then streams the constrained LLM answer into the
     /// AI pane. Esc cancels; Enter submits.
@@ -1322,15 +1328,15 @@ impl App {
             // pane. Generic suffix (· H help · Esc cancel) is shared.
             self.status = match self.focus {
                 Focus::Tree | Focus::SearchBar => {
-                    "META · B/C/S/P add · D delete · U/J ↑/↓ reorder · H help · Esc cancel"
+                    "META · B/C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · Esc cancel"
                         .into()
                 }
                 Focus::Editor => {
-                    "META · S save · N snapshot · R history · L load · F split · T retitle · P place · C character · H help · Esc cancel"
+                    "META · S save · N snapshot · R history · L load · F split · T retitle · P place · C character · H help · V credits · Esc cancel"
                         .into()
                 }
                 Focus::Ai | Focus::AiPrompt => {
-                    "META · C clear chat · H help · Esc cancel".into()
+                    "META · C clear chat · H help · V credits · Esc cancel".into()
                 }
             };
             return Ok(false);
@@ -3452,6 +3458,14 @@ impl App {
             return;
         }
 
+        // V is a global action: version / author / credits floating
+        // pane. Handled before pane dispatch so every pane gets the same
+        // chord without having to repeat it in three places.
+        if matches!(key.code, KeyCode::Char('V') | KeyCode::Char('v')) {
+            self.open_credits();
+            return;
+        }
+
         let consumed = match self.focus {
             Focus::Tree | Focus::SearchBar => self.dispatch_meta_tree(key),
             Focus::Editor => self.dispatch_meta_editor(key),
@@ -3588,6 +3602,11 @@ impl App {
             focus: self.focus,
             scroll: 0,
         };
+    }
+
+    fn open_credits(&mut self) {
+        self.modal = Modal::Credits { scroll: 0 };
+        self.status = "Credits · ↑↓/PgUp/PgDn scroll · Esc close".into();
     }
 
     fn cycle_ai_mode(&mut self) {
@@ -4121,6 +4140,43 @@ impl App {
             }
             KeyCode::End => {
                 *scroll = total.saturating_sub(1);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Scroll handler for the Credits modal — mirrors `quickref_handle_key`.
+    /// `total` is the number of rendered lines (computed in the renderer),
+    /// but we don't need a hard upper bound here; clamping happens at
+    /// render time so out-of-range scroll just shows a blank tail.
+    fn credits_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::Credits { scroll } = &mut self.modal else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Up => {
+                *scroll = scroll.saturating_sub(1);
+                true
+            }
+            KeyCode::Down => {
+                *scroll = scroll.saturating_add(1);
+                true
+            }
+            KeyCode::PageUp => {
+                *scroll = scroll.saturating_sub(10);
+                true
+            }
+            KeyCode::PageDown => {
+                *scroll = scroll.saturating_add(10);
+                true
+            }
+            KeyCode::Home => {
+                *scroll = 0;
+                true
+            }
+            KeyCode::End => {
+                *scroll = usize::MAX / 2;
                 true
             }
             _ => false,
@@ -4686,10 +4742,15 @@ impl App {
         let is_file_picker = matches!(self.modal, Modal::FilePicker(_));
         let is_find = matches!(self.modal, Modal::FindReplace { .. });
         let is_quickref = matches!(self.modal, Modal::QuickRef { .. });
+        let is_credits = matches!(self.modal, Modal::Credits { .. });
         let is_help_query = matches!(self.modal, Modal::HelpQuery { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
+            return Ok(false);
+        }
+        if is_credits {
+            self.credits_handle_key(key);
             return Ok(false);
         }
 
@@ -4987,8 +5048,21 @@ impl App {
         ) {
             Ok(node) => {
                 let new_id = node.id;
+                // For root-level user books: provision the artefacts
+                // subdirectory and the Typst-book skeleton (chapter +
+                // index/settings/globals paragraphs). No-op for other
+                // kinds; failure logs to status but doesn't roll back
+                // the just-created book.
+                if let Err(e) = self.store.provision_user_book(&self.cfg, &node) {
+                    self.status = format!(
+                        "added {} `{}` — but Typst skeleton failed: {e}",
+                        kind.as_str(),
+                        node.title
+                    );
+                } else {
+                    self.status = format!("added {} `{}`", kind.as_str(), node.title);
+                }
                 self.modal = Modal::None;
-                self.status = format!("added {} `{}`", kind.as_str(), node.title);
                 self.reload_hierarchy();
                 if let Some(i) = self.rows.iter().position(|(id, _)| *id == new_id) {
                     self.tree_cursor = i;
@@ -5337,6 +5411,79 @@ impl App {
     }
 
 
+    /// Render the Ctrl+B V credits panel. Version + author come from
+    /// `CARGO_PKG_*` env vars set by cargo at compile time; the component
+    /// list is a hand-curated static (kept here so it stays in sync with
+    /// what Cargo.toml actually depends on — automating from Cargo.lock
+    /// would dump 200+ transitive crates that no user wants to read).
+    fn draw_credits_modal(&self, f: &mut ratatui::Frame, area: Rect, scroll: usize) {
+        let lines = build_credits_lines(&self.theme);
+        let total = lines.len();
+
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(
+            " Inkhaven v{} · author / credits ",
+            env!("CARGO_PKG_VERSION")
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // 1 row reserved for the bottom hint line.
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+
+        let max_scroll = total.saturating_sub(body_h);
+        let scroll = scroll.min(max_scroll);
+        let end = (scroll + body_h).min(total);
+        let visible: Vec<Line<'_>> = lines[scroll..end].to_vec();
+        f.render_widget(Paragraph::new(visible), body_rect);
+
+        let at_end = end >= total;
+        let more_hint = if at_end { " " } else { " · more below" };
+        let hint = format!(
+            " ↑↓ / PgUp/PgDn / Home/End scroll · Esc close{more_hint}    (showing {}–{} of {total}) ",
+            scroll + 1,
+            end
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     fn draw_quickref_modal(
         &self,
         f: &mut ratatui::Frame,
@@ -5560,6 +5707,10 @@ impl App {
             self.draw_quickref_modal(f, area, *focus, *scroll);
             return;
         }
+        if let Modal::Credits { scroll } = &self.modal {
+            self.draw_credits_modal(f, area, *scroll);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -5572,6 +5723,7 @@ impl App {
             Modal::None => return,
             Modal::FilePicker(_) => unreachable!("file picker handled above"),
             Modal::QuickRef { .. } => unreachable!("quickref handled above"),
+            Modal::Credits { .. } => unreachable!("credits handled above"),
             Modal::HelpQuery { input } => {
                 let body = vec![
                     Line::from(""),
@@ -7237,6 +7389,142 @@ Rules:
 /// Inclusive on the top-left, exclusive on the bottom-right — matches
 /// ratatui's Rect semantics where width/height are spans (the column at
 /// `x + width` is one past the rect's last column).
+/// Components Inkhaven directly depends on. Each entry is
+/// `(crate-name, license, one-line description)`. The list is curated by
+/// hand so the credits panel stays readable — auto-pulling every
+/// transitive dep from Cargo.lock would dump 200+ rows nobody would
+/// scroll through. When you add a new direct dep in Cargo.toml, add it
+/// here too.
+const CREDITS_COMPONENTS: &[(&str, &str, &str)] = &[
+    ("bdslib",                "Apache-2.0",      "DuckDB + Tantivy + fastembed + HNSW document store (V. Ulogov)"),
+    ("ratatui",               "MIT",             "TUI rendering framework"),
+    ("tui-textarea",          "MIT",             "multi-line text widget (state model)"),
+    ("crossterm",             "MIT",             "cross-platform terminal control"),
+    ("tree-sitter",           "MIT",             "incremental parser engine"),
+    ("tree-sitter-highlight", "MIT",             "syntax-highlight tagging on top of tree-sitter"),
+    ("tree-sitter-typst",     "MIT",             "Typst grammar for tree-sitter (uben0)"),
+    ("genai",                 "MIT / Apache-2.0", "provider-neutral LLM client (Gemini, DeepSeek, Ollama, OpenAI, …)"),
+    ("pulldown-cmark",        "MIT",             "CommonMark parser — markdown rendering in the AI pane"),
+    ("rust-stemmers",         "MIT",             "Snowball stemmers — multilingual lexicon overlay"),
+    ("unicode-segmentation",  "MIT / Apache-2.0", "Unicode word boundaries"),
+    ("regex",                 "MIT / Apache-2.0", "in-buffer find / replace"),
+    ("tokio",                 "MIT",             "async runtime"),
+    ("tokio-stream",          "MIT",             "Stream adapters for tokio"),
+    ("futures-util",          "MIT / Apache-2.0", "futures combinators"),
+    ("clap",                  "MIT / Apache-2.0", "CLI parser"),
+    ("serde",                 "MIT / Apache-2.0", "serialisation framework"),
+    ("serde_json",            "MIT / Apache-2.0", "JSON support for serde"),
+    ("serde-hjson",           "MIT",             "HJSON parser — friendly config file format"),
+    ("humantime",             "MIT / Apache-2.0", "human-readable duration parsing — backup max_age"),
+    ("humantime-serde",       "MIT / Apache-2.0", "serde glue for humantime durations"),
+    ("chrono",                "MIT / Apache-2.0", "timestamps, RFC-3339 formatting"),
+    ("uuid",                  "Apache-2.0",      "UUIDv7 paragraph IDs"),
+    ("zip",                   "MIT",             "backup / restore archive format"),
+    ("walkdir",               "MIT / Unlicense", "recursive directory walking"),
+    ("arboard",               "MIT / Apache-2.0", "system clipboard access"),
+    ("directories",           "MIT / Apache-2.0", "per-user cache path resolution"),
+    ("slug",                  "MIT / Apache-2.0", "URL-safe slug generation"),
+    ("tracing",               "MIT",             "structured logging"),
+    ("tracing-subscriber",    "MIT",             "log filtering and writer config"),
+    ("anyhow",                "MIT / Apache-2.0", "error wrapping in application boundaries"),
+    ("thiserror",             "MIT / Apache-2.0", "derive macros for typed errors"),
+];
+
+/// Build the styled `Line`s the credits modal renders. Returns one Line
+/// per row — section headers in cyan-bold, crate names in the configured
+/// modal-border colour, descriptions in dim. Each crate row is wrapped
+/// to fit a reasonable terminal width; very long descriptions naturally
+/// truncate at the right edge of the modal.
+fn build_credits_lines(theme: &super::theme::Theme) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    let bold_accent = Style::default()
+        .fg(theme.modal_border)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled(
+        format!("  Inkhaven v{}", env!("CARGO_PKG_VERSION")),
+        bold_accent,
+    )]));
+    lines.push(Line::from(Span::styled(
+        format!("  {}", env!("CARGO_PKG_DESCRIPTION")),
+        dim,
+    )));
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(vec![Span::styled(
+        "  Author".to_string(),
+        bold_accent,
+    )]));
+    for a in env!("CARGO_PKG_AUTHORS").split(':') {
+        if !a.is_empty() {
+            lines.push(Line::from(format!("    {a}")));
+        }
+    }
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(vec![Span::styled(
+        "  Project".to_string(),
+        bold_accent,
+    )]));
+    lines.push(Line::from(format!(
+        "    Repository: {}",
+        env!("CARGO_PKG_REPOSITORY")
+    )));
+    lines.push(Line::from(format!(
+        "    Licence:    {}",
+        env!("CARGO_PKG_LICENSE")
+    )));
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(vec![Span::styled(
+        "  Components used".to_string(),
+        bold_accent,
+    )]));
+    lines.push(Line::from(Span::styled(
+        "  Inkhaven stands on the shoulders of these open-source projects:".to_string(),
+        dim,
+    )));
+    lines.push(Line::from(""));
+
+    // Two-column rendering inside the credits body would be neat but
+    // complicates wrapping; a single column with name + licence + tagline
+    // reads cleanly even on narrow terminals.
+    for (name, license, desc) in CREDITS_COMPONENTS {
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(
+                format!("{:<24}", name),
+                Style::default()
+                    .fg(theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  [{}]", license),
+                Style::default().add_modifier(Modifier::DIM),
+            ),
+        ]));
+        lines.push(Line::from(Span::styled(
+            format!("        {desc}"),
+            dim,
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  And a long tail of transitive dependencies — every one is".to_string(),
+        dim,
+    )));
+    lines.push(Line::from(Span::styled(
+        "  listed in `Cargo.lock`. Thanks to every author.".to_string(),
+        dim,
+    )));
+    lines.push(Line::from(""));
+
+    lines
+}
+
 fn rect_contains(rect: Rect, col: u16, row: u16) -> bool {
     if rect.width == 0 || rect.height == 0 {
         return false;

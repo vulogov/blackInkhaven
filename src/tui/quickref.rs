@@ -48,7 +48,7 @@ pub fn entries_for(focus: Focus) -> Vec<Entry> {
     out
 }
 
-fn global_entries() -> [Entry; 15] {
+fn global_entries() -> [Entry; 16] {
     [
         header("─── Global ───"),
         entry("Ctrl+Q", "Quit (autosaves dirty paragraph)"),
@@ -60,6 +60,7 @@ fn global_entries() -> [Entry; 15] {
         entry("Ctrl+I", "Focus AI prompt"),
         entry("Ctrl+B", "Meta prefix (next key = action)"),
         entry("Ctrl+B H", "This Quick reference (works from every pane)"),
+        entry("Ctrl+B V", "Version, author, and component credits"),
         entry("F1", "Help-manual question (RAG over the Help book)"),
         entry("F7", "Grammar check the open paragraph (→ AI pane)"),
         entry("F9", "Cycle AI scope: None→Sel→Para→Sub→Chap→Book→None"),

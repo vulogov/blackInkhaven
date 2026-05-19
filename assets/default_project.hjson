@@ -115,6 +115,12 @@
 
   prompts_file: prompts.hjson
 
+  // Where per-book artefacts (rendered PDFs, build intermediates, …)
+  // land. Each new user book gets its own subdirectory under here
+  // (e.g. `artefacts/my-novel/`). Created on project open if missing;
+  // relative paths resolve against the project root.
+  artefacts_directory: artefacts
+
   // Visual theme — every value is a hex RGB triple like "#RRGGBB" (or the
   // short "#RGB" form). Empty strings fall back to the shipped Catppuccin
   // Mocha defaults baked into the binary, so you only need to set the
