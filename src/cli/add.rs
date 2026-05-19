@@ -86,6 +86,10 @@ pub fn run(
         position,
     )?;
 
+    // Per-book artefacts directory + Typst skeleton. No-op for non-Book
+    // kinds and for system books; safe to always invoke.
+    store.provision_user_book(&cfg, &node)?;
+
     let display_path = {
         let mut parts: Vec<String> = node.path.clone();
         parts.push(node.slug.clone());

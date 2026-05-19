@@ -33,6 +33,12 @@ pub struct Config {
     pub language: String,
     #[serde(default = "default_prompts_path")]
     pub prompts_file: PathBuf,
+    /// Where per-book artefacts (rendered PDFs, build intermediates, …)
+    /// land. Each new book gets its own subdirectory under here. Created
+    /// on project open if missing. Relative paths resolve against the
+    /// project root; absolute paths are used verbatim.
+    #[serde(default = "default_artefacts_directory")]
+    pub artefacts_directory: String,
     /// Seconds between background calls to `Store::sync()` (flushes HNSW
     /// index + DuckDB checkpoint). 0 disables the background sync; explicit
     /// sync-on-save still fires.
@@ -52,6 +58,10 @@ fn default_language() -> String {
     "english".into()
 }
 
+fn default_artefacts_directory() -> String {
+    "artefacts".into()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -64,6 +74,7 @@ impl Default for Config {
             backup: BackupConfig::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
+            artefacts_directory: default_artefacts_directory(),
             sync_interval_seconds: default_sync_interval(),
         }
     }
