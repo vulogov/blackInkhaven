@@ -54,53 +54,57 @@ const HIGHLIGHT_NAMES: &[&str] = &[
     "punctuation",
 ];
 
-fn style_for_name(name: &str) -> Style {
+fn style_for_name(name: &str, theme: &super::theme::Theme) -> Style {
     match name {
         "comment" => Style::default()
-            .fg(Color::DarkGray)
+            .fg(theme.syntax_comment)
             .add_modifier(Modifier::ITALIC),
 
-        "string" => Style::default().fg(Color::Green),
+        "string" => Style::default().fg(theme.syntax_string),
 
-        "constant.numeric" => Style::default().fg(Color::Magenta),
-        "constant.character.escape" => Style::default().fg(Color::Cyan),
-        "constant.character" => Style::default().fg(Color::Yellow),
+        "constant.numeric" => Style::default().fg(theme.syntax_number),
+        "constant.character.escape" => Style::default().fg(theme.syntax_operator),
+        "constant.character" => Style::default().fg(theme.syntax_number),
         "constant.builtin.boolean" | "constant.builtin" | "constant" => {
-            Style::default().fg(Color::Magenta)
+            Style::default().fg(theme.syntax_number)
         }
 
-        "function" | "function.method" => Style::default().fg(Color::Yellow),
+        "function" | "function.method" => Style::default().fg(theme.syntax_function),
 
         "keyword.control.conditional" | "keyword.control.repeat" | "keyword.control.import"
         | "keyword.control" | "keyword.storage.type" | "keyword" => Style::default()
-            .fg(Color::Magenta)
+            .fg(theme.syntax_keyword)
             .add_modifier(Modifier::BOLD),
-        "keyword.operator" => Style::default().fg(Color::Magenta),
-        "operator" => Style::default().fg(Color::Cyan),
+        "keyword.operator" => Style::default().fg(theme.syntax_keyword),
+        "operator" => Style::default().fg(theme.syntax_operator),
 
-        "tag" => Style::default().fg(Color::Blue),
+        "tag" => Style::default().fg(theme.syntax_tag),
         "variable" => Style::default(),
 
         "markup.heading.marker" => Style::default()
-            .fg(Color::Cyan)
+            .fg(theme.syntax_heading)
             .add_modifier(Modifier::DIM),
         "markup.heading.1" => Style::default()
-            .fg(Color::Cyan)
+            .fg(theme.syntax_heading)
             .add_modifier(Modifier::BOLD),
         "markup.heading.2" => Style::default()
-            .fg(Color::Cyan)
+            .fg(theme.syntax_heading)
             .add_modifier(Modifier::BOLD),
         "markup.heading.3" | "markup.heading.4" | "markup.heading.5" | "markup.heading.6"
-        | "markup.heading" => Style::default().fg(Color::Cyan),
-        "markup.bold" => Style::default().add_modifier(Modifier::BOLD),
-        "markup.italic" => Style::default().add_modifier(Modifier::ITALIC),
+        | "markup.heading" => Style::default().fg(theme.syntax_heading),
+        "markup.bold" => Style::default()
+            .fg(theme.syntax_bold)
+            .add_modifier(Modifier::BOLD),
+        "markup.italic" => Style::default()
+            .fg(theme.syntax_italic)
+            .add_modifier(Modifier::ITALIC),
         "markup.quote" => Style::default()
-            .fg(Color::DarkGray)
+            .fg(theme.syntax_quote)
             .add_modifier(Modifier::ITALIC),
         "markup.raw.block" | "markup.raw" => {
-            Style::default().fg(Color::LightYellow).bg(Color::Reset)
+            Style::default().fg(theme.syntax_raw).bg(Color::Reset)
         }
-        "markup.list" => Style::default().fg(Color::Magenta),
+        "markup.list" => Style::default().fg(theme.syntax_list_marker),
 
         "punctuation.bracket" | "punctuation.delimiter" | "punctuation" => {
             Style::default().add_modifier(Modifier::DIM)
@@ -242,16 +246,20 @@ pub struct RowHit {
     pub is_current: bool,
 }
 
-fn match_style_at(row_hits: &[RowHit], col: usize) -> Option<Style> {
+fn match_style_at(
+    row_hits: &[RowHit],
+    col: usize,
+    theme: &super::theme::Theme,
+) -> Option<Style> {
     for hit in row_hits {
         if col >= hit.col_start && col < hit.col_end {
             return Some(if hit.is_current {
                 Style::default()
-                    .bg(Color::LightRed)
+                    .bg(theme.search_current_bg)
                     .fg(Color::Black)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().bg(Color::Red).fg(Color::White)
+                Style::default().bg(theme.search_match_bg).fg(Color::Black)
             });
         }
     }
@@ -262,13 +270,15 @@ fn match_style_at(row_hits: &[RowHit], col: usize) -> Option<Style> {
 /// or None if the column doesn't fall inside any hit. Place wins over
 /// Character if both categories match the same column (shouldn't happen at
 /// the lexicon-build layer, but cheap to be defensive).
-fn lex_style_at(hits: &[super::lexicon::LexHit], col: usize) -> Option<Style> {
+fn lex_style_at(
+    hits: &[super::lexicon::LexHit],
+    col: usize,
+    theme: &super::theme::Theme,
+) -> Option<Style> {
     use super::lexicon::LexCategory;
     let mut chosen: Option<LexCategory> = None;
     for hit in hits {
         if col >= hit.col_start && col < hit.col_end {
-            // Prefer Place if we already saw it; otherwise keep the first
-            // category that hits.
             match (chosen, hit.category) {
                 (Some(LexCategory::Place), _) => {}
                 (_, cat) => chosen = Some(cat),
@@ -277,10 +287,10 @@ fn lex_style_at(hits: &[super::lexicon::LexHit], col: usize) -> Option<Style> {
     }
     chosen.map(|cat| match cat {
         LexCategory::Place => Style::default()
-            .fg(Color::Cyan)
+            .fg(theme.places_fg)
             .add_modifier(Modifier::BOLD),
         LexCategory::Character => Style::default()
-            .fg(Color::Yellow)
+            .fg(theme.characters_fg)
             .add_modifier(Modifier::BOLD),
     })
 }
@@ -321,6 +331,7 @@ pub fn build_visual_row_spans(
     added: AddedFlags,
     matches: &[RowHit],
     lex_hits: &[super::lexicon::LexHit],
+    theme: &super::theme::Theme,
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
 
@@ -360,16 +371,10 @@ pub fn build_visual_row_spans(
             if is_added {
                 style = style.add_modifier(Modifier::BOLD);
             }
-            // Lexicon (cyan/yellow) sits between added-bold and search
-            // match: search hits override the colour for the current
-            // search session, but cyan/yellow show through otherwise.
-            if let Some(lex_style) = lex_style_at(lex_hits, src_col) {
+            if let Some(lex_style) = lex_style_at(lex_hits, src_col, theme) {
                 style = style.patch(lex_style);
             }
-            // Match highlight applies AFTER added-bold but BEFORE selection
-            // (so selection's REVERSED wins on cells that are both).
-            if let Some(match_style) = match_style_at(matches, src_col) {
-                // Compose: keep added's bold, take match's fg/bg.
+            if let Some(match_style) = match_style_at(matches, src_col, theme) {
                 style = style.patch(match_style);
             }
             if is_selected || is_block {
@@ -402,6 +407,7 @@ pub fn build_row_spans(
     added: AddedFlags,
     matches: &[RowHit],
     lex_hits: &[super::lexicon::LexHit],
+    theme: &super::theme::Theme,
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
 
@@ -455,10 +461,10 @@ pub fn build_row_spans(
             if is_added {
                 style = style.add_modifier(Modifier::BOLD);
             }
-            if let Some(lex_style) = lex_style_at(lex_hits, src_col) {
+            if let Some(lex_style) = lex_style_at(lex_hits, src_col, theme) {
                 style = style.patch(lex_style);
             }
-            if let Some(match_style) = match_style_at(matches, src_col) {
+            if let Some(match_style) = match_style_at(matches, src_col, theme) {
                 style = style.patch(match_style);
             }
             if is_selected || is_block {
@@ -501,14 +507,22 @@ impl TypstHighlighter {
     ///
     /// On parse failure or any unexpected highlighter error, falls back to
     /// returning unhighlighted runs so the editor stays usable.
-    pub fn highlight_lines(&mut self, source: &str) -> Vec<Vec<StyledRun>> {
-        match self.try_highlight(source) {
+    pub fn highlight_lines(
+        &mut self,
+        source: &str,
+        theme: &super::theme::Theme,
+    ) -> Vec<Vec<StyledRun>> {
+        match self.try_highlight(source, theme) {
             Ok(lines) => lines,
             Err(_) => plain_lines(source),
         }
     }
 
-    fn try_highlight(&mut self, source: &str) -> Result<Vec<Vec<StyledRun>>, String> {
+    fn try_highlight(
+        &mut self,
+        source: &str,
+        theme: &super::theme::Theme,
+    ) -> Result<Vec<Vec<StyledRun>>, String> {
         let bytes = source.as_bytes();
         let events = self
             .inner
@@ -555,7 +569,7 @@ impl TypstHighlighter {
                         .get(h.0)
                         .copied()
                         .unwrap_or("");
-                    let inherited = style_for_name(name);
+                    let inherited = style_for_name(name, theme);
                     current_style = merge(current_style, inherited);
                 }
                 HighlightEvent::HighlightEnd => {
@@ -608,14 +622,18 @@ fn merge(outer: Style, inner: Style) -> Style {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ThemeConfig;
+
+    fn t() -> super::super::theme::Theme {
+        super::super::theme::Theme::from_config(&ThemeConfig::default())
+    }
 
     #[test]
     fn heading_gets_highlighted() {
         let mut h = TypstHighlighter::new().unwrap();
-        let lines = h.highlight_lines("= Hello world\n\nplain text");
+        let theme = t();
+        let lines = h.highlight_lines("= Hello world\n\nplain text", &theme);
         assert!(!lines.is_empty(), "highlight produced no lines");
-        // Line 0 should have at least one styled run with a non-default style
-        // (the heading marker or the heading itself).
         let line0 = &lines[0];
         assert!(!line0.is_empty(), "heading line had no runs: {:?}", line0);
         let has_color = line0.iter().any(|r| r.style.fg.is_some());
@@ -625,18 +643,21 @@ mod tests {
     #[test]
     fn comment_recognized() {
         let mut h = TypstHighlighter::new().unwrap();
-        let lines = h.highlight_lines("// a comment");
+        let theme = t();
+        let lines = h.highlight_lines("// a comment", &theme);
         let line0 = &lines[0];
-        let has_dark = line0
+        let expected = theme.syntax_comment;
+        let has_themed = line0
             .iter()
-            .any(|r| r.text.contains("comment") && r.style.fg == Some(Color::DarkGray));
-        assert!(has_dark, "expected comment to be DarkGray, got {:?}", line0);
+            .any(|r| r.text.contains("comment") && r.style.fg == Some(expected));
+        assert!(has_themed, "expected themed comment colour, got {:?}", line0);
     }
 
     #[test]
     fn empty_input_one_empty_line() {
         let mut h = TypstHighlighter::new().unwrap();
-        let lines = h.highlight_lines("");
+        let theme = t();
+        let lines = h.highlight_lines("", &theme);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].is_empty());
     }

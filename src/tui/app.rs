@@ -3,7 +3,11 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -18,7 +22,7 @@ use tui_textarea::{CursorMove, TextArea};
 use uuid::Uuid;
 
 use crate::ai::AiClient;
-use crate::ai::prompts::{Prompt, PromptLibrary};
+use crate::ai::prompts::PromptLibrary;
 use crate::ai::stream::{ChatTurn, StreamMsg, spawn_chat_stream};
 use crate::config::Config;
 use crate::error::{Error, Result as InkResult};
@@ -174,6 +178,20 @@ pub fn run(project: &Path) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
+    // Try to enable the kitty keyboard protocol. Without it, legacy
+    // terminal encoding can't distinguish e.g. `Ctrl+1` from a bare `1`
+    // (the TTY only has dedicated bytes for Ctrl+A..Z + a handful of
+    // punctuation), so `Ctrl+1` ends up inserting "1" into the AI prompt.
+    // Best-effort: terminals that don't support it just ignore the CSI
+    // sequence and we run with reduced functionality.
+    let kbd_enhanced = execute!(
+        io::stdout(),
+        PushKeyboardEnhancementFlags(
+            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
+        )
+    )
+    .is_ok();
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -203,6 +221,9 @@ pub fn run(project: &Path) -> Result<()> {
 
     let result = app.run(&mut terminal);
 
+    if kbd_enhanced {
+        let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
+    }
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -313,6 +334,44 @@ enum InferenceAction {
     CopyOnly,
 }
 
+/// Scope of context an AI prompt sweeps in along with the user's query.
+/// Cycled by F9: None → Selection → Paragraph → Subchapter → Chapter →
+/// Book → None. Each non-None scope prepends the relevant text to the
+/// query before sending; after a successful submission the mode auto-
+/// resets to None so a follow-up prompt isn't surprised by stale scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AiMode {
+    None,
+    Selection,
+    Paragraph,
+    Subchapter,
+    Chapter,
+    Book,
+}
+
+impl AiMode {
+    fn label(self) -> &'static str {
+        match self {
+            AiMode::None => "None",
+            AiMode::Selection => "Selection",
+            AiMode::Paragraph => "Paragraph",
+            AiMode::Subchapter => "Subchapter",
+            AiMode::Chapter => "Chapter",
+            AiMode::Book => "Book",
+        }
+    }
+    fn next(self) -> Self {
+        match self {
+            AiMode::None => AiMode::Selection,
+            AiMode::Selection => AiMode::Paragraph,
+            AiMode::Paragraph => AiMode::Subchapter,
+            AiMode::Subchapter => AiMode::Chapter,
+            AiMode::Chapter => AiMode::Book,
+            AiMode::Book => AiMode::None,
+        }
+    }
+}
+
 impl InferenceAction {
     fn label(&self) -> &'static str {
         match self {
@@ -323,6 +382,47 @@ impl InferenceAction {
             InferenceAction::CopyOnly => "copied",
         }
     }
+}
+
+/// One entry in the `/` prompt picker. Wraps both shipping HJSON prompts
+/// (`PromptSource::System`) and user-authored paragraphs under the Prompts
+/// book (`PromptSource::Book`). The body is lazily fetched for book
+/// paragraphs so we don't hit the store while filtering as the user types.
+#[derive(Debug, Clone)]
+struct PromptCandidate {
+    name: String,
+    description: String,
+    body: PromptBody,
+    source: PromptSource,
+}
+
+#[derive(Debug, Clone)]
+enum PromptBody {
+    Static(String),
+    BookParagraph(Uuid),
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PromptSource {
+    System,
+    Book,
+}
+
+/// Strip a leading Typst heading line (`= Title`) from a paragraph body so
+/// it doesn't end up in the LLM prompt. The heading is editor chrome — it
+/// describes the prompt for tree-pane navigation, not text the user wants
+/// to send. Trims any blank lines that immediately follow the heading.
+fn strip_leading_typst_heading(body: &str) -> String {
+    let mut lines: Vec<&str> = body.lines().collect();
+    if let Some(first) = lines.first() {
+        if first.trim_start().starts_with('=') {
+            lines.remove(0);
+            while lines.first().is_some_and(|l| l.trim().is_empty()) {
+                lines.remove(0);
+            }
+        }
+    }
+    lines.join("\n")
 }
 
 enum Modal {
@@ -416,6 +516,10 @@ struct App {
     clipboard: Option<arboard::Clipboard>,
 
     highlighter: TypstHighlighter,
+    /// Decoded ratatui colours for the active theme; built once at startup
+    /// from `cfg.theme`. Read everywhere the renderer used to hard-code
+    /// `Color::Cyan` / `Color::DarkGray` / etc.
+    theme: super::theme::Theme,
 
     /// Place/Character names recompiled into regexes for the editor highlight
     /// overlay. Rebuilt after every save and at startup. None means an empty
@@ -447,6 +551,12 @@ struct App {
     /// so we can record the matching Assistant turn into `chat_history`
     /// once the stream finishes. None during one-shot (Help) inferences.
     pending_chat_user_msg: Option<String>,
+
+    /// Active AI "scope" picker. Cycled with F9. When set to anything but
+    /// `None`, the next AI-prompt submission prepends the matching context
+    /// (selection text, paragraph body, subchapter / chapter / book
+    /// concatenation) to the user's query, then auto-resets to `None`.
+    ai_mode: AiMode,
 }
 
 #[derive(Debug)]
@@ -546,6 +656,7 @@ impl App {
             PromptLibrary::default()
         };
 
+        let theme = super::theme::Theme::from_config(&cfg.theme);
         Ok(Self {
             layout,
             store,
@@ -573,6 +684,7 @@ impl App {
             clipboard: arboard::Clipboard::new().ok(),
             highlighter: TypstHighlighter::new()
                 .map_err(|e| anyhow::anyhow!("typst highlighter init: {e}"))?,
+            theme,
             lexicon,
             inference: None,
             show_prompt_picker: false,
@@ -580,6 +692,7 @@ impl App {
             paragraph_cursors: std::collections::HashMap::new(),
             chat_history: Vec::new(),
             pending_chat_user_msg: None,
+            ai_mode: AiMode::None,
         })
     }
 
@@ -764,11 +877,13 @@ impl App {
             return Ok(false);
         }
 
-        // F9 clears the AI chat history AND the current inference. Use this
-        // to start a fresh research conversation; previous turns are not
-        // replayed to the model after this.
+        // F9 cycles the AI scope mode (None → Selection → Paragraph →
+        // Subchapter → Chapter → Book → None). The next prompt sent from
+        // the AI prompt bar will prepend that context, then auto-reset to
+        // None. F9 works from every pane — Editor/Tree/AI/Search/AI prompt.
+        // (Chat history is cleared via Ctrl+B C, not F9.)
         if matches!(key.code, KeyCode::F(9)) {
-            self.clear_chat_history();
+            self.cycle_ai_mode();
             return Ok(false);
         }
 
@@ -835,6 +950,9 @@ impl App {
 
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') if plain => return Ok(self.request_quit()),
+            // Esc cycles Tree → Search bar (third leg of the
+            // Editor → Tree → Search → Editor rotation).
+            KeyCode::Esc => self.change_focus(Focus::SearchBar),
             KeyCode::F(2) => self.open_rename_modal(),
             // F3 in Tree: import a file (becomes new paragraph after cursor)
             // or a directory tree (dirs → subchapters, files → paragraphs).
@@ -898,6 +1016,16 @@ impl App {
                 self.move_current(MoveDir::Down);
             }
 
+            // Z collapses the cursor's enclosing subchapter; X collapses
+            // every expanded branch in the tree. Both rebuild the row list
+            // so the view updates immediately.
+            KeyCode::Char('Z') | KeyCode::Char('z') if plain => {
+                self.collapse_enclosing_subchapter();
+            }
+            KeyCode::Char('X') | KeyCode::Char('x') if plain => {
+                self.collapse_all_branches();
+            }
+
             _ if self.keymap.page_up.matches(&key) => self.move_cursor(-10),
             _ if self.keymap.page_down.matches(&key) => self.move_cursor(10),
             _ => {}
@@ -944,6 +1072,78 @@ impl App {
                 self.tree_cursor = i;
             }
         }
+    }
+
+    /// Collapse the cursor's enclosing Subchapter. If the cursor is on a
+    /// Subchapter itself, collapse it directly. Walks ancestors otherwise;
+    /// no-op if no Subchapter is in scope (e.g. cursor on a chapter or
+    /// directly under a book). After collapsing, the tree cursor moves to
+    /// the now-folded subchapter row so the user sees what happened.
+    fn collapse_enclosing_subchapter(&mut self) {
+        let Some(&(id, _)) = self.rows.get(self.tree_cursor) else {
+            self.status = "nothing selected".into();
+            return;
+        };
+        let Some(node) = self.hierarchy.get(id) else {
+            return;
+        };
+        // Pick the cursor's enclosing subchapter — itself if it IS one,
+        // otherwise the nearest ancestor of kind Subchapter.
+        let target = if node.kind == NodeKind::Subchapter {
+            Some(node.id)
+        } else {
+            self.hierarchy
+                .ancestors(node)
+                .into_iter()
+                .find(|a| a.kind == NodeKind::Subchapter)
+                .map(|a| a.id)
+        };
+        let Some(target_id) = target else {
+            self.status = "no enclosing subchapter to collapse".into();
+            return;
+        };
+        if self.collapsed_nodes.insert(target_id) {
+            self.rebuild_rows_preserving_cursor();
+            // Land the cursor on the freshly-collapsed subchapter row so
+            // the user can see what was folded.
+            if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == target_id) {
+                self.tree_cursor = i;
+            }
+            let title = self
+                .hierarchy
+                .get(target_id)
+                .map(|n| n.title.as_str())
+                .unwrap_or("?");
+            self.status = format!("collapsed subchapter `{title}`");
+        } else {
+            self.status = "subchapter is already collapsed".into();
+        }
+    }
+
+    /// Collapse every branch that has children. Paragraphs and empty
+    /// branches are untouched (they wouldn't render differently anyway).
+    /// The tree cursor stays on the same node if it survives the fold;
+    /// otherwise `rebuild_rows_preserving_cursor` snaps it to the nearest
+    /// remaining visible row.
+    fn collapse_all_branches(&mut self) {
+        let mut added = 0usize;
+        let candidates: Vec<Uuid> = self
+            .hierarchy
+            .iter()
+            .filter(|n| n.kind != NodeKind::Paragraph && self.hierarchy.has_children(n.id))
+            .map(|n| n.id)
+            .collect();
+        for id in candidates {
+            if self.collapsed_nodes.insert(id) {
+                added += 1;
+            }
+        }
+        if added == 0 {
+            self.status = "all branches already collapsed".into();
+            return;
+        }
+        self.rebuild_rows_preserving_cursor();
+        self.status = format!("collapsed {added} branch(es)");
     }
 
     fn rebuild_rows_preserving_cursor(&mut self) {
@@ -1086,14 +1286,18 @@ impl App {
                 _ => {}
             }
         }
-        // Esc in editor (when search is active) clears the search state.
-        if matches!(key.code, KeyCode::Esc)
-            && self.opened.as_ref().is_some_and(|d| d.search.is_some())
-        {
-            if let Some(doc) = self.opened.as_mut() {
-                doc.search = None;
+        // Esc in editor: first press clears an active in-buffer search (the
+        // Ctrl+F flow); second press cycles focus → Tree. The Editor/Tree/
+        // Search cycle is Editor → Tree → Search → Editor.
+        if matches!(key.code, KeyCode::Esc) {
+            if self.opened.as_ref().is_some_and(|d| d.search.is_some()) {
+                if let Some(doc) = self.opened.as_mut() {
+                    doc.search = None;
+                }
+                self.status = "search cleared".into();
+                return Ok(false);
             }
-            self.status = "search cleared".into();
+            self.change_focus(Focus::Tree);
             return Ok(false);
         }
 
@@ -1659,10 +1863,12 @@ impl App {
         let Some(inf) = self.inference.as_ref() else {
             return;
         };
-        let text = inf.response.clone();
+        let raw = inf.response.clone();
         if matches!(action, InferenceAction::CopyOnly) {
+            // Copy keeps the original markdown — the user might paste it
+            // somewhere that expects markdown, not Typst.
             if let Some(cb) = self.clipboard.as_mut() {
-                let _ = cb.set_text(text.clone());
+                let _ = cb.set_text(raw.clone());
             }
             self.status = "copied AI result to clipboard".into();
             return;
@@ -1671,6 +1877,11 @@ impl App {
             self.status = "no paragraph open — apply needs a focused paragraph".into();
             return;
         };
+        // Translate markdown to Typst for editor-bound applies; the AI tends
+        // to respond in markdown (`# Heading`, `**bold**`) but our buffer is
+        // Typst (`= Heading`, `*bold*`). Conversion is best-effort — anything
+        // unrecognised passes through verbatim.
+        let text = super::markdown::markdown_to_typst(&raw);
         match action {
             InferenceAction::Replace => {
                 if doc.textarea.selection_range().is_some() {
@@ -1721,17 +1932,11 @@ impl App {
                 } else {
                     self.show_results_overlay = false;
                     self.show_prompt_picker = false;
-                    // AI prompt → AI pane (so the user can scroll/read the
-                    // answer or apply r/i/t/b/c). The mirror jump back lives
-                    // in `handle_passive_key`. Search bar keeps its original
-                    // "return to Editor/Tree" behaviour because there is no
-                    // matching read-pane to bounce to.
+                    // Search bar → Editor closes the
+                    // Editor → Tree → Search → Editor rotation. AI prompt
+                    // bounces to AI pane (separate Ai↔AiPrompt pairing).
                     let target = if is_search {
-                        if self.opened.is_some() {
-                            Focus::Editor
-                        } else {
-                            Focus::Tree
-                        }
+                        Focus::Editor
                     } else {
                         Focus::Ai
                     };
@@ -1795,6 +2000,26 @@ impl App {
             KeyCode::Home => self.current_input(is_search).move_home(),
             KeyCode::End => self.current_input(is_search).move_end(),
             KeyCode::Char(c) => {
+                // Explicit AI-prompt focus shortcuts. The global Ctrl+1..5
+                // block at the top of `handle_key` covers these too, but
+                // some terminals re-encode the chords in ways that bypass
+                // the global path — handle them locally as a safety net so
+                // they always work from the AI prompt.
+                if !is_search
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key
+                        .modifiers
+                        .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
+                {
+                    if c == '1' {
+                        self.change_focus(Focus::Editor);
+                        return Ok(false);
+                    }
+                    if c == 't' || c == 'T' {
+                        self.change_focus(Focus::Tree);
+                        return Ok(false);
+                    }
+                }
                 let mut residual = key.modifiers;
                 residual.remove(KeyModifiers::SHIFT);
                 if residual.is_empty() {
@@ -1830,34 +2055,129 @@ impl App {
             .min(self.prompt_picker_matches().len().saturating_sub(1));
     }
 
-    fn prompt_picker_matches(&self) -> Vec<&Prompt> {
+    /// Union of system-level prompts (from prompts.hjson) and paragraphs
+    /// nested under the "Prompts" system book. System prompts come first so
+    /// the user's mental model — "well-known commands at the top, project-
+    /// specific scratch prompts below" — is preserved. Filtered by the
+    /// substring after `/` in `ai_input`.
+    fn prompt_picker_matches(&self) -> Vec<PromptCandidate> {
         let q = self.ai_input.as_str();
         let filter = q.strip_prefix('/').unwrap_or("").trim().to_lowercase();
-        self.prompts
-            .prompts
-            .iter()
-            .filter(|p| {
-                filter.is_empty()
-                    || p.name.to_lowercase().contains(&filter)
-                    || p.description.to_lowercase().contains(&filter)
-            })
-            .collect()
+
+        let mut out: Vec<PromptCandidate> = Vec::new();
+        // 1) prompts.hjson (system)
+        for p in &self.prompts.prompts {
+            if filter.is_empty()
+                || p.name.to_lowercase().contains(&filter)
+                || p.description.to_lowercase().contains(&filter)
+            {
+                out.push(PromptCandidate {
+                    name: p.name.clone(),
+                    description: p.description.clone(),
+                    body: PromptBody::Static(p.template.clone()),
+                    source: PromptSource::System,
+                });
+            }
+        }
+        // 2) Paragraphs under the Prompts system book
+        if let Some(book_id) = self.system_book_id(crate::store::SYSTEM_TAG_PROMPTS) {
+            for id in self.hierarchy.collect_subtree(book_id) {
+                if id == book_id {
+                    continue;
+                }
+                let Some(node) = self.hierarchy.get(id) else {
+                    continue;
+                };
+                if node.kind != NodeKind::Paragraph {
+                    continue;
+                }
+                let name = node.slug.clone();
+                let title = node.title.clone();
+                if filter.is_empty()
+                    || name.to_lowercase().contains(&filter)
+                    || title.to_lowercase().contains(&filter)
+                {
+                    out.push(PromptCandidate {
+                        name,
+                        description: title,
+                        body: PromptBody::BookParagraph(node.id),
+                        source: PromptSource::Book,
+                    });
+                }
+            }
+        }
+        out
     }
 
     fn commit_prompt_pick(&mut self) {
         let matches = self.prompt_picker_matches();
-        let Some(picked) = matches.get(self.prompt_picker_cursor).copied().cloned() else {
+        let Some(picked) = matches.into_iter().nth(self.prompt_picker_cursor) else {
             self.status = "no matching prompt".into();
             return;
         };
-        // Render template now so the user sees what's going.
-        let body = self.render_template(&picked.template);
+        let template = match &picked.body {
+            PromptBody::Static(t) => t.clone(),
+            PromptBody::BookParagraph(id) => {
+                match self.store.get_content(*id) {
+                    Ok(Some(bytes)) => {
+                        let text = String::from_utf8_lossy(&bytes).to_string();
+                        // Strip the leading `= Title` Typst heading that the
+                        // editor inserts by default so it doesn't pollute the
+                        // prompt sent to the LLM.
+                        strip_leading_typst_heading(&text)
+                    }
+                    Ok(None) => {
+                        self.status = format!("prompt `{}` has no body", picked.name);
+                        return;
+                    }
+                    Err(e) => {
+                        self.status = format!(
+                            "loading prompt `{}` from book failed: {e}",
+                            picked.name
+                        );
+                        return;
+                    }
+                }
+            }
+        };
+        let body = self.render_template(&template);
         self.ai_input.clear();
         for c in body.chars() {
             self.ai_input.insert_char(c);
         }
         self.show_prompt_picker = false;
-        self.status = format!("loaded prompt `{}` — Enter to send", picked.name);
+        let chip = match picked.source {
+            PromptSource::System => "system",
+            PromptSource::Book => "book",
+        };
+        self.status = format!(
+            "loaded prompt `{}` [{chip}] — Enter to send",
+            picked.name
+        );
+    }
+
+    /// Look up a prompt by name inside the Prompts system book. Returns the
+    /// paragraph body with the leading `= Title` heading stripped, ready to
+    /// be passed through `render_template`. Returns None if no such
+    /// paragraph exists or its body can't be loaded.
+    fn lookup_book_prompt_template(&self, name: &str) -> Option<String> {
+        let book_id = self.system_book_id(crate::store::SYSTEM_TAG_PROMPTS)?;
+        let lower = name.to_lowercase();
+        for id in self.hierarchy.collect_subtree(book_id) {
+            if id == book_id {
+                continue;
+            }
+            let node = self.hierarchy.get(id)?;
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            if node.slug.to_lowercase() == lower || node.title.to_lowercase() == lower {
+                let bytes = self.store.get_content(node.id).ok().flatten()?;
+                let text = String::from_utf8_lossy(&bytes).to_string();
+                return Some(strip_leading_typst_heading(&text));
+            }
+        }
+        None
     }
 
     fn render_template(&self, template: &str) -> String {
@@ -1917,20 +2237,35 @@ impl App {
             self.start_help_inference(&question);
             return;
         }
-        let prompt_text = if raw.starts_with('/') {
-            // Resolve `/name [extra args]` form by name lookup.
+        let user_query = if raw.starts_with('/') {
+            // Resolve `/name [extra args]` form. Search system prompts
+            // (prompts.hjson) first, then paragraphs under the Prompts book.
             let after = raw.trim_start_matches('/').trim();
-            match self.prompts.find(after) {
-                Some(p) => self.render_template(&p.template.clone()),
-                None => {
-                    self.status =
-                        format!("no prompt `{after}` — type `/` to see the list");
-                    return;
-                }
+            if let Some(p) = self.prompts.find(after) {
+                self.render_template(&p.template.clone())
+            } else if let Some(text) = self.lookup_book_prompt_template(after) {
+                self.render_template(&text)
+            } else {
+                self.status =
+                    format!("no prompt `{after}` — type `/` to see the list");
+                return;
             }
         } else {
             raw
         };
+
+        // Prepend the AI scope context if one is set. Failures (no
+        // selection, etc.) abort the submission with a status message; the
+        // scope sticks around so the user can fix the cause and re-submit.
+        let prompt_text = match self.build_ai_mode_context() {
+            Ok(Some(prefix)) => format!("{prefix}\n\n{user_query}"),
+            Ok(None) => user_query,
+            Err(reason) => {
+                self.status = reason;
+                return;
+            }
+        };
+        let mode_used = self.ai_mode;
 
         let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
             Ok(pair) => pair,
@@ -1968,7 +2303,17 @@ impl App {
         // away. Esc bounces to the AI pane to read/scroll the answer.
         self.change_focus(Focus::AiPrompt);
         let depth = self.chat_history.len() / 2 + 1;
-        self.status = format!("streaming from {provider} (chat turn #{depth})…");
+        let scope_note = if mode_used == AiMode::None {
+            String::new()
+        } else {
+            format!(" · scope={}", mode_used.label())
+        };
+        self.status = format!(
+            "streaming from {provider} (chat turn #{depth}{scope_note})…"
+        );
+        // Auto-reset the scope so the next prompt isn't surprised by stale
+        // context. The user re-cycles with F9 to pick a new scope.
+        self.ai_mode = AiMode::None;
         // Clear the prompt so the next inference starts fresh.
         self.ai_input.clear();
     }
@@ -2055,6 +2400,25 @@ impl App {
             }
         }
         self.open_add_modal_inner(kind, InsertPosition::End);
+    }
+
+    /// Build a "Book › Chapter › Subchapter" style breadcrumb of titles
+    /// for the node identified by `id`. Used by the search-results overlay
+    /// and the Help RAG context block so users see human names rather than
+    /// the slug-derived filesystem path. Falls back to the hit's own slug
+    /// path if the node has vanished from the hierarchy (e.g. just deleted).
+    fn title_breadcrumb(&self, id: Uuid) -> String {
+        let Some(node) = self.hierarchy.get(id) else {
+            return String::new();
+        };
+        let mut parts: Vec<String> = self
+            .hierarchy
+            .ancestors(node)
+            .into_iter()
+            .map(|n| n.title.clone())
+            .collect();
+        parts.push(node.title.clone());
+        parts.join(" › ")
     }
 
     /// Look up a system book's UUID by tag. Returns None if the project
@@ -2641,6 +3005,140 @@ impl App {
         };
     }
 
+    fn cycle_ai_mode(&mut self) {
+        self.ai_mode = self.ai_mode.next();
+        self.status = match self.ai_mode {
+            AiMode::None => "AI scope: None (only the prompt is sent)".into(),
+            other => format!(
+                "AI scope: {} (will prepend matching context to next prompt)",
+                other.label()
+            ),
+        };
+    }
+
+    /// Assemble the prefix the active AI scope should prepend to the
+    /// user's prompt. Returns `Ok(Some(text))` when the scope produced
+    /// content, `Ok(None)` for `AiMode::None`, or `Err(reason)` when the
+    /// scope was requested but produced nothing (no selection, no open
+    /// paragraph, no enclosing branch). The status message in `Err` is
+    /// surfaced to the user verbatim.
+    fn build_ai_mode_context(&self) -> Result<Option<String>, String> {
+        match self.ai_mode {
+            AiMode::None => Ok(None),
+            AiMode::Selection => {
+                let Some(doc) = self.opened.as_ref() else {
+                    return Err("AI scope `Selection` needs an open paragraph".into());
+                };
+                let Some(((r1, c1), (r2, c2))) = doc.textarea.selection_range() else {
+                    return Err("AI scope `Selection` needs a non-empty selection in the editor".into());
+                };
+                let text = slice_lines(doc.textarea.lines(), r1, c1, r2, c2);
+                if text.trim().is_empty() {
+                    return Err("AI scope `Selection` selection was empty".into());
+                }
+                Ok(Some(format!(
+                    "── Editor selection ──\n{text}\n── end selection ──"
+                )))
+            }
+            AiMode::Paragraph => {
+                let Some(doc) = self.opened.as_ref() else {
+                    return Err("AI scope `Paragraph` needs an open paragraph".into());
+                };
+                let live = doc.textarea.lines().join("\n");
+                let mut out = String::new();
+                if let Some(split) = doc.split.as_ref() {
+                    // In split-edit mode the user sees the snapshot AND
+                    // the live buffer side by side; include both so the
+                    // model can compare.
+                    out.push_str("── Paragraph snapshot (split-edit copy) ──\n");
+                    out.push_str(&split.snapshot_lines.join("\n"));
+                    out.push_str("\n── end snapshot ──\n\n");
+                }
+                out.push_str("── Paragraph: ");
+                out.push_str(&doc.title);
+                out.push_str(" ──\n");
+                out.push_str(&live);
+                out.push_str("\n── end paragraph ──");
+                Ok(Some(out))
+            }
+            AiMode::Subchapter | AiMode::Chapter | AiMode::Book => {
+                let scope_kind = match self.ai_mode {
+                    AiMode::Subchapter => NodeKind::Subchapter,
+                    AiMode::Chapter => NodeKind::Chapter,
+                    AiMode::Book => NodeKind::Book,
+                    _ => unreachable!(),
+                };
+                let mode_label = self.ai_mode.label();
+                // Anchor on the open paragraph if any, otherwise the tree
+                // cursor — gives the user a sensible default whether they
+                // were editing or browsing when they cycled to this scope.
+                let anchor_id = self
+                    .opened
+                    .as_ref()
+                    .map(|d| d.id)
+                    .or_else(|| self.rows.get(self.tree_cursor).map(|(id, _)| *id))
+                    .ok_or_else(|| {
+                        format!("AI scope `{mode_label}` needs an open paragraph or tree cursor")
+                    })?;
+                let anchor = self
+                    .hierarchy
+                    .get(anchor_id)
+                    .ok_or_else(|| format!("AI scope `{mode_label}` anchor vanished"))?;
+                // Walk up to the enclosing branch of `scope_kind`. The
+                // anchor itself counts if it is already that kind.
+                let scope_node = if anchor.kind == scope_kind {
+                    Some(anchor.clone())
+                } else {
+                    self.hierarchy
+                        .ancestors(anchor)
+                        .into_iter()
+                        .find(|n| n.kind == scope_kind)
+                        .cloned()
+                };
+                let Some(scope_node) = scope_node else {
+                    return Err(format!(
+                        "AI scope `{mode_label}` requires the cursor to be inside a {}",
+                        scope_kind.as_str()
+                    ));
+                };
+                let mut chunks: Vec<String> = Vec::new();
+                for id in self.hierarchy.collect_subtree(scope_node.id) {
+                    let Some(node) = self.hierarchy.get(id) else {
+                        continue;
+                    };
+                    if node.kind != NodeKind::Paragraph {
+                        continue;
+                    }
+                    if let Ok(Some(bytes)) = self.store.get_content(node.id) {
+                        let body = String::from_utf8_lossy(&bytes).to_string();
+                        chunks.push(format!(
+                            "── {} ──\n{}",
+                            self.title_breadcrumb(node.id),
+                            body
+                        ));
+                    }
+                }
+                if chunks.is_empty() {
+                    return Err(format!(
+                        "AI scope `{mode_label}` `{}` has no paragraphs to send",
+                        scope_node.title
+                    ));
+                }
+                let header = format!(
+                    "── {} context: {} ({} paragraph(s)) ──",
+                    mode_label,
+                    scope_node.title,
+                    chunks.len()
+                );
+                Ok(Some(format!(
+                    "{header}\n\n{}\n── end {} context ──",
+                    chunks.join("\n\n"),
+                    mode_label.to_lowercase()
+                )))
+            }
+        }
+    }
+
     fn clear_chat_history(&mut self) {
         let turns = self.chat_history.len();
         self.chat_history.clear();
@@ -2719,9 +3217,10 @@ impl App {
             } else {
                 body
             };
+            let breadcrumb = self.title_breadcrumb(hit.id);
             context.push_str(&format!(
                 "── Help excerpt: {} (path: {}) ──\n{}\n\n",
-                hit.title, hit.slug_path, trimmed
+                hit.title, breadcrumb, trimmed
             ));
             included += 1;
         }
@@ -4037,8 +4536,13 @@ impl App {
             .title(header)
             .border_style(
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(self.theme.modal_border)
                     .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
             );
         let inner = block.inner(rect);
         f.render_widget(block, rect);
@@ -4141,8 +4645,13 @@ impl App {
             .title(header)
             .border_style(
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(self.theme.modal_border)
                     .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
             );
         let inner = block.inner(rect);
         f.render_widget(block, rect);
@@ -4450,43 +4959,78 @@ impl App {
             }
         };
 
+        // Generic confirms (Adding / Deleting / FindReplace / Renaming /
+        // SnapshotPicker) all share this final render. Theme drives the
+        // modal background + foreground; per-modal accent colour is the
+        // border (passed in via `border_color`).
         f.render_widget(
             Paragraph::new(body).block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title(title)
-                    .border_style(Style::default().fg(border_color).add_modifier(Modifier::BOLD)),
+                    .border_style(Style::default().fg(border_color).add_modifier(Modifier::BOLD))
+                    .style(
+                        Style::default()
+                            .bg(self.theme.modal_bg)
+                            .fg(self.theme.modal_fg),
+                    ),
             ),
             rect,
         );
     }
 
     fn pane_block<'a>(&self, title: &'a str, focus: Focus) -> Block<'a> {
-        let mut block = Block::default().borders(Borders::ALL).title(title);
-        if self.focus == focus {
-            block = block
-                .border_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
-        }
-        block
-    }
-
-    /// Editor pane block. Border color carries the document's clean/dirty
-    /// state when the pane has focus: green when saved, yellow when there
-    /// are unsaved changes (bolded). When the pane is unfocused, the border
-    /// is plain white — the status bar's red `●` chip and the `[modified]`
-    /// suffix in the title still signal dirty state independent of focus.
-    fn editor_block<'a>(&self, title: &'a str) -> Block<'a> {
-        let style = if self.focus == Focus::Editor {
-            let dirty = self.opened.as_ref().is_some_and(|d| d.dirty);
-            let color = if dirty { Color::Yellow } else { Color::Green };
-            Style::default().fg(color).add_modifier(Modifier::BOLD)
+        let border_color = if self.focus == focus {
+            self.theme.border_focused
         } else {
-            Style::default().fg(Color::White)
+            self.theme.border_unfocused
         };
         Block::default()
             .borders(Borders::ALL)
             .title(title)
-            .border_style(style)
+            .border_style(
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.pane_bg)
+                    .fg(self.theme.pane_fg),
+            )
+    }
+
+    /// Editor pane block. Border colour carries the document's clean/dirty
+    /// state when the pane has focus: green when saved, yellow when dirty,
+    /// teal when the open paragraph is read-only (Help subtree). Unfocused
+    /// uses the theme's neutral border colour.
+    fn editor_block<'a>(&self, title: &'a str) -> Block<'a> {
+        let border_color = if self.focus == Focus::Editor {
+            let dirty = self.opened.as_ref().is_some_and(|d| d.dirty);
+            let ro = self.opened.as_ref().is_some_and(|d| d.read_only);
+            if ro {
+                self.theme.border_readonly
+            } else if dirty {
+                self.theme.border_dirty
+            } else {
+                self.theme.border_saved
+            }
+        } else {
+            self.theme.border_unfocused
+        };
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.pane_bg)
+                    .fg(self.theme.pane_fg),
+            )
     }
 
     /// Centralized focus change. When leaving the Editor pane, autosave the
@@ -4533,7 +5077,7 @@ impl App {
         let text = if self.focus == Focus::AiPrompt {
             self.ai_input.render_with_cursor('│')
         } else if self.ai_input.is_empty() {
-            String::from("(press Ctrl+I for AI; `/` lists prompts)")
+            String::from("(press Ctrl+I for AI; `/` lists prompts · F9 cycles scope)")
         } else {
             self.ai_input.as_str().to_string()
         };
@@ -4542,9 +5086,16 @@ impl App {
         } else {
             Style::default().add_modifier(Modifier::DIM)
         };
+        // Title carries the current AI scope so the user knows what
+        // context will be prepended on the next submit. Bright when scope
+        // is non-None — easy to spot accidentally-armed scope.
+        let title = match self.ai_mode {
+            AiMode::None => "AI prompt".to_string(),
+            other => format!("AI prompt · scope: {}", other.label()),
+        };
         let p = Paragraph::new(text)
             .style(style)
-            .block(self.pane_block("AI prompt", Focus::AiPrompt));
+            .block(self.pane_block(&title, Focus::AiPrompt));
         f.render_widget(p, area);
     }
 
@@ -4604,7 +5155,7 @@ impl App {
                 // dirty (yellow border), this stays green — it's marking the
                 // "what is loaded", not the dirty state.
                 row_style = row_style
-                    .fg(Color::Green)
+                    .fg(self.theme.tree_open_marker)
                     .add_modifier(Modifier::BOLD);
             }
             if i == self.tree_cursor {
@@ -4769,11 +5320,12 @@ impl App {
     fn draw_editor_unwrapped(&mut self, f: &mut ratatui::Frame, inner: Rect) {
         let block = self.current_block();
         let lexicon = &self.lexicon;
+        let theme = &self.theme;
         let opened = self.opened.as_mut().expect("opened checked above");
         let highlighter = &mut self.highlighter;
         let current_lines: Vec<String> = opened.textarea.lines().to_vec();
         let source = current_lines.join("\n");
-        let highlighted = highlighter.highlight_lines(&source);
+        let highlighted = highlighter.highlight_lines(&source, theme);
 
         // Precompute "added since last save" bitmaps per source row.
         let saved = &opened.saved_lines;
@@ -4843,8 +5395,8 @@ impl App {
             }
         }
 
-        let lineno_style = Style::default().fg(Color::DarkGray);
-        let current_bg = Color::Indexed(236);
+        let lineno_style = Style::default().fg(theme.line_number_fg);
+        let current_bg = theme.current_line_bg;
 
         let mut visible_lines: Vec<Line> = Vec::with_capacity(h);
         let row_end = (opened.scroll_row + h).min(highlighted.len());
@@ -4877,6 +5429,7 @@ impl App {
                 added_flags,
                 row_hits,
                 lex_hits,
+                theme,
             );
             if is_current {
                 for s in &mut text_spans {
@@ -4916,11 +5469,12 @@ impl App {
     fn draw_editor_wrapped(&mut self, f: &mut ratatui::Frame, inner: Rect) {
         let block = self.current_block();
         let lexicon = &self.lexicon;
+        let theme = &self.theme;
         let opened = self.opened.as_mut().expect("opened checked above");
         let highlighter = &mut self.highlighter;
         let current_lines: Vec<String> = opened.textarea.lines().to_vec();
         let source = current_lines.join("\n");
-        let highlighted = highlighter.highlight_lines(&source);
+        let highlighted = highlighter.highlight_lines(&source, theme);
 
         let saved = &opened.saved_lines;
         let added_per_row: Vec<Vec<bool>> = current_lines
@@ -4988,8 +5542,8 @@ impl App {
         }
         opened.scroll_col = 0;
 
-        let lineno_style = Style::default().fg(Color::DarkGray);
-        let current_bg = Color::Indexed(236);
+        let lineno_style = Style::default().fg(theme.line_number_fg);
+        let current_bg = theme.current_line_bg;
 
         let mut lines: Vec<Line> = Vec::with_capacity(h);
         let row_end = (opened.scroll_row + h).min(visual.len());
@@ -5019,8 +5573,9 @@ impl App {
                 .get(v.src_row)
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
-            let mut text_spans =
-                build_visual_row_spans(v, selection, block, added_flags, row_hits, lex_hits);
+            let mut text_spans = build_visual_row_spans(
+                v, selection, block, added_flags, row_hits, lex_hits, theme,
+            );
             if is_current {
                 for s in &mut text_spans {
                     if s.style.bg.is_none() {
@@ -5112,19 +5667,19 @@ impl App {
                     width: inner.width,
                     height: body_height,
                 };
-                let body_text: &str = match &inf.status {
-                    InferenceStatus::Error(e) => e,
-                    _ => inf.response.as_str(),
+                let widget = match &inf.status {
+                    InferenceStatus::Error(e) => Paragraph::new(e.clone())
+                        .style(Style::default().fg(Color::Red))
+                        .wrap(Wrap { trim: false }),
+                    InferenceStatus::Streaming | InferenceStatus::Done => {
+                        // Render the response as markdown — bold/italic/
+                        // headings/code/lists all light up. Partial input
+                        // during streaming is tolerated by the renderer.
+                        let lines = super::markdown::render(&inf.response);
+                        Paragraph::new(lines).wrap(Wrap { trim: false })
+                    }
                 };
-                let style = match &inf.status {
-                    InferenceStatus::Error(_) => Style::default().fg(Color::Red),
-                    InferenceStatus::Streaming => Style::default(),
-                    InferenceStatus::Done => Style::default(),
-                };
-                f.render_widget(
-                    Paragraph::new(body_text).style(style).wrap(Wrap { trim: false }),
-                    body_rect,
-                );
+                f.render_widget(widget, body_rect);
                 if show_hints && inner.height >= 2 {
                     let hints_rect = Rect {
                         x: inner.x,
@@ -5187,9 +5742,20 @@ impl App {
                 } else {
                     Style::default().add_modifier(Modifier::DIM)
                 };
-                lines.push(Line::from(Span::styled(format!(" /{}", p.name), name_style)));
+                let (chip_text, chip_color) = match p.source {
+                    PromptSource::System => (" system ", Color::Cyan),
+                    PromptSource::Book => (" book ", Color::Green),
+                };
+                let chip_style = Style::default()
+                    .bg(chip_color)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD);
+                lines.push(Line::from(vec![
+                    Span::styled(chip_text.to_string(), chip_style),
+                    Span::styled(format!(" /{}", p.name), name_style),
+                ]));
                 lines.push(Line::from(Span::styled(
-                    format!("    {}", p.description),
+                    format!("        {}", p.description),
                     desc_style,
                 )));
             }
@@ -5200,7 +5766,16 @@ impl App {
                 Block::default()
                     .borders(Borders::ALL)
                     .title(" Prompts ")
-                    .border_style(Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                    .border_style(
+                        Style::default()
+                            .fg(self.theme.modal_border)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                    .style(
+                        Style::default()
+                            .bg(self.theme.modal_bg)
+                            .fg(self.theme.modal_fg),
+                    ),
             ),
             rect,
         );
@@ -5294,11 +5869,16 @@ impl App {
                     Style::default().add_modifier(Modifier::DIM)
                 };
 
+                // Display the human-readable breadcrumb (ancestor titles
+                // joined with `›`) instead of the slug-based directory path
+                // — book/chapter/subchapter names are what the user
+                // recognises.
+                let breadcrumb = self.title_breadcrumb(hit.id);
                 let header = format!(
                     " {:>5.3}  [{:<10}] {} ",
                     hit.score,
                     hit.kind.as_str(),
-                    hit.slug_path
+                    breadcrumb
                 );
                 lines.push(Line::from(Span::styled(header, header_style)));
                 lines.push(Line::from(Span::styled(

@@ -89,4 +89,65 @@
   }
 
   prompts_file: prompts.hjson
+
+  // Visual theme — every value is a hex RGB triple like "#RRGGBB" (or the
+  // short "#RGB" form). Empty strings fall back to the shipped Catppuccin
+  // Mocha defaults baked into the binary, so you only need to set the
+  // fields you want to override.
+  //
+  // Tip: terminals that don't speak truecolor (TERM=xterm-256color is fine)
+  // render the closest 256-colour neighbour automatically.
+  theme: {
+    // Pane chrome — base background / text and line-number / current-line
+    // accents used by the editor.
+    pane_bg:           "#1e1e2e"
+    pane_fg:           "#cdd6f4"
+    line_number_fg:    "#6c7086"
+    current_line_bg:   "#313244"
+
+    // Pane borders. Focused / unfocused get used everywhere; the editor
+    // additionally switches between dirty / saved / read-only to telegraph
+    // the open paragraph's state at a glance.
+    border_focused:    "#cba6f7"
+    border_unfocused:  "#45475a"
+    border_dirty:      "#f9e2af"
+    border_saved:      "#a6e3a1"
+    border_readonly:   "#94e2d5"
+
+    // Floating windows (Add / Delete / Rename / FindReplace / QuickRef /
+    // FilePicker / Help / PromptPicker). All share these three colours.
+    modal_bg:          "#181825"
+    modal_fg:          "#cdd6f4"
+    modal_border:      "#cba6f7"
+
+    // Places / Characters overlay tints. Words that match a paragraph
+    // title nested under the Places (resp. Characters) book light up in
+    // these colours inside the editor.
+    places_fg:         "#89dceb"
+    characters_fg:     "#f9e2af"
+
+    // In-buffer Ctrl+F search highlights (every match / the current one).
+    search_match_bg:   "#f38ba8"
+    search_current_bg: "#f5c2e7"
+
+    // Tree pane chrome: colour of the ▸ marker on the currently-open
+    // paragraph row.
+    tree_open_marker:  "#a6e3a1"
+
+    // Typst syntax highlight palette. Drives the colours applied to
+    // tree-sitter-typst's tagged regions in the editor buffer.
+    syntax_heading:     "#cba6f7"
+    syntax_bold:        "#f9e2af"
+    syntax_italic:      "#94e2d5"
+    syntax_string:      "#a6e3a1"
+    syntax_number:      "#fab387"
+    syntax_comment:     "#6c7086"
+    syntax_keyword:     "#cba6f7"
+    syntax_function:    "#89dceb"
+    syntax_operator:    "#94e2d5"
+    syntax_list_marker: "#cba6f7"
+    syntax_raw:         "#fab387"
+    syntax_tag:         "#89b4fa"
+    syntax_quote:       "#9399b2"
+  }
 }
