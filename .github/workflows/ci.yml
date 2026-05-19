@@ -26,6 +26,20 @@ jobs:
         with:
           components: clippy
 
+      # System libs for bdslib's transitive native deps on Ubuntu.
+      # See `release.yml` for the rationale; CI mirrors the same set.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libfontconfig1-dev \
+            libssl-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
