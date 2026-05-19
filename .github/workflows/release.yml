@@ -44,16 +44,20 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
-          # macOS x86_64 must run on an Intel runner — macos-latest is
-          # macos-14 (Apple Silicon), and cross-building a tree with
-          # native build scripts (yeslogic-fontconfig-sys etc.) from
-          # there fails because pkg-config can't reconcile arch mismatch.
-          - os: macos-13
-            target: x86_64-apple-darwin
-            archive: tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
+          # macOS x86_64 (Intel) is temporarily disabled. The macos-13
+          # runner pool is heavily capacity-constrained — v1.0.2's job
+          # sat in `queued` for 3+ hours without picking up a runner.
+          # Apple stopped selling Intel Macs in 2023; modern users are
+          # on Apple Silicon (aarch64) above. Intel-Mac users can still
+          # `cargo install --git`. Re-enable once GitHub-hosted macos-13
+          # runner availability improves OR by adopting a self-hosted
+          # Intel-Mac runner.
+          # - os: macos-13
+          #   target: x86_64-apple-darwin
+          #   archive: tar.gz
           # Windows is temporarily disabled. yeslogic-fontconfig-sys
           # (pulled in transitively by bdslib) is a wrapper over the
           # POSIX fontconfig C library; on Windows it needs a vcpkg /
