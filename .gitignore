@@ -27,3 +27,4 @@ target
 # Lives next to the working tree but is environment-specific and shouldn't
 # travel with commits.
 /.claude
+/book_sources
