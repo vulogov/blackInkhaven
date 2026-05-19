@@ -326,6 +326,8 @@ pub struct ThemeConfig {
     // Lexicon highlights overlay.
     pub places_fg: String,
     pub characters_fg: String,
+    pub artefacts_fg: String,
+    pub notes_underline_fg: String,
 
     // Search-match overlay in the editor.
     pub search_match_bg: String,
@@ -395,6 +397,8 @@ impl Default for ThemeConfig {
 
             places_fg: "#89dceb".into(),
             characters_fg: "#f9e2af".into(),
+            artefacts_fg: "#fab387".into(),
+            notes_underline_fg: "#cdd6f4".into(),
 
             search_match_bg: "#f38ba8".into(),
             search_current_bg: "#f5c2e7".into(),

@@ -267,22 +267,36 @@ fn match_style_at(
 }
 
 /// Foreground style for a Place/Character lexicon hit at the given column,
-/// or None if the column doesn't fall inside any hit. Place wins over
-/// Character if both categories match the same column (shouldn't happen at
-/// the lexicon-build layer, but cheap to be defensive).
+/// Style override at `col` for any lexicon hit covering that column,
+/// or None when no hit applies. Precedence on overlap (rare; the
+/// builder dedupes case-insensitive titles across categories before
+/// they reach here):
+///
+///   Place > Character > Artefact > Note
+///
+/// Higher categories paint over lower so a name catalogued as both a
+/// Place and a Note shows in the Place style.
 fn lex_style_at(
     hits: &[super::lexicon::LexHit],
     col: usize,
     theme: &super::theme::Theme,
 ) -> Option<Style> {
     use super::lexicon::LexCategory;
+    fn rank(c: LexCategory) -> u8 {
+        match c {
+            LexCategory::Place => 4,
+            LexCategory::Character => 3,
+            LexCategory::Artefact => 2,
+            LexCategory::Note => 1,
+        }
+    }
     let mut chosen: Option<LexCategory> = None;
     for hit in hits {
         if col >= hit.col_start && col < hit.col_end {
-            match (chosen, hit.category) {
-                (Some(LexCategory::Place), _) => {}
-                (_, cat) => chosen = Some(cat),
-            }
+            chosen = Some(match chosen {
+                Some(prev) if rank(prev) >= rank(hit.category) => prev,
+                _ => hit.category,
+            });
         }
     }
     chosen.map(|cat| match cat {
@@ -292,6 +306,12 @@ fn lex_style_at(
         LexCategory::Character => Style::default()
             .fg(theme.characters_fg)
             .add_modifier(Modifier::BOLD),
+        LexCategory::Artefact => Style::default()
+            .fg(theme.artefacts_fg)
+            .add_modifier(Modifier::BOLD),
+        LexCategory::Note => Style::default()
+            .fg(theme.notes_underline_fg)
+            .add_modifier(Modifier::UNDERLINED),
     })
 }
 

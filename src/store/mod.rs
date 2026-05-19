@@ -28,6 +28,7 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("prompts", "Prompts"),
     ("places", "Places"),
     ("characters", "Characters"),
+    ("artefacts", "Artefacts"),
     ("typst", "Typst"),
     ("help", "Help"),
 ];
@@ -36,6 +37,7 @@ pub const SYSTEM_TAG_NOTES: &str = "notes";
 pub const SYSTEM_TAG_PROMPTS: &str = "prompts";
 pub const SYSTEM_TAG_PLACES: &str = "places";
 pub const SYSTEM_TAG_CHARACTERS: &str = "characters";
+pub const SYSTEM_TAG_ARTEFACTS: &str = "artefacts";
 pub const SYSTEM_TAG_TYPST: &str = "typst";
 pub const SYSTEM_TAG_HELP: &str = "help";
 
@@ -303,6 +305,30 @@ impl Store {
                     // SYSTEM_BOOKS array index. Reload before each create so
                     // subsequent slugs see prior creates and don't collide.
                     let h = Hierarchy::load(self)?;
+
+                    // Make room for the new system book at its
+                    // canonical slot: bump every existing root book
+                    // (system or user) with `order >= target_order` up
+                    // by 1. Without this, inserting `Artefacts` at
+                    // slot 5 into a project that already has `Typst`
+                    // at order 5 would either collide on order (sort
+                    // tie-broken by slug — usually wrong) or land out
+                    // of the intended sequence. A single open-time
+                    // pass is enough; subsequent opens are no-ops
+                    // since the book then exists.
+                    for n in h.children_of(None) {
+                        if n.order >= target_order {
+                            let mut bumped = n.clone();
+                            bumped.order += 1;
+                            self.inner
+                                .update_metadata(bumped.id, bumped.to_json())
+                                .map_err(|e| {
+                                    Error::Store(format!("update_metadata (bump): {e}"))
+                                })?;
+                        }
+                    }
+                    let h = Hierarchy::load(self)?;
+
                     let mut node = self.create_node(
                         cfg,
                         &h,
@@ -321,6 +347,42 @@ impl Store {
                 }
             }
         }
+        // Heal-pass: if two system books ended up sharing the same
+        // `order` (older seeder versions used to set the new book's
+        // canonical idx without bumping the existing books), the
+        // lexicographic tie-breaker chooses the wrong visual order.
+        // Re-stamp the colliding pair to their canonical positions
+        // and bump anything else above them. This is conservative —
+        // it only fires when there's a clear collision, so a user
+        // who deliberately reordered system books isn't surprised.
+        let healed = Hierarchy::load(self)?;
+        let mut by_order: std::collections::HashMap<u32, Vec<Node>> =
+            std::collections::HashMap::new();
+        for n in healed.children_of(None) {
+            if n.system_tag.is_some() {
+                by_order.entry(n.order).or_default().push(n.clone());
+            }
+        }
+        let any_collision = by_order.values().any(|v| v.len() > 1);
+        if any_collision {
+            for (idx, (tag, _title)) in SYSTEM_BOOKS.iter().enumerate() {
+                let target = idx as u32;
+                if let Some(node) = healed.iter().find(|n| {
+                    n.kind == NK::Book && n.system_tag.as_deref() == Some(*tag)
+                }) {
+                    if node.order != target {
+                        let mut updated = node.clone();
+                        updated.order = target;
+                        self.inner
+                            .update_metadata(updated.id, updated.to_json())
+                            .map_err(|e| {
+                                Error::Store(format!("update_metadata (heal): {e}"))
+                            })?;
+                    }
+                }
+            }
+        }
+
         self.sync()?;
         Ok(())
     }
