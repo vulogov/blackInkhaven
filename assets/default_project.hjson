@@ -40,21 +40,27 @@
     unbounded_subchapters: false
   }
 
+  // Seconds between background calls to bdslib's sync (HNSW flush +
+  // DuckDB checkpoint). 0 disables; saves still trigger sync explicitly.
+  sync_interval_seconds: 60
+
   keys: {
     save:             Ctrl+s
     search:           Ctrl+/
     ai_prompt:        Ctrl+i
-    add_book:         Ctrl+Shift+b
-    add_chapter:      Ctrl+Shift+c
-    add_subchapter:   Ctrl+Shift+s
-    add_paragraph:    Ctrl+Shift+p
-    delete_node:      Ctrl+Shift+d
     next_pane:        Tab
     prev_pane:        Shift+Tab
     page_up:          PageUp
     page_down:        PageDown
-    move_up:          Ctrl+Shift+Up
-    move_down:        Ctrl+Shift+Down
+
+    // The meta-prefix chord. Pressing this puts the TUI into meta mode;
+    // the next keystroke is treated as an action selector:
+    //   B/C/S/P  → add book / chapter / subchapter / paragraph
+    //   D        → delete the cursor's node (subtree)
+    //   ↑/↓      → reorder current node within its siblings
+    //   Esc      → cancel meta mode
+    // Replaces the old `Ctrl+Shift+*` chords which terminals often eat.
+    meta_prefix:      Ctrl+b
   }
 
   prompts_file: prompts.hjson

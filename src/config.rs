@@ -19,6 +19,15 @@ pub struct Config {
     pub hierarchy: HierarchyConfig,
     #[serde(default = "default_prompts_path")]
     pub prompts_file: PathBuf,
+    /// Seconds between background calls to `Store::sync()` (flushes HNSW
+    /// index + DuckDB checkpoint). 0 disables the background sync; explicit
+    /// sync-on-save still fires.
+    #[serde(default = "default_sync_interval")]
+    pub sync_interval_seconds: u64,
+}
+
+fn default_sync_interval() -> u64 {
+    60
 }
 
 fn default_prompts_path() -> PathBuf {
@@ -34,6 +43,7 @@ impl Default for Config {
             keys: KeyBindings::default(),
             hierarchy: HierarchyConfig::default(),
             prompts_file: default_prompts_path(),
+            sync_interval_seconds: default_sync_interval(),
         }
     }
 }
@@ -123,17 +133,15 @@ pub struct KeyBindings {
     pub save: String,
     pub search: String,
     pub ai_prompt: String,
-    pub add_book: String,
-    pub add_chapter: String,
-    pub add_subchapter: String,
-    pub add_paragraph: String,
-    pub delete_node: String,
     pub next_pane: String,
     pub prev_pane: String,
     pub page_up: String,
     pub page_down: String,
-    pub move_up: String,
-    pub move_down: String,
+    /// Meta-prefix chord. When pressed, the next keystroke is interpreted as
+    /// an action selector (B add book, C chapter, S subchapter, P paragraph,
+    /// D delete, ↑/↓ reorder, Esc cancel). Replaces the old `Ctrl+Shift+*`
+    /// chords which many terminals and multiplexers re-encode unhelpfully.
+    pub meta_prefix: String,
 }
 
 impl Default for KeyBindings {
@@ -142,17 +150,11 @@ impl Default for KeyBindings {
             save: "Ctrl+s".into(),
             search: "Ctrl+/".into(),
             ai_prompt: "Ctrl+i".into(),
-            add_book: "Ctrl+Shift+b".into(),
-            add_chapter: "Ctrl+Shift+c".into(),
-            add_subchapter: "Ctrl+Shift+s".into(),
-            add_paragraph: "Ctrl+Shift+p".into(),
-            delete_node: "Ctrl+Shift+d".into(),
             next_pane: "Tab".into(),
             prev_pane: "Shift+Tab".into(),
             page_up: "PageUp".into(),
             page_down: "PageDown".into(),
-            move_up: "Ctrl+Shift+Up".into(),
-            move_down: "Ctrl+Shift+Down".into(),
+            meta_prefix: "Ctrl+b".into(),
         }
     }
 }

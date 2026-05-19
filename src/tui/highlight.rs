@@ -232,6 +232,32 @@ pub fn wrap_line(runs: &[StyledRun], src_row: usize, width: usize) -> Vec<Visual
 /// True means the char is new (will be rendered bold).
 pub type AddedFlags<'a> = Option<&'a [bool]>;
 
+/// One regex hit projected onto a single source row, used by the renderer
+/// to paint matches red. `is_current` marks the hit that the cursor is
+/// parked on (gets a brighter highlight).
+#[derive(Debug, Clone, Copy)]
+pub struct RowHit {
+    pub col_start: usize,
+    pub col_end: usize,
+    pub is_current: bool,
+}
+
+fn match_style_at(row_hits: &[RowHit], col: usize) -> Option<Style> {
+    for hit in row_hits {
+        if col >= hit.col_start && col < hit.col_end {
+            return Some(if hit.is_current {
+                Style::default()
+                    .bg(Color::LightRed)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().bg(Color::Red).fg(Color::White)
+            });
+        }
+    }
+    None
+}
+
 /// Compute which characters in `current` differ from `saved`, returning a
 /// bool-per-char vector aligned with `current`. Uses the longest common
 /// prefix + suffix method: characters between the two unchanged regions are
@@ -266,6 +292,7 @@ pub fn build_visual_row_spans(
     selection: Option<((usize, usize), (usize, usize))>,
     block: Option<BlockSelection>,
     added: AddedFlags,
+    matches: &[RowHit],
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
 
@@ -305,6 +332,12 @@ pub fn build_visual_row_spans(
             if is_added {
                 style = style.add_modifier(Modifier::BOLD);
             }
+            // Match highlight applies AFTER added-bold but BEFORE selection
+            // (so selection's REVERSED wins on cells that are both).
+            if let Some(match_style) = match_style_at(matches, src_col) {
+                // Compose: keep added's bold, take match's fg/bg.
+                style = style.patch(match_style);
+            }
             if is_selected || is_block {
                 style = style.add_modifier(Modifier::REVERSED);
             }
@@ -333,6 +366,7 @@ pub fn build_row_spans(
     selection: Option<((usize, usize), (usize, usize))>,
     block: Option<BlockSelection>,
     added: AddedFlags,
+    matches: &[RowHit],
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
 
@@ -385,6 +419,9 @@ pub fn build_row_spans(
             let mut style = run.style;
             if is_added {
                 style = style.add_modifier(Modifier::BOLD);
+            }
+            if let Some(match_style) = match_style_at(matches, src_col) {
+                style = style.patch(match_style);
             }
             if is_selected || is_block {
                 style = style.add_modifier(Modifier::REVERSED);

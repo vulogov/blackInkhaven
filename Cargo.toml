@@ -54,6 +54,7 @@ chrono = { version = "0.4", features = ["serde"] }
 arboard = "3"
 slug = "0.1"
 walkdir = "2"
+regex = "1"
 
 [dev-dependencies]
 tempfile = "3"
