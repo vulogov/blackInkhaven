@@ -11,6 +11,8 @@
   }
 
   llm: {
+    // Provider used by the AI pane when no explicit override is passed.
+    // Switch to "ollama" below for local inference.
     default: gemini
     providers: {
       gemini: {
@@ -20,6 +22,13 @@
       deepseek: {
         model: deepseek-chat
         api_key_env: DEEPSEEK_API_KEY
+      }
+      // Local Ollama at the default endpoint (http://localhost:11434).
+      // No API key is needed — omit `api_key_env`. genai picks the Ollama
+      // adapter from the model name. Pull a model first with e.g.
+      // `ollama pull llama3.2`, then set `default: ollama` above.
+      ollama: {
+        model: llama3.2
       }
     }
   }

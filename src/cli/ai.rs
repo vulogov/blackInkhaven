@@ -19,6 +19,7 @@ pub fn run(project: &Path, prompt: &str, provider: Option<&str>) -> Result<()> {
         ai.client.clone(),
         model.to_string(),
         None,
+        Vec::new(),
         prompt.to_string(),
     );
 

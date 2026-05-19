@@ -165,6 +165,12 @@ impl Store {
         &self.inner
     }
 
+    /// Project root path (the directory the user passed via --project).
+    /// Read-only accessor — callers should not mutate the layout.
+    pub fn project_root(&self) -> &std::path::Path {
+        &self.layout.root
+    }
+
     pub fn sync(&self) -> Result<()> {
         self.inner.sync().map_err(|e| Error::Store(e.to_string()))
     }

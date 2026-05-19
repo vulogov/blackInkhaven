@@ -48,7 +48,7 @@ pub fn entries_for(focus: Focus) -> Vec<Entry> {
     out
 }
 
-fn global_entries() -> [Entry; 11] {
+fn global_entries() -> [Entry; 12] {
     [
         header("─── Global ───"),
         entry("Ctrl+Q", "Quit (autosaves dirty paragraph)"),
@@ -60,6 +60,7 @@ fn global_entries() -> [Entry; 11] {
         entry("Ctrl+I", "Focus AI prompt"),
         entry("Ctrl+B", "Meta prefix (next key = action)"),
         entry("Ctrl+B H", "This Quick reference (works from every pane)"),
+        entry("F1", "Help-manual question (RAG over the Help book)"),
         entry("Esc", "Close overlay / cancel"),
     ]
 }
@@ -131,7 +132,7 @@ fn editor_entries() -> [Entry; 35] {
     ]
 }
 
-fn ai_entries() -> [Entry; 11] {
+fn ai_entries() -> [Entry; 13] {
     [
         entry("r / R", "Replace editor selection with AI text"),
         entry("i / I", "Insert AI text at cursor"),
@@ -141,8 +142,10 @@ fn ai_entries() -> [Entry; 11] {
         header(""),
         header("─ AI prompt input ─"),
         entry("/", "Show prompt library picker"),
+        entry("Help! …", "Help-manual question (same as F1)"),
         entry("Enter", "Send to LLM"),
         header(""),
         entry("Ctrl+B C", "Clear current inference"),
+        entry("Ctrl+B H", "Open Quick reference"),
     ]
 }

@@ -2,6 +2,7 @@ pub mod add;
 pub mod ai;
 pub mod delete;
 pub mod export;
+pub mod import_help;
 pub mod init;
 pub mod list;
 pub mod mv;
@@ -114,6 +115,18 @@ pub enum Command {
         provider: Option<String>,
     },
 
+    /// Import a directory tree into the Help system book. Subdirectories
+    /// become chapters / subchapters / (flattened) and files become
+    /// paragraphs. Filenames and directory names supply the displayed
+    /// titles.
+    ImportHelp {
+        /// Source directory whose contents will be ingested under the Help
+        /// system book. Files at the root land as paragraphs directly under
+        /// Help; subdirectories become chapters (then subchapters, etc.).
+        #[arg(long)]
+        documents_directory: PathBuf,
+    },
+
     /// Launch the TUI editor (default if no subcommand is given).
     Tui,
 }
@@ -184,6 +197,9 @@ impl Cli {
             Command::Ai { prompt, provider } => {
                 ai::run(&project, &prompt, provider.as_deref()).map_err(Into::into)
             }
+            Command::ImportHelp {
+                documents_directory,
+            } => import_help::run(&project, &documents_directory).map_err(Into::into),
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
         }
     }

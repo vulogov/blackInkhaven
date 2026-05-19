@@ -33,6 +33,7 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+5`             | Focus the **AI prompt** bar (bottom).                       | no           |
 | `Ctrl+B`             | Enter **meta mode**. The next keystroke is the action selector (see §1.1). | `meta_prefix` |
 | `Ctrl+B H`           | Open the pane-aware **Quick reference** floating pane. Works from every pane (Tree / Editor / AI). Scroll with arrows / PgUp / PgDn; close with `Esc`. Routed through the meta prefix so it never collides with the editor's `Ctrl+H` split-scroll. | no |
+| `F1`                 | Open the **Help-manual** query pane (RAG over the Help book). Type a question, Enter to ask. The default LLM provider streams a grounded answer into the AI pane; the model is constrained to use only the Help excerpts (no external knowledge). Same flow as typing `Help! <question>` into the AI prompt bar. | no |
 
 ### 1.1 Meta mode (Ctrl+B prefix)
 
