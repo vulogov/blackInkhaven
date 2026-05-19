@@ -48,7 +48,7 @@ pub fn entries_for(focus: Focus) -> Vec<Entry> {
     out
 }
 
-fn global_entries() -> [Entry; 17] {
+fn global_entries() -> [Entry; 18] {
     [
         header("─── Global ───"),
         entry("Ctrl+Q", "Quit (autosaves dirty paragraph)"),
@@ -62,6 +62,7 @@ fn global_entries() -> [Entry; 17] {
         entry("Ctrl+B H", "This Quick reference (works from every pane)"),
         entry("Ctrl+B V", "Version, author, and component credits"),
         entry("Ctrl+B I", "Current book info (paths · stats · PDF status)"),
+        entry("Ctrl+B L", "Switch LLM provider (writes to inkhaven.hjson)"),
         entry("F1", "Help-manual question (RAG over the Help book)"),
         entry("F7", "Grammar check the open paragraph (→ AI pane)"),
         entry("F9", "Cycle AI scope: None→Sel→Para→Sub→Chap→Book→None"),
@@ -142,7 +143,7 @@ fn editor_entries() -> [Entry; 43] {
         header("─ Editor meta (Ctrl+B …) ─"),
         entry("Ctrl+B S", "Save (alternative to Ctrl+S)"),
         entry("Ctrl+B N / R", "New snapshot / open snapshot history"),
-        entry("Ctrl+B L / F", "Load file / toggle split-edit"),
+        entry("Ctrl+B F", "Toggle split-edit (F3 still loads files)"),
         entry("Ctrl+B T", "Retitle paragraph from its first sentence"),
         entry("Ctrl+B P", "Place RAG — selection → Places book → AI pane"),
         entry("Ctrl+B C", "Character RAG — selection → Characters book → AI pane"),

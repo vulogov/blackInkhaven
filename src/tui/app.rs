@@ -835,6 +835,132 @@ mod book_info_tests {
     }
 
     #[test]
+    fn set_llm_default_rewrites_value_only() {
+        let raw = "\
+language: english
+
+llm: {
+  // Provider used by default.
+  default: gemini
+  providers: {
+    gemini: { model: gemini-2.5-pro }
+    ollama: { model: llama3.2 }
+  }
+}
+";
+        let out = set_llm_default_in_hjson(raw, "ollama").unwrap();
+        // The default line changed.
+        assert!(out.contains("default: ollama"));
+        assert!(!out.contains("default: gemini"));
+        // Everything else survives byte-for-byte.
+        assert!(out.contains("language: english"));
+        assert!(out.contains("// Provider used by default."));
+        assert!(out.contains("model: gemini-2.5-pro"));
+        assert!(out.contains("model: llama3.2"));
+    }
+
+    #[test]
+    fn set_llm_default_preserves_trailing_comment() {
+        let raw = "\
+llm: {
+  default: gemini    // pick gemini for prose
+  providers: { gemini: { model: x } }
+}
+";
+        let out = set_llm_default_in_hjson(raw, "ollama").unwrap();
+        // Value swapped, comment retained.
+        assert!(
+            out.contains("default: ollama"),
+            "expected new default; got:\n{out}"
+        );
+        assert!(
+            out.contains("// pick gemini for prose"),
+            "expected trailing comment preserved; got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn set_llm_default_quotes_unsafe_values() {
+        let raw = "\
+llm: {
+  default: gemini
+  providers: { x: { model: y } }
+}
+";
+        let out = set_llm_default_in_hjson(raw, "weird name").unwrap();
+        assert!(
+            out.contains("default: \"weird name\""),
+            "value with space should be quoted; got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn set_llm_default_inserts_when_missing() {
+        // No `default:` key in the llm block — insert one.
+        let raw = "\
+llm: {
+  providers: { gemini: { model: g } }
+}
+";
+        let out = set_llm_default_in_hjson(raw, "gemini").unwrap();
+        assert!(
+            out.contains("default: gemini"),
+            "expected inserted default; got:\n{out}"
+        );
+        // The providers block survives.
+        assert!(out.contains("providers: { gemini: { model: g } }"));
+    }
+
+    #[test]
+    fn set_llm_default_errors_on_missing_block() {
+        let raw = "language: english\n";
+        let err = set_llm_default_in_hjson(raw, "gemini").unwrap_err();
+        assert!(err.contains("no `llm:` block"), "got: {err}");
+    }
+
+    #[test]
+    fn set_llm_default_roundtrips_shipped_template() {
+        // The annotated default HJSON the project ships with has to
+        // survive a switch and still parse cleanly via `Config::load`.
+        // This is the regression we care about most — if the in-place
+        // edit garbles the file, the user's next launch fails to read
+        // their config.
+        let raw = crate::config::DEFAULT_PROJECT_CONFIG;
+        let edited = set_llm_default_in_hjson(raw, "ollama").unwrap();
+        let cfg: crate::config::Config =
+            serde_hjson::from_str(&edited).expect("edited HJSON should still parse");
+        assert_eq!(cfg.llm.default, "ollama");
+        // The two non-llm sections should round-trip unchanged.
+        assert_eq!(cfg.language, "english");
+        assert_eq!(cfg.editor.tab_width, 2);
+        // Comments survive (string match in the raw text).
+        assert!(edited.contains("// Provider used by the AI pane"));
+    }
+
+    #[test]
+    fn set_llm_default_does_not_match_provider_internals() {
+        // A `default:` key inside a nested provider block must NOT be
+        // mistaken for `llm.default`. Our scanner requires depth==1.
+        let raw = "\
+llm: {
+  default: gemini
+  providers: {
+    fake: {
+      default: should_not_be_touched
+      model: x
+    }
+  }
+}
+";
+        let out = set_llm_default_in_hjson(raw, "ollama").unwrap();
+        assert!(out.contains("default: ollama"));
+        assert!(
+            out.contains("default: should_not_be_touched"),
+            "nested `default:` inside a provider must survive untouched; got:\n{out}"
+        );
+    }
+
+    #[test]
     fn format_age_minutes_hours_days() {
         assert_eq!(
             format_age_humantime(std::time::Duration::from_secs(7 * 60)),
@@ -943,6 +1069,15 @@ enum Modal {
     /// fresh as the user edits.
     BookInfo {
         scroll: usize,
+    },
+    /// Ctrl+B L — pick a different `llm.default` provider from the set
+    /// configured in inkhaven.hjson. On commit we rewrite just the
+    /// `default:` line of the HJSON file in place so user comments and
+    /// the rest of the config survive.
+    LlmPicker {
+        providers: Vec<String>,
+        cursor: usize,
+        initial_default: String,
     },
     /// F1 help-manual query. Asks a free-form question against the Help
     /// system book (RAG), then streams the constrained LLM answer into the
@@ -1563,15 +1698,15 @@ impl App {
             // pane. Generic suffix (· H help · Esc cancel) is shared.
             self.status = match self.focus {
                 Focus::Tree | Focus::SearchBar => {
-                    "META · B/C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I book info · Esc cancel"
+                    "META · B/C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I book info · L LLM · Esc cancel"
                         .into()
                 }
                 Focus::Editor => {
-                    "META · S save · N snapshot · R history · L load · F split · T retitle · P place · C character · H help · V credits · I book info · Esc cancel"
+                    "META · S save · N snapshot · R history · F split · T retitle · P place · C character · H help · V credits · I book info · L LLM · Esc cancel"
                         .into()
                 }
                 Focus::Ai | Focus::AiPrompt => {
-                    "META · C clear chat · H help · V credits · I book info · Esc cancel".into()
+                    "META · C clear chat · H help · V credits · I book info · L LLM · Esc cancel".into()
                 }
             };
             return Ok(false);
@@ -3707,6 +3842,13 @@ impl App {
             self.open_book_info();
             return;
         }
+        // L is the global "switch LLM provider" picker — pick a
+        // different `default` from `llm.providers`, save it back to
+        // inkhaven.hjson in place.
+        if matches!(key.code, KeyCode::Char('L') | KeyCode::Char('l')) {
+            self.open_llm_picker();
+            return;
+        }
 
         let consumed = match self.focus {
             Focus::Tree | Focus::SearchBar => self.dispatch_meta_tree(key),
@@ -3787,11 +3929,9 @@ impl App {
                 self.open_snapshot_picker();
                 true
             }
-            // L: load file into editor (== F3).
-            KeyCode::Char('L') | KeyCode::Char('l') => {
-                self.open_file_picker(PickerContext::EditorLoad);
-                true
-            }
+            // L was a duplicate of F3 (load file). Reclaimed as the
+            // global "switch LLM provider" chord — F3 still loads files
+            // in the editor pane.
             // F: toggle split-edit mode (== F4).
             KeyCode::Char('F') | KeyCode::Char('f') => {
                 self.toggle_split();
@@ -4154,6 +4294,236 @@ impl App {
         out
     }
 
+    /// Ctrl+B L — open the LLM provider picker. Empty providers map
+    /// yields a status-bar diagnostic instead of an empty modal.
+    fn open_llm_picker(&mut self) {
+        if self.cfg.llm.providers.is_empty() {
+            self.status =
+                "No LLM providers configured in inkhaven.hjson — add at least one under `llm.providers`."
+                    .into();
+            return;
+        }
+        let providers: Vec<String> = self.cfg.llm.providers.keys().cloned().collect();
+        // Position the cursor on the currently-active default so Enter
+        // is a confirm rather than a switch.
+        let cursor = providers
+            .iter()
+            .position(|p| p == &self.cfg.llm.default)
+            .unwrap_or(0);
+        let initial_default = self.cfg.llm.default.clone();
+        self.modal = Modal::LlmPicker {
+            providers,
+            cursor,
+            initial_default,
+        };
+        self.status = "Switch LLM provider · ↑↓ / Enter to switch · Esc to cancel".into();
+    }
+
+    fn llm_picker_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::LlmPicker {
+            providers, cursor, ..
+        } = &mut self.modal
+        else {
+            return false;
+        };
+        let total = providers.len();
+        match key.code {
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+                true
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < total {
+                    *cursor += 1;
+                }
+                true
+            }
+            KeyCode::Home => {
+                *cursor = 0;
+                true
+            }
+            KeyCode::End => {
+                *cursor = total.saturating_sub(1);
+                true
+            }
+            KeyCode::Enter => {
+                self.commit_llm_picker();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn commit_llm_picker(&mut self) {
+        let (chosen, initial_default) = match &self.modal {
+            Modal::LlmPicker {
+                providers,
+                cursor,
+                initial_default,
+            } => (
+                providers.get(*cursor).cloned(),
+                initial_default.clone(),
+            ),
+            _ => return,
+        };
+        let Some(chosen) = chosen else {
+            self.modal = Modal::None;
+            return;
+        };
+
+        // No-op early-out: picking the same provider just closes the
+        // modal without rewriting the file.
+        if chosen == initial_default {
+            self.modal = Modal::None;
+            self.status = format!("LLM provider unchanged · still `{chosen}`");
+            return;
+        }
+
+        // Persist to inkhaven.hjson with a targeted text edit so user
+        // comments + the rest of the config survive the rewrite.
+        let config_path = self.layout.config_path();
+        let raw = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(e) => {
+                self.status =
+                    format!("LLM switch aborted: read {}: {e}", config_path.display());
+                return;
+            }
+        };
+        let updated = match set_llm_default_in_hjson(&raw, &chosen) {
+            Ok(s) => s,
+            Err(reason) => {
+                self.status = format!(
+                    "LLM switch aborted: can't rewrite {}: {reason}",
+                    config_path.display()
+                );
+                return;
+            }
+        };
+        if let Err(e) = std::fs::write(&config_path, &updated) {
+            self.status = format!("LLM switch aborted: write {}: {e}", config_path.display());
+            return;
+        }
+
+        // Update the live config + AiClient so subsequent prompts use
+        // the new provider without restarting.
+        self.cfg.llm.default = chosen.clone();
+        match AiClient::from_config(&self.cfg.llm) {
+            Ok(ai) => self.ai = ai,
+            Err(e) => {
+                // The file is already on disk so the next startup will
+                // honour the new default — surface the error so the
+                // user knows the in-memory client wasn't refreshed.
+                self.status = format!(
+                    "switched to `{chosen}` on disk, but couldn't refresh in-memory client: {e}"
+                );
+                self.modal = Modal::None;
+                return;
+            }
+        }
+
+        self.modal = Modal::None;
+        self.status = format!(
+            "LLM provider switched to `{chosen}` · saved to {}",
+            config_path.display()
+        );
+    }
+
+    fn draw_llm_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::LlmPicker {
+            providers,
+            cursor,
+            initial_default,
+        } = &self.modal
+        else {
+            return;
+        };
+
+        // Build the visible lines so we can size the modal to fit.
+        let header_lines = 2; // title + blank
+        let footer_lines = 2; // blank + hint
+        let body_lines = providers.len();
+        let height = (header_lines + body_lines + footer_lines + 2) as u16;
+        let height = height.clamp(8, area.height.saturating_sub(2));
+
+        // Widest provider name + model for column alignment.
+        let max_name = providers.iter().map(|p| p.chars().count()).max().unwrap_or(8);
+        let max_model = providers
+            .iter()
+            .filter_map(|p| self.cfg.llm.providers.get(p).map(|c| c.model.chars().count()))
+            .max()
+            .unwrap_or(8);
+        let width = (max_name + max_model + 28) as u16;
+        let width = width.clamp(50, area.width.saturating_sub(6));
+
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Switch LLM provider · Ctrl+B L ")
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(""));
+        for (i, name) in providers.iter().enumerate() {
+            let prov = self.cfg.llm.providers.get(name);
+            let model = prov.map(|p| p.model.as_str()).unwrap_or("?");
+            let api_key_state = prov
+                .and_then(|p| p.api_key_env.clone())
+                .map(|env| {
+                    if std::env::var(&env).is_ok() {
+                        format!("· {env} set")
+                    } else {
+                        format!("· {env} MISSING")
+                    }
+                })
+                .unwrap_or_else(|| "· local (no key)".to_string());
+            let marker = if i == *cursor { "›" } else { " " };
+            let current_tag = if name == initial_default {
+                "  (current)"
+            } else {
+                ""
+            };
+            let name_padded = format!("{name:<width$}", width = max_name);
+            let model_padded = format!("{model:<width$}", width = max_model);
+            let row = format!(
+                "  {marker} {name_padded}   {model_padded}   {api_key_state}{current_tag}"
+            );
+            let style = if i == *cursor {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED)
+                    .add_modifier(Modifier::BOLD)
+            } else if name == initial_default {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(row, style)));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  ↑↓ to select · Enter to switch · Esc to cancel".to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
 
     fn cycle_ai_mode(&mut self) {
         self.ai_mode = self.ai_mode.next();
@@ -5351,6 +5721,7 @@ impl App {
         let is_quickref = matches!(self.modal, Modal::QuickRef { .. });
         let is_credits = matches!(self.modal, Modal::Credits { .. });
         let is_book_info = matches!(self.modal, Modal::BookInfo { .. });
+        let is_llm_picker = matches!(self.modal, Modal::LlmPicker { .. });
         let is_help_query = matches!(self.modal, Modal::HelpQuery { .. });
 
         if is_quickref {
@@ -5363,6 +5734,10 @@ impl App {
         }
         if is_book_info {
             self.book_info_handle_key(key);
+            return Ok(false);
+        }
+        if is_llm_picker {
+            self.llm_picker_handle_key(key);
             return Ok(false);
         }
 
@@ -6323,6 +6698,10 @@ impl App {
             self.draw_book_info_modal(f, area, *scroll);
             return;
         }
+        if let Modal::LlmPicker { .. } = &self.modal {
+            self.draw_llm_picker_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -6337,6 +6716,7 @@ impl App {
             Modal::QuickRef { .. } => unreachable!("quickref handled above"),
             Modal::Credits { .. } => unreachable!("credits handled above"),
             Modal::BookInfo { .. } => unreachable!("book info handled above"),
+            Modal::LlmPicker { .. } => unreachable!("llm picker handled above"),
             Modal::HelpQuery { input } => {
                 let body = vec![
                     Line::from(""),
@@ -7771,6 +8151,176 @@ fn format_age_humantime(dur: std::time::Duration) -> String {
         }
     } else {
         format!("{minutes}m")
+    }
+}
+
+/// Rewrite the `llm.default` value in an existing HJSON config file in
+/// place, preserving every other byte — comments, key ordering,
+/// indentation, trailing comments on the rewritten line. Returns the
+/// new file contents. The strategy is a targeted text edit (no full
+/// re-serialisation) so the carefully-annotated default HJSON template
+/// survives a provider switch.
+///
+/// Returns Err with a human-readable reason when the file shape
+/// doesn't match our expectations (no `llm:` block, no `default:`
+/// inside it, unterminated braces). The caller surfaces this in the
+/// status bar without touching the file.
+///
+/// The brace counter doesn't understand HJSON strings — it would
+/// miscount a `{` / `}` inside a quoted string. This is acceptable for
+/// the llm block, which only ever contains nested objects and simple
+/// identifier values.
+fn set_llm_default_in_hjson(raw: &str, new_default: &str) -> Result<String, String> {
+    let lines: Vec<&str> = raw.split_inclusive('\n').collect();
+    if lines.is_empty() {
+        return Err("config file is empty".into());
+    }
+
+    // Find the line that introduces the `llm:` key.
+    let llm_open_idx = lines.iter().position(|l| {
+        let trimmed = l.trim_start();
+        !trimmed.starts_with("//") && trimmed.starts_with("llm:")
+    });
+    let llm_open_idx = llm_open_idx.ok_or_else(|| "no `llm:` block found in HJSON".to_string())?;
+
+    // Walk forward tracking brace depth (ignoring `//` line comments)
+    // so we know where the llm block ends.
+    let mut depth: i32 = 0;
+    let mut block_started = false;
+    let mut block_end: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate().skip(llm_open_idx) {
+        let code = line.split("//").next().unwrap_or("");
+        for c in code.chars() {
+            match c {
+                '{' => {
+                    depth += 1;
+                    block_started = true;
+                }
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        if block_started && depth == 0 {
+            block_end = Some(i);
+            break;
+        }
+    }
+    let block_end =
+        block_end.ok_or_else(|| "unterminated `llm: {` block — check brace balance".to_string())?;
+
+    // Now scan for the `default:` line that's a *direct* child of the
+    // llm block (depth == 1 at the time the line starts being read).
+    let mut depth: i32 = 0;
+    let mut target_idx: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate().take(block_end + 1).skip(llm_open_idx) {
+        let depth_before = depth;
+        let code = line.split("//").next().unwrap_or("");
+        for c in code.chars() {
+            match c {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        if i == llm_open_idx {
+            continue;
+        }
+        if depth_before == 1 {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            // HJSON allows `key:` and `"key":`. The shipped template
+            // uses the unquoted form for `default:`; accept either.
+            if trimmed.starts_with("default:") || trimmed.starts_with("\"default\":") {
+                target_idx = Some(i);
+                break;
+            }
+        }
+    }
+
+    // Format the new value. HJSON accepts unquoted strings as long as
+    // they don't contain whitespace or punctuation that would terminate
+    // the value. Quote anything outside [A-Za-z0-9_-] to be safe.
+    let quote_needed = new_default.is_empty()
+        || !new_default
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    let value_lit = if quote_needed {
+        format!("\"{}\"", new_default.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        new_default.to_string()
+    };
+
+    let mut out = String::with_capacity(raw.len() + value_lit.len());
+    match target_idx {
+        Some(idx) => {
+            let mut rewrote = false;
+            for (i, line) in lines.iter().enumerate() {
+                if i == idx {
+                    rewrote = true;
+                    // Preserve EOL, leading whitespace, and trailing
+                    // comment. Replace only the value between `:` and
+                    // the comment (or EOL).
+                    let (eol, core): (&str, &str) =
+                        if let Some(stripped) = line.strip_suffix("\r\n") {
+                            ("\r\n", stripped)
+                        } else if let Some(stripped) = line.strip_suffix('\n') {
+                            ("\n", stripped)
+                        } else {
+                            ("", *line)
+                        };
+                    // Find the `:` that ends the key.
+                    let colon_pos = core.find(':').ok_or_else(|| {
+                        "default line missing `:` separator — unexpected HJSON".to_string()
+                    })?;
+                    let head = &core[..=colon_pos]; // includes ":"
+                    let tail = &core[colon_pos + 1..];
+                    let comment_pos = tail.find("//");
+                    let (_old_value, comment_suffix) = match comment_pos {
+                        Some(p) => (&tail[..p], &tail[p..]),
+                        None => (tail, ""),
+                    };
+                    if comment_suffix.is_empty() {
+                        out.push_str(&format!("{head} {value_lit}{eol}"));
+                    } else {
+                        // Keep one space of separation between the new
+                        // value and the trailing comment for readability.
+                        out.push_str(&format!("{head} {value_lit}  {comment_suffix}{eol}"));
+                    }
+                } else {
+                    out.push_str(line);
+                }
+            }
+            if !rewrote {
+                return Err("internal error: target line not rewritten".into());
+            }
+            Ok(out)
+        }
+        None => {
+            // No existing `default:` key — insert one immediately after
+            // the `llm: {` line, using two extra spaces of indentation
+            // relative to the `llm:` line itself.
+            let llm_indent: String = lines[llm_open_idx]
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect();
+            let child_indent = format!("{llm_indent}  ");
+            for (i, line) in lines.iter().enumerate() {
+                out.push_str(line);
+                if i == llm_open_idx {
+                    let eol = if line.ends_with("\r\n") {
+                        "\r\n"
+                    } else if line.ends_with('\n') {
+                        "\n"
+                    } else {
+                        "\n"
+                    };
+                    out.push_str(&format!("{child_indent}default: {value_lit}{eol}"));
+                }
+            }
+            Ok(out)
+        }
     }
 }
 
