@@ -32,6 +32,7 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+4`             | Focus the **Search** bar (top).                             | no           |
 | `Ctrl+5`             | Focus the **AI prompt** bar (bottom).                       | no           |
 | `Ctrl+B`             | Enter **meta mode**. The next keystroke is the action selector (see §1.1). | `meta_prefix` |
+| `Ctrl+B H`           | Open the pane-aware **Quick reference** floating pane. Works from every pane (Tree / Editor / AI). Scroll with arrows / PgUp / PgDn; close with `Esc`. Routed through the meta prefix so it never collides with the editor's `Ctrl+H` split-scroll. | no |
 
 ### 1.1 Meta mode (Ctrl+B prefix)
 
@@ -55,6 +56,7 @@ cancels with a status hint telling you which pane's table it consulted.
 | `D` / `d`  | Open Delete confirm modal for the cursor's node.    |
 | `↑`        | Swap the cursor's node with its previous sibling.   |
 | `↓`        | Swap the cursor's node with its next sibling.       |
+| `H` / `h`  | Open the pane-aware **Quick reference** overlay.    |
 
 **Editor pane** — paragraph operations:
 
@@ -62,15 +64,17 @@ cancels with a status hint telling you which pane's table it consulted.
 | ---------- | --------------------------------------------------------------- |
 | `S` / `s`  | **Save** the open paragraph (alternative to Ctrl+S).            |
 | `N` / `n`  | **New snapshot** of the current buffer (== F5).                 |
-| `H` / `h`  | Open the **snapshot history** picker (== F6).                   |
+| `R` / `r`  | Open the snapshot histo**R**y picker (== F6). Moved off `H` so Help can claim that letter across every pane. |
 | `L` / `l`  | Open the **load file** dialog (== F3).                          |
 | `F` / `f`  | Toggle **split-edit** mode (== F4). See §3.9.                   |
+| `H` / `h`  | Open the pane-aware **Quick reference** overlay.                |
 
 **AI pane (and AI prompt focus)** — inference management:
 
 | Second key | Action                                              |
 | ---------- | --------------------------------------------------- |
 | `C` / `c`  | **Clear** the current inference (cancel streaming or discard a finished result). |
+| `H` / `h`  | Open the pane-aware **Quick reference** overlay.    |
 
 The Tree pane's plain-letter shortcuts (`B`, `C`, `V`, `A`, `S`, `+`, `P`,
 `D`, `-`) still work directly without the meta prefix when Tree has focus —
@@ -257,7 +261,8 @@ clipboard. Each saves and restores the yank buffer around the operation, so
 | `Ctrl+D`  | **Delete current line** — removes the entire line + its trailing newline; cursor lands on the line that takes its place. On the very last line, the content is cleared and an empty line remains (no newline to delete). |
 | `Ctrl+E`  | **Delete to end of line** — removes from the cursor to the line end.   |
 | `Ctrl+W`  | **Delete to start of line** — removes from the cursor back to column 0. |
-| `Ctrl+Z`  | **Delete to end of line** — alias for `Ctrl+E` per user spec. (Undo is `Ctrl+U`.) |
+
+*(`Ctrl+Z` is intentionally unbound — see §1 Global. Undo is `Ctrl+U`, delete-to-EOL is `Ctrl+E`.)*
 
 **Note on `Ctrl+W`**: bash, tmux, and some terminals interpret `Ctrl+W` as
 "delete previous word" before forwarding the keystroke. If your shell layer
@@ -290,6 +295,8 @@ the snapshot's total line count, plus a reminder of the available keys.
 `Ctrl+H` and `Ctrl+J` are routed to the split pane **only while split is
 active**. When split is off they fall through to normal editor handling
 (tui-textarea's defaults), so they don't shadow anything in regular use.
+The Quick-reference overlay is opened via `Ctrl+B` `H` (meta prefix)
+precisely so it never contends with the split-scroll chord.
 
 ### 3.10 Find and replace (regex)
 
@@ -702,7 +709,6 @@ EDITOR          arrows       move cursor
                 Ctrl+D       delete current line
                 Ctrl+E       delete cursor → end of line
                 Ctrl+W       delete cursor → start of line
-                Ctrl+Z       delete cursor → end of line (alias of Ctrl+E)
                 Alt+arrows   extend rectangular block selection
                 Alt+C        copy rectangular block
                 Ctrl+S       save + re-embed
@@ -712,6 +718,7 @@ EDITOR          arrows       move cursor
                 F3           load file → replaces buffer
                 F4 / Ctrl+F4 toggle split / accept snapshot
                 Ctrl+H/J     (split only) scroll lower pane up/down
+                Ctrl+B H     open Quick reference overlay (global)
                 F5           create snapshot
                 F6           open snapshot picker
                 Esc          clear search (if active) · else defocus to tree
