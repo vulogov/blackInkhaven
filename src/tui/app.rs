@@ -658,6 +658,69 @@ mod corrected_tests {
     }
 }
 
+#[cfg(test)]
+mod book_info_tests {
+    use super::*;
+
+    #[test]
+    fn count_sentences_basic_terminators() {
+        assert_eq!(count_sentences("Hello. World!"), 2);
+        assert_eq!(count_sentences("Why? Because!"), 2);
+        assert_eq!(count_sentences("One sentence only"), 0);
+    }
+
+    #[test]
+    fn count_sentences_collapses_runs() {
+        // Repeated terminators ("...", "?!") should count as one sentence
+        // each, not three / two.
+        assert_eq!(count_sentences("Hmm... interesting?!"), 2);
+    }
+
+    #[test]
+    fn count_sentences_ignores_headings_and_comments() {
+        let body = "= Chapter title\n\n// this comment has a period.\n\
+                    First. Second.";
+        assert_eq!(count_sentences(body), 2);
+    }
+
+    #[test]
+    fn count_sentences_handles_blank_and_multiline() {
+        let body = "First sentence.\n\nSecond sentence!\nThird?";
+        assert_eq!(count_sentences(body), 3);
+    }
+
+    #[test]
+    fn format_age_subminute() {
+        assert_eq!(format_age_humantime(std::time::Duration::from_secs(0)), "0s");
+        assert_eq!(format_age_humantime(std::time::Duration::from_secs(45)), "45s");
+    }
+
+    #[test]
+    fn format_age_minutes_hours_days() {
+        assert_eq!(
+            format_age_humantime(std::time::Duration::from_secs(7 * 60)),
+            "7m"
+        );
+        assert_eq!(
+            format_age_humantime(std::time::Duration::from_secs(3 * 3600 + 30 * 60)),
+            "3h 30m"
+        );
+        assert_eq!(
+            format_age_humantime(std::time::Duration::from_secs(2 * 86_400 + 4 * 3600)),
+            "2d 4h"
+        );
+        // Whole-hour and whole-day values shouldn't dangle a "0m" / "0h".
+        assert_eq!(
+            format_age_humantime(std::time::Duration::from_secs(5 * 86_400)),
+            "5d"
+        );
+        assert_eq!(
+            format_age_humantime(std::time::Duration::from_secs(2 * 3600)),
+            "2h"
+        );
+    }
+}
+
 /// One entry in the `/` prompt picker. Wraps both shipping HJSON prompts
 /// (`PromptSource::System`) and user-authored paragraphs under the Prompts
 /// book (`PromptSource::Book`). The body is lazily fetched for book
@@ -732,6 +795,14 @@ enum Modal {
     /// Content is rendered fresh each frame so it picks up the current
     /// `CARGO_PKG_VERSION` / `CARGO_PKG_AUTHORS` env vars.
     Credits {
+        scroll: usize,
+    },
+    /// Ctrl+B I — current-book info panel: backup / artefacts paths,
+    /// structural counts (chapters / subchapters / paragraphs /
+    /// sentences / words), reading-time estimate, and rendered-PDF
+    /// status. Content is recomputed each frame so the figures stay
+    /// fresh as the user edits.
+    BookInfo {
         scroll: usize,
     },
     /// F1 help-manual query. Asks a free-form question against the Help
@@ -1339,15 +1410,15 @@ impl App {
             // pane. Generic suffix (· H help · Esc cancel) is shared.
             self.status = match self.focus {
                 Focus::Tree | Focus::SearchBar => {
-                    "META · B/C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · Esc cancel"
+                    "META · B/C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I book info · Esc cancel"
                         .into()
                 }
                 Focus::Editor => {
-                    "META · S save · N snapshot · R history · L load · F split · T retitle · P place · C character · H help · V credits · Esc cancel"
+                    "META · S save · N snapshot · R history · L load · F split · T retitle · P place · C character · H help · V credits · I book info · Esc cancel"
                         .into()
                 }
                 Focus::Ai | Focus::AiPrompt => {
-                    "META · C clear chat · H help · V credits · Esc cancel".into()
+                    "META · C clear chat · H help · V credits · I book info · Esc cancel".into()
                 }
             };
             return Ok(false);
@@ -3476,6 +3547,13 @@ impl App {
             self.open_credits();
             return;
         }
+        // I is the global "current book info" panel — paths + stats +
+        // PDF status for the book the cursor (or the open paragraph) is
+        // inside. Same pane-agnostic dispatch as V.
+        if matches!(key.code, KeyCode::Char('I') | KeyCode::Char('i')) {
+            self.open_book_info();
+            return;
+        }
 
         let consumed = match self.focus {
             Focus::Tree | Focus::SearchBar => self.dispatch_meta_tree(key),
@@ -3619,6 +3697,310 @@ impl App {
         self.modal = Modal::Credits { scroll: 0 };
         self.status = "Credits · ↑↓/PgUp/PgDn scroll · Esc close".into();
     }
+
+    /// Ctrl+B I — open the "current book info" panel. The content is
+    /// rendered each frame in `draw_book_info_modal` so figures stay
+    /// fresh as the user edits; we only stash the scroll offset here.
+    fn open_book_info(&mut self) {
+        self.modal = Modal::BookInfo { scroll: 0 };
+        self.status =
+            "Book info · ↑↓/PgUp/PgDn scroll · Esc close".into();
+    }
+
+    /// Scroll handler for the BookInfo modal — mirrors
+    /// `credits_handle_key`. Renderer clamps scroll to the actual line
+    /// count.
+    fn book_info_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::BookInfo { scroll } = &mut self.modal else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Up => {
+                *scroll = scroll.saturating_sub(1);
+                true
+            }
+            KeyCode::Down => {
+                *scroll = scroll.saturating_add(1);
+                true
+            }
+            KeyCode::PageUp => {
+                *scroll = scroll.saturating_sub(10);
+                true
+            }
+            KeyCode::PageDown => {
+                *scroll = scroll.saturating_add(10);
+                true
+            }
+            KeyCode::Home => {
+                *scroll = 0;
+                true
+            }
+            KeyCode::End => {
+                *scroll = usize::MAX / 2;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Resolve the "current book" the user is inside: prefer the book
+    /// containing the open paragraph (if any), otherwise the book
+    /// containing the tree cursor. Returns the cloned node so the
+    /// caller can drop the temporary `Hierarchy` it loaded.
+    ///
+    /// "Current book" walks `parent_id` up to the root: for a node at
+    /// any depth this lands on the root Book; for a Book node it
+    /// returns the node itself. Returns `None` only when the project
+    /// is completely empty (no books seeded yet).
+    fn current_book_node(&self, hierarchy: &Hierarchy) -> Option<Node> {
+        let start_id = self
+            .opened
+            .as_ref()
+            .map(|d| d.id)
+            .or_else(|| self.rows.get(self.tree_cursor).map(|(id, _)| *id))?;
+
+        let mut current_id = start_id;
+        loop {
+            let node = hierarchy.get(current_id)?;
+            match node.parent_id {
+                None => return Some(node.clone()),
+                Some(pid) => current_id = pid,
+            }
+        }
+    }
+
+    fn draw_book_info_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+        scroll: usize,
+    ) {
+        let lines = self.build_book_info_lines();
+        let total = lines.len();
+
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = " Book info · Ctrl+B I ".to_string();
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+
+        let max_scroll = total.saturating_sub(body_h);
+        let scroll = scroll.min(max_scroll);
+        let end = (scroll + body_h).min(total);
+        let visible: Vec<Line<'_>> = lines[scroll..end].to_vec();
+        f.render_widget(Paragraph::new(visible), body_rect);
+
+        let at_end = end >= total;
+        let more_hint = if at_end { " " } else { " · more below" };
+        let hint = format!(
+            " ↑↓ / PgUp/PgDn / Home/End scroll · Esc close{more_hint}    (showing {}–{} of {total}) ",
+            scroll + 1,
+            end
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    fn build_book_info_lines(&self) -> Vec<Line<'static>> {
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let label_color = Style::default().fg(Color::Cyan);
+
+        let mut out: Vec<Line<'static>> = Vec::new();
+        out.push(Line::from(""));
+
+        let Ok(hierarchy) = Hierarchy::load(&self.store) else {
+            out.push(Line::from(Span::styled(
+                "  (could not load hierarchy)".to_string(),
+                dim,
+            )));
+            return out;
+        };
+
+        let Some(book) = self.current_book_node(&hierarchy) else {
+            out.push(Line::from(Span::styled(
+                "  No book selected. Move the tree cursor onto a book \
+                 (or any node inside one) and press Ctrl+B I again."
+                    .to_string(),
+                dim,
+            )));
+            return out;
+        };
+
+        out.push(Line::from(vec![
+            Span::styled("  Book: ", label_color),
+            Span::styled(book.title.clone(), bold),
+            Span::styled(
+                format!("   ({})", book.slug),
+                dim,
+            ),
+        ]));
+        if let Some(tag) = book.system_tag.as_deref() {
+            out.push(Line::from(Span::styled(
+                format!("    system book · tag={tag}"),
+                dim,
+            )));
+        }
+        out.push(Line::from(""));
+
+        // 1. Paths.
+        let backup_dir =
+            crate::store::default_user_backup_dir(&self.layout.root);
+        let artefacts_root = self.store.resolve_artefacts_dir(&self.cfg);
+        let artefacts_book = artefacts_root.join(&book.slug);
+
+        out.push(Line::from(Span::styled(
+            "  Paths".to_string(),
+            label_color.add_modifier(Modifier::BOLD),
+        )));
+        out.push(Line::from(format!("    backups:    {}", backup_dir.display())));
+        out.push(Line::from(format!(
+            "    artefacts:  {}",
+            artefacts_book.display()
+        )));
+        out.push(Line::from(""));
+
+        // 2. Stats.
+        let stats = compute_book_stats(&hierarchy, &book, &self.layout.root);
+        out.push(Line::from(Span::styled(
+            "  Structure".to_string(),
+            label_color.add_modifier(Modifier::BOLD),
+        )));
+        out.push(Line::from(format!(
+            "    chapters:     {}",
+            stats.chapters
+        )));
+        out.push(Line::from(format!(
+            "    subchapters:  {}",
+            stats.subchapters
+        )));
+        out.push(Line::from(format!(
+            "    paragraphs:   {}",
+            stats.paragraphs
+        )));
+        out.push(Line::from(""));
+
+        out.push(Line::from(Span::styled(
+            "  Prose".to_string(),
+            label_color.add_modifier(Modifier::BOLD),
+        )));
+        out.push(Line::from(format!(
+            "    sentences:    {}",
+            stats.sentences
+        )));
+        out.push(Line::from(format!(
+            "    words:        {}",
+            stats.words
+        )));
+        // 250 wpm — a standard adult silent-reading speed for prose
+        // (educational references typically quote 200–300 wpm). Round
+        // up to whole minutes so humantime doesn't print sub-second
+        // precision for an estimate that's never that precise.
+        let read_pretty = if stats.words == 0 {
+            "< 1m".to_string()
+        } else {
+            let minutes = ((stats.words as f64) / 250.0).ceil() as u64;
+            humantime::format_duration(std::time::Duration::from_secs(
+                minutes.max(1) * 60,
+            ))
+            .to_string()
+        };
+        out.push(Line::from(format!(
+            "    reading time: {read_pretty}  (at 250 words/min)"
+        )));
+        out.push(Line::from(""));
+
+        // 3. PDF status.
+        let pdf_path = artefacts_book.join(format!("{}.pdf", book.slug));
+        out.push(Line::from(Span::styled(
+            "  Rendered PDF".to_string(),
+            label_color.add_modifier(Modifier::BOLD),
+        )));
+        out.push(Line::from(format!(
+            "    expected:   {}",
+            pdf_path.display()
+        )));
+        match std::fs::metadata(&pdf_path) {
+            Ok(meta) => {
+                let created = meta
+                    .created()
+                    .or_else(|_| meta.modified())
+                    .ok()
+                    .and_then(|t| {
+                        std::time::SystemTime::now()
+                            .duration_since(t)
+                            .ok()
+                    });
+                let age = match created {
+                    Some(d) => format_age_humantime(d),
+                    None => "(timestamp unavailable)".to_string(),
+                };
+                let size_kb = meta.len() / 1024;
+                out.push(Line::from(vec![
+                    Span::raw("    status:     "),
+                    Span::styled(
+                        "present".to_string(),
+                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(format!("  ({size_kb} KiB)")),
+                ]));
+                out.push(Line::from(format!("    created:    {age} ago")));
+            }
+            Err(_) => {
+                out.push(Line::from(vec![
+                    Span::raw("    status:     "),
+                    Span::styled(
+                        "missing".to_string(),
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        "   (render the book to create it)".to_string(),
+                        dim,
+                    ),
+                ]));
+            }
+        }
+        out.push(Line::from(""));
+        out
+    }
+
 
     fn cycle_ai_mode(&mut self) {
         self.ai_mode = self.ai_mode.next();
@@ -4754,6 +5136,7 @@ impl App {
         let is_find = matches!(self.modal, Modal::FindReplace { .. });
         let is_quickref = matches!(self.modal, Modal::QuickRef { .. });
         let is_credits = matches!(self.modal, Modal::Credits { .. });
+        let is_book_info = matches!(self.modal, Modal::BookInfo { .. });
         let is_help_query = matches!(self.modal, Modal::HelpQuery { .. });
 
         if is_quickref {
@@ -4762,6 +5145,10 @@ impl App {
         }
         if is_credits {
             self.credits_handle_key(key);
+            return Ok(false);
+        }
+        if is_book_info {
+            self.book_info_handle_key(key);
             return Ok(false);
         }
 
@@ -5722,6 +6109,10 @@ impl App {
             self.draw_credits_modal(f, area, *scroll);
             return;
         }
+        if let Modal::BookInfo { scroll } = &self.modal {
+            self.draw_book_info_modal(f, area, *scroll);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -5735,6 +6126,7 @@ impl App {
             Modal::FilePicker(_) => unreachable!("file picker handled above"),
             Modal::QuickRef { .. } => unreachable!("quickref handled above"),
             Modal::Credits { .. } => unreachable!("credits handled above"),
+            Modal::BookInfo { .. } => unreachable!("book info handled above"),
             Modal::HelpQuery { input } => {
                 let body = vec![
                     Line::from(""),
@@ -7068,6 +7460,108 @@ fn current_word_or_selection(doc: &OpenedDoc) -> String {
         }
     }
     String::new()
+}
+
+/// Aggregate counts for one root Book, computed by walking its subtree.
+/// Words come from each Paragraph's stored `word_count` (kept up to date
+/// at save time); sentences are derived by re-reading paragraph bodies
+/// from disk, which is fine for literary-scale projects (hundreds of
+/// short files) but should be reconsidered if a project ever grows past
+/// many thousands of paragraphs.
+#[derive(Debug, Default)]
+struct BookStats {
+    chapters: usize,
+    subchapters: usize,
+    paragraphs: usize,
+    sentences: usize,
+    words: u64,
+}
+
+fn compute_book_stats(
+    hierarchy: &Hierarchy,
+    book: &Node,
+    project_root: &Path,
+) -> BookStats {
+    let mut stats = BookStats::default();
+    for id in hierarchy.collect_subtree(book.id) {
+        let Some(node) = hierarchy.get(id) else { continue };
+        match node.kind {
+            NodeKind::Book => {} // the book itself — don't count it as a chapter
+            NodeKind::Chapter => stats.chapters += 1,
+            NodeKind::Subchapter => stats.subchapters += 1,
+            NodeKind::Paragraph => {
+                stats.paragraphs += 1;
+                stats.words += node.word_count;
+                if let Some(rel) = node.file.as_ref() {
+                    if let Ok(body) =
+                        std::fs::read_to_string(project_root.join(rel))
+                    {
+                        stats.sentences += count_sentences(&body);
+                    }
+                }
+            }
+        }
+    }
+    stats
+}
+
+/// Count sentence-terminators (`. ! ?`) in prose text, ignoring Typst
+/// heading lines (`= ...`) and comments (`// ...`). A run of repeated
+/// terminators (e.g. `...` or `?!`) counts as one sentence. The result
+/// is an estimate — Typst markup like `#image(...)` and inline math can
+/// confuse it — but it's good enough for a UI read-out and consistent
+/// across runs.
+fn count_sentences(content: &str) -> usize {
+    let mut count = 0;
+    let mut in_run = false;
+    for line in content.lines() {
+        let t = line.trim_start();
+        if t.is_empty() || t.starts_with('=') || t.starts_with("//") {
+            in_run = false;
+            continue;
+        }
+        for c in t.chars() {
+            if matches!(c, '.' | '!' | '?') {
+                if !in_run {
+                    count += 1;
+                    in_run = true;
+                }
+            } else {
+                in_run = false;
+            }
+        }
+        in_run = false;
+    }
+    count
+}
+
+/// Format a `Duration` as a coarse "N units ago" string using only the
+/// largest two units (days+hours, hours+minutes, etc.). humantime's
+/// default formatter prints every non-zero unit down to nanoseconds,
+/// which is too noisy for a "how old is this PDF" read-out.
+fn format_age_humantime(dur: std::time::Duration) -> String {
+    let total_secs = dur.as_secs();
+    if total_secs < 60 {
+        return format!("{total_secs}s");
+    }
+    let days = total_secs / 86_400;
+    let hours = (total_secs % 86_400) / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    if days > 0 {
+        if hours > 0 {
+            format!("{days}d {hours}h")
+        } else {
+            format!("{days}d")
+        }
+    } else if hours > 0 {
+        if minutes > 0 {
+            format!("{hours}h {minutes}m")
+        } else {
+            format!("{hours}h")
+        }
+    } else {
+        format!("{minutes}m")
+    }
 }
 
 fn extract_first_sentence(content: &str) -> Option<String> {
