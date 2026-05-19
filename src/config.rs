@@ -39,6 +39,7 @@ impl Default for Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct EmbeddingsConfig {
     /// fastembed model name; default is multilingual with strong Russian support
     pub model: String,
@@ -57,6 +58,7 @@ impl Default for EmbeddingsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LlmConfig {
     pub default: String,
     pub providers: std::collections::BTreeMap<String, LlmProvider>,
@@ -93,6 +95,7 @@ pub struct LlmProvider {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct EditorConfig {
     pub theme: String,
     pub tab_width: usize,
@@ -110,6 +113,7 @@ impl Default for EditorConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct KeyBindings {
     pub save: String,
     pub search: String,
@@ -149,6 +153,7 @@ impl Default for KeyBindings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct HierarchyConfig {
     /// If false, only Book → Chapter → Subchapter → Paragraph is allowed.
     /// If true, Subchapter may nest arbitrarily before terminating in Paragraph.
