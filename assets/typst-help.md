@@ -175,6 +175,16 @@ Ctrl+B A (or B / O). The root `<book-slug>.typ` imports
 to control layout — they're called automatically for every node in
 the tree.
 
+## Inkhaven HJSON-driven settings.typ
+`settings.typ` in the artefacts tree has an auto-generated header
+synthesised from the `typst_page` / `typst_fonts` / `typst_layout`
+stanzas in `inkhaven.hjson`. Change values there — paper, margins,
+fonts, line spacing, heading numbering — and re-run Ctrl+B A. The
+header is overwritten every assembly so don't edit it by hand. Your
+`Typst → <book> → settings.typ` paragraph content is appended below
+the header as a free-form override for anything HJSON doesn't
+expose.
+
 ## Inkhaven wrap functions
 - `wrap_book(body)` — wraps the entire book.
 - `wrap_chapter(title, body)` — wraps each Chapter; the chapter title is

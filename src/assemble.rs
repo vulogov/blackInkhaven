@@ -106,7 +106,7 @@ pub fn assemble_book(
     // user book) → its three seed paragraphs map to the output's
     // globals.typ / settings.typ / index.typ.
     let typst_root_index_body =
-        copy_typst_skeleton_files(store, layout, &hierarchy, book_node, &out_book, &artefacts_root, &mut done, total, progress)?;
+        copy_typst_skeleton_files(store, cfg, layout, &hierarchy, book_node, &out_book, &artefacts_root, &mut done, total, progress)?;
 
     // Root .typ for the book — applies settings, calls wrap_book on
     // the assembled subtree. The Typst chapter's index.typ body is
@@ -469,6 +469,7 @@ fn strip_leading_heading(body: &str) -> String {
 /// it before calling `wrap_book(...)`.
 fn copy_typst_skeleton_files(
     _store: &Store,
+    cfg: &Config,
     layout: &ProjectLayout,
     hierarchy: &Hierarchy,
     book: &Node,
@@ -519,8 +520,21 @@ fn copy_typst_skeleton_files(
                 progress(*done, total, rel);
             }
             "settings.typ" => {
+                // HJSON-driven header (#set page / #set text / #set par
+                // synthesised from typst_page / typst_fonts /
+                // typst_layout) followed by the user's free-form
+                // paragraph content. Wiping the artefacts copy each
+                // run is fine — bdslib holds the user's source.
+                let mut composed = cfg.synthesised_settings_typ_header();
+                if !stripped.trim().is_empty() {
+                    composed.push('\n');
+                    composed.push_str(&stripped);
+                    if !composed.ends_with('\n') {
+                        composed.push('\n');
+                    }
+                }
                 let dst = out_book.join("settings.typ");
-                std::fs::write(&dst, stripped.as_bytes()).map_err(Error::Io)?;
+                std::fs::write(&dst, composed.as_bytes()).map_err(Error::Io)?;
                 *done += 1;
                 let rel = dst.strip_prefix(artefacts_root).unwrap_or(&dst);
                 progress(*done, total, rel);

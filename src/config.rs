@@ -28,6 +28,12 @@ pub struct Config {
     #[serde(default)]
     pub typst_compile: TypstCompileConfig,
     #[serde(default)]
+    pub typst_page: TypstPageConfig,
+    #[serde(default)]
+    pub typst_fonts: TypstFontsConfig,
+    #[serde(default)]
+    pub typst_layout: TypstLayoutConfig,
+    #[serde(default)]
     pub images: ImagesConfig,
     /// Primary writing language of the project. Drives:
     /// * Snowball stemmers for the editor's Places/Characters highlight
@@ -88,6 +94,9 @@ impl Default for Config {
             sound: SoundConfig::default(),
             typst_templates: TypstTemplatesConfig::default(),
             typst_compile: TypstCompileConfig::default(),
+            typst_page: TypstPageConfig::default(),
+            typst_fonts: TypstFontsConfig::default(),
+            typst_layout: TypstLayoutConfig::default(),
             images: ImagesConfig::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
@@ -407,6 +416,212 @@ impl Default for ImagesConfig {
             max_size_bytes: 32 * 1024 * 1024,
         }
     }
+}
+
+/// Page geometry — fed into `#set page(...)` in the synthesised
+/// `settings.typ`. Empty / zero / `"default"` values fall through to
+/// typst's own defaults so a user who doesn't touch HJSON still gets
+/// a working compile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TypstPageConfig {
+    /// `"us-letter"`, `"a4"`, `"a5"`, etc. — anything typst's `paper:`
+    /// argument accepts. Empty = typst default.
+    pub paper: String,
+    pub margin_top: String,
+    pub margin_bottom: String,
+    /// Inside / outside replace left / right when typesetting two-
+    /// sided books. Typst handles the binding-edge swap automatically
+    /// when `inside` / `outside` are used.
+    pub margin_inside: String,
+    pub margin_outside: String,
+    /// Page-number format — `"1"`, `"i"`, `"1 of 1"`. Empty = no
+    /// page numbers (typst default).
+    pub page_numbering: String,
+    /// Single-column documents: 1. Multi-column: 2+. 0 / 1 both fall
+    /// through to typst's single-column default.
+    pub columns: u32,
+}
+
+impl Default for TypstPageConfig {
+    fn default() -> Self {
+        Self {
+            paper: "us-letter".into(),
+            margin_top: "2.5cm".into(),
+            margin_bottom: "2.5cm".into(),
+            margin_inside: "3cm".into(),
+            margin_outside: "2cm".into(),
+            page_numbering: "1".into(),
+            columns: 1,
+        }
+    }
+}
+
+/// `#set text(...)` and language. Empty body / monospace strings let
+/// typst pick its bundled defaults.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TypstFontsConfig {
+    pub body: String,
+    pub body_size: String,
+    pub monospace: String,
+    /// Two-letter language tag fed to `#set text(lang: ...)`. Drives
+    /// typst's hyphenation / smart-quote behaviour.
+    pub language: String,
+}
+
+impl Default for TypstFontsConfig {
+    fn default() -> Self {
+        Self {
+            body: "EB Garamond".into(),
+            body_size: "11pt".into(),
+            monospace: "JetBrains Mono".into(),
+            language: "en".into(),
+        }
+    }
+}
+
+/// Paragraph + heading layout. Empty strings = typst default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TypstLayoutConfig {
+    pub justify: bool,
+    pub leading: String,
+    /// First-line indent for paragraphs. Empty = no indent.
+    pub paragraph_indent: String,
+    /// `#set heading(numbering: ...)` argument. `"1."` / `"1.1"` /
+    /// `"I."`. Empty = unnumbered (typst default).
+    pub heading_numbering: String,
+}
+
+impl Default for TypstLayoutConfig {
+    fn default() -> Self {
+        Self {
+            justify: true,
+            leading: "0.7em".into(),
+            paragraph_indent: String::new(),
+            heading_numbering: String::new(),
+        }
+    }
+}
+
+impl Config {
+    /// Render the auto-generated header that `Book assembly` prepends
+    /// to the synthesised `settings.typ`. Reflects the live values of
+    /// `typst_page` / `typst_fonts` / `typst_layout`; the user's
+    /// `Typst → <book> → settings.typ` paragraph content is appended
+    /// below this header so free-form additions survive every
+    /// regeneration.
+    pub fn synthesised_settings_typ_header(&self) -> String {
+        let mut out = String::new();
+        out.push_str(
+            "// ── inkhaven auto-generated · do not edit ────────────────\n\
+             // Source: typst_page / typst_fonts / typst_layout in\n\
+             // inkhaven.hjson. Change values there and re-run Ctrl+B A.\n\
+             // Anything below the `User overrides` line below is your\n\
+             // free-form paragraph content; preserved across rebuilds.\n\n",
+        );
+
+        // #set page(...)
+        let p = &self.typst_page;
+        if !p.paper.trim().is_empty() {
+            let mut args: Vec<String> = Vec::new();
+            args.push(format!("paper: \"{}\"", typst_escape(&p.paper)));
+            let any_margin = !(p.margin_top.is_empty()
+                && p.margin_bottom.is_empty()
+                && p.margin_inside.is_empty()
+                && p.margin_outside.is_empty());
+            if any_margin {
+                args.push(format!(
+                    "margin: (top: {}, bottom: {}, inside: {}, outside: {})",
+                    pad_or(&p.margin_top, "2.5cm"),
+                    pad_or(&p.margin_bottom, "2.5cm"),
+                    pad_or(&p.margin_inside, "3cm"),
+                    pad_or(&p.margin_outside, "2cm"),
+                ));
+            }
+            if !p.page_numbering.trim().is_empty() {
+                args.push(format!(
+                    "numbering: \"{}\"",
+                    typst_escape(&p.page_numbering)
+                ));
+            }
+            if p.columns > 1 {
+                args.push(format!("columns: {}", p.columns));
+            }
+            out.push_str(&format!("#set page({})\n\n", args.join(", ")));
+        }
+
+        // #set text(...)
+        let f = &self.typst_fonts;
+        let mut text_args: Vec<String> = Vec::new();
+        if !f.body.trim().is_empty() {
+            text_args.push(format!("font: \"{}\"", typst_escape(&f.body)));
+        }
+        if !f.body_size.trim().is_empty() {
+            text_args.push(format!("size: {}", f.body_size));
+        }
+        if !f.language.trim().is_empty() {
+            text_args.push(format!("lang: \"{}\"", typst_escape(&f.language)));
+        }
+        if !text_args.is_empty() {
+            out.push_str(&format!("#set text({})\n\n", text_args.join(", ")));
+        }
+        // Raw / code typeface — separate set so it doesn't clobber the
+        // body font.
+        if !f.monospace.trim().is_empty() {
+            out.push_str(&format!(
+                "#set raw(font: \"{}\")\n\n",
+                typst_escape(&f.monospace)
+            ));
+        }
+
+        // #set par(...) — justify, leading, first-line-indent
+        let l = &self.typst_layout;
+        let mut par_args: Vec<String> = Vec::new();
+        par_args.push(format!("justify: {}", l.justify));
+        if !l.leading.trim().is_empty() {
+            par_args.push(format!("leading: {}", l.leading));
+        }
+        if !l.paragraph_indent.trim().is_empty() {
+            par_args.push(format!("first-line-indent: {}", l.paragraph_indent));
+        }
+        out.push_str(&format!("#set par({})\n\n", par_args.join(", ")));
+
+        // #set heading(numbering: ...)
+        if !l.heading_numbering.trim().is_empty() {
+            out.push_str(&format!(
+                "#set heading(numbering: \"{}\")\n\n",
+                typst_escape(&l.heading_numbering)
+            ));
+        }
+
+        out.push_str(
+            "// ── User overrides (your settings.typ paragraph below) ─────\n",
+        );
+        out
+    }
+}
+
+/// Backslash-escape `\` and `"` so a user-supplied value can be
+/// inlined into a Typst string literal without breaking the parser.
+/// Strips newlines defensively — HJSON should never produce them in
+/// these fields but the user might paste one in.
+fn typst_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' | '\r' => out.push(' '),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn pad_or<'a>(v: &'a str, fallback: &'a str) -> &'a str {
+    if v.trim().is_empty() { fallback } else { v }
 }
 
 pub fn default_typst_error_system_prompt() -> &'static str {
@@ -792,5 +1007,64 @@ impl Config {
         let s = serde_hjson::to_string(self)
             .map_err(|e| crate::error::Error::Config(e.to_string()))?;
         std::fs::write(path, s).map_err(crate::error::Error::Io)
+    }
+}
+
+#[cfg(test)]
+mod settings_synth_tests {
+    use super::*;
+
+    #[test]
+    fn synthesised_header_with_defaults_compiles_typst_shape() {
+        let cfg = Config::default();
+        let s = cfg.synthesised_settings_typ_header();
+        // Mandatory headers and the user-override marker.
+        assert!(s.contains("auto-generated"));
+        assert!(s.contains("User overrides"));
+        // Default page / text / par.
+        assert!(s.contains("#set page("));
+        assert!(s.contains("paper: \"us-letter\""));
+        assert!(s.contains("margin: (top: 2.5cm"));
+        assert!(s.contains("#set text("));
+        assert!(s.contains("lang: \"en\""));
+        assert!(s.contains("#set par(justify: true"));
+        // No heading numbering by default.
+        assert!(!s.contains("#set heading(numbering"));
+    }
+
+    #[test]
+    fn synthesised_header_emits_numbering_when_set() {
+        let mut cfg = Config::default();
+        cfg.typst_layout.heading_numbering = "1.1".into();
+        let s = cfg.synthesised_settings_typ_header();
+        assert!(s.contains("#set heading(numbering: \"1.1\")"));
+    }
+
+    #[test]
+    fn synthesised_header_omits_text_set_when_all_empty() {
+        let mut cfg = Config::default();
+        cfg.typst_fonts.body = String::new();
+        cfg.typst_fonts.body_size = String::new();
+        cfg.typst_fonts.language = String::new();
+        let s = cfg.synthesised_settings_typ_header();
+        // No #set text(...) but #set raw is independent.
+        assert!(!s.contains("#set text("));
+        assert!(s.contains("#set raw(font:")); // monospace still set
+    }
+
+    #[test]
+    fn synthesised_header_escapes_double_quotes_in_values() {
+        let mut cfg = Config::default();
+        cfg.typst_fonts.body = "Bad\"Font".into();
+        let s = cfg.synthesised_settings_typ_header();
+        assert!(s.contains("font: \"Bad\\\"Font\""), "got:\n{s}");
+    }
+
+    #[test]
+    fn synthesised_header_multi_column_emits_columns_arg() {
+        let mut cfg = Config::default();
+        cfg.typst_page.columns = 2;
+        let s = cfg.synthesised_settings_typ_header();
+        assert!(s.contains("columns: 2"));
     }
 }
