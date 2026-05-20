@@ -110,9 +110,11 @@
     unbounded_subchapters: false
   }
 
-  // Seconds between background calls to bdslib's sync (HNSW flush +
-  // DuckDB checkpoint). 0 disables; saves still trigger sync explicitly.
-  sync_interval_seconds: 60
+  // Background HNSW flush cadence in seconds. Acts as a safety net —
+  // every explicit save already syncs. The tick is a no-op when the
+  // index has no writes since the last sync (dirty-flag short-circuit),
+  // so a generous interval costs nothing during idle. 0 disables.
+  sync_interval_seconds: 600
 
   // Auto-backup on TUI exit. The TUI checks `.inkhaven-backup.json` for
   // the last successful backup timestamp; if older than `max_age`, the

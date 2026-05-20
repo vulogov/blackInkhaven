@@ -53,15 +53,18 @@ pub struct Config {
     /// project root; absolute paths are used verbatim.
     #[serde(default = "default_artefacts_directory")]
     pub artefacts_directory: String,
-    /// Seconds between background calls to `Store::sync()` (flushes HNSW
-    /// index + DuckDB checkpoint). 0 disables the background sync; explicit
-    /// sync-on-save still fires.
+    /// Seconds between background calls to `Store::sync()`, which
+    /// flushes the HNSW vector index to disk. Acts as a safety net —
+    /// every explicit mutation in `src/store/` already calls
+    /// `sync()` on its own. The tick is cheap when the index is
+    /// clean (dirty-flag short-circuit), so the default cadence is
+    /// generous. `0` disables the background task entirely.
     #[serde(default = "default_sync_interval")]
     pub sync_interval_seconds: u64,
 }
 
 fn default_sync_interval() -> u64 {
-    60
+    600
 }
 
 fn default_prompts_path() -> PathBuf {
