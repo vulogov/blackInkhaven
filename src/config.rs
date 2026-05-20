@@ -27,6 +27,8 @@ pub struct Config {
     pub typst_templates: TypstTemplatesConfig,
     #[serde(default)]
     pub typst_compile: TypstCompileConfig,
+    #[serde(default)]
+    pub images: ImagesConfig,
     /// Primary writing language of the project. Drives:
     /// * Snowball stemmers for the editor's Places/Characters highlight
     ///   overlay (overrides `editor.stemming.languages` when non-empty).
@@ -86,6 +88,7 @@ impl Default for Config {
             sound: SoundConfig::default(),
             typst_templates: TypstTemplatesConfig::default(),
             typst_compile: TypstCompileConfig::default(),
+            images: ImagesConfig::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
             artefacts_directory: default_artefacts_directory(),
@@ -369,6 +372,39 @@ impl TypstCompileConfig {
             default_typst_error_system_prompt().into()
         } else {
             self.error_system_prompt.clone()
+        }
+    }
+}
+
+/// Settings for Image nodes (book art / chapter art / inline figures).
+/// `preview_enabled` toggles the ratatui-image preview that pops on
+/// Enter — flip it off on slow ssh sessions or terminals where the
+/// half-block fallback is too noisy. The two size knobs guard against
+/// accidental imports of huge files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImagesConfig {
+    pub preview_enabled: bool,
+    pub allowed_extensions: Vec<String>,
+    pub max_size_bytes: u64,
+}
+
+impl Default for ImagesConfig {
+    fn default() -> Self {
+        Self {
+            preview_enabled: true,
+            allowed_extensions: vec![
+                "png".into(),
+                "jpg".into(),
+                "jpeg".into(),
+                "gif".into(),
+                "webp".into(),
+                "svg".into(),
+            ],
+            // 32 MiB cap — generous for literary cover art, small
+            // enough that a misclicked drag of a 200-MB raw scan
+            // gets rejected with a clear status message.
+            max_size_bytes: 32 * 1024 * 1024,
         }
     }
 }

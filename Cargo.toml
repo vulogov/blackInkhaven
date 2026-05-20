@@ -127,6 +127,20 @@ humantime-serde = "1"
 # headless build (CI, SSH session without audio forwarding) still works.
 # Linux release builds need `libasound2-dev` at build time.
 rodio = { version = "0.20", default-features = false }
+# Image preview in the editor pane. The Picker is created lazily by
+# querying the host terminal's graphics-protocol support; on terminals
+# that don't speak kitty / sixel / iterm2 the half-block backend is the
+# fallback. Disabled at the application level by `images.preview_enabled`.
+ratatui-image = "5"
+# In-memory decoder for the image bytes we feed to ratatui-image.
+# Limit codecs to the formats we accept on import to keep the binary
+# from pulling in TIFF / OpenEXR / etc.
+image = { version = "0.25", default-features = false, features = [
+  "png",
+  "jpeg",
+  "gif",
+  "webp",
+] }
 
 [dev-dependencies]
 tempfile = "3"
