@@ -141,6 +141,24 @@
     // (fs_write, net, shell, code_eval) is cleared and only
     // `disabled_*` above apply. Off in stock projects.
     no_default_deny: false
+    // Bund script run once after the VM is built, after stdlib
+    // registration, and after policy application. Natural home for
+    // hook lambdas. Hook signatures:
+    //
+    //   hook.on_create   ( uuid kind -- )
+    //   hook.on_save     ( uuid -- )
+    //   hook.on_rename   ( uuid new_title -- )
+    //   hook.on_snapshot ( parent_uuid snapshot_uuid -- )
+    //   hook.on_delete   ( uuid -- )   (fires once per deleted id)
+    //
+    // Lambda syntax in bundcore-vanilla:
+    //   "name" { body } register
+    //
+    // Example — print a line whenever a paragraph is saved:
+    //   bootstrap: '''
+    //     "hook.on_save" { drop "saved" println } register
+    //   '''
+    bootstrap: ""
   }
 
   // Auto-backup on TUI exit. The TUI checks `.inkhaven-backup.json` for

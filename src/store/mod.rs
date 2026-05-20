@@ -99,6 +99,11 @@ impl Store {
         };
         store.ensure_system_books(cfg)?;
         store.ensure_artefacts_directory(cfg)?;
+        // Arm the scripting layer for every path that opens a
+        // project — TUI, `inkhaven bund`, `inkhaven add`,
+        // `inkhaven reindex`, etc. Idempotent in practice
+        // (single-project-per-process).
+        crate::scripting::configure(cfg.scripting.clone(), store.clone());
         Ok(store)
     }
 
@@ -422,6 +427,16 @@ impl Store {
         self.inner
             .update_metadata(id, node.to_json())
             .map_err(|e| Error::Store(format!("update_metadata: {e}")))?;
+        // Fire hook.on_create ( uuid kind -- ). Errors are logged
+        // and swallowed inside `hooks::fire` — a misbehaving hook
+        // never aborts the create.
+        fire_hook(
+            "hook.on_create",
+            vec![
+                bund_string(&id.to_string()),
+                bund_string(node.kind.as_str()),
+            ],
+        );
         Ok(())
     }
 
@@ -677,6 +692,11 @@ impl Store {
             .reembed_document(node.id)
             .map_err(|e| Error::Store(format!("reembed_document: {e}")))?;
         self.sync()?;
+        // Fire hook.on_rename ( uuid new_title -- ).
+        fire_hook(
+            "hook.on_rename",
+            vec![bund_string(&node.id.to_string()), bund_string(trimmed)],
+        );
         Ok(())
     }
 
@@ -847,6 +867,14 @@ impl Store {
             .add_document_no_embed(meta, content)
             .map_err(|e| Error::Store(format!("create_snapshot: {e}")))?;
         self.sync()?;
+        // Fire hook.on_snapshot ( parent_uuid snapshot_uuid -- ).
+        fire_hook(
+            "hook.on_snapshot",
+            vec![
+                bund_string(&parent.id.to_string()),
+                bund_string(&id.to_string()),
+            ],
+        );
         Ok(id)
     }
 
@@ -1002,6 +1030,12 @@ impl Store {
             }
         }
         self.sync()?;
+        // Fire hook.on_delete ( uuid -- ) once per deleted id, in
+        // the same order the store walks them. Best-effort: hook
+        // failures are logged inside `hooks::fire`, never abort.
+        for id in ids {
+            fire_hook("hook.on_delete", vec![bund_string(&id.to_string())]);
+        }
         Ok(())
     }
 
@@ -1024,8 +1058,24 @@ impl Store {
         self.inner
             .reembed_document(id)
             .map_err(|e| Error::Store(format!("reembed_document: {e}")))?;
+        // Fire hook.on_save ( uuid -- ).
+        fire_hook("hook.on_save", vec![bund_string(&id.to_string())]);
         Ok(())
     }
+}
+
+// ── Bund hook helpers ─────────────────────────────────────────────────
+
+/// Forward a hook fire request to the scripting layer. Behind a
+/// helper so the call sites in this module stay one-liners.
+fn fire_hook(name: &str, args: Vec<rust_dynamic::value::Value>) {
+    crate::scripting::hooks::fire(name, args);
+}
+
+/// Build a Bund STRING value. Used to push `Uuid`, `&str`, etc.
+/// onto the workbench in hook fire calls.
+fn bund_string(s: &str) -> rust_dynamic::value::Value {
+    rust_dynamic::value::Value::from_string(s)
 }
 
 fn first_prose_line(content: &[u8]) -> String {

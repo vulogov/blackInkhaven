@@ -222,13 +222,14 @@ pub fn run(project: &Path) -> Result<()> {
     let cfg_for_exit = cfg.clone();
     let layout_for_exit = layout.clone();
 
-    // Install the sandbox policy + store into the scripting layer's
-    // global slots BEFORE the first eval. Both are cheap: Policy
-    // clones trivially, Store clones via internal Arcs. Done before
-    // App takes ownership so a failed App::new doesn't leave the
-    // slots pointing at a half-initialised project.
-    crate::scripting::set_policy(cfg.scripting.clone());
-    crate::scripting::register_active_store(store.clone());
+    // Scripting layer (policy + active store) was armed inside
+    // Store::open via scripting::configure. Force eager Adam
+    // construction here so the bootstrap script runs and hook
+    // lambdas are registered before the first store mutation
+    // can fire a hook.
+    if let Err(e) = crate::scripting::init_adam() {
+        tracing::warn!("scripting init failed: {e}");
+    }
 
     let mut app = App::new(layout, cfg, store)?;
     app.restore_session();

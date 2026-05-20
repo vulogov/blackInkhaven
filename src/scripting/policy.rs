@@ -119,6 +119,13 @@ pub struct Policy {
     /// users only — off by default.
     #[serde(default)]
     pub no_default_deny: bool,
+
+    /// Bund script run once after Adam is constructed, after stdlib
+    /// registration, after policy application. The natural home for
+    /// defining hook lambdas (`hook.on_save`, `hook.on_rename`, …)
+    /// and any custom user words. Empty = no bootstrap.
+    #[serde(default)]
+    pub bootstrap: String,
 }
 
 impl Default for Policy {
@@ -128,6 +135,7 @@ impl Default for Policy {
             disabled_words: Vec::new(),
             enabled_words: Vec::new(),
             no_default_deny: false,
+            bootstrap: String::new(),
         }
     }
 }
