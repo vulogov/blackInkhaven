@@ -1724,6 +1724,12 @@ struct App {
     /// then falls back to the status-bar info line. Also None when
     /// `images.preview_enabled = false` regardless of capability.
     image_picker: Option<ratatui_image::picker::Picker>,
+
+    /// Ctrl+B W toggles full-screen "typewriter mode" — the editor
+    /// pane expands to the whole terminal, every other pane (search
+    /// bar, tree, AI, AI prompt, status bar) is hidden. The same
+    /// chord returns to the normal layout.
+    typewriter_mode: bool,
 }
 
 #[derive(Debug)]
@@ -1927,6 +1933,7 @@ impl App {
             pending_take: None,
             sound,
             image_picker,
+            typewriter_mode: false,
         })
     }
 
@@ -2275,15 +2282,15 @@ impl App {
             // pane. Generic suffix (· H help · Esc cancel) is shared.
             self.status = match self.focus {
                 Focus::Tree | Focus::SearchBar => {
-                    "META · C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · Esc cancel"
+                    "META · C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · Esc cancel"
                         .into()
                 }
                 Focus::Editor => {
-                    "META · S save · N snapshot · R status · F func · T retitle · P place/pic · C character · G notes · Y artefacts · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · Esc cancel"
+                    "META · S save · N snapshot · R status · F func · T retitle · P place/pic · C character · G notes · Y artefacts · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · Esc cancel"
                         .into()
                 }
                 Focus::Ai | Focus::AiPrompt => {
-                    "META · C clear chat · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · Esc cancel".into()
+                    "META · C clear chat · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · Esc cancel".into()
                 }
             };
             return Ok(false);
@@ -4612,6 +4619,13 @@ impl App {
             self.schedule_take();
             return;
         }
+        // W toggles full-screen typewriter mode — hides every pane
+        // except the editor (and modals when they're open). Same
+        // chord returns to the normal layout.
+        if matches!(key.code, KeyCode::Char('W') | KeyCode::Char('w')) {
+            self.toggle_typewriter_mode();
+            return;
+        }
 
         let consumed = match self.focus {
             Focus::Tree | Focus::SearchBar => self.dispatch_meta_tree(key),
@@ -6055,6 +6069,23 @@ impl App {
     /// streams the result into the AI pane. The AI pane is read-only by
     /// construction (no editor lives there), so the user can scroll the
     /// answer but can't edit it.
+    /// Ctrl+B W toggles full-screen "typewriter mode". When on, every
+    /// pane except the editor (and any floating modal) is hidden;
+    /// focus is forced onto the editor so typing lands in the
+    /// buffer. The same chord disables it.
+    fn toggle_typewriter_mode(&mut self) {
+        self.typewriter_mode = !self.typewriter_mode;
+        if self.typewriter_mode {
+            // Force focus to the editor so the user can start typing
+            // immediately; the search bar / AI prompt are hidden
+            // anyway, so leaving focus on them would be confusing.
+            self.change_focus(Focus::Editor);
+            self.status = "typewriter mode · Ctrl+B W to exit".into();
+        } else {
+            self.status = "typewriter mode off".into();
+        }
+    }
+
     /// Editor meta `Ctrl+B R`: advance the open paragraph's status one
     /// step through the workflow ring. The cycle wraps back to None
     /// after Ready; pressing R repeatedly walks the whole sequence
@@ -8639,6 +8670,28 @@ impl App {
     // -------- drawing -----------------------------------------------------
 
     fn draw(&mut self, f: &mut ratatui::Frame) {
+        // Typewriter mode: hide every pane except the editor. The
+        // editor's own header still shows L/C, word count, edited
+        // ago, and the status badge — so the user gets the writing-
+        // critical metadata without the surrounding panes. Modals
+        // (Quick-ref, Book info, etc.) still float on top, which
+        // makes Ctrl+B H usable mid-flow.
+        if self.typewriter_mode {
+            let area = f.area();
+            // Empty pane rects mean the mouse handler skips everything
+            // hidden (clicks fall through to the editor's own rect).
+            self.layout_search = Rect::default();
+            self.layout_tree = Rect::default();
+            self.layout_editor = area;
+            self.layout_ai = Rect::default();
+            self.layout_ai_prompt = Rect::default();
+            self.draw_editor(f, area);
+            if !matches!(self.modal, Modal::None) {
+                self.draw_modal(f, f.area());
+            }
+            return;
+        }
+
         let outer = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
