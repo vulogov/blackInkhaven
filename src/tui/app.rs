@@ -1775,6 +1775,12 @@ struct App {
     /// middle of the pane. Ctrl+X advances toward older matches
     /// (the spec: "Start from bottom, going up to older").
     chat_search: Option<ChatSearchState>,
+
+    /// Active chat-selection mode (Ctrl+C in AI-fullscreen). `Some`
+    /// when the user is selecting a turn block. Up / Down navigate;
+    /// `C` copies the selected turn to the system clipboard, `T`
+    /// inserts it into the editor buffer at the cursor.
+    chat_selection: Option<ChatSelectionState>,
 }
 
 #[derive(Debug)]
@@ -1817,6 +1823,18 @@ struct ChatSearchState {
     /// freshly-computed match count each frame so terminal resize +
     /// streaming-token arrival can't push it out of range.
     current: usize,
+}
+
+/// "Chat selection mode" (Ctrl+C in AI-fullscreen). The cursor
+/// points at a single turn in `chat_history`; Up / Down step through
+/// turns, `c` / `C` copies the turn text to the clipboard, `t` / `T`
+/// inserts it at the editor cursor.
+#[derive(Debug, Clone, Copy)]
+struct ChatSelectionState {
+    /// Index into `chat_history`. Always points at a valid turn —
+    /// reset / clamped if the history shrinks while selection is
+    /// active.
+    turn: usize,
 }
 
 /// One row in the `Ctrl+B 1..7` status-filter list. Carries the
@@ -1995,6 +2013,7 @@ impl App {
             ai_fullscreen: false,
             chat_history_scroll: 0,
             chat_search: None,
+            chat_selection: None,
         })
     }
 
@@ -2376,6 +2395,60 @@ impl App {
         if matches!(key.code, KeyCode::F(7)) {
             self.start_grammar_check();
             return Ok(false);
+        }
+
+        // AI-fullscreen Ctrl+C toggles "Chat selection mode" — the
+        // editor's Ctrl+C still does clipboard-copy via the focus
+        // dispatch, but in this layout the editor isn't visible and
+        // the chord is reclaimed for navigating chat turns.
+        if self.ai_fullscreen
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
+            && matches!(self.modal, Modal::None)
+        {
+            self.toggle_chat_selection_mode();
+            return Ok(false);
+        }
+
+        // When chat-selection is active: Up / Down step turns, `c` /
+        // `C` copies to clipboard, `t` / `T` inserts at the editor
+        // cursor, Esc / Enter exits.
+        if self.ai_fullscreen && self.chat_selection.is_some() && matches!(self.modal, Modal::None) {
+            let plain = !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+            match key.code {
+                KeyCode::Up if plain => {
+                    self.chat_selection_step(-1);
+                    return Ok(false);
+                }
+                KeyCode::Down if plain => {
+                    self.chat_selection_step(1);
+                    return Ok(false);
+                }
+                KeyCode::Home if plain => {
+                    self.chat_selection_jump(0);
+                    return Ok(false);
+                }
+                KeyCode::End if plain => {
+                    self.chat_selection_jump(usize::MAX);
+                    return Ok(false);
+                }
+                KeyCode::Char('c') | KeyCode::Char('C') if plain => {
+                    self.chat_selection_copy();
+                    return Ok(false);
+                }
+                KeyCode::Char('t') | KeyCode::Char('T') if plain => {
+                    self.chat_selection_into_editor();
+                    return Ok(false);
+                }
+                KeyCode::Esc | KeyCode::Enter => {
+                    self.chat_selection = None;
+                    self.status = "chat selection mode off".into();
+                    return Ok(false);
+                }
+                _ => {}
+            }
         }
 
         // AI-fullscreen Esc with an active chat search → clear the
@@ -6183,8 +6256,11 @@ impl App {
         self.chat_history.clear();
         self.pending_chat_user_msg = None;
         self.inference = None;
-        // Reset chat-history scroll — there's nothing left to scroll.
+        // Reset chat-history scroll / search / selection — there's
+        // nothing left to scroll or act on.
         self.chat_history_scroll = 0;
+        self.chat_search = None;
+        self.chat_selection = None;
         // Also dismiss any active grammar-correction overlay — the AI
         // result it derived from is being discarded, so keeping a
         // baseline tied to a forgotten correction is confusing.
@@ -6238,9 +6314,10 @@ impl App {
         // Always start scrolled to the bottom (newest visible). The
         // user can PageUp to walk back through the history.
         self.chat_history_scroll = 0;
-        // Wipe any in-flight chat search; the layout transition is
-        // an obvious break in user intent.
+        // Wipe any in-flight chat search / selection; the layout
+        // transition is an obvious break in user intent.
         self.chat_search = None;
+        self.chat_selection = None;
         if self.ai_fullscreen {
             self.typewriter_mode = false; // exclusive with typewriter
             // Restore previously-saved chat history if the in-memory
@@ -10539,6 +10616,127 @@ impl App {
         }
     }
 
+    fn toggle_chat_selection_mode(&mut self) {
+        if self.chat_selection.is_some() {
+            self.chat_selection = None;
+            self.status = "chat selection mode off".into();
+            return;
+        }
+        if self.chat_history.is_empty() {
+            self.status = "chat history is empty — nothing to select".into();
+            return;
+        }
+        // Start at the newest turn — the assistant reply you just
+        // received is what most users want to copy.
+        let turn = self.chat_history.len() - 1;
+        self.chat_selection = Some(ChatSelectionState { turn });
+        // Dismiss the search highlights so the selection's block bg
+        // isn't fighting for visibility.
+        self.chat_search = None;
+        // Reset scroll — the renderer auto-centres on the selected
+        // turn anyway.
+        self.chat_history_scroll = 0;
+        self.status =
+            "chat selection mode · ↑↓ navigate · c=copy · t=insert into editor · Esc to exit".into();
+    }
+
+    fn chat_selection_step(&mut self, delta: isize) {
+        let Some(sel) = self.chat_selection else { return };
+        let total = self.chat_history.len();
+        if total == 0 {
+            self.chat_selection = None;
+            return;
+        }
+        let new_turn = if delta < 0 {
+            sel.turn.saturating_sub(delta.unsigned_abs())
+        } else {
+            (sel.turn + delta as usize).min(total - 1)
+        };
+        if let Some(s) = self.chat_selection.as_mut() {
+            s.turn = new_turn;
+        }
+        let label = self.chat_turn_label(new_turn);
+        self.status = format!("chat selection: {} {}/{total}", label, new_turn + 1);
+    }
+
+    fn chat_selection_jump(&mut self, target: usize) {
+        let Some(_sel) = self.chat_selection else { return };
+        let total = self.chat_history.len();
+        if total == 0 {
+            self.chat_selection = None;
+            return;
+        }
+        let new_turn = target.min(total - 1);
+        if let Some(s) = self.chat_selection.as_mut() {
+            s.turn = new_turn;
+        }
+        let label = self.chat_turn_label(new_turn);
+        self.status = format!("chat selection: {} {}/{total}", label, new_turn + 1);
+    }
+
+    fn chat_turn_label(&self, idx: usize) -> &'static str {
+        match self.chat_history.get(idx) {
+            Some(ChatTurn::User(_)) => "User",
+            Some(ChatTurn::Assistant(_)) => "Assistant",
+            None => "?",
+        }
+    }
+
+    /// `c` / `C` action: copy the selected turn's text to the system
+    /// clipboard. Silently no-op when no clipboard is available
+    /// (headless host); status bar reports the outcome either way.
+    fn chat_selection_copy(&mut self) {
+        let Some(sel) = self.chat_selection else { return };
+        let Some(turn) = self.chat_history.get(sel.turn) else { return };
+        let text = match turn {
+            ChatTurn::User(s) | ChatTurn::Assistant(s) => s.clone(),
+        };
+        match self.clipboard.as_mut() {
+            Some(cb) => match cb.set_text(text.clone()) {
+                Ok(()) => {
+                    self.status = format!(
+                        "copied {} turn ({} chars)",
+                        self.chat_turn_label(sel.turn),
+                        text.chars().count()
+                    );
+                }
+                Err(e) => {
+                    self.status = format!("clipboard copy failed: {e}");
+                }
+            },
+            None => {
+                self.status =
+                    "no system clipboard available — copy unavailable on this host".into();
+            }
+        }
+    }
+
+    /// `t` / `T` action: insert the selected turn's text at the
+    /// editor cursor. Useful when an Assistant reply is the right
+    /// next paragraph or when a User question becomes the new
+    /// prompt body. Requires an open paragraph in the editor.
+    fn chat_selection_into_editor(&mut self) {
+        let Some(sel) = self.chat_selection else { return };
+        let Some(turn) = self.chat_history.get(sel.turn) else { return };
+        let text = match turn {
+            ChatTurn::User(s) | ChatTurn::Assistant(s) => s.clone(),
+        };
+        let label = self.chat_turn_label(sel.turn);
+        if self.opened.is_none() {
+            self.status =
+                "no paragraph open — switch off AI fullscreen (Ctrl+B K) and pick one".into();
+            return;
+        }
+        if let Some(doc) = self.opened.as_mut() {
+            doc.textarea.insert_str(&text);
+            doc.dirty = true;
+        }
+        self.status = format!(
+            "inserted {label} turn into editor ({} chars)",
+            text.chars().count()
+        );
+    }
+
     /// Open the chat-history search query modal. Pre-populates the
     /// input with the previous query (if any) so re-search is a
     /// single Enter.
@@ -10621,7 +10819,7 @@ impl App {
             return Vec::new();
         }
         let needle = query.to_lowercase();
-        let lines = self.build_chat_history_lines();
+        let (lines, _) = self.build_chat_history_lines();
         let mut out: Vec<usize> = Vec::new();
         for (i, line) in lines.iter().enumerate() {
             let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -10634,10 +10832,12 @@ impl App {
 
     /// Build the chat-history pane's Lines exactly as
     /// `draw_chat_history` does — same iteration, same markdown
-    /// rendering, same headers. Extracted so the search-match
-    /// scanner sees the same indices the renderer uses.
-    fn build_chat_history_lines(&self) -> Vec<Line<'static>> {
+    /// rendering, same headers. Returns both the lines and per-turn
+    /// `(line_start..line_end)` ranges so the chat-selection mode
+    /// can highlight the active turn as a block.
+    fn build_chat_history_lines(&self) -> (Vec<Line<'static>>, Vec<std::ops::Range<usize>>) {
         let mut lines: Vec<Line<'static>> = Vec::new();
+        let mut turn_ranges: Vec<std::ops::Range<usize>> = Vec::new();
         let user_style = Style::default()
             .fg(self.theme.ai_scope_fg)
             .add_modifier(Modifier::BOLD);
@@ -10645,6 +10845,7 @@ impl App {
             .fg(self.theme.ai_infer_fg)
             .add_modifier(Modifier::BOLD);
         for (i, turn) in self.chat_history.iter().enumerate() {
+            let turn_start = lines.len();
             match turn {
                 ChatTurn::User(text) => {
                     if i > 0 {
@@ -10675,8 +10876,9 @@ impl App {
                     }
                 }
             }
+            turn_ranges.push(turn_start..lines.len());
         }
-        lines
+        (lines, turn_ranges)
     }
 
     /// Render the accumulated chat history (User / Assistant turns).
@@ -10712,10 +10914,44 @@ impl App {
             return;
         }
 
-        let mut lines = self.build_chat_history_lines();
+        let (mut lines, turn_ranges) = self.build_chat_history_lines();
 
-        // If a search is active, highlight every matching line and
-        // pick the centred match's line index for the scroll math.
+        // Chat-selection mode: paint the selected turn's lines with
+        // a block bg + clamp the turn index against the live
+        // history (so a deletion / wipe doesn't leave the highlight
+        // dangling).
+        let centred_selection: Option<usize> = if let Some(sel) = self.chat_selection {
+            let total_turns = self.chat_history.len();
+            if total_turns == 0 {
+                None
+            } else {
+                let turn = sel.turn.min(total_turns - 1);
+                match turn_ranges.get(turn).cloned() {
+                    Some(range) => {
+                        let block_style = ratatui::style::Style::default()
+                            .bg(self.theme.current_line_bg);
+                        for i in range.clone() {
+                            if let Some(line) = lines.get_mut(i) {
+                                for span in line.spans.iter_mut() {
+                                    span.style = span.style.patch(block_style);
+                                }
+                            }
+                        }
+                        Some((range.start + range.end) / 2)
+                    }
+                    None => None,
+                }
+            }
+        } else {
+            None
+        };
+
+        // If a search is active, highlight ONLY the matched substring
+        // on each hit line (not the whole line) and pin the
+        // centred match's line index for the scroll math. Matches
+        // the editor's per-token search highlight visually: the
+        // matched word reads dark text on a light pink bg, so the
+        // characters stay legible.
         let body_h = inner.height as usize;
         let centred_match: Option<usize> = if let Some(search) = &self.chat_search {
             let needle = search.query.to_lowercase();
@@ -10734,16 +10970,13 @@ impl App {
                 search.current.min(total - 1)
             };
             for (mi, idx) in match_indices.iter().enumerate() {
-                let highlight_style = if mi == cursor {
-                    Style::default()
-                        .bg(self.theme.search_current_bg)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().bg(self.theme.search_match_bg)
-                };
-                for span in lines[*idx].spans.iter_mut() {
-                    span.style = span.style.patch(highlight_style);
-                }
+                let is_current = mi == cursor;
+                highlight_substring_in_line(
+                    &mut lines[*idx],
+                    &needle,
+                    is_current,
+                    &self.theme,
+                );
             }
             match_indices.get(cursor).copied()
         } else {
@@ -10755,9 +10988,13 @@ impl App {
         // user's PageUp delta still drives.
         let total = lines.len();
         let auto_scroll = total.saturating_sub(body_h);
-        let scroll_offset = if let Some(match_line) = centred_match {
-            // Pin the match line to the middle of the pane.
-            match_line.saturating_sub(body_h / 2).min(auto_scroll.max(0))
+        // Centring precedence: a live search trumps selection (the
+        // user is presumably hunting for a phrase); otherwise the
+        // chat-selection focal point; otherwise the user's manual
+        // PageUp delta over the auto-pin.
+        let centre_line = centred_match.or(centred_selection);
+        let scroll_offset = if let Some(line_idx) = centre_line {
+            line_idx.saturating_sub(body_h / 2).min(auto_scroll.max(0))
         } else {
             auto_scroll.saturating_sub(self.chat_history_scroll)
         };
@@ -11084,6 +11321,86 @@ pub fn digit_to_status(c: char) -> Option<&'static str> {
         '7' => Some("None"),
         _ => None,
     }
+}
+
+/// Apply an editor-style "search match" highlight to the first
+/// occurrence of `needle` (case-insensitive) inside a chat-history
+/// rendered line. The matched substring gets a dark foreground on a
+/// pink background (re-using `search_match_bg` / `search_current_bg`
+/// from the theme); surrounding text keeps its original styling.
+///
+/// Only the FIRST occurrence per line is highlighted — multiple
+/// matches on the same line is a UX corner case; the user can hit
+/// Ctrl+X to walk to the next line's match either way.
+pub fn highlight_substring_in_line(
+    line: &mut ratatui::text::Line<'static>,
+    needle_lower: &str,
+    is_current: bool,
+    theme: &super::theme::Theme,
+) {
+    if needle_lower.is_empty() {
+        return;
+    }
+    let full: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let lower = full.to_lowercase();
+    let Some(byte_pos) = lower.find(needle_lower) else { return };
+    let byte_end = byte_pos + needle_lower.len();
+    let char_start = full[..byte_pos].chars().count();
+    // Use `chars().count()` rather than slicing by needle.len() so
+    // we get the count in original-cased chars (UTF-8 case-fold can
+    // shift byte lengths).
+    let char_end = full[..byte_end].chars().count();
+
+    let highlight_bg = if is_current {
+        theme.search_current_bg
+    } else {
+        theme.search_match_bg
+    };
+    // Dark text on the pink bg — matches the editor's find-modal
+    // colour scheme so the matched word stays legible.
+    let mut highlight_style = ratatui::style::Style::default()
+        .bg(highlight_bg)
+        .fg(theme.pane_bg);
+    if is_current {
+        highlight_style = highlight_style.add_modifier(ratatui::style::Modifier::BOLD);
+    }
+
+    let mut new_spans: Vec<ratatui::text::Span<'static>> = Vec::new();
+    let mut cursor: usize = 0;
+    for span in line.spans.drain(..) {
+        let span_text = span.content.to_string();
+        let span_len = span_text.chars().count();
+        let span_end = cursor + span_len;
+        let overlap_start = char_start.max(cursor);
+        let overlap_end = char_end.min(span_end);
+        if overlap_start >= overlap_end {
+            new_spans.push(ratatui::text::Span::styled(span_text, span.style));
+            cursor = span_end;
+            continue;
+        }
+        if overlap_start > cursor {
+            let pre: String = span_text
+                .chars()
+                .take(overlap_start - cursor)
+                .collect();
+            new_spans.push(ratatui::text::Span::styled(pre, span.style));
+        }
+        let match_text: String = span_text
+            .chars()
+            .skip(overlap_start - cursor)
+            .take(overlap_end - overlap_start)
+            .collect();
+        new_spans.push(ratatui::text::Span::styled(match_text, highlight_style));
+        if overlap_end < span_end {
+            let post: String = span_text
+                .chars()
+                .skip(overlap_end - cursor)
+                .collect();
+            new_spans.push(ratatui::text::Span::styled(post, span.style));
+        }
+        cursor = span_end;
+    }
+    line.spans = new_spans;
 }
 
 /// Document-status workflow ring. `Ctrl+B R` advances through this
