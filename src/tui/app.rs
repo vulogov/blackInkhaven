@@ -227,6 +227,12 @@ pub fn run(project: &Path) -> Result<()> {
 
     let result = app.run(&mut terminal);
 
+    // Explicit final flush — HNSW save + DuckDB CHECKPOINT — while the
+    // App still holds the Store. The pool's Drop impl would checkpoint
+    // implicitly, but doing it explicitly here lets us log any error
+    // and guarantees the auto-backup below sees a fully-drained WAL.
+    app.shutdown_flush();
+
     // Drop the App (and its Store handle) BEFORE running the auto-backup so
     // duckdb/HNSW checkpoint state is flushed to disk and the zip captures
     // a consistent snapshot rather than mid-write WAL data.
@@ -1910,9 +1916,12 @@ impl App {
             .map(|(n, d)| (n.id, d))
             .collect();
 
-        // Background sync: every `sync_interval_seconds` call store.sync().
-        // Store is Send+Sync and cheap to clone (Arc inside), so we share it
-        // with the task. 0 disables.
+        // Background sync: every `sync_interval_seconds` flush the HNSW
+        // index (cheap no-op when clean) and force a DuckDB CHECKPOINT
+        // against `metadata.db` + `blobs.db` (cheap when WAL is empty).
+        // Both ops short-circuit when there's no real work, so the tick
+        // can be generous (default 600s). Store is Send+Sync and cheap to
+        // clone (Arc inside). 0 disables.
         if cfg.sync_interval_seconds > 0 {
             let store_for_sync = store.clone();
             let interval_secs = cfg.sync_interval_seconds;
@@ -1925,6 +1934,9 @@ impl App {
                     ticker.tick().await;
                     if let Err(e) = store_for_sync.sync() {
                         tracing::warn!("background sync failed: {e}");
+                    }
+                    if let Err(e) = store_for_sync.checkpoint() {
+                        tracing::warn!("background checkpoint failed: {e}");
                     }
                 }
             });
@@ -2015,6 +2027,21 @@ impl App {
             chat_search: None,
             chat_selection: None,
         })
+    }
+
+    /// Final HNSW save + DuckDB CHECKPOINT before the App (and its
+    /// `Store` handle, and therefore the duckdb connection pool) are
+    /// dropped. Called from the exit sequence in `run(&Path)` so the
+    /// `.db.wal` files are drained while we can still surface errors
+    /// — the pool's own Drop impl would checkpoint implicitly, but
+    /// silently.
+    fn shutdown_flush(&self) {
+        if let Err(e) = self.store.sync() {
+            tracing::warn!("shutdown sync failed: {e}");
+        }
+        if let Err(e) = self.store.checkpoint() {
+            tracing::warn!("shutdown checkpoint failed: {e}");
+        }
     }
 
     fn run<B: ratatui::backend::Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {

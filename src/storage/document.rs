@@ -138,10 +138,23 @@ impl DocumentStorage {
 
     // ── persistence ────────────────────────────────────────────────
 
-    /// Flush the vector index to disk. DuckDB's blob + json stores
-    /// checkpoint themselves; only vecstore needs an explicit save.
+    /// Flush the vector index to disk. Called on every save and by
+    /// the background tick. Cheap when the index is clean (dirty
+    /// flag short-circuit inside `VectorEngine::sync`).
     pub fn sync(&self) -> Result<()> {
         self.vectors.sync()
+    }
+
+    /// Issue a DuckDB `CHECKPOINT` against both sub-stores
+    /// (`metadata.db` + `blobs.db`). Drains WAL into the main `.db`
+    /// files; cheap when there's nothing to drain (DuckDB short-
+    /// circuits). Called from the background sync tick and the TUI
+    /// shutdown path — not on every save, since per-commit fsync
+    /// already makes writes durable.
+    pub fn checkpoint(&self) -> Result<()> {
+        self.meta.checkpoint()?;
+        self.blobs.checkpoint()?;
+        Ok(())
     }
 
     // ── internals ──────────────────────────────────────────────────
