@@ -527,6 +527,80 @@ pub fn build_row_spans(
     out
 }
 
+/// Typst's three "modes" that determine whether a function call
+/// needs a leading `#`. Markup wraps the whole document by default;
+/// `[...]` content blocks and rendered text are markup-mode. `{...}`
+/// code blocks, function-call arguments, `let` RHS, `set` / `show`
+/// rules are code-mode. `$...$` is math-mode (no `#` either).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypstMode {
+    Markup,
+    Code,
+    Math,
+}
+
+impl TypstMode {
+    /// Prefix to put in front of a function call so it dispatches as
+    /// code. `#` only in markup mode; bare in code / math.
+    pub fn call_prefix(self) -> &'static str {
+        match self {
+            TypstMode::Markup => "#",
+            TypstMode::Code | TypstMode::Math => "",
+        }
+    }
+}
+
+/// Parse `source` with tree-sitter-typst and decide what mode the
+/// cursor at `byte_offset` is in. Walks up the AST from the
+/// smallest node containing the cursor; the first ancestor that
+/// implies a mode wins. Falls back to Markup on any parse failure
+/// (the worst that does is insert a stray `#` the user can delete).
+pub fn typst_mode_at(source: &str, byte_offset: usize) -> TypstMode {
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(tree_sitter_typst::language())
+        .is_err()
+    {
+        return TypstMode::Markup;
+    }
+    let Some(tree) = parser.parse(source, None) else {
+        return TypstMode::Markup;
+    };
+    let byte = byte_offset.min(source.len());
+    let mut node = tree
+        .root_node()
+        .descendant_for_byte_range(byte, byte)
+        .unwrap_or(tree.root_node());
+    loop {
+        match node.kind() {
+            // Math first so it shadows the markup label on the
+            // surrounding equation.
+            "math" | "fraction" | "attach" | "align" | "prime" => {
+                return TypstMode::Math;
+            }
+            // Code-mode-implying nodes. `flow` / `block` / `branch`
+            // are typst's internal grouping for control flow.
+            "code" | "flow" | "block" | "branch" | "call" | "lambda" | "let"
+            | "set" | "show" | "if" | "for" | "while" | "return" | "import"
+            | "include" | "context" => {
+                return TypstMode::Code;
+            }
+            // Markup-implying nodes. Hitting `source_file` means we
+            // reached the document root without finding a code
+            // ancestor — still markup.
+            "content" | "text" | "heading" | "emph" | "strong" | "item"
+            | "term" | "section" | "source_file" => {
+                return TypstMode::Markup;
+            }
+            _ => {}
+        }
+        match node.parent() {
+            Some(p) => node = p,
+            None => return TypstMode::Markup,
+        }
+    }
+}
+
 pub struct TypstHighlighter {
     inner: TsHighlighter,
     config: HighlightConfiguration,
@@ -703,5 +777,58 @@ mod tests {
         let lines = h.highlight_lines("", &theme);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].is_empty());
+    }
+
+    #[test]
+    fn mode_at_file_scope_is_markup() {
+        // Cursor at the start of an otherwise empty buffer.
+        assert_eq!(typst_mode_at("", 0), TypstMode::Markup);
+        // Cursor inside plain prose.
+        let src = "Hello world.";
+        assert_eq!(typst_mode_at(src, 6), TypstMode::Markup);
+    }
+
+    #[test]
+    fn mode_at_inside_code_block_is_code() {
+        // Cursor inside `{ ... }`.
+        let src = "Some text. #{ }";
+        // Position immediately after the `{`.
+        let pos = src.find('{').unwrap() + 1;
+        assert_eq!(typst_mode_at(src, pos), TypstMode::Code);
+    }
+
+    #[test]
+    fn mode_at_inside_function_args_is_code() {
+        // Inside the parens of a markup-mode function call, we're in
+        // code mode (typst evaluates each argument as an expression).
+        let src = "Prose. #text(size: 12pt)";
+        // Cursor between `(` and `size`.
+        let pos = src.find('(').unwrap() + 1;
+        assert_eq!(typst_mode_at(src, pos), TypstMode::Code);
+    }
+
+    #[test]
+    fn mode_at_inside_content_block_is_markup() {
+        // `#text[hello, |world]` — cursor inside the content block
+        // is markup mode again (despite being nested inside a code-
+        // mode call).
+        let src = "#text[hello, world]";
+        let pos = src.find("hello").unwrap();
+        assert_eq!(typst_mode_at(src, pos), TypstMode::Markup);
+    }
+
+    #[test]
+    fn mode_at_inside_math_is_math() {
+        // Inline math: `$x^2$`. Cursor between the dollars.
+        let src = "Prose. $x^2$ more.";
+        let pos = src.find("x^").unwrap();
+        assert_eq!(typst_mode_at(src, pos), TypstMode::Math);
+    }
+
+    #[test]
+    fn call_prefix_for_each_mode() {
+        assert_eq!(TypstMode::Markup.call_prefix(), "#");
+        assert_eq!(TypstMode::Code.call_prefix(), "");
+        assert_eq!(TypstMode::Math.call_prefix(), "");
     }
 }
