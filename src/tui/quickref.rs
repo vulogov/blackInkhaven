@@ -48,7 +48,7 @@ pub fn entries_for(focus: Focus) -> Vec<Entry> {
     out
 }
 
-fn global_entries() -> [Entry; 24] {
+fn global_entries() -> [Entry; 25] {
     [
         header("─── Global ───"),
         entry("Ctrl+Q", "Quit (autosaves dirty paragraph)"),
@@ -69,6 +69,7 @@ fn global_entries() -> [Entry; 24] {
         entry("Ctrl+B O", "Take the book — build + copy PDF to cwd"),
         entry("Ctrl+B 1..7", "Scoped status filter — list paragraphs by status under tree cursor (r/-/Enter act on rows)"),
         entry("Ctrl+B W", "Toggle full-screen typewriter mode (hides every other pane)"),
+        entry("Ctrl+B K", "Toggle full-screen AI mode (AI pane | chat history + AI prompt)"),
         entry("F1", "Help-manual question (RAG over the Help book)"),
         entry("F7", "Grammar check the open paragraph (→ AI pane)"),
         entry("F9", "Cycle AI scope: None→Sel→Para→Sub→Chap→Book→None"),
