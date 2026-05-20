@@ -2,6 +2,7 @@ mod app;
 mod file_picker;
 mod focus;
 mod highlight;
+mod hjson_highlight;
 mod input;
 mod keymap;
 mod lexicon;

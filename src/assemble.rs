@@ -628,6 +628,7 @@ mod tests {
             image_ext: None,
             image_caption: None,
             image_alt: None,
+            content_type: None,
         }
     }
 

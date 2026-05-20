@@ -99,6 +99,16 @@ pub struct Node {
     /// `image(..., alt: ...)` when set.
     #[serde(default)]
     pub image_alt: Option<String>,
+
+    /// For Paragraph nodes: the editor / highlighter language. None
+    /// or `"typst"` (the default) treats the file as a Typst document
+    /// and picks the tree-sitter-typst highlighter. `"hjson"` switches
+    /// to inkhaven's hand-rolled HJSON highlighter and gives the file
+    /// the `.hjson` extension on disk. Future values (`"json"`,
+    /// `"yaml"`) can land without breaking persisted projects because
+    /// the field is serde-optional with the typst default.
+    #[serde(default)]
+    pub content_type: Option<String>,
 }
 
 impl Node {
@@ -118,6 +128,7 @@ impl Node {
             "image_ext":     self.image_ext,
             "image_caption": self.image_caption,
             "image_alt":     self.image_alt,
+            "content_type":  self.content_type,
         })
     }
 
@@ -208,6 +219,10 @@ impl Node {
             .get("image_alt")
             .and_then(|v| v.as_str())
             .map(str::to_owned);
+        let content_type = obj
+            .get("content_type")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
 
         Ok(Self {
             id,
@@ -225,6 +240,7 @@ impl Node {
             image_ext,
             image_caption,
             image_alt,
+            content_type,
         })
     }
 
@@ -234,7 +250,16 @@ impl Node {
     pub fn fs_name(&self) -> String {
         match self.kind {
             NodeKind::Book => self.slug.clone(),
-            NodeKind::Paragraph => format!("{:02}-{}.typ", self.order, self.slug),
+            NodeKind::Paragraph => {
+                // content_type drives the extension. Default / None /
+                // `"typst"` → `.typ`; `"hjson"` → `.hjson`. Future
+                // values gain their own arms.
+                let ext = match self.content_type.as_deref() {
+                    Some("hjson") => "hjson",
+                    _ => "typ",
+                };
+                format!("{:02}-{}.{}", self.order, self.slug, ext)
+            }
             NodeKind::Image => {
                 // Default to .png when an Image was somehow constructed
                 // without an extension (test data, older project that
