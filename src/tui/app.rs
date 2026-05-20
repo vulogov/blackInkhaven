@@ -956,6 +956,58 @@ mod book_info_tests {
     }
 
     #[test]
+    fn open_pair_for_known_openers() {
+        assert_eq!(open_pair_for('('), Some(')'));
+        assert_eq!(open_pair_for('['), Some(']'));
+        assert_eq!(open_pair_for('{'), Some('}'));
+        assert_eq!(open_pair_for('"'), Some('"'));
+        assert_eq!(open_pair_for('\''), Some('\''));
+        assert_eq!(open_pair_for('a'), None);
+        assert_eq!(open_pair_for(')'), None);
+    }
+
+    #[test]
+    fn is_close_pair_char_covers_all_closers() {
+        for c in [')', ']', '}', '"', '\''] {
+            assert!(is_close_pair_char(c), "{c} should be a close pair char");
+        }
+        for c in ['(', '[', '{', 'a', '#'] {
+            assert!(!is_close_pair_char(c), "{c} should not be");
+        }
+    }
+
+    /// Reproduce the pair-detection rule used by the Enter and
+    /// Backspace handlers without going through tui-textarea.
+    fn between_pair(line: &str, col: usize) -> bool {
+        let chars: Vec<char> = line.chars().collect();
+        let before = if col > 0 { chars.get(col - 1).copied() } else { None };
+        let after = chars.get(col).copied();
+        matches!(
+            (before, after),
+            (Some('('), Some(')')) | (Some('['), Some(']')) | (Some('{'), Some('}'))
+        )
+    }
+
+    #[test]
+    fn pair_detection_inside_freshly_typed_pair() {
+        // `foo(|)` — cursor at col 4, between `(` and `)`.
+        assert!(between_pair("foo()", 4));
+        // `[]` — cursor at col 1, between `[` and `]`.
+        assert!(between_pair("[]", 1));
+        // `{}` — cursor at col 1, between `{` and `}`.
+        assert!(between_pair("{}", 1));
+    }
+
+    #[test]
+    fn pair_detection_skips_when_chars_dont_match() {
+        // Just before `)` but `(` is not on the immediate left.
+        assert!(!between_pair("foo )", 4));
+        // Indented prose with parens that DO match — pair logic only
+        // cares about the immediately adjacent chars.
+        assert!(!between_pair("  abc(def)", 6));
+    }
+
+    #[test]
     fn filter_functions_empty_returns_all() {
         let all = filter_functions("").len();
         assert!(all > 50, "expected the baked-in table to have >50 entries, got {all}");
@@ -2772,6 +2824,31 @@ impl App {
             }
         }
 
+        // Auto-close pairs (configurable). Only plain keystrokes — Ctrl /
+        // Alt / Super combinations fall through to the textarea catch-all
+        // below. Each helper returns `true` when it consumed the key,
+        // letting us skip the catch-all without disturbing the cursor.
+        let plain_no_mods = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        if plain_no_mods && self.cfg.editor.auto_close_pairs {
+            if let KeyCode::Char(c) = key.code {
+                if let Some(close) = open_pair_for(c) {
+                    self.editor_auto_open_pair(c, close);
+                    return Ok(false);
+                }
+                if is_close_pair_char(c) && self.editor_try_skip_close(c) {
+                    return Ok(false);
+                }
+            }
+            if matches!(key.code, KeyCode::Enter) && self.editor_try_expand_pair_on_enter() {
+                return Ok(false);
+            }
+            if matches!(key.code, KeyCode::Backspace) && self.editor_try_delete_pair() {
+                return Ok(false);
+            }
+        }
+
         // Everything else: pass to textarea WITHOUT its emacs-style defaults,
         // so plain typing/arrows/Home/End/PageUp/PageDown/Shift+arrows still
         // work but Ctrl+letter combinations don't get hijacked.
@@ -2782,6 +2859,99 @@ impl App {
             }
         }
         Ok(false)
+    }
+
+    /// Insert `open` + `close` at the cursor and step back one
+    /// character so the cursor sits between them.
+    fn editor_auto_open_pair(&mut self, open: char, close: char) {
+        let Some(doc) = self.opened.as_mut() else { return };
+        doc.textarea.insert_char(open);
+        doc.textarea.insert_char(close);
+        doc.textarea.move_cursor(CursorMove::Back);
+        doc.dirty = true;
+    }
+
+    /// When the next char on the line is the same close character
+    /// the user just typed, step over it instead of inserting a
+    /// duplicate. Returns `false` when the next char doesn't match
+    /// (caller falls through to normal insertion).
+    fn editor_try_skip_close(&mut self, close: char) -> bool {
+        let Some(doc) = self.opened.as_mut() else { return false };
+        let (row, col) = doc.textarea.cursor();
+        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
+        let next_char = line.chars().nth(col);
+        if next_char == Some(close) {
+            doc.textarea.move_cursor(CursorMove::Forward);
+            return true;
+        }
+        false
+    }
+
+    /// Enter pressed with the cursor between matching brackets:
+    /// expand to a 3-line indented block. Returns `false` when the
+    /// cursor isn't between a pair (caller does the regular Enter).
+    fn editor_try_expand_pair_on_enter(&mut self) -> bool {
+        let Some(doc) = self.opened.as_ref() else { return false };
+        let (row, col) = doc.textarea.cursor();
+        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
+        let chars: Vec<char> = line.chars().collect();
+        let before = if col > 0 { chars.get(col - 1).copied() } else { None };
+        let after = chars.get(col).copied();
+        if !matches!(
+            (before, after),
+            (Some('('), Some(')')) | (Some('['), Some(']')) | (Some('{'), Some('}'))
+        ) {
+            return false;
+        }
+        let base_indent: String = chars
+            .iter()
+            .take_while(|c| **c == ' ' || **c == '\t')
+            .collect();
+        let extra = " ".repeat(self.cfg.editor.tab_width.max(1));
+        let new_indent = format!("{base_indent}{extra}");
+        let Some(doc) = self.opened.as_mut() else { return false };
+        // 1. Newline → cursor lands at column 0 of a new line with
+        //    the close-bracket as its first char.
+        doc.textarea.insert_char('\n');
+        // 2. Type the deeper indent, then ANOTHER newline so the
+        //    close-bracket slides further down. Cursor lands at
+        //    column 0 of the close-bracket line.
+        doc.textarea.insert_str(&new_indent);
+        doc.textarea.insert_char('\n');
+        // 3. Indent the close-bracket line with the base indent.
+        doc.textarea.insert_str(&base_indent);
+        // 4. Move up to the middle line, end of indent.
+        doc.textarea.move_cursor(CursorMove::Up);
+        doc.textarea.move_cursor(CursorMove::End);
+        doc.dirty = true;
+        true
+    }
+
+    /// Backspace when cursor sits between a freshly typed pair like
+    /// `(|)`: delete BOTH halves. Returns `false` otherwise.
+    fn editor_try_delete_pair(&mut self) -> bool {
+        let Some(doc) = self.opened.as_ref() else { return false };
+        let (row, col) = doc.textarea.cursor();
+        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
+        let chars: Vec<char> = line.chars().collect();
+        let before = if col > 0 { chars.get(col - 1).copied() } else { None };
+        let after = chars.get(col).copied();
+        let is_pair = matches!(
+            (before, after),
+            (Some('('), Some(')'))
+                | (Some('['), Some(']'))
+                | (Some('{'), Some('}'))
+                | (Some('"'), Some('"'))
+                | (Some('\''), Some('\''))
+        );
+        if !is_pair {
+            return false;
+        }
+        let Some(doc) = self.opened.as_mut() else { return false };
+        doc.textarea.delete_next_char();
+        doc.textarea.delete_char();
+        doc.dirty = true;
+        true
     }
 
     fn editor_copy(&mut self) {
@@ -9665,6 +9835,23 @@ fn truncate_title(title: &str, max_chars: usize) -> String {
 /// `unicode-segmentation`, so a selection of "Москва" works the same as
 /// dropping the cursor inside it. Trailing apostrophes / quotes are
 /// trimmed so "King's" doesn't pull in an extra quote.
+/// Open-bracket → matching close pair the auto-close logic emits.
+/// None for any character that isn't an opener we recognise.
+fn open_pair_for(c: char) -> Option<char> {
+    match c {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        '"' => Some('"'),
+        '\'' => Some('\''),
+        _ => None,
+    }
+}
+
+fn is_close_pair_char(c: char) -> bool {
+    matches!(c, ')' | ']' | '}' | '"' | '\'')
+}
+
 /// Case-insensitive substring filter over the baked-in typst function
 /// table. Results are returned sorted alphabetically (the table is
 /// already sorted; we just preserve order across filter steps).
