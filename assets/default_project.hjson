@@ -52,6 +52,18 @@
     // paragraph-switch autosaves still fire.
     autosave_seconds: 5
 
+    // Auto-close brackets and quotes.
+    //  * Typing `(`, `[`, `{`, `"`, `'` inserts the matching close-char
+    //    and parks the cursor between them.
+    //  * Typing the matching close-char when it's already the next
+    //    character on the line steps over it instead of duplicating.
+    //  * Enter inside `()`, `[]` or `{}` expands to three indented
+    //    lines (cursor lands on the middle one). Indent size = `tab_width`.
+    //  * Backspace on the inside of a freshly-typed pair removes
+    //    both halves.
+    // Set false to disable the whole behaviour.
+    auto_close_pairs: true
+
     // Snowball stemmer languages used to expand the Places / Characters
     // highlight overlay. With `russian` configured a paragraph titled
     // "Москва" also lights up "Москве", "Москвою", etc.; with `english`

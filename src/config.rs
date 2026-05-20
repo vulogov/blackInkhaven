@@ -883,6 +883,11 @@ pub struct EditorConfig {
     /// paragraph is automatically saved. 0 disables idle autosave (the
     /// quit-time and paragraph-switch autosaves still fire).
     pub autosave_seconds: u64,
+    /// Insert the matching close-bracket / quote when the user types
+    /// `(`, `[`, `{`, `"` or `'`. Enter inside a bracket pair expands
+    /// to a 3-line indented block. Backspace at the inside of a freshly
+    /// typed pair removes both halves. Disabled = nothing inserts.
+    pub auto_close_pairs: bool,
     /// Snowball stemmer languages used to expand the Places/Characters
     /// highlight overlay so morphological variants light up too — e.g.
     /// "Москва" also matches "Москве", "Москвою". Each entry is one of the
@@ -898,6 +903,7 @@ impl Default for EditorConfig {
             tab_width: 2,
             wrap: true,
             autosave_seconds: 5,
+            auto_close_pairs: true,
             stemming: StemmingConfig::default(),
         }
     }
