@@ -261,11 +261,14 @@ impl Hierarchy {
             (Some(NodeKind::Book), NodeKind::Chapter) => true,
             (Some(NodeKind::Book), NodeKind::Paragraph) => true,
             (Some(NodeKind::Book), NodeKind::Image) => true,
+            (Some(NodeKind::Book), NodeKind::Script) => true,
             (Some(NodeKind::Chapter), NodeKind::Subchapter) => true,
             (Some(NodeKind::Chapter), NodeKind::Paragraph) => true,
             (Some(NodeKind::Chapter), NodeKind::Image) => true,
+            (Some(NodeKind::Chapter), NodeKind::Script) => true,
             (Some(NodeKind::Subchapter), NodeKind::Paragraph) => true,
             (Some(NodeKind::Subchapter), NodeKind::Image) => true,
+            (Some(NodeKind::Subchapter), NodeKind::Script) => true,
             (Some(NodeKind::Subchapter), NodeKind::Subchapter) => {
                 cfg.hierarchy.unbounded_subchapters
             }

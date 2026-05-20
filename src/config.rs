@@ -696,6 +696,7 @@ pub struct ThemeConfig {
     pub tree_subchapter_fg: String,
     pub tree_paragraph_fg: String,
     pub tree_image_fg: String,
+    pub tree_script_fg: String,
 
     // Editor pane header — the trailing `L{row} C{col}` cursor read-out
     // gets this colour so it's distinguishable from the title.
@@ -763,6 +764,7 @@ impl Default for ThemeConfig {
             tree_subchapter_fg: "#94e2d5".into(), // teal — subchapter
             tree_paragraph_fg: "#cdd6f4".into(),  // base text — keep prose calm
             tree_image_fg: "#fab387".into(),       // peach — media accent
+            tree_script_fg: "#cba6f7".into(),      // mauve — code accent
 
             editor_position_fg: "#89dceb".into(), // sky — cursor read-out
             ai_scope_fg: "#fab387".into(),        // peach — F9 scope chip

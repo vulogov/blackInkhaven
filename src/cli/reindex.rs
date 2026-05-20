@@ -27,7 +27,10 @@ pub fn run(project: &Path, prune: bool, adopt: bool) -> Result<()> {
     let mut known_paths: HashSet<PathBuf> = HashSet::new();
 
     for node in h.iter() {
-        if node.kind != NodeKind::Paragraph {
+        // Reindex sees text-leaf kinds: Paragraph (.typ / .hjson)
+        // and Script (.bund). Images are binary and have no
+        // useful "did the disk drift?" semantic at this layer.
+        if !matches!(node.kind, NodeKind::Paragraph | NodeKind::Script) {
             continue;
         }
         let Some(rel) = node.file.as_ref() else {

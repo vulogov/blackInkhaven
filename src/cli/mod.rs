@@ -178,6 +178,10 @@ pub enum CliNodeKind {
     Chapter,
     Subchapter,
     Paragraph,
+    /// Bund script — a `.bund` file `bund.eval`'d into Adam at
+    /// project open. Default home is the `Scripts` system book,
+    /// but Scripts can also live inside any user Book.
+    Script,
 }
 
 impl From<CliNodeKind> for NodeKind {
@@ -187,6 +191,7 @@ impl From<CliNodeKind> for NodeKind {
             CliNodeKind::Chapter => NodeKind::Chapter,
             CliNodeKind::Subchapter => NodeKind::Subchapter,
             CliNodeKind::Paragraph => NodeKind::Paragraph,
+            CliNodeKind::Script => NodeKind::Script,
         }
     }
 }
