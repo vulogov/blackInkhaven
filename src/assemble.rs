@@ -135,7 +135,7 @@ fn count_work(hierarchy: &Hierarchy, book: &Node) -> usize {
         match n.kind {
             NodeKind::Book => count += 1, // book/index.typ
             NodeKind::Chapter | NodeKind::Subchapter => count += 1,
-            NodeKind::Paragraph => count += 1,
+            NodeKind::Paragraph | NodeKind::Image => count += 1,
         }
     }
     count
@@ -208,6 +208,20 @@ fn write_branch(
                 )?;
                 child_refs.push(ChildRef::Branch { dname });
             }
+            NodeKind::Image => {
+                let fname = child.fs_name(); // "NN-slug.<ext>"
+                let dst = out_dir.join(&fname);
+                copy_image_file(store, child, &dst)?;
+                *done += 1;
+                let rel = dst.strip_prefix(artefacts_root).unwrap_or(&dst);
+                progress(*done, total, rel);
+                child_refs.push(ChildRef::Image {
+                    fname,
+                    title: child.title.clone(),
+                    caption: child.image_caption.clone(),
+                    alt: child.image_alt.clone(),
+                });
+            }
             NodeKind::Book => {
                 // Books can't be nested under other books in this
                 // hierarchy; skip defensively.
@@ -233,10 +247,17 @@ fn write_branch(
 }
 
 /// References each `index.typ` keeps to its children so it can emit
-/// the right include / wrap_paragraph / sub-include line.
+/// the right include / wrap_paragraph / sub-include / wrap_image_*
+/// line.
 enum ChildRef {
     Paragraph { fname: String },
     Branch { dname: String },
+    Image {
+        fname: String,
+        title: String,
+        caption: Option<String>,
+        alt: Option<String>,
+    },
 }
 
 fn build_branch_index(
@@ -272,6 +293,23 @@ fn build_branch_index(
                             "#include \"{dname}/index.typ\"\n"
                         ));
                     }
+                    ChildRef::Image {
+                        fname,
+                        title,
+                        caption,
+                        alt,
+                    } => {
+                        // Image directly under a Book → frontispiece /
+                        // book-art treatment via `wrap_image_book`.
+                        out.push_str(&render_image_call(
+                            "wrap_image_book",
+                            fname,
+                            title,
+                            caption.as_deref(),
+                            alt.as_deref(),
+                            /*markup_prefix=*/ true,
+                        ));
+                    }
                 }
             }
         }
@@ -293,6 +331,31 @@ fn build_branch_index(
                             "  include \"{dname}/index.typ\"\n"
                         ));
                     }
+                    ChildRef::Image {
+                        fname,
+                        title,
+                        caption,
+                        alt,
+                    } => {
+                        // Image under Chapter → `wrap_image_chapter`,
+                        // under Subchapter → `wrap_image_subchapter`.
+                        // Inside the code-mode `{ … }` argument so no
+                        // `#` prefix.
+                        let wrap_fn = match level {
+                            BranchLevel::Chapter => "wrap_image_chapter",
+                            BranchLevel::Subchapter => "wrap_image_subchapter",
+                            BranchLevel::BookRoot => unreachable!(),
+                        };
+                        body.push_str("  ");
+                        body.push_str(&render_image_call(
+                            wrap_fn,
+                            fname,
+                            title,
+                            caption.as_deref(),
+                            alt.as_deref(),
+                            /*markup_prefix=*/ false,
+                        ));
+                    }
                 }
             }
             if body.is_empty() {
@@ -310,6 +373,60 @@ fn build_branch_index(
         }
     }
     out
+}
+
+/// Format one `wrap_image_*` function call for inclusion in an
+/// `index.typ`. `markup_prefix` adds the `#` so the call works at file
+/// scope (markup mode); inside a code-mode `{ … }` block the prefix
+/// is dropped. None values for caption / alt become Typst `none`.
+fn render_image_call(
+    wrap_fn: &str,
+    fname: &str,
+    title: &str,
+    caption: Option<&str>,
+    alt: Option<&str>,
+    markup_prefix: bool,
+) -> String {
+    let title_lit = quote_or_none(Some(title));
+    let caption_lit = quote_or_none(caption);
+    let alt_lit = quote_or_none(alt);
+    let prefix = if markup_prefix { "#" } else { "" };
+    format!(
+        "{prefix}{wrap_fn}(\"{}\", {title_lit}, {caption_lit}, alt: {alt_lit})\n",
+        fname.replace('\\', "\\\\").replace('"', "\\\""),
+    )
+}
+
+/// `"..."` for a Some, the bare keyword `none` for a None. Strings
+/// get their `\` and `"` escaped.
+fn quote_or_none(s: Option<&str>) -> String {
+    match s.and_then(|t| if t.is_empty() { None } else { Some(t) }) {
+        None => "none".to_string(),
+        Some(t) => format!(
+            "\"{}\"",
+            t.replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', " ")
+        ),
+    }
+}
+
+/// Pull an Image node's bytes out of bdslib (source of truth) and
+/// write them to the assembled tree at `dst`. The on-disk copy under
+/// `books/<...>` is the working copy; bdslib is authoritative so a
+/// hand-edit there isn't accidentally re-ingested by the assembler.
+fn copy_image_file(store: &Store, node: &Node, dst: &Path) -> Result<()> {
+    let bytes = match store.image_bytes(node.id)? {
+        Some(b) => b,
+        None => {
+            return Err(Error::Store(format!(
+                "assemble: image `{}` has no bytes in bdslib",
+                node.title
+            )));
+        }
+    };
+    std::fs::write(dst, &bytes).map_err(Error::Io)?;
+    Ok(())
 }
 
 /// Strip the leading `= Title\n` editor-chrome heading off a paragraph
@@ -494,6 +611,9 @@ mod tests {
             modified_at: chrono::Utc::now(),
             protected: false,
             system_tag: None,
+            image_ext: None,
+            image_caption: None,
+            image_alt: None,
         }
     }
 
@@ -532,6 +652,101 @@ mod tests {
         // Inside the code-block argument, `wrap_paragraph` is bare —
         // no `#` since we're already in code mode.
         assert!(out.contains("wrap_paragraph(include \"01-first.typ\")"));
+    }
+
+    #[test]
+    fn render_image_call_omits_none_caption_alt() {
+        let s = render_image_call(
+            "wrap_image_chapter",
+            "01-cover.png",
+            "Cover Art",
+            None,
+            None,
+            false,
+        );
+        // No `#` because we asked for code-mode form.
+        assert!(s.starts_with("wrap_image_chapter("), "got: {s}");
+        assert!(s.contains("\"Cover Art\""));
+        assert!(s.contains(", none"), "expected `none` for caption: {s}");
+        assert!(s.contains("alt: none"), "expected `alt: none`: {s}");
+    }
+
+    #[test]
+    fn render_image_call_markup_prefix_for_book_root() {
+        let s = render_image_call(
+            "wrap_image_book",
+            "01-frontispiece.png",
+            "Frontispiece",
+            Some("Lighthouse at dawn"),
+            Some("alt text"),
+            true,
+        );
+        assert!(s.starts_with("#wrap_image_book("), "got: {s}");
+        assert!(s.contains("\"01-frontispiece.png\""));
+        assert!(s.contains("\"Lighthouse at dawn\""));
+        assert!(s.contains("alt: \"alt text\""));
+    }
+
+    #[test]
+    fn build_book_root_emits_wrap_image_book() {
+        let book = mk_node(NodeKind::Book, "Novel", "novel", 0);
+        let children = vec![ChildRef::Image {
+            fname: "01-cover.png".into(),
+            title: "Cover".into(),
+            caption: Some("By Vladimir".into()),
+            alt: None,
+        }];
+        let out = build_branch_index(
+            &book,
+            BranchLevel::BookRoot,
+            &children,
+            "../globals.typ",
+        );
+        assert!(out.contains("#wrap_image_book(\"01-cover.png\""), "got:\n{out}");
+        assert!(out.contains("\"By Vladimir\""));
+    }
+
+    #[test]
+    fn build_chapter_emits_wrap_image_chapter_in_code_mode() {
+        let chap = mk_node(NodeKind::Chapter, "Prologue", "prologue", 1);
+        let children = vec![ChildRef::Image {
+            fname: "01-opener.jpg".into(),
+            title: "Opener".into(),
+            caption: None,
+            alt: None,
+        }];
+        let out = build_branch_index(
+            &chap,
+            BranchLevel::Chapter,
+            &children,
+            "../../globals.typ",
+        );
+        // Wrapped in #wrap_chapter("Prologue", { ... }), inner call
+        // is code-mode so NO `#` prefix.
+        assert!(out.contains("#wrap_chapter(\"Prologue\""));
+        assert!(
+            out.contains("  wrap_image_chapter(\"01-opener.jpg\""),
+            "got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn build_subchapter_uses_wrap_image_subchapter() {
+        let sub = mk_node(NodeKind::Subchapter, "Vista", "vista", 1);
+        let children = vec![ChildRef::Image {
+            fname: "01-vista.webp".into(),
+            title: "Vista".into(),
+            caption: None,
+            alt: None,
+        }];
+        let out = build_branch_index(
+            &sub,
+            BranchLevel::Subchapter,
+            &children,
+            "../../../globals.typ",
+        );
+        assert!(out.contains("#wrap_subchapter(\"Vista\""));
+        assert!(out.contains("  wrap_image_subchapter(\"01-vista.webp\""));
     }
 
     #[test]

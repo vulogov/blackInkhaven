@@ -725,6 +725,18 @@ fn derive_paragraph_title_from_path(path: &std::path::Path) -> String {
     }
 }
 
+/// Return the lowercase extension if `path` looks like an image file
+/// we'll route to `import_single_image`. The list is the recognised
+/// set Typst's `#image(...)` natively understands: PNG, JPG, JPEG,
+/// GIF, WebP, SVG. Anything else stays a paragraph candidate.
+fn image_extension_for(path: &std::path::Path) -> Option<String> {
+    let ext = path.extension()?.to_str()?.to_lowercase();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => Some(ext),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum InferenceAction {
     Replace,
@@ -5531,6 +5543,12 @@ impl App {
     }
 
     fn import_single_file(&mut self, path: &std::path::Path) {
+        // Route image files (PNG / JPG / etc.) to the image-import
+        // path; everything else gets the prose treatment.
+        if let Some(ext) = image_extension_for(path) {
+            self.import_single_image(path, &ext);
+            return;
+        }
         // Place the new paragraph after the tree cursor's same-kind ancestor
         // if there is one (so it's "insert after current"). Falls back to
         // append-at-end under the nearest valid parent.
@@ -5613,6 +5631,81 @@ impl App {
         }
         let _ = self.store.sync();
         self.status = format!("imported `{}` as paragraph", path.display());
+        self.reload_hierarchy();
+        if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == created.id) {
+            self.tree_cursor = i;
+        }
+    }
+
+    /// Sibling to `import_single_file` for image files. The parent
+    /// selection mirrors the prose path: insert after the cursor's
+    /// nearest leaf sibling, falling back to "append at the end of
+    /// the nearest legal branch".
+    fn import_single_image(&mut self, path: &std::path::Path, ext: &str) {
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.status = format!("read {}: {e}", path.display());
+                return;
+            }
+        };
+        let title = derive_paragraph_title_from_path(path);
+        let cursor_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
+        let anchor = cursor_id.and_then(|id| {
+            let mut cur = Some(id);
+            while let Some(c) = cur {
+                let node = self.hierarchy.get(c)?;
+                if node.kind.is_leaf() {
+                    return Some(node.id);
+                }
+                cur = node.parent_id;
+            }
+            None
+        });
+        let position = match anchor {
+            Some(id) => InsertPosition::After(id),
+            None => InsertPosition::End,
+        };
+        let parent = match position {
+            InsertPosition::After(anchor_id) | InsertPosition::Before(anchor_id) => self
+                .hierarchy
+                .get(anchor_id)
+                .and_then(|n| n.parent_id)
+                .and_then(|pid| self.hierarchy.get(pid))
+                .cloned(),
+            InsertPosition::End => {
+                match self
+                    .hierarchy
+                    .pick_parent_for(&self.cfg, cursor_id, NodeKind::Image)
+                {
+                    Ok(p) => p.cloned(),
+                    Err(e) => {
+                        self.status = format!("can't import image here: {e}");
+                        return;
+                    }
+                }
+            }
+        };
+        let created = match self.store.create_image_node(
+            &self.cfg,
+            &self.hierarchy,
+            &title,
+            ext,
+            &bytes,
+            parent.as_ref(),
+            position,
+        ) {
+            Ok(n) => n,
+            Err(e) => {
+                self.status = format!("import image: {e}");
+                return;
+            }
+        };
+        self.status = format!(
+            "imported `{}` as image ({} bytes)",
+            path.display(),
+            bytes.len()
+        );
         self.reload_hierarchy();
         if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == created.id) {
             self.tree_cursor = i;
@@ -6092,9 +6185,9 @@ impl App {
                     None
                 }
             }
-            Some(NodeKind::Paragraph) => {
+            Some(NodeKind::Paragraph) | Some(NodeKind::Image) => {
                 return Err(Error::Store(
-                    "can't import under a paragraph — move cursor to a branch first".into(),
+                    "can't import under a leaf — move cursor to a branch first".into(),
                 ));
             }
         };
@@ -6914,15 +7007,40 @@ impl App {
 
         match node.kind {
             NodeKind::Paragraph => self.load_paragraph(&node)?,
+            NodeKind::Image => self.show_image_info(&node),
             _ => {
                 self.status = format!(
-                    "`{}` is a {} (Enter opens paragraphs)",
+                    "`{}` is a {} (Enter opens paragraphs / images)",
                     node.title,
                     node.kind.as_str()
                 );
             }
         }
         Ok(())
+    }
+
+    /// Phase-1 stand-in for the eventual ratatui-image preview. Shows
+    /// filename + extension + bytes-on-disk size + caption + alt in a
+    /// status-bar line. Phase-2 swaps this for an actual preview
+    /// modal gated on the `images.preview_enabled` HJSON knob.
+    fn show_image_info(&mut self, node: &Node) {
+        let fs_rel = node.file.clone().unwrap_or_else(|| "<no path>".into());
+        let abs = self.layout.root.join(&fs_rel);
+        let size = std::fs::metadata(&abs)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let caption_hint = node
+            .image_caption
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("(no caption)");
+        self.status = format!(
+            "🖼 {} · {} · {} bytes · {}",
+            node.title,
+            fs_rel,
+            size,
+            caption_hint
+        );
     }
 
     fn load_paragraph(&mut self, node: &Node) -> Result<()> {
@@ -7927,6 +8045,7 @@ impl App {
             } else {
                 match node.kind {
                     NodeKind::Paragraph => "¶ ",
+                    NodeKind::Image => "▣ ",
                     // For branches, use ▾ (expanded) / ▸ (collapsed) glyphs
                     // so the expand/collapse state is visible at a glance.
                     _ => {
@@ -7946,6 +8065,7 @@ impl App {
                 NodeKind::Chapter => self.theme.tree_chapter_fg,
                 NodeKind::Subchapter => self.theme.tree_subchapter_fg,
                 NodeKind::Paragraph => self.theme.tree_paragraph_fg,
+                NodeKind::Image => self.theme.tree_image_fg,
             };
             let mut row_style = Style::default().fg(kind_fg);
             if matches!(node.kind, NodeKind::Book | NodeKind::Chapter) {
@@ -8868,6 +8988,7 @@ struct BookStats {
     chapters: usize,
     subchapters: usize,
     paragraphs: usize,
+    images: usize,
     sentences: usize,
     words: u64,
 }
@@ -8895,6 +9016,7 @@ fn compute_book_stats(
                     }
                 }
             }
+            NodeKind::Image => stats.images += 1,
         }
     }
     stats
