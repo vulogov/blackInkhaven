@@ -2334,9 +2334,15 @@ impl App {
 
         // AI-fullscreen-only: PageUp / PageDown scroll the chat history
         // pane regardless of which sub-pane has focus (the user is
-        // typically focused on the AI prompt). Intercepted here so the
-        // AI prompt's own input handler never sees these keys in this
-        // layout. The non-fullscreen path leaves them untouched.
+        // typically focused on the AI prompt). Up / Down do the same
+        // one line at a time for fine-grained reading. Intercepted
+        // here so the AI prompt's own input handler never sees these
+        // keys in this layout. The non-fullscreen path leaves them
+        // untouched.
+        //
+        // Exception: when the `/` prompt-library picker is open, Up /
+        // Down still navigate the picker — that's the picker's only
+        // way to move the selection.
         if self.ai_fullscreen {
             if self.keymap.page_up.matches(&key) {
                 self.chat_history_scroll = self.chat_history_scroll.saturating_add(10);
@@ -2345,6 +2351,16 @@ impl App {
             if self.keymap.page_down.matches(&key) {
                 self.chat_history_scroll = self.chat_history_scroll.saturating_sub(10);
                 return Ok(false);
+            }
+            if !self.show_prompt_picker {
+                if matches!(key.code, KeyCode::Up) {
+                    self.chat_history_scroll = self.chat_history_scroll.saturating_add(1);
+                    return Ok(false);
+                }
+                if matches!(key.code, KeyCode::Down) {
+                    self.chat_history_scroll = self.chat_history_scroll.saturating_sub(1);
+                    return Ok(false);
+                }
             }
         }
 
@@ -6147,7 +6163,8 @@ impl App {
             // no input role and the editor / tree / search bar are
             // hidden in this layout anyway.
             self.change_focus(Focus::AiPrompt);
-            self.status = "AI fullscreen · PageUp/PgDn scrolls history · Ctrl+B K to exit".into();
+            self.status =
+                "AI fullscreen · ↑↓/PgUp/PgDn scrolls history · Ctrl+B K to exit".into();
         } else {
             self.status = "AI fullscreen off".into();
         }
@@ -10330,7 +10347,7 @@ impl App {
         };
         let block = self.pane_block_line(
             Line::from(format!(
-                " Chat history · {} turn(s){scroll_tag} · PgUp/PgDn ",
+                " Chat history · {} turn(s){scroll_tag} · ↑↓ / PgUp / PgDn ",
                 self.chat_history.len()
             )),
             // Use the AI focus colouring so the two AI-related panes
