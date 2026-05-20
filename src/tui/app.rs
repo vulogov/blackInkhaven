@@ -1358,6 +1358,17 @@ enum Modal {
         /// the filename — true when the `#image(` call was unclosed.
         close_quote: bool,
     },
+    /// Enter-on-Image preview using ratatui-image. The `proto` is a
+    /// resize-aware StatefulProtocol scoped to one image; it's
+    /// re-encoded each frame against the modal's current rect so a
+    /// terminal resize Just Works. None when the picker isn't
+    /// available — caller falls back to the status-line info path.
+    ImagePreview {
+        title: String,
+        fs_rel: String,
+        size_bytes: u64,
+        proto: ratatui_image::protocol::StatefulProtocol,
+    },
     /// F1 help-manual query. Asks a free-form question against the Help
     /// system book (RAG), then streams the constrained LLM answer into the
     /// AI pane. Esc cancels; Enter submits.
@@ -1508,6 +1519,13 @@ struct App {
     /// silently no-ops, so a headless / SSH-without-audio session
     /// behaves identically to a desktop with `sound.enabled = false`.
     sound: Option<super::sound::SoundPlayer>,
+
+    /// Cached ratatui-image Picker — queried once at startup from the
+    /// host terminal. None when the query failed (CI, weird ssh
+    /// session, terminals without ANSI graphics support); preview
+    /// then falls back to the status-bar info line. Also None when
+    /// `images.preview_enabled = false` regardless of capability.
+    image_picker: Option<ratatui_image::picker::Picker>,
 }
 
 #[derive(Debug)]
@@ -1630,6 +1648,21 @@ impl App {
         // `sound.enabled = false`.
         let sound =
             super::sound::SoundPlayer::try_new(cfg.sound.enabled, cfg.sound.volume);
+        // Probe the host terminal for graphics-protocol support so the
+        // image-preview modal can pick kitty / sixel / iterm2 / half-
+        // block. Errors here just disable the preview pane; the rest
+        // of the app behaves identically.
+        let image_picker = if cfg.images.preview_enabled {
+            match ratatui_image::picker::Picker::from_query_stdio() {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    tracing::info!("image preview disabled — terminal probe: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         Ok(Self {
             layout,
             store,
@@ -1678,6 +1711,7 @@ impl App {
             pending_build: None,
             pending_take: None,
             sound,
+            image_picker,
         })
     }
 
@@ -5195,6 +5229,74 @@ impl App {
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 
+    fn draw_image_preview_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        // Pull the variant fields out by value (cloning the cheap
+        // strings/numbers) and take a `&mut` borrow of `proto` only
+        // for the render call — keeps the modal field accessible
+        // for read elsewhere if needed.
+        let Modal::ImagePreview {
+            title,
+            fs_rel,
+            size_bytes,
+            proto,
+        } = &mut self.modal
+        else {
+            return;
+        };
+
+        let width = area.width.saturating_sub(4).max(40);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let title_line = format!(
+            " 🖼 {title}  ·  {fs_rel}  ·  {size_bytes} bytes "
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title_line)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Reserve the last inner row for the hint line.
+        let body_h = inner.height.saturating_sub(1);
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: body_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: 1,
+        };
+
+        let widget = ratatui_image::StatefulImage::new();
+        f.render_stateful_widget(widget, body_rect, proto);
+
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  Esc closes  ·  resize the terminal to re-fit ".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     fn cycle_ai_mode(&mut self) {
         self.ai_mode = self.ai_mode.next();
         self.status = match self.ai_mode {
@@ -7318,16 +7420,56 @@ impl App {
         Ok(())
     }
 
-    /// Phase-1 stand-in for the eventual ratatui-image preview. Shows
-    /// filename + extension + bytes-on-disk size + caption + alt in a
-    /// status-bar line. Phase-2 swaps this for an actual preview
-    /// modal gated on the `images.preview_enabled` HJSON knob.
+    /// Enter on an Image row: try the ratatui-image preview modal,
+    /// fall back to a status-bar info line when the picker isn't
+    /// available (preview disabled, terminal lacks graphics protocol,
+    /// or the image bytes aren't decodable by the `image` crate).
     fn show_image_info(&mut self, node: &Node) {
         let fs_rel = node.file.clone().unwrap_or_else(|| "<no path>".into());
         let abs = self.layout.root.join(&fs_rel);
         let size = std::fs::metadata(&abs)
             .map(|m| m.len())
             .unwrap_or(0);
+
+        // Preview path: fetch bytes from bdslib (source of truth),
+        // decode, build a resize protocol, pop the modal.
+        if let Some(picker) = self.image_picker.as_ref() {
+            match self.store.image_bytes(node.id) {
+                Ok(Some(bytes)) => match image::load_from_memory(&bytes) {
+                    Ok(dyn_img) => {
+                        let proto = picker.new_resize_protocol(dyn_img);
+                        self.modal = Modal::ImagePreview {
+                            title: node.title.clone(),
+                            fs_rel: fs_rel.clone(),
+                            size_bytes: size,
+                            proto,
+                        };
+                        self.status = format!(
+                            "🖼 {}  ·  Esc closes  ·  {} bytes",
+                            node.title, size
+                        );
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "image decode failed for {}: {e} — falling back to info line",
+                            node.title
+                        );
+                    }
+                },
+                Ok(None) => {
+                    tracing::warn!(
+                        "image {} has no bytes in bdslib — info line only",
+                        node.title
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("image_bytes({}): {e}", node.title);
+                }
+            }
+        }
+
+        // Fallback: status-bar one-liner.
         let caption_hint = node
             .image_caption
             .as_deref()
@@ -7335,10 +7477,7 @@ impl App {
             .unwrap_or("(no caption)");
         self.status = format!(
             "🖼 {} · {} · {} bytes · {}",
-            node.title,
-            fs_rel,
-            size,
-            caption_hint
+            node.title, fs_rel, size, caption_hint
         );
     }
 
@@ -7879,7 +8018,7 @@ impl App {
         f.render_widget(Paragraph::new(hint), footer_rect);
     }
 
-    fn draw_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+    fn draw_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
         // The file picker needs a much larger panel than the fixed
         // 80-wide / 8-high box used for confirms — give it its own renderer.
         if let Modal::FilePicker(picker) = &self.modal {
@@ -7906,6 +8045,10 @@ impl App {
             self.draw_image_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::ImagePreview { .. }) {
+            self.draw_image_preview_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -7922,6 +8065,7 @@ impl App {
             Modal::BookInfo { .. } => unreachable!("book info handled above"),
             Modal::LlmPicker { .. } => unreachable!("llm picker handled above"),
             Modal::ImagePicker { .. } => unreachable!("image picker handled above"),
+            Modal::ImagePreview { .. } => unreachable!("image preview handled above"),
             Modal::HelpQuery { input } => {
                 let body = vec![
                     Line::from(""),
@@ -10139,6 +10283,8 @@ const CREDITS_COMPONENTS: &[(&str, &str, &str)] = &[
     ("humantime",             "MIT / Apache-2.0", "human-readable duration parsing — backup max_age"),
     ("humantime-serde",       "MIT / Apache-2.0", "serde glue for humantime durations"),
     ("rodio",                 "MIT / Apache-2.0", "audio playback — typewriter SFX (Ctrl+B E)"),
+    ("ratatui-image",         "MIT",             "in-TUI image preview — Enter on an Image node"),
+    ("image",                 "MIT / Apache-2.0", "image decoder for the preview pane"),
     ("chrono",                "MIT / Apache-2.0", "timestamps, RFC-3339 formatting"),
     ("uuid",                  "Apache-2.0",      "UUIDv7 paragraph IDs"),
     ("zip",                   "MIT",             "backup / restore archive format"),

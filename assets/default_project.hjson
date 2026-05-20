@@ -138,6 +138,22 @@
     wrap_image_inline: ""
   }
 
+  // Image-node behaviour (F3 import, Enter-on-Image preview).
+  // - `preview_enabled`: when true, Enter on an Image row pops a
+  //   ratatui-image preview that uses kitty / sixel / iterm2 /
+  //   half-block protocols depending on terminal support. Flip to
+  //   false on slow ssh sessions or terminals where the half-block
+  //   fallback is too noisy — the status-bar info line then takes
+  //   over.
+  // - `allowed_extensions`: import filter (F3 picker). Anything not
+  //   here keeps the prose treatment.
+  // - `max_size_bytes`: soft guard against importing huge files.
+  images: {
+    preview_enabled: true
+    allowed_extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"]
+    max_size_bytes: 33554432
+  }
+
   // `typst compile` integration used by Ctrl+B B (build) and
   // Ctrl+B O (take). When the compile fails, inkhaven opens a fresh
   // AI chat with this system prompt and the captured stderr — the
