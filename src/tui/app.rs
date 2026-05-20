@@ -968,6 +968,25 @@ mod book_info_tests {
     }
 
     #[test]
+    fn chat_turn_roundtrips_through_serde() {
+        let history = vec![
+            ChatTurn::User("What's the weather?".into()),
+            ChatTurn::Assistant("I don't have a weather tool.".into()),
+        ];
+        let json = serde_json::to_string(&history).expect("encode");
+        let back: Vec<ChatTurn> = serde_json::from_str(&json).expect("decode");
+        assert_eq!(back.len(), 2);
+        match &back[0] {
+            ChatTurn::User(s) => assert_eq!(s, "What's the weather?"),
+            _ => panic!("expected User turn"),
+        }
+        match &back[1] {
+            ChatTurn::Assistant(s) => assert_eq!(s, "I don't have a weather tool."),
+            _ => panic!("expected Assistant turn"),
+        }
+    }
+
+    #[test]
     fn digit_to_status_mapping() {
         assert_eq!(digit_to_status('1'), Some("Ready"));
         assert_eq!(digit_to_status('2'), Some("Final"));
@@ -1551,6 +1570,12 @@ enum Modal {
         filter: TextInput,
         cursor: usize,
     },
+    /// Ctrl+F in AI-fullscreen — query string entry for the chat-
+    /// history search. Enter commits the query into
+    /// `App::chat_search`; Esc cancels with no search.
+    ChatSearchPrompt {
+        input: TextInput,
+    },
     /// Ctrl+B 1..7 — list paragraphs whose `status` matches the
     /// chord's target value (1 = Ready, 2 = Final, …, 7 = None),
     /// scoped to the tree cursor's enclosing branch (or the whole
@@ -1743,6 +1768,13 @@ struct App {
     /// at the top of the history. Reset to 0 each time a new user
     /// message is sent so the streaming reply is visible.
     chat_history_scroll: usize,
+
+    /// Active chat-history search state (Ctrl+F in AI-fullscreen).
+    /// While Some, matching lines render with a highlight bg and
+    /// the renderer scrolls so the `current` match lands in the
+    /// middle of the pane. Ctrl+X advances toward older matches
+    /// (the spec: "Start from bottom, going up to older").
+    chat_search: Option<ChatSearchState>,
 }
 
 #[derive(Debug)]
@@ -1772,6 +1804,19 @@ struct ImagePickerEntry {
     fname: String,
     title: String,
     size_bytes: u64,
+}
+
+/// Active search session inside the AI-fullscreen chat-history pane.
+/// `matches` is recomputed lazily by `draw_chat_history` whenever the
+/// rendered line count changes (terminal resize) — we just track the
+/// query + which match we're currently centred on.
+#[derive(Debug, Clone)]
+struct ChatSearchState {
+    query: String,
+    /// Index into `matches`. The render hook clamps this against the
+    /// freshly-computed match count each frame so terminal resize +
+    /// streaming-token arrival can't push it out of range.
+    current: usize,
 }
 
 /// One row in the `Ctrl+B 1..7` status-filter list. Carries the
@@ -1949,6 +1994,7 @@ impl App {
             typewriter_mode: false,
             ai_fullscreen: false,
             chat_history_scroll: 0,
+            chat_search: None,
         })
     }
 
@@ -2329,6 +2375,42 @@ impl App {
         // Typst markup.
         if matches!(key.code, KeyCode::F(7)) {
             self.start_grammar_check();
+            return Ok(false);
+        }
+
+        // AI-fullscreen Esc with an active chat search → clear the
+        // search (drop highlights + scroll back to the bottom-pin).
+        // Routed before the focus handlers so AI-prompt Esc doesn't
+        // grab it.
+        if self.ai_fullscreen
+            && self.chat_search.is_some()
+            && matches!(key.code, KeyCode::Esc)
+            && matches!(self.modal, Modal::None)
+        {
+            self.chat_search = None;
+            self.chat_history_scroll = 0;
+            self.status = "chat search cleared".into();
+            return Ok(false);
+        }
+
+        // AI-fullscreen Ctrl+F → chat-history search modal. Intercepted
+        // before the editor-pane Ctrl+F handler so the chord behaves
+        // contextually based on layout, not focus.
+        if self.ai_fullscreen
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F'))
+        {
+            self.open_chat_search_prompt();
+            return Ok(false);
+        }
+        // Ctrl+X advances to the next (older) match while a chat
+        // search is active. No-op when no search is running.
+        if self.ai_fullscreen
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X'))
+            && self.chat_search.is_some()
+        {
+            self.advance_chat_search();
             return Ok(false);
         }
 
@@ -6156,18 +6238,102 @@ impl App {
         // Always start scrolled to the bottom (newest visible). The
         // user can PageUp to walk back through the history.
         self.chat_history_scroll = 0;
+        // Wipe any in-flight chat search; the layout transition is
+        // an obvious break in user intent.
+        self.chat_search = None;
         if self.ai_fullscreen {
             self.typewriter_mode = false; // exclusive with typewriter
+            // Restore previously-saved chat history if the in-memory
+            // list is currently empty. The user explicitly asked for
+            // "if chat is empty, restore from previous state" — never
+            // overwrite a live session.
+            if self.chat_history.is_empty() {
+                match self.load_chat_history_from_disk() {
+                    Ok(turns) if turns > 0 => {
+                        self.status = format!(
+                            "AI fullscreen · restored {turns} turn(s) · Ctrl+B K to exit · Ctrl+F to search history"
+                        );
+                    }
+                    Ok(_) => {
+                        self.status =
+                            "AI fullscreen · ↑↓/PgUp/PgDn scrolls history · Ctrl+F search · Ctrl+B K to exit".into();
+                    }
+                    Err(e) => {
+                        tracing::warn!("chat history restore failed: {e}");
+                        self.status =
+                            "AI fullscreen · ↑↓/PgUp/PgDn scrolls history · Ctrl+F search · Ctrl+B K to exit".into();
+                    }
+                }
+            } else {
+                self.status =
+                    "AI fullscreen · ↑↓/PgUp/PgDn scrolls history · Ctrl+F search · Ctrl+B K to exit".into();
+            }
             // Drop focus onto the AI prompt so the user can start
             // typing the next message immediately — the AI pane has
             // no input role and the editor / tree / search bar are
             // hidden in this layout anyway.
             self.change_focus(Focus::AiPrompt);
-            self.status =
-                "AI fullscreen · ↑↓/PgUp/PgDn scrolls history · Ctrl+B K to exit".into();
         } else {
-            self.status = "AI fullscreen off".into();
+            // Persist the current chat to disk before leaving the
+            // layout. Best-effort: write failures are logged but
+            // don't block the toggle.
+            match self.save_chat_history_to_disk() {
+                Ok(()) => {
+                    self.status = format!(
+                        "AI fullscreen off · {} turn(s) saved",
+                        self.chat_history.len()
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("chat history save failed: {e}");
+                    self.status = "AI fullscreen off (chat history save failed — see logs)".into();
+                }
+            }
         }
+    }
+
+    /// Path used by the chat-history persistence hooks. Lives next
+    /// to `.inkhaven-backup.json` and `.session.json` inside the
+    /// project root.
+    fn chat_history_path(&self) -> std::path::PathBuf {
+        self.layout.root.join(".inkhaven-chat.json")
+    }
+
+    /// Write the in-memory `chat_history` to disk. Empty history
+    /// removes the file so a stale list doesn't haunt the next
+    /// session.
+    fn save_chat_history_to_disk(&self) -> std::io::Result<()> {
+        let path = self.chat_history_path();
+        if self.chat_history.is_empty() {
+            // Nothing to save — clean up any prior file so the next
+            // entry doesn't restore a phantom.
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+            }
+            return Ok(());
+        }
+        let json = serde_json::to_string_pretty(&self.chat_history)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        std::fs::write(&path, json)
+    }
+
+    /// Load the on-disk chat history into `chat_history`. Returns
+    /// the number of turns loaded (0 when the file is absent or
+    /// empty). Parse / IO errors propagate so the caller can log.
+    fn load_chat_history_from_disk(&mut self) -> std::io::Result<usize> {
+        let path = self.chat_history_path();
+        if !path.exists() {
+            return Ok(0);
+        }
+        let bytes = std::fs::read(&path)?;
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        let history: Vec<ChatTurn> = serde_json::from_slice(&bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let n = history.len();
+        self.chat_history = history;
+        Ok(n)
     }
 
     /// Editor meta `Ctrl+B R`: advance the open paragraph's status one
@@ -8047,6 +8213,7 @@ impl App {
         let is_function_picker = matches!(self.modal, Modal::FunctionPicker { .. });
         let is_status_filter = matches!(self.modal, Modal::StatusFilter { .. });
         let is_help_query = matches!(self.modal, Modal::HelpQuery { .. });
+        let is_chat_search_prompt = matches!(self.modal, Modal::ChatSearchPrompt { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -8090,6 +8257,28 @@ impl App {
                 return Ok(false);
             }
             if let Modal::HelpQuery { input } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
+            return Ok(false);
+        }
+
+        if is_chat_search_prompt {
+            // Enter commits the query into `chat_search`; the rendered
+            // chat-history pane then auto-centres on the match. Esc
+            // closes the modal without starting a search (global Esc
+            // handler at the top of this function does the close).
+            if matches!(key.code, KeyCode::Enter) {
+                let query = match &self.modal {
+                    Modal::ChatSearchPrompt { input } => {
+                        input.as_str().trim().to_string()
+                    }
+                    _ => String::new(),
+                };
+                self.modal = Modal::None;
+                self.commit_chat_search(query);
+                return Ok(false);
+            }
+            if let Modal::ChatSearchPrompt { input } = &mut self.modal {
                 handle_text_input_key(input, key);
             }
             return Ok(false);
@@ -9218,6 +9407,22 @@ impl App {
                 ];
                 (" Help — F1 ".to_string(), Color::Cyan, body)
             }
+            Modal::ChatSearchPrompt { input } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Search chat history:",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter starts from the newest match · Ctrl+X advances to older · Esc cancels",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (" Chat search — Ctrl+F ".to_string(), Color::Cyan, body)
+            }
             Modal::FindReplace {
                 search_input,
                 replace_input,
@@ -10334,6 +10539,146 @@ impl App {
         }
     }
 
+    /// Open the chat-history search query modal. Pre-populates the
+    /// input with the previous query (if any) so re-search is a
+    /// single Enter.
+    fn open_chat_search_prompt(&mut self) {
+        if self.chat_history.is_empty() {
+            self.status = "chat history is empty — nothing to search".into();
+            return;
+        }
+        let mut input = TextInput::new();
+        if let Some(prev) = &self.chat_search {
+            for c in prev.query.chars() {
+                input.insert_char(c);
+            }
+        }
+        self.modal = Modal::ChatSearchPrompt { input };
+        self.status =
+            "Search chat history · Enter to start (newest first) · Ctrl+X next (older) · Esc cancel".into();
+    }
+
+    /// Apply the just-submitted query. Empty query clears any active
+    /// search. The `current` index starts at the LAST match — the
+    /// most recent / closest-to-the-bottom hit — per the spec.
+    fn commit_chat_search(&mut self, query: String) {
+        if query.is_empty() {
+            self.chat_search = None;
+            self.status = "chat search: empty query — cleared".into();
+            return;
+        }
+        let total = self.chat_search_matches(&query).len();
+        if total == 0 {
+            self.chat_search = None;
+            self.status = format!("chat search: no match for `{query}`");
+            return;
+        }
+        self.chat_search = Some(ChatSearchState {
+            query: query.clone(),
+            current: total - 1, // newest match (last in match order)
+        });
+        // Recompute scroll so the centre lands on the match.
+        // draw_chat_history handles this from the state.
+        self.chat_history_scroll = 0;
+        self.status = format!("chat search: `{query}` · 1/{total} (newest)");
+    }
+
+    /// Step the chat-search cursor one match toward older history.
+    /// Wraps from oldest back to newest. Matches are recomputed each
+    /// call to handle terminal resize / streaming-token arrival.
+    fn advance_chat_search(&mut self) {
+        let Some((query, current)) = self
+            .chat_search
+            .as_ref()
+            .map(|s| (s.query.clone(), s.current))
+        else {
+            return;
+        };
+        let total = self.chat_search_matches(&query).len();
+        if total == 0 {
+            // Live history may have lost the matches we had — clear.
+            self.chat_search = None;
+            self.status = "chat search: no matches in current history".into();
+            return;
+        }
+        let new_current = (current + total - 1) % total;
+        if let Some(search) = self.chat_search.as_mut() {
+            search.current = new_current;
+        }
+        self.status = format!(
+            "chat search: `{query}` · {}/{}",
+            new_current + 1,
+            total
+        );
+    }
+
+    /// Find every line index in the rendered chat-history pane
+    /// whose text contains `query` (case-insensitive). Render runs
+    /// against the same shape `draw_chat_history` produces so the
+    /// indices map 1-1 to rendered rows.
+    fn chat_search_matches(&self, query: &str) -> Vec<usize> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let needle = query.to_lowercase();
+        let lines = self.build_chat_history_lines();
+        let mut out: Vec<usize> = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            if text.to_lowercase().contains(&needle) {
+                out.push(i);
+            }
+        }
+        out
+    }
+
+    /// Build the chat-history pane's Lines exactly as
+    /// `draw_chat_history` does — same iteration, same markdown
+    /// rendering, same headers. Extracted so the search-match
+    /// scanner sees the same indices the renderer uses.
+    fn build_chat_history_lines(&self) -> Vec<Line<'static>> {
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        let user_style = Style::default()
+            .fg(self.theme.ai_scope_fg)
+            .add_modifier(Modifier::BOLD);
+        let assistant_style = Style::default()
+            .fg(self.theme.ai_infer_fg)
+            .add_modifier(Modifier::BOLD);
+        for (i, turn) in self.chat_history.iter().enumerate() {
+            match turn {
+                ChatTurn::User(text) => {
+                    if i > 0 {
+                        lines.push(Line::from(""));
+                    }
+                    lines.push(Line::from(Span::styled(
+                        "❯ User".to_string(),
+                        user_style,
+                    )));
+                    for line in text.lines() {
+                        lines.push(Line::from(format!("  {line}")));
+                    }
+                }
+                ChatTurn::Assistant(text) => {
+                    lines.push(Line::from(Span::styled(
+                        "← Assistant".to_string(),
+                        assistant_style,
+                    )));
+                    let rendered = super::markdown::render(text);
+                    if rendered.is_empty() {
+                        for line in text.lines() {
+                            lines.push(Line::from(format!("  {line}")));
+                        }
+                    } else {
+                        for l in rendered {
+                            lines.push(l);
+                        }
+                    }
+                }
+            }
+        }
+        lines
+    }
+
     /// Render the accumulated chat history (User / Assistant turns).
     /// Used by the `Ctrl+B K` AI-fullscreen layout. The newest turn is
     /// pinned to the bottom of the pane — old history scrolls up off-
@@ -10367,68 +10712,58 @@ impl App {
             return;
         }
 
-        // Build the renderable lines: per-turn header + the body.
-        // User turns are short and styled cyan; assistant turns go
-        // through the markdown renderer so headings, bold, code,
-        // etc. all colour correctly.
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        let user_style = Style::default()
-            .fg(self.theme.ai_scope_fg)
-            .add_modifier(Modifier::BOLD);
-        let assistant_style = Style::default()
-            .fg(self.theme.ai_infer_fg)
-            .add_modifier(Modifier::BOLD);
-        for (i, turn) in self.chat_history.iter().enumerate() {
-            match turn {
-                ChatTurn::User(text) => {
-                    if i > 0 {
-                        lines.push(Line::from(""));
-                    }
-                    lines.push(Line::from(Span::styled(
-                        format!("❯ User"),
-                        user_style,
-                    )));
-                    for line in text.lines() {
-                        lines.push(Line::from(format!("  {line}")));
-                    }
-                }
-                ChatTurn::Assistant(text) => {
-                    lines.push(Line::from(Span::styled(
-                        format!("← Assistant"),
-                        assistant_style,
-                    )));
-                    // Render the assistant response through the
-                    // markdown→ratatui pipeline so code fences /
-                    // headings / lists look right. Drop into plain
-                    // lines if the renderer fails for any reason
-                    // (corrupt UTF-8 etc).
-                    let rendered = super::markdown::render(text);
-                    if rendered.is_empty() {
-                        for line in text.lines() {
-                            lines.push(Line::from(format!("  {line}")));
-                        }
-                    } else {
-                        for l in rendered {
-                            lines.push(l);
-                        }
-                    }
+        let mut lines = self.build_chat_history_lines();
+
+        // If a search is active, highlight every matching line and
+        // pick the centred match's line index for the scroll math.
+        let body_h = inner.height as usize;
+        let centred_match: Option<usize> = if let Some(search) = &self.chat_search {
+            let needle = search.query.to_lowercase();
+            let mut match_indices: Vec<usize> = Vec::new();
+            for (i, line) in lines.iter().enumerate() {
+                let text: String =
+                    line.spans.iter().map(|s| s.content.as_ref()).collect();
+                if text.to_lowercase().contains(&needle) {
+                    match_indices.push(i);
                 }
             }
-        }
+            let total = match_indices.len();
+            let cursor = if total == 0 {
+                0
+            } else {
+                search.current.min(total - 1)
+            };
+            for (mi, idx) in match_indices.iter().enumerate() {
+                let highlight_style = if mi == cursor {
+                    Style::default()
+                        .bg(self.theme.search_current_bg)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().bg(self.theme.search_match_bg)
+                };
+                for span in lines[*idx].spans.iter_mut() {
+                    span.style = span.style.patch(highlight_style);
+                }
+            }
+            match_indices.get(cursor).copied()
+        } else {
+            None
+        };
 
-        // Auto-scroll so the most-recent line is on the bottom row
-        // of the pane: total_lines - inner_height = offset to skip.
-        // `chat_history_scroll` is the user's manual PageUp delta;
-        // subtracting it moves the visible window UP (showing
-        // earlier turns). Clamp so over-scroll stops at the top.
-        let body_h = inner.height as usize;
+        // Scroll: search-centred mode wins over manual / auto when
+        // active. Otherwise the existing auto-bottom-pin minus the
+        // user's PageUp delta still drives.
         let total = lines.len();
         let auto_scroll = total.saturating_sub(body_h);
-        let effective = auto_scroll.saturating_sub(self.chat_history_scroll);
-        let scroll = effective as u16;
+        let scroll_offset = if let Some(match_line) = centred_match {
+            // Pin the match line to the middle of the pane.
+            match_line.saturating_sub(body_h / 2).min(auto_scroll.max(0))
+        } else {
+            auto_scroll.saturating_sub(self.chat_history_scroll)
+        };
         let p = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
-            .scroll((scroll, 0));
+            .scroll((scroll_offset as u16, 0));
         f.render_widget(p, inner);
     }
 
