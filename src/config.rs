@@ -842,6 +842,7 @@ pub struct LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         let mut providers = std::collections::BTreeMap::new();
+        // Gemini — Google.
         providers.insert(
             "gemini".into(),
             LlmProvider {
@@ -849,11 +850,42 @@ impl Default for LlmConfig {
                 api_key_env: Some("GEMINI_API_KEY".into()),
             },
         );
+        // Claude — Anthropic. genai routes any `claude-*` model to
+        // the Anthropic adapter.
+        providers.insert(
+            "claude".into(),
+            LlmProvider {
+                model: "claude-sonnet-4-5".into(),
+                api_key_env: Some("ANTHROPIC_API_KEY".into()),
+            },
+        );
+        // OpenAI — `gpt-4o` is the multi-modal workhorse. The user
+        // can switch to `gpt-4o-mini` for cheaper / faster runs or
+        // `gpt-5-pro` once available; genai picks the right adapter
+        // (Responses vs Chat Completions) automatically.
+        providers.insert(
+            "openai".into(),
+            LlmProvider {
+                model: "gpt-4o".into(),
+                api_key_env: Some("OPENAI_API_KEY".into()),
+            },
+        );
+        // DeepSeek.
         providers.insert(
             "deepseek".into(),
             LlmProvider {
                 model: "deepseek-chat".into(),
                 api_key_env: Some("DEEPSEEK_API_KEY".into()),
+            },
+        );
+        // Grok — xAI. genai dispatches `grok-*` model names to its
+        // Xai adapter, which talks to https://api.x.ai/v1 with the
+        // OpenAI-compatible protocol.
+        providers.insert(
+            "grok".into(),
+            LlmProvider {
+                model: "grok-2-latest".into(),
+                api_key_env: Some("XAI_API_KEY".into()),
             },
         );
         Self {
