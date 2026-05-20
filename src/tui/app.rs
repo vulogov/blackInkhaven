@@ -222,6 +222,12 @@ pub fn run(project: &Path) -> Result<()> {
     let cfg_for_exit = cfg.clone();
     let layout_for_exit = layout.clone();
 
+    // Install the store into the scripting layer's global slot so
+    // ink.* Bund words can find it. Cheap: Store clones via internal
+    // Arcs. Done before App takes ownership so a failed App::new
+    // doesn't leave the slot pointing at a half-initialised project.
+    crate::scripting::register_active_store(store.clone());
+
     let mut app = App::new(layout, cfg, store)?;
     app.restore_session();
 
