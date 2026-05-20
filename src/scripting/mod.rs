@@ -62,12 +62,20 @@ static ACTIVE_STORE: OnceLock<Store> = OnceLock::new();
 static POLICY: OnceLock<Policy> = OnceLock::new();
 
 /// Initialise the Adam VM exactly once. Idempotent — subsequent
-/// calls are no-ops. Loads bundcore's stdlib (arithmetic, string,
-/// conditional, …) via the `Bund::new()` constructor, layers on
-/// inkhaven's read-only `ink.*` words, applies the sandbox policy
-/// (re-registers denied words with a stub), then evals the
-/// `scripting.bootstrap` script — which is where users typically
-/// define their hook lambdas.
+/// calls are no-ops. The order matters:
+///
+/// 1. `Bund::new()` loads bundcore's vanilla stdlib (arithmetic,
+///    strings, conditionals, lambdas).
+/// 2. `register_ink_stdlib` adds inkhaven's read-only `ink.*` words.
+/// 3. `policy::apply_policy` re-registers denied words with a stub.
+/// 4. The inline `scripting.bootstrap` HJSON script runs once.
+/// 5. Every `NodeKind::Script` in the active store gets eval'd in
+///    tree order — that's where most user-authored hook lambdas
+///    actually live (P5).
+///
+/// Steps 4 and 5 are best-effort: a syntax error in a single
+/// script logs a WARN and skips that script; the others still
+/// run, and Adam still finishes constructing.
 pub fn init_adam() -> Result<()> {
     if ADAM.get().is_some() {
         return Ok(());
@@ -89,8 +97,62 @@ pub fn init_adam() -> Result<()> {
             );
         }
     }
+    load_store_scripts(&mut bund);
     let _ = ADAM.set(RwLock::new(bund));
     Ok(())
+}
+
+/// Walk the active store for every `NodeKind::Script` node, read
+/// its body, and `bund.eval` it against the supplied VM. Errors
+/// per-script are logged and continue; no script can break the
+/// rest of init.
+///
+/// No-ops cleanly when no project store is registered (e.g., a
+/// pure `inkhaven bund "40 2 +"` invocation outside any project).
+fn load_store_scripts(bund: &mut Bund) {
+    let Some(store) = active_store() else { return };
+    let hierarchy = match crate::store::hierarchy::Hierarchy::load(store) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::warn!(
+                target: "inkhaven::scripting",
+                "load_store_scripts: hierarchy load failed: {}",
+                e
+            );
+            return;
+        }
+    };
+    for node in hierarchy.iter() {
+        if node.kind != crate::store::NodeKind::Script {
+            continue;
+        }
+        let bytes = match store.get_content(node.id) {
+            Ok(Some(b)) => b,
+            Ok(None) => continue,
+            Err(e) => {
+                tracing::warn!(
+                    target: "inkhaven::scripting",
+                    "script {} read failed: {}",
+                    node.id,
+                    e
+                );
+                continue;
+            }
+        };
+        let body = String::from_utf8_lossy(&bytes).into_owned();
+        if body.trim().is_empty() {
+            continue;
+        }
+        if let Err(e) = bund.eval(body) {
+            tracing::warn!(
+                target: "inkhaven::scripting",
+                "script `{}` ({}) eval failed: {}",
+                node.title,
+                node.id,
+                e
+            );
+        }
+    }
 }
 
 /// Run `f` with a mutable reference to Adam. Returns `None` when

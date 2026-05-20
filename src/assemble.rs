@@ -136,6 +136,9 @@ fn count_work(hierarchy: &Hierarchy, book: &Node) -> usize {
             NodeKind::Book => count += 1, // book/index.typ
             NodeKind::Chapter | NodeKind::Subchapter => count += 1,
             NodeKind::Paragraph | NodeKind::Image => count += 1,
+            // Scripts never participate in Typst assembly — they
+            // live alongside book content but aren't rendered.
+            NodeKind::Script => {}
         }
     }
     count
@@ -225,6 +228,10 @@ fn write_branch(
             NodeKind::Book => {
                 // Books can't be nested under other books in this
                 // hierarchy; skip defensively.
+            }
+            NodeKind::Script => {
+                // Scripts are executable Bund — they're not part
+                // of the rendered manuscript.
             }
         }
     }

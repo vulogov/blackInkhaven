@@ -39,6 +39,7 @@ pub struct Theme {
     pub tree_subchapter_fg: Color,
     pub tree_paragraph_fg: Color,
     pub tree_image_fg: Color,
+    pub tree_script_fg: Color,
     pub editor_position_fg: Color,
     pub ai_scope_fg: Color,
     pub ai_infer_fg: Color,
@@ -102,6 +103,9 @@ impl Theme {
             // Same peach as the Artefacts editor overlay so the "this
             // is media, not text" cue is consistent.
             tree_image_fg: color_or(&cfg.tree_image_fg, Color::Rgb(0xfa, 0xb3, 0x87)),
+            // Catppuccin-mocha "mauve" — distinct from prose / image
+            // / data colours, signals "this is code, not prose".
+            tree_script_fg: color_or(&cfg.tree_script_fg, Color::Rgb(0xcb, 0xa6, 0xf7)),
             editor_position_fg: color_or(&cfg.editor_position_fg, Color::Rgb(0x89, 0xdc, 0xeb)),
             ai_scope_fg: color_or(&cfg.ai_scope_fg, Color::Rgb(0xfa, 0xb3, 0x87)),
             ai_infer_fg: color_or(&cfg.ai_infer_fg, Color::Rgb(0x94, 0xe2, 0xd5)),

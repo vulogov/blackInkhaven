@@ -7919,7 +7919,7 @@ impl App {
                     None
                 }
             }
-            Some(NodeKind::Paragraph) | Some(NodeKind::Image) => {
+            Some(NodeKind::Paragraph) | Some(NodeKind::Image) | Some(NodeKind::Script) => {
                 return Err(Error::Store(
                     "can't import under a leaf — move cursor to a branch first".into(),
                 ));
@@ -8778,11 +8778,16 @@ impl App {
         };
 
         match node.kind {
-            NodeKind::Paragraph => self.load_paragraph(&node)?,
+            // Scripts are text leaves like Paragraphs — same load
+            // path, same editor surface. Real Bund syntax
+            // highlighting is a follow-up; today they render as
+            // plain text (which is still legible because bundcore's
+            // syntax is sparse: words + braces + strings).
+            NodeKind::Paragraph | NodeKind::Script => self.load_paragraph(&node)?,
             NodeKind::Image => self.show_image_info(&node),
             _ => {
                 self.status = format!(
-                    "`{}` is a {} (Enter opens paragraphs / images)",
+                    "`{}` is a {} (Enter opens paragraphs / images / scripts)",
                     node.title,
                     node.kind.as_str()
                 );
@@ -9968,6 +9973,7 @@ impl App {
                 NodeKind::Subchapter => self.theme.tree_subchapter_fg,
                 NodeKind::Paragraph => self.theme.tree_paragraph_fg,
                 NodeKind::Image => self.theme.tree_image_fg,
+                NodeKind::Script => self.theme.tree_script_fg,
             };
             let mut row_style = Style::default().fg(kind_fg);
             if matches!(node.kind, NodeKind::Book | NodeKind::Chapter) {
@@ -11706,6 +11712,10 @@ fn compute_book_stats(
                 }
             }
             NodeKind::Image => stats.images += 1,
+            // Bund scripts aren't book content; they don't add to
+            // word / sentence counts. Tracking them in their own
+            // stats slot is a follow-up.
+            NodeKind::Script => {}
         }
     }
     stats

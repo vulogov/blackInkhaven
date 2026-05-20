@@ -16,10 +16,16 @@ use crate::store::node::{Node, NodeKind as NK};
 
 pub use node::NodeKind;
 
-/// Canonical ordering of the six project-managed books. The tag is the
-/// `system_tag` we write into metadata; the second element is the human-
-/// facing default title used when the book is freshly created. Display order
-/// matches array order (Notes first, Help last).
+/// Canonical ordering of the project-managed books. The tag is the
+/// `system_tag` we write into metadata; the second element is the
+/// human-facing default title used when the book is freshly created.
+/// Display order matches array order (Notes first, Help last).
+///
+/// The `Scripts` system book is the default home for Bund script
+/// nodes (`NodeKind::Script`) that aren't logically tied to a
+/// particular user Book — global hooks, lint rules, AI templates.
+/// Scripts can also live inside any user Book if they belong to
+/// that book's workflow; nothing forces them under `Scripts`.
 pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("notes", "Notes"),
     ("research", "Research"),
@@ -28,6 +34,7 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("characters", "Characters"),
     ("artefacts", "Artefacts"),
     ("typst", "Typst"),
+    ("scripts", "Scripts"),
     ("help", "Help"),
 ];
 
@@ -37,6 +44,7 @@ pub const SYSTEM_TAG_PLACES: &str = "places";
 pub const SYSTEM_TAG_CHARACTERS: &str = "characters";
 pub const SYSTEM_TAG_ARTEFACTS: &str = "artefacts";
 pub const SYSTEM_TAG_TYPST: &str = "typst";
+pub const SYSTEM_TAG_SCRIPTS: &str = "scripts";
 pub const SYSTEM_TAG_HELP: &str = "help";
 
 /// Where a newly-created node lands among its parent's existing children.
@@ -594,6 +602,21 @@ impl Store {
                     std::fs::create_dir_all(parent_dir)?;
                 }
                 let template = format!("= {}\n\n", node.title);
+                std::fs::write(&abs_path, &template)?;
+                node.file = Some(rel_path.to_string_lossy().into_owned());
+                node.word_count = template.split_whitespace().count() as u64;
+                template.into_bytes()
+            }
+            NK::Script => {
+                if let Some(parent_dir) = abs_path.parent() {
+                    std::fs::create_dir_all(parent_dir)?;
+                }
+                let template = format!(
+                    "// {}\n// Bund script — evaluated into the Adam VM at\n\
+                     // project open. Register hooks via:\n\
+                     //   \"hook.on_save\" {{ drop \"saved\" println }} register\n\n",
+                    node.title
+                );
                 std::fs::write(&abs_path, &template)?;
                 node.file = Some(rel_path.to_string_lossy().into_owned());
                 node.word_count = template.split_whitespace().count() as u64;

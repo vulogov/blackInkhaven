@@ -20,6 +20,14 @@ pub enum NodeKind {
     /// * Optional `image_caption` / `image_alt` for the wrap_image
     ///   functions emitted during Book assembly.
     Image,
+    /// Bund script as a first-class hierarchy node. Lives anywhere
+    /// in the tree (default home: the `Scripts` system book), is
+    /// stored on disk as a `.bund` file under `books/<...>/`, and
+    /// gets `bund.eval`'d into the Adam VM at project open. That's
+    /// where user-authored hook lambdas (`hook.on_save`, etc.) come
+    /// from in P5+ — the HJSON `scripting.bootstrap` field remains
+    /// for tiny inline rules.
+    Script,
 }
 
 impl NodeKind {
@@ -30,6 +38,7 @@ impl NodeKind {
             NodeKind::Subchapter => "subchapter",
             NodeKind::Paragraph => "paragraph",
             NodeKind::Image => "image",
+            NodeKind::Script => "script",
         }
     }
 
@@ -40,15 +49,19 @@ impl NodeKind {
             "subchapter" => Some(NodeKind::Subchapter),
             "paragraph" => Some(NodeKind::Paragraph),
             "image" => Some(NodeKind::Image),
+            "script" => Some(NodeKind::Script),
             _ => None,
         }
     }
 
-    /// Image / Paragraph are leaves; chapters / subchapters / books
-    /// can have children. Used in tree-rendering and the placement
-    /// validator.
+    /// Image / Paragraph / Script are leaves; chapters /
+    /// subchapters / books can have children. Used in tree-
+    /// rendering and the placement validator.
     pub fn is_leaf(&self) -> bool {
-        matches!(self, NodeKind::Paragraph | NodeKind::Image)
+        matches!(
+            self,
+            NodeKind::Paragraph | NodeKind::Image | NodeKind::Script
+        )
     }
 }
 
@@ -282,6 +295,7 @@ impl Node {
                 let ext = self.image_ext.as_deref().unwrap_or("png");
                 format!("{:02}-{}.{}", self.order, self.slug, ext)
             }
+            NodeKind::Script => format!("{:02}-{}.bund", self.order, self.slug),
             _ => format!("{:02}-{}", self.order, self.slug),
         }
     }
