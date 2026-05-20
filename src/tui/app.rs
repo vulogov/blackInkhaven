@@ -1736,6 +1736,13 @@ struct App {
     /// history, bottom = AI prompt. Same chord returns to the
     /// normal layout. Mutually exclusive with `typewriter_mode`.
     ai_fullscreen: bool,
+
+    /// Extra lines to scroll the chat-history pane UP from its auto-
+    /// bottom-pin. PageUp adds, PageDown subtracts; the value is
+    /// clamped against the total line count so over-scrolling stops
+    /// at the top of the history. Reset to 0 each time a new user
+    /// message is sent so the streaming reply is visible.
+    chat_history_scroll: usize,
 }
 
 #[derive(Debug)]
@@ -1941,6 +1948,7 @@ impl App {
             image_picker,
             typewriter_mode: false,
             ai_fullscreen: false,
+            chat_history_scroll: 0,
         })
     }
 
@@ -2322,6 +2330,22 @@ impl App {
         if matches!(key.code, KeyCode::F(7)) {
             self.start_grammar_check();
             return Ok(false);
+        }
+
+        // AI-fullscreen-only: PageUp / PageDown scroll the chat history
+        // pane regardless of which sub-pane has focus (the user is
+        // typically focused on the AI prompt). Intercepted here so the
+        // AI prompt's own input handler never sees these keys in this
+        // layout. The non-fullscreen path leaves them untouched.
+        if self.ai_fullscreen {
+            if self.keymap.page_up.matches(&key) {
+                self.chat_history_scroll = self.chat_history_scroll.saturating_add(10);
+                return Ok(false);
+            }
+            if self.keymap.page_down.matches(&key) {
+                self.chat_history_scroll = self.chat_history_scroll.saturating_sub(10);
+                return Ok(false);
+            }
         }
 
         // F9 cycles the AI scope mode (None → Selection → Paragraph →
@@ -3962,6 +3986,10 @@ impl App {
         // Remember the user message so we can pair it with the assistant
         // turn once the stream finishes.
         self.pending_chat_user_msg = Some(prompt_text);
+        // Reset chat-history scroll so the user always sees the
+        // streaming reply (if they'd PageUp'd to look at earlier turns
+        // before sending, the new turn would otherwise land off-screen).
+        self.chat_history_scroll = 0;
         // Stay on the AI prompt pane so follow-up questions are one keystroke
         // away. Esc bounces to the AI pane to read/scroll the answer.
         self.change_focus(Focus::AiPrompt);
@@ -6057,6 +6085,8 @@ impl App {
         self.chat_history.clear();
         self.pending_chat_user_msg = None;
         self.inference = None;
+        // Reset chat-history scroll — there's nothing left to scroll.
+        self.chat_history_scroll = 0;
         // Also dismiss any active grammar-correction overlay — the AI
         // result it derived from is being discarded, so keeping a
         // baseline tied to a forgotten correction is confusing.
@@ -6107,6 +6137,9 @@ impl App {
     /// returns to the four-pane layout.
     fn toggle_ai_fullscreen(&mut self) {
         self.ai_fullscreen = !self.ai_fullscreen;
+        // Always start scrolled to the bottom (newest visible). The
+        // user can PageUp to walk back through the history.
+        self.chat_history_scroll = 0;
         if self.ai_fullscreen {
             self.typewriter_mode = false; // exclusive with typewriter
             // Drop focus onto the AI prompt so the user can start
@@ -6114,7 +6147,7 @@ impl App {
             // no input role and the editor / tree / search bar are
             // hidden in this layout anyway.
             self.change_focus(Focus::AiPrompt);
-            self.status = "AI fullscreen · Ctrl+B K to exit".into();
+            self.status = "AI fullscreen · PageUp/PgDn scrolls history · Ctrl+B K to exit".into();
         } else {
             self.status = "AI fullscreen off".into();
         }
@@ -10290,9 +10323,14 @@ impl App {
     /// screen, matching the natural chat-window UX. `Paragraph::scroll`
     /// handles the offset so we don't have to track per-pane state.
     fn draw_chat_history(&self, f: &mut ratatui::Frame, area: Rect) {
+        let scroll_tag = if self.chat_history_scroll > 0 {
+            format!(" · ↑ {} line(s)", self.chat_history_scroll)
+        } else {
+            String::new()
+        };
         let block = self.pane_block_line(
             Line::from(format!(
-                " Chat history · {} turn(s) ",
+                " Chat history · {} turn(s){scroll_tag} · PgUp/PgDn ",
                 self.chat_history.len()
             )),
             // Use the AI focus colouring so the two AI-related panes
@@ -10363,9 +10401,14 @@ impl App {
 
         // Auto-scroll so the most-recent line is on the bottom row
         // of the pane: total_lines - inner_height = offset to skip.
+        // `chat_history_scroll` is the user's manual PageUp delta;
+        // subtracting it moves the visible window UP (showing
+        // earlier turns). Clamp so over-scroll stops at the top.
         let body_h = inner.height as usize;
         let total = lines.len();
-        let scroll = total.saturating_sub(body_h) as u16;
+        let auto_scroll = total.saturating_sub(body_h);
+        let effective = auto_scroll.saturating_sub(self.chat_history_scroll);
+        let scroll = effective as u16;
         let p = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .scroll((scroll, 0));
