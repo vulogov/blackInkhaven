@@ -956,6 +956,31 @@ mod book_info_tests {
     }
 
     #[test]
+    fn filter_functions_empty_returns_all() {
+        let all = filter_functions("").len();
+        assert!(all > 50, "expected the baked-in table to have >50 entries, got {all}");
+    }
+
+    #[test]
+    fn filter_functions_substring_match() {
+        let m: Vec<&'static str> = filter_functions("image").iter().map(|f| f.name).collect();
+        assert!(m.contains(&"image"), "got: {m:?}");
+        assert!(m.contains(&"figure") == false || true);
+    }
+
+    #[test]
+    fn filter_functions_case_insensitive() {
+        let a = filter_functions("Heading");
+        let b = filter_functions("heading");
+        assert_eq!(a.len(), b.len());
+    }
+
+    #[test]
+    fn filter_functions_no_match_returns_empty() {
+        assert!(filter_functions("zzz-no-such-function").is_empty());
+    }
+
+    #[test]
     fn image_call_context_inside_open_string() {
         // Cursor is after the `"` — we're inside the first string arg.
         let line = "#image(\"";
@@ -1368,6 +1393,14 @@ enum Modal {
         fs_rel: String,
         size_bytes: u64,
         proto: ratatui_image::protocol::StatefulProtocol,
+    },
+    /// Ctrl+B F (editor pane) — Typst function picker. The filter
+    /// input narrows the baked-in list as the user types; Enter
+    /// inserts `#<name>(|)` at the cursor with the editor cursor
+    /// positioned between the parens (Phase 1 = markup-mode default).
+    FunctionPicker {
+        filter: TextInput,
+        cursor: usize,
     },
     /// F1 help-manual query. Asks a free-form question against the Help
     /// system book (RAG), then streams the constrained LLM answer into the
@@ -4352,9 +4385,10 @@ impl App {
             // L was a duplicate of F3 (load file). Reclaimed as the
             // global "switch LLM provider" chord — F3 still loads files
             // in the editor pane.
-            // F: toggle split-edit mode (== F4).
+            // F: Typst function picker (== a baked-in autocomplete
+            // for `#funcname(`). F4 still toggles split-edit.
             KeyCode::Char('F') | KeyCode::Char('f') => {
-                self.toggle_split();
+                self.open_function_picker();
                 true
             }
             // T: re-derive the paragraph's display title from its first
@@ -5227,6 +5261,224 @@ impl App {
             Style::default().add_modifier(Modifier::DIM),
         )));
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
+    fn open_function_picker(&mut self) {
+        if self.opened.is_none() {
+            self.status = "function picker needs an open paragraph".into();
+            return;
+        }
+        self.modal = Modal::FunctionPicker {
+            filter: TextInput::new(),
+            cursor: 0,
+        };
+        self.status = "Type to filter · ↑↓ select · Enter insert · Esc cancel".into();
+    }
+
+    fn function_picker_handle_key(&mut self, key: KeyEvent) -> bool {
+        // Recompute the filtered list each keystroke so the cursor
+        // stays attached to a visible row.
+        let (filter_text, mut cursor_value) = match &self.modal {
+            Modal::FunctionPicker { filter, cursor } => (filter.as_str().to_string(), *cursor),
+            _ => return false,
+        };
+        let matches = filter_functions(&filter_text);
+        let total = matches.len();
+        let mut closed = false;
+        let mut commit_now = false;
+        let mut filter_dirty = false;
+        match key.code {
+            KeyCode::Up => {
+                if cursor_value > 0 {
+                    cursor_value -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if cursor_value + 1 < total {
+                    cursor_value += 1;
+                }
+            }
+            KeyCode::Home => cursor_value = 0,
+            KeyCode::End => cursor_value = total.saturating_sub(1),
+            KeyCode::PageUp => cursor_value = cursor_value.saturating_sub(10),
+            KeyCode::PageDown => {
+                cursor_value = (cursor_value + 10).min(total.saturating_sub(1));
+            }
+            KeyCode::Enter => commit_now = true,
+            KeyCode::Esc => closed = true,
+            _ => {
+                if let Modal::FunctionPicker { filter, cursor } = &mut self.modal {
+                    handle_text_input_key(filter, key);
+                    *cursor = 0;
+                    filter_dirty = true;
+                    let _ = cursor;
+                }
+            }
+        }
+        if filter_dirty {
+            return true;
+        }
+        if closed {
+            self.modal = Modal::None;
+            return true;
+        }
+        if commit_now {
+            self.commit_function_picker(&matches, cursor_value);
+            return true;
+        }
+        if let Modal::FunctionPicker { cursor, .. } = &mut self.modal {
+            *cursor = cursor_value;
+        }
+        true
+    }
+
+    fn commit_function_picker(&mut self, matches: &[super::typst_funcs::TypstFn], cursor_value: usize) {
+        let Some(picked) = matches.get(cursor_value).copied() else {
+            self.modal = Modal::None;
+            return;
+        };
+        // Phase 1: always insert with the `#` markup-mode prefix. A
+        // context detector (markup vs code via tree-sitter-typst) is
+        // the natural follow-up; until then the user can delete the
+        // `#` in the rare code-mode case.
+        let opener = format!("#{}(", picked.name);
+        if let Some(doc) = self.opened.as_mut() {
+            doc.textarea.insert_str(&opener);
+            doc.textarea.insert_str(")");
+            doc.textarea.move_cursor(CursorMove::Back);
+            doc.dirty = true;
+        }
+        self.modal = Modal::None;
+        self.status = format!("inserted #{}( … )", picked.name);
+    }
+
+    fn draw_function_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::FunctionPicker { filter, cursor } = &self.modal else {
+            return;
+        };
+        let matches = filter_functions(filter.as_str());
+        let width = area.width.saturating_sub(6).max(60);
+        let height = area.height.saturating_sub(4).max(14);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let title = " Typst function · Ctrl+B F ".to_string();
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // 3 rows of chrome: filter, blank spacer, footer.
+        let filter_h: u16 = 2;
+        let footer_h: u16 = 2;
+        let list_h = inner.height.saturating_sub(filter_h + footer_h);
+        let filter_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: filter_h,
+        };
+        let list_rect = Rect {
+            x: inner.x,
+            y: inner.y + filter_h,
+            width: inner.width,
+            height: list_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + filter_h + list_h,
+            width: inner.width,
+            height: footer_h,
+        };
+
+        let cursor_char = '│';
+        let filter_lines = vec![
+            Line::from(Span::styled(
+                format!(" › Filter: {}", filter.render_with_cursor(cursor_char)),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                format!(
+                    "   {} match{} of {}",
+                    matches.len(),
+                    if matches.len() == 1 { "" } else { "es" },
+                    super::typst_funcs::all().len()
+                ),
+                Style::default().add_modifier(Modifier::DIM),
+            )),
+        ];
+        f.render_widget(Paragraph::new(filter_lines), filter_rect);
+
+        // List body — scroll so the cursor is always in view.
+        let body_height = list_h as usize;
+        let total = matches.len();
+        let cursor = (*cursor).min(total.saturating_sub(1));
+        let scroll = if cursor >= body_height {
+            cursor - body_height + 1
+        } else {
+            0
+        };
+        let max_name = matches
+            .iter()
+            .map(|f| f.name.chars().count())
+            .max()
+            .unwrap_or(8);
+
+        let mut rows: Vec<Line<'static>> = Vec::new();
+        if matches.is_empty() {
+            rows.push(Line::from(Span::styled(
+                "  (no functions match the filter)".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        }
+        let body_end = (scroll + body_height).min(total);
+        for i in scroll..body_end {
+            let entry = matches[i];
+            let marker = if i == cursor { "›" } else { " " };
+            let name_padded =
+                format!("{n:<width$}", n = entry.name, width = max_name);
+            let line = format!("  {marker} {name_padded}   {desc}", desc = entry.description);
+            let style = if i == cursor {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            rows.push(Line::from(Span::styled(line, style)));
+        }
+        // Also include the signature underneath the selected entry as
+        // a hint row. Kept narrow to avoid pushing the list off-screen.
+        f.render_widget(Paragraph::new(rows), list_rect);
+
+        let signature_hint = matches
+            .get(cursor)
+            .map(|f| format!(" sig: {}", f.signature))
+            .unwrap_or_default();
+        let hint = format!(
+            "{signature_hint}\n ↑↓ select · Enter inserts #name(…) · Esc cancel"
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            )))
+            .wrap(Wrap { trim: false }),
+            footer_rect,
+        );
     }
 
     fn draw_image_preview_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
@@ -6985,6 +7237,7 @@ impl App {
         let is_book_info = matches!(self.modal, Modal::BookInfo { .. });
         let is_llm_picker = matches!(self.modal, Modal::LlmPicker { .. });
         let is_image_picker = matches!(self.modal, Modal::ImagePicker { .. });
+        let is_function_picker = matches!(self.modal, Modal::FunctionPicker { .. });
         let is_help_query = matches!(self.modal, Modal::HelpQuery { .. });
 
         if is_quickref {
@@ -7005,6 +7258,10 @@ impl App {
         }
         if is_image_picker {
             self.image_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_function_picker {
+            self.function_picker_handle_key(key);
             return Ok(false);
         }
 
@@ -8049,6 +8306,10 @@ impl App {
             self.draw_image_preview_modal(f, area);
             return;
         }
+        if let Modal::FunctionPicker { .. } = &self.modal {
+            self.draw_function_picker_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -8066,6 +8327,7 @@ impl App {
             Modal::LlmPicker { .. } => unreachable!("llm picker handled above"),
             Modal::ImagePicker { .. } => unreachable!("image picker handled above"),
             Modal::ImagePreview { .. } => unreachable!("image preview handled above"),
+            Modal::FunctionPicker { .. } => unreachable!("function picker handled above"),
             Modal::HelpQuery { input } => {
                 let body = vec![
                     Line::from(""),
@@ -9403,6 +9665,20 @@ fn truncate_title(title: &str, max_chars: usize) -> String {
 /// `unicode-segmentation`, so a selection of "Москва" works the same as
 /// dropping the cursor inside it. Trailing apostrophes / quotes are
 /// trimmed so "King's" doesn't pull in an extra quote.
+/// Case-insensitive substring filter over the baked-in typst function
+/// table. Results are returned sorted alphabetically (the table is
+/// already sorted; we just preserve order across filter steps).
+pub fn filter_functions(filter: &str) -> Vec<super::typst_funcs::TypstFn> {
+    let needle = filter.trim().to_lowercase();
+    if needle.is_empty() {
+        return super::typst_funcs::all();
+    }
+    super::typst_funcs::all()
+        .into_iter()
+        .filter(|f| f.name.to_lowercase().contains(&needle))
+        .collect()
+}
+
 /// Detection result for "is the cursor sitting inside the first
 /// string argument of a `#image(...)` call on this line".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

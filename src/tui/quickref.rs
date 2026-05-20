@@ -162,7 +162,7 @@ fn editor_entries() -> [Entry; 56] {
         entry("Ctrl+B S", "Save (alternative to Ctrl+S)"),
         entry("Ctrl+B N", "New snapshot of current paragraph"),
         entry("Ctrl+B R", "Open snapshot history (== F6)"),
-        entry("Ctrl+B F", "Toggle split-edit (F3 still loads files)"),
+        entry("Ctrl+B F", "Typst function picker — type to filter, Enter inserts #name(…)"),
         entry("Ctrl+B T", "Retitle paragraph from its first sentence"),
         entry(
             "Ctrl+B P",

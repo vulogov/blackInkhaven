@@ -9,6 +9,7 @@ mod markdown;
 mod quickref;
 mod sound;
 mod theme;
+mod typst_funcs;
 mod search_replace;
 mod search_results;
 mod session;
