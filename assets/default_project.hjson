@@ -298,6 +298,15 @@
     //   Esc      → cancel meta mode
     // Replaces the old `Ctrl+Shift+*` chords which terminals often eat.
     meta_prefix:      Ctrl+b
+
+    // Bund-meta chord — parallel to meta_prefix, drives scripting:
+    //   R   → run the open .bund buffer against Adam
+    //   N   → new script under the Scripts system book
+    //   E   → eval a one-shot Bund expression (modal prompt)
+    //   Esc → cancel
+    // Set to an empty string to disable (some users reserve Ctrl+Z
+    // for their terminal multiplexer).
+    bund_prefix:      Ctrl+z
   }
 
   prompts_file: prompts.hjson

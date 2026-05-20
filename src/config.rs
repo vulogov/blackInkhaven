@@ -1013,6 +1013,12 @@ pub struct KeyBindings {
     /// D delete, ↑/↓ reorder, Esc cancel). Replaces the old `Ctrl+Shift+*`
     /// chords which many terminals and multiplexers re-encode unhelpfully.
     pub meta_prefix: String,
+    /// Bund meta-prefix chord. Parallel to `meta_prefix` but for
+    /// scripting actions (R run buffer, E eval, N new script).
+    /// Defaults to Ctrl+Z since tui-textarea's undo is bound to
+    /// Ctrl+U in this codebase. Set to an empty string to disable
+    /// the Bund chord entirely.
+    pub bund_prefix: String,
 }
 
 impl Default for KeyBindings {
@@ -1026,6 +1032,7 @@ impl Default for KeyBindings {
             page_up: "PageUp".into(),
             page_down: "PageDown".into(),
             meta_prefix: "Ctrl+b".into(),
+            bund_prefix: "Ctrl+z".into(),
         }
     }
 }

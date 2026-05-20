@@ -1,4 +1,5 @@
 mod app;
+mod bund_highlight;
 mod file_picker;
 mod focus;
 mod highlight;
