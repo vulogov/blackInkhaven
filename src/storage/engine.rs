@@ -351,3 +351,82 @@ pub(crate) fn sql_escape(s: &str) -> String {
 fn now_unix_secs() -> i64 {
     chrono::Utc::now().timestamp()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    /// `App::shutdown_flush` calls `Store::checkpoint()`, which fans out to
+    /// `JsonStorage::checkpoint()` + `BlobStorage::checkpoint()`. Verify
+    /// both checkpoint paths drain a fresh write into the main DB file —
+    /// i.e. no `.wal` should remain after checkpoint + drop.
+    #[test]
+    fn checkpoint_drains_wal_after_write() {
+        let dir = TempDir::new().unwrap();
+
+        // JSON path
+        let json_path = dir.path().join("meta.db");
+        {
+            let store = JsonStorage::new(&json_path, 2, "doc").unwrap();
+            let id = Uuid::now_v7();
+            store
+                .add_json_with_id(id, json!({"hello": "world"}))
+                .unwrap();
+            store.checkpoint().unwrap();
+        }
+        assert!(json_path.exists(), "main JSON file should exist");
+        let wal = json_path.with_extension("db.wal");
+        assert!(
+            !wal.exists() || std::fs::metadata(&wal).unwrap().len() == 0,
+            "WAL should be drained after checkpoint, found {} bytes",
+            std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0)
+        );
+
+        // Blob path
+        let blob_path = dir.path().join("blobs.db");
+        {
+            let store = BlobStorage::new(&blob_path, 2).unwrap();
+            let id = Uuid::now_v7();
+            store.add_blob_with_key(id, b"some bytes").unwrap();
+            store.checkpoint().unwrap();
+        }
+        assert!(blob_path.exists());
+        let wal = blob_path.with_extension("db.wal");
+        assert!(
+            !wal.exists() || std::fs::metadata(&wal).unwrap().len() == 0,
+            "blob WAL should be drained after checkpoint",
+        );
+    }
+
+    /// `App::shutdown_flush` doesn't error when nothing has been written —
+    /// CHECKPOINT against an empty WAL is a no-op in DuckDB, but we want
+    /// to be sure our wrapper doesn't choke.
+    #[test]
+    fn checkpoint_is_safe_on_empty_store() {
+        let dir = TempDir::new().unwrap();
+        let store = JsonStorage::new(dir.path().join("empty.db"), 2, "doc").unwrap();
+        store.checkpoint().unwrap();
+        store.checkpoint().unwrap(); // idempotent
+    }
+
+    /// Write-then-checkpoint-then-reopen round-trip — confirms data
+    /// survives the explicit checkpoint exactly like it survives the
+    /// pool-drop auto-checkpoint.
+    #[test]
+    fn data_survives_checkpoint_and_reopen() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("rt.db");
+        let id = Uuid::now_v7();
+
+        {
+            let s = JsonStorage::new(&path, 2, "doc").unwrap();
+            s.add_json_with_id(id, json!({"key": "value-1"})).unwrap();
+            s.checkpoint().unwrap();
+        }
+        let s2 = JsonStorage::new(&path, 2, "doc").unwrap();
+        let got = s2.get_json(id).unwrap();
+        assert_eq!(got, Some(json!({"key": "value-1"})));
+    }
+}
