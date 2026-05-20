@@ -657,12 +657,21 @@ struct Keymap {
     page_up: KeyChord,
     page_down: KeyChord,
     meta_prefix: KeyChord,
+    /// Bund-meta prefix. `None` when the config sets
+    /// `keys.bund_prefix = ""` to disable the chord (some users
+    /// reserve Ctrl+Z for their terminal multiplexer).
+    bund_prefix: Option<KeyChord>,
 }
 
 impl Keymap {
     fn from_config(cfg: &Config) -> InkResult<Self> {
         let parse = |label: &str, s: &str| -> InkResult<KeyChord> {
             KeyChord::parse(s).map_err(|e| Error::Config(format!("keys.{label}: {e}")))
+        };
+        let bund_prefix = if cfg.keys.bund_prefix.trim().is_empty() {
+            None
+        } else {
+            Some(parse("bund_prefix", &cfg.keys.bund_prefix)?)
         };
         Ok(Self {
             next_pane: parse("next_pane", &cfg.keys.next_pane)?,
@@ -673,6 +682,7 @@ impl Keymap {
             page_up: parse("page_up", &cfg.keys.page_up)?,
             page_down: parse("page_down", &cfg.keys.page_down)?,
             meta_prefix: parse("meta_prefix", &cfg.keys.meta_prefix)?,
+            bund_prefix,
         })
     }
 }
@@ -1526,6 +1536,12 @@ enum Modal {
         kind: NodeKind,
         input: TextInput,
     },
+    /// Ctrl+Z E — one-shot Bund eval. The user types an
+    /// expression; Enter runs it against Adam and pops the
+    /// result onto the status bar. Esc cancels.
+    BundEval {
+        input: TextInput,
+    },
     FilePicker(FilePicker),
     /// Ctrl+H quick reference. Pane-aware: content is fetched from
     /// `quickref::entries_for(focus_when_opened)`.
@@ -1648,6 +1664,10 @@ struct App {
     /// True after the user pressed the meta-prefix chord (default Ctrl+B).
     /// The next key is interpreted as an action selector and clears this.
     meta_pending: bool,
+    /// True after the user pressed the Bund-meta prefix (default
+    /// Ctrl+Z). The next key dispatches into `handle_bund_action`
+    /// (R run, E eval, N new script).
+    bund_pending: bool,
     modal: Modal,
 
     focus: Focus,
@@ -1993,6 +2013,7 @@ impl App {
             modal: Modal::None,
             collapsed_nodes,
             meta_pending: false,
+            bund_pending: false,
             focus: Focus::Tree,
             tree_cursor: 0,
             tree_scroll: 0,
@@ -2382,6 +2403,24 @@ impl App {
         if matches!(key.code, KeyCode::Null) {
             self.change_focus(Focus::Tree);
             return Ok(false);
+        }
+
+        // Bund-meta dispatch (Ctrl+Z by default). Mirrors the
+        // meta-prefix machinery below — same state-machine shape,
+        // different action table. Intercept BEFORE tui-textarea
+        // sees the key so its default Ctrl+Z=undo binding stays
+        // dormant.
+        if self.bund_pending {
+            self.handle_bund_action(key);
+            return Ok(false);
+        }
+        if let Some(bund_prefix) = self.keymap.bund_prefix {
+            if bund_prefix.matches(&key) {
+                self.bund_pending = true;
+                self.status =
+                    "BUND · R run buffer · E eval expression · N new script · Esc cancel".into();
+                return Ok(false);
+            }
         }
 
         // Meta-prefix dispatch. If we're already inside meta mode, the next
@@ -4887,6 +4926,106 @@ impl App {
                 self.focus.label()
             );
         }
+    }
+
+    /// Dispatch the Bund-meta chord (Ctrl+Z by default). Three
+    /// actions in the v1 chord table:
+    ///
+    ///   R — run the buffer (eval the open Script's body against Adam)
+    ///   N — new script (Add modal under the Scripts system book)
+    ///   E — eval one expression (modal prompt, like F1)
+    fn handle_bund_action(&mut self, key: KeyEvent) {
+        self.bund_pending = false;
+        if matches!(key.code, KeyCode::Esc) {
+            self.status = "bund cancelled".into();
+            return;
+        }
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        if !plain {
+            self.status = "bund cancelled".into();
+            return;
+        }
+        match key.code {
+            KeyCode::Char('R') | KeyCode::Char('r') => self.bund_run_buffer(),
+            KeyCode::Char('N') | KeyCode::Char('n') => self.bund_new_script(),
+            KeyCode::Char('E') | KeyCode::Char('e') => self.bund_open_eval_modal(),
+            _ => {
+                self.status =
+                    "bund: unknown action — R run · N new · E eval · Esc cancel".into();
+            }
+        }
+    }
+
+    /// Ctrl+Z R — eval the currently-open Script's body against Adam.
+    /// No-ops with a status message when no Script is open.
+    fn bund_run_buffer(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "bund: no buffer open — Ctrl+Z R needs an open .bund".into();
+            return;
+        };
+        let Some(node) = self.hierarchy.get(doc.id) else {
+            self.status = "bund: open buffer's node is missing from hierarchy".into();
+            return;
+        };
+        if node.kind != NodeKind::Script {
+            self.status = format!(
+                "bund: open buffer is a {}, not a script",
+                node.kind.as_str()
+            );
+            return;
+        }
+        let body = doc.textarea.lines().join("\n");
+        match crate::scripting::eval(&body) {
+            Ok(Some(value)) => {
+                self.status = format!("bund → {}", crate::scripting::format_value(&value));
+            }
+            Ok(None) => {
+                self.status = format!("bund: ran `{}` (no result)", node.title);
+            }
+            Err(e) => {
+                self.status = format!("bund: eval failed — {e:#}");
+            }
+        }
+    }
+
+    /// Ctrl+Z N — open the Add modal pre-targeted at the Scripts
+    /// system book. Falls back to the standard add path if the
+    /// Scripts book hasn't been seeded for some reason.
+    fn bund_new_script(&mut self) {
+        if let Some(scripts_id) = self.system_book_id(crate::store::SYSTEM_TAG_SCRIPTS) {
+            // Same shape as open_add_modal_inner for End, but with
+            // the parent forced to the Scripts book rather than
+            // derived from cursor position.
+            let parent_label = if let Some(scripts) = self.hierarchy.get(scripts_id) {
+                self.hierarchy.slug_path(scripts)
+            } else {
+                "scripts".to_string()
+            };
+            self.modal = Modal::Adding {
+                kind: NodeKind::Script,
+                parent_id: Some(scripts_id),
+                parent_label,
+                input: TextInput::new(),
+                position: InsertPosition::End,
+            };
+            self.status = "bund: new script under Scripts — type a title, Enter to create".into();
+        } else {
+            // Fall back to the default cursor-based parent picker —
+            // user-added Books can also host scripts.
+            self.open_add_modal(NodeKind::Script);
+        }
+    }
+
+    /// Ctrl+Z E — open a modal asking for a one-shot expression.
+    /// On Enter, eval against Adam and surface the result (or
+    /// error) in the status bar. Reuses the BundEval modal variant.
+    fn bund_open_eval_modal(&mut self) {
+        self.modal = Modal::BundEval {
+            input: TextInput::new(),
+        };
+        self.status = "bund eval: type an expression, Enter to run, Esc to cancel".into();
     }
 
     fn dispatch_meta_tree(&mut self, key: KeyEvent) -> bool {
@@ -8327,6 +8466,7 @@ impl App {
         let is_status_filter = matches!(self.modal, Modal::StatusFilter { .. });
         let is_help_query = matches!(self.modal, Modal::HelpQuery { .. });
         let is_chat_search_prompt = matches!(self.modal, Modal::ChatSearchPrompt { .. });
+        let is_bund_eval = matches!(self.modal, Modal::BundEval { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -8370,6 +8510,35 @@ impl App {
                 return Ok(false);
             }
             if let Modal::HelpQuery { input } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
+            return Ok(false);
+        }
+
+        if is_bund_eval {
+            // Enter runs the expression against Adam; result goes to
+            // the status bar. Anything else feeds the input box.
+            if matches!(key.code, KeyCode::Enter) {
+                let expr = match &self.modal {
+                    Modal::BundEval { input } => input.as_str().to_string(),
+                    _ => String::new(),
+                };
+                self.modal = Modal::None;
+                match crate::scripting::eval(&expr) {
+                    Ok(Some(value)) => {
+                        self.status =
+                            format!("bund → {}", crate::scripting::format_value(&value));
+                    }
+                    Ok(None) => {
+                        self.status = "bund: (no result)".into();
+                    }
+                    Err(e) => {
+                        self.status = format!("bund: eval failed — {e:#}");
+                    }
+                }
+                return Ok(false);
+            }
+            if let Modal::BundEval { input } = &mut self.modal {
                 handle_text_input_key(input, key);
             }
             return Ok(false);
@@ -8940,7 +9109,16 @@ impl App {
             search: None,
             read_only,
             correction_baseline: None,
-            content_type: node.content_type.clone(),
+            // Script nodes default to the "bund" content_type even
+            // if the persisted metadata is missing it — covers
+            // scripts created before content_type stamping landed.
+            content_type: node
+                .content_type
+                .clone()
+                .or_else(|| match node.kind {
+                    NodeKind::Script => Some("bund".to_string()),
+                    _ => None,
+                }),
         });
         self.change_focus(Focus::Editor);
         self.status = format!("opened {}", abs.display());
@@ -9525,6 +9703,28 @@ impl App {
                 ];
                 (" Help — F1 ".to_string(), Color::Cyan, body)
             }
+            Modal::BundEval { input } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Bund — evaluate one expression against Adam:",
+                        Style::default()
+                            .fg(self.theme.tree_script_fg)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter runs · Esc cancels · result lands on the status bar",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Bund — Ctrl+Z E ".to_string(),
+                    self.theme.tree_script_fg,
+                    body,
+                )
+            }
             Modal::ChatSearchPrompt { input } => {
                 let body = vec![
                     Line::from(""),
@@ -10051,6 +10251,7 @@ impl App {
                     .add_modifier(Modifier::BOLD);
                 let lang_tag = match d.content_type.as_deref() {
                     Some("hjson") => " [hjson]",
+                    Some("bund") => " [bund]",
                     _ => "",
                 };
                 // Status badge: hidden when None to keep the header
@@ -11321,6 +11522,7 @@ pub fn highlight_for_content(
 ) -> Vec<Vec<super::highlight::StyledRun>> {
     match content_type {
         Some("hjson") => super::hjson_highlight::highlight_hjson_lines(source, theme),
+        Some("bund") => super::bund_highlight::highlight_bund_lines(source, theme),
         _ => highlighter.highlight_lines(source, theme),
     }
 }

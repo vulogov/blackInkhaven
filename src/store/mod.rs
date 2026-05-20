@@ -620,6 +620,9 @@ impl Store {
                 std::fs::write(&abs_path, &template)?;
                 node.file = Some(rel_path.to_string_lossy().into_owned());
                 node.word_count = template.split_whitespace().count() as u64;
+                // Drive the Bund syntax highlighter via the same
+                // content_type channel the HJSON path uses.
+                node.content_type = Some("bund".to_string());
                 template.into_bytes()
             }
             _ => {
