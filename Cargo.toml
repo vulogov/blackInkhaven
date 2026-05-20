@@ -5,7 +5,7 @@ edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
 rust-version = "1.85"
-license = "Apache-2.0"
+license = "Apache-2.0 AND MIT"
 description = "Inkhaven — TUI literary work editor for Typst books"
 authors = ["Vladimir Ulogov <vulogov@gmail.com>"]
 repository = "https://github.com/vulogov/blackInkhaven"
@@ -21,12 +21,6 @@ categories = ["command-line-utilities", "text-editors", "text-processing"]
 #   * `cargo binstall inkhaven` (prebuilts; see [package.metadata.binstall])
 #   * Direct download from https://github.com/vulogov/blackInkhaven/releases
 #
-# crates.io publishing is currently disabled but the crate is
-# publish-ready — no path-deps remain, and `cargo package` succeeds.
-# Flip to `publish = true` (or delete this line) when ready to push
-# the first release to crates.io.
-publish = false
-
 # `cargo-binstall` metadata: tells `cargo binstall inkhaven` where to
 # fetch a prebuilt for the current host triple. The asset filenames
 # below must match what `.github/workflows/release.yml` uploads.
