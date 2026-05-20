@@ -164,7 +164,10 @@ fn editor_entries() -> [Entry; 56] {
         entry("Ctrl+B R", "Open snapshot history (== F6)"),
         entry("Ctrl+B F", "Toggle split-edit (F3 still loads files)"),
         entry("Ctrl+B T", "Retitle paragraph from its first sentence"),
-        entry("Ctrl+B P", "Place RAG — selection → Places book → AI pane"),
+        entry(
+            "Ctrl+B P",
+            "Inside #image(\"…\"): pick a sibling image — else Place RAG",
+        ),
         entry("Ctrl+B C", "Character RAG — selection → Characters book → AI pane"),
         entry("Ctrl+B G", "Notes RAG — selection → Notes book → AI pane"),
         entry("Ctrl+B Y", "Artefacts RAG — selection → Artefacts book → AI pane"),

@@ -956,6 +956,54 @@ mod book_info_tests {
     }
 
     #[test]
+    fn image_call_context_inside_open_string() {
+        // Cursor is after the `"` — we're inside the first string arg.
+        let line = "#image(\"";
+        let ctx = detect_image_call_context(line, line.chars().count())
+            .expect("should detect");
+        assert!(!ctx.closing_quote_present);
+    }
+
+    #[test]
+    fn image_call_context_inside_with_closing_quote() {
+        let line = "#image(\"\")";
+        // Cursor positioned right after the opening quote (col 8).
+        let ctx = detect_image_call_context(line, 8).expect("should detect");
+        assert!(ctx.closing_quote_present);
+    }
+
+    #[test]
+    fn image_call_context_not_inside_when_closed() {
+        // After the closing `)`.
+        let line = "#image(\"cover.png\")";
+        let n = line.chars().count();
+        assert!(detect_image_call_context(line, n).is_none());
+    }
+
+    #[test]
+    fn image_call_context_requires_hash_prefix() {
+        // `image(` without leading `#` is not a typst function call.
+        let line = "image(\"cover.png";
+        assert!(detect_image_call_context(line, line.chars().count()).is_none());
+    }
+
+    #[test]
+    fn image_call_context_not_after_other_function() {
+        let line = "#text(\"hello";
+        assert!(detect_image_call_context(line, line.chars().count()).is_none());
+    }
+
+    #[test]
+    fn image_call_context_in_chapter_body() {
+        // Realistic editor line — leading indentation + prose, then a
+        // `#image(` partway through.
+        let line = "  Some prose. #image(\"01-co";
+        let ctx = detect_image_call_context(line, line.chars().count())
+            .expect("should detect inside the call");
+        assert!(!ctx.closing_quote_present);
+    }
+
+    #[test]
     fn body_to_lines_strips_crlf() {
         // CRLF (DOS / Windows / RFC dumps): trailing `\r` must not
         // survive into the line list.
@@ -1300,6 +1348,16 @@ enum Modal {
         cursor: usize,
         initial_default: String,
     },
+    /// Ctrl+B P fired with the cursor inside `#image("…")`: pick a
+    /// sibling Image node to insert. Filename gets inserted at the
+    /// cursor (plus a closing `"` when the call had none).
+    ImagePicker {
+        entries: Vec<ImagePickerEntry>,
+        cursor: usize,
+        /// Tells `commit_image_picker` whether to append a `"` after
+        /// the filename — true when the `#image(` call was unclosed.
+        close_quote: bool,
+    },
     /// F1 help-manual query. Asks a free-form question against the Help
     /// system book (RAG), then streams the constrained LLM answer into the
     /// AI pane. Esc cancels; Enter submits.
@@ -1469,6 +1527,16 @@ enum InferenceStatus {
     Streaming,
     Done,
     Error(String),
+}
+
+/// One row in the `Ctrl+B P`-while-inside-`#image(...)` picker. The
+/// `fname` is what gets inserted at the cursor — already in
+/// `NN-slug.<ext>` form (Node::fs_name).
+#[derive(Debug, Clone)]
+struct ImagePickerEntry {
+    fname: String,
+    title: String,
+    size_bytes: u64,
 }
 
 struct OpenedDoc {
@@ -4263,11 +4331,17 @@ impl App {
                 self.rename_paragraph_to_first_sentence();
                 true
             }
-            // P: place-RAG inference. Sweeps the editor selection (or
-            // word under cursor) and queries the Places system book.
+            // P: context-sensitive. When the cursor sits inside a
+            // `#image("…")` call, open the image-picker that lists
+            // sibling Image nodes; otherwise dispatch to the Places
+            // RAG flow.
             KeyCode::Char('P') | KeyCode::Char('p') => {
-                self.start_lexicon_inference(LexiconKind::Places);
-                true
+                if self.try_open_image_picker() {
+                    true
+                } else {
+                    self.start_lexicon_inference(LexiconKind::Places);
+                    true
+                }
             }
             // C: character-RAG inference. Same as P but against the
             // Characters book.
@@ -4898,6 +4972,226 @@ impl App {
             Style::default().add_modifier(Modifier::DIM),
         )));
 
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
+    /// Try the in-`#image(…)` picker; returns false when the cursor
+    /// isn't inside an image call (so the caller can fall through to
+    /// Places RAG). Returns true even when the picker is empty —
+    /// "you're inside `#image()` but this paragraph has no sibling
+    /// images" is still better feedback than silently jumping to
+    /// Places RAG.
+    fn try_open_image_picker(&mut self) -> bool {
+        let Some(doc) = self.opened.as_ref() else {
+            return false;
+        };
+        let (row, col) = doc.textarea.cursor();
+        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
+        let ctx = match detect_image_call_context(&line, col) {
+            Some(c) => c,
+            None => return false,
+        };
+        // Find sibling Image nodes in the paragraph's parent.
+        let entries = self.sibling_image_entries(doc.id);
+        if entries.is_empty() {
+            self.status = "no sibling images at this level — import one with F3 first".into();
+            self.modal = Modal::ImagePicker {
+                entries,
+                cursor: 0,
+                close_quote: !ctx.closing_quote_present,
+            };
+            return true;
+        }
+        self.status =
+            "↑↓ select · Enter insert · Esc cancel".into();
+        self.modal = Modal::ImagePicker {
+            entries,
+            cursor: 0,
+            close_quote: !ctx.closing_quote_present,
+        };
+        true
+    }
+
+    /// Sibling Image nodes of the paragraph identified by `para_id`,
+    /// sorted by their `order` field. Each entry carries the filename
+    /// (already in `NN-slug.<ext>` form), the display title, and the
+    /// file size for the picker readout.
+    fn sibling_image_entries(&self, para_id: Uuid) -> Vec<ImagePickerEntry> {
+        let Some(para) = self.hierarchy.get(para_id) else {
+            return Vec::new();
+        };
+        let mut out: Vec<ImagePickerEntry> = self
+            .hierarchy
+            .children_of(para.parent_id)
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Image)
+            .map(|n| {
+                let size_bytes = n
+                    .file
+                    .as_ref()
+                    .map(|rel| {
+                        std::fs::metadata(self.layout.root.join(rel))
+                            .map(|m| m.len())
+                            .unwrap_or(0)
+                    })
+                    .unwrap_or(0);
+                ImagePickerEntry {
+                    fname: n.fs_name(),
+                    title: n.title.clone(),
+                    size_bytes,
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.fname.cmp(&b.fname));
+        out
+    }
+
+    fn image_picker_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::ImagePicker {
+            entries, cursor, ..
+        } = &mut self.modal
+        else {
+            return false;
+        };
+        let total = entries.len();
+        match key.code {
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+                true
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < total {
+                    *cursor += 1;
+                }
+                true
+            }
+            KeyCode::Home => {
+                *cursor = 0;
+                true
+            }
+            KeyCode::End => {
+                *cursor = total.saturating_sub(1);
+                true
+            }
+            KeyCode::Enter => {
+                self.commit_image_picker();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn commit_image_picker(&mut self) {
+        let (fname, close_quote) = match &self.modal {
+            Modal::ImagePicker {
+                entries,
+                cursor,
+                close_quote,
+            } => match entries.get(*cursor) {
+                Some(e) => (e.fname.clone(), *close_quote),
+                None => {
+                    self.modal = Modal::None;
+                    return;
+                }
+            },
+            _ => return,
+        };
+        // Insert filename + optional `"` at the cursor in the editor.
+        let insert = if close_quote {
+            format!("{fname}\"")
+        } else {
+            fname.clone()
+        };
+        if let Some(doc) = self.opened.as_mut() {
+            doc.textarea.insert_str(&insert);
+            doc.dirty = true;
+        }
+        self.modal = Modal::None;
+        self.status = format!("inserted `{fname}` into #image(…)");
+    }
+
+    fn draw_image_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::ImagePicker {
+            entries, cursor, ..
+        } = &self.modal
+        else {
+            return;
+        };
+        let header_lines = 2usize;
+        let footer_lines = 2usize;
+        let body_lines = entries.len().max(1);
+        let height = ((header_lines + body_lines + footer_lines + 2) as u16)
+            .clamp(8, area.height.saturating_sub(2));
+        let max_name = entries
+            .iter()
+            .map(|e| e.fname.chars().count())
+            .max()
+            .unwrap_or(16);
+        let max_title = entries
+            .iter()
+            .map(|e| e.title.chars().count())
+            .max()
+            .unwrap_or(16);
+        let width = ((max_name + max_title + 24) as u16).clamp(50, area.width.saturating_sub(6));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Pick an image · Ctrl+B P ")
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(""));
+        if entries.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  No Image siblings at this level. Use F3 to import one,"
+                    .to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+            lines.push(Line::from(Span::styled(
+                "  then re-run Ctrl+B P inside the #image(\"…\") call."
+                    .to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        } else {
+            for (i, e) in entries.iter().enumerate() {
+                let marker = if i == *cursor { "›" } else { " " };
+                let name_padded =
+                    format!("{n:<width$}", n = e.fname, width = max_name);
+                let title_padded =
+                    format!("{t:<width$}", t = e.title, width = max_title);
+                let size_kib = e.size_bytes / 1024;
+                let row = format!("  {marker} {name_padded}   {title_padded}   ({size_kib} KiB)");
+                let style = if i == *cursor {
+                    Style::default()
+                        .add_modifier(Modifier::REVERSED)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                lines.push(Line::from(Span::styled(row, style)));
+            }
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  ↑↓ select · Enter insert · Esc cancel".to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 
@@ -6588,6 +6882,7 @@ impl App {
         let is_credits = matches!(self.modal, Modal::Credits { .. });
         let is_book_info = matches!(self.modal, Modal::BookInfo { .. });
         let is_llm_picker = matches!(self.modal, Modal::LlmPicker { .. });
+        let is_image_picker = matches!(self.modal, Modal::ImagePicker { .. });
         let is_help_query = matches!(self.modal, Modal::HelpQuery { .. });
 
         if is_quickref {
@@ -6604,6 +6899,10 @@ impl App {
         }
         if is_llm_picker {
             self.llm_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_image_picker {
+            self.image_picker_handle_key(key);
             return Ok(false);
         }
 
@@ -7603,6 +7902,10 @@ impl App {
             self.draw_llm_picker_modal(f, area);
             return;
         }
+        if let Modal::ImagePicker { .. } = &self.modal {
+            self.draw_image_picker_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -7618,6 +7921,7 @@ impl App {
             Modal::Credits { .. } => unreachable!("credits handled above"),
             Modal::BookInfo { .. } => unreachable!("book info handled above"),
             Modal::LlmPicker { .. } => unreachable!("llm picker handled above"),
+            Modal::ImagePicker { .. } => unreachable!("image picker handled above"),
             Modal::HelpQuery { input } => {
                 let body = vec![
                     Line::from(""),
@@ -8955,6 +9259,108 @@ fn truncate_title(title: &str, max_chars: usize) -> String {
 /// `unicode-segmentation`, so a selection of "Москва" works the same as
 /// dropping the cursor inside it. Trailing apostrophes / quotes are
 /// trimmed so "King's" doesn't pull in an extra quote.
+/// Detection result for "is the cursor sitting inside the first
+/// string argument of a `#image(...)` call on this line".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageCallContext {
+    /// True when the open `"` has a matching close `"` further along
+    /// the same line. The picker uses this to decide whether to
+    /// insert a closing quote after the filename or not.
+    pub closing_quote_present: bool,
+}
+
+/// Inspect the editor line up to the cursor and decide whether we're
+/// inside `#image("…<cursor>…")`. Returns `None` when not, so the
+/// caller can fall back to the regular `Ctrl+B P` (Places RAG) path.
+///
+/// Detection rule (line-local, no tree-sitter required):
+///   1. Find the LAST occurrence of `#image(` on the line at-or-before
+///      the cursor column.
+///   2. Between the `(` and the cursor, there must be no balanced `)`
+///      (the call is still open).
+///   3. Between the `(` and the cursor, there must be exactly one `"`
+///      (we are inside the first string literal).
+///
+/// Multi-line `#image(...)` calls — rare in practice — are not
+/// detected. The line-local scope makes this a 50-line function and
+/// the failure mode is "Ctrl+B P falls through to Places RAG" rather
+/// than a bug.
+pub fn detect_image_call_context(line: &str, cursor_col: usize) -> Option<ImageCallContext> {
+    let cursor_byte = char_offset_to_byte(line, cursor_col);
+    let prefix = &line[..cursor_byte];
+    // Walk backward to find the last `#image(`. Allow whitespace
+    // between `image` and `(` (e.g. `#image (` is uncommon but legal).
+    let open_paren_idx = find_image_open(prefix)?;
+    // After the `(`, count parens + quotes up to the cursor.
+    let between = &prefix[open_paren_idx + 1..];
+    let mut depth: i32 = 1; // we're inside the open paren
+    let mut quotes: usize = 0;
+    for c in between.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth <= 0 {
+                    return None; // call already closed before cursor
+                }
+            }
+            '"' => quotes += 1,
+            _ => {}
+        }
+    }
+    if quotes != 1 {
+        return None;
+    }
+    // Look forward for a closing quote on the same line so the picker
+    // can decide whether to add one.
+    let suffix = &line[cursor_byte..];
+    let closing_quote_present = suffix
+        .chars()
+        .scan(false, |escape, c| {
+            if *escape {
+                *escape = false;
+                return Some((false, c));
+            }
+            if c == '\\' {
+                *escape = true;
+                return Some((false, c));
+            }
+            Some((c == '"', c))
+        })
+        .any(|(is_close, _)| is_close);
+    Some(ImageCallContext {
+        closing_quote_present,
+    })
+}
+
+fn find_image_open(prefix: &str) -> Option<usize> {
+    // Iterate in reverse to find the LAST `#image[whitespace]?(`.
+    let bytes = prefix.as_bytes();
+    let mut i = bytes.len();
+    while i > 0 {
+        if bytes[i - 1] == b'(' {
+            // Look back for "image" with optional whitespace, and a `#`
+            // somewhere before that on this scan window.
+            let head = &prefix[..i - 1];
+            let trimmed = head.trim_end();
+            if let Some(stripped) = trimmed.strip_suffix("image") {
+                if stripped.ends_with('#') {
+                    return Some(i - 1);
+                }
+            }
+        }
+        i -= 1;
+    }
+    None
+}
+
+fn char_offset_to_byte(s: &str, char_off: usize) -> usize {
+    s.char_indices()
+        .nth(char_off)
+        .map(|(b, _)| b)
+        .unwrap_or(s.len())
+}
+
 fn current_word_or_selection(doc: &OpenedDoc) -> String {
     if let Some(((r1, c1), (r2, c2))) = doc.textarea.selection_range() {
         return slice_lines(doc.textarea.lines(), r1, c1, r2, c2)
