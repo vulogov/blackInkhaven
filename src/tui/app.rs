@@ -968,6 +968,33 @@ mod book_info_tests {
     }
 
     #[test]
+    fn digit_to_status_mapping() {
+        assert_eq!(digit_to_status('1'), Some("Ready"));
+        assert_eq!(digit_to_status('2'), Some("Final"));
+        assert_eq!(digit_to_status('3'), Some("Third"));
+        assert_eq!(digit_to_status('4'), Some("Second"));
+        assert_eq!(digit_to_status('5'), Some("First"));
+        assert_eq!(digit_to_status('6'), Some("Napkin"));
+        assert_eq!(digit_to_status('7'), Some("None"));
+        // 0, 8, 9 and letters don't map.
+        assert_eq!(digit_to_status('0'), None);
+        assert_eq!(digit_to_status('8'), None);
+        assert_eq!(digit_to_status('a'), None);
+    }
+
+    #[test]
+    fn status_letter_returns_one_char_or_space() {
+        assert_eq!(status_letter("Napkin"), "n");
+        assert_eq!(status_letter("First"), "1");
+        assert_eq!(status_letter("Second"), "2");
+        assert_eq!(status_letter("Third"), "3");
+        assert_eq!(status_letter("Final"), "F");
+        assert_eq!(status_letter("Ready"), "R");
+        assert_eq!(status_letter("None"), " ");
+        assert_eq!(status_letter("Unknown"), " ");
+    }
+
+    #[test]
     fn next_status_walks_the_ring() {
         assert_eq!(next_status(None), "Napkin");
         assert_eq!(next_status(Some("Napkin")), "First");
@@ -1516,6 +1543,14 @@ enum Modal {
         filter: TextInput,
         cursor: usize,
     },
+    /// Ctrl+B 1..7 — list every paragraph whose `status` matches the
+    /// chord's target value (1 = Ready, 2 = Final, …, 7 = None).
+    /// Enter on a row jumps the tree cursor and opens the paragraph.
+    StatusFilter {
+        status_label: &'static str,
+        entries: Vec<StatusFilterEntry>,
+        cursor: usize,
+    },
     /// F1 help-manual query. Asks a free-form question against the Help
     /// system book (RAG), then streams the constrained LLM answer into the
     /// AI pane. Esc cancels; Enter submits.
@@ -1702,6 +1737,17 @@ struct ImagePickerEntry {
     fname: String,
     title: String,
     size_bytes: u64,
+}
+
+/// One row in the `Ctrl+B 1..7` status-filter list. Carries the
+/// paragraph id (for opening on Enter) plus a pre-rendered
+/// breadcrumb so the user can disambiguate same-titled paragraphs
+/// across chapters at a glance.
+#[derive(Debug, Clone)]
+struct StatusFilterEntry {
+    id: Uuid,
+    title: String,
+    breadcrumb: String,
 }
 
 struct OpenedDoc {
@@ -4529,6 +4575,15 @@ impl App {
             self.schedule_assembly();
             return;
         }
+        // Digit chords 1..7 → status-filter modal. The user picks a
+        // workflow stage and we list every paragraph in the project
+        // tagged with that status.
+        if let KeyCode::Char(c) = key.code {
+            if let Some(target) = digit_to_status(c) {
+                self.open_status_filter(target);
+                return;
+            }
+        }
         // B runs Book assembly + `typst compile`. On error, opens a
         // fresh AI chat tuned to diagnose the typst stderr.
         if matches!(key.code, KeyCode::Char('B') | KeyCode::Char('b')) {
@@ -6017,6 +6072,188 @@ impl App {
         // Refresh hierarchy so the status reads back next frame.
         self.reload_hierarchy();
         self.status = format!("status: `{}` → `{}`", display_status(node.status.as_deref()), next);
+    }
+
+    /// Open the floating Ctrl+B 1..7 status-filter modal for
+    /// `target`. Walks every paragraph in the hierarchy, collects
+    /// the ones whose `status` matches, builds a breadcrumb for each
+    /// (Book → Chapter → Subchapter → Paragraph) so visually-similar
+    /// titles across chapters stay disambiguatable, and parks the
+    /// cursor on row 0.
+    fn open_status_filter(&mut self, target: &'static str) {
+        let mut entries: Vec<StatusFilterEntry> = Vec::new();
+        for node in self.hierarchy.iter() {
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let label = display_status(node.status.as_deref());
+            if label != target {
+                continue;
+            }
+            let breadcrumb = self.title_breadcrumb(node.id);
+            entries.push(StatusFilterEntry {
+                id: node.id,
+                title: node.title.clone(),
+                breadcrumb,
+            });
+        }
+        entries.sort_by(|a, b| a.breadcrumb.cmp(&b.breadcrumb));
+        let count = entries.len();
+        self.modal = Modal::StatusFilter {
+            status_label: target,
+            entries,
+            cursor: 0,
+        };
+        self.status = format!("status filter [{target}] · {count} paragraph(s)");
+    }
+
+    fn status_filter_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::StatusFilter { entries, cursor, .. } = &mut self.modal else {
+            return false;
+        };
+        let total = entries.len();
+        match key.code {
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+                true
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < total {
+                    *cursor += 1;
+                }
+                true
+            }
+            KeyCode::Home => {
+                *cursor = 0;
+                true
+            }
+            KeyCode::End => {
+                *cursor = total.saturating_sub(1);
+                true
+            }
+            KeyCode::PageUp => {
+                *cursor = cursor.saturating_sub(10);
+                true
+            }
+            KeyCode::PageDown => {
+                *cursor = (*cursor + 10).min(total.saturating_sub(1));
+                true
+            }
+            KeyCode::Enter => {
+                self.commit_status_filter();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn commit_status_filter(&mut self) {
+        let target_id = match &self.modal {
+            Modal::StatusFilter { entries, cursor, .. } => {
+                entries.get(*cursor).map(|e| e.id)
+            }
+            _ => None,
+        };
+        let Some(id) = target_id else {
+            self.modal = Modal::None;
+            return;
+        };
+        self.modal = Modal::None;
+        // Jump tree cursor to the chosen paragraph, then open it via
+        // the standard load path so paragraph_cursors / save sessions
+        // work the same as Enter from the tree.
+        if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == id) {
+            self.tree_cursor = i;
+        }
+        if let Some(node) = self.hierarchy.get(id).cloned() {
+            if let Err(e) = self.load_paragraph(&node) {
+                self.status = format!("open: {e}");
+            }
+        }
+    }
+
+    fn draw_status_filter_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::StatusFilter { status_label, entries, cursor } = &self.modal else {
+            return;
+        };
+        let header_lines = 2usize;
+        let footer_lines = 2usize;
+        let body_lines = entries.len().max(1);
+        let height = ((header_lines + body_lines + footer_lines + 2) as u16)
+            .clamp(8, area.height.saturating_sub(2));
+        let max_title = entries.iter().map(|e| e.title.chars().count()).max().unwrap_or(20);
+        let max_crumb = entries.iter().map(|e| e.breadcrumb.chars().count()).max().unwrap_or(30);
+        let width = ((max_title + max_crumb + 12) as u16).clamp(60, area.width.saturating_sub(6));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let title = format!(" Paragraphs with status [{status_label}] · Ctrl+B {} ",
+            match *status_label {
+                "Ready" => "1",
+                "Final" => "2",
+                "Third" => "3",
+                "Second" => "4",
+                "First" => "5",
+                "Napkin" => "6",
+                "None" => "7",
+                _ => "?",
+            });
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(""));
+        if entries.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("  No paragraphs tagged [{status_label}]."),
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        } else {
+            let body_h = inner.height.saturating_sub((header_lines + footer_lines) as u16) as usize;
+            let body_h = body_h.max(1);
+            let cursor = (*cursor).min(entries.len() - 1);
+            let scroll = if cursor >= body_h { cursor - body_h + 1 } else { 0 };
+            let end = (scroll + body_h).min(entries.len());
+            for (i_offset, entry) in entries[scroll..end].iter().enumerate() {
+                let i = scroll + i_offset;
+                let marker = if i == cursor { "›" } else { " " };
+                let title_padded =
+                    format!("{t:<width$}", t = entry.title, width = max_title);
+                let row =
+                    format!("  {marker} {title_padded}   {b}", b = entry.breadcrumb);
+                let style = if i == cursor {
+                    Style::default()
+                        .add_modifier(Modifier::REVERSED)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                lines.push(Line::from(Span::styled(row, style)));
+            }
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  ↑↓ select · Enter opens · Esc cancel".to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 
     /// Editor meta `Ctrl+B T`: rerun the placeholder-title derivation on
@@ -7563,6 +7800,7 @@ impl App {
         let is_llm_picker = matches!(self.modal, Modal::LlmPicker { .. });
         let is_image_picker = matches!(self.modal, Modal::ImagePicker { .. });
         let is_function_picker = matches!(self.modal, Modal::FunctionPicker { .. });
+        let is_status_filter = matches!(self.modal, Modal::StatusFilter { .. });
         let is_help_query = matches!(self.modal, Modal::HelpQuery { .. });
 
         if is_quickref {
@@ -7587,6 +7825,10 @@ impl App {
         }
         if is_function_picker {
             self.function_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_status_filter {
+            self.status_filter_handle_key(key);
             return Ok(false);
         }
 
@@ -8636,6 +8878,10 @@ impl App {
             self.draw_function_picker_modal(f, area);
             return;
         }
+        if let Modal::StatusFilter { .. } = &self.modal {
+            self.draw_status_filter_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -8654,6 +8900,7 @@ impl App {
             Modal::ImagePicker { .. } => unreachable!("image picker handled above"),
             Modal::ImagePreview { .. } => unreachable!("image preview handled above"),
             Modal::FunctionPicker { .. } => unreachable!("function picker handled above"),
+            Modal::StatusFilter { .. } => unreachable!("status filter handled above"),
             Modal::HelpQuery { input } => {
                 let body = vec![
                     Line::from(""),
@@ -9118,20 +9365,36 @@ impl App {
 
             // Truncate very long titles (typical for paragraphs whose name
             // was auto-derived from the first sentence) so they don't push
-            // the word count off the pane.
+            // the trailing status badge off the pane.
             let display_title = truncate_title(&node.title, TITLE_MAX_DISPLAY);
-            let mut spans = vec![Span::styled(
-                format!("{indent}{marker}{display_title}"),
+            // Build the prefix: indent + glyph + status-letter badge.
+            // The badge is one char (or space) styled with the matching
+            // workflow colour — gives every paragraph row a consistent
+            // gutter column the eye can scan down.
+            let status_label = if matches!(node.kind, NodeKind::Paragraph) {
+                display_status(node.status.as_deref())
+            } else {
+                "None"
+            };
+            let status_letter = status_letter(status_label);
+            let status_badge_style = status_style(status_label, &self.theme);
+            let mut spans: Vec<Span<'_>> = Vec::new();
+            spans.push(Span::styled(
+                format!("{indent}{marker}"),
                 row_style,
-            )];
-            if matches!(node.kind, NodeKind::Paragraph) {
-                let count_style = if i == self.tree_cursor || is_open {
-                    row_style
-                } else {
+            ));
+            // Always reserve the badge column (a space when None) so
+            // titles align across rows regardless of which paragraphs
+            // have a status set.
+            spans.push(Span::styled(
+                format!("{status_letter} "),
+                if status_label == "None" {
                     Style::default().add_modifier(Modifier::DIM)
-                };
-                spans.push(Span::styled(format!("  {}w", node.word_count), count_style));
-            }
+                } else {
+                    status_badge_style
+                },
+            ));
+            spans.push(Span::styled(display_title.to_string(), row_style));
             lines.push(Line::from(spans));
         }
 
@@ -9174,6 +9437,16 @@ impl App {
                     .and_then(|n| n.status.as_deref())
                     .map(|s| s.trim())
                     .filter(|s| !s.is_empty() && *s != "None");
+                // "edited X ago" from the node's `modified_at`. Updated
+                // automatically on save (via `update_paragraph_content`),
+                // and recomputed on every frame so the value freshens
+                // visibly when the user re-opens after a break.
+                let edited_ago = status_node.map(|n| {
+                    let now = chrono::Utc::now();
+                    let delta = now.signed_duration_since(n.modified_at);
+                    let secs = delta.num_seconds().max(0) as u64;
+                    format_age_humantime(std::time::Duration::from_secs(secs))
+                });
                 let mut spans: Vec<Span<'_>> = Vec::new();
                 spans.push(Span::raw(format!(
                     " Editor — {}{}{}{} · ",
@@ -9194,6 +9467,13 @@ impl App {
                 spans.push(Span::styled(format!("{words}w"), stats_style));
                 spans.push(Span::raw(" · "));
                 spans.push(Span::styled(reading, stats_style));
+                if let Some(ago) = edited_ago {
+                    spans.push(Span::raw(" · "));
+                    spans.push(Span::styled(
+                        format!("edited {ago} ago"),
+                        Style::default().add_modifier(Modifier::DIM),
+                    ));
+                }
                 spans.push(Span::raw(" "));
                 Line::from(spans)
             }
@@ -10056,6 +10336,22 @@ pub fn byte_offset_for_cursor(source: &str, row: usize, col: usize) -> usize {
     source.len()
 }
 
+/// Map digit chars '1'..'7' to a status label. Empty for any other
+/// char. 1 is the most-advanced status so the typical writer query —
+/// "what's actually ready to ship?" — is the lowest-effort chord.
+pub fn digit_to_status(c: char) -> Option<&'static str> {
+    match c {
+        '1' => Some("Ready"),
+        '2' => Some("Final"),
+        '3' => Some("Third"),
+        '4' => Some("Second"),
+        '5' => Some("First"),
+        '6' => Some("Napkin"),
+        '7' => Some("None"),
+        _ => None,
+    }
+}
+
 /// Document-status workflow ring. `Ctrl+B R` advances through this
 /// sequence; the ring wraps back to "None" after "Ready". `None` is
 /// represented by both the absence of `status` on the Node and the
@@ -10079,6 +10375,22 @@ pub fn display_status(current: Option<&str>) -> &str {
         None => "None",
         Some(s) if s.trim().is_empty() => "None",
         Some(s) => s,
+    }
+}
+
+/// Compact one-character badge for the tree-pane row. The colour
+/// (from `status_style`) carries the meaning; the letter just gives
+/// the row a visual anchor so the user knows that column means
+/// status.
+pub fn status_letter(label: &str) -> &'static str {
+    match label {
+        "Napkin" => "n",
+        "First" => "1",
+        "Second" => "2",
+        "Third" => "3",
+        "Final" => "F",
+        "Ready" => "R",
+        _ => " ",
     }
 }
 
