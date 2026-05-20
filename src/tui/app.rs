@@ -1730,6 +1730,12 @@ struct App {
     /// bar, tree, AI, AI prompt, status bar) is hidden. The same
     /// chord returns to the normal layout.
     typewriter_mode: bool,
+
+    /// Ctrl+B K toggles full-screen AI mode — left half = the live
+    /// AI pane (streaming inference), right half = scrolling chat
+    /// history, bottom = AI prompt. Same chord returns to the
+    /// normal layout. Mutually exclusive with `typewriter_mode`.
+    ai_fullscreen: bool,
 }
 
 #[derive(Debug)]
@@ -1934,6 +1940,7 @@ impl App {
             sound,
             image_picker,
             typewriter_mode: false,
+            ai_fullscreen: false,
         })
     }
 
@@ -2282,15 +2289,15 @@ impl App {
             // pane. Generic suffix (· H help · Esc cancel) is shared.
             self.status = match self.focus {
                 Focus::Tree | Focus::SearchBar => {
-                    "META · C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · Esc cancel"
+                    "META · C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel"
                         .into()
                 }
                 Focus::Editor => {
-                    "META · S save · N snapshot · R status · F func · T retitle · P place/pic · C character · G notes · Y artefacts · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · Esc cancel"
+                    "META · S save · N snapshot · R status · F func · T retitle · P place/pic · C character · G notes · Y artefacts · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel"
                         .into()
                 }
                 Focus::Ai | Focus::AiPrompt => {
-                    "META · C clear chat · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · Esc cancel".into()
+                    "META · C clear chat · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel".into()
                 }
             };
             return Ok(false);
@@ -4626,6 +4633,13 @@ impl App {
             self.toggle_typewriter_mode();
             return;
         }
+        // K toggles full-screen AI mode — left half AI pane, right
+        // half scrolling chat history, bottom AI prompt. Same chord
+        // returns to the normal layout.
+        if matches!(key.code, KeyCode::Char('K') | KeyCode::Char('k')) {
+            self.toggle_ai_fullscreen();
+            return;
+        }
 
         let consumed = match self.focus {
             Focus::Tree | Focus::SearchBar => self.dispatch_meta_tree(key),
@@ -6076,6 +6090,7 @@ impl App {
     fn toggle_typewriter_mode(&mut self) {
         self.typewriter_mode = !self.typewriter_mode;
         if self.typewriter_mode {
+            self.ai_fullscreen = false; // the two fullscreens are exclusive
             // Force focus to the editor so the user can start typing
             // immediately; the search bar / AI prompt are hidden
             // anyway, so leaving focus on them would be confusing.
@@ -6083,6 +6098,25 @@ impl App {
             self.status = "typewriter mode · Ctrl+B W to exit".into();
         } else {
             self.status = "typewriter mode off".into();
+        }
+    }
+
+    /// Ctrl+B K toggles full-screen AI mode. Layout: top area split
+    /// 50/50 — AI pane on the left, chat history on the right —
+    /// over a full-width AI prompt at the bottom. Same chord
+    /// returns to the four-pane layout.
+    fn toggle_ai_fullscreen(&mut self) {
+        self.ai_fullscreen = !self.ai_fullscreen;
+        if self.ai_fullscreen {
+            self.typewriter_mode = false; // exclusive with typewriter
+            // Drop focus onto the AI prompt so the user can start
+            // typing the next message immediately — the AI pane has
+            // no input role and the editor / tree / search bar are
+            // hidden in this layout anyway.
+            self.change_focus(Focus::AiPrompt);
+            self.status = "AI fullscreen · Ctrl+B K to exit".into();
+        } else {
+            self.status = "AI fullscreen off".into();
         }
     }
 
@@ -8692,6 +8726,40 @@ impl App {
             return;
         }
 
+        if self.ai_fullscreen {
+            // Layout: most of the screen split 50/50 (AI pane | chat
+            // history); AI prompt at the bottom; one status line.
+            // Tree, editor, and search bar are hidden.
+            let outer = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(3),
+                    Constraint::Length(1),
+                ])
+                .split(f.area());
+            let top = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(50),
+                    Constraint::Percentage(50),
+                ])
+                .split(outer[0]);
+            self.layout_search = Rect::default();
+            self.layout_tree = Rect::default();
+            self.layout_editor = Rect::default();
+            self.layout_ai = top[0];
+            self.layout_ai_prompt = outer[1];
+            self.draw_ai(f, top[0]);
+            self.draw_chat_history(f, top[1]);
+            self.draw_ai_prompt(f, outer[1]);
+            self.draw_status(f, outer[2]);
+            if !matches!(self.modal, Modal::None) {
+                self.draw_modal(f, f.area());
+            }
+            return;
+        }
+
         let outer = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -10214,6 +10282,94 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Render the accumulated chat history (User / Assistant turns).
+    /// Used by the `Ctrl+B K` AI-fullscreen layout. The newest turn is
+    /// pinned to the bottom of the pane — old history scrolls up off-
+    /// screen, matching the natural chat-window UX. `Paragraph::scroll`
+    /// handles the offset so we don't have to track per-pane state.
+    fn draw_chat_history(&self, f: &mut ratatui::Frame, area: Rect) {
+        let block = self.pane_block_line(
+            Line::from(format!(
+                " Chat history · {} turn(s) ",
+                self.chat_history.len()
+            )),
+            // Use the AI focus colouring so the two AI-related panes
+            // visually group together when the layout is active.
+            Focus::Ai,
+        );
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        if self.chat_history.is_empty() {
+            let hint = Paragraph::new(
+                "(no chat turns yet — send a query from the AI prompt below)",
+            )
+            .style(Style::default().add_modifier(Modifier::DIM))
+            .wrap(Wrap { trim: false });
+            f.render_widget(hint, inner);
+            return;
+        }
+
+        // Build the renderable lines: per-turn header + the body.
+        // User turns are short and styled cyan; assistant turns go
+        // through the markdown renderer so headings, bold, code,
+        // etc. all colour correctly.
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        let user_style = Style::default()
+            .fg(self.theme.ai_scope_fg)
+            .add_modifier(Modifier::BOLD);
+        let assistant_style = Style::default()
+            .fg(self.theme.ai_infer_fg)
+            .add_modifier(Modifier::BOLD);
+        for (i, turn) in self.chat_history.iter().enumerate() {
+            match turn {
+                ChatTurn::User(text) => {
+                    if i > 0 {
+                        lines.push(Line::from(""));
+                    }
+                    lines.push(Line::from(Span::styled(
+                        format!("❯ User"),
+                        user_style,
+                    )));
+                    for line in text.lines() {
+                        lines.push(Line::from(format!("  {line}")));
+                    }
+                }
+                ChatTurn::Assistant(text) => {
+                    lines.push(Line::from(Span::styled(
+                        format!("← Assistant"),
+                        assistant_style,
+                    )));
+                    // Render the assistant response through the
+                    // markdown→ratatui pipeline so code fences /
+                    // headings / lists look right. Drop into plain
+                    // lines if the renderer fails for any reason
+                    // (corrupt UTF-8 etc).
+                    let rendered = super::markdown::render(text);
+                    if rendered.is_empty() {
+                        for line in text.lines() {
+                            lines.push(Line::from(format!("  {line}")));
+                        }
+                    } else {
+                        for l in rendered {
+                            lines.push(l);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Auto-scroll so the most-recent line is on the bottom row
+        // of the pane: total_lines - inner_height = offset to skip.
+        let body_h = inner.height as usize;
+        let total = lines.len();
+        let scroll = total.saturating_sub(body_h) as u16;
+        let p = Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0));
+        f.render_widget(p, inner);
     }
 
     fn draw_prompt_picker(&self, f: &mut ratatui::Frame, area: Rect) {
