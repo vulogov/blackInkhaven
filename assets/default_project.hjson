@@ -138,6 +138,38 @@
     wrap_image_inline: ""
   }
 
+  // HJSON-driven `settings.typ`. `Ctrl+B A` synthesises the
+  // generated header in artefacts/<book>/settings.typ from these
+  // three stanzas — change values here instead of hand-editing the
+  // Typst paragraph. The user's `Typst → <book> → settings.typ`
+  // paragraph still applies BELOW the auto-generated header as a
+  // free-form override (anything HJSON doesn't yet expose).
+  //
+  // typst_page → #set page(...)
+  // typst_fonts → #set text(...) + #set raw(font: ...)
+  // typst_layout → #set par(...) and optional #set heading(numbering)
+  typst_page: {
+    paper: "us-letter"
+    margin_top: "2.5cm"
+    margin_bottom: "2.5cm"
+    margin_inside: "3cm"
+    margin_outside: "2cm"
+    page_numbering: "1"
+    columns: 1
+  }
+  typst_fonts: {
+    body: "EB Garamond"
+    body_size: "11pt"
+    monospace: "JetBrains Mono"
+    language: "en"
+  }
+  typst_layout: {
+    justify: true
+    leading: "0.7em"
+    paragraph_indent: ""
+    heading_numbering: ""
+  }
+
   // Image-node behaviour (F3 import, Enter-on-Image preview).
   // - `preview_enabled`: when true, Enter on an Image row pops a
   //   ratatui-image preview that uses kitty / sixel / iterm2 /
