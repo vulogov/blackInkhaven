@@ -3,14 +3,15 @@
 //!
 //! Phase-0 smoke entry point. If the working directory (or
 //! `--project`) is an initialised inkhaven project, the store is
-//! opened and registered with the scripting layer so `ink.*` words
-//! work. Otherwise the script runs against the bare Adam VM (pure
-//! arithmetic / strings / control flow).
+//! opened — which auto-arms the scripting layer via
+//! `Store::open` → `scripting::configure` — and `ink.*` words
+//! become available. Otherwise the script runs against the bare
+//! Adam VM (pure arithmetic / strings / control flow).
 //!
 //! The store-open path triggers fastembed model load on first use,
 //! which is slow (~seconds). We avoid that for arithmetic-only
 //! scripts by skipping the open when the path isn't an inkhaven
-//! project. Pure VM smoke tests stay fast.
+//! project.
 
 use std::path::Path;
 
@@ -21,7 +22,7 @@ use crate::project::ProjectLayout;
 use crate::store::Store;
 
 pub fn run(code: &str, project: &Path) -> Result<()> {
-    maybe_register_active_store(project);
+    maybe_open_project(project);
     match crate::scripting::eval(code)? {
         Some(value) => println!("{}", crate::scripting::format_value(&value)),
         None => println!("(no result)"),
@@ -29,11 +30,11 @@ pub fn run(code: &str, project: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Best-effort attempt to open the project at `project` and install
-/// its `Store` into the scripting layer. Failures (not initialised,
-/// missing config, model load fails) are silent — the bund command
-/// must remain usable for pure-VM experiments outside any project.
-fn maybe_register_active_store(project: &Path) {
+/// Open the project at `project` when it's a real inkhaven
+/// directory. `Store::open` itself arms the scripting layer
+/// (policy + active store) — we don't need to wire anything
+/// else here.
+fn maybe_open_project(project: &Path) {
     let layout = ProjectLayout::new(project);
     if layout.require_initialized().is_err() {
         return;
@@ -42,13 +43,5 @@ fn maybe_register_active_store(project: &Path) {
         Ok(c) => c,
         Err(_) => return,
     };
-    // Honor the project's scripting policy in the CLI path too —
-    // a writer running `inkhaven bund` against their project gets
-    // the same sandbox they'd see in the TUI.
-    crate::scripting::set_policy(cfg.scripting.clone());
-    let store = match Store::open(layout, &cfg) {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-    crate::scripting::register_active_store(store);
+    let _ = Store::open(layout, &cfg);
 }

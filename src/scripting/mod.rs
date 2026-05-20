@@ -31,6 +31,7 @@
 //! - **P5**: first-class `NodeKind::Script` + Bund-aware editor.
 //! - **P6**: ephemeral worker pool + result queue.
 
+pub mod hooks;
 pub mod policy;
 pub mod stdlib;
 
@@ -63,8 +64,10 @@ static POLICY: OnceLock<Policy> = OnceLock::new();
 /// Initialise the Adam VM exactly once. Idempotent — subsequent
 /// calls are no-ops. Loads bundcore's stdlib (arithmetic, string,
 /// conditional, …) via the `Bund::new()` constructor, layers on
-/// inkhaven's read-only `ink.*` words, then applies the sandbox
-/// policy (re-registers denied words with a stub).
+/// inkhaven's read-only `ink.*` words, applies the sandbox policy
+/// (re-registers denied words with a stub), then evals the
+/// `scripting.bootstrap` script — which is where users typically
+/// define their hook lambdas.
 pub fn init_adam() -> Result<()> {
     if ADAM.get().is_some() {
         return Ok(());
@@ -77,8 +80,29 @@ pub fn init_adam() -> Result<()> {
         policy::apply_policy(&mut bund.vm, &p)
             .map_err(|e| anyhow!("apply policy: {e}"))?;
     }
+    if !p.bootstrap.trim().is_empty() {
+        if let Err(e) = bund.eval(p.bootstrap.clone()) {
+            tracing::warn!(
+                target: "inkhaven::scripting",
+                "bootstrap script failed: {}",
+                e
+            );
+        }
+    }
     let _ = ADAM.set(RwLock::new(bund));
     Ok(())
+}
+
+/// Run `f` with a mutable reference to Adam. Returns `None` when
+/// Adam hasn't been built yet — callers handle that as "no script
+/// runtime available, skip". Used internally by `hooks::fire`.
+pub(crate) fn with_adam<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut Bund) -> R,
+{
+    let adam = ADAM.get()?;
+    let mut guard = adam.write();
+    Some(f(&mut guard))
 }
 
 /// Install the sandbox policy. Must be called BEFORE the first
@@ -95,6 +119,19 @@ pub fn set_policy(policy: Policy) {
 /// subsequent calls silently no-op (single-project-per-process).
 pub fn register_active_store(store: Store) {
     let _ = ACTIVE_STORE.set(store);
+}
+
+/// One-shot helper called from `Store::open` so every code path
+/// that opens a project — TUI, `inkhaven bund`, `inkhaven add`,
+/// `inkhaven reindex`, etc. — automatically arms the scripting
+/// layer. Equivalent to `set_policy(cfg.scripting.clone())`
+/// followed by `register_active_store(store)`.
+///
+/// Both inner calls are idempotent (single-project-per-process),
+/// so a second open against the same project is harmless.
+pub fn configure(policy: Policy, store: Store) {
+    set_policy(policy);
+    register_active_store(store);
 }
 
 /// Read access to the active store, used by `ink.*` word handlers.
