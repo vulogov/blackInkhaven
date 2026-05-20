@@ -4,9 +4,7 @@ pub mod node;
 use std::path::Path;
 use std::sync::Arc;
 
-use bdslib::DocumentStorage;
-use bdslib::EmbeddingEngine;
-use bdslib::embedding::Model;
+use crate::storage::{DocumentStorage, EmbeddingEngine, Model};
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
 

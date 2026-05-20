@@ -5,6 +5,7 @@ mod cli;
 mod config;
 mod error;
 mod project;
+mod storage;
 mod store;
 mod tui;
 mod typst_compile;

@@ -79,7 +79,7 @@ pub fn run(project: &Path, prune: bool, adopt: bool) -> Result<()> {
         orphans.len()
     );
     if prune {
-        eprintln!("  pruned {pruned} missing record(s) from bdslib");
+        eprintln!("  pruned {pruned} missing record(s) from the store");
     } else if !missing_ids.is_empty() {
         eprintln!("  (re-run with --prune to remove records for missing files)");
     }
