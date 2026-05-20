@@ -1009,6 +1009,14 @@ mod book_info_tests {
     }
 
     #[test]
+    fn prev_status_walks_backwards_and_wraps() {
+        assert_eq!(prev_status(Some("Napkin")), "None");
+        assert_eq!(prev_status(Some("Ready")), "Final");
+        assert_eq!(prev_status(Some("Final")), "Third");
+        assert_eq!(prev_status(None), "Ready"); // wrap from None backwards
+    }
+
+    #[test]
     fn next_status_unknown_value_treated_as_none() {
         assert_eq!(next_status(Some("WeirdCustom")), "Napkin");
     }
@@ -1543,11 +1551,19 @@ enum Modal {
         filter: TextInput,
         cursor: usize,
     },
-    /// Ctrl+B 1..7 — list every paragraph whose `status` matches the
-    /// chord's target value (1 = Ready, 2 = Final, …, 7 = None).
-    /// Enter on a row jumps the tree cursor and opens the paragraph.
+    /// Ctrl+B 1..7 — list paragraphs whose `status` matches the
+    /// chord's target value (1 = Ready, 2 = Final, …, 7 = None),
+    /// scoped to the tree cursor's enclosing branch (or the whole
+    /// project when the cursor sits at the root). Actions inside the
+    /// modal:
+    ///   Enter → jump tree cursor + open the paragraph
+    ///   r / R → cycle the highlighted paragraph's status forward
+    ///           (if it no longer matches, the row disappears from
+    ///           the list and the next one slides up)
+    ///   - / Backspace → cycle status backward
     StatusFilter {
         status_label: &'static str,
+        scope: String,
         entries: Vec<StatusFilterEntry>,
         cursor: usize,
     },
@@ -6075,39 +6091,89 @@ impl App {
     }
 
     /// Open the floating Ctrl+B 1..7 status-filter modal for
-    /// `target`. Walks every paragraph in the hierarchy, collects
-    /// the ones whose `status` matches, builds a breadcrumb for each
-    /// (Book → Chapter → Subchapter → Paragraph) so visually-similar
-    /// titles across chapters stay disambiguatable, and parks the
-    /// cursor on row 0.
+    /// `target`, scoped to the tree cursor's enclosing branch.
     fn open_status_filter(&mut self, target: &'static str) {
+        let (scope_id, scope_label) = self.resolve_status_filter_scope();
+        let entries = self.collect_status_entries(target, scope_id);
+        let count = entries.len();
+        self.modal = Modal::StatusFilter {
+            status_label: target,
+            scope: scope_label.clone(),
+            entries,
+            cursor: 0,
+        };
+        self.status = format!(
+            "status filter [{target}] · {scope_label} · {count} paragraph(s) · R/- cycles · Enter opens"
+        );
+    }
+
+    /// "Current scope" for the status filter: the cursor's node when
+    /// it's a branch; otherwise the nearest non-paragraph ancestor.
+    /// Returns `(scope_id, breadcrumb)`. None scope = project-wide.
+    fn resolve_status_filter_scope(&self) -> (Option<Uuid>, String) {
+        let cursor_id = self
+            .rows
+            .get(self.tree_cursor)
+            .map(|(id, _)| *id);
+        let mut cur = cursor_id;
+        while let Some(id) = cur {
+            let Some(node) = self.hierarchy.get(id) else {
+                break;
+            };
+            if node.kind != NodeKind::Paragraph && node.kind != NodeKind::Image {
+                return (Some(id), self.title_breadcrumb(id));
+            }
+            cur = node.parent_id;
+        }
+        (None, "entire project".to_string())
+    }
+
+    /// Walk every paragraph that is (a) inside `scope_id`'s subtree
+    /// when given, and (b) tagged with `target`. Sorted by breadcrumb
+    /// so paragraphs from the same parent cluster together.
+    fn collect_status_entries(
+        &self,
+        target: &'static str,
+        scope_id: Option<Uuid>,
+    ) -> Vec<StatusFilterEntry> {
+        let allowed_ids: Option<std::collections::HashSet<Uuid>> =
+            scope_id.map(|id| self.hierarchy.collect_subtree(id).into_iter().collect());
         let mut entries: Vec<StatusFilterEntry> = Vec::new();
         for node in self.hierarchy.iter() {
             if node.kind != NodeKind::Paragraph {
                 continue;
             }
-            let label = display_status(node.status.as_deref());
-            if label != target {
+            if let Some(allowed) = &allowed_ids {
+                if !allowed.contains(&node.id) {
+                    continue;
+                }
+            }
+            if display_status(node.status.as_deref()) != target {
                 continue;
             }
-            let breadcrumb = self.title_breadcrumb(node.id);
             entries.push(StatusFilterEntry {
                 id: node.id,
                 title: node.title.clone(),
-                breadcrumb,
+                breadcrumb: self.title_breadcrumb(node.id),
             });
         }
         entries.sort_by(|a, b| a.breadcrumb.cmp(&b.breadcrumb));
-        let count = entries.len();
-        self.modal = Modal::StatusFilter {
-            status_label: target,
-            entries,
-            cursor: 0,
-        };
-        self.status = format!("status filter [{target}] · {count} paragraph(s)");
+        entries
     }
 
     fn status_filter_handle_key(&mut self, key: KeyEvent) -> bool {
+        // Navigation-only branches first; status cycling has its own
+        // path because it needs the full `self` borrow.
+        let advance: Option<bool> = match key.code {
+            KeyCode::Char('r') | KeyCode::Char('R') => Some(true),
+            KeyCode::Char('-') | KeyCode::Backspace => Some(false),
+            _ => None,
+        };
+        if let Some(forward) = advance {
+            self.cycle_status_in_filter(forward);
+            return true;
+        }
+
         let Modal::StatusFilter { entries, cursor, .. } = &mut self.modal else {
             return false;
         };
@@ -6149,6 +6215,69 @@ impl App {
         }
     }
 
+    /// Step the highlighted paragraph's status forward or backward
+    /// in the workflow ring (without leaving the modal). The list is
+    /// re-collected against the original filter — if the paragraph
+    /// no longer matches it disappears and the next row slides up.
+    /// The cursor index is clamped to stay inside the (possibly
+    /// shorter) list.
+    fn cycle_status_in_filter(&mut self, forward: bool) {
+        let (target_status, paragraph_id, prior_cursor) = match &self.modal {
+            Modal::StatusFilter { status_label, entries, cursor, .. } => {
+                let Some(entry) = entries.get(*cursor) else {
+                    return;
+                };
+                (*status_label, entry.id, *cursor)
+            }
+            _ => return,
+        };
+        let Some(node) = self.hierarchy.get(paragraph_id).cloned() else {
+            return;
+        };
+        let new_label = if forward {
+            next_status(node.status.as_deref())
+        } else {
+            prev_status(node.status.as_deref())
+        };
+        let mut updated = node.clone();
+        updated.status = if new_label == "None" {
+            None
+        } else {
+            Some(new_label.to_string())
+        };
+        if let Err(e) = self
+            .store
+            .raw()
+            .update_metadata(paragraph_id, updated.to_json())
+        {
+            self.status = format!("status update failed: {e}");
+            return;
+        }
+        self.reload_hierarchy();
+        // Re-collect entries under the same scope + status target.
+        let (scope_id, scope_label) = self.resolve_status_filter_scope();
+        let entries = self.collect_status_entries(target_status, scope_id);
+        let total = entries.len();
+        let new_cursor = if total == 0 {
+            0
+        } else if prior_cursor >= total {
+            total - 1
+        } else {
+            prior_cursor
+        };
+        self.modal = Modal::StatusFilter {
+            status_label: target_status,
+            scope: scope_label.clone(),
+            entries,
+            cursor: new_cursor,
+        };
+        let direction = if forward { "→" } else { "←" };
+        self.status = format!(
+            "{} {direction} {new_label} · `{scope_label}` · {total} paragraph(s) remaining",
+            node.title
+        );
+    }
+
     fn commit_status_filter(&mut self) {
         let target_id = match &self.modal {
             Modal::StatusFilter { entries, cursor, .. } => {
@@ -6175,14 +6304,14 @@ impl App {
     }
 
     fn draw_status_filter_modal(&self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::StatusFilter { status_label, entries, cursor } = &self.modal else {
+        let Modal::StatusFilter { status_label, scope, entries, cursor } = &self.modal else {
             return;
         };
-        let header_lines = 2usize;
-        let footer_lines = 2usize;
+        let header_lines = 3usize; // title row inside chrome stays 0; footer grows
+        let footer_lines = 3usize;
         let body_lines = entries.len().max(1);
         let height = ((header_lines + body_lines + footer_lines + 2) as u16)
-            .clamp(8, area.height.saturating_sub(2));
+            .clamp(10, area.height.saturating_sub(2));
         let max_title = entries.iter().map(|e| e.title.chars().count()).max().unwrap_or(20);
         let max_crumb = entries.iter().map(|e| e.breadcrumb.chars().count()).max().unwrap_or(30);
         let width = ((max_title + max_crumb + 12) as u16).clamp(60, area.width.saturating_sub(6));
@@ -6191,7 +6320,7 @@ impl App {
         let rect = Rect { x, y, width, height };
         f.render_widget(ratatui::widgets::Clear, rect);
 
-        let title = format!(" Paragraphs with status [{status_label}] · Ctrl+B {} ",
+        let title = format!(" Paragraphs with status [{status_label}] · scope: {scope} · Ctrl+B {} ",
             match *status_label {
                 "Ready" => "1",
                 "Final" => "2",
@@ -6250,7 +6379,8 @@ impl App {
         }
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "  ↑↓ select · Enter opens · Esc cancel".to_string(),
+            "  ↑↓ select · Enter opens · r/R advances status · - / Backspace reverses · Esc cancel"
+                .to_string(),
             Style::default().add_modifier(Modifier::DIM),
         )));
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
@@ -10368,6 +10498,15 @@ pub fn next_status(current: Option<&str>) -> &'static str {
         .position(|s| *s == cur)
         .unwrap_or(0);
     STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.len()]
+}
+
+pub fn prev_status(current: Option<&str>) -> &'static str {
+    let cur = display_status(current);
+    let idx = STATUS_CYCLE
+        .iter()
+        .position(|s| *s == cur)
+        .unwrap_or(0);
+    STATUS_CYCLE[(idx + STATUS_CYCLE.len() - 1) % STATUS_CYCLE.len()]
 }
 
 pub fn display_status(current: Option<&str>) -> &str {

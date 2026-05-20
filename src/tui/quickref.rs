@@ -67,7 +67,7 @@ fn global_entries() -> [Entry; 23] {
         entry("Ctrl+B A", "Book assembly — emit a typst-compilable tree"),
         entry("Ctrl+B B", "Build the book — assemble + typst compile"),
         entry("Ctrl+B O", "Take the book — build + copy PDF to cwd"),
-        entry("Ctrl+B 1..7", "List paragraphs by status (1=Ready · 2=Final · 3=Third · 4=Second · 5=First · 6=Napkin · 7=None)"),
+        entry("Ctrl+B 1..7", "Scoped status filter — list paragraphs by status under tree cursor (r/-/Enter act on rows)"),
         entry("F1", "Help-manual question (RAG over the Help book)"),
         entry("F7", "Grammar check the open paragraph (→ AI pane)"),
         entry("F9", "Cycle AI scope: None→Sel→Para→Sub→Chap→Book→None"),
