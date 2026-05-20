@@ -226,6 +226,11 @@ fn adopt_orphans(
             modified_at: chrono::Utc::now(),
             protected: false,
             system_tag: None,
+            image_ext: None,
+            image_caption: None,
+            image_alt: None,
+            content_type: None,
+            status: None,
         };
 
         store.put_node(&mut node, &bytes)?;

@@ -28,6 +28,8 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("prompts", "Prompts"),
     ("places", "Places"),
     ("characters", "Characters"),
+    ("artefacts", "Artefacts"),
+    ("typst", "Typst"),
     ("help", "Help"),
 ];
 
@@ -35,6 +37,8 @@ pub const SYSTEM_TAG_NOTES: &str = "notes";
 pub const SYSTEM_TAG_PROMPTS: &str = "prompts";
 pub const SYSTEM_TAG_PLACES: &str = "places";
 pub const SYSTEM_TAG_CHARACTERS: &str = "characters";
+pub const SYSTEM_TAG_ARTEFACTS: &str = "artefacts";
+pub const SYSTEM_TAG_TYPST: &str = "typst";
 pub const SYSTEM_TAG_HELP: &str = "help";
 
 /// Where a newly-created node lands among its parent's existing children.
@@ -96,7 +100,168 @@ impl Store {
             layout: Arc::new(layout),
         };
         store.ensure_system_books(cfg)?;
+        store.ensure_artefacts_directory(cfg)?;
         Ok(store)
+    }
+
+    /// Create the per-project artefacts root if it doesn't exist yet.
+    /// Each user book gets its own subdirectory under here for PDFs /
+    /// build intermediates / etc. With the empty-string default the
+    /// directory lives in the OS per-user cache (see
+    /// `resolve_artefacts_dir`).
+    fn ensure_artefacts_directory(&self, cfg: &Config) -> Result<()> {
+        let abs = self.resolve_artefacts_dir(cfg);
+        std::fs::create_dir_all(&abs).map_err(Error::Io)?;
+        Ok(())
+    }
+
+    /// Resolve `cfg.artefacts_directory` to an absolute path. Precedence:
+    ///   1. **Empty string** — use the OS-appropriate per-user cache
+    ///      directory: `<cache_dir>/inkhaven/artefacts/<project-basename>`.
+    ///      This is the default behaviour because build artefacts are
+    ///      ephemeral and don't belong inside the project tree.
+    ///   2. **Absolute path** — used verbatim.
+    ///   3. **Relative path** — joined to the project root (legacy
+    ///      behaviour; useful if the user explicitly wants artefacts
+    ///      tracked alongside the manuscript).
+    pub fn resolve_artefacts_dir(&self, cfg: &Config) -> std::path::PathBuf {
+        let raw = cfg.artefacts_directory.trim();
+        if raw.is_empty() {
+            return default_user_artefacts_dir(&self.layout.root);
+        }
+        let p = std::path::PathBuf::from(raw);
+        if p.is_absolute() {
+            p
+        } else {
+            self.layout.root.join(p)
+        }
+    }
+
+
+    /// Provision the side-effects of creating a user book at the root
+    /// level: an artefacts subdirectory matching the book's slug, and a
+    /// Typst-book chapter (same display name as the new book) carrying
+    /// three starter paragraphs — `index.typ`, `settings.typ`,
+    /// `globals.typ`. `index.typ` is seeded with `import` statements
+    /// pulling in the other two so a fresh book's Typst skeleton is
+    /// ready to render.
+    ///
+    /// Idempotent: re-calling with the same book is a no-op for any
+    /// piece that's already in place.
+    ///
+    /// Called from both the TUI's `commit_add` (when creating a Book at
+    /// root via the Tree pane) and the CLI's `add` subcommand.
+    pub fn provision_user_book(
+        &self,
+        cfg: &Config,
+        book_node: &Node,
+    ) -> Result<()> {
+        // Only root-level Books trigger provisioning.
+        if book_node.kind != NK::Book || book_node.parent_id.is_some() {
+            return Ok(());
+        }
+        // Skip system books — they shouldn't get artefact subdirs or a
+        // self-referential Typst entry.
+        if book_node.system_tag.is_some() {
+            return Ok(());
+        }
+
+        // (a) Artefacts subdirectory under the resolved root
+        // (per-user cache by default — see `resolve_artefacts_dir`).
+        let sub = self.resolve_artefacts_dir(cfg).join(&book_node.slug);
+        std::fs::create_dir_all(&sub).map_err(Error::Io)?;
+
+        // (b) Typst-book chapter + three starter paragraphs.
+        self.ensure_typst_skeleton(cfg, &book_node.title)?;
+        Ok(())
+    }
+
+    /// Ensure a chapter named after `book_title` exists inside the
+    /// Typst system book, and that it contains paragraphs `index.typ`,
+    /// `settings.typ`, `globals.typ`. Each part is created only if
+    /// missing — safe to call repeatedly.
+    fn ensure_typst_skeleton(&self, cfg: &Config, book_title: &str) -> Result<()> {
+        let hierarchy = Hierarchy::load(self)?;
+        let Some(typst_book) = hierarchy
+            .iter()
+            .find(|n| n.kind == NK::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_TYPST))
+            .cloned()
+        else {
+            // Typst system book is missing — shouldn't happen because
+            // ensure_system_books seeds it on every open, but bail
+            // cleanly rather than panic if the hierarchy is unusual.
+            return Ok(());
+        };
+
+        // Find or create the chapter matching the book's title.
+        let chapter = match hierarchy
+            .iter()
+            .find(|n| n.kind == NK::Chapter
+                && n.parent_id == Some(typst_book.id)
+                && n.title == book_title)
+            .cloned()
+        {
+            Some(n) => n,
+            None => self.create_node(
+                cfg,
+                &hierarchy,
+                NK::Chapter,
+                book_title,
+                Some(&typst_book),
+                None,
+                InsertPosition::End,
+            )?,
+        };
+
+        // Each paragraph needs a deterministic title and a starter
+        // body. globals.typ ships the four wrap_* functions used by the
+        // Book assembly procedure (Ctrl+B A) — pulled from
+        // `cfg.typst_templates` so the user can pre-customise them in
+        // HJSON.
+        let globals_body = cfg.typst_templates.globals_typ_body();
+        let seeds: [(&str, String); 3] = [
+            (
+                "index.typ",
+                "= index.typ\n\n#import \"globals.typ\": *\n#import \"settings.typ\": *\n"
+                    .into(),
+            ),
+            (
+                "settings.typ",
+                "= settings.typ\n\n// Document-wide #set / #show rules go here.\n".into(),
+            ),
+            ("globals.typ", globals_body),
+        ];
+        // Reload hierarchy after each create so subsequent lookups see
+        // freshly-added siblings.
+        for (title, body) in &seeds {
+            let h = Hierarchy::load(self)?;
+            let already = h.iter().any(|n| {
+                n.kind == NK::Paragraph
+                    && n.parent_id == Some(chapter.id)
+                    && n.title == *title
+            });
+            if already {
+                continue;
+            }
+            let mut created = self.create_node(
+                cfg,
+                &h,
+                NK::Paragraph,
+                title,
+                Some(&chapter),
+                None,
+                InsertPosition::End,
+            )?;
+            // Overwrite the auto-generated `= Title\n\n` body with the
+            // seeded content. The fs file already exists from
+            // `create_node`'s paragraph branch.
+            if let Some(rel) = &created.file {
+                let abs = self.layout.root.join(rel);
+                std::fs::write(&abs, body.as_bytes()).map_err(Error::Io)?;
+                self.update_paragraph_content(&mut created, body.as_bytes())?;
+            }
+        }
+        Ok(())
     }
 
     /// Six books that every project keeps at the root, in this order:
@@ -140,6 +305,30 @@ impl Store {
                     // SYSTEM_BOOKS array index. Reload before each create so
                     // subsequent slugs see prior creates and don't collide.
                     let h = Hierarchy::load(self)?;
+
+                    // Make room for the new system book at its
+                    // canonical slot: bump every existing root book
+                    // (system or user) with `order >= target_order` up
+                    // by 1. Without this, inserting `Artefacts` at
+                    // slot 5 into a project that already has `Typst`
+                    // at order 5 would either collide on order (sort
+                    // tie-broken by slug — usually wrong) or land out
+                    // of the intended sequence. A single open-time
+                    // pass is enough; subsequent opens are no-ops
+                    // since the book then exists.
+                    for n in h.children_of(None) {
+                        if n.order >= target_order {
+                            let mut bumped = n.clone();
+                            bumped.order += 1;
+                            self.inner
+                                .update_metadata(bumped.id, bumped.to_json())
+                                .map_err(|e| {
+                                    Error::Store(format!("update_metadata (bump): {e}"))
+                                })?;
+                        }
+                    }
+                    let h = Hierarchy::load(self)?;
+
                     let mut node = self.create_node(
                         cfg,
                         &h,
@@ -158,6 +347,42 @@ impl Store {
                 }
             }
         }
+        // Heal-pass: if two system books ended up sharing the same
+        // `order` (older seeder versions used to set the new book's
+        // canonical idx without bumping the existing books), the
+        // lexicographic tie-breaker chooses the wrong visual order.
+        // Re-stamp the colliding pair to their canonical positions
+        // and bump anything else above them. This is conservative —
+        // it only fires when there's a clear collision, so a user
+        // who deliberately reordered system books isn't surprised.
+        let healed = Hierarchy::load(self)?;
+        let mut by_order: std::collections::HashMap<u32, Vec<Node>> =
+            std::collections::HashMap::new();
+        for n in healed.children_of(None) {
+            if n.system_tag.is_some() {
+                by_order.entry(n.order).or_default().push(n.clone());
+            }
+        }
+        let any_collision = by_order.values().any(|v| v.len() > 1);
+        if any_collision {
+            for (idx, (tag, _title)) in SYSTEM_BOOKS.iter().enumerate() {
+                let target = idx as u32;
+                if let Some(node) = healed.iter().find(|n| {
+                    n.kind == NK::Book && n.system_tag.as_deref() == Some(*tag)
+                }) {
+                    if node.order != target {
+                        let mut updated = node.clone();
+                        updated.order = target;
+                        self.inner
+                            .update_metadata(updated.id, updated.to_json())
+                            .map_err(|e| {
+                                Error::Store(format!("update_metadata (heal): {e}"))
+                            })?;
+                    }
+                }
+            }
+        }
+
         self.sync()?;
         Ok(())
     }
@@ -327,6 +552,11 @@ impl Store {
             modified_at: chrono::Utc::now(),
             protected: false,
             system_tag: None,
+            image_ext: None,
+            image_caption: None,
+            image_alt: None,
+            content_type: None,
+            status: None,
         };
 
         let rel_path = match parent {
@@ -662,6 +892,91 @@ impl Store {
             .map_err(|e| Error::Store(format!("snapshot_content: {e}")))
     }
 
+    /// Fetch the raw bytes of an Image node from bdslib. The on-disk
+    /// copy under `books/<...>` is the working copy; bdslib is the
+    /// source of truth (so a hand-edit on disk isn't re-ingested by
+    /// `Book assembly` — re-importing the file via F3 is the way).
+    pub fn image_bytes(&self, image_id: Uuid) -> Result<Option<Vec<u8>>> {
+        self.inner
+            .get_content(image_id)
+            .map_err(|e| Error::Store(format!("image_bytes: {e}")))
+    }
+
+    /// Create an Image node in bdslib + on disk. `title` becomes the
+    /// node's display title; the slug is derived from it. `ext` is
+    /// the canonical file extension (`png`, `jpg`, …) without a dot.
+    /// `bytes` is the image content — written to disk verbatim and
+    /// also stored in bdslib via `add_document_no_embed` so backup /
+    /// restore round-trip it.
+    pub fn create_image_node(
+        &self,
+        cfg: &Config,
+        hierarchy: &Hierarchy,
+        title: &str,
+        ext: &str,
+        bytes: &[u8],
+        parent: Option<&Node>,
+        position: InsertPosition,
+    ) -> Result<Node> {
+        // Build the node skeleton via the existing branch path —
+        // create_node handles slug uniqueness, ordering, and
+        // metadata persistence. We then override the kind-specific
+        // fields and update.
+        let mut node = self.create_node(
+            cfg,
+            hierarchy,
+            NK::Image,
+            title,
+            parent,
+            None,
+            position,
+        )?;
+        node.image_ext = Some(ext.to_lowercase());
+        // The placeholder body create_node wrote (a paragraph-style
+        // `= Title` markdown stub) isn't useful for an image. Replace
+        // both bdslib content and on-disk file with the bytes.
+        let abs = self.layout.root.join(
+            node.file.as_deref().unwrap_or(""),
+        );
+        std::fs::write(&abs, bytes).map_err(Error::Io)?;
+        // Rename the on-disk file from `NN-slug.typ` (what create_node
+        // wrote) to `NN-slug.<ext>` so the on-disk extension matches.
+        let abs_typ = abs.clone();
+        let abs_image =
+            self.layout.root.join(
+                std::path::PathBuf::from(node.file.clone().unwrap_or_default())
+                    .with_extension(&node.image_ext.clone().unwrap_or_default()),
+            );
+        if abs_typ != abs_image && abs_typ.exists() {
+            let _ = std::fs::rename(&abs_typ, &abs_image);
+        }
+        // Update node.file to reflect the new extension.
+        if let Some(rel) = node.file.as_ref() {
+            let rel_image =
+                std::path::PathBuf::from(rel).with_extension(&node.image_ext.clone().unwrap_or_default());
+            node.file = Some(rel_image.to_string_lossy().into_owned());
+        }
+        self.inner
+            .update_content(node.id, bytes)
+            .map_err(|e| Error::Store(format!("update_content (image): {e}")))?;
+        self.inner
+            .update_metadata(node.id, node.to_json())
+            .map_err(|e| Error::Store(format!("update_metadata (image): {e}")))?;
+        self.sync()?;
+        Ok(node)
+    }
+
+    /// Delete a single snapshot by id. Snapshots have no on-disk file
+    /// (they live entirely in bdslib as `add_document_no_embed`), so
+    /// this is just a bdslib delete + a sync to flush the change.
+    pub fn delete_snapshot(&self, snapshot_id: Uuid) -> Result<()> {
+        self.inner
+            .delete_document(snapshot_id)
+            .map_err(|e| Error::Store(format!("delete_snapshot {snapshot_id}: {e}")))?;
+        self.sync()?;
+        Ok(())
+    }
+
     /// Delete the on-disk subtree at `fs_rel` (relative to project root) and
     /// remove every UUID in `ids` from bdslib. Errors from individual bdslib
     /// deletes are logged but don't abort the loop — orphans get caught by
@@ -751,4 +1066,55 @@ fn embedding_cache_dir() -> Option<std::path::PathBuf> {
     let path = dirs.cache_dir().join("embeddings");
     let _ = std::fs::create_dir_all(&path);
     Some(path)
+}
+
+/// Default backup directory for a given project. Lives **next to** the
+/// project (sibling directory in the same parent), in a shared
+/// `inkhaven-backups/` folder with a `<project-basename>` subfolder so
+/// multiple projects in the same parent don't collide.
+///
+/// Why sibling-of-project rather than an OS cache directory: backups
+/// are user-facing artefacts that need to be obvious when listing files.
+/// Hiding them in `~/Library/Caches/...` makes them hard to find and
+/// hard to copy to external storage.
+///
+/// Layout for a project at `~/Books/my-novel/`:
+/// ```text
+/// ~/Books/
+/// ├── inkhaven-backups/
+/// │   └── my-novel/         ← snapshots land here
+/// └── my-novel/
+/// ```
+pub fn default_user_backup_dir(project_root: &std::path::Path) -> std::path::PathBuf {
+    let project_id = project_basename(project_root);
+    project_root
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("inkhaven-backups")
+        .join(project_id)
+}
+
+/// Default artefacts directory — same sibling-of-project pattern as
+/// `default_user_backup_dir`. PDFs, build intermediates, and other
+/// per-book outputs land under `<parent>/inkhaven-artefacts/<project-basename>/<book-slug>/`.
+pub fn default_user_artefacts_dir(project_root: &std::path::Path) -> std::path::PathBuf {
+    let project_id = project_basename(project_root);
+    project_root
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("inkhaven-artefacts")
+        .join(project_id)
+}
+
+/// Project identifier for the default-path resolvers. The bare filename
+/// of the project root works in practice; collisions between same-named
+/// projects in different parents are surfaced quickly by the user and
+/// can be resolved by setting an explicit `backup.out_dir` /
+/// `artefacts_directory` in their HJSON.
+fn project_basename(project_root: &std::path::Path) -> String {
+    project_root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "default".into())
 }

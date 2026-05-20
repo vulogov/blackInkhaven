@@ -1,4 +1,5 @@
 mod ai;
+mod assemble;
 mod backup;
 mod cli;
 mod config;
@@ -6,6 +7,7 @@ mod error;
 mod project;
 mod store;
 mod tui;
+mod typst_compile;
 
 use clap::Parser;
 

@@ -27,6 +27,8 @@ pub struct Theme {
 
     pub places_fg: Color,
     pub characters_fg: Color,
+    pub artefacts_fg: Color,
+    pub notes_underline_fg: Color,
 
     pub search_match_bg: Color,
     pub search_current_bg: Color,
@@ -36,6 +38,7 @@ pub struct Theme {
     pub tree_chapter_fg: Color,
     pub tree_subchapter_fg: Color,
     pub tree_paragraph_fg: Color,
+    pub tree_image_fg: Color,
     pub editor_position_fg: Color,
     pub ai_scope_fg: Color,
     pub ai_infer_fg: Color,
@@ -80,6 +83,13 @@ impl Theme {
 
             places_fg: color_or(&cfg.places_fg, Color::Rgb(0x89, 0xdc, 0xeb)),
             characters_fg: color_or(&cfg.characters_fg, Color::Rgb(0xf9, 0xe2, 0xaf)),
+            // Catppuccin Mocha "peach" — a clearly distinct yellow-
+            // orange so Artefacts don't clash with Characters' amber.
+            artefacts_fg: color_or(&cfg.artefacts_fg, Color::Rgb(0xfa, 0xb3, 0x87)),
+            // Underline uses the regular pane text colour by default;
+            // a separate knob lets the user tint the underline if the
+            // pane_fg is too subtle.
+            notes_underline_fg: color_or(&cfg.notes_underline_fg, Color::Rgb(0xcd, 0xd6, 0xf4)),
 
             search_match_bg: color_or(&cfg.search_match_bg, Color::Rgb(0xf3, 0x8b, 0xa8)),
             search_current_bg: color_or(&cfg.search_current_bg, Color::Rgb(0xf5, 0xc2, 0xe7)),
@@ -89,6 +99,9 @@ impl Theme {
             tree_chapter_fg: color_or(&cfg.tree_chapter_fg, Color::Rgb(0x89, 0xb4, 0xfa)),
             tree_subchapter_fg: color_or(&cfg.tree_subchapter_fg, Color::Rgb(0x94, 0xe2, 0xd5)),
             tree_paragraph_fg: color_or(&cfg.tree_paragraph_fg, Color::Rgb(0xcd, 0xd6, 0xf4)),
+            // Same peach as the Artefacts editor overlay so the "this
+            // is media, not text" cue is consistent.
+            tree_image_fg: color_or(&cfg.tree_image_fg, Color::Rgb(0xfa, 0xb3, 0x87)),
             editor_position_fg: color_or(&cfg.editor_position_fg, Color::Rgb(0x89, 0xdc, 0xeb)),
             ai_scope_fg: color_or(&cfg.ai_scope_fg, Color::Rgb(0xfa, 0xb3, 0x87)),
             ai_infer_fg: color_or(&cfg.ai_infer_fg, Color::Rgb(0x94, 0xe2, 0xd5)),

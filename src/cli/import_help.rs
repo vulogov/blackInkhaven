@@ -312,7 +312,7 @@ fn next_branch_kind(parent: &Node, cfg: &Config) -> Option<NodeKind> {
                 None
             }
         }
-        NodeKind::Paragraph => None,
+        NodeKind::Paragraph | NodeKind::Image => None,
     }
 }
 

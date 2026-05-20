@@ -11,6 +11,15 @@ pub enum NodeKind {
     Chapter,
     Subchapter,
     Paragraph,
+    /// Standalone graphic in the book tree — first-class hierarchy
+    /// node alongside Paragraph. Image nodes have:
+    /// * `file: Some("<NN-slug>.<ext>")` pointing at the bytes on disk
+    ///   under `books/<...>/`.
+    /// * `image_ext` carrying the file extension (`png`, `jpg`, …) so
+    ///   `fs_name()` can reconstruct the filename.
+    /// * Optional `image_caption` / `image_alt` for the wrap_image
+    ///   functions emitted during Book assembly.
+    Image,
 }
 
 impl NodeKind {
@@ -20,6 +29,7 @@ impl NodeKind {
             NodeKind::Chapter => "chapter",
             NodeKind::Subchapter => "subchapter",
             NodeKind::Paragraph => "paragraph",
+            NodeKind::Image => "image",
         }
     }
 
@@ -29,10 +39,17 @@ impl NodeKind {
             "chapter" => Some(NodeKind::Chapter),
             "subchapter" => Some(NodeKind::Subchapter),
             "paragraph" => Some(NodeKind::Paragraph),
+            "image" => Some(NodeKind::Image),
             _ => None,
         }
     }
 
+    /// Image / Paragraph are leaves; chapters / subchapters / books
+    /// can have children. Used in tree-rendering and the placement
+    /// validator.
+    pub fn is_leaf(&self) -> bool {
+        matches!(self, NodeKind::Paragraph | NodeKind::Image)
+    }
 }
 
 /// Hierarchy node metadata as stored in bdslib's JsonStorage layer.
@@ -63,22 +80,64 @@ pub struct Node {
     /// survive a hypothetical future rename.
     #[serde(default)]
     pub system_tag: Option<String>,
+
+    /// For Image nodes: the file extension (`png`, `jpg`, `webp`, …)
+    /// without the leading dot. Used by `fs_name()` to reconstruct the
+    /// on-disk filename, and by `wrap_image_*` calls in the assembled
+    /// typst tree to pick the right relative path. None on every
+    /// other kind.
+    #[serde(default)]
+    pub image_ext: Option<String>,
+
+    /// For Image nodes: optional caption rendered by the matching
+    /// `wrap_image_*` function in the assembled output. None → no
+    /// caption is emitted.
+    #[serde(default)]
+    pub image_caption: Option<String>,
+
+    /// For Image nodes: alt-text for accessibility; flows into typst
+    /// `image(..., alt: ...)` when set.
+    #[serde(default)]
+    pub image_alt: Option<String>,
+
+    /// For Paragraph nodes: the editor / highlighter language. None
+    /// or `"typst"` (the default) treats the file as a Typst document
+    /// and picks the tree-sitter-typst highlighter. `"hjson"` switches
+    /// to inkhaven's hand-rolled HJSON highlighter and gives the file
+    /// the `.hjson` extension on disk. Future values (`"json"`,
+    /// `"yaml"`) can land without breaking persisted projects because
+    /// the field is serde-optional with the typst default.
+    #[serde(default)]
+    pub content_type: Option<String>,
+
+    /// Document-status workflow tag — Ctrl+B R in the editor cycles
+    /// through Napkin → First → Second → Third → Final → Ready (and
+    /// back to None) so the writer can mark progress without leaving
+    /// the buffer. None / empty = no badge. Stored as a string so
+    /// future projects can extend the workflow without a migration.
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 impl Node {
     pub fn to_json(&self) -> JsonValue {
         json!({
-            "kind":        self.kind.as_str(),
-            "title":       self.title,
-            "slug":        self.slug,
-            "path":        self.path,
-            "parent_id":   self.parent_id.map(|u| u.to_string()),
-            "order":       self.order,
-            "file":        self.file,
-            "word_count":  self.word_count,
-            "modified_at": self.modified_at.to_rfc3339(),
-            "protected":   self.protected,
-            "system_tag":  self.system_tag,
+            "kind":          self.kind.as_str(),
+            "title":         self.title,
+            "slug":          self.slug,
+            "path":          self.path,
+            "parent_id":     self.parent_id.map(|u| u.to_string()),
+            "order":         self.order,
+            "file":          self.file,
+            "word_count":    self.word_count,
+            "modified_at":   self.modified_at.to_rfc3339(),
+            "protected":     self.protected,
+            "system_tag":    self.system_tag,
+            "image_ext":     self.image_ext,
+            "image_caption": self.image_caption,
+            "image_alt":     self.image_alt,
+            "content_type":  self.content_type,
+            "status":        self.status,
         })
     }
 
@@ -157,6 +216,27 @@ impl Node {
             .and_then(|v| v.as_str())
             .map(str::to_owned);
 
+        let image_ext = obj
+            .get("image_ext")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let image_caption = obj
+            .get("image_caption")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let image_alt = obj
+            .get("image_alt")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let content_type = obj
+            .get("content_type")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let status = obj
+            .get("status")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+
         Ok(Self {
             id,
             kind,
@@ -170,6 +250,11 @@ impl Node {
             modified_at,
             protected,
             system_tag,
+            image_ext,
+            image_caption,
+            image_alt,
+            content_type,
+            status,
         })
     }
 
@@ -179,7 +264,24 @@ impl Node {
     pub fn fs_name(&self) -> String {
         match self.kind {
             NodeKind::Book => self.slug.clone(),
-            NodeKind::Paragraph => format!("{:02}-{}.typ", self.order, self.slug),
+            NodeKind::Paragraph => {
+                // content_type drives the extension. Default / None /
+                // `"typst"` → `.typ`; `"hjson"` → `.hjson`. Future
+                // values gain their own arms.
+                let ext = match self.content_type.as_deref() {
+                    Some("hjson") => "hjson",
+                    _ => "typ",
+                };
+                format!("{:02}-{}.{}", self.order, self.slug, ext)
+            }
+            NodeKind::Image => {
+                // Default to .png when an Image was somehow constructed
+                // without an extension (test data, older project that
+                // pre-dates the feature). Image bytes on disk would be
+                // wrong, but the filename still sorts correctly.
+                let ext = self.image_ext.as_deref().unwrap_or("png");
+                format!("{:02}-{}.{}", self.order, self.slug, ext)
+            }
             _ => format!("{:02}-{}", self.order, self.slug),
         }
     }

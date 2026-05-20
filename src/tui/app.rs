@@ -316,6 +316,254 @@ fn draw_backup_splash(
     f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
 }
 
+/// Render the centered "Importing directory" splash for the tree-pane
+/// directory import. Mirrors `draw_backup_splash` but adds a third line
+/// showing the file currently being imported so the user can see the
+/// walk advance through the tree.
+fn draw_import_splash(
+    f: &mut ratatui::Frame,
+    source_display: &str,
+    done: usize,
+    total: usize,
+    current: &str,
+) {
+    let area = f.area();
+    let width = area.width.saturating_sub(8).clamp(50, 100);
+    let height: u16 = 11;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let rect = Rect { x, y, width, height };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Inkhaven · import directory ")
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let bar_width = (inner.width as usize).saturating_sub(8).max(20);
+    let pct = if total == 0 {
+        0.0
+    } else {
+        (done as f32 / total as f32).clamp(0.0, 1.0)
+    };
+    let filled = (pct * bar_width as f32).round() as usize;
+    let bar = format!(
+        "  [{}{}]  {}/{} ({:>3.0}%)",
+        "█".repeat(filled),
+        "·".repeat(bar_width.saturating_sub(filled)),
+        done,
+        total,
+        pct * 100.0,
+    );
+
+    // Clip the current-file line so the splash never wraps and shoves
+    // the bar off-screen on narrow terminals.
+    let label_budget = inner.width.saturating_sub(4) as usize;
+    let current_clipped: String = if current.chars().count() > label_budget {
+        let mut s: String = current
+            .chars()
+            .rev()
+            .take(label_budget.saturating_sub(1))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        s.insert(0, '…');
+        s
+    } else {
+        current.to_string()
+    };
+
+    let body = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Importing directory…".to_string(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  Source:  {source_display}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(Span::styled(
+            format!("  Current: {current_clipped}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            bar,
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+    ];
+    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
+}
+
+/// Splash for the Book-assembly procedure (Ctrl+B A). Mirrors the
+/// import splash visually but the body line is "Assembling …" and the
+/// per-file readout is relative to `<artefacts-root>` so the user sees
+/// `inkhaven-artefacts/<project>/<book>/book/<chapter>/index.typ`-shape
+/// paths scroll past.
+fn draw_assembly_splash(
+    f: &mut ratatui::Frame,
+    book_display: &str,
+    done: usize,
+    total: usize,
+    current: &str,
+) {
+    let area = f.area();
+    let width = area.width.saturating_sub(8).clamp(50, 100);
+    let height: u16 = 11;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let rect = Rect { x, y, width, height };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Inkhaven · Book assembly ")
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let bar_width = (inner.width as usize).saturating_sub(8).max(20);
+    let pct = if total == 0 {
+        0.0
+    } else {
+        (done as f32 / total as f32).clamp(0.0, 1.0)
+    };
+    let filled = (pct * bar_width as f32).round() as usize;
+    let bar = format!(
+        "  [{}{}]  {}/{} ({:>3.0}%)",
+        "█".repeat(filled),
+        "·".repeat(bar_width.saturating_sub(filled)),
+        done,
+        total,
+        pct * 100.0,
+    );
+
+    let label_budget = inner.width.saturating_sub(4) as usize;
+    let current_clipped: String = if current.chars().count() > label_budget {
+        let mut s: String = current
+            .chars()
+            .rev()
+            .take(label_budget.saturating_sub(1))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        s.insert(0, '…');
+        s
+    } else {
+        current.to_string()
+    };
+
+    let body = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Assembling book…".to_string(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  Book:    {book_display}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(Span::styled(
+            format!("  Writing: {current_clipped}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            bar,
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+    ];
+    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
+}
+
+/// Splash for the `typst compile` step (Ctrl+B B / Ctrl+B O). Static
+/// "Please wait" body plus an animated spinner the caller advances
+/// each frame so the user can tell the TUI is still alive while the
+/// child process churns.
+fn draw_typst_compile_splash(
+    f: &mut ratatui::Frame,
+    book_display: &str,
+    elapsed_secs: u64,
+    spinner: char,
+) {
+    let area = f.area();
+    let width = area.width.saturating_sub(8).clamp(50, 100);
+    let height: u16 = 9;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let rect = Rect { x, y, width, height };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Inkhaven · typst compile ")
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let body = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  {spinner}  Please wait while PDF is generated…"),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  Book:    {book_display}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(Span::styled(
+            format!("  Elapsed: {elapsed_secs}s"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+    ];
+    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
+}
+
+const TYPST_COMPILE_SPINNER: &[char] = &[
+    '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏',
+];
+
+/// Walk `root` and count regular files that would be imported as
+/// paragraphs (mirrors the importer's hidden-entry filter so the total
+/// matches the progress callbacks).
+fn count_importable_files(root: &Path) -> usize {
+    walkdir::WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            e.file_name()
+                .to_str()
+                .map(|s| !s.starts_with('.'))
+                .unwrap_or(true)
+        })
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .count()
+}
+
 /// Check whether the project is overdue for a backup and run one if so,
 /// streaming progress into the splash drawn over the alternate screen.
 /// Returns `Ok(())` when no backup was required OR the backup succeeded;
@@ -325,9 +573,10 @@ fn maybe_auto_backup<B: ratatui::backend::Backend>(
     layout: &ProjectLayout,
     cfg: &Config,
 ) -> Result<()> {
-    // Config must opt in: empty out_dir or zero max_age → never auto-backup.
+    // Auto-backup opts out only via `max_age = 0s` now — `out_dir` empty
+    // means "use the per-user default" (see `default_user_backup_dir`).
     let bcfg = &cfg.backup;
-    if bcfg.out_dir.trim().is_empty() || bcfg.max_age.as_secs() == 0 {
+    if bcfg.max_age.as_secs() == 0 {
         return Ok(());
     }
     // If we already backed up recently, do nothing.
@@ -341,14 +590,24 @@ fn maybe_auto_backup<B: ratatui::backend::Backend>(
         }
     }
 
+    // Resolve the backup directory. Empty `out_dir` → per-user data
+    // location; absolute path → used as-is; relative → resolved against
+    // the project root (legacy override for users who explicitly want
+    // backups inside the project).
     let out_dir = {
-        let raw = std::path::PathBuf::from(&bcfg.out_dir);
-        if raw.is_absolute() {
-            raw
+        let raw = bcfg.out_dir.trim();
+        if raw.is_empty() {
+            crate::store::default_user_backup_dir(&layout.root)
         } else {
-            layout.root.join(raw)
+            let p = std::path::PathBuf::from(raw);
+            if p.is_absolute() {
+                p
+            } else {
+                layout.root.join(p)
+            }
         }
     };
+    std::fs::create_dir_all(&out_dir).ok();
     let abs_project = std::fs::canonicalize(&layout.root)
         .unwrap_or_else(|_| layout.root.clone());
     let abs_out = std::fs::canonicalize(&out_dir).unwrap_or_else(|_| out_dir.clone());
@@ -463,6 +722,30 @@ fn derive_paragraph_title_from_path(path: &std::path::Path) -> String {
         "Imported".into()
     } else {
         pretty
+    }
+}
+
+/// Return the lowercase extension if `path` looks like an image file
+/// we'll route to `import_single_image`. The list is the recognised
+/// set Typst's `#image(...)` natively understands: PNG, JPG, JPEG,
+/// GIF, WebP, SVG. Anything else stays a paragraph candidate.
+fn image_extension_for(path: &std::path::Path) -> Option<String> {
+    let ext = path.extension()?.to_str()?.to_lowercase();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => Some(ext),
+        _ => None,
+    }
+}
+
+/// Map file extension → content_type tag stored on the resulting
+/// Paragraph. `.hjson` → "hjson"; anything else (including `.typ` /
+/// no extension / plain text files) → `None`, which means "typst
+/// default".
+fn content_type_for(path: &std::path::Path) -> Option<String> {
+    let ext = path.extension()?.to_str()?.to_lowercase();
+    match ext.as_str() {
+        "hjson" => Some("hjson".into()),
+        _ => None,
     }
 }
 
@@ -647,6 +930,524 @@ mod corrected_tests {
     }
 }
 
+#[cfg(test)]
+mod book_info_tests {
+    use super::*;
+
+    #[test]
+    fn count_sentences_basic_terminators() {
+        assert_eq!(count_sentences("Hello. World!"), 2);
+        assert_eq!(count_sentences("Why? Because!"), 2);
+        assert_eq!(count_sentences("One sentence only"), 0);
+    }
+
+    #[test]
+    fn count_sentences_collapses_runs() {
+        // Repeated terminators ("...", "?!") should count as one sentence
+        // each, not three / two.
+        assert_eq!(count_sentences("Hmm... interesting?!"), 2);
+    }
+
+    #[test]
+    fn count_sentences_ignores_headings_and_comments() {
+        let body = "= Chapter title\n\n// this comment has a period.\n\
+                    First. Second.";
+        assert_eq!(count_sentences(body), 2);
+    }
+
+    #[test]
+    fn count_sentences_handles_blank_and_multiline() {
+        let body = "First sentence.\n\nSecond sentence!\nThird?";
+        assert_eq!(count_sentences(body), 3);
+    }
+
+    #[test]
+    fn format_age_subminute() {
+        assert_eq!(format_age_humantime(std::time::Duration::from_secs(0)), "0s");
+        assert_eq!(format_age_humantime(std::time::Duration::from_secs(45)), "45s");
+    }
+
+    #[test]
+    fn chat_turn_roundtrips_through_serde() {
+        let history = vec![
+            ChatTurn::User("What's the weather?".into()),
+            ChatTurn::Assistant("I don't have a weather tool.".into()),
+        ];
+        let json = serde_json::to_string(&history).expect("encode");
+        let back: Vec<ChatTurn> = serde_json::from_str(&json).expect("decode");
+        assert_eq!(back.len(), 2);
+        match &back[0] {
+            ChatTurn::User(s) => assert_eq!(s, "What's the weather?"),
+            _ => panic!("expected User turn"),
+        }
+        match &back[1] {
+            ChatTurn::Assistant(s) => assert_eq!(s, "I don't have a weather tool."),
+            _ => panic!("expected Assistant turn"),
+        }
+    }
+
+    #[test]
+    fn digit_to_status_mapping() {
+        assert_eq!(digit_to_status('1'), Some("Ready"));
+        assert_eq!(digit_to_status('2'), Some("Final"));
+        assert_eq!(digit_to_status('3'), Some("Third"));
+        assert_eq!(digit_to_status('4'), Some("Second"));
+        assert_eq!(digit_to_status('5'), Some("First"));
+        assert_eq!(digit_to_status('6'), Some("Napkin"));
+        assert_eq!(digit_to_status('7'), Some("None"));
+        // 0, 8, 9 and letters don't map.
+        assert_eq!(digit_to_status('0'), None);
+        assert_eq!(digit_to_status('8'), None);
+        assert_eq!(digit_to_status('a'), None);
+    }
+
+    #[test]
+    fn status_letter_returns_one_char_or_space() {
+        assert_eq!(status_letter("Napkin"), "n");
+        assert_eq!(status_letter("First"), "1");
+        assert_eq!(status_letter("Second"), "2");
+        assert_eq!(status_letter("Third"), "3");
+        assert_eq!(status_letter("Final"), "F");
+        assert_eq!(status_letter("Ready"), "R");
+        assert_eq!(status_letter("None"), " ");
+        assert_eq!(status_letter("Unknown"), " ");
+    }
+
+    #[test]
+    fn next_status_walks_the_ring() {
+        assert_eq!(next_status(None), "Napkin");
+        assert_eq!(next_status(Some("Napkin")), "First");
+        assert_eq!(next_status(Some("First")), "Second");
+        assert_eq!(next_status(Some("Second")), "Third");
+        assert_eq!(next_status(Some("Third")), "Final");
+        assert_eq!(next_status(Some("Final")), "Ready");
+        // Wrap.
+        assert_eq!(next_status(Some("Ready")), "None");
+        // Empty string = same as None.
+        assert_eq!(next_status(Some("")), "Napkin");
+    }
+
+    #[test]
+    fn prev_status_walks_backwards_and_wraps() {
+        assert_eq!(prev_status(Some("Napkin")), "None");
+        assert_eq!(prev_status(Some("Ready")), "Final");
+        assert_eq!(prev_status(Some("Final")), "Third");
+        assert_eq!(prev_status(None), "Ready"); // wrap from None backwards
+    }
+
+    #[test]
+    fn next_status_unknown_value_treated_as_none() {
+        assert_eq!(next_status(Some("WeirdCustom")), "Napkin");
+    }
+
+    #[test]
+    fn display_status_collapses_none_variants() {
+        assert_eq!(display_status(None), "None");
+        assert_eq!(display_status(Some("")), "None");
+        assert_eq!(display_status(Some("   ")), "None");
+        assert_eq!(display_status(Some("Napkin")), "Napkin");
+    }
+
+    #[test]
+    fn byte_offset_for_cursor_basic() {
+        let src = "abc\ndef\nghi";
+        // Row 0, col 0 → byte 0.
+        assert_eq!(byte_offset_for_cursor(src, 0, 0), 0);
+        // Row 0, col 3 → end of "abc".
+        assert_eq!(byte_offset_for_cursor(src, 0, 3), 3);
+        // Row 1, col 0 → after the first newline.
+        assert_eq!(byte_offset_for_cursor(src, 1, 0), 4);
+        // Row 2, col 2 → "gh|i".
+        assert_eq!(byte_offset_for_cursor(src, 2, 2), 10);
+    }
+
+    #[test]
+    fn byte_offset_for_cursor_handles_multibyte() {
+        // "Москва" is 6 chars / 12 bytes.
+        let src = "Москва";
+        assert_eq!(byte_offset_for_cursor(src, 0, 0), 0);
+        assert_eq!(byte_offset_for_cursor(src, 0, 6), 12);
+        // Mid-way: 3 chars in is 6 bytes.
+        assert_eq!(byte_offset_for_cursor(src, 0, 3), 6);
+    }
+
+    #[test]
+    fn open_pair_for_known_openers() {
+        assert_eq!(open_pair_for('('), Some(')'));
+        assert_eq!(open_pair_for('['), Some(']'));
+        assert_eq!(open_pair_for('{'), Some('}'));
+        assert_eq!(open_pair_for('"'), Some('"'));
+        assert_eq!(open_pair_for('\''), Some('\''));
+        assert_eq!(open_pair_for('a'), None);
+        assert_eq!(open_pair_for(')'), None);
+    }
+
+    #[test]
+    fn is_close_pair_char_covers_all_closers() {
+        for c in [')', ']', '}', '"', '\''] {
+            assert!(is_close_pair_char(c), "{c} should be a close pair char");
+        }
+        for c in ['(', '[', '{', 'a', '#'] {
+            assert!(!is_close_pair_char(c), "{c} should not be");
+        }
+    }
+
+    /// Reproduce the pair-detection rule used by the Enter and
+    /// Backspace handlers without going through tui-textarea.
+    fn between_pair(line: &str, col: usize) -> bool {
+        let chars: Vec<char> = line.chars().collect();
+        let before = if col > 0 { chars.get(col - 1).copied() } else { None };
+        let after = chars.get(col).copied();
+        matches!(
+            (before, after),
+            (Some('('), Some(')')) | (Some('['), Some(']')) | (Some('{'), Some('}'))
+        )
+    }
+
+    #[test]
+    fn pair_detection_inside_freshly_typed_pair() {
+        // `foo(|)` — cursor at col 4, between `(` and `)`.
+        assert!(between_pair("foo()", 4));
+        // `[]` — cursor at col 1, between `[` and `]`.
+        assert!(between_pair("[]", 1));
+        // `{}` — cursor at col 1, between `{` and `}`.
+        assert!(between_pair("{}", 1));
+    }
+
+    #[test]
+    fn pair_detection_skips_when_chars_dont_match() {
+        // Just before `)` but `(` is not on the immediate left.
+        assert!(!between_pair("foo )", 4));
+        // Indented prose with parens that DO match — pair logic only
+        // cares about the immediately adjacent chars.
+        assert!(!between_pair("  abc(def)", 6));
+    }
+
+    #[test]
+    fn filter_functions_empty_returns_all() {
+        let all = filter_functions("").len();
+        assert!(all > 50, "expected the baked-in table to have >50 entries, got {all}");
+    }
+
+    #[test]
+    fn filter_functions_substring_match() {
+        let m: Vec<&'static str> = filter_functions("image").iter().map(|f| f.name).collect();
+        assert!(m.contains(&"image"), "got: {m:?}");
+        assert!(m.contains(&"figure") == false || true);
+    }
+
+    #[test]
+    fn filter_functions_case_insensitive() {
+        let a = filter_functions("Heading");
+        let b = filter_functions("heading");
+        assert_eq!(a.len(), b.len());
+    }
+
+    #[test]
+    fn filter_functions_no_match_returns_empty() {
+        assert!(filter_functions("zzz-no-such-function").is_empty());
+    }
+
+    #[test]
+    fn image_call_context_inside_open_string() {
+        // Cursor is after the `"` — we're inside the first string arg.
+        let line = "#image(\"";
+        let ctx = detect_image_call_context(line, line.chars().count())
+            .expect("should detect");
+        assert!(!ctx.closing_quote_present);
+    }
+
+    #[test]
+    fn image_call_context_inside_with_closing_quote() {
+        let line = "#image(\"\")";
+        // Cursor positioned right after the opening quote (col 8).
+        let ctx = detect_image_call_context(line, 8).expect("should detect");
+        assert!(ctx.closing_quote_present);
+    }
+
+    #[test]
+    fn image_call_context_not_inside_when_closed() {
+        // After the closing `)`.
+        let line = "#image(\"cover.png\")";
+        let n = line.chars().count();
+        assert!(detect_image_call_context(line, n).is_none());
+    }
+
+    #[test]
+    fn image_call_context_requires_hash_prefix() {
+        // `image(` without leading `#` is not a typst function call.
+        let line = "image(\"cover.png";
+        assert!(detect_image_call_context(line, line.chars().count()).is_none());
+    }
+
+    #[test]
+    fn image_call_context_not_after_other_function() {
+        let line = "#text(\"hello";
+        assert!(detect_image_call_context(line, line.chars().count()).is_none());
+    }
+
+    #[test]
+    fn image_call_context_in_chapter_body() {
+        // Realistic editor line — leading indentation + prose, then a
+        // `#image(` partway through.
+        let line = "  Some prose. #image(\"01-co";
+        let ctx = detect_image_call_context(line, line.chars().count())
+            .expect("should detect inside the call");
+        assert!(!ctx.closing_quote_present);
+    }
+
+    #[test]
+    fn body_to_lines_strips_crlf() {
+        // CRLF (DOS / Windows / RFC dumps): trailing `\r` must not
+        // survive into the line list.
+        let body = "Network Working Group\r\nRequest for Comments: 1\r\n";
+        let lines = body_to_lines(body);
+        assert_eq!(lines.len(), 3); // last `\n` produces a trailing "" entry
+        assert_eq!(lines[0], "Network Working Group");
+        assert_eq!(lines[1], "Request for Comments: 1");
+        assert_eq!(lines[2], "");
+    }
+
+    #[test]
+    fn body_to_lines_strips_bare_cr() {
+        // Old-Mac files used bare `\r`. Treat them as line breaks too.
+        let body = "first\rsecond\rthird";
+        let lines = body_to_lines(body);
+        assert_eq!(lines, vec!["first", "second", "third"]);
+    }
+
+    #[test]
+    fn body_to_lines_unix_passthrough() {
+        let body = "alpha\nbeta\ngamma";
+        let lines = body_to_lines(body);
+        assert_eq!(lines, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn body_to_lines_empty_yields_single_empty() {
+        assert_eq!(body_to_lines(""), vec![String::new()]);
+    }
+
+    #[test]
+    fn set_llm_default_rewrites_value_only() {
+        let raw = "\
+language: english
+
+llm: {
+  // Provider used by default.
+  default: gemini
+  providers: {
+    gemini: { model: gemini-2.5-pro }
+    ollama: { model: llama3.2 }
+  }
+}
+";
+        let out = set_llm_default_in_hjson(raw, "ollama").unwrap();
+        // The default line changed.
+        assert!(out.contains("default: ollama"));
+        assert!(!out.contains("default: gemini"));
+        // Everything else survives byte-for-byte.
+        assert!(out.contains("language: english"));
+        assert!(out.contains("// Provider used by default."));
+        assert!(out.contains("model: gemini-2.5-pro"));
+        assert!(out.contains("model: llama3.2"));
+    }
+
+    #[test]
+    fn set_llm_default_preserves_trailing_comment() {
+        let raw = "\
+llm: {
+  default: gemini    // pick gemini for prose
+  providers: { gemini: { model: x } }
+}
+";
+        let out = set_llm_default_in_hjson(raw, "ollama").unwrap();
+        // Value swapped, comment retained.
+        assert!(
+            out.contains("default: ollama"),
+            "expected new default; got:\n{out}"
+        );
+        assert!(
+            out.contains("// pick gemini for prose"),
+            "expected trailing comment preserved; got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn set_llm_default_quotes_unsafe_values() {
+        let raw = "\
+llm: {
+  default: gemini
+  providers: { x: { model: y } }
+}
+";
+        let out = set_llm_default_in_hjson(raw, "weird name").unwrap();
+        assert!(
+            out.contains("default: \"weird name\""),
+            "value with space should be quoted; got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn set_llm_default_inserts_when_missing() {
+        // No `default:` key in the llm block — insert one.
+        let raw = "\
+llm: {
+  providers: { gemini: { model: g } }
+}
+";
+        let out = set_llm_default_in_hjson(raw, "gemini").unwrap();
+        assert!(
+            out.contains("default: gemini"),
+            "expected inserted default; got:\n{out}"
+        );
+        // The providers block survives.
+        assert!(out.contains("providers: { gemini: { model: g } }"));
+    }
+
+    #[test]
+    fn set_llm_default_errors_on_missing_block() {
+        let raw = "language: english\n";
+        let err = set_llm_default_in_hjson(raw, "gemini").unwrap_err();
+        assert!(err.contains("no `llm:` block"), "got: {err}");
+    }
+
+    #[test]
+    fn set_llm_default_roundtrips_shipped_template() {
+        // The annotated default HJSON the project ships with has to
+        // survive a switch and still parse cleanly via `Config::load`.
+        // This is the regression we care about most — if the in-place
+        // edit garbles the file, the user's next launch fails to read
+        // their config.
+        let raw = crate::config::DEFAULT_PROJECT_CONFIG;
+        let edited = set_llm_default_in_hjson(raw, "ollama").unwrap();
+        let cfg: crate::config::Config =
+            serde_hjson::from_str(&edited).expect("edited HJSON should still parse");
+        assert_eq!(cfg.llm.default, "ollama");
+        // The two non-llm sections should round-trip unchanged.
+        assert_eq!(cfg.language, "english");
+        assert_eq!(cfg.editor.tab_width, 2);
+        // Comments survive (string match in the raw text).
+        assert!(edited.contains("// Provider used by the AI pane"));
+    }
+
+    #[test]
+    fn set_sound_enabled_rewrites_existing_block() {
+        let raw = "\
+sound: {
+  enabled: false
+  volume: 0.6
+}
+";
+        let out = set_sound_enabled_in_hjson(raw, true).unwrap();
+        assert!(out.contains("enabled: true"));
+        assert!(out.contains("volume: 0.6"));
+        // And toggling back.
+        let back = set_sound_enabled_in_hjson(&out, false).unwrap();
+        assert!(back.contains("enabled: false"));
+    }
+
+    #[test]
+    fn set_sound_enabled_roundtrips_shipped_template() {
+        let raw = crate::config::DEFAULT_PROJECT_CONFIG;
+        let edited = set_sound_enabled_in_hjson(raw, true).unwrap();
+        let cfg: crate::config::Config =
+            serde_hjson::from_str(&edited).expect("edited HJSON should still parse");
+        assert!(cfg.sound.enabled);
+        // Sound-unrelated stanzas untouched.
+        assert_eq!(cfg.language, "english");
+        assert!(edited.contains("// Typewriter-style sound effects"));
+    }
+
+    #[test]
+    fn set_sound_enabled_inserts_block_when_missing() {
+        // Older configs without a sound block — the helper inserts a
+        // minimal one just inside the root closing brace, so the file
+        // stays valid HJSON.
+        let raw = "{\n  language: english\n}\n";
+        let out = set_sound_enabled_in_hjson(raw, true).unwrap();
+        assert!(out.contains("sound: {"), "got:\n{out}");
+        assert!(out.contains("enabled: true"));
+        let cfg: crate::config::Config =
+            serde_hjson::from_str(&out).expect("inserted HJSON should still parse");
+        assert!(cfg.sound.enabled);
+    }
+
+    #[test]
+    fn set_sound_enabled_insertion_lands_before_root_close() {
+        // Regression: the previous version appended after the root `}`
+        // which made the file invalid HJSON. Verify the new block lives
+        // strictly before the root close, and the file round-trips.
+        let raw = "{\n  language: english\n  theme: {\n    pane_bg: \"#1e1e2e\"\n  }\n}\n";
+        let out = set_sound_enabled_in_hjson(raw, true).unwrap();
+        let sound_idx = out.find("sound:").expect("sound block inserted");
+        let last_close = out.rfind('}').expect("root close present");
+        assert!(
+            sound_idx < last_close,
+            "sound block must be before root close — got:\n{out}"
+        );
+        let _: crate::config::Config = serde_hjson::from_str(&out).expect("must parse");
+    }
+
+    #[test]
+    fn format_reading_time_thresholds() {
+        assert_eq!(format_reading_time(0), "<1m");
+        assert_eq!(format_reading_time(1), "~1m");          // ceil(1/250) = 1
+        assert_eq!(format_reading_time(250), "~1m");
+        assert_eq!(format_reading_time(251), "~2m");
+        assert_eq!(format_reading_time(250 * 60), "~1h");   // exact hour, no "0m"
+        assert_eq!(format_reading_time(250 * 75), "~1h 15m");
+    }
+
+    #[test]
+    fn set_llm_default_does_not_match_provider_internals() {
+        // A `default:` key inside a nested provider block must NOT be
+        // mistaken for `llm.default`. Our scanner requires depth==1.
+        let raw = "\
+llm: {
+  default: gemini
+  providers: {
+    fake: {
+      default: should_not_be_touched
+      model: x
+    }
+  }
+}
+";
+        let out = set_llm_default_in_hjson(raw, "ollama").unwrap();
+        assert!(out.contains("default: ollama"));
+        assert!(
+            out.contains("default: should_not_be_touched"),
+            "nested `default:` inside a provider must survive untouched; got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn format_age_minutes_hours_days() {
+        assert_eq!(
+            format_age_humantime(std::time::Duration::from_secs(7 * 60)),
+            "7m"
+        );
+        assert_eq!(
+            format_age_humantime(std::time::Duration::from_secs(3 * 3600 + 30 * 60)),
+            "3h 30m"
+        );
+        assert_eq!(
+            format_age_humantime(std::time::Duration::from_secs(2 * 86_400 + 4 * 3600)),
+            "2d 4h"
+        );
+        // Whole-hour and whole-day values shouldn't dangle a "0m" / "0h".
+        assert_eq!(
+            format_age_humantime(std::time::Duration::from_secs(5 * 86_400)),
+            "5d"
+        );
+        assert_eq!(
+            format_age_humantime(std::time::Duration::from_secs(2 * 3600)),
+            "2h"
+        );
+    }
+}
+
 /// One entry in the `/` prompt picker. Wraps both shipping HJSON prompts
 /// (`PromptSource::System`) and user-authored paragraphs under the Prompts
 /// book (`PromptSource::Book`). The body is lazily fetched for book
@@ -716,6 +1517,80 @@ enum Modal {
     QuickRef {
         focus: Focus,
         scroll: usize,
+    },
+    /// Ctrl+B V — version, author, and credits panel. Scrollable.
+    /// Content is rendered fresh each frame so it picks up the current
+    /// `CARGO_PKG_VERSION` / `CARGO_PKG_AUTHORS` env vars.
+    Credits {
+        scroll: usize,
+    },
+    /// Ctrl+B I — current-book info panel: backup / artefacts paths,
+    /// structural counts (chapters / subchapters / paragraphs /
+    /// sentences / words), reading-time estimate, and rendered-PDF
+    /// status. Content is recomputed each frame so the figures stay
+    /// fresh as the user edits.
+    BookInfo {
+        scroll: usize,
+    },
+    /// Ctrl+B L — pick a different `llm.default` provider from the set
+    /// configured in inkhaven.hjson. On commit we rewrite just the
+    /// `default:` line of the HJSON file in place so user comments and
+    /// the rest of the config survive.
+    LlmPicker {
+        providers: Vec<String>,
+        cursor: usize,
+        initial_default: String,
+    },
+    /// Ctrl+B P fired with the cursor inside `#image("…")`: pick a
+    /// sibling Image node to insert. Filename gets inserted at the
+    /// cursor (plus a closing `"` when the call had none).
+    ImagePicker {
+        entries: Vec<ImagePickerEntry>,
+        cursor: usize,
+        /// Tells `commit_image_picker` whether to append a `"` after
+        /// the filename — true when the `#image(` call was unclosed.
+        close_quote: bool,
+    },
+    /// Enter-on-Image preview using ratatui-image. The `proto` is a
+    /// resize-aware StatefulProtocol scoped to one image; it's
+    /// re-encoded each frame against the modal's current rect so a
+    /// terminal resize Just Works. None when the picker isn't
+    /// available — caller falls back to the status-line info path.
+    ImagePreview {
+        title: String,
+        fs_rel: String,
+        size_bytes: u64,
+        proto: ratatui_image::protocol::StatefulProtocol,
+    },
+    /// Ctrl+B F (editor pane) — Typst function picker. The filter
+    /// input narrows the baked-in list as the user types; Enter
+    /// inserts `#<name>(|)` at the cursor with the editor cursor
+    /// positioned between the parens (Phase 1 = markup-mode default).
+    FunctionPicker {
+        filter: TextInput,
+        cursor: usize,
+    },
+    /// Ctrl+F in AI-fullscreen — query string entry for the chat-
+    /// history search. Enter commits the query into
+    /// `App::chat_search`; Esc cancels with no search.
+    ChatSearchPrompt {
+        input: TextInput,
+    },
+    /// Ctrl+B 1..7 — list paragraphs whose `status` matches the
+    /// chord's target value (1 = Ready, 2 = Final, …, 7 = None),
+    /// scoped to the tree cursor's enclosing branch (or the whole
+    /// project when the cursor sits at the root). Actions inside the
+    /// modal:
+    ///   Enter → jump tree cursor + open the paragraph
+    ///   r / R → cycle the highlighted paragraph's status forward
+    ///           (if it no longer matches, the row disappears from
+    ///           the list and the next one slides up)
+    ///   - / Backspace → cycle status backward
+    StatusFilter {
+        status_label: &'static str,
+        scope: String,
+        entries: Vec<StatusFilterEntry>,
+        cursor: usize,
     },
     /// F1 help-manual query. Asks a free-form question against the Help
     /// system book (RAG), then streams the constrained LLM answer into the
@@ -843,6 +1718,69 @@ struct App {
     /// globally by F10. Help inferences pin this to `Local` regardless of
     /// the current value (see `start_help_inference`).
     inference_mode: InferenceMode,
+
+    /// Set by `commit_file_pick` when the user picks a directory to
+    /// import. The main loop picks this up, renders a progress splash,
+    /// and runs the (synchronous) import with periodic redraws. None
+    /// during normal operation.
+    pending_import: Option<std::path::PathBuf>,
+
+    /// Set by Ctrl+B A (`schedule_assembly`). Main loop drives the
+    /// synchronous book-assembly procedure with a progress splash.
+    pending_assembly: Option<Uuid>,
+
+    /// Set by Ctrl+B B — run assembly + `typst compile`, surface
+    /// errors via a fresh AI chat tuned for typst diagnostics.
+    pending_build: Option<Uuid>,
+
+    /// Set by Ctrl+B O — Ctrl+B B + copy the resulting PDF into the
+    /// inkhaven launch cwd with a timestamped filename.
+    pending_take: Option<Uuid>,
+
+    /// Typewriter-style SFX (Enter key + editor-pane focus-out). None
+    /// when the host has no audio device — every play call then
+    /// silently no-ops, so a headless / SSH-without-audio session
+    /// behaves identically to a desktop with `sound.enabled = false`.
+    sound: Option<super::sound::SoundPlayer>,
+
+    /// Cached ratatui-image Picker — queried once at startup from the
+    /// host terminal. None when the query failed (CI, weird ssh
+    /// session, terminals without ANSI graphics support); preview
+    /// then falls back to the status-bar info line. Also None when
+    /// `images.preview_enabled = false` regardless of capability.
+    image_picker: Option<ratatui_image::picker::Picker>,
+
+    /// Ctrl+B W toggles full-screen "typewriter mode" — the editor
+    /// pane expands to the whole terminal, every other pane (search
+    /// bar, tree, AI, AI prompt, status bar) is hidden. The same
+    /// chord returns to the normal layout.
+    typewriter_mode: bool,
+
+    /// Ctrl+B K toggles full-screen AI mode — left half = the live
+    /// AI pane (streaming inference), right half = scrolling chat
+    /// history, bottom = AI prompt. Same chord returns to the
+    /// normal layout. Mutually exclusive with `typewriter_mode`.
+    ai_fullscreen: bool,
+
+    /// Extra lines to scroll the chat-history pane UP from its auto-
+    /// bottom-pin. PageUp adds, PageDown subtracts; the value is
+    /// clamped against the total line count so over-scrolling stops
+    /// at the top of the history. Reset to 0 each time a new user
+    /// message is sent so the streaming reply is visible.
+    chat_history_scroll: usize,
+
+    /// Active chat-history search state (Ctrl+F in AI-fullscreen).
+    /// While Some, matching lines render with a highlight bg and
+    /// the renderer scrolls so the `current` match lands in the
+    /// middle of the pane. Ctrl+X advances toward older matches
+    /// (the spec: "Start from bottom, going up to older").
+    chat_search: Option<ChatSearchState>,
+
+    /// Active chat-selection mode (Ctrl+C in AI-fullscreen). `Some`
+    /// when the user is selecting a turn block. Up / Down navigate;
+    /// `C` copies the selected turn to the system clipboard, `T`
+    /// inserts it into the editor buffer at the cursor.
+    chat_selection: Option<ChatSelectionState>,
 }
 
 #[derive(Debug)]
@@ -862,6 +1800,52 @@ enum InferenceStatus {
     Streaming,
     Done,
     Error(String),
+}
+
+/// One row in the `Ctrl+B P`-while-inside-`#image(...)` picker. The
+/// `fname` is what gets inserted at the cursor — already in
+/// `NN-slug.<ext>` form (Node::fs_name).
+#[derive(Debug, Clone)]
+struct ImagePickerEntry {
+    fname: String,
+    title: String,
+    size_bytes: u64,
+}
+
+/// Active search session inside the AI-fullscreen chat-history pane.
+/// `matches` is recomputed lazily by `draw_chat_history` whenever the
+/// rendered line count changes (terminal resize) — we just track the
+/// query + which match we're currently centred on.
+#[derive(Debug, Clone)]
+struct ChatSearchState {
+    query: String,
+    /// Index into `matches`. The render hook clamps this against the
+    /// freshly-computed match count each frame so terminal resize +
+    /// streaming-token arrival can't push it out of range.
+    current: usize,
+}
+
+/// "Chat selection mode" (Ctrl+C in AI-fullscreen). The cursor
+/// points at a single turn in `chat_history`; Up / Down step through
+/// turns, `c` / `C` copies the turn text to the clipboard, `t` / `T`
+/// inserts it at the editor cursor.
+#[derive(Debug, Clone, Copy)]
+struct ChatSelectionState {
+    /// Index into `chat_history`. Always points at a valid turn —
+    /// reset / clamped if the history shrinks while selection is
+    /// active.
+    turn: usize,
+}
+
+/// One row in the `Ctrl+B 1..7` status-filter list. Carries the
+/// paragraph id (for opening on Enter) plus a pre-rendered
+/// breadcrumb so the user can disambiguate same-titled paragraphs
+/// across chapters at a glance.
+#[derive(Debug, Clone)]
+struct StatusFilterEntry {
+    id: Uuid,
+    title: String,
+    breadcrumb: String,
 }
 
 struct OpenedDoc {
@@ -894,6 +1878,12 @@ struct OpenedDoc {
     /// renders it normally (so the user can read it, scroll, search), but
     /// every mutating keystroke is intercepted with a status message.
     read_only: bool,
+    /// Picked from the Node's `content_type` at open time. Drives
+    /// which syntax highlighter the editor uses (`"hjson"` → the
+    /// hand-rolled HJSON lexer; anything else → tree-sitter-typst).
+    /// Also reported in the editor header so the user can tell at a
+    /// glance which language they're editing.
+    content_type: Option<String>,
     /// Pre-correction baseline captured when the AI pane's `T` (grammar-
     /// check apply) overwrites the buffer with the model's corrected text.
     /// Lines that differ from this baseline render in `theme.grammar_change_fg`
@@ -950,6 +1940,26 @@ impl App {
         };
 
         let theme = super::theme::Theme::from_config(&cfg.theme);
+        // Try to claim the default audio device. None on hosts without
+        // one — the player then silently no-ops, mirroring
+        // `sound.enabled = false`.
+        let sound =
+            super::sound::SoundPlayer::try_new(cfg.sound.enabled, cfg.sound.volume);
+        // Probe the host terminal for graphics-protocol support so the
+        // image-preview modal can pick kitty / sixel / iterm2 / half-
+        // block. Errors here just disable the preview pane; the rest
+        // of the app behaves identically.
+        let image_picker = if cfg.images.preview_enabled {
+            match ratatui_image::picker::Picker::from_query_stdio() {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    tracing::info!("image preview disabled — terminal probe: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         Ok(Self {
             layout,
             store,
@@ -993,6 +2003,17 @@ impl App {
             layout_ai_prompt: Rect::default(),
             ai_mode: AiMode::None,
             inference_mode: InferenceMode::Full,
+            pending_import: None,
+            pending_assembly: None,
+            pending_build: None,
+            pending_take: None,
+            sound,
+            image_picker,
+            typewriter_mode: false,
+            ai_fullscreen: false,
+            chat_history_scroll: 0,
+            chat_search: None,
+            chat_selection: None,
         })
     }
 
@@ -1000,6 +2021,25 @@ impl App {
         loop {
             self.pump_inference();
             self.tick_autosave();
+            // Drive any deferred directory import — `commit_file_pick`
+            // sets `pending_import` so the splash can be drawn directly
+            // via the terminal handle (which `commit_file_pick` doesn't
+            // own). Runs synchronously: same UX as the backup splash.
+            if let Some(root) = self.pending_import.take() {
+                self.run_pending_import(terminal, &root);
+            }
+            // Same pattern for Book assembly (Ctrl+B A): the dispatcher
+            // stashes the book uuid, the main loop runs the procedure
+            // and drives the splash redraws.
+            if let Some(book_id) = self.pending_assembly.take() {
+                self.run_pending_assembly(terminal, book_id);
+            }
+            if let Some(book_id) = self.pending_build.take() {
+                self.run_pending_build(terminal, book_id, false);
+            }
+            if let Some(book_id) = self.pending_take.take() {
+                self.run_pending_build(terminal, book_id, true);
+            }
             terminal.draw(|f| self.draw(f))?;
             // Shorter poll interval while streaming so tokens render with low
             // latency without burning CPU when idle.
@@ -1322,15 +2362,15 @@ impl App {
             // pane. Generic suffix (· H help · Esc cancel) is shared.
             self.status = match self.focus {
                 Focus::Tree | Focus::SearchBar => {
-                    "META · B/C/S/P add · D delete · U/J ↑/↓ reorder · H help · Esc cancel"
+                    "META · C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel"
                         .into()
                 }
                 Focus::Editor => {
-                    "META · S save · N snapshot · R history · L load · F split · T retitle · P place · C character · H help · Esc cancel"
+                    "META · S save · N snapshot · R status · F func · T retitle · P place/pic · C character · G notes · Y artefacts · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel"
                         .into()
                 }
                 Focus::Ai | Focus::AiPrompt => {
-                    "META · C clear chat · H help · Esc cancel".into()
+                    "META · C clear chat · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel".into()
                 }
             };
             return Ok(false);
@@ -1355,6 +2395,128 @@ impl App {
         if matches!(key.code, KeyCode::F(7)) {
             self.start_grammar_check();
             return Ok(false);
+        }
+
+        // AI-fullscreen Ctrl+C toggles "Chat selection mode" — the
+        // editor's Ctrl+C still does clipboard-copy via the focus
+        // dispatch, but in this layout the editor isn't visible and
+        // the chord is reclaimed for navigating chat turns.
+        if self.ai_fullscreen
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
+            && matches!(self.modal, Modal::None)
+        {
+            self.toggle_chat_selection_mode();
+            return Ok(false);
+        }
+
+        // When chat-selection is active: Up / Down step turns, `c` /
+        // `C` copies to clipboard, `t` / `T` inserts at the editor
+        // cursor, Esc / Enter exits.
+        if self.ai_fullscreen && self.chat_selection.is_some() && matches!(self.modal, Modal::None) {
+            let plain = !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+            match key.code {
+                KeyCode::Up if plain => {
+                    self.chat_selection_step(-1);
+                    return Ok(false);
+                }
+                KeyCode::Down if plain => {
+                    self.chat_selection_step(1);
+                    return Ok(false);
+                }
+                KeyCode::Home if plain => {
+                    self.chat_selection_jump(0);
+                    return Ok(false);
+                }
+                KeyCode::End if plain => {
+                    self.chat_selection_jump(usize::MAX);
+                    return Ok(false);
+                }
+                KeyCode::Char('c') | KeyCode::Char('C') if plain => {
+                    self.chat_selection_copy();
+                    return Ok(false);
+                }
+                KeyCode::Char('t') | KeyCode::Char('T') if plain => {
+                    self.chat_selection_into_editor();
+                    return Ok(false);
+                }
+                KeyCode::Esc | KeyCode::Enter => {
+                    self.chat_selection = None;
+                    self.status = "chat selection mode off".into();
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
+
+        // AI-fullscreen Esc with an active chat search → clear the
+        // search (drop highlights + scroll back to the bottom-pin).
+        // Routed before the focus handlers so AI-prompt Esc doesn't
+        // grab it.
+        if self.ai_fullscreen
+            && self.chat_search.is_some()
+            && matches!(key.code, KeyCode::Esc)
+            && matches!(self.modal, Modal::None)
+        {
+            self.chat_search = None;
+            self.chat_history_scroll = 0;
+            self.status = "chat search cleared".into();
+            return Ok(false);
+        }
+
+        // AI-fullscreen Ctrl+F → chat-history search modal. Intercepted
+        // before the editor-pane Ctrl+F handler so the chord behaves
+        // contextually based on layout, not focus.
+        if self.ai_fullscreen
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F'))
+        {
+            self.open_chat_search_prompt();
+            return Ok(false);
+        }
+        // Ctrl+X advances to the next (older) match while a chat
+        // search is active. No-op when no search is running.
+        if self.ai_fullscreen
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X'))
+            && self.chat_search.is_some()
+        {
+            self.advance_chat_search();
+            return Ok(false);
+        }
+
+        // AI-fullscreen-only: PageUp / PageDown scroll the chat history
+        // pane regardless of which sub-pane has focus (the user is
+        // typically focused on the AI prompt). Up / Down do the same
+        // one line at a time for fine-grained reading. Intercepted
+        // here so the AI prompt's own input handler never sees these
+        // keys in this layout. The non-fullscreen path leaves them
+        // untouched.
+        //
+        // Exception: when the `/` prompt-library picker is open, Up /
+        // Down still navigate the picker — that's the picker's only
+        // way to move the selection.
+        if self.ai_fullscreen {
+            if self.keymap.page_up.matches(&key) {
+                self.chat_history_scroll = self.chat_history_scroll.saturating_add(10);
+                return Ok(false);
+            }
+            if self.keymap.page_down.matches(&key) {
+                self.chat_history_scroll = self.chat_history_scroll.saturating_sub(10);
+                return Ok(false);
+            }
+            if !self.show_prompt_picker {
+                if matches!(key.code, KeyCode::Up) {
+                    self.chat_history_scroll = self.chat_history_scroll.saturating_add(1);
+                    return Ok(false);
+                }
+                if matches!(key.code, KeyCode::Down) {
+                    self.chat_history_scroll = self.chat_history_scroll.saturating_sub(1);
+                    return Ok(false);
+                }
+            }
         }
 
         // F9 cycles the AI scope mode (None → Selection → Paragraph →
@@ -1719,6 +2881,19 @@ impl App {
             return Ok(false);
         }
 
+        // Typewriter SFX — plain Enter (end-of-line click). Fires after
+        // the read-only gate so refused keystrokes in Help don't click.
+        // No-op when sound is disabled or the host has no audio device.
+        if matches!(key.code, KeyCode::Enter)
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
+            if let Some(sp) = &self.sound {
+                sp.play_enter();
+            }
+        }
+
         // F5 creates a snapshot of the current paragraph; F6 opens the picker.
         // Function keys are rarely intercepted by terminals or multiplexers.
         if matches!(key.code, KeyCode::F(5)) {
@@ -1988,6 +3163,31 @@ impl App {
             }
         }
 
+        // Auto-close pairs (configurable). Only plain keystrokes — Ctrl /
+        // Alt / Super combinations fall through to the textarea catch-all
+        // below. Each helper returns `true` when it consumed the key,
+        // letting us skip the catch-all without disturbing the cursor.
+        let plain_no_mods = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        if plain_no_mods && self.cfg.editor.auto_close_pairs {
+            if let KeyCode::Char(c) = key.code {
+                if let Some(close) = open_pair_for(c) {
+                    self.editor_auto_open_pair(c, close);
+                    return Ok(false);
+                }
+                if is_close_pair_char(c) && self.editor_try_skip_close(c) {
+                    return Ok(false);
+                }
+            }
+            if matches!(key.code, KeyCode::Enter) && self.editor_try_expand_pair_on_enter() {
+                return Ok(false);
+            }
+            if matches!(key.code, KeyCode::Backspace) && self.editor_try_delete_pair() {
+                return Ok(false);
+            }
+        }
+
         // Everything else: pass to textarea WITHOUT its emacs-style defaults,
         // so plain typing/arrows/Home/End/PageUp/PageDown/Shift+arrows still
         // work but Ctrl+letter combinations don't get hijacked.
@@ -1998,6 +3198,99 @@ impl App {
             }
         }
         Ok(false)
+    }
+
+    /// Insert `open` + `close` at the cursor and step back one
+    /// character so the cursor sits between them.
+    fn editor_auto_open_pair(&mut self, open: char, close: char) {
+        let Some(doc) = self.opened.as_mut() else { return };
+        doc.textarea.insert_char(open);
+        doc.textarea.insert_char(close);
+        doc.textarea.move_cursor(CursorMove::Back);
+        doc.dirty = true;
+    }
+
+    /// When the next char on the line is the same close character
+    /// the user just typed, step over it instead of inserting a
+    /// duplicate. Returns `false` when the next char doesn't match
+    /// (caller falls through to normal insertion).
+    fn editor_try_skip_close(&mut self, close: char) -> bool {
+        let Some(doc) = self.opened.as_mut() else { return false };
+        let (row, col) = doc.textarea.cursor();
+        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
+        let next_char = line.chars().nth(col);
+        if next_char == Some(close) {
+            doc.textarea.move_cursor(CursorMove::Forward);
+            return true;
+        }
+        false
+    }
+
+    /// Enter pressed with the cursor between matching brackets:
+    /// expand to a 3-line indented block. Returns `false` when the
+    /// cursor isn't between a pair (caller does the regular Enter).
+    fn editor_try_expand_pair_on_enter(&mut self) -> bool {
+        let Some(doc) = self.opened.as_ref() else { return false };
+        let (row, col) = doc.textarea.cursor();
+        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
+        let chars: Vec<char> = line.chars().collect();
+        let before = if col > 0 { chars.get(col - 1).copied() } else { None };
+        let after = chars.get(col).copied();
+        if !matches!(
+            (before, after),
+            (Some('('), Some(')')) | (Some('['), Some(']')) | (Some('{'), Some('}'))
+        ) {
+            return false;
+        }
+        let base_indent: String = chars
+            .iter()
+            .take_while(|c| **c == ' ' || **c == '\t')
+            .collect();
+        let extra = " ".repeat(self.cfg.editor.tab_width.max(1));
+        let new_indent = format!("{base_indent}{extra}");
+        let Some(doc) = self.opened.as_mut() else { return false };
+        // 1. Newline → cursor lands at column 0 of a new line with
+        //    the close-bracket as its first char.
+        doc.textarea.insert_char('\n');
+        // 2. Type the deeper indent, then ANOTHER newline so the
+        //    close-bracket slides further down. Cursor lands at
+        //    column 0 of the close-bracket line.
+        doc.textarea.insert_str(&new_indent);
+        doc.textarea.insert_char('\n');
+        // 3. Indent the close-bracket line with the base indent.
+        doc.textarea.insert_str(&base_indent);
+        // 4. Move up to the middle line, end of indent.
+        doc.textarea.move_cursor(CursorMove::Up);
+        doc.textarea.move_cursor(CursorMove::End);
+        doc.dirty = true;
+        true
+    }
+
+    /// Backspace when cursor sits between a freshly typed pair like
+    /// `(|)`: delete BOTH halves. Returns `false` otherwise.
+    fn editor_try_delete_pair(&mut self) -> bool {
+        let Some(doc) = self.opened.as_ref() else { return false };
+        let (row, col) = doc.textarea.cursor();
+        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
+        let chars: Vec<char> = line.chars().collect();
+        let before = if col > 0 { chars.get(col - 1).copied() } else { None };
+        let after = chars.get(col).copied();
+        let is_pair = matches!(
+            (before, after),
+            (Some('('), Some(')'))
+                | (Some('['), Some(']'))
+                | (Some('{'), Some('}'))
+                | (Some('"'), Some('"'))
+                | (Some('\''), Some('\''))
+        );
+        if !is_pair {
+            return false;
+        }
+        let Some(doc) = self.opened.as_mut() else { return false };
+        doc.textarea.delete_next_char();
+        doc.textarea.delete_char();
+        doc.dirty = true;
+        true
     }
 
     fn editor_copy(&mut self) {
@@ -2864,6 +4157,10 @@ impl App {
         // Remember the user message so we can pair it with the assistant
         // turn once the stream finishes.
         self.pending_chat_user_msg = Some(prompt_text);
+        // Reset chat-history scroll so the user always sees the
+        // streaming reply (if they'd PageUp'd to look at earlier turns
+        // before sending, the new turn would otherwise land off-screen).
+        self.chat_history_scroll = 0;
         // Stay on the AI prompt pane so follow-up questions are one keystroke
         // away. Esc bounces to the AI pane to read/scroll the answer.
         self.change_focus(Focus::AiPrompt);
@@ -3212,9 +4509,31 @@ impl App {
         let Some((row, col)) = target else {
             return;
         };
+        // Editor viewport height in lines — `layout_editor` is cached
+        // from the last draw and includes the two border rows.
+        let viewport_h =
+            (self.layout_editor.height as usize).saturating_sub(2);
         if let Some(doc) = self.opened.as_mut() {
             doc.textarea
                 .move_cursor(CursorMove::Jump(row as u16, col as u16));
+            // The editor draws itself — it doesn't render the
+            // tui-textarea widget — so the actual viewport top is
+            // `doc.scroll_row`, not anything inside tui-textarea. The
+            // per-render auto-scroll only nudges `scroll_row` when the
+            // cursor falls outside `[scroll_row, scroll_row + h)`,
+            // which after a forward Jump lands the cursor at the
+            // BOTTOM edge of the viewport. Pre-pinning scroll_row to
+            // `target - h/2` keeps the cursor inside the new viewport,
+            // so the auto-scroll leaves it alone and the match lands
+            // in the middle.
+            //
+            // Both renderers track scroll_row this way (unwrapped uses
+            // source rows verbatim; wrapped uses visual rows but for
+            // typical short-line literary content the two agree).
+            if viewport_h > 0 {
+                let half = viewport_h / 2;
+                doc.scroll_row = row.saturating_sub(half);
+            }
         }
     }
 
@@ -3452,6 +4771,75 @@ impl App {
             return;
         }
 
+        // V is a global action: version / author / credits floating
+        // pane. Handled before pane dispatch so every pane gets the same
+        // chord without having to repeat it in three places.
+        if matches!(key.code, KeyCode::Char('V') | KeyCode::Char('v')) {
+            self.open_credits();
+            return;
+        }
+        // I is the global "current book info" panel — paths + stats +
+        // PDF status for the book the cursor (or the open paragraph) is
+        // inside. Same pane-agnostic dispatch as V.
+        if matches!(key.code, KeyCode::Char('I') | KeyCode::Char('i')) {
+            self.open_book_info();
+            return;
+        }
+        // L is the global "switch LLM provider" picker — pick a
+        // different `default` from `llm.providers`, save it back to
+        // inkhaven.hjson in place.
+        if matches!(key.code, KeyCode::Char('L') | KeyCode::Char('l')) {
+            self.open_llm_picker();
+            return;
+        }
+        // E toggles typewriter sound effects (Enter / focus-out) and
+        // persists the choice to inkhaven.hjson in place.
+        if matches!(key.code, KeyCode::Char('E') | KeyCode::Char('e')) {
+            self.toggle_sound();
+            return;
+        }
+        // A starts Book assembly — generates a typst-compilable tree
+        // for the current user book under <artefacts>/<book-slug>/.
+        if matches!(key.code, KeyCode::Char('A') | KeyCode::Char('a')) {
+            self.schedule_assembly();
+            return;
+        }
+        // Digit chords 1..7 → status-filter modal. The user picks a
+        // workflow stage and we list every paragraph in the project
+        // tagged with that status.
+        if let KeyCode::Char(c) = key.code {
+            if let Some(target) = digit_to_status(c) {
+                self.open_status_filter(target);
+                return;
+            }
+        }
+        // B runs Book assembly + `typst compile`. On error, opens a
+        // fresh AI chat tuned to diagnose the typst stderr.
+        if matches!(key.code, KeyCode::Char('B') | KeyCode::Char('b')) {
+            self.schedule_build();
+            return;
+        }
+        // O = "take the book": build, then copy the resulting PDF into
+        // the launch cwd with a timestamped filename.
+        if matches!(key.code, KeyCode::Char('O') | KeyCode::Char('o')) {
+            self.schedule_take();
+            return;
+        }
+        // W toggles full-screen typewriter mode — hides every pane
+        // except the editor (and modals when they're open). Same
+        // chord returns to the normal layout.
+        if matches!(key.code, KeyCode::Char('W') | KeyCode::Char('w')) {
+            self.toggle_typewriter_mode();
+            return;
+        }
+        // K toggles full-screen AI mode — left half AI pane, right
+        // half scrolling chat history, bottom AI prompt. Same chord
+        // returns to the normal layout.
+        if matches!(key.code, KeyCode::Char('K') | KeyCode::Char('k')) {
+            self.toggle_ai_fullscreen();
+            return;
+        }
+
         let consumed = match self.focus {
             Focus::Tree | Focus::SearchBar => self.dispatch_meta_tree(key),
             Focus::Editor => self.dispatch_meta_editor(key),
@@ -3467,10 +4855,9 @@ impl App {
 
     fn dispatch_meta_tree(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            KeyCode::Char('B') | KeyCode::Char('b') => {
-                self.open_add_modal(NodeKind::Book);
-                true
-            }
+            // Note: `B` is now the global "build the book" chord (see
+            // `handle_meta_action`). Plain `B` in the tree pane still
+            // adds a book — see `handle_tree_key`.
             KeyCode::Char('C') | KeyCode::Char('c') => {
                 self.open_add_modal(NodeKind::Chapter);
                 true
@@ -3525,20 +4912,23 @@ impl App {
                 self.open_quickref();
                 true
             }
-            // R: snapshot histoRy picker (== F6). Moved off H so Help can
-            // claim that letter across every pane.
+            // R: cycle the open paragraph's `status` workflow tag —
+            // None → Napkin → First → Second → Third → Final → Ready → None.
+            // F6 still opens the snapshot history (the previous meaning
+            // of Ctrl+B R); the chord is reclaimed here because writers
+            // touch their draft status far more often than they browse
+            // snapshot history.
             KeyCode::Char('R') | KeyCode::Char('r') => {
-                self.open_snapshot_picker();
+                self.cycle_paragraph_status();
                 true
             }
-            // L: load file into editor (== F3).
-            KeyCode::Char('L') | KeyCode::Char('l') => {
-                self.open_file_picker(PickerContext::EditorLoad);
-                true
-            }
-            // F: toggle split-edit mode (== F4).
+            // L was a duplicate of F3 (load file). Reclaimed as the
+            // global "switch LLM provider" chord — F3 still loads files
+            // in the editor pane.
+            // F: Typst function picker (== a baked-in autocomplete
+            // for `#funcname(`). F4 still toggles split-edit.
             KeyCode::Char('F') | KeyCode::Char('f') => {
-                self.toggle_split();
+                self.open_function_picker();
                 true
             }
             // T: re-derive the paragraph's display title from its first
@@ -3549,16 +4939,35 @@ impl App {
                 self.rename_paragraph_to_first_sentence();
                 true
             }
-            // P: place-RAG inference. Sweeps the editor selection (or
-            // word under cursor) and queries the Places system book.
+            // P: context-sensitive. When the cursor sits inside a
+            // `#image("…")` call, open the image-picker that lists
+            // sibling Image nodes; otherwise dispatch to the Places
+            // RAG flow.
             KeyCode::Char('P') | KeyCode::Char('p') => {
-                self.start_lexicon_inference(LexiconKind::Places);
-                true
+                if self.try_open_image_picker() {
+                    true
+                } else {
+                    self.start_lexicon_inference(LexiconKind::Places);
+                    true
+                }
             }
             // C: character-RAG inference. Same as P but against the
             // Characters book.
             KeyCode::Char('C') | KeyCode::Char('c') => {
                 self.start_lexicon_inference(LexiconKind::Characters);
+                true
+            }
+            // G: notes-RAG inference. Notes don't have a clean
+            // single-letter mnemonic (N is taken by snapshot), so
+            // we picked `G` for "Glossary / Get notes".
+            KeyCode::Char('G') | KeyCode::Char('g') => {
+                self.start_lexicon_inference(LexiconKind::Notes);
+                true
+            }
+            // Y: artefacts-RAG inference. `A` is taken globally by
+            // Book Assembly; `Y` echoes the yellow editor highlight.
+            KeyCode::Char('Y') | KeyCode::Char('y') => {
+                self.start_lexicon_inference(LexiconKind::Artefacts);
                 true
             }
             _ => false,
@@ -3588,6 +4997,1112 @@ impl App {
             focus: self.focus,
             scroll: 0,
         };
+    }
+
+    fn open_credits(&mut self) {
+        self.modal = Modal::Credits { scroll: 0 };
+        self.status = "Credits · ↑↓/PgUp/PgDn scroll · Esc close".into();
+    }
+
+    /// Ctrl+B I — open the "current book info" panel. The content is
+    /// rendered each frame in `draw_book_info_modal` so figures stay
+    /// fresh as the user edits; we only stash the scroll offset here.
+    fn open_book_info(&mut self) {
+        self.modal = Modal::BookInfo { scroll: 0 };
+        self.status =
+            "Book info · ↑↓/PgUp/PgDn scroll · Esc close".into();
+    }
+
+    /// Scroll handler for the BookInfo modal — mirrors
+    /// `credits_handle_key`. Renderer clamps scroll to the actual line
+    /// count.
+    fn book_info_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::BookInfo { scroll } = &mut self.modal else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Up => {
+                *scroll = scroll.saturating_sub(1);
+                true
+            }
+            KeyCode::Down => {
+                *scroll = scroll.saturating_add(1);
+                true
+            }
+            KeyCode::PageUp => {
+                *scroll = scroll.saturating_sub(10);
+                true
+            }
+            KeyCode::PageDown => {
+                *scroll = scroll.saturating_add(10);
+                true
+            }
+            KeyCode::Home => {
+                *scroll = 0;
+                true
+            }
+            KeyCode::End => {
+                *scroll = usize::MAX / 2;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Resolve the "current book" the user is inside: prefer the book
+    /// containing the open paragraph (if any), otherwise the book
+    /// containing the tree cursor. Returns the cloned node so the
+    /// caller can drop the temporary `Hierarchy` it loaded.
+    ///
+    /// "Current book" walks `parent_id` up to the root: for a node at
+    /// any depth this lands on the root Book; for a Book node it
+    /// returns the node itself. Returns `None` only when the project
+    /// is completely empty (no books seeded yet).
+    fn current_book_node(&self, hierarchy: &Hierarchy) -> Option<Node> {
+        let start_id = self
+            .opened
+            .as_ref()
+            .map(|d| d.id)
+            .or_else(|| self.rows.get(self.tree_cursor).map(|(id, _)| *id))?;
+
+        let mut current_id = start_id;
+        loop {
+            let node = hierarchy.get(current_id)?;
+            match node.parent_id {
+                None => return Some(node.clone()),
+                Some(pid) => current_id = pid,
+            }
+        }
+    }
+
+    fn draw_book_info_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+        scroll: usize,
+    ) {
+        let lines = self.build_book_info_lines();
+        let total = lines.len();
+
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = " Book info · Ctrl+B I ".to_string();
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+
+        let max_scroll = total.saturating_sub(body_h);
+        let scroll = scroll.min(max_scroll);
+        let end = (scroll + body_h).min(total);
+        let visible: Vec<Line<'_>> = lines[scroll..end].to_vec();
+        f.render_widget(Paragraph::new(visible), body_rect);
+
+        let at_end = end >= total;
+        let more_hint = if at_end { " " } else { " · more below" };
+        let hint = format!(
+            " ↑↓ / PgUp/PgDn / Home/End scroll · Esc close{more_hint}    (showing {}–{} of {total}) ",
+            scroll + 1,
+            end
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    fn build_book_info_lines(&self) -> Vec<Line<'static>> {
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let label_color = Style::default().fg(Color::Cyan);
+
+        let mut out: Vec<Line<'static>> = Vec::new();
+        out.push(Line::from(""));
+
+        let Ok(hierarchy) = Hierarchy::load(&self.store) else {
+            out.push(Line::from(Span::styled(
+                "  (could not load hierarchy)".to_string(),
+                dim,
+            )));
+            return out;
+        };
+
+        let Some(book) = self.current_book_node(&hierarchy) else {
+            out.push(Line::from(Span::styled(
+                "  No book selected. Move the tree cursor onto a book \
+                 (or any node inside one) and press Ctrl+B I again."
+                    .to_string(),
+                dim,
+            )));
+            return out;
+        };
+
+        out.push(Line::from(vec![
+            Span::styled("  Book: ", label_color),
+            Span::styled(book.title.clone(), bold),
+            Span::styled(
+                format!("   ({})", book.slug),
+                dim,
+            ),
+        ]));
+        if let Some(tag) = book.system_tag.as_deref() {
+            out.push(Line::from(Span::styled(
+                format!("    system book · tag={tag}"),
+                dim,
+            )));
+        }
+        out.push(Line::from(""));
+
+        // 1. Paths.
+        let backup_dir =
+            crate::store::default_user_backup_dir(&self.layout.root);
+        let artefacts_root = self.store.resolve_artefacts_dir(&self.cfg);
+        let artefacts_book = artefacts_root.join(&book.slug);
+
+        out.push(Line::from(Span::styled(
+            "  Paths".to_string(),
+            label_color.add_modifier(Modifier::BOLD),
+        )));
+        out.push(Line::from(format!("    backups:    {}", backup_dir.display())));
+        out.push(Line::from(format!(
+            "    artefacts:  {}",
+            artefacts_book.display()
+        )));
+        out.push(Line::from(""));
+
+        // 2. Stats.
+        let stats = compute_book_stats(&hierarchy, &book, &self.layout.root);
+        out.push(Line::from(Span::styled(
+            "  Structure".to_string(),
+            label_color.add_modifier(Modifier::BOLD),
+        )));
+        out.push(Line::from(format!(
+            "    chapters:     {}",
+            stats.chapters
+        )));
+        out.push(Line::from(format!(
+            "    subchapters:  {}",
+            stats.subchapters
+        )));
+        out.push(Line::from(format!(
+            "    paragraphs:   {}",
+            stats.paragraphs
+        )));
+        out.push(Line::from(""));
+
+        out.push(Line::from(Span::styled(
+            "  Prose".to_string(),
+            label_color.add_modifier(Modifier::BOLD),
+        )));
+        out.push(Line::from(format!(
+            "    sentences:    {}",
+            stats.sentences
+        )));
+        out.push(Line::from(format!(
+            "    words:        {}",
+            stats.words
+        )));
+        // 250 wpm — a standard adult silent-reading speed for prose
+        // (educational references typically quote 200–300 wpm). Round
+        // up to whole minutes so humantime doesn't print sub-second
+        // precision for an estimate that's never that precise.
+        let read_pretty = if stats.words == 0 {
+            "< 1m".to_string()
+        } else {
+            let minutes = ((stats.words as f64) / 250.0).ceil() as u64;
+            humantime::format_duration(std::time::Duration::from_secs(
+                minutes.max(1) * 60,
+            ))
+            .to_string()
+        };
+        out.push(Line::from(format!(
+            "    reading time: {read_pretty}  (at 250 words/min)"
+        )));
+        out.push(Line::from(""));
+
+        // 3. PDF status.
+        let pdf_path = artefacts_book.join(format!("{}.pdf", book.slug));
+        out.push(Line::from(Span::styled(
+            "  Rendered PDF".to_string(),
+            label_color.add_modifier(Modifier::BOLD),
+        )));
+        out.push(Line::from(format!(
+            "    expected:   {}",
+            pdf_path.display()
+        )));
+        match std::fs::metadata(&pdf_path) {
+            Ok(meta) => {
+                let created = meta
+                    .created()
+                    .or_else(|_| meta.modified())
+                    .ok()
+                    .and_then(|t| {
+                        std::time::SystemTime::now()
+                            .duration_since(t)
+                            .ok()
+                    });
+                let age = match created {
+                    Some(d) => format_age_humantime(d),
+                    None => "(timestamp unavailable)".to_string(),
+                };
+                let size_kb = meta.len() / 1024;
+                out.push(Line::from(vec![
+                    Span::raw("    status:     "),
+                    Span::styled(
+                        "present".to_string(),
+                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(format!("  ({size_kb} KiB)")),
+                ]));
+                out.push(Line::from(format!("    created:    {age} ago")));
+            }
+            Err(_) => {
+                out.push(Line::from(vec![
+                    Span::raw("    status:     "),
+                    Span::styled(
+                        "missing".to_string(),
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        "   (render the book to create it)".to_string(),
+                        dim,
+                    ),
+                ]));
+            }
+        }
+        out.push(Line::from(""));
+        out
+    }
+
+    /// Ctrl+B L — open the LLM provider picker. Empty providers map
+    /// yields a status-bar diagnostic instead of an empty modal.
+    fn open_llm_picker(&mut self) {
+        if self.cfg.llm.providers.is_empty() {
+            self.status =
+                "No LLM providers configured in inkhaven.hjson — add at least one under `llm.providers`."
+                    .into();
+            return;
+        }
+        let providers: Vec<String> = self.cfg.llm.providers.keys().cloned().collect();
+        // Position the cursor on the currently-active default so Enter
+        // is a confirm rather than a switch.
+        let cursor = providers
+            .iter()
+            .position(|p| p == &self.cfg.llm.default)
+            .unwrap_or(0);
+        let initial_default = self.cfg.llm.default.clone();
+        self.modal = Modal::LlmPicker {
+            providers,
+            cursor,
+            initial_default,
+        };
+        self.status = "Switch LLM provider · ↑↓ / Enter to switch · Esc to cancel".into();
+    }
+
+    fn llm_picker_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::LlmPicker {
+            providers, cursor, ..
+        } = &mut self.modal
+        else {
+            return false;
+        };
+        let total = providers.len();
+        match key.code {
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+                true
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < total {
+                    *cursor += 1;
+                }
+                true
+            }
+            KeyCode::Home => {
+                *cursor = 0;
+                true
+            }
+            KeyCode::End => {
+                *cursor = total.saturating_sub(1);
+                true
+            }
+            KeyCode::Enter => {
+                self.commit_llm_picker();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn commit_llm_picker(&mut self) {
+        let (chosen, initial_default) = match &self.modal {
+            Modal::LlmPicker {
+                providers,
+                cursor,
+                initial_default,
+            } => (
+                providers.get(*cursor).cloned(),
+                initial_default.clone(),
+            ),
+            _ => return,
+        };
+        let Some(chosen) = chosen else {
+            self.modal = Modal::None;
+            return;
+        };
+
+        // No-op early-out: picking the same provider just closes the
+        // modal without rewriting the file.
+        if chosen == initial_default {
+            self.modal = Modal::None;
+            self.status = format!("LLM provider unchanged · still `{chosen}`");
+            return;
+        }
+
+        // Persist to inkhaven.hjson with a targeted text edit so user
+        // comments + the rest of the config survive the rewrite.
+        let config_path = self.layout.config_path();
+        let raw = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(e) => {
+                self.status =
+                    format!("LLM switch aborted: read {}: {e}", config_path.display());
+                return;
+            }
+        };
+        let updated = match set_llm_default_in_hjson(&raw, &chosen) {
+            Ok(s) => s,
+            Err(reason) => {
+                self.status = format!(
+                    "LLM switch aborted: can't rewrite {}: {reason}",
+                    config_path.display()
+                );
+                return;
+            }
+        };
+        if let Err(e) = std::fs::write(&config_path, &updated) {
+            self.status = format!("LLM switch aborted: write {}: {e}", config_path.display());
+            return;
+        }
+
+        // Update the live config + AiClient so subsequent prompts use
+        // the new provider without restarting.
+        self.cfg.llm.default = chosen.clone();
+        match AiClient::from_config(&self.cfg.llm) {
+            Ok(ai) => self.ai = ai,
+            Err(e) => {
+                // The file is already on disk so the next startup will
+                // honour the new default — surface the error so the
+                // user knows the in-memory client wasn't refreshed.
+                self.status = format!(
+                    "switched to `{chosen}` on disk, but couldn't refresh in-memory client: {e}"
+                );
+                self.modal = Modal::None;
+                return;
+            }
+        }
+
+        self.modal = Modal::None;
+        self.status = format!(
+            "LLM provider switched to `{chosen}` · saved to {}",
+            config_path.display()
+        );
+    }
+
+    /// Ctrl+B E — flip `sound.enabled` in the live config + on disk,
+    /// and toggle the live SoundPlayer's enabled flag. No-ops on hosts
+    /// without an audio device beyond updating the config (so the
+    /// preference persists for a future launch on a host that does).
+    fn toggle_sound(&mut self) {
+        let new_value = !self.cfg.sound.enabled;
+        let config_path = self.layout.config_path();
+        let raw = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(e) => {
+                self.status =
+                    format!("sound toggle aborted: read {}: {e}", config_path.display());
+                return;
+            }
+        };
+        let updated = match set_sound_enabled_in_hjson(&raw, new_value) {
+            Ok(s) => s,
+            Err(reason) => {
+                self.status = format!(
+                    "sound toggle aborted: can't rewrite {}: {reason}",
+                    config_path.display()
+                );
+                return;
+            }
+        };
+        if let Err(e) = std::fs::write(&config_path, &updated) {
+            self.status =
+                format!("sound toggle aborted: write {}: {e}", config_path.display());
+            return;
+        }
+
+        self.cfg.sound.enabled = new_value;
+        if let Some(sp) = self.sound.as_mut() {
+            sp.enabled = new_value;
+        }
+        let label = if new_value { "ON" } else { "OFF" };
+        let audio_note = if self.sound.is_some() {
+            ""
+        } else {
+            " (no audio device — silent, but preference saved)"
+        };
+        self.status =
+            format!("Typewriter sound {label}{audio_note} · saved to {}", config_path.display());
+    }
+
+    fn draw_llm_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::LlmPicker {
+            providers,
+            cursor,
+            initial_default,
+        } = &self.modal
+        else {
+            return;
+        };
+
+        // Build the visible lines so we can size the modal to fit.
+        let header_lines = 2; // title + blank
+        let footer_lines = 2; // blank + hint
+        let body_lines = providers.len();
+        let height = (header_lines + body_lines + footer_lines + 2) as u16;
+        let height = height.clamp(8, area.height.saturating_sub(2));
+
+        // Widest provider name + model for column alignment.
+        let max_name = providers.iter().map(|p| p.chars().count()).max().unwrap_or(8);
+        let max_model = providers
+            .iter()
+            .filter_map(|p| self.cfg.llm.providers.get(p).map(|c| c.model.chars().count()))
+            .max()
+            .unwrap_or(8);
+        let width = (max_name + max_model + 28) as u16;
+        let width = width.clamp(50, area.width.saturating_sub(6));
+
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Switch LLM provider · Ctrl+B L ")
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(""));
+        for (i, name) in providers.iter().enumerate() {
+            let prov = self.cfg.llm.providers.get(name);
+            let model = prov.map(|p| p.model.as_str()).unwrap_or("?");
+            let api_key_state = prov
+                .and_then(|p| p.api_key_env.clone())
+                .map(|env| {
+                    if std::env::var(&env).is_ok() {
+                        format!("· {env} set")
+                    } else {
+                        format!("· {env} MISSING")
+                    }
+                })
+                .unwrap_or_else(|| "· local (no key)".to_string());
+            let marker = if i == *cursor { "›" } else { " " };
+            let current_tag = if name == initial_default {
+                "  (current)"
+            } else {
+                ""
+            };
+            let name_padded = format!("{name:<width$}", width = max_name);
+            let model_padded = format!("{model:<width$}", width = max_model);
+            let row = format!(
+                "  {marker} {name_padded}   {model_padded}   {api_key_state}{current_tag}"
+            );
+            let style = if i == *cursor {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED)
+                    .add_modifier(Modifier::BOLD)
+            } else if name == initial_default {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(row, style)));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  ↑↓ to select · Enter to switch · Esc to cancel".to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
+    /// Try the in-`#image(…)` picker; returns false when the cursor
+    /// isn't inside an image call (so the caller can fall through to
+    /// Places RAG). Returns true even when the picker is empty —
+    /// "you're inside `#image()` but this paragraph has no sibling
+    /// images" is still better feedback than silently jumping to
+    /// Places RAG.
+    fn try_open_image_picker(&mut self) -> bool {
+        let Some(doc) = self.opened.as_ref() else {
+            return false;
+        };
+        let (row, col) = doc.textarea.cursor();
+        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
+        let ctx = match detect_image_call_context(&line, col) {
+            Some(c) => c,
+            None => return false,
+        };
+        // Find sibling Image nodes in the paragraph's parent.
+        let entries = self.sibling_image_entries(doc.id);
+        if entries.is_empty() {
+            self.status = "no sibling images at this level — import one with F3 first".into();
+            self.modal = Modal::ImagePicker {
+                entries,
+                cursor: 0,
+                close_quote: !ctx.closing_quote_present,
+            };
+            return true;
+        }
+        self.status =
+            "↑↓ select · Enter insert · Esc cancel".into();
+        self.modal = Modal::ImagePicker {
+            entries,
+            cursor: 0,
+            close_quote: !ctx.closing_quote_present,
+        };
+        true
+    }
+
+    /// Sibling Image nodes of the paragraph identified by `para_id`,
+    /// sorted by their `order` field. Each entry carries the filename
+    /// (already in `NN-slug.<ext>` form), the display title, and the
+    /// file size for the picker readout.
+    fn sibling_image_entries(&self, para_id: Uuid) -> Vec<ImagePickerEntry> {
+        let Some(para) = self.hierarchy.get(para_id) else {
+            return Vec::new();
+        };
+        let mut out: Vec<ImagePickerEntry> = self
+            .hierarchy
+            .children_of(para.parent_id)
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Image)
+            .map(|n| {
+                let size_bytes = n
+                    .file
+                    .as_ref()
+                    .map(|rel| {
+                        std::fs::metadata(self.layout.root.join(rel))
+                            .map(|m| m.len())
+                            .unwrap_or(0)
+                    })
+                    .unwrap_or(0);
+                ImagePickerEntry {
+                    fname: n.fs_name(),
+                    title: n.title.clone(),
+                    size_bytes,
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.fname.cmp(&b.fname));
+        out
+    }
+
+    fn image_picker_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::ImagePicker {
+            entries, cursor, ..
+        } = &mut self.modal
+        else {
+            return false;
+        };
+        let total = entries.len();
+        match key.code {
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+                true
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < total {
+                    *cursor += 1;
+                }
+                true
+            }
+            KeyCode::Home => {
+                *cursor = 0;
+                true
+            }
+            KeyCode::End => {
+                *cursor = total.saturating_sub(1);
+                true
+            }
+            KeyCode::Enter => {
+                self.commit_image_picker();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn commit_image_picker(&mut self) {
+        let (fname, close_quote) = match &self.modal {
+            Modal::ImagePicker {
+                entries,
+                cursor,
+                close_quote,
+            } => match entries.get(*cursor) {
+                Some(e) => (e.fname.clone(), *close_quote),
+                None => {
+                    self.modal = Modal::None;
+                    return;
+                }
+            },
+            _ => return,
+        };
+        // Insert filename + optional `"` at the cursor in the editor.
+        let insert = if close_quote {
+            format!("{fname}\"")
+        } else {
+            fname.clone()
+        };
+        if let Some(doc) = self.opened.as_mut() {
+            doc.textarea.insert_str(&insert);
+            doc.dirty = true;
+        }
+        self.modal = Modal::None;
+        self.status = format!("inserted `{fname}` into #image(…)");
+    }
+
+    fn draw_image_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::ImagePicker {
+            entries, cursor, ..
+        } = &self.modal
+        else {
+            return;
+        };
+        let header_lines = 2usize;
+        let footer_lines = 2usize;
+        let body_lines = entries.len().max(1);
+        let height = ((header_lines + body_lines + footer_lines + 2) as u16)
+            .clamp(8, area.height.saturating_sub(2));
+        let max_name = entries
+            .iter()
+            .map(|e| e.fname.chars().count())
+            .max()
+            .unwrap_or(16);
+        let max_title = entries
+            .iter()
+            .map(|e| e.title.chars().count())
+            .max()
+            .unwrap_or(16);
+        let width = ((max_name + max_title + 24) as u16).clamp(50, area.width.saturating_sub(6));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Pick an image · Ctrl+B P ")
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(""));
+        if entries.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  No Image siblings at this level. Use F3 to import one,"
+                    .to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+            lines.push(Line::from(Span::styled(
+                "  then re-run Ctrl+B P inside the #image(\"…\") call."
+                    .to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        } else {
+            for (i, e) in entries.iter().enumerate() {
+                let marker = if i == *cursor { "›" } else { " " };
+                let name_padded =
+                    format!("{n:<width$}", n = e.fname, width = max_name);
+                let title_padded =
+                    format!("{t:<width$}", t = e.title, width = max_title);
+                let size_kib = e.size_bytes / 1024;
+                let row = format!("  {marker} {name_padded}   {title_padded}   ({size_kib} KiB)");
+                let style = if i == *cursor {
+                    Style::default()
+                        .add_modifier(Modifier::REVERSED)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                lines.push(Line::from(Span::styled(row, style)));
+            }
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  ↑↓ select · Enter insert · Esc cancel".to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
+    fn open_function_picker(&mut self) {
+        if self.opened.is_none() {
+            self.status = "function picker needs an open paragraph".into();
+            return;
+        }
+        self.modal = Modal::FunctionPicker {
+            filter: TextInput::new(),
+            cursor: 0,
+        };
+        self.status = "Type to filter · ↑↓ select · Enter insert · Esc cancel".into();
+    }
+
+    fn function_picker_handle_key(&mut self, key: KeyEvent) -> bool {
+        // Recompute the filtered list each keystroke so the cursor
+        // stays attached to a visible row.
+        let (filter_text, mut cursor_value) = match &self.modal {
+            Modal::FunctionPicker { filter, cursor } => (filter.as_str().to_string(), *cursor),
+            _ => return false,
+        };
+        let matches = filter_functions(&filter_text);
+        let total = matches.len();
+        let mut closed = false;
+        let mut commit_now = false;
+        let mut filter_dirty = false;
+        match key.code {
+            KeyCode::Up => {
+                if cursor_value > 0 {
+                    cursor_value -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if cursor_value + 1 < total {
+                    cursor_value += 1;
+                }
+            }
+            KeyCode::Home => cursor_value = 0,
+            KeyCode::End => cursor_value = total.saturating_sub(1),
+            KeyCode::PageUp => cursor_value = cursor_value.saturating_sub(10),
+            KeyCode::PageDown => {
+                cursor_value = (cursor_value + 10).min(total.saturating_sub(1));
+            }
+            KeyCode::Enter => commit_now = true,
+            KeyCode::Esc => closed = true,
+            _ => {
+                if let Modal::FunctionPicker { filter, cursor } = &mut self.modal {
+                    handle_text_input_key(filter, key);
+                    *cursor = 0;
+                    filter_dirty = true;
+                    let _ = cursor;
+                }
+            }
+        }
+        if filter_dirty {
+            return true;
+        }
+        if closed {
+            self.modal = Modal::None;
+            return true;
+        }
+        if commit_now {
+            self.commit_function_picker(&matches, cursor_value);
+            return true;
+        }
+        if let Modal::FunctionPicker { cursor, .. } = &mut self.modal {
+            *cursor = cursor_value;
+        }
+        true
+    }
+
+    fn commit_function_picker(&mut self, matches: &[super::typst_funcs::TypstFn], cursor_value: usize) {
+        let Some(picked) = matches.get(cursor_value).copied() else {
+            self.modal = Modal::None;
+            return;
+        };
+        // Detect the syntactic mode at the cursor via tree-sitter-
+        // typst so we only emit the `#` prefix when the cursor is in
+        // markup. Inside `{ code }`, function-call arguments, `let`
+        // RHS, or math, the bare identifier is what typst expects.
+        let mode = self
+            .opened
+            .as_ref()
+            .map(|doc| {
+                let source = doc.textarea.lines().join("\n");
+                let (row, col) = doc.textarea.cursor();
+                let byte = byte_offset_for_cursor(&source, row, col);
+                super::highlight::typst_mode_at(&source, byte)
+            })
+            .unwrap_or(super::highlight::TypstMode::Markup);
+        let prefix = mode.call_prefix();
+        let opener = format!("{prefix}{}(", picked.name);
+        if let Some(doc) = self.opened.as_mut() {
+            doc.textarea.insert_str(&opener);
+            doc.textarea.insert_str(")");
+            doc.textarea.move_cursor(CursorMove::Back);
+            doc.dirty = true;
+        }
+        self.modal = Modal::None;
+        let mode_tag = match mode {
+            super::highlight::TypstMode::Markup => "markup",
+            super::highlight::TypstMode::Code => "code",
+            super::highlight::TypstMode::Math => "math",
+        };
+        self.status = format!("inserted {prefix}{}( … ) · {mode_tag} mode", picked.name);
+    }
+
+    fn draw_function_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::FunctionPicker { filter, cursor } = &self.modal else {
+            return;
+        };
+        let matches = filter_functions(filter.as_str());
+        let width = area.width.saturating_sub(6).max(60);
+        let height = area.height.saturating_sub(4).max(14);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let title = " Typst function · Ctrl+B F ".to_string();
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // 3 rows of chrome: filter, blank spacer, footer.
+        let filter_h: u16 = 2;
+        let footer_h: u16 = 2;
+        let list_h = inner.height.saturating_sub(filter_h + footer_h);
+        let filter_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: filter_h,
+        };
+        let list_rect = Rect {
+            x: inner.x,
+            y: inner.y + filter_h,
+            width: inner.width,
+            height: list_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + filter_h + list_h,
+            width: inner.width,
+            height: footer_h,
+        };
+
+        let cursor_char = '│';
+        let filter_lines = vec![
+            Line::from(Span::styled(
+                format!(" › Filter: {}", filter.render_with_cursor(cursor_char)),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                format!(
+                    "   {} match{} of {}",
+                    matches.len(),
+                    if matches.len() == 1 { "" } else { "es" },
+                    super::typst_funcs::all().len()
+                ),
+                Style::default().add_modifier(Modifier::DIM),
+            )),
+        ];
+        f.render_widget(Paragraph::new(filter_lines), filter_rect);
+
+        // List body — scroll so the cursor is always in view.
+        let body_height = list_h as usize;
+        let total = matches.len();
+        let cursor = (*cursor).min(total.saturating_sub(1));
+        let scroll = if cursor >= body_height {
+            cursor - body_height + 1
+        } else {
+            0
+        };
+        let max_name = matches
+            .iter()
+            .map(|f| f.name.chars().count())
+            .max()
+            .unwrap_or(8);
+
+        let mut rows: Vec<Line<'static>> = Vec::new();
+        if matches.is_empty() {
+            rows.push(Line::from(Span::styled(
+                "  (no functions match the filter)".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        }
+        let body_end = (scroll + body_height).min(total);
+        for i in scroll..body_end {
+            let entry = matches[i];
+            let marker = if i == cursor { "›" } else { " " };
+            let name_padded =
+                format!("{n:<width$}", n = entry.name, width = max_name);
+            let line = format!("  {marker} {name_padded}   {desc}", desc = entry.description);
+            let style = if i == cursor {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            rows.push(Line::from(Span::styled(line, style)));
+        }
+        // Also include the signature underneath the selected entry as
+        // a hint row. Kept narrow to avoid pushing the list off-screen.
+        f.render_widget(Paragraph::new(rows), list_rect);
+
+        let signature_hint = matches
+            .get(cursor)
+            .map(|f| format!(" sig: {}", f.signature))
+            .unwrap_or_default();
+        let hint = format!(
+            "{signature_hint}\n ↑↓ select · Enter inserts #name(…) · Esc cancel"
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            )))
+            .wrap(Wrap { trim: false }),
+            footer_rect,
+        );
+    }
+
+    fn draw_image_preview_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        // Pull the variant fields out by value (cloning the cheap
+        // strings/numbers) and take a `&mut` borrow of `proto` only
+        // for the render call — keeps the modal field accessible
+        // for read elsewhere if needed.
+        let Modal::ImagePreview {
+            title,
+            fs_rel,
+            size_bytes,
+            proto,
+        } = &mut self.modal
+        else {
+            return;
+        };
+
+        let width = area.width.saturating_sub(4).max(40);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let title_line = format!(
+            " 🖼 {title}  ·  {fs_rel}  ·  {size_bytes} bytes "
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title_line)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Reserve the last inner row for the hint line.
+        let body_h = inner.height.saturating_sub(1);
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: body_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: 1,
+        };
+
+        let widget = ratatui_image::StatefulImage::new();
+        f.render_stateful_widget(widget, body_rect, proto);
+
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  Esc closes  ·  resize the terminal to re-fit ".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
     }
 
     fn cycle_ai_mode(&mut self) {
@@ -3741,6 +6256,11 @@ impl App {
         self.chat_history.clear();
         self.pending_chat_user_msg = None;
         self.inference = None;
+        // Reset chat-history scroll / search / selection — there's
+        // nothing left to scroll or act on.
+        self.chat_history_scroll = 0;
+        self.chat_search = None;
+        self.chat_selection = None;
         // Also dismiss any active grammar-correction overlay — the AI
         // result it derived from is being discarded, so keeping a
         // baseline tied to a forgotten correction is confusing.
@@ -3767,6 +6287,463 @@ impl App {
     /// streams the result into the AI pane. The AI pane is read-only by
     /// construction (no editor lives there), so the user can scroll the
     /// answer but can't edit it.
+    /// Ctrl+B W toggles full-screen "typewriter mode". When on, every
+    /// pane except the editor (and any floating modal) is hidden;
+    /// focus is forced onto the editor so typing lands in the
+    /// buffer. The same chord disables it.
+    fn toggle_typewriter_mode(&mut self) {
+        self.typewriter_mode = !self.typewriter_mode;
+        if self.typewriter_mode {
+            self.ai_fullscreen = false; // the two fullscreens are exclusive
+            // Force focus to the editor so the user can start typing
+            // immediately; the search bar / AI prompt are hidden
+            // anyway, so leaving focus on them would be confusing.
+            self.change_focus(Focus::Editor);
+            self.status = "typewriter mode · Ctrl+B W to exit".into();
+        } else {
+            self.status = "typewriter mode off".into();
+        }
+    }
+
+    /// Ctrl+B K toggles full-screen AI mode. Layout: top area split
+    /// 50/50 — AI pane on the left, chat history on the right —
+    /// over a full-width AI prompt at the bottom. Same chord
+    /// returns to the four-pane layout.
+    fn toggle_ai_fullscreen(&mut self) {
+        self.ai_fullscreen = !self.ai_fullscreen;
+        // Always start scrolled to the bottom (newest visible). The
+        // user can PageUp to walk back through the history.
+        self.chat_history_scroll = 0;
+        // Wipe any in-flight chat search / selection; the layout
+        // transition is an obvious break in user intent.
+        self.chat_search = None;
+        self.chat_selection = None;
+        if self.ai_fullscreen {
+            self.typewriter_mode = false; // exclusive with typewriter
+            // Restore previously-saved chat history if the in-memory
+            // list is currently empty. The user explicitly asked for
+            // "if chat is empty, restore from previous state" — never
+            // overwrite a live session.
+            if self.chat_history.is_empty() {
+                match self.load_chat_history_from_disk() {
+                    Ok(turns) if turns > 0 => {
+                        self.status = format!(
+                            "AI fullscreen · restored {turns} turn(s) · Ctrl+B K to exit · Ctrl+F to search history"
+                        );
+                    }
+                    Ok(_) => {
+                        self.status =
+                            "AI fullscreen · ↑↓/PgUp/PgDn scrolls history · Ctrl+F search · Ctrl+B K to exit".into();
+                    }
+                    Err(e) => {
+                        tracing::warn!("chat history restore failed: {e}");
+                        self.status =
+                            "AI fullscreen · ↑↓/PgUp/PgDn scrolls history · Ctrl+F search · Ctrl+B K to exit".into();
+                    }
+                }
+            } else {
+                self.status =
+                    "AI fullscreen · ↑↓/PgUp/PgDn scrolls history · Ctrl+F search · Ctrl+B K to exit".into();
+            }
+            // Drop focus onto the AI prompt so the user can start
+            // typing the next message immediately — the AI pane has
+            // no input role and the editor / tree / search bar are
+            // hidden in this layout anyway.
+            self.change_focus(Focus::AiPrompt);
+        } else {
+            // Persist the current chat to disk before leaving the
+            // layout. Best-effort: write failures are logged but
+            // don't block the toggle.
+            match self.save_chat_history_to_disk() {
+                Ok(()) => {
+                    self.status = format!(
+                        "AI fullscreen off · {} turn(s) saved",
+                        self.chat_history.len()
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("chat history save failed: {e}");
+                    self.status = "AI fullscreen off (chat history save failed — see logs)".into();
+                }
+            }
+        }
+    }
+
+    /// Path used by the chat-history persistence hooks. Lives next
+    /// to `.inkhaven-backup.json` and `.session.json` inside the
+    /// project root.
+    fn chat_history_path(&self) -> std::path::PathBuf {
+        self.layout.root.join(".inkhaven-chat.json")
+    }
+
+    /// Write the in-memory `chat_history` to disk. Empty history
+    /// removes the file so a stale list doesn't haunt the next
+    /// session.
+    fn save_chat_history_to_disk(&self) -> std::io::Result<()> {
+        let path = self.chat_history_path();
+        if self.chat_history.is_empty() {
+            // Nothing to save — clean up any prior file so the next
+            // entry doesn't restore a phantom.
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+            }
+            return Ok(());
+        }
+        let json = serde_json::to_string_pretty(&self.chat_history)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        std::fs::write(&path, json)
+    }
+
+    /// Load the on-disk chat history into `chat_history`. Returns
+    /// the number of turns loaded (0 when the file is absent or
+    /// empty). Parse / IO errors propagate so the caller can log.
+    fn load_chat_history_from_disk(&mut self) -> std::io::Result<usize> {
+        let path = self.chat_history_path();
+        if !path.exists() {
+            return Ok(0);
+        }
+        let bytes = std::fs::read(&path)?;
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        let history: Vec<ChatTurn> = serde_json::from_slice(&bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let n = history.len();
+        self.chat_history = history;
+        Ok(n)
+    }
+
+    /// Editor meta `Ctrl+B R`: advance the open paragraph's status one
+    /// step through the workflow ring. The cycle wraps back to None
+    /// after Ready; pressing R repeatedly walks the whole sequence
+    /// without any other UI. Persisted to bdslib so it survives the
+    /// next launch.
+    fn cycle_paragraph_status(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "no paragraph open".into();
+            return;
+        };
+        let id = doc.id;
+        let Some(node) = self.hierarchy.get(id).cloned() else {
+            self.status = "couldn't find the open paragraph in the hierarchy".into();
+            return;
+        };
+        let next = next_status(node.status.as_deref());
+        let mut updated = node.clone();
+        updated.status = if next == "None" {
+            None
+        } else {
+            Some(next.to_string())
+        };
+        if let Err(e) = self
+            .store
+            .raw()
+            .update_metadata(id, updated.to_json())
+        {
+            self.status = format!("status update failed: {e}");
+            return;
+        }
+        // Refresh hierarchy so the status reads back next frame.
+        self.reload_hierarchy();
+        self.status = format!("status: `{}` → `{}`", display_status(node.status.as_deref()), next);
+    }
+
+    /// Open the floating Ctrl+B 1..7 status-filter modal for
+    /// `target`, scoped to the tree cursor's enclosing branch.
+    fn open_status_filter(&mut self, target: &'static str) {
+        let (scope_id, scope_label) = self.resolve_status_filter_scope();
+        let entries = self.collect_status_entries(target, scope_id);
+        let count = entries.len();
+        self.modal = Modal::StatusFilter {
+            status_label: target,
+            scope: scope_label.clone(),
+            entries,
+            cursor: 0,
+        };
+        self.status = format!(
+            "status filter [{target}] · {scope_label} · {count} paragraph(s) · R/- cycles · Enter opens"
+        );
+    }
+
+    /// "Current scope" for the status filter: the cursor's node when
+    /// it's a branch; otherwise the nearest non-paragraph ancestor.
+    /// Returns `(scope_id, breadcrumb)`. None scope = project-wide.
+    fn resolve_status_filter_scope(&self) -> (Option<Uuid>, String) {
+        let cursor_id = self
+            .rows
+            .get(self.tree_cursor)
+            .map(|(id, _)| *id);
+        let mut cur = cursor_id;
+        while let Some(id) = cur {
+            let Some(node) = self.hierarchy.get(id) else {
+                break;
+            };
+            if node.kind != NodeKind::Paragraph && node.kind != NodeKind::Image {
+                return (Some(id), self.title_breadcrumb(id));
+            }
+            cur = node.parent_id;
+        }
+        (None, "entire project".to_string())
+    }
+
+    /// Walk every paragraph that is (a) inside `scope_id`'s subtree
+    /// when given, and (b) tagged with `target`. Sorted by breadcrumb
+    /// so paragraphs from the same parent cluster together.
+    fn collect_status_entries(
+        &self,
+        target: &'static str,
+        scope_id: Option<Uuid>,
+    ) -> Vec<StatusFilterEntry> {
+        let allowed_ids: Option<std::collections::HashSet<Uuid>> =
+            scope_id.map(|id| self.hierarchy.collect_subtree(id).into_iter().collect());
+        let mut entries: Vec<StatusFilterEntry> = Vec::new();
+        for node in self.hierarchy.iter() {
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            if let Some(allowed) = &allowed_ids {
+                if !allowed.contains(&node.id) {
+                    continue;
+                }
+            }
+            if display_status(node.status.as_deref()) != target {
+                continue;
+            }
+            entries.push(StatusFilterEntry {
+                id: node.id,
+                title: node.title.clone(),
+                breadcrumb: self.title_breadcrumb(node.id),
+            });
+        }
+        entries.sort_by(|a, b| a.breadcrumb.cmp(&b.breadcrumb));
+        entries
+    }
+
+    fn status_filter_handle_key(&mut self, key: KeyEvent) -> bool {
+        // Navigation-only branches first; status cycling has its own
+        // path because it needs the full `self` borrow.
+        let advance: Option<bool> = match key.code {
+            KeyCode::Char('r') | KeyCode::Char('R') => Some(true),
+            KeyCode::Char('-') | KeyCode::Backspace => Some(false),
+            _ => None,
+        };
+        if let Some(forward) = advance {
+            self.cycle_status_in_filter(forward);
+            return true;
+        }
+
+        let Modal::StatusFilter { entries, cursor, .. } = &mut self.modal else {
+            return false;
+        };
+        let total = entries.len();
+        match key.code {
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+                true
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < total {
+                    *cursor += 1;
+                }
+                true
+            }
+            KeyCode::Home => {
+                *cursor = 0;
+                true
+            }
+            KeyCode::End => {
+                *cursor = total.saturating_sub(1);
+                true
+            }
+            KeyCode::PageUp => {
+                *cursor = cursor.saturating_sub(10);
+                true
+            }
+            KeyCode::PageDown => {
+                *cursor = (*cursor + 10).min(total.saturating_sub(1));
+                true
+            }
+            KeyCode::Enter => {
+                self.commit_status_filter();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Step the highlighted paragraph's status forward or backward
+    /// in the workflow ring (without leaving the modal). The list is
+    /// re-collected against the original filter — if the paragraph
+    /// no longer matches it disappears and the next row slides up.
+    /// The cursor index is clamped to stay inside the (possibly
+    /// shorter) list.
+    fn cycle_status_in_filter(&mut self, forward: bool) {
+        let (target_status, paragraph_id, prior_cursor) = match &self.modal {
+            Modal::StatusFilter { status_label, entries, cursor, .. } => {
+                let Some(entry) = entries.get(*cursor) else {
+                    return;
+                };
+                (*status_label, entry.id, *cursor)
+            }
+            _ => return,
+        };
+        let Some(node) = self.hierarchy.get(paragraph_id).cloned() else {
+            return;
+        };
+        let new_label = if forward {
+            next_status(node.status.as_deref())
+        } else {
+            prev_status(node.status.as_deref())
+        };
+        let mut updated = node.clone();
+        updated.status = if new_label == "None" {
+            None
+        } else {
+            Some(new_label.to_string())
+        };
+        if let Err(e) = self
+            .store
+            .raw()
+            .update_metadata(paragraph_id, updated.to_json())
+        {
+            self.status = format!("status update failed: {e}");
+            return;
+        }
+        self.reload_hierarchy();
+        // Re-collect entries under the same scope + status target.
+        let (scope_id, scope_label) = self.resolve_status_filter_scope();
+        let entries = self.collect_status_entries(target_status, scope_id);
+        let total = entries.len();
+        let new_cursor = if total == 0 {
+            0
+        } else if prior_cursor >= total {
+            total - 1
+        } else {
+            prior_cursor
+        };
+        self.modal = Modal::StatusFilter {
+            status_label: target_status,
+            scope: scope_label.clone(),
+            entries,
+            cursor: new_cursor,
+        };
+        let direction = if forward { "→" } else { "←" };
+        self.status = format!(
+            "{} {direction} {new_label} · `{scope_label}` · {total} paragraph(s) remaining",
+            node.title
+        );
+    }
+
+    fn commit_status_filter(&mut self) {
+        let target_id = match &self.modal {
+            Modal::StatusFilter { entries, cursor, .. } => {
+                entries.get(*cursor).map(|e| e.id)
+            }
+            _ => None,
+        };
+        let Some(id) = target_id else {
+            self.modal = Modal::None;
+            return;
+        };
+        self.modal = Modal::None;
+        // Jump tree cursor to the chosen paragraph, then open it via
+        // the standard load path so paragraph_cursors / save sessions
+        // work the same as Enter from the tree.
+        if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == id) {
+            self.tree_cursor = i;
+        }
+        if let Some(node) = self.hierarchy.get(id).cloned() {
+            if let Err(e) = self.load_paragraph(&node) {
+                self.status = format!("open: {e}");
+            }
+        }
+    }
+
+    fn draw_status_filter_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::StatusFilter { status_label, scope, entries, cursor } = &self.modal else {
+            return;
+        };
+        let header_lines = 3usize; // title row inside chrome stays 0; footer grows
+        let footer_lines = 3usize;
+        let body_lines = entries.len().max(1);
+        let height = ((header_lines + body_lines + footer_lines + 2) as u16)
+            .clamp(10, area.height.saturating_sub(2));
+        let max_title = entries.iter().map(|e| e.title.chars().count()).max().unwrap_or(20);
+        let max_crumb = entries.iter().map(|e| e.breadcrumb.chars().count()).max().unwrap_or(30);
+        let width = ((max_title + max_crumb + 12) as u16).clamp(60, area.width.saturating_sub(6));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let title = format!(" Paragraphs with status [{status_label}] · scope: {scope} · Ctrl+B {} ",
+            match *status_label {
+                "Ready" => "1",
+                "Final" => "2",
+                "Third" => "3",
+                "Second" => "4",
+                "First" => "5",
+                "Napkin" => "6",
+                "None" => "7",
+                _ => "?",
+            });
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(""));
+        if entries.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("  No paragraphs tagged [{status_label}]."),
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        } else {
+            let body_h = inner.height.saturating_sub((header_lines + footer_lines) as u16) as usize;
+            let body_h = body_h.max(1);
+            let cursor = (*cursor).min(entries.len() - 1);
+            let scroll = if cursor >= body_h { cursor - body_h + 1 } else { 0 };
+            let end = (scroll + body_h).min(entries.len());
+            for (i_offset, entry) in entries[scroll..end].iter().enumerate() {
+                let i = scroll + i_offset;
+                let marker = if i == cursor { "›" } else { " " };
+                let title_padded =
+                    format!("{t:<width$}", t = entry.title, width = max_title);
+                let row =
+                    format!("  {marker} {title_padded}   {b}", b = entry.breadcrumb);
+                let style = if i == cursor {
+                    Style::default()
+                        .add_modifier(Modifier::REVERSED)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                lines.push(Line::from(Span::styled(row, style)));
+            }
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  ↑↓ select · Enter opens · r/R advances status · - / Backspace reverses · Esc cancel"
+                .to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
     /// Editor meta `Ctrl+B T`: rerun the placeholder-title derivation on
     /// the currently-open paragraph. Same logic that fires on save when
     /// the title is still `PARAGRAPH_PLACEHOLDER_TITLE`, but exposed
@@ -4127,6 +7104,43 @@ impl App {
         }
     }
 
+    /// Scroll handler for the Credits modal — mirrors `quickref_handle_key`.
+    /// `total` is the number of rendered lines (computed in the renderer),
+    /// but we don't need a hard upper bound here; clamping happens at
+    /// render time so out-of-range scroll just shows a blank tail.
+    fn credits_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::Credits { scroll } = &mut self.modal else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Up => {
+                *scroll = scroll.saturating_sub(1);
+                true
+            }
+            KeyCode::Down => {
+                *scroll = scroll.saturating_add(1);
+                true
+            }
+            KeyCode::PageUp => {
+                *scroll = scroll.saturating_sub(10);
+                true
+            }
+            KeyCode::PageDown => {
+                *scroll = scroll.saturating_add(10);
+                true
+            }
+            KeyCode::Home => {
+                *scroll = 0;
+                true
+            }
+            KeyCode::End => {
+                *scroll = usize::MAX / 2;
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn open_file_picker(&mut self, context: PickerContext) {
         let root = std::env::current_dir().unwrap_or_else(|_| self.layout.root.clone());
         self.modal = Modal::FilePicker(FilePicker::new(root, context));
@@ -4158,8 +7172,12 @@ impl App {
                 self.modal = Modal::None;
             }
             (PickerContext::TreeInsertOrImport, true) => {
-                self.import_directory_tree(&path);
+                // Defer the actual import to the main loop so it can run
+                // with a progress splash drawn directly via the terminal
+                // handle. `commit_file_pick` doesn't own the terminal —
+                // see `App::run`.
                 self.modal = Modal::None;
+                self.pending_import = Some(path);
             }
         }
     }
@@ -4178,12 +7196,7 @@ impl App {
                 "no paragraph open — open one first, then F3 to replace its body".into();
             return;
         };
-        let lines: Vec<String> = if body.is_empty() {
-            vec![String::new()]
-        } else {
-            body.split('\n').map(String::from).collect()
-        };
-        let mut new_textarea = TextArea::new(lines);
+        let mut new_textarea = TextArea::new(body_to_lines(&body));
         new_textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
         new_textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
         doc.textarea = new_textarea;
@@ -4196,6 +7209,12 @@ impl App {
     }
 
     fn import_single_file(&mut self, path: &std::path::Path) {
+        // Route image files (PNG / JPG / etc.) to the image-import
+        // path; everything else gets the prose treatment.
+        if let Some(ext) = image_extension_for(path) {
+            self.import_single_image(path, &ext);
+            return;
+        }
         // Place the new paragraph after the tree cursor's same-kind ancestor
         // if there is one (so it's "insert after current"). Falls back to
         // append-at-end under the nearest valid parent.
@@ -4245,7 +7264,8 @@ impl App {
             }
         };
 
-        let created = match self.store.create_node(
+        let content_type = content_type_for(path);
+        let mut created = match self.store.create_node(
             &self.cfg,
             &self.hierarchy,
             NodeKind::Paragraph,
@@ -4260,13 +7280,40 @@ impl App {
                 return;
             }
         };
+        // For non-default content types, stamp the node + rename the
+        // on-disk file so the extension matches (`<NN>-<slug>.hjson`
+        // instead of `.typ`). create_node always lays down the file
+        // with the typst extension; we move it before writing bytes.
+        if let Some(ct) = &content_type {
+            created.content_type = Some(ct.clone());
+            let new_rel = std::path::PathBuf::from(
+                created.file.clone().unwrap_or_default(),
+            )
+            .with_extension(ct);
+            if let Some(old_rel) = &created.file {
+                let old_abs = self.layout.root.join(old_rel);
+                let new_abs = self.layout.root.join(&new_rel);
+                if old_abs.exists() && old_abs != new_abs {
+                    let _ = std::fs::rename(&old_abs, &new_abs);
+                }
+            }
+            created.file = Some(new_rel.to_string_lossy().into_owned());
+            if let Err(e) = self
+                .store
+                .raw()
+                .update_metadata(created.id, created.to_json())
+            {
+                self.status = format!("update metadata: {e}");
+                return;
+            }
+        }
 
         // Replace the templated body with the actual file content.
-        let Some(rel) = &created.file else {
+        let Some(rel) = created.file.clone() else {
             self.status = "created paragraph has no file path — bug?".into();
             return;
         };
-        let abs = self.layout.root.join(rel);
+        let abs = self.layout.root.join(&rel);
         if let Err(e) = std::fs::write(&abs, &bytes) {
             self.status = format!("write {}: {e}", abs.display());
             return;
@@ -4277,14 +7324,489 @@ impl App {
             return;
         }
         let _ = self.store.sync();
-        self.status = format!("imported `{}` as paragraph", path.display());
+        let kind_note = match content_type.as_deref() {
+            Some("hjson") => " (hjson)",
+            _ => "",
+        };
+        self.status = format!("imported `{}` as paragraph{kind_note}", path.display());
         self.reload_hierarchy();
         if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == created.id) {
             self.tree_cursor = i;
         }
     }
 
-    fn import_directory_tree(&mut self, root: &std::path::Path) {
+    /// Sibling to `import_single_file` for image files. The parent
+    /// selection mirrors the prose path: insert after the cursor's
+    /// nearest leaf sibling, falling back to "append at the end of
+    /// the nearest legal branch".
+    fn import_single_image(&mut self, path: &std::path::Path, ext: &str) {
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.status = format!("read {}: {e}", path.display());
+                return;
+            }
+        };
+        let title = derive_paragraph_title_from_path(path);
+        let cursor_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
+        let anchor = cursor_id.and_then(|id| {
+            let mut cur = Some(id);
+            while let Some(c) = cur {
+                let node = self.hierarchy.get(c)?;
+                if node.kind.is_leaf() {
+                    return Some(node.id);
+                }
+                cur = node.parent_id;
+            }
+            None
+        });
+        let position = match anchor {
+            Some(id) => InsertPosition::After(id),
+            None => InsertPosition::End,
+        };
+        let parent = match position {
+            InsertPosition::After(anchor_id) | InsertPosition::Before(anchor_id) => self
+                .hierarchy
+                .get(anchor_id)
+                .and_then(|n| n.parent_id)
+                .and_then(|pid| self.hierarchy.get(pid))
+                .cloned(),
+            InsertPosition::End => {
+                match self
+                    .hierarchy
+                    .pick_parent_for(&self.cfg, cursor_id, NodeKind::Image)
+                {
+                    Ok(p) => p.cloned(),
+                    Err(e) => {
+                        self.status = format!("can't import image here: {e}");
+                        return;
+                    }
+                }
+            }
+        };
+        let created = match self.store.create_image_node(
+            &self.cfg,
+            &self.hierarchy,
+            &title,
+            ext,
+            &bytes,
+            parent.as_ref(),
+            position,
+        ) {
+            Ok(n) => n,
+            Err(e) => {
+                self.status = format!("import image: {e}");
+                return;
+            }
+        };
+        self.status = format!(
+            "imported `{}` as image ({} bytes)",
+            path.display(),
+            bytes.len()
+        );
+        self.reload_hierarchy();
+        if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == created.id) {
+            self.tree_cursor = i;
+        }
+    }
+
+    /// Drive a deferred directory import set up by `commit_file_pick`.
+    /// Pre-counts files so the splash has a meaningful denominator, then
+    /// runs the (synchronous) import with a progress callback that
+    /// throttles `terminal.draw` to ~30 Hz. Status bar is updated when
+    /// the import finishes; the next mainloop frame paints over the
+    /// splash automatically.
+    fn run_pending_import<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        root: &Path,
+    ) {
+        let total = count_importable_files(root);
+        let source_display = root.display().to_string();
+        let progress_root = root.to_path_buf();
+
+        // Initial 0/total frame so the splash appears even if the
+        // first file takes a moment (e.g. fastembed cold-loading on
+        // first import in a session).
+        let _ = terminal.draw(|f| {
+            draw_import_splash(f, &source_display, 0, total, "scanning…")
+        });
+
+        let mut last_redraw = std::time::Instant::now();
+        {
+            let source_display = source_display.clone();
+            let mut progress = move |done: usize, file: &Path| {
+                if last_redraw.elapsed() < std::time::Duration::from_millis(33) {
+                    return;
+                }
+                last_redraw = std::time::Instant::now();
+                let rel = file
+                    .strip_prefix(&progress_root)
+                    .unwrap_or(file);
+                let label = rel.display().to_string();
+                let _ = terminal.draw(|f| {
+                    draw_import_splash(f, &source_display, done, total, &label)
+                });
+            };
+            self.import_directory_tree(root, &mut progress);
+        }
+    }
+
+    /// Ctrl+B A — resolve "current book" the same way Ctrl+B I does
+    /// (open paragraph's book, or the tree-cursor's book), validate
+    /// it's a user book, then stash the uuid so the main loop drives
+    /// the assembly with the splash.
+    fn schedule_assembly(&mut self) {
+        let hierarchy = match Hierarchy::load(&self.store) {
+            Ok(h) => h,
+            Err(e) => {
+                self.status = format!("Book assembly: hierarchy load failed: {e}");
+                return;
+            }
+        };
+        let Some(book) = self.current_book_node(&hierarchy) else {
+            self.status =
+                "Book assembly: move the tree cursor onto a user book (or any node inside one) first."
+                    .into();
+            return;
+        };
+        if book.system_tag.is_some() {
+            self.status = format!(
+                "Book assembly: `{}` is a system book — pick a user book.",
+                book.title
+            );
+            return;
+        }
+        self.pending_assembly = Some(book.id);
+        self.status = format!("Book assembly: assembling `{}`…", book.title);
+    }
+
+    /// Drive a deferred Book assembly. Pre-renders the splash at 0%,
+    /// runs the synchronous assembler with a 30 Hz-throttled progress
+    /// callback, and surfaces the final result (root .typ path or
+    /// error) in the status bar.
+    fn run_pending_assembly<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        book_id: Uuid,
+    ) {
+        let book = match Hierarchy::load(&self.store) {
+            Ok(h) => match h.get(book_id).cloned() {
+                Some(n) => n,
+                None => {
+                    self.status = "Book assembly: book vanished from hierarchy".into();
+                    return;
+                }
+            },
+            Err(e) => {
+                self.status = format!("Book assembly: hierarchy load failed: {e}");
+                return;
+            }
+        };
+
+        let book_display = book.title.clone();
+        let initial_total = 0;
+        let _ = terminal.draw(|f| {
+            draw_assembly_splash(f, &book_display, 0, initial_total, "preparing…")
+        });
+
+        let mut last_redraw = std::time::Instant::now();
+        let book_display_for_cb = book_display.clone();
+        let report = {
+            let mut progress = move |done: usize, total: usize, file: &Path| {
+                if last_redraw.elapsed() < std::time::Duration::from_millis(33) {
+                    return;
+                }
+                last_redraw = std::time::Instant::now();
+                let label = file.display().to_string();
+                let _ = terminal.draw(|f| {
+                    draw_assembly_splash(f, &book_display_for_cb, done, total, &label)
+                });
+            };
+            crate::assemble::assemble_book(
+                &self.store,
+                &self.layout,
+                &self.cfg,
+                &book,
+                &mut progress,
+            )
+        };
+
+        match report {
+            Ok(r) => {
+                self.status = format!(
+                    "Book assembly: wrote {} files · root: {}  (typst compile `{}`)",
+                    r.files_written,
+                    r.root_typ.display(),
+                    r.root_typ.display(),
+                );
+            }
+            Err(e) => {
+                self.status = format!("Book assembly failed: {e}");
+            }
+        }
+    }
+
+    /// Ctrl+B B — schedule a Book "build": assembly + `typst compile`.
+    /// On error the build path opens a fresh AI chat for analysis.
+    fn schedule_build(&mut self) {
+        let Some(book_id) = self.resolve_current_user_book("Book build") else {
+            return;
+        };
+        self.pending_build = Some(book_id);
+        self.status = "Book build: assembling + compiling…".into();
+    }
+
+    /// Ctrl+B O — schedule a Book "take": build, then copy the PDF
+    /// into the launch cwd with a timestamped filename.
+    fn schedule_take(&mut self) {
+        let Some(book_id) = self.resolve_current_user_book("Take the book") else {
+            return;
+        };
+        self.pending_take = Some(book_id);
+        self.status = "Take the book: assembling + compiling + copying…".into();
+    }
+
+    /// Common preflight for Ctrl+B A / B / O. Returns the uuid of the
+    /// user book the cursor is inside, or surfaces an error status and
+    /// returns None when the cursor isn't on a user book.
+    fn resolve_current_user_book(&mut self, ctx: &str) -> Option<Uuid> {
+        let hierarchy = match Hierarchy::load(&self.store) {
+            Ok(h) => h,
+            Err(e) => {
+                self.status = format!("{ctx}: hierarchy load failed: {e}");
+                return None;
+            }
+        };
+        let book = self.current_book_node(&hierarchy)?;
+        if book.system_tag.is_some() {
+            self.status =
+                format!("{ctx}: `{}` is a system book — pick a user book.", book.title);
+            return None;
+        }
+        Some(book.id)
+    }
+
+    /// Run assembly + typst compile for `book_id`. If `take` is true,
+    /// the resulting PDF is also copied into the launch cwd with a
+    /// timestamped filename. A typst-error opens a fresh AI chat with
+    /// the configured error-system-prompt; the user gets streamed
+    /// analysis on the AI pane without any extra keystroke.
+    fn run_pending_build<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        book_id: Uuid,
+        take: bool,
+    ) {
+        // Step 1: assembly (re-uses the existing splash + procedure).
+        self.run_pending_assembly(terminal, book_id);
+        // run_pending_assembly returns silently on failure — figure
+        // out whether it succeeded by re-checking the artefacts path.
+        let book = match Hierarchy::load(&self.store) {
+            Ok(h) => match h.get(book_id).cloned() {
+                Some(n) => n,
+                None => {
+                    self.status =
+                        "Book build aborted: book vanished mid-assembly".into();
+                    return;
+                }
+            },
+            Err(e) => {
+                self.status = format!("Book build aborted: hierarchy reload: {e}");
+                return;
+            }
+        };
+        let artefacts_root = self.store.resolve_artefacts_dir(&self.cfg);
+        let root_typ = artefacts_root
+            .join(&book.slug)
+            .join(format!("{}.typ", book.slug));
+        if !root_typ.is_file() {
+            // Assembly didn't produce a root .typ — its status message
+            // already explains why, leave it in place.
+            return;
+        }
+
+        // Step 2: spawn `typst compile` and animate the splash while
+        // the child runs.
+        let book_display = book.title.clone();
+        let outcome = match self.run_typst_compile(terminal, &book_display, &root_typ) {
+            Some(o) => o,
+            None => return, // spawn failed; status already set
+        };
+
+        if outcome.success {
+            let pdf_msg = format!(
+                "Build OK · PDF: {}",
+                outcome.pdf_path.display()
+            );
+            if take {
+                match self.take_book_pdf(&book, &outcome.pdf_path) {
+                    Ok(dest) => {
+                        self.status = format!(
+                            "Took the book · {}  (source PDF: {})",
+                            dest.display(),
+                            outcome.pdf_path.display()
+                        );
+                    }
+                    Err(e) => {
+                        self.status = format!("{pdf_msg} · take failed: {e}");
+                    }
+                }
+            } else {
+                self.status = pdf_msg;
+            }
+            return;
+        }
+
+        // Compile failed — surface the stderr through the AI pane and
+        // leave a status hint mentioning where to read the answer.
+        let error_text = if outcome.stderr.trim().is_empty() {
+            outcome.stdout.clone()
+        } else {
+            outcome.stderr.clone()
+        };
+        self.start_typst_error_analysis(&book, &root_typ, &error_text);
+    }
+
+    /// Drive a typst-compile child to completion with the spinner
+    /// splash. Returns the outcome on success-or-failure of the
+    /// compile itself; returns None when even spawning the binary
+    /// failed (status bar is set in that case).
+    fn run_typst_compile<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        book_display: &str,
+        root_typ: &Path,
+    ) -> Option<crate::typst_compile::CompileOutcome> {
+        let (child, pdf_path) = match crate::typst_compile::spawn(root_typ) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("typst compile: {e}");
+                return None;
+            }
+        };
+        // Animate the splash while the child runs. ~80ms per frame
+        // keeps the spinner readable without burning CPU.
+        let started = std::time::Instant::now();
+        let mut spin_idx: usize = 0;
+        let mut child = child;
+        loop {
+            let elapsed = started.elapsed().as_secs();
+            let spinner = TYPST_COMPILE_SPINNER[spin_idx % TYPST_COMPILE_SPINNER.len()];
+            let _ = terminal.draw(|f| {
+                draw_typst_compile_splash(f, book_display, elapsed, spinner)
+            });
+            spin_idx = spin_idx.wrapping_add(1);
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => {
+                    std::thread::sleep(std::time::Duration::from_millis(80));
+                }
+                Err(e) => {
+                    self.status = format!("typst compile: try_wait: {e}");
+                    return None;
+                }
+            }
+        }
+        match crate::typst_compile::finish(child, pdf_path) {
+            Ok(o) => Some(o),
+            Err(e) => {
+                self.status = format!("typst compile: {e}");
+                None
+            }
+        }
+    }
+
+    /// Copy `pdf_src` into the launch cwd as
+    /// `<book-slug>-YYYYDDMM-HHMM.pdf`. Returns the destination path
+    /// on success. The cwd is inkhaven's `current_dir()` at the
+    /// moment of the call — same path the shell-launched binary saw.
+    fn take_book_pdf(
+        &self,
+        book: &Node,
+        pdf_src: &Path,
+    ) -> std::io::Result<std::path::PathBuf> {
+        let cwd = std::env::current_dir()?;
+        let now = chrono::Local::now();
+        // Match the existing backup filename style: YYYYDDMM_HHMMSS.
+        // User asked for YYYYDDMM-HHMM specifically — slight variant.
+        let stamp = now.format("%Y%d%m-%H%M");
+        let dest = cwd.join(format!("{}-{stamp}.pdf", book.slug));
+        std::fs::copy(pdf_src, &dest)?;
+        Ok(dest)
+    }
+
+    /// Open a fresh AI chat (cleared history, system prompt tuned for
+    /// typst errors, inference mode forced to Full) and auto-send the
+    /// compile error so the user gets streamed analysis without an
+    /// extra keystroke.
+    fn start_typst_error_analysis(
+        &mut self,
+        book: &Node,
+        root_typ: &Path,
+        error_text: &str,
+    ) {
+        // Wipe any in-flight chat so the new system prompt isn't
+        // diluted by unrelated turns.
+        self.chat_history.clear();
+        self.inference = None;
+        self.pending_chat_user_msg = None;
+        // Force Full mode per the user's spec; auto-reset scope.
+        self.inference_mode = InferenceMode::Full;
+        self.ai_mode = AiMode::None;
+
+        let system_prompt = self.cfg.typst_compile.resolved_error_system_prompt();
+        let user_prompt = format!(
+            "Book: `{book_title}` (slug `{slug}`)\n\
+             Root file: {root}\n\n\
+             `typst compile` failed with the following error. Please diagnose \
+             it using the inkhaven file-layout knowledge from the system \
+             prompt and tell me the smallest concrete fix.\n\n\
+             --- typst stderr ---\n{err}",
+            book_title = book.title,
+            slug = book.slug,
+            root = root_typ.display(),
+            err = error_text.trim(),
+        );
+
+        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("typst error: can't reach LLM ({e})");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            Some(system_prompt),
+            Vec::new(),
+            user_prompt.clone(),
+        );
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        // Record the user turn so the assistant's reply ends up in
+        // chat_history when streaming finishes.
+        self.pending_chat_user_msg = Some(user_prompt);
+        self.change_focus(Focus::Ai);
+        self.status = format!(
+            "typst compile failed · {provider} is analysing the error in the AI pane…"
+        );
+    }
+
+    fn import_directory_tree(
+        &mut self,
+        root: &std::path::Path,
+        progress: &mut dyn FnMut(usize, &Path),
+    ) {
         // The top-level dir's "kind" adapts to where the tree cursor sits:
         //   Book      → top dir becomes a Chapter
         //   Chapter   → top dir becomes a Subchapter
@@ -4309,7 +7831,7 @@ impl App {
         });
 
         let mut counts = ImportCounts::default();
-        let result = self.import_dir_recursive(root, parent_id, &mut counts);
+        let result = self.import_dir_recursive(root, parent_id, &mut counts, progress);
 
         // Always reload — even on partial failure the new branches/paragraphs
         // that DID get created should be visible in the tree.
@@ -4340,6 +7862,7 @@ impl App {
         source: &std::path::Path,
         parent_id: Option<Uuid>,
         counts: &mut ImportCounts,
+        progress: &mut dyn FnMut(usize, &Path),
     ) -> InkResult<()> {
         // Resolve parent against a freshly loaded hierarchy so prior creates
         // in this import are visible.
@@ -4360,9 +7883,9 @@ impl App {
                     None
                 }
             }
-            Some(NodeKind::Paragraph) => {
+            Some(NodeKind::Paragraph) | Some(NodeKind::Image) => {
                 return Err(Error::Store(
-                    "can't import under a paragraph — move cursor to a branch first".into(),
+                    "can't import under a leaf — move cursor to a branch first".into(),
                 ));
             }
         };
@@ -4373,7 +7896,7 @@ impl App {
             // point are lost (the bounded hierarchy can't represent them),
             // but the prose comes through.
             let pid = parent_id.expect("None parent already handled by kind match");
-            return self.flatten_files_into(source, pid, counts);
+            return self.flatten_files_into(source, pid, counts, progress);
         };
 
         let title = source
@@ -4401,9 +7924,9 @@ impl App {
         let mut first_err: Option<Error> = None;
         for child_path in children {
             let res = if child_path.is_dir() {
-                self.import_dir_recursive(&child_path, Some(created_id), counts)
+                self.import_dir_recursive(&child_path, Some(created_id), counts, progress)
             } else {
-                self.import_file_as_paragraph_by_id(&child_path, created_id, counts)
+                self.import_file_as_paragraph_by_id(&child_path, created_id, counts, progress)
             };
             if let Err(e) = res {
                 if first_err.is_none() {
@@ -4425,6 +7948,7 @@ impl App {
         source: &std::path::Path,
         parent_id: Uuid,
         counts: &mut ImportCounts,
+        progress: &mut dyn FnMut(usize, &Path),
     ) -> InkResult<()> {
         let mut first_err: Option<Error> = None;
         for entry in walkdir::WalkDir::new(source)
@@ -4447,7 +7971,12 @@ impl App {
             if name.starts_with('.') {
                 continue;
             }
-            if let Err(e) = self.import_file_as_paragraph_by_id(entry.path(), parent_id, counts) {
+            if let Err(e) = self.import_file_as_paragraph_by_id(
+                entry.path(),
+                parent_id,
+                counts,
+                progress,
+            ) {
                 if first_err.is_none() {
                     first_err = Some(e);
                 }
@@ -4464,9 +7993,22 @@ impl App {
         file: &std::path::Path,
         parent_id: Uuid,
         counts: &mut ImportCounts,
+        progress: &mut dyn FnMut(usize, &Path),
     ) -> InkResult<()> {
         let title = derive_paragraph_title_from_path(file);
-        let bytes = std::fs::read(file).map_err(Error::Io)?;
+        let raw = std::fs::read(file).map_err(Error::Io)?;
+        // Normalise line endings so DOS / old-Mac dumps don't keep
+        // their `\r` bytes on disk — those survive into the editor
+        // load path and render as control glyphs. Only touched when
+        // the content decodes as UTF-8; binary payloads are written
+        // verbatim and will simply fail to render meaningfully.
+        let bytes: Vec<u8> = match std::str::from_utf8(&raw) {
+            Ok(text) if text.contains('\r') => text
+                .replace("\r\n", "\n")
+                .replace('\r', "\n")
+                .into_bytes(),
+            _ => raw,
+        };
         let hierarchy = Hierarchy::load(&self.store)?;
         let parent = hierarchy
             .get(parent_id)
@@ -4488,6 +8030,7 @@ impl App {
             self.store.update_paragraph_content(&mut node, &bytes)?;
         }
         counts.paragraphs += 1;
+        progress(counts.paragraphs, file);
         Ok(())
     }
 
@@ -4602,12 +8145,7 @@ impl App {
             self.modal = Modal::None;
             return;
         };
-        let lines: Vec<String> = if body.is_empty() {
-            vec![String::new()]
-        } else {
-            body.split('\n').map(String::from).collect()
-        };
-        let mut new_textarea = TextArea::new(lines);
+        let mut new_textarea = TextArea::new(body_to_lines(&body));
         new_textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
         new_textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
         doc.textarea = new_textarea;
@@ -4622,8 +8160,67 @@ impl App {
         self.change_focus(Focus::Editor);
         self.status = format!(
             "loaded snapshot from {} — bold marks the change vs saved",
-            when.format("%Y-%m-%d %H:%M:%S")
+            when.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S %z")
         );
+    }
+
+    fn delete_current_snapshot(&mut self) {
+        let (snap_id, when, paragraph_id, paragraph_title) = match &self.modal {
+            Modal::SnapshotPicker {
+                snapshots,
+                cursor,
+                paragraph_id,
+                paragraph_title,
+            } => {
+                let Some(snap) = snapshots.get(*cursor).cloned() else {
+                    return;
+                };
+                (snap.id, snap.created_at, *paragraph_id, paragraph_title.clone())
+            }
+            _ => return,
+        };
+
+        if let Err(e) = self.store.delete_snapshot(snap_id) {
+            self.status = format!("delete snapshot failed: {e}");
+            return;
+        }
+
+        let when_local = when
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S %z");
+
+        match self.store.list_snapshots(paragraph_id) {
+            Ok(snapshots) => {
+                if snapshots.is_empty() {
+                    self.modal = Modal::None;
+                    self.status = format!(
+                        "deleted snapshot {when_local} — no snapshots left for `{paragraph_title}`"
+                    );
+                } else {
+                    // Keep the cursor on the same row index, clamped
+                    // to the new (shorter) list — feels like "the row
+                    // below the deleted one slid up".
+                    let new_cursor = match &self.modal {
+                        Modal::SnapshotPicker { cursor, .. } => {
+                            (*cursor).min(snapshots.len() - 1)
+                        }
+                        _ => 0,
+                    };
+                    self.modal = Modal::SnapshotPicker {
+                        paragraph_id,
+                        paragraph_title,
+                        snapshots,
+                        cursor: new_cursor,
+                    };
+                    self.status = format!("deleted snapshot {when_local}");
+                }
+            }
+            Err(e) => {
+                self.modal = Modal::None;
+                self.status =
+                    format!("deleted snapshot, but couldn't refresh list: {e}");
+            }
+        }
     }
 
     fn open_delete_modal(&mut self) {
@@ -4686,10 +8283,41 @@ impl App {
         let is_file_picker = matches!(self.modal, Modal::FilePicker(_));
         let is_find = matches!(self.modal, Modal::FindReplace { .. });
         let is_quickref = matches!(self.modal, Modal::QuickRef { .. });
+        let is_credits = matches!(self.modal, Modal::Credits { .. });
+        let is_book_info = matches!(self.modal, Modal::BookInfo { .. });
+        let is_llm_picker = matches!(self.modal, Modal::LlmPicker { .. });
+        let is_image_picker = matches!(self.modal, Modal::ImagePicker { .. });
+        let is_function_picker = matches!(self.modal, Modal::FunctionPicker { .. });
+        let is_status_filter = matches!(self.modal, Modal::StatusFilter { .. });
         let is_help_query = matches!(self.modal, Modal::HelpQuery { .. });
+        let is_chat_search_prompt = matches!(self.modal, Modal::ChatSearchPrompt { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
+            return Ok(false);
+        }
+        if is_credits {
+            self.credits_handle_key(key);
+            return Ok(false);
+        }
+        if is_book_info {
+            self.book_info_handle_key(key);
+            return Ok(false);
+        }
+        if is_llm_picker {
+            self.llm_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_image_picker {
+            self.image_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_function_picker {
+            self.function_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_status_filter {
+            self.status_filter_handle_key(key);
             return Ok(false);
         }
 
@@ -4706,6 +8334,28 @@ impl App {
                 return Ok(false);
             }
             if let Modal::HelpQuery { input } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
+            return Ok(false);
+        }
+
+        if is_chat_search_prompt {
+            // Enter commits the query into `chat_search`; the rendered
+            // chat-history pane then auto-centres on the match. Esc
+            // closes the modal without starting a search (global Esc
+            // handler at the top of this function does the close).
+            if matches!(key.code, KeyCode::Enter) {
+                let query = match &self.modal {
+                    Modal::ChatSearchPrompt { input } => {
+                        input.as_str().trim().to_string()
+                    }
+                    _ => String::new(),
+                };
+                self.modal = Modal::None;
+                self.commit_chat_search(query);
+                return Ok(false);
+            }
+            if let Modal::ChatSearchPrompt { input } = &mut self.modal {
                 handle_text_input_key(input, key);
             }
             return Ok(false);
@@ -4868,6 +8518,7 @@ impl App {
 
         if is_snapshot {
             let mut commit = false;
+            let mut delete = false;
             if let Modal::SnapshotPicker {
                 snapshots, cursor, ..
             } = &mut self.modal
@@ -4888,11 +8539,20 @@ impl App {
                         *cursor = snapshots.len().saturating_sub(1);
                     }
                     KeyCode::Enter => commit = true,
+                    // D (case-insensitive) or the Delete key removes
+                    // the cursor's snapshot. No further confirmation —
+                    // snapshots are explicit creations (F5 / Ctrl+B N),
+                    // and refreshing the list keeps the cursor sane.
+                    KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Delete => {
+                        delete = true;
+                    }
                     _ => {}
                 }
             }
             if commit {
                 self.commit_snapshot_load();
+            } else if delete {
+                self.delete_current_snapshot();
             }
             return Ok(false);
         }
@@ -4987,8 +8647,21 @@ impl App {
         ) {
             Ok(node) => {
                 let new_id = node.id;
+                // For root-level user books: provision the artefacts
+                // subdirectory and the Typst-book skeleton (chapter +
+                // index/settings/globals paragraphs). No-op for other
+                // kinds; failure logs to status but doesn't roll back
+                // the just-created book.
+                if let Err(e) = self.store.provision_user_book(&self.cfg, &node) {
+                    self.status = format!(
+                        "added {} `{}` — but Typst skeleton failed: {e}",
+                        kind.as_str(),
+                        node.title
+                    );
+                } else {
+                    self.status = format!("added {} `{}`", kind.as_str(), node.title);
+                }
                 self.modal = Modal::None;
-                self.status = format!("added {} `{}`", kind.as_str(), node.title);
                 self.reload_hierarchy();
                 if let Some(i) = self.rows.iter().position(|(id, _)| *id == new_id) {
                     self.tree_cursor = i;
@@ -5070,15 +8743,77 @@ impl App {
 
         match node.kind {
             NodeKind::Paragraph => self.load_paragraph(&node)?,
+            NodeKind::Image => self.show_image_info(&node),
             _ => {
                 self.status = format!(
-                    "`{}` is a {} (Enter opens paragraphs)",
+                    "`{}` is a {} (Enter opens paragraphs / images)",
                     node.title,
                     node.kind.as_str()
                 );
             }
         }
         Ok(())
+    }
+
+    /// Enter on an Image row: try the ratatui-image preview modal,
+    /// fall back to a status-bar info line when the picker isn't
+    /// available (preview disabled, terminal lacks graphics protocol,
+    /// or the image bytes aren't decodable by the `image` crate).
+    fn show_image_info(&mut self, node: &Node) {
+        let fs_rel = node.file.clone().unwrap_or_else(|| "<no path>".into());
+        let abs = self.layout.root.join(&fs_rel);
+        let size = std::fs::metadata(&abs)
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        // Preview path: fetch bytes from bdslib (source of truth),
+        // decode, build a resize protocol, pop the modal.
+        if let Some(picker) = self.image_picker.as_ref() {
+            match self.store.image_bytes(node.id) {
+                Ok(Some(bytes)) => match image::load_from_memory(&bytes) {
+                    Ok(dyn_img) => {
+                        let proto = picker.new_resize_protocol(dyn_img);
+                        self.modal = Modal::ImagePreview {
+                            title: node.title.clone(),
+                            fs_rel: fs_rel.clone(),
+                            size_bytes: size,
+                            proto,
+                        };
+                        self.status = format!(
+                            "🖼 {}  ·  Esc closes  ·  {} bytes",
+                            node.title, size
+                        );
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "image decode failed for {}: {e} — falling back to info line",
+                            node.title
+                        );
+                    }
+                },
+                Ok(None) => {
+                    tracing::warn!(
+                        "image {} has no bytes in bdslib — info line only",
+                        node.title
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("image_bytes({}): {e}", node.title);
+                }
+            }
+        }
+
+        // Fallback: status-bar one-liner.
+        let caption_hint = node
+            .image_caption
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("(no caption)");
+        self.status = format!(
+            "🖼 {} · {} · {} bytes · {}",
+            node.title, fs_rel, size, caption_hint
+        );
     }
 
     fn load_paragraph(&mut self, node: &Node) -> Result<()> {
@@ -5118,11 +8853,7 @@ impl App {
             }
         };
 
-        let lines: Vec<String> = if body.is_empty() {
-            vec![String::new()]
-        } else {
-            body.split('\n').map(String::from).collect()
-        };
+        let lines = body_to_lines(&body);
         let saved_lines = lines.clone();
         let mut textarea = TextArea::new(lines);
         textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
@@ -5168,6 +8899,7 @@ impl App {
             search: None,
             read_only,
             correction_baseline: None,
+            content_type: node.content_type.clone(),
         });
         self.change_focus(Focus::Editor);
         self.status = format!("opened {}", abs.display());
@@ -5288,6 +9020,62 @@ impl App {
     // -------- drawing -----------------------------------------------------
 
     fn draw(&mut self, f: &mut ratatui::Frame) {
+        // Typewriter mode: hide every pane except the editor. The
+        // editor's own header still shows L/C, word count, edited
+        // ago, and the status badge — so the user gets the writing-
+        // critical metadata without the surrounding panes. Modals
+        // (Quick-ref, Book info, etc.) still float on top, which
+        // makes Ctrl+B H usable mid-flow.
+        if self.typewriter_mode {
+            let area = f.area();
+            // Empty pane rects mean the mouse handler skips everything
+            // hidden (clicks fall through to the editor's own rect).
+            self.layout_search = Rect::default();
+            self.layout_tree = Rect::default();
+            self.layout_editor = area;
+            self.layout_ai = Rect::default();
+            self.layout_ai_prompt = Rect::default();
+            self.draw_editor(f, area);
+            if !matches!(self.modal, Modal::None) {
+                self.draw_modal(f, f.area());
+            }
+            return;
+        }
+
+        if self.ai_fullscreen {
+            // Layout: most of the screen split 50/50 (AI pane | chat
+            // history); AI prompt at the bottom; one status line.
+            // Tree, editor, and search bar are hidden.
+            let outer = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(3),
+                    Constraint::Length(1),
+                ])
+                .split(f.area());
+            let top = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(50),
+                    Constraint::Percentage(50),
+                ])
+                .split(outer[0]);
+            self.layout_search = Rect::default();
+            self.layout_tree = Rect::default();
+            self.layout_editor = Rect::default();
+            self.layout_ai = top[0];
+            self.layout_ai_prompt = outer[1];
+            self.draw_ai(f, top[0]);
+            self.draw_chat_history(f, top[1]);
+            self.draw_ai_prompt(f, outer[1]);
+            self.draw_status(f, outer[2]);
+            if !matches!(self.modal, Modal::None) {
+                self.draw_modal(f, f.area());
+            }
+            return;
+        }
+
         let outer = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -5336,6 +9124,79 @@ impl App {
         }
     }
 
+
+    /// Render the Ctrl+B V credits panel. Version + author come from
+    /// `CARGO_PKG_*` env vars set by cargo at compile time; the component
+    /// list is a hand-curated static (kept here so it stays in sync with
+    /// what Cargo.toml actually depends on — automating from Cargo.lock
+    /// would dump 200+ transitive crates that no user wants to read).
+    fn draw_credits_modal(&self, f: &mut ratatui::Frame, area: Rect, scroll: usize) {
+        let lines = build_credits_lines(&self.theme);
+        let total = lines.len();
+
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(
+            " Inkhaven v{} · author / credits ",
+            env!("CARGO_PKG_VERSION")
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // 1 row reserved for the bottom hint line.
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+
+        let max_scroll = total.saturating_sub(body_h);
+        let scroll = scroll.min(max_scroll);
+        let end = (scroll + body_h).min(total);
+        let visible: Vec<Line<'_>> = lines[scroll..end].to_vec();
+        f.render_widget(Paragraph::new(visible), body_rect);
+
+        let at_end = end >= total;
+        let more_hint = if at_end { " " } else { " · more below" };
+        let hint = format!(
+            " ↑↓ / PgUp/PgDn / Home/End scroll · Esc close{more_hint}    (showing {}–{} of {total}) ",
+            scroll + 1,
+            end
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
 
     fn draw_quickref_modal(
         &self,
@@ -5549,7 +9410,7 @@ impl App {
         f.render_widget(Paragraph::new(hint), footer_rect);
     }
 
-    fn draw_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+    fn draw_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
         // The file picker needs a much larger panel than the fixed
         // 80-wide / 8-high box used for confirms — give it its own renderer.
         if let Modal::FilePicker(picker) = &self.modal {
@@ -5558,6 +9419,34 @@ impl App {
         }
         if let Modal::QuickRef { focus, scroll } = &self.modal {
             self.draw_quickref_modal(f, area, *focus, *scroll);
+            return;
+        }
+        if let Modal::Credits { scroll } = &self.modal {
+            self.draw_credits_modal(f, area, *scroll);
+            return;
+        }
+        if let Modal::BookInfo { scroll } = &self.modal {
+            self.draw_book_info_modal(f, area, *scroll);
+            return;
+        }
+        if let Modal::LlmPicker { .. } = &self.modal {
+            self.draw_llm_picker_modal(f, area);
+            return;
+        }
+        if let Modal::ImagePicker { .. } = &self.modal {
+            self.draw_image_picker_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::ImagePreview { .. }) {
+            self.draw_image_preview_modal(f, area);
+            return;
+        }
+        if let Modal::FunctionPicker { .. } = &self.modal {
+            self.draw_function_picker_modal(f, area);
+            return;
+        }
+        if let Modal::StatusFilter { .. } = &self.modal {
+            self.draw_status_filter_modal(f, area);
             return;
         }
 
@@ -5572,6 +9461,13 @@ impl App {
             Modal::None => return,
             Modal::FilePicker(_) => unreachable!("file picker handled above"),
             Modal::QuickRef { .. } => unreachable!("quickref handled above"),
+            Modal::Credits { .. } => unreachable!("credits handled above"),
+            Modal::BookInfo { .. } => unreachable!("book info handled above"),
+            Modal::LlmPicker { .. } => unreachable!("llm picker handled above"),
+            Modal::ImagePicker { .. } => unreachable!("image picker handled above"),
+            Modal::ImagePreview { .. } => unreachable!("image preview handled above"),
+            Modal::FunctionPicker { .. } => unreachable!("function picker handled above"),
+            Modal::StatusFilter { .. } => unreachable!("status filter handled above"),
             Modal::HelpQuery { input } => {
                 let body = vec![
                     Line::from(""),
@@ -5587,6 +9483,22 @@ impl App {
                     )),
                 ];
                 (" Help — F1 ".to_string(), Color::Cyan, body)
+            }
+            Modal::ChatSearchPrompt { input } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Search chat history:",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter starts from the newest match · Ctrl+X advances to older · Esc cancels",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (" Chat search — Ctrl+F ".to_string(), Color::Cyan, body)
             }
             Modal::FindReplace {
                 search_input,
@@ -5761,7 +9673,10 @@ impl App {
                 body.push(Line::from(""));
                 for (i, snap) in snapshots.iter().enumerate() {
                     let selected = i == *cursor;
-                    let ts = snap.created_at.format("%Y-%m-%d %H:%M:%S");
+                    let ts = snap
+                        .created_at
+                        .with_timezone(&chrono::Local)
+                        .format("%Y-%m-%d %H:%M:%S %z");
                     let head = format!(
                         " {ts}   {}w   {}",
                         snap.word_count,
@@ -5782,7 +9697,7 @@ impl App {
                 }
                 body.push(Line::from(""));
                 body.push(Line::from(Span::styled(
-                    " ↑↓ navigate · Enter loads (current edits become dirty) · Esc cancel ",
+                    " ↑↓ navigate · Enter loads (current edits become dirty) · D / Del delete · Esc cancel ",
                     Style::default().add_modifier(Modifier::DIM),
                 )));
                 (header, Color::Cyan, body)
@@ -5903,6 +9818,12 @@ impl App {
             if let Err(e) = self.save_session() {
                 tracing::warn!("focus-loss session save failed: {e}");
             }
+            // Typewriter SFX — "remove page from machine" when the
+            // editor pane loses focus. No-op when sound is disabled or
+            // the host has no audio device.
+            if let Some(sp) = &self.sound {
+                sp.play_focus_out();
+            }
         }
         self.focus = new;
     }
@@ -5990,6 +9911,7 @@ impl App {
             } else {
                 match node.kind {
                     NodeKind::Paragraph => "¶ ",
+                    NodeKind::Image => "▣ ",
                     // For branches, use ▾ (expanded) / ▸ (collapsed) glyphs
                     // so the expand/collapse state is visible at a glance.
                     _ => {
@@ -6009,6 +9931,7 @@ impl App {
                 NodeKind::Chapter => self.theme.tree_chapter_fg,
                 NodeKind::Subchapter => self.theme.tree_subchapter_fg,
                 NodeKind::Paragraph => self.theme.tree_paragraph_fg,
+                NodeKind::Image => self.theme.tree_image_fg,
             };
             let mut row_style = Style::default().fg(kind_fg);
             if matches!(node.kind, NodeKind::Book | NodeKind::Chapter) {
@@ -6025,20 +9948,36 @@ impl App {
 
             // Truncate very long titles (typical for paragraphs whose name
             // was auto-derived from the first sentence) so they don't push
-            // the word count off the pane.
+            // the trailing status badge off the pane.
             let display_title = truncate_title(&node.title, TITLE_MAX_DISPLAY);
-            let mut spans = vec![Span::styled(
-                format!("{indent}{marker}{display_title}"),
+            // Build the prefix: indent + glyph + status-letter badge.
+            // The badge is one char (or space) styled with the matching
+            // workflow colour — gives every paragraph row a consistent
+            // gutter column the eye can scan down.
+            let status_label = if matches!(node.kind, NodeKind::Paragraph) {
+                display_status(node.status.as_deref())
+            } else {
+                "None"
+            };
+            let status_letter = status_letter(status_label);
+            let status_badge_style = status_style(status_label, &self.theme);
+            let mut spans: Vec<Span<'_>> = Vec::new();
+            spans.push(Span::styled(
+                format!("{indent}{marker}"),
                 row_style,
-            )];
-            if matches!(node.kind, NodeKind::Paragraph) {
-                let count_style = if i == self.tree_cursor || is_open {
-                    row_style
-                } else {
+            ));
+            // Always reserve the badge column (a space when None) so
+            // titles align across rows regardless of which paragraphs
+            // have a status set.
+            spans.push(Span::styled(
+                format!("{status_letter} "),
+                if status_label == "None" {
                     Style::default().add_modifier(Modifier::DIM)
-                };
-                spans.push(Span::styled(format!("  {}w", node.word_count), count_style));
-            }
+                } else {
+                    status_badge_style
+                },
+            ));
+            spans.push(Span::styled(display_title.to_string(), row_style));
             lines.push(Line::from(spans));
         }
 
@@ -6055,15 +9994,71 @@ impl App {
                 let (row, col) = d.textarea.cursor();
                 let dirty = if d.dirty { " [modified]" } else { "" };
                 let ro = if d.read_only { " [read-only]" } else { "" };
-                Line::from(vec![
-                    Span::raw(format!(" Editor — {}{}{} · ", d.title, ro, dirty)),
-                    Span::styled(
-                        format!("L{} C{} ", row + 1, col + 1),
-                        Style::default()
-                            .fg(self.theme.editor_position_fg)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ])
+                // Live word count + reading-time estimate (250 wpm —
+                // matches the Ctrl+B I book-info modal). Computed each
+                // frame from the textarea so it tracks edits.
+                let words: usize = d
+                    .textarea
+                    .lines()
+                    .iter()
+                    .map(|l| l.split_whitespace().count())
+                    .sum();
+                let reading = format_reading_time(words);
+                let stats_style = Style::default()
+                    .fg(self.theme.editor_position_fg)
+                    .add_modifier(Modifier::BOLD);
+                let lang_tag = match d.content_type.as_deref() {
+                    Some("hjson") => " [hjson]",
+                    _ => "",
+                };
+                // Status badge: hidden when None to keep the header
+                // visually quiet on fresh paragraphs; colour-coded
+                // through the workflow when set. The badge wraps in
+                // brackets so it reads as metadata, not prose.
+                let status_node = self.hierarchy.get(d.id);
+                let status_label = status_node
+                    .and_then(|n| n.status.as_deref())
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty() && *s != "None");
+                // "edited X ago" from the node's `modified_at`. Updated
+                // automatically on save (via `update_paragraph_content`),
+                // and recomputed on every frame so the value freshens
+                // visibly when the user re-opens after a break.
+                let edited_ago = status_node.map(|n| {
+                    let now = chrono::Utc::now();
+                    let delta = now.signed_duration_since(n.modified_at);
+                    let secs = delta.num_seconds().max(0) as u64;
+                    format_age_humantime(std::time::Duration::from_secs(secs))
+                });
+                let mut spans: Vec<Span<'_>> = Vec::new();
+                spans.push(Span::raw(format!(
+                    " Editor — {}{}{}{} · ",
+                    d.title, lang_tag, ro, dirty
+                )));
+                if let Some(label) = status_label {
+                    spans.push(Span::styled(
+                        format!("[{label}]"),
+                        status_style(label, &self.theme),
+                    ));
+                    spans.push(Span::raw(" · "));
+                }
+                spans.push(Span::styled(
+                    format!("L{} C{} ", row + 1, col + 1),
+                    stats_style,
+                ));
+                spans.push(Span::raw("· "));
+                spans.push(Span::styled(format!("{words}w"), stats_style));
+                spans.push(Span::raw(" · "));
+                spans.push(Span::styled(reading, stats_style));
+                if let Some(ago) = edited_ago {
+                    spans.push(Span::raw(" · "));
+                    spans.push(Span::styled(
+                        format!("edited {ago} ago"),
+                        Style::default().add_modifier(Modifier::DIM),
+                    ));
+                }
+                spans.push(Span::raw(" "));
+                Line::from(spans)
             }
             None => Line::from(" Editor "),
         };
@@ -6188,7 +10183,7 @@ impl App {
         let highlighter = &mut self.highlighter;
         let current_lines: Vec<String> = opened.textarea.lines().to_vec();
         let source = current_lines.join("\n");
-        let highlighted = highlighter.highlight_lines(&source, theme);
+        let highlighted = highlight_for_content(highlighter, &source, theme, opened.content_type.as_deref());
 
         // Precompute "added since last save" bitmaps per source row.
         let saved = &opened.saved_lines;
@@ -6354,7 +10349,7 @@ impl App {
         let highlighter = &mut self.highlighter;
         let current_lines: Vec<String> = opened.textarea.lines().to_vec();
         let source = current_lines.join("\n");
-        let highlighted = highlighter.highlight_lines(&source, theme);
+        let highlighted = highlight_for_content(highlighter, &source, theme, opened.content_type.as_deref());
 
         let saved = &opened.saved_lines;
         let added_per_row: Vec<Vec<bool>> = current_lines
@@ -6621,6 +10616,394 @@ impl App {
         }
     }
 
+    fn toggle_chat_selection_mode(&mut self) {
+        if self.chat_selection.is_some() {
+            self.chat_selection = None;
+            self.status = "chat selection mode off".into();
+            return;
+        }
+        if self.chat_history.is_empty() {
+            self.status = "chat history is empty — nothing to select".into();
+            return;
+        }
+        // Start at the newest turn — the assistant reply you just
+        // received is what most users want to copy.
+        let turn = self.chat_history.len() - 1;
+        self.chat_selection = Some(ChatSelectionState { turn });
+        // Dismiss the search highlights so the selection's block bg
+        // isn't fighting for visibility.
+        self.chat_search = None;
+        // Reset scroll — the renderer auto-centres on the selected
+        // turn anyway.
+        self.chat_history_scroll = 0;
+        self.status =
+            "chat selection mode · ↑↓ navigate · c=copy · t=insert into editor · Esc to exit".into();
+    }
+
+    fn chat_selection_step(&mut self, delta: isize) {
+        let Some(sel) = self.chat_selection else { return };
+        let total = self.chat_history.len();
+        if total == 0 {
+            self.chat_selection = None;
+            return;
+        }
+        let new_turn = if delta < 0 {
+            sel.turn.saturating_sub(delta.unsigned_abs())
+        } else {
+            (sel.turn + delta as usize).min(total - 1)
+        };
+        if let Some(s) = self.chat_selection.as_mut() {
+            s.turn = new_turn;
+        }
+        let label = self.chat_turn_label(new_turn);
+        self.status = format!("chat selection: {} {}/{total}", label, new_turn + 1);
+    }
+
+    fn chat_selection_jump(&mut self, target: usize) {
+        let Some(_sel) = self.chat_selection else { return };
+        let total = self.chat_history.len();
+        if total == 0 {
+            self.chat_selection = None;
+            return;
+        }
+        let new_turn = target.min(total - 1);
+        if let Some(s) = self.chat_selection.as_mut() {
+            s.turn = new_turn;
+        }
+        let label = self.chat_turn_label(new_turn);
+        self.status = format!("chat selection: {} {}/{total}", label, new_turn + 1);
+    }
+
+    fn chat_turn_label(&self, idx: usize) -> &'static str {
+        match self.chat_history.get(idx) {
+            Some(ChatTurn::User(_)) => "User",
+            Some(ChatTurn::Assistant(_)) => "Assistant",
+            None => "?",
+        }
+    }
+
+    /// `c` / `C` action: copy the selected turn's text to the system
+    /// clipboard. Silently no-op when no clipboard is available
+    /// (headless host); status bar reports the outcome either way.
+    fn chat_selection_copy(&mut self) {
+        let Some(sel) = self.chat_selection else { return };
+        let Some(turn) = self.chat_history.get(sel.turn) else { return };
+        let text = match turn {
+            ChatTurn::User(s) | ChatTurn::Assistant(s) => s.clone(),
+        };
+        match self.clipboard.as_mut() {
+            Some(cb) => match cb.set_text(text.clone()) {
+                Ok(()) => {
+                    self.status = format!(
+                        "copied {} turn ({} chars)",
+                        self.chat_turn_label(sel.turn),
+                        text.chars().count()
+                    );
+                }
+                Err(e) => {
+                    self.status = format!("clipboard copy failed: {e}");
+                }
+            },
+            None => {
+                self.status =
+                    "no system clipboard available — copy unavailable on this host".into();
+            }
+        }
+    }
+
+    /// `t` / `T` action: insert the selected turn's text at the
+    /// editor cursor. Useful when an Assistant reply is the right
+    /// next paragraph or when a User question becomes the new
+    /// prompt body. Requires an open paragraph in the editor.
+    fn chat_selection_into_editor(&mut self) {
+        let Some(sel) = self.chat_selection else { return };
+        let Some(turn) = self.chat_history.get(sel.turn) else { return };
+        let text = match turn {
+            ChatTurn::User(s) | ChatTurn::Assistant(s) => s.clone(),
+        };
+        let label = self.chat_turn_label(sel.turn);
+        if self.opened.is_none() {
+            self.status =
+                "no paragraph open — switch off AI fullscreen (Ctrl+B K) and pick one".into();
+            return;
+        }
+        if let Some(doc) = self.opened.as_mut() {
+            doc.textarea.insert_str(&text);
+            doc.dirty = true;
+        }
+        self.status = format!(
+            "inserted {label} turn into editor ({} chars)",
+            text.chars().count()
+        );
+    }
+
+    /// Open the chat-history search query modal. Pre-populates the
+    /// input with the previous query (if any) so re-search is a
+    /// single Enter.
+    fn open_chat_search_prompt(&mut self) {
+        if self.chat_history.is_empty() {
+            self.status = "chat history is empty — nothing to search".into();
+            return;
+        }
+        let mut input = TextInput::new();
+        if let Some(prev) = &self.chat_search {
+            for c in prev.query.chars() {
+                input.insert_char(c);
+            }
+        }
+        self.modal = Modal::ChatSearchPrompt { input };
+        self.status =
+            "Search chat history · Enter to start (newest first) · Ctrl+X next (older) · Esc cancel".into();
+    }
+
+    /// Apply the just-submitted query. Empty query clears any active
+    /// search. The `current` index starts at the LAST match — the
+    /// most recent / closest-to-the-bottom hit — per the spec.
+    fn commit_chat_search(&mut self, query: String) {
+        if query.is_empty() {
+            self.chat_search = None;
+            self.status = "chat search: empty query — cleared".into();
+            return;
+        }
+        let total = self.chat_search_matches(&query).len();
+        if total == 0 {
+            self.chat_search = None;
+            self.status = format!("chat search: no match for `{query}`");
+            return;
+        }
+        self.chat_search = Some(ChatSearchState {
+            query: query.clone(),
+            current: total - 1, // newest match (last in match order)
+        });
+        // Recompute scroll so the centre lands on the match.
+        // draw_chat_history handles this from the state.
+        self.chat_history_scroll = 0;
+        self.status = format!("chat search: `{query}` · 1/{total} (newest)");
+    }
+
+    /// Step the chat-search cursor one match toward older history.
+    /// Wraps from oldest back to newest. Matches are recomputed each
+    /// call to handle terminal resize / streaming-token arrival.
+    fn advance_chat_search(&mut self) {
+        let Some((query, current)) = self
+            .chat_search
+            .as_ref()
+            .map(|s| (s.query.clone(), s.current))
+        else {
+            return;
+        };
+        let total = self.chat_search_matches(&query).len();
+        if total == 0 {
+            // Live history may have lost the matches we had — clear.
+            self.chat_search = None;
+            self.status = "chat search: no matches in current history".into();
+            return;
+        }
+        let new_current = (current + total - 1) % total;
+        if let Some(search) = self.chat_search.as_mut() {
+            search.current = new_current;
+        }
+        self.status = format!(
+            "chat search: `{query}` · {}/{}",
+            new_current + 1,
+            total
+        );
+    }
+
+    /// Find every line index in the rendered chat-history pane
+    /// whose text contains `query` (case-insensitive). Render runs
+    /// against the same shape `draw_chat_history` produces so the
+    /// indices map 1-1 to rendered rows.
+    fn chat_search_matches(&self, query: &str) -> Vec<usize> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let needle = query.to_lowercase();
+        let (lines, _) = self.build_chat_history_lines();
+        let mut out: Vec<usize> = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            if text.to_lowercase().contains(&needle) {
+                out.push(i);
+            }
+        }
+        out
+    }
+
+    /// Build the chat-history pane's Lines exactly as
+    /// `draw_chat_history` does — same iteration, same markdown
+    /// rendering, same headers. Returns both the lines and per-turn
+    /// `(line_start..line_end)` ranges so the chat-selection mode
+    /// can highlight the active turn as a block.
+    fn build_chat_history_lines(&self) -> (Vec<Line<'static>>, Vec<std::ops::Range<usize>>) {
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        let mut turn_ranges: Vec<std::ops::Range<usize>> = Vec::new();
+        let user_style = Style::default()
+            .fg(self.theme.ai_scope_fg)
+            .add_modifier(Modifier::BOLD);
+        let assistant_style = Style::default()
+            .fg(self.theme.ai_infer_fg)
+            .add_modifier(Modifier::BOLD);
+        for (i, turn) in self.chat_history.iter().enumerate() {
+            let turn_start = lines.len();
+            match turn {
+                ChatTurn::User(text) => {
+                    if i > 0 {
+                        lines.push(Line::from(""));
+                    }
+                    lines.push(Line::from(Span::styled(
+                        "❯ User".to_string(),
+                        user_style,
+                    )));
+                    for line in text.lines() {
+                        lines.push(Line::from(format!("  {line}")));
+                    }
+                }
+                ChatTurn::Assistant(text) => {
+                    lines.push(Line::from(Span::styled(
+                        "← Assistant".to_string(),
+                        assistant_style,
+                    )));
+                    let rendered = super::markdown::render(text);
+                    if rendered.is_empty() {
+                        for line in text.lines() {
+                            lines.push(Line::from(format!("  {line}")));
+                        }
+                    } else {
+                        for l in rendered {
+                            lines.push(l);
+                        }
+                    }
+                }
+            }
+            turn_ranges.push(turn_start..lines.len());
+        }
+        (lines, turn_ranges)
+    }
+
+    /// Render the accumulated chat history (User / Assistant turns).
+    /// Used by the `Ctrl+B K` AI-fullscreen layout. The newest turn is
+    /// pinned to the bottom of the pane — old history scrolls up off-
+    /// screen, matching the natural chat-window UX. `Paragraph::scroll`
+    /// handles the offset so we don't have to track per-pane state.
+    fn draw_chat_history(&self, f: &mut ratatui::Frame, area: Rect) {
+        let scroll_tag = if self.chat_history_scroll > 0 {
+            format!(" · ↑ {} line(s)", self.chat_history_scroll)
+        } else {
+            String::new()
+        };
+        let block = self.pane_block_line(
+            Line::from(format!(
+                " Chat history · {} turn(s){scroll_tag} · ↑↓ / PgUp / PgDn ",
+                self.chat_history.len()
+            )),
+            // Use the AI focus colouring so the two AI-related panes
+            // visually group together when the layout is active.
+            Focus::Ai,
+        );
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        if self.chat_history.is_empty() {
+            let hint = Paragraph::new(
+                "(no chat turns yet — send a query from the AI prompt below)",
+            )
+            .style(Style::default().add_modifier(Modifier::DIM))
+            .wrap(Wrap { trim: false });
+            f.render_widget(hint, inner);
+            return;
+        }
+
+        let (mut lines, turn_ranges) = self.build_chat_history_lines();
+
+        // Chat-selection mode: paint the selected turn's lines with
+        // a block bg + clamp the turn index against the live
+        // history (so a deletion / wipe doesn't leave the highlight
+        // dangling).
+        let centred_selection: Option<usize> = if let Some(sel) = self.chat_selection {
+            let total_turns = self.chat_history.len();
+            if total_turns == 0 {
+                None
+            } else {
+                let turn = sel.turn.min(total_turns - 1);
+                match turn_ranges.get(turn).cloned() {
+                    Some(range) => {
+                        let block_style = ratatui::style::Style::default()
+                            .bg(self.theme.current_line_bg);
+                        for i in range.clone() {
+                            if let Some(line) = lines.get_mut(i) {
+                                for span in line.spans.iter_mut() {
+                                    span.style = span.style.patch(block_style);
+                                }
+                            }
+                        }
+                        Some((range.start + range.end) / 2)
+                    }
+                    None => None,
+                }
+            }
+        } else {
+            None
+        };
+
+        // If a search is active, highlight ONLY the matched substring
+        // on each hit line (not the whole line) and pin the
+        // centred match's line index for the scroll math. Matches
+        // the editor's per-token search highlight visually: the
+        // matched word reads dark text on a light pink bg, so the
+        // characters stay legible.
+        let body_h = inner.height as usize;
+        let centred_match: Option<usize> = if let Some(search) = &self.chat_search {
+            let needle = search.query.to_lowercase();
+            let mut match_indices: Vec<usize> = Vec::new();
+            for (i, line) in lines.iter().enumerate() {
+                let text: String =
+                    line.spans.iter().map(|s| s.content.as_ref()).collect();
+                if text.to_lowercase().contains(&needle) {
+                    match_indices.push(i);
+                }
+            }
+            let total = match_indices.len();
+            let cursor = if total == 0 {
+                0
+            } else {
+                search.current.min(total - 1)
+            };
+            for (mi, idx) in match_indices.iter().enumerate() {
+                let is_current = mi == cursor;
+                highlight_substring_in_line(
+                    &mut lines[*idx],
+                    &needle,
+                    is_current,
+                    &self.theme,
+                );
+            }
+            match_indices.get(cursor).copied()
+        } else {
+            None
+        };
+
+        // Scroll: search-centred mode wins over manual / auto when
+        // active. Otherwise the existing auto-bottom-pin minus the
+        // user's PageUp delta still drives.
+        let total = lines.len();
+        let auto_scroll = total.saturating_sub(body_h);
+        // Centring precedence: a live search trumps selection (the
+        // user is presumably hunting for a phrase); otherwise the
+        // chat-selection focal point; otherwise the user's manual
+        // PageUp delta over the auto-pin.
+        let centre_line = centred_match.or(centred_selection);
+        let scroll_offset = if let Some(line_idx) = centre_line {
+            line_idx.saturating_sub(body_h / 2).min(auto_scroll.max(0))
+        } else {
+            auto_scroll.saturating_sub(self.chat_history_scroll)
+        };
+        let p = Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_offset as u16, 0));
+        f.render_widget(p, inner);
+    }
+
     fn draw_prompt_picker(&self, f: &mut ratatui::Frame, area: Rect) {
         let width = (area.width * 6 / 10).max(40).min(area.width.saturating_sub(4));
         let matches = self.prompt_picker_matches();
@@ -6885,6 +11268,346 @@ fn truncate_title(title: &str, max_chars: usize) -> String {
 /// `unicode-segmentation`, so a selection of "Москва" works the same as
 /// dropping the cursor inside it. Trailing apostrophes / quotes are
 /// trimmed so "King's" doesn't pull in an extra quote.
+/// Dispatch the per-line highlight call based on `content_type` —
+/// typst (default) goes through the cached tree-sitter highlighter;
+/// "hjson" runs the lightweight hand-rolled lexer.
+pub fn highlight_for_content(
+    highlighter: &mut super::highlight::TypstHighlighter,
+    source: &str,
+    theme: &super::theme::Theme,
+    content_type: Option<&str>,
+) -> Vec<Vec<super::highlight::StyledRun>> {
+    match content_type {
+        Some("hjson") => super::hjson_highlight::highlight_hjson_lines(source, theme),
+        _ => highlighter.highlight_lines(source, theme),
+    }
+}
+
+/// Convert a tui-textarea (row, char-col) cursor into a byte offset
+/// inside `source = lines.join("\n")`. Used by the mode detector to
+/// query tree-sitter at the cursor's position.
+pub fn byte_offset_for_cursor(source: &str, row: usize, col: usize) -> usize {
+    let mut byte: usize = 0;
+    let mut current_row = 0;
+    for line in source.split_inclusive('\n') {
+        if current_row == row {
+            // Find the byte offset for `col` chars into this line
+            // (stop before the newline if any).
+            let body = line.strip_suffix('\n').unwrap_or(line);
+            return byte
+                + body
+                    .char_indices()
+                    .nth(col)
+                    .map(|(b, _)| b)
+                    .unwrap_or(body.len());
+        }
+        byte += line.len();
+        current_row += 1;
+    }
+    source.len()
+}
+
+/// Map digit chars '1'..'7' to a status label. Empty for any other
+/// char. 1 is the most-advanced status so the typical writer query —
+/// "what's actually ready to ship?" — is the lowest-effort chord.
+pub fn digit_to_status(c: char) -> Option<&'static str> {
+    match c {
+        '1' => Some("Ready"),
+        '2' => Some("Final"),
+        '3' => Some("Third"),
+        '4' => Some("Second"),
+        '5' => Some("First"),
+        '6' => Some("Napkin"),
+        '7' => Some("None"),
+        _ => None,
+    }
+}
+
+/// Apply an editor-style "search match" highlight to the first
+/// occurrence of `needle` (case-insensitive) inside a chat-history
+/// rendered line. The matched substring gets a dark foreground on a
+/// pink background (re-using `search_match_bg` / `search_current_bg`
+/// from the theme); surrounding text keeps its original styling.
+///
+/// Only the FIRST occurrence per line is highlighted — multiple
+/// matches on the same line is a UX corner case; the user can hit
+/// Ctrl+X to walk to the next line's match either way.
+pub fn highlight_substring_in_line(
+    line: &mut ratatui::text::Line<'static>,
+    needle_lower: &str,
+    is_current: bool,
+    theme: &super::theme::Theme,
+) {
+    if needle_lower.is_empty() {
+        return;
+    }
+    let full: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let lower = full.to_lowercase();
+    let Some(byte_pos) = lower.find(needle_lower) else { return };
+    let byte_end = byte_pos + needle_lower.len();
+    let char_start = full[..byte_pos].chars().count();
+    // Use `chars().count()` rather than slicing by needle.len() so
+    // we get the count in original-cased chars (UTF-8 case-fold can
+    // shift byte lengths).
+    let char_end = full[..byte_end].chars().count();
+
+    let highlight_bg = if is_current {
+        theme.search_current_bg
+    } else {
+        theme.search_match_bg
+    };
+    // Dark text on the pink bg — matches the editor's find-modal
+    // colour scheme so the matched word stays legible.
+    let mut highlight_style = ratatui::style::Style::default()
+        .bg(highlight_bg)
+        .fg(theme.pane_bg);
+    if is_current {
+        highlight_style = highlight_style.add_modifier(ratatui::style::Modifier::BOLD);
+    }
+
+    let mut new_spans: Vec<ratatui::text::Span<'static>> = Vec::new();
+    let mut cursor: usize = 0;
+    for span in line.spans.drain(..) {
+        let span_text = span.content.to_string();
+        let span_len = span_text.chars().count();
+        let span_end = cursor + span_len;
+        let overlap_start = char_start.max(cursor);
+        let overlap_end = char_end.min(span_end);
+        if overlap_start >= overlap_end {
+            new_spans.push(ratatui::text::Span::styled(span_text, span.style));
+            cursor = span_end;
+            continue;
+        }
+        if overlap_start > cursor {
+            let pre: String = span_text
+                .chars()
+                .take(overlap_start - cursor)
+                .collect();
+            new_spans.push(ratatui::text::Span::styled(pre, span.style));
+        }
+        let match_text: String = span_text
+            .chars()
+            .skip(overlap_start - cursor)
+            .take(overlap_end - overlap_start)
+            .collect();
+        new_spans.push(ratatui::text::Span::styled(match_text, highlight_style));
+        if overlap_end < span_end {
+            let post: String = span_text
+                .chars()
+                .skip(overlap_end - cursor)
+                .collect();
+            new_spans.push(ratatui::text::Span::styled(post, span.style));
+        }
+        cursor = span_end;
+    }
+    line.spans = new_spans;
+}
+
+/// Document-status workflow ring. `Ctrl+B R` advances through this
+/// sequence; the ring wraps back to "None" after "Ready". `None` is
+/// represented by both the absence of `status` on the Node and the
+/// literal "None" string in the ring — the helpers below collapse
+/// the two views.
+pub const STATUS_CYCLE: &[&str] = &[
+    "None", "Napkin", "First", "Second", "Third", "Final", "Ready",
+];
+
+pub fn next_status(current: Option<&str>) -> &'static str {
+    let cur = display_status(current);
+    let idx = STATUS_CYCLE
+        .iter()
+        .position(|s| *s == cur)
+        .unwrap_or(0);
+    STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.len()]
+}
+
+pub fn prev_status(current: Option<&str>) -> &'static str {
+    let cur = display_status(current);
+    let idx = STATUS_CYCLE
+        .iter()
+        .position(|s| *s == cur)
+        .unwrap_or(0);
+    STATUS_CYCLE[(idx + STATUS_CYCLE.len() - 1) % STATUS_CYCLE.len()]
+}
+
+pub fn display_status(current: Option<&str>) -> &str {
+    match current {
+        None => "None",
+        Some(s) if s.trim().is_empty() => "None",
+        Some(s) => s,
+    }
+}
+
+/// Compact one-character badge for the tree-pane row. The colour
+/// (from `status_style`) carries the meaning; the letter just gives
+/// the row a visual anchor so the user knows that column means
+/// status.
+pub fn status_letter(label: &str) -> &'static str {
+    match label {
+        "Napkin" => "n",
+        "First" => "1",
+        "Second" => "2",
+        "Third" => "3",
+        "Final" => "F",
+        "Ready" => "R",
+        _ => " ",
+    }
+}
+
+/// Colour the editor header uses for each status — picks from the
+/// existing theme palette so users with custom themes keep their
+/// preferred hues.
+pub fn status_style(label: &str, theme: &super::theme::Theme) -> Style {
+    let base = match label {
+        "None" => return Style::default().add_modifier(Modifier::DIM),
+        "Napkin" => theme.grammar_change_fg,           // red — "rough"
+        "First" => theme.ai_scope_fg,                  // peach
+        "Second" => theme.characters_fg,               // amber
+        "Third" => theme.places_fg,                    // cyan
+        "Final" => theme.border_saved,                 // green
+        "Ready" => theme.border_saved,                 // green + bold
+        _ => return Style::default(),
+    };
+    let mut style = Style::default().fg(base).add_modifier(Modifier::BOLD);
+    if label == "Ready" {
+        style = style.add_modifier(Modifier::REVERSED);
+    }
+    style
+}
+
+/// Open-bracket → matching close pair the auto-close logic emits.
+/// None for any character that isn't an opener we recognise.
+fn open_pair_for(c: char) -> Option<char> {
+    match c {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        '"' => Some('"'),
+        '\'' => Some('\''),
+        _ => None,
+    }
+}
+
+fn is_close_pair_char(c: char) -> bool {
+    matches!(c, ')' | ']' | '}' | '"' | '\'')
+}
+
+/// Case-insensitive substring filter over the baked-in typst function
+/// table. Results are returned sorted alphabetically (the table is
+/// already sorted; we just preserve order across filter steps).
+pub fn filter_functions(filter: &str) -> Vec<super::typst_funcs::TypstFn> {
+    let needle = filter.trim().to_lowercase();
+    if needle.is_empty() {
+        return super::typst_funcs::all();
+    }
+    super::typst_funcs::all()
+        .into_iter()
+        .filter(|f| f.name.to_lowercase().contains(&needle))
+        .collect()
+}
+
+/// Detection result for "is the cursor sitting inside the first
+/// string argument of a `#image(...)` call on this line".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageCallContext {
+    /// True when the open `"` has a matching close `"` further along
+    /// the same line. The picker uses this to decide whether to
+    /// insert a closing quote after the filename or not.
+    pub closing_quote_present: bool,
+}
+
+/// Inspect the editor line up to the cursor and decide whether we're
+/// inside `#image("…<cursor>…")`. Returns `None` when not, so the
+/// caller can fall back to the regular `Ctrl+B P` (Places RAG) path.
+///
+/// Detection rule (line-local, no tree-sitter required):
+///   1. Find the LAST occurrence of `#image(` on the line at-or-before
+///      the cursor column.
+///   2. Between the `(` and the cursor, there must be no balanced `)`
+///      (the call is still open).
+///   3. Between the `(` and the cursor, there must be exactly one `"`
+///      (we are inside the first string literal).
+///
+/// Multi-line `#image(...)` calls — rare in practice — are not
+/// detected. The line-local scope makes this a 50-line function and
+/// the failure mode is "Ctrl+B P falls through to Places RAG" rather
+/// than a bug.
+pub fn detect_image_call_context(line: &str, cursor_col: usize) -> Option<ImageCallContext> {
+    let cursor_byte = char_offset_to_byte(line, cursor_col);
+    let prefix = &line[..cursor_byte];
+    // Walk backward to find the last `#image(`. Allow whitespace
+    // between `image` and `(` (e.g. `#image (` is uncommon but legal).
+    let open_paren_idx = find_image_open(prefix)?;
+    // After the `(`, count parens + quotes up to the cursor.
+    let between = &prefix[open_paren_idx + 1..];
+    let mut depth: i32 = 1; // we're inside the open paren
+    let mut quotes: usize = 0;
+    for c in between.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth <= 0 {
+                    return None; // call already closed before cursor
+                }
+            }
+            '"' => quotes += 1,
+            _ => {}
+        }
+    }
+    if quotes != 1 {
+        return None;
+    }
+    // Look forward for a closing quote on the same line so the picker
+    // can decide whether to add one.
+    let suffix = &line[cursor_byte..];
+    let closing_quote_present = suffix
+        .chars()
+        .scan(false, |escape, c| {
+            if *escape {
+                *escape = false;
+                return Some((false, c));
+            }
+            if c == '\\' {
+                *escape = true;
+                return Some((false, c));
+            }
+            Some((c == '"', c))
+        })
+        .any(|(is_close, _)| is_close);
+    Some(ImageCallContext {
+        closing_quote_present,
+    })
+}
+
+fn find_image_open(prefix: &str) -> Option<usize> {
+    // Iterate in reverse to find the LAST `#image[whitespace]?(`.
+    let bytes = prefix.as_bytes();
+    let mut i = bytes.len();
+    while i > 0 {
+        if bytes[i - 1] == b'(' {
+            // Look back for "image" with optional whitespace, and a `#`
+            // somewhere before that on this scan window.
+            let head = &prefix[..i - 1];
+            let trimmed = head.trim_end();
+            if let Some(stripped) = trimmed.strip_suffix("image") {
+                if stripped.ends_with('#') {
+                    return Some(i - 1);
+                }
+            }
+        }
+        i -= 1;
+    }
+    None
+}
+
+fn char_offset_to_byte(s: &str, char_off: usize) -> usize {
+    s.char_indices()
+        .nth(char_off)
+        .map(|(b, _)| b)
+        .unwrap_or(s.len())
+}
+
 fn current_word_or_selection(doc: &OpenedDoc) -> String {
     if let Some(((r1, c1), (r2, c2))) = doc.textarea.selection_range() {
         return slice_lines(doc.textarea.lines(), r1, c1, r2, c2)
@@ -6905,6 +11628,375 @@ fn current_word_or_selection(doc: &OpenedDoc) -> String {
         }
     }
     String::new()
+}
+
+/// Aggregate counts for one root Book, computed by walking its subtree.
+/// Words come from each Paragraph's stored `word_count` (kept up to date
+/// at save time); sentences are derived by re-reading paragraph bodies
+/// from disk, which is fine for literary-scale projects (hundreds of
+/// short files) but should be reconsidered if a project ever grows past
+/// many thousands of paragraphs.
+#[derive(Debug, Default)]
+struct BookStats {
+    chapters: usize,
+    subchapters: usize,
+    paragraphs: usize,
+    images: usize,
+    sentences: usize,
+    words: u64,
+}
+
+fn compute_book_stats(
+    hierarchy: &Hierarchy,
+    book: &Node,
+    project_root: &Path,
+) -> BookStats {
+    let mut stats = BookStats::default();
+    for id in hierarchy.collect_subtree(book.id) {
+        let Some(node) = hierarchy.get(id) else { continue };
+        match node.kind {
+            NodeKind::Book => {} // the book itself — don't count it as a chapter
+            NodeKind::Chapter => stats.chapters += 1,
+            NodeKind::Subchapter => stats.subchapters += 1,
+            NodeKind::Paragraph => {
+                stats.paragraphs += 1;
+                stats.words += node.word_count;
+                if let Some(rel) = node.file.as_ref() {
+                    if let Ok(body) =
+                        std::fs::read_to_string(project_root.join(rel))
+                    {
+                        stats.sentences += count_sentences(&body);
+                    }
+                }
+            }
+            NodeKind::Image => stats.images += 1,
+        }
+    }
+    stats
+}
+
+/// Count sentence-terminators (`. ! ?`) in prose text, ignoring Typst
+/// heading lines (`= ...`) and comments (`// ...`). A run of repeated
+/// terminators (e.g. `...` or `?!`) counts as one sentence. The result
+/// is an estimate — Typst markup like `#image(...)` and inline math can
+/// confuse it — but it's good enough for a UI read-out and consistent
+/// across runs.
+fn count_sentences(content: &str) -> usize {
+    let mut count = 0;
+    let mut in_run = false;
+    for line in content.lines() {
+        let t = line.trim_start();
+        if t.is_empty() || t.starts_with('=') || t.starts_with("//") {
+            in_run = false;
+            continue;
+        }
+        for c in t.chars() {
+            if matches!(c, '.' | '!' | '?') {
+                if !in_run {
+                    count += 1;
+                    in_run = true;
+                }
+            } else {
+                in_run = false;
+            }
+        }
+        in_run = false;
+    }
+    count
+}
+
+/// Compact reading-time estimate for the editor header. 250 wpm
+/// (educational adult silent-reading baseline) rounded up to whole
+/// minutes; short paragraphs collapse to `<1m`. Matches the per-book
+/// figure in the Ctrl+B I info panel — same constant, same rounding.
+fn format_reading_time(words: usize) -> String {
+    if words == 0 {
+        return "<1m".to_string();
+    }
+    let minutes = ((words as f64) / 250.0).ceil() as u64;
+    if minutes < 60 {
+        format!("~{minutes}m")
+    } else {
+        let h = minutes / 60;
+        let m = minutes % 60;
+        if m == 0 {
+            format!("~{h}h")
+        } else {
+            format!("~{h}h {m}m")
+        }
+    }
+}
+
+/// Format a `Duration` as a coarse "N units ago" string using only the
+/// largest two units (days+hours, hours+minutes, etc.). humantime's
+/// default formatter prints every non-zero unit down to nanoseconds,
+/// which is too noisy for a "how old is this PDF" read-out.
+fn format_age_humantime(dur: std::time::Duration) -> String {
+    let total_secs = dur.as_secs();
+    if total_secs < 60 {
+        return format!("{total_secs}s");
+    }
+    let days = total_secs / 86_400;
+    let hours = (total_secs % 86_400) / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    if days > 0 {
+        if hours > 0 {
+            format!("{days}d {hours}h")
+        } else {
+            format!("{days}d")
+        }
+    } else if hours > 0 {
+        if minutes > 0 {
+            format!("{hours}h {minutes}m")
+        } else {
+            format!("{hours}h")
+        }
+    } else {
+        format!("{minutes}m")
+    }
+}
+
+/// Rewrite `<block>.<key> = <value_lit>` in an existing HJSON config
+/// file in place, preserving every other byte — comments, key
+/// ordering, indentation, trailing comments on the rewritten line.
+/// Returns the new file contents. The strategy is a targeted text
+/// edit (no full re-serialisation) so the carefully-annotated default
+/// HJSON template survives an update.
+///
+/// `value_lit` is the literal text to write (already quoted /
+/// formatted by the caller — e.g. `"ollama"` for a string, `true` for
+/// a bool). When the key isn't present we insert it right after the
+/// opening `{` of the block.
+///
+/// Returns Err with a human-readable reason when the file shape
+/// doesn't match our expectations (no block of that name, unterminated
+/// braces). The brace counter doesn't understand HJSON strings — it
+/// would miscount a `{` / `}` inside a quoted string. Fine for our
+/// shipped template, which uses braces only for nested objects.
+fn set_key_in_hjson_block(
+    raw: &str,
+    block: &str,
+    key: &str,
+    value_lit: &str,
+) -> Result<String, String> {
+    let lines: Vec<&str> = raw.split_inclusive('\n').collect();
+    if lines.is_empty() {
+        return Err("config file is empty".into());
+    }
+
+    let block_prefix = format!("{block}:");
+    let block_open_idx = lines.iter().position(|l| {
+        let trimmed = l.trim_start();
+        !trimmed.starts_with("//") && trimmed.starts_with(&block_prefix)
+    });
+    let block_open_idx = block_open_idx
+        .ok_or_else(|| format!("no `{block}:` block found in HJSON"))?;
+
+    // Walk forward tracking brace depth (ignoring `//` line comments)
+    // so we know where the block ends.
+    let mut depth: i32 = 0;
+    let mut block_started = false;
+    let mut block_end: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate().skip(block_open_idx) {
+        let code = line.split("//").next().unwrap_or("");
+        for c in code.chars() {
+            match c {
+                '{' => {
+                    depth += 1;
+                    block_started = true;
+                }
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        if block_started && depth == 0 {
+            block_end = Some(i);
+            break;
+        }
+    }
+    let block_end = block_end
+        .ok_or_else(|| format!("unterminated `{block}: {{` block — check brace balance"))?;
+
+    // Scan for the target key as a *direct* child of the block
+    // (depth == 1 at the time the line starts being read).
+    let key_unquoted = format!("{key}:");
+    let key_quoted = format!("\"{key}\":");
+    let mut depth: i32 = 0;
+    let mut target_idx: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate().take(block_end + 1).skip(block_open_idx) {
+        let depth_before = depth;
+        let code = line.split("//").next().unwrap_or("");
+        for c in code.chars() {
+            match c {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        if i == block_open_idx {
+            continue;
+        }
+        if depth_before == 1 {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if trimmed.starts_with(&key_unquoted) || trimmed.starts_with(&key_quoted) {
+                target_idx = Some(i);
+                break;
+            }
+        }
+    }
+
+    let mut out = String::with_capacity(raw.len() + value_lit.len());
+    match target_idx {
+        Some(idx) => {
+            let mut rewrote = false;
+            for (i, line) in lines.iter().enumerate() {
+                if i == idx {
+                    rewrote = true;
+                    let (eol, core): (&str, &str) =
+                        if let Some(stripped) = line.strip_suffix("\r\n") {
+                            ("\r\n", stripped)
+                        } else if let Some(stripped) = line.strip_suffix('\n') {
+                            ("\n", stripped)
+                        } else {
+                            ("", *line)
+                        };
+                    let colon_pos = core.find(':').ok_or_else(|| {
+                        format!("`{key}` line missing `:` separator — unexpected HJSON")
+                    })?;
+                    let head = &core[..=colon_pos]; // includes ":"
+                    let tail = &core[colon_pos + 1..];
+                    let comment_pos = tail.find("//");
+                    let (_old_value, comment_suffix) = match comment_pos {
+                        Some(p) => (&tail[..p], &tail[p..]),
+                        None => (tail, ""),
+                    };
+                    if comment_suffix.is_empty() {
+                        out.push_str(&format!("{head} {value_lit}{eol}"));
+                    } else {
+                        // Keep one space between the new value and the
+                        // trailing comment so it doesn't slide left.
+                        out.push_str(&format!("{head} {value_lit}  {comment_suffix}{eol}"));
+                    }
+                } else {
+                    out.push_str(line);
+                }
+            }
+            if !rewrote {
+                return Err("internal error: target line not rewritten".into());
+            }
+            Ok(out)
+        }
+        None => {
+            // Insert the missing key right after the block-opening
+            // line, using two extra spaces of indentation relative to
+            // it.
+            let block_indent: String = lines[block_open_idx]
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect();
+            let child_indent = format!("{block_indent}  ");
+            for (i, line) in lines.iter().enumerate() {
+                out.push_str(line);
+                if i == block_open_idx {
+                    let eol = if line.ends_with("\r\n") {
+                        "\r\n"
+                    } else if line.ends_with('\n') {
+                        "\n"
+                    } else {
+                        "\n"
+                    };
+                    out.push_str(&format!("{child_indent}{key}: {value_lit}{eol}"));
+                }
+            }
+            Ok(out)
+        }
+    }
+}
+
+/// Wrapper that quotes `new_default` if needed and delegates to
+/// `set_key_in_hjson_block` for the `llm.default` slot.
+fn set_llm_default_in_hjson(raw: &str, new_default: &str) -> Result<String, String> {
+    let quote_needed = new_default.is_empty()
+        || !new_default
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    let value_lit = if quote_needed {
+        format!("\"{}\"", new_default.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        new_default.to_string()
+    };
+    set_key_in_hjson_block(raw, "llm", "default", &value_lit)
+}
+
+/// Set `sound.enabled = true|false` in inkhaven.hjson. Inserts the
+/// key (and synthesises the block when missing) when the user has
+/// stripped them from an older config.
+fn set_sound_enabled_in_hjson(raw: &str, enabled: bool) -> Result<String, String> {
+    let value_lit = if enabled { "true" } else { "false" };
+    match set_key_in_hjson_block(raw, "sound", "enabled", value_lit) {
+        Ok(s) => Ok(s),
+        Err(reason) if reason.contains("no `sound:` block") => {
+            insert_sound_block_before_root_close(raw, value_lit)
+        }
+        Err(other) => Err(other),
+    }
+}
+
+/// Append a fresh `sound: { ... }` block just *inside* the root
+/// object's closing `}`. Older configs predating the sound feature
+/// don't have the block at all — the toggle synthesises one. The
+/// previous version of this helper appended after the file end, which
+/// landed the block *outside* the root and broke parsing on next
+/// launch.
+fn insert_sound_block_before_root_close(raw: &str, value_lit: &str) -> Result<String, String> {
+    let lines: Vec<&str> = raw.split_inclusive('\n').collect();
+    // Scan backward for the root object's closing brace — the last
+    // line whose first non-whitespace character is `}` and whose code
+    // (stripped of `//` comments) contains *only* whitespace + `}`.
+    let root_close_idx = lines.iter().enumerate().rev().find_map(|(i, l)| {
+        let code = l.split("//").next().unwrap_or("");
+        let trimmed = code.trim();
+        if trimmed == "}" {
+            Some(i)
+        } else {
+            None
+        }
+    });
+    let root_close_idx = root_close_idx.ok_or_else(|| {
+        "no root closing `}` found — file shape unrecognised".to_string()
+    })?;
+
+    let block = format!(
+        "\n  // Typewriter SFX (Ctrl+B E to toggle).\n  sound: {{\n    enabled: {value_lit}\n    volume: 0.6\n  }}\n"
+    );
+
+    let mut out = String::with_capacity(raw.len() + block.len());
+    for (i, line) in lines.iter().enumerate() {
+        if i == root_close_idx {
+            out.push_str(&block);
+        }
+        out.push_str(line);
+    }
+    Ok(out)
+}
+
+/// Split a file body into editor lines, normalising CRLF (`\r\n`) and
+/// bare CR (`\r`) line endings to LF first so trailing `\r` bytes never
+/// survive into the textarea (where ratatui would render them as
+/// control glyphs that look like vertical bars and visually offset the
+/// following characters). Triggered by Windows / DOS / old-Mac text
+/// dumps the user might import (e.g. the RFC corpus).
+fn body_to_lines(body: &str) -> Vec<String> {
+    if body.is_empty() {
+        return vec![String::new()];
+    }
+    // CRLF first so we don't double-split, then any remaining bare CR
+    // (pre-OS-X Mac files). After this every line break is one `\n`.
+    let normalised = body.replace("\r\n", "\n").replace('\r', "\n");
+    normalised.split('\n').map(String::from).collect()
 }
 
 fn extract_first_sentence(content: &str) -> Option<String> {
@@ -7037,12 +12129,17 @@ fn truncate_to_chars(s: &str, max: usize) -> String {
 /// names are skipped silently (with a tracing warning) so a typo doesn't
 /// break the editor.
 fn build_lexicon(hierarchy: &Hierarchy, cfg: &Config) -> super::lexicon::Lexicon {
-    let mut places = None;
-    let mut characters = None;
+    use super::lexicon::LexCategory;
+    let mut places: Option<Uuid> = None;
+    let mut characters: Option<Uuid> = None;
+    let mut notes: Option<Uuid> = None;
+    let mut artefacts: Option<Uuid> = None;
     for node in hierarchy.iter() {
         match node.system_tag.as_deref() {
             Some(crate::store::SYSTEM_TAG_PLACES) => places = Some(node.id),
             Some(crate::store::SYSTEM_TAG_CHARACTERS) => characters = Some(node.id),
+            Some(crate::store::SYSTEM_TAG_NOTES) => notes = Some(node.id),
+            Some(crate::store::SYSTEM_TAG_ARTEFACTS) => artefacts = Some(node.id),
             _ => {}
         }
     }
@@ -7078,7 +12175,23 @@ fn build_lexicon(hierarchy: &Hierarchy, cfg: &Config) -> super::lexicon::Lexicon
             })
             .collect()
     };
-    super::lexicon::Lexicon::build(hierarchy, places, characters, algos)
+    // Higher-priority first: Place > Character > Artefact > Note —
+    // matches the renderer's overlap precedence so the build-time
+    // dedupe and the per-column style picker agree.
+    let mut books: Vec<(Uuid, LexCategory)> = Vec::new();
+    if let Some(id) = places {
+        books.push((id, LexCategory::Place));
+    }
+    if let Some(id) = characters {
+        books.push((id, LexCategory::Character));
+    }
+    if let Some(id) = artefacts {
+        books.push((id, LexCategory::Artefact));
+    }
+    if let Some(id) = notes {
+        books.push((id, LexCategory::Note));
+    }
+    super::lexicon::Lexicon::build(hierarchy, &books, algos)
 }
 
 /// Standard text-input key dispatch: typing, navigation, deletion. Shared
@@ -7111,12 +12224,15 @@ fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) {
     }
 }
 
-/// Which system book a lexicon-RAG inference draws context from. Picked
-/// by the meta chord (P for Places, C for Characters) in the editor.
+/// Which system book a lexicon-RAG inference draws context from.
+/// Picked by the editor-meta chords (`P` Places, `C` Characters,
+/// `G` Notes, `Y` Artefacts).
 #[derive(Debug, Clone, Copy)]
 enum LexiconKind {
     Places,
     Characters,
+    Notes,
+    Artefacts,
 }
 
 impl LexiconKind {
@@ -7124,12 +12240,16 @@ impl LexiconKind {
         match self {
             LexiconKind::Places => "Place",
             LexiconKind::Characters => "Character",
+            LexiconKind::Notes => "Note",
+            LexiconKind::Artefacts => "Artefact",
         }
     }
     fn system_tag(self) -> &'static str {
         match self {
             LexiconKind::Places => crate::store::SYSTEM_TAG_PLACES,
             LexiconKind::Characters => crate::store::SYSTEM_TAG_CHARACTERS,
+            LexiconKind::Notes => crate::store::SYSTEM_TAG_NOTES,
+            LexiconKind::Artefacts => crate::store::SYSTEM_TAG_ARTEFACTS,
         }
     }
 }
@@ -7237,6 +12357,145 @@ Rules:
 /// Inclusive on the top-left, exclusive on the bottom-right — matches
 /// ratatui's Rect semantics where width/height are spans (the column at
 /// `x + width` is one past the rect's last column).
+/// Components Inkhaven directly depends on. Each entry is
+/// `(crate-name, license, one-line description)`. The list is curated by
+/// hand so the credits panel stays readable — auto-pulling every
+/// transitive dep from Cargo.lock would dump 200+ rows nobody would
+/// scroll through. When you add a new direct dep in Cargo.toml, add it
+/// here too.
+const CREDITS_COMPONENTS: &[(&str, &str, &str)] = &[
+    ("bdslib",                "Apache-2.0",      "DuckDB + Tantivy + fastembed + HNSW document store (V. Ulogov)"),
+    ("ratatui",               "MIT",             "TUI rendering framework"),
+    ("tui-textarea",          "MIT",             "multi-line text widget (state model)"),
+    ("crossterm",             "MIT",             "cross-platform terminal control"),
+    ("tree-sitter",           "MIT",             "incremental parser engine"),
+    ("tree-sitter-highlight", "MIT",             "syntax-highlight tagging on top of tree-sitter"),
+    ("tree-sitter-typst",     "MIT",             "Typst grammar for tree-sitter (uben0)"),
+    ("genai",                 "MIT / Apache-2.0", "provider-neutral LLM client (Gemini, DeepSeek, Ollama, OpenAI, …)"),
+    ("pulldown-cmark",        "MIT",             "CommonMark parser — markdown rendering in the AI pane"),
+    ("rust-stemmers",         "MIT",             "Snowball stemmers — multilingual lexicon overlay"),
+    ("unicode-segmentation",  "MIT / Apache-2.0", "Unicode word boundaries"),
+    ("regex",                 "MIT / Apache-2.0", "in-buffer find / replace"),
+    ("tokio",                 "MIT",             "async runtime"),
+    ("tokio-stream",          "MIT",             "Stream adapters for tokio"),
+    ("futures-util",          "MIT / Apache-2.0", "futures combinators"),
+    ("clap",                  "MIT / Apache-2.0", "CLI parser"),
+    ("serde",                 "MIT / Apache-2.0", "serialisation framework"),
+    ("serde_json",            "MIT / Apache-2.0", "JSON support for serde"),
+    ("serde-hjson",           "MIT",             "HJSON parser — friendly config file format"),
+    ("humantime",             "MIT / Apache-2.0", "human-readable duration parsing — backup max_age"),
+    ("humantime-serde",       "MIT / Apache-2.0", "serde glue for humantime durations"),
+    ("rodio",                 "MIT / Apache-2.0", "audio playback — typewriter SFX (Ctrl+B E)"),
+    ("ratatui-image",         "MIT",             "in-TUI image preview — Enter on an Image node"),
+    ("image",                 "MIT / Apache-2.0", "image decoder for the preview pane"),
+    ("chrono",                "MIT / Apache-2.0", "timestamps, RFC-3339 formatting"),
+    ("uuid",                  "Apache-2.0",      "UUIDv7 paragraph IDs"),
+    ("zip",                   "MIT",             "backup / restore archive format"),
+    ("walkdir",               "MIT / Unlicense", "recursive directory walking"),
+    ("arboard",               "MIT / Apache-2.0", "system clipboard access"),
+    ("directories",           "MIT / Apache-2.0", "per-user cache path resolution"),
+    ("slug",                  "MIT / Apache-2.0", "URL-safe slug generation"),
+    ("tracing",               "MIT",             "structured logging"),
+    ("tracing-subscriber",    "MIT",             "log filtering and writer config"),
+    ("anyhow",                "MIT / Apache-2.0", "error wrapping in application boundaries"),
+    ("thiserror",             "MIT / Apache-2.0", "derive macros for typed errors"),
+];
+
+/// Build the styled `Line`s the credits modal renders. Returns one Line
+/// per row — section headers in cyan-bold, crate names in the configured
+/// modal-border colour, descriptions in dim. Each crate row is wrapped
+/// to fit a reasonable terminal width; very long descriptions naturally
+/// truncate at the right edge of the modal.
+fn build_credits_lines(theme: &super::theme::Theme) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    let bold_accent = Style::default()
+        .fg(theme.modal_border)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled(
+        format!("  Inkhaven v{}", env!("CARGO_PKG_VERSION")),
+        bold_accent,
+    )]));
+    lines.push(Line::from(Span::styled(
+        format!("  {}", env!("CARGO_PKG_DESCRIPTION")),
+        dim,
+    )));
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(vec![Span::styled(
+        "  Author".to_string(),
+        bold_accent,
+    )]));
+    for a in env!("CARGO_PKG_AUTHORS").split(':') {
+        if !a.is_empty() {
+            lines.push(Line::from(format!("    {a}")));
+        }
+    }
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(vec![Span::styled(
+        "  Project".to_string(),
+        bold_accent,
+    )]));
+    lines.push(Line::from(format!(
+        "    Repository: {}",
+        env!("CARGO_PKG_REPOSITORY")
+    )));
+    lines.push(Line::from(format!(
+        "    Licence:    {}",
+        env!("CARGO_PKG_LICENSE")
+    )));
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(vec![Span::styled(
+        "  Components used".to_string(),
+        bold_accent,
+    )]));
+    lines.push(Line::from(Span::styled(
+        "  Inkhaven stands on the shoulders of these open-source projects:".to_string(),
+        dim,
+    )));
+    lines.push(Line::from(""));
+
+    // Two-column rendering inside the credits body would be neat but
+    // complicates wrapping; a single column with name + licence + tagline
+    // reads cleanly even on narrow terminals.
+    for (name, license, desc) in CREDITS_COMPONENTS {
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(
+                format!("{:<24}", name),
+                Style::default()
+                    .fg(theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  [{}]", license),
+                Style::default().add_modifier(Modifier::DIM),
+            ),
+        ]));
+        lines.push(Line::from(Span::styled(
+            format!("        {desc}"),
+            dim,
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  And a long tail of transitive dependencies — every one is".to_string(),
+        dim,
+    )));
+    lines.push(Line::from(Span::styled(
+        "  listed in `Cargo.lock`. Thanks to every author.".to_string(),
+        dim,
+    )));
+    lines.push(Line::from(""));
+
+    lines
+}
+
 fn rect_contains(rect: Rect, col: u16, row: u16) -> bool {
     if rect.width == 0 || rect.height == 0 {
         return false;
