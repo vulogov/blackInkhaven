@@ -21,9 +21,10 @@ categories = ["command-line-utilities", "text-editors", "text-processing"]
 #   * `cargo binstall inkhaven` (prebuilts; see [package.metadata.binstall])
 #   * Direct download from https://github.com/vulogov/blackInkhaven/releases
 #
-# crates.io publishing is intentionally disabled — see `publish = false`
-# below. If you ever want to flip to crates.io, tree-sitter-typst (the
-# last remaining vendored path-dep) would need to be published first.
+# crates.io publishing is currently disabled but the crate is
+# publish-ready — no path-deps remain, and `cargo package` succeeds.
+# Flip to `publish = true` (or delete this line) when ready to push
+# the first release to crates.io.
 publish = false
 
 # `cargo-binstall` metadata: tells `cargo binstall inkhaven` where to
@@ -89,14 +90,12 @@ tui-textarea = { version = "0.7", default-features = false, features = [
   "search",
 ] }
 
-# Syntax highlighting. Pinned to 0.20 because uben0/tree-sitter-typst's
-# Cargo.toml is locked at `tree-sitter ~0.20.10` and the Language type is
-# ABI-incompatible across major versions. Bump when the grammar moves.
+# Syntax highlighting. Pinned to 0.20 because the in-tree Typst grammar
+# under `src/grammar/` is generated against tree-sitter 0.20's parser
+# ABI, and the `Language` type is ABI-incompatible across major
+# versions. Bump alongside any grammar refresh.
 tree-sitter = "0.20"
 tree-sitter-highlight = "0.20"
-# Vendored at `vendor/tree-sitter-typst/` (cloned from
-# github.com/uben0/tree-sitter-typst). Same rationale as bdslib above.
-tree-sitter-typst = { path = "vendor/tree-sitter-typst" }
 
 # AI clients (one crate covers Gemini, DeepSeek, OpenAI, Anthropic, …)
 genai = "=0.6.0-beta.20"
@@ -147,6 +146,11 @@ image = { version = "0.25", default-features = false, features = [
   "webp",
 ] }
 
+[build-dependencies]
+# Compiles the in-tree Typst tree-sitter grammar (`src/grammar/`)
+# during `cargo build`. See `build.rs`.
+cc = "1"
+
 [dev-dependencies]
 tempfile = "3"
 
@@ -155,10 +159,8 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 
-# Exclude the vendored crates from any ambient workspace discovery — the
-# parent repository contains them only as source for our path deps, not
-# as workspace members. Without this, Cargo would try to build / lint
-# them on every `cargo` invocation.
+# Single-crate workspace. Kept explicit so any future vendored-source
+# experiments under `vendor/` don't accidentally become workspace
+# members. The grammar itself lives in-tree at `src/grammar/`.
 [workspace]
 members = ["."]
-exclude = ["vendor/tree-sitter-typst"]

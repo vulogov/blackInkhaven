@@ -1,3 +1,18 @@
+This file contains the upstream license for the in-tree Typst
+tree-sitter grammar, which lives at `src/grammar/parser.c`,
+`src/grammar/scanner.c`, `src/grammar/unicode.h`, and
+`src/grammar/tree_sitter/*.h`.
+
+Upstream:    https://github.com/uben0/tree-sitter-typst
+License:     MIT
+Copyright:   © 2023 Gerbais-Nief Eddie
+
+The Rust shim (`src/grammar/mod.rs`) is original inkhaven code and
+ships under inkhaven's overall Apache-2.0 license. Only the C
+sources and headers above are governed by the MIT license below.
+
+-----------------------------------------------------------------
+
 MIT License
 
 Copyright (c) 2023 Gerbais-Nief Eddie
