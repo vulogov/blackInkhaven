@@ -165,6 +165,21 @@ pub struct TypstTemplatesConfig {
     pub wrap_chapter: String,
     pub wrap_subchapter: String,
     pub wrap_paragraph: String,
+    /// Frontispiece-style: page break + full-page centered image,
+    /// optional caption. Called for Image nodes whose parent is a
+    /// Book.
+    pub wrap_image_book: String,
+    /// Chapter-art: page break + 80%-width image + caption. Called
+    /// for Image nodes whose parent is a Chapter.
+    pub wrap_image_chapter: String,
+    /// Smaller centered image + caption. Called for Image nodes
+    /// whose parent is a Subchapter.
+    pub wrap_image_subchapter: String,
+    /// `figure(image(...), caption: ...)`. Not called by the
+    /// assembler (Image nodes never sit under a Paragraph) but
+    /// available as a regular function for users to call by hand
+    /// from paragraph text.
+    pub wrap_image_inline: String,
 }
 
 impl Default for TypstTemplatesConfig {
@@ -174,6 +189,10 @@ impl Default for TypstTemplatesConfig {
             wrap_chapter: default_wrap_chapter().into(),
             wrap_subchapter: default_wrap_subchapter().into(),
             wrap_paragraph: default_wrap_paragraph().into(),
+            wrap_image_book: default_wrap_image_book().into(),
+            wrap_image_chapter: default_wrap_image_chapter().into(),
+            wrap_image_subchapter: default_wrap_image_subchapter().into(),
+            wrap_image_inline: default_wrap_image_inline().into(),
         }
     }
 }
@@ -192,6 +211,41 @@ pub fn default_wrap_subchapter() -> &'static str {
 }
 pub fn default_wrap_paragraph() -> &'static str {
     "#let wrap_paragraph(body) = {\n  body\n  parbreak()\n}\n"
+}
+
+pub fn default_wrap_image_book() -> &'static str {
+    "// Frontispiece — Image directly under a Book.\n\
+     #let wrap_image_book(path, title, caption, alt: none) = {\n\
+     \u{20}\u{20}pagebreak(weak: true)\n\
+     \u{20}\u{20}align(center + horizon, image(path, alt: alt, width: 90%))\n\
+     \u{20}\u{20}if caption != none [#align(center)[#emph(caption)]]\n\
+     \u{20}\u{20}pagebreak(weak: true)\n\
+     }\n"
+}
+
+pub fn default_wrap_image_chapter() -> &'static str {
+    "// Chapter-art — Image directly under a Chapter.\n\
+     #let wrap_image_chapter(path, title, caption, alt: none) = {\n\
+     \u{20}\u{20}pagebreak(weak: true)\n\
+     \u{20}\u{20}align(center, image(path, alt: alt, width: 80%))\n\
+     \u{20}\u{20}if caption != none [#align(center)[#emph(caption)]]\n\
+     }\n"
+}
+
+pub fn default_wrap_image_subchapter() -> &'static str {
+    "// Section image — Image directly under a Subchapter.\n\
+     #let wrap_image_subchapter(path, title, caption, alt: none) = {\n\
+     \u{20}\u{20}align(center, image(path, alt: alt, width: 60%))\n\
+     \u{20}\u{20}if caption != none [#align(center)[#emph(caption)]]\n\
+     }\n"
+}
+
+pub fn default_wrap_image_inline() -> &'static str {
+    "// Inline figure — call from paragraph text with #wrap_image_inline(...).\n\
+     #let wrap_image_inline(path, title, caption, alt: none) = figure(\n\
+     \u{20}\u{20}image(path, alt: alt, width: 80%),\n\
+     \u{20}\u{20}caption: caption,\n\
+     )\n"
 }
 
 impl TypstTemplatesConfig {
@@ -227,19 +281,49 @@ impl TypstTemplatesConfig {
             self.wrap_paragraph.clone()
         }
     }
+    pub fn resolved_wrap_image_book(&self) -> String {
+        if self.wrap_image_book.trim().is_empty() {
+            default_wrap_image_book().into()
+        } else {
+            self.wrap_image_book.clone()
+        }
+    }
+    pub fn resolved_wrap_image_chapter(&self) -> String {
+        if self.wrap_image_chapter.trim().is_empty() {
+            default_wrap_image_chapter().into()
+        } else {
+            self.wrap_image_chapter.clone()
+        }
+    }
+    pub fn resolved_wrap_image_subchapter(&self) -> String {
+        if self.wrap_image_subchapter.trim().is_empty() {
+            default_wrap_image_subchapter().into()
+        } else {
+            self.wrap_image_subchapter.clone()
+        }
+    }
+    pub fn resolved_wrap_image_inline(&self) -> String {
+        if self.wrap_image_inline.trim().is_empty() {
+            default_wrap_image_inline().into()
+        } else {
+            self.wrap_image_inline.clone()
+        }
+    }
 
-    /// Concatenated body for the per-book `globals.typ` paragraph: the
-    /// editor-chrome heading line, a brief comment header explaining
-    /// the four functions, then each wrap function in order.
+    /// Concatenated body for the per-book `globals.typ` paragraph:
+    /// the editor-chrome heading line, a brief comment header, then
+    /// the eight wrap_* functions (four for prose-level wrappers,
+    /// four for image-level wrappers).
     pub fn globals_typ_body(&self) -> String {
         let mut out = String::new();
         out.push_str("= globals.typ\n\n");
         out.push_str(
             "// Wrap functions used by inkhaven's `Book assembly` (Ctrl+B A).\n\
-             // Each level of the manuscript tree is fed through the matching\n\
+             // Each node in the manuscript tree is fed through the matching\n\
              // wrap_* call when the assembler synthesises index.typ files.\n\
-             // Customise to taste — page breaks, headings, fonts, etc.\n\n",
+             // Customise to taste — page breaks, headings, fonts, layout.\n\n",
         );
+        out.push_str("// ---- Prose wrappers ----\n");
         out.push_str(&self.resolved_wrap_book());
         out.push('\n');
         out.push_str(&self.resolved_wrap_chapter());
@@ -247,6 +331,14 @@ impl TypstTemplatesConfig {
         out.push_str(&self.resolved_wrap_subchapter());
         out.push('\n');
         out.push_str(&self.resolved_wrap_paragraph());
+        out.push_str("\n// ---- Image wrappers ----\n");
+        out.push_str(&self.resolved_wrap_image_book());
+        out.push('\n');
+        out.push_str(&self.resolved_wrap_image_chapter());
+        out.push('\n');
+        out.push_str(&self.resolved_wrap_image_subchapter());
+        out.push('\n');
+        out.push_str(&self.resolved_wrap_image_inline());
         out
     }
 }
@@ -342,6 +434,7 @@ pub struct ThemeConfig {
     pub tree_chapter_fg: String,
     pub tree_subchapter_fg: String,
     pub tree_paragraph_fg: String,
+    pub tree_image_fg: String,
 
     // Editor pane header — the trailing `L{row} C{col}` cursor read-out
     // gets this colour so it's distinguishable from the title.
@@ -408,6 +501,7 @@ impl Default for ThemeConfig {
             tree_chapter_fg: "#89b4fa".into(),    // blue — chapter rhythm
             tree_subchapter_fg: "#94e2d5".into(), // teal — subchapter
             tree_paragraph_fg: "#cdd6f4".into(),  // base text — keep prose calm
+            tree_image_fg: "#fab387".into(),       // peach — media accent
 
             editor_position_fg: "#89dceb".into(), // sky — cursor read-out
             ai_scope_fg: "#fab387".into(),        // peach — F9 scope chip

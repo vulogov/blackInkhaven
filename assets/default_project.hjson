@@ -128,6 +128,14 @@
     wrap_chapter: ""
     wrap_subchapter: ""
     wrap_paragraph: ""
+    // Image wrappers — picked by the assembler based on the Image
+    // node's parent kind. Empty string falls back to a sensible
+    // baked-in default (page-break frontispiece / chapter art /
+    // centered section image / inline figure).
+    wrap_image_book: ""
+    wrap_image_chapter: ""
+    wrap_image_subchapter: ""
+    wrap_image_inline: ""
   }
 
   // `typst compile` integration used by Ctrl+B B (build) and
@@ -229,6 +237,7 @@
     tree_chapter_fg:     "#89b4fa"
     tree_subchapter_fg:  "#94e2d5"
     tree_paragraph_fg:   "#cdd6f4"
+    tree_image_fg:       "#fab387"
 
     // Editor pane header — the trailing `L… C…` cursor read-out uses
     // this colour so it pops out of the title.

@@ -552,6 +552,9 @@ impl Store {
             modified_at: chrono::Utc::now(),
             protected: false,
             system_tag: None,
+            image_ext: None,
+            image_caption: None,
+            image_alt: None,
         };
 
         let rel_path = match parent {
@@ -885,6 +888,80 @@ impl Store {
         self.inner
             .get_content(snapshot_id)
             .map_err(|e| Error::Store(format!("snapshot_content: {e}")))
+    }
+
+    /// Fetch the raw bytes of an Image node from bdslib. The on-disk
+    /// copy under `books/<...>` is the working copy; bdslib is the
+    /// source of truth (so a hand-edit on disk isn't re-ingested by
+    /// `Book assembly` — re-importing the file via F3 is the way).
+    pub fn image_bytes(&self, image_id: Uuid) -> Result<Option<Vec<u8>>> {
+        self.inner
+            .get_content(image_id)
+            .map_err(|e| Error::Store(format!("image_bytes: {e}")))
+    }
+
+    /// Create an Image node in bdslib + on disk. `title` becomes the
+    /// node's display title; the slug is derived from it. `ext` is
+    /// the canonical file extension (`png`, `jpg`, …) without a dot.
+    /// `bytes` is the image content — written to disk verbatim and
+    /// also stored in bdslib via `add_document_no_embed` so backup /
+    /// restore round-trip it.
+    pub fn create_image_node(
+        &self,
+        cfg: &Config,
+        hierarchy: &Hierarchy,
+        title: &str,
+        ext: &str,
+        bytes: &[u8],
+        parent: Option<&Node>,
+        position: InsertPosition,
+    ) -> Result<Node> {
+        // Build the node skeleton via the existing branch path —
+        // create_node handles slug uniqueness, ordering, and
+        // metadata persistence. We then override the kind-specific
+        // fields and update.
+        let mut node = self.create_node(
+            cfg,
+            hierarchy,
+            NK::Image,
+            title,
+            parent,
+            None,
+            position,
+        )?;
+        node.image_ext = Some(ext.to_lowercase());
+        // The placeholder body create_node wrote (a paragraph-style
+        // `= Title` markdown stub) isn't useful for an image. Replace
+        // both bdslib content and on-disk file with the bytes.
+        let abs = self.layout.root.join(
+            node.file.as_deref().unwrap_or(""),
+        );
+        std::fs::write(&abs, bytes).map_err(Error::Io)?;
+        // Rename the on-disk file from `NN-slug.typ` (what create_node
+        // wrote) to `NN-slug.<ext>` so the on-disk extension matches.
+        let abs_typ = abs.clone();
+        let abs_image =
+            self.layout.root.join(
+                std::path::PathBuf::from(node.file.clone().unwrap_or_default())
+                    .with_extension(&node.image_ext.clone().unwrap_or_default()),
+            );
+        if abs_typ != abs_image && abs_typ.exists() {
+            let _ = std::fs::rename(&abs_typ, &abs_image);
+        }
+        // Update node.file to reflect the new extension.
+        if let Some(rel) = node.file.as_ref() {
+            let rel_image =
+                std::path::PathBuf::from(rel).with_extension(&node.image_ext.clone().unwrap_or_default());
+            node.file = Some(rel_image.to_string_lossy().into_owned());
+        }
+        self.inner
+            .update_content(node.id, bytes)
+            .map_err(|e| Error::Store(format!("update_content (image): {e}")))?;
+        self.inner
+            .update_metadata(node.id, node.to_json())
+            .map_err(|e| Error::Store(format!("update_metadata (image): {e}")))?;
+        self.sync()?;
+        Ok(node)
     }
 
     /// Delete a single snapshot by id. Snapshots have no on-disk file

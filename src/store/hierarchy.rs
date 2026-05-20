@@ -238,9 +238,14 @@ impl Hierarchy {
     /// Validate that `child_kind` may be placed under `parent`.
     ///
     /// Default config (unbounded_subchapters = false):
-    ///   books → chapter, paragraph
-    ///   chapter → subchapter, paragraph
-    ///   subchapter → paragraph
+    ///   books → chapter, paragraph, image
+    ///   chapter → subchapter, paragraph, image
+    ///   subchapter → paragraph, image
+    ///
+    /// Images sit wherever paragraphs sit — first-class leaves
+    /// alongside prose. The wrap_image_* function picked by the
+    /// assembler depends on the Image's parent kind (book art /
+    /// chapter art / subchapter art).
     ///
     /// With unbounded_subchapters = true, subchapter → subchapter is also OK.
     pub fn validate_placement(
@@ -255,9 +260,12 @@ impl Hierarchy {
             (Some(_), NodeKind::Book) => false,
             (Some(NodeKind::Book), NodeKind::Chapter) => true,
             (Some(NodeKind::Book), NodeKind::Paragraph) => true,
+            (Some(NodeKind::Book), NodeKind::Image) => true,
             (Some(NodeKind::Chapter), NodeKind::Subchapter) => true,
             (Some(NodeKind::Chapter), NodeKind::Paragraph) => true,
+            (Some(NodeKind::Chapter), NodeKind::Image) => true,
             (Some(NodeKind::Subchapter), NodeKind::Paragraph) => true,
+            (Some(NodeKind::Subchapter), NodeKind::Image) => true,
             (Some(NodeKind::Subchapter), NodeKind::Subchapter) => {
                 cfg.hierarchy.unbounded_subchapters
             }
