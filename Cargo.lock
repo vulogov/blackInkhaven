@@ -2611,6 +2611,7 @@ dependencies = [
  "crossterm",
  "directories",
  "duckdb",
+ "easy-error",
  "fastembed",
  "futures-util",
  "genai",

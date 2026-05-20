@@ -101,6 +101,10 @@ bundcore = "=0.7.0"
 bund_language_parser = "=0.14.0"
 rust_multistackvm = "=0.38.0"
 rust_dynamic = "=0.49.0"
+# bundcore / rust_multistackvm use easy_error for their function-pointer
+# `Result<_, Error>` signatures; we need a direct dep to construct that
+# error type at the FFI boundary in `scripting::stdlib::ink`.
+easy-error = "1"
 
 # Misc
 anyhow = "1"

@@ -248,7 +248,7 @@ impl Cli {
             Command::Restore { archive, to } => {
                 restore::run(&archive, &to).map_err(Into::into)
             }
-            Command::Bund { code } => bund::run(&code),
+            Command::Bund { code } => bund::run(&code, &project),
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
         }
     }
