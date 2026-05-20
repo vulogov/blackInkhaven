@@ -175,6 +175,18 @@ Ctrl+B A (or B / O). The root `<book-slug>.typ` imports
 to control layout — they're called automatically for every node in
 the tree.
 
+## Inkhaven LLM providers
+The AI pane talks to one of six bundled provider configurations: Gemini,
+Claude, OpenAI, DeepSeek, Grok, and Ollama. They live under `llm.providers`
+in `inkhaven.hjson`; the `llm.default` field picks the active one.
+Ctrl+B L opens a floating switcher that rewrites `llm.default` in place
+without touching the rest of the file. genai (the underlying client)
+routes by model name — change the `model:` string to upgrade in place
+(`gpt-4o` → `gpt-5-pro`, `claude-sonnet-4-5` → `claude-opus-4`, etc).
+Required env vars: `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`DEEPSEEK_API_KEY`, `XAI_API_KEY`. Ollama needs no key — point it at
+your local daemon and pull a model with `ollama pull <name>`.
+
 ## Inkhaven HJSON data nodes
 Paragraphs can hold HJSON in addition to Typst. F3 in the tree-pane
 file picker detects `.hjson` files and creates a Paragraph with

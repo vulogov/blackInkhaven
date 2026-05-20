@@ -22,16 +22,39 @@
 
   llm: {
     // Provider used by the AI pane when no explicit override is passed.
-    // Switch to "ollama" below for local inference.
+    // Cycle via Ctrl+B L to pick a different one without leaving the TUI.
+    //
+    // genai (the multi-provider client) routes by model name: `gpt-*`
+    // / `o1-*` → OpenAI, `claude-*` → Anthropic, `gemini-*` → Gemini,
+    // `grok-*` → xAI, `deepseek-*` → DeepSeek, anything else → Ollama.
+    // Add / rename providers freely — only the model string + env var
+    // matter to the dispatcher.
     default: gemini
     providers: {
       gemini: {
         model: gemini-2.5-pro
         api_key_env: GEMINI_API_KEY
       }
+      claude: {
+        model: claude-sonnet-4-5
+        api_key_env: ANTHROPIC_API_KEY
+      }
+      openai: {
+        // `gpt-4o-mini` for cheaper / faster; `gpt-5-pro` once
+        // generally available. genai picks Responses-API vs
+        // Chat-Completions adapter automatically from the model name.
+        model: gpt-4o
+        api_key_env: OPENAI_API_KEY
+      }
       deepseek: {
         model: deepseek-chat
         api_key_env: DEEPSEEK_API_KEY
+      }
+      grok: {
+        // xAI's Grok. Hits api.x.ai/v1 via genai's OpenAI-compatible
+        // Xai adapter.
+        model: grok-2-latest
+        api_key_env: XAI_API_KEY
       }
       // Local Ollama at the default endpoint (http://localhost:11434).
       // No API key is needed — omit `api_key_env`. genai picks the Ollama
