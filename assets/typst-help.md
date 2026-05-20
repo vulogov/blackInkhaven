@@ -175,6 +175,16 @@ Ctrl+B A (or B / O). The root `<book-slug>.typ` imports
 to control layout — they're called automatically for every node in
 the tree.
 
+## Inkhaven HJSON data nodes
+Paragraphs can hold HJSON in addition to Typst. F3 in the tree-pane
+file picker detects `.hjson` files and creates a Paragraph with
+`content_type = "hjson"`; the editor switches to the HJSON syntax
+highlighter (comments, strings, numbers, keywords, keys) and the on-
+disk filename uses the `.hjson` extension. Read HJSON files from
+Typst with `json("01-data.hjson")` (note: typst's `json()` accepts
+HJSON-relaxed syntax via the `hjson` flag when typst's stdlib
+supports it; otherwise feed it strict JSON for now).
+
 ## Inkhaven HJSON-driven settings.typ
 `settings.typ` in the artefacts tree has an auto-generated header
 synthesised from the `typst_page` / `typst_fonts` / `typst_layout`

@@ -555,6 +555,7 @@ impl Store {
             image_ext: None,
             image_caption: None,
             image_alt: None,
+            content_type: None,
         };
 
         let rel_path = match parent {

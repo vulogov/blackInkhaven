@@ -737,6 +737,18 @@ fn image_extension_for(path: &std::path::Path) -> Option<String> {
     }
 }
 
+/// Map file extension → content_type tag stored on the resulting
+/// Paragraph. `.hjson` → "hjson"; anything else (including `.typ` /
+/// no extension / plain text files) → `None`, which means "typst
+/// default".
+fn content_type_for(path: &std::path::Path) -> Option<String> {
+    let ext = path.extension()?.to_str()?.to_lowercase();
+    match ext.as_str() {
+        "hjson" => Some("hjson".into()),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum InferenceAction {
     Replace,
@@ -1695,6 +1707,12 @@ struct OpenedDoc {
     /// renders it normally (so the user can read it, scroll, search), but
     /// every mutating keystroke is intercepted with a status message.
     read_only: bool,
+    /// Picked from the Node's `content_type` at open time. Drives
+    /// which syntax highlighter the editor uses (`"hjson"` → the
+    /// hand-rolled HJSON lexer; anything else → tree-sitter-typst).
+    /// Also reported in the editor header so the user can tell at a
+    /// glance which language they're editing.
+    content_type: Option<String>,
     /// Pre-correction baseline captured when the AI pane's `T` (grammar-
     /// check apply) overwrites the buffer with the model's corrected text.
     /// Lines that differ from this baseline render in `theme.grammar_change_fg`
@@ -6455,7 +6473,8 @@ impl App {
             }
         };
 
-        let created = match self.store.create_node(
+        let content_type = content_type_for(path);
+        let mut created = match self.store.create_node(
             &self.cfg,
             &self.hierarchy,
             NodeKind::Paragraph,
@@ -6470,13 +6489,40 @@ impl App {
                 return;
             }
         };
+        // For non-default content types, stamp the node + rename the
+        // on-disk file so the extension matches (`<NN>-<slug>.hjson`
+        // instead of `.typ`). create_node always lays down the file
+        // with the typst extension; we move it before writing bytes.
+        if let Some(ct) = &content_type {
+            created.content_type = Some(ct.clone());
+            let new_rel = std::path::PathBuf::from(
+                created.file.clone().unwrap_or_default(),
+            )
+            .with_extension(ct);
+            if let Some(old_rel) = &created.file {
+                let old_abs = self.layout.root.join(old_rel);
+                let new_abs = self.layout.root.join(&new_rel);
+                if old_abs.exists() && old_abs != new_abs {
+                    let _ = std::fs::rename(&old_abs, &new_abs);
+                }
+            }
+            created.file = Some(new_rel.to_string_lossy().into_owned());
+            if let Err(e) = self
+                .store
+                .raw()
+                .update_metadata(created.id, created.to_json())
+            {
+                self.status = format!("update metadata: {e}");
+                return;
+            }
+        }
 
         // Replace the templated body with the actual file content.
-        let Some(rel) = &created.file else {
+        let Some(rel) = created.file.clone() else {
             self.status = "created paragraph has no file path — bug?".into();
             return;
         };
-        let abs = self.layout.root.join(rel);
+        let abs = self.layout.root.join(&rel);
         if let Err(e) = std::fs::write(&abs, &bytes) {
             self.status = format!("write {}: {e}", abs.display());
             return;
@@ -6487,7 +6533,11 @@ impl App {
             return;
         }
         let _ = self.store.sync();
-        self.status = format!("imported `{}` as paragraph", path.display());
+        let kind_note = match content_type.as_deref() {
+            Some("hjson") => " (hjson)",
+            _ => "",
+        };
+        self.status = format!("imported `{}` as paragraph{kind_note}", path.display());
         self.reload_hierarchy();
         if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == created.id) {
             self.tree_cursor = i;
@@ -8030,6 +8080,7 @@ impl App {
             search: None,
             read_only,
             correction_baseline: None,
+            content_type: node.content_type.clone(),
         });
         self.change_focus(Focus::Editor);
         self.status = format!("opened {}", abs.display());
@@ -9044,8 +9095,15 @@ impl App {
                 let stats_style = Style::default()
                     .fg(self.theme.editor_position_fg)
                     .add_modifier(Modifier::BOLD);
+                let lang_tag = match d.content_type.as_deref() {
+                    Some("hjson") => " [hjson]",
+                    _ => "",
+                };
                 Line::from(vec![
-                    Span::raw(format!(" Editor — {}{}{} · ", d.title, ro, dirty)),
+                    Span::raw(format!(
+                        " Editor — {}{}{}{} · ",
+                        d.title, lang_tag, ro, dirty
+                    )),
                     Span::styled(format!("L{} C{} ", row + 1, col + 1), stats_style),
                     Span::raw("· "),
                     Span::styled(format!("{words}w"), stats_style),
@@ -9177,7 +9235,7 @@ impl App {
         let highlighter = &mut self.highlighter;
         let current_lines: Vec<String> = opened.textarea.lines().to_vec();
         let source = current_lines.join("\n");
-        let highlighted = highlighter.highlight_lines(&source, theme);
+        let highlighted = highlight_for_content(highlighter, &source, theme, opened.content_type.as_deref());
 
         // Precompute "added since last save" bitmaps per source row.
         let saved = &opened.saved_lines;
@@ -9343,7 +9401,7 @@ impl App {
         let highlighter = &mut self.highlighter;
         let current_lines: Vec<String> = opened.textarea.lines().to_vec();
         let source = current_lines.join("\n");
-        let highlighted = highlighter.highlight_lines(&source, theme);
+        let highlighted = highlight_for_content(highlighter, &source, theme, opened.content_type.as_deref());
 
         let saved = &opened.saved_lines;
         let added_per_row: Vec<Vec<bool>> = current_lines
@@ -9874,6 +9932,21 @@ fn truncate_title(title: &str, max_chars: usize) -> String {
 /// `unicode-segmentation`, so a selection of "Москва" works the same as
 /// dropping the cursor inside it. Trailing apostrophes / quotes are
 /// trimmed so "King's" doesn't pull in an extra quote.
+/// Dispatch the per-line highlight call based on `content_type` —
+/// typst (default) goes through the cached tree-sitter highlighter;
+/// "hjson" runs the lightweight hand-rolled lexer.
+pub fn highlight_for_content(
+    highlighter: &mut super::highlight::TypstHighlighter,
+    source: &str,
+    theme: &super::theme::Theme,
+    content_type: Option<&str>,
+) -> Vec<Vec<super::highlight::StyledRun>> {
+    match content_type {
+        Some("hjson") => super::hjson_highlight::highlight_hjson_lines(source, theme),
+        _ => highlighter.highlight_lines(source, theme),
+    }
+}
+
 /// Convert a tui-textarea (row, char-col) cursor into a byte offset
 /// inside `source = lines.join("\n")`. Used by the mode detector to
 /// query tree-sitter at the cursor's position.
