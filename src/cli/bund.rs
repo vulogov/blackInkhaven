@@ -42,6 +42,10 @@ fn maybe_register_active_store(project: &Path) {
         Ok(c) => c,
         Err(_) => return,
     };
+    // Honor the project's scripting policy in the CLI path too —
+    // a writer running `inkhaven bund` against their project gets
+    // the same sandbox they'd see in the TUI.
+    crate::scripting::set_policy(cfg.scripting.clone());
     let store = match Store::open(layout, &cfg) {
         Ok(s) => s,
         Err(_) => return,
