@@ -956,6 +956,29 @@ mod book_info_tests {
     }
 
     #[test]
+    fn byte_offset_for_cursor_basic() {
+        let src = "abc\ndef\nghi";
+        // Row 0, col 0 → byte 0.
+        assert_eq!(byte_offset_for_cursor(src, 0, 0), 0);
+        // Row 0, col 3 → end of "abc".
+        assert_eq!(byte_offset_for_cursor(src, 0, 3), 3);
+        // Row 1, col 0 → after the first newline.
+        assert_eq!(byte_offset_for_cursor(src, 1, 0), 4);
+        // Row 2, col 2 → "gh|i".
+        assert_eq!(byte_offset_for_cursor(src, 2, 2), 10);
+    }
+
+    #[test]
+    fn byte_offset_for_cursor_handles_multibyte() {
+        // "Москва" is 6 chars / 12 bytes.
+        let src = "Москва";
+        assert_eq!(byte_offset_for_cursor(src, 0, 0), 0);
+        assert_eq!(byte_offset_for_cursor(src, 0, 6), 12);
+        // Mid-way: 3 chars in is 6 bytes.
+        assert_eq!(byte_offset_for_cursor(src, 0, 3), 6);
+    }
+
+    #[test]
     fn open_pair_for_known_openers() {
         assert_eq!(open_pair_for('('), Some(')'));
         assert_eq!(open_pair_for('['), Some(']'));
@@ -5507,11 +5530,22 @@ impl App {
             self.modal = Modal::None;
             return;
         };
-        // Phase 1: always insert with the `#` markup-mode prefix. A
-        // context detector (markup vs code via tree-sitter-typst) is
-        // the natural follow-up; until then the user can delete the
-        // `#` in the rare code-mode case.
-        let opener = format!("#{}(", picked.name);
+        // Detect the syntactic mode at the cursor via tree-sitter-
+        // typst so we only emit the `#` prefix when the cursor is in
+        // markup. Inside `{ code }`, function-call arguments, `let`
+        // RHS, or math, the bare identifier is what typst expects.
+        let mode = self
+            .opened
+            .as_ref()
+            .map(|doc| {
+                let source = doc.textarea.lines().join("\n");
+                let (row, col) = doc.textarea.cursor();
+                let byte = byte_offset_for_cursor(&source, row, col);
+                super::highlight::typst_mode_at(&source, byte)
+            })
+            .unwrap_or(super::highlight::TypstMode::Markup);
+        let prefix = mode.call_prefix();
+        let opener = format!("{prefix}{}(", picked.name);
         if let Some(doc) = self.opened.as_mut() {
             doc.textarea.insert_str(&opener);
             doc.textarea.insert_str(")");
@@ -5519,7 +5553,12 @@ impl App {
             doc.dirty = true;
         }
         self.modal = Modal::None;
-        self.status = format!("inserted #{}( … )", picked.name);
+        let mode_tag = match mode {
+            super::highlight::TypstMode::Markup => "markup",
+            super::highlight::TypstMode::Code => "code",
+            super::highlight::TypstMode::Math => "math",
+        };
+        self.status = format!("inserted {prefix}{}( … ) · {mode_tag} mode", picked.name);
     }
 
     fn draw_function_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
@@ -9835,6 +9874,30 @@ fn truncate_title(title: &str, max_chars: usize) -> String {
 /// `unicode-segmentation`, so a selection of "Москва" works the same as
 /// dropping the cursor inside it. Trailing apostrophes / quotes are
 /// trimmed so "King's" doesn't pull in an extra quote.
+/// Convert a tui-textarea (row, char-col) cursor into a byte offset
+/// inside `source = lines.join("\n")`. Used by the mode detector to
+/// query tree-sitter at the cursor's position.
+pub fn byte_offset_for_cursor(source: &str, row: usize, col: usize) -> usize {
+    let mut byte: usize = 0;
+    let mut current_row = 0;
+    for line in source.split_inclusive('\n') {
+        if current_row == row {
+            // Find the byte offset for `col` chars into this line
+            // (stop before the newline if any).
+            let body = line.strip_suffix('\n').unwrap_or(line);
+            return byte
+                + body
+                    .char_indices()
+                    .nth(col)
+                    .map(|(b, _)| b)
+                    .unwrap_or(body.len());
+        }
+        byte += line.len();
+        current_row += 1;
+    }
+    source.len()
+}
+
 /// Open-bracket → matching close pair the auto-close logic emits.
 /// None for any character that isn't an opener we recognise.
 fn open_pair_for(c: char) -> Option<char> {
