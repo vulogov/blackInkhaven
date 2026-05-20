@@ -22,16 +22,39 @@
 
   llm: {
     // Provider used by the AI pane when no explicit override is passed.
-    // Switch to "ollama" below for local inference.
+    // Cycle via Ctrl+B L to pick a different one without leaving the TUI.
+    //
+    // genai (the multi-provider client) routes by model name: `gpt-*`
+    // / `o1-*` → OpenAI, `claude-*` → Anthropic, `gemini-*` → Gemini,
+    // `grok-*` → xAI, `deepseek-*` → DeepSeek, anything else → Ollama.
+    // Add / rename providers freely — only the model string + env var
+    // matter to the dispatcher.
     default: gemini
     providers: {
       gemini: {
         model: gemini-2.5-pro
         api_key_env: GEMINI_API_KEY
       }
+      claude: {
+        model: claude-sonnet-4-5
+        api_key_env: ANTHROPIC_API_KEY
+      }
+      openai: {
+        // `gpt-4o-mini` for cheaper / faster; `gpt-5-pro` once
+        // generally available. genai picks Responses-API vs
+        // Chat-Completions adapter automatically from the model name.
+        model: gpt-4o
+        api_key_env: OPENAI_API_KEY
+      }
       deepseek: {
         model: deepseek-chat
         api_key_env: DEEPSEEK_API_KEY
+      }
+      grok: {
+        // xAI's Grok. Hits api.x.ai/v1 via genai's OpenAI-compatible
+        // Xai adapter.
+        model: grok-2-latest
+        api_key_env: XAI_API_KEY
       }
       // Local Ollama at the default endpoint (http://localhost:11434).
       // No API key is needed — omit `api_key_env`. genai picks the Ollama
@@ -51,6 +74,18 @@
     // autosaved. Set to 0 to disable idle autosave; Ctrl+S, Ctrl+Q, and
     // paragraph-switch autosaves still fire.
     autosave_seconds: 5
+
+    // Auto-close brackets and quotes.
+    //  * Typing `(`, `[`, `{`, `"`, `'` inserts the matching close-char
+    //    and parks the cursor between them.
+    //  * Typing the matching close-char when it's already the next
+    //    character on the line steps over it instead of duplicating.
+    //  * Enter inside `()`, `[]` or `{}` expands to three indented
+    //    lines (cursor lands on the middle one). Indent size = `tab_width`.
+    //  * Backspace on the inside of a freshly-typed pair removes
+    //    both halves.
+    // Set false to disable the whole behaviour.
+    auto_close_pairs: true
 
     // Snowball stemmer languages used to expand the Places / Characters
     // highlight overlay. With `russian` configured a paragraph titled
@@ -85,13 +120,118 @@
   // zip is written to `out_dir`. `inkhaven backup --out <dir>` triggers
   // the same flow manually at any time.
   //
-  // - `out_dir`: relative paths resolve against the project root; empty
-  //   string disables auto-backup.
-  // - `max_age`: humantime — "1d", "12h", "30m", "1w" all work.
-  //   Set to "0s" (or unset) to disable the on-exit hook entirely.
+  // - `out_dir`: empty string (default) → resolved at runtime to
+  //   `<parent-of-project>/inkhaven-backups/<project-basename>/`
+  //   (sibling directory next to the project — visible in any file
+  //   manager so backups are easy to copy off to external storage).
+  //   Absolute paths used verbatim; relative paths resolve against the
+  //   project root if you really want backups inside the project.
+  // - `max_age`: humantime — "1d", "12h", "30m", "1w" all work. Set to
+  //   "0s" to disable the on-exit hook entirely (manual
+  //   `inkhaven backup` still works).
   backup: {
-    out_dir: "backups"
+    out_dir: ""
     max_age: "7d"
+  }
+
+  // Typewriter-style sound effects. Two events emit a synthesised
+  // click: pressing Enter in the editor ("end of line, hit Enter") and
+  // the editor pane losing focus ("remove page from machine"). The
+  // sounds are generated at runtime — no audio assets needed. Toggle
+  // live with Ctrl+B E; the change is written back here.
+  //
+  // - `enabled`: false by default so new users aren't surprised by
+  //   audio on first launch.
+  // - `volume`: master multiplier, clamped to 0.0–1.0.
+  sound: {
+    enabled: false
+    volume: 0.6
+  }
+
+  // Typst wrap function templates used by Book assembly (Ctrl+B A).
+  // The strings below are inlined verbatim into the per-book
+  // `globals.typ` paragraph the first time a user book is created —
+  // edit them here BEFORE running `add book` (or copy your customised
+  // wrap_* defs into Typst → <bookname> → globals.typ in the TUI).
+  //
+  // An empty string falls back to inkhaven's baked-in default for that
+  // wrap (`heading(level: ...) ; body` for chapter/subchapter; passthrough
+  // for book / paragraph). Leave the defaults until you know what
+  // headings, page breaks, and layout you want.
+  typst_templates: {
+    wrap_book: ""
+    wrap_chapter: ""
+    wrap_subchapter: ""
+    wrap_paragraph: ""
+    // Image wrappers — picked by the assembler based on the Image
+    // node's parent kind. Empty string falls back to a sensible
+    // baked-in default (page-break frontispiece / chapter art /
+    // centered section image / inline figure).
+    wrap_image_book: ""
+    wrap_image_chapter: ""
+    wrap_image_subchapter: ""
+    wrap_image_inline: ""
+  }
+
+  // HJSON-driven `settings.typ`. `Ctrl+B A` synthesises the
+  // generated header in artefacts/<book>/settings.typ from these
+  // three stanzas — change values here instead of hand-editing the
+  // Typst paragraph. The user's `Typst → <book> → settings.typ`
+  // paragraph still applies BELOW the auto-generated header as a
+  // free-form override (anything HJSON doesn't yet expose).
+  //
+  // typst_page → #set page(...)
+  // typst_fonts → #set text(...) + #set raw(font: ...)
+  // typst_layout → #set par(...) and optional #set heading(numbering)
+  typst_page: {
+    paper: "us-letter"
+    margin_top: "2.5cm"
+    margin_bottom: "2.5cm"
+    margin_inside: "3cm"
+    margin_outside: "2cm"
+    page_numbering: "1"
+    columns: 1
+  }
+  typst_fonts: {
+    body: "EB Garamond"
+    body_size: "11pt"
+    monospace: "JetBrains Mono"
+    language: "en"
+  }
+  typst_layout: {
+    justify: true
+    leading: "0.7em"
+    paragraph_indent: ""
+    heading_numbering: ""
+  }
+
+  // Image-node behaviour (F3 import, Enter-on-Image preview).
+  // - `preview_enabled`: when true, Enter on an Image row pops a
+  //   ratatui-image preview that uses kitty / sixel / iterm2 /
+  //   half-block protocols depending on terminal support. Flip to
+  //   false on slow ssh sessions or terminals where the half-block
+  //   fallback is too noisy — the status-bar info line then takes
+  //   over.
+  // - `allowed_extensions`: import filter (F3 picker). Anything not
+  //   here keeps the prose treatment.
+  // - `max_size_bytes`: soft guard against importing huge files.
+  images: {
+    preview_enabled: true
+    allowed_extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"]
+    max_size_bytes: 33554432
+  }
+
+  // `typst compile` integration used by Ctrl+B B (build) and
+  // Ctrl+B O (take). When the compile fails, inkhaven opens a fresh
+  // AI chat with this system prompt and the captured stderr — the
+  // analysis streams into the AI pane automatically.
+  //
+  // - `error_system_prompt`: empty string falls back to inkhaven's
+  //   baked-in default (knows the inkhaven file layout: globals.typ,
+  //   book/index.typ, etc.). Override to tighten the prompt to your
+  //   own conventions or to a different language.
+  typst_compile: {
+    error_system_prompt: ""
   }
 
   keys: {
@@ -114,6 +254,16 @@
   }
 
   prompts_file: prompts.hjson
+
+  // Where per-book artefacts (rendered PDFs, build intermediates, …)
+  // land. Empty string → resolved at runtime to
+  // `<parent-of-project>/inkhaven-artefacts/<project-basename>/`
+  // (sibling directory next to the project, mirroring `backup.out_dir`
+  // so both user-visible outputs sit next to the project in a file
+  // manager). Override with an absolute path for a custom location, or
+  // a relative path to keep artefacts inside the project tree (legacy
+  // behaviour — remember they're ephemeral and don't belong in backups).
+  artefacts_directory: ""
 
   // Visual theme — every value is a hex RGB triple like "#RRGGBB" (or the
   // short "#RGB" form). Empty strings fall back to the shipped Catppuccin
@@ -145,11 +295,16 @@
     modal_fg:          "#cdd6f4"
     modal_border:      "#cba6f7"
 
-    // Places / Characters overlay tints. Words that match a paragraph
-    // title nested under the Places (resp. Characters) book light up in
-    // these colours inside the editor.
-    places_fg:         "#89dceb"
-    characters_fg:     "#f9e2af"
+    // Places / Characters / Artefacts overlay tints. Words that match a
+    // paragraph title nested under the Places (cyan) / Characters (amber)
+    // / Artefacts (peach) book light up in these colours inside the
+    // editor. Notes matches get a plain underline tinted with the
+    // `notes_underline_fg` colour below (default = pane_fg so the
+    // underline reads as text).
+    places_fg:           "#89dceb"
+    characters_fg:       "#f9e2af"
+    artefacts_fg:        "#fab387"
+    notes_underline_fg:  "#cdd6f4"
 
     // In-buffer Ctrl+F search highlights (every match / the current one).
     search_match_bg:   "#f38ba8"
@@ -165,6 +320,7 @@
     tree_chapter_fg:     "#89b4fa"
     tree_subchapter_fg:  "#94e2d5"
     tree_paragraph_fg:   "#cdd6f4"
+    tree_image_fg:       "#fab387"
 
     // Editor pane header — the trailing `L… C…` cursor read-out uses
     // this colour so it pops out of the title.

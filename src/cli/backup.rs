@@ -1,6 +1,8 @@
-//! `inkhaven backup --out <dir>` — zip the project into a dated archive.
-//! Mirrors what the TUI does on its auto-backup-on-exit hook, but standalone
-//! so users can take ad-hoc snapshots before risky operations.
+//! `inkhaven backup [--out <dir>]` — zip the project into a dated
+//! archive. Mirrors what the TUI does on its auto-backup-on-exit hook,
+//! but standalone so users can take ad-hoc snapshots before risky
+//! operations. When `--out` is omitted the default lands at
+//! `<parent-of-project>/inkhaven-backups/<project-basename>/`.
 
 use std::path::{Path, PathBuf};
 
@@ -8,8 +10,9 @@ use crate::backup;
 use crate::config::Config;
 use crate::error::Result;
 use crate::project::ProjectLayout;
+use crate::store::default_user_backup_dir;
 
-pub fn run(project: &Path, out: &Path) -> Result<()> {
+pub fn run(project: &Path, out: Option<&Path>) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     // Read the config only to derive the canonical backup dir if `out` is
@@ -18,17 +21,19 @@ pub fn run(project: &Path, out: &Path) -> Result<()> {
     // initialise duckdb/HNSW just to copy bytes.
     let _cfg = Config::load(&layout.config_path())?;
 
+    let abs_project = std::fs::canonicalize(&layout.root).map_err(crate::error::Error::Io)?;
     // `out` may be relative — resolve against the cwd, not the project
     // root, so `inkhaven --project /foo backup --out .` lands in the
     // user's actual cwd. Resolve the project's own canonical path so we
     // can decide whether `out` lives inside it (and must be skip-listed).
-    let abs_project = std::fs::canonicalize(&layout.root).map_err(crate::error::Error::Io)?;
-    let abs_out = if out.is_absolute() {
-        out.to_path_buf()
-    } else {
-        std::env::current_dir()
+    // When omitted, fall back to the sibling-of-project default — same
+    // location the TUI auto-backup hook writes to.
+    let abs_out = match out {
+        Some(p) if p.is_absolute() => p.to_path_buf(),
+        Some(p) => std::env::current_dir()
             .map_err(crate::error::Error::Io)?
-            .join(out)
+            .join(p),
+        None => default_user_backup_dir(&abs_project),
     };
     let skip = skip_dirs_for(&abs_project, &abs_out);
 

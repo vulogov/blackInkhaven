@@ -7,27 +7,33 @@ backup pipeline — so the entire writing workflow lives inside one binary,
 without leaving the terminal.
 
 Your manuscript is organised as a hierarchy of `.typ` files
-(Book → Chapter → Subchapter → Paragraph). Inkhaven stores metadata in a
-local DuckDB database, indexes every paragraph for full-text and semantic
-search, keeps versioned snapshots, and streams answers from your chosen LLM
-provider (Gemini, DeepSeek, Ollama, or anything else
-[genai](https://github.com/jeremychone/rust-genai) understands) right next
-to the paragraph you're working on.
+(Book → Chapter → Subchapter → Paragraph), with first-class **image**
+leaves alongside paragraphs. Inkhaven stores metadata in a local DuckDB
+database, indexes every paragraph for full-text and semantic search,
+keeps versioned snapshots, and streams answers from your chosen LLM
+provider — six are bundled (**Gemini**, **Claude**, **OpenAI**,
+**DeepSeek**, **Grok**, **Ollama**) and any model
+[genai](https://github.com/jeremychone/rust-genai) routes is one
+HJSON line away.
 
-```
-┌── Tree ──────────┬── Editor — Opening Scene · L4 C18 ───────┬── AI — gemini · done · scope=Paragraph · infer=Full ──┐
-│ ▾ My Novel     │  = Opening Scene                          │ Suggestion: tighten the second sentence — the          │
-│   ▾ The Begi…  │                                            │ phrase "thunderstruck mariner" reads dated. Try         │
-│   ► Opening …  │  The thunderstruck mariner stood at        │ "stunned sailor" or "shaken helmsman" if you want the   │
-│ ▸ Notes        │  the rail. The rain had been falling       │ alliteration. Three more candidates below.              │
-│ ▸ Research     │  for three days, and the deck was…         │                                                         │
-│ ▸ Prompts      │                                            │                                                         │
-│ ▸ Places       │                                            │  r replace  i insert  t top  b bottom  c copy  g grammar│
-│ ▸ Characters   │                                            │                                                         │
-│ ▸ Help         │                                            │                                                         │
-└──────────────────┴────────────────────────────────────────────┴─────────────────────────────────────────────────────────┘
-[Search │ ]                                              [AI prompt · scope=Paragraph │ ]                                [✓ saved 412 words · gemini responded in 1.8s]
-```
+![Inkhaven screenshot](screen.png)
+
+## Latest release · 1.1
+
+Read the full notes: [`Documentation/RELEASE_NOTES/1.1.md`](Documentation/RELEASE_NOTES/1.1.md)
+
+Headlines:
+- First-class **images** in the project tree with a ratatui-image preview.
+- **Book assembly → typst compile → PDF** pipeline (`Ctrl+B A` / `B` / `O`).
+- HJSON-driven `settings.typ` — change paper, fonts, margins, line spacing in config; the rest is synthesised on every build.
+- Six bundled LLM providers, live-switchable via `Ctrl+B L`.
+- **AI full-screen layout** (`Ctrl+B K`) with persistent chat history, chat search, and a turn-selection mode that pipes Assistant replies into the editor.
+- **Document status workflow** — cycle `None → Napkin → First → … → Ready` with `Ctrl+B R`; filter the project by status with `Ctrl+B 1..7`.
+- **Typewriter mode** (`Ctrl+B W`) hides every pane but the editor.
+- **`inkhaven import-typst-help`** seeds the Help book with a curated typst reference so F1 RAG answers typst questions.
+- HJSON as a first-class node type with syntax highlighting.
+
+Every prior release lives under [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
 
 ## Why Inkhaven
 
@@ -48,11 +54,22 @@ to the paragraph you're working on.
 - **Multilingual.** Snowball stemmers and multilingual embeddings make
   Russian, German, French, Spanish, Italian and others first-class. The
   shipped defaults cover English and Russian.
-- **Help, characters, places — built in.** Six system books are seeded on
-  every project: `Notes`, `Research`, `Prompts`, `Places`, `Characters`,
-  `Help`. Mentions of names from `Places` light up in cyan; mentions from
-  `Characters` light up in yellow. F1 answers questions about Inkhaven
-  itself by RAG over the `Help` book.
+- **Help, characters, places, artefacts — built in.** Eight system
+  books are seeded on every project: `Notes`, `Research`, `Prompts`,
+  `Places`, `Characters`, `Artefacts`, `Typst`, `Help`. Mentions of
+  names from these books light up in the editor (cyan / amber / peach /
+  underline). `Ctrl+B P` / `C` / `Y` / `G` query each book via RAG.
+  `F1` answers questions about Inkhaven itself by RAG over `Help`.
+- **First-class images.** Drop PNG / JPG / WebP / SVG into the tree;
+  Book assembly emits the right `wrap_image_*` calls and ships the
+  bytes into the typst tree. `Ctrl+B P` inside `#image("…")` opens a
+  sibling picker. Enter on an Image row pops a ratatui-image preview
+  (kitty / sixel / iterm2 / half-block).
+- **From buffer to PDF in two chords.** `Ctrl+B A` assembles your tree
+  into a typst-compilable directory; `Ctrl+B B` compiles it; `Ctrl+B O`
+  builds and copies the PDF into your shell's cwd as
+  `<book>-YYYYDDMM-HHMM.pdf`. Compile failures route the captured
+  stderr into a fresh AI chat with a typst-aware system prompt.
 
 ## Features at a glance
 
@@ -69,10 +86,12 @@ to the paragraph you're working on.
 
 ### Tree
 - Multi-level folding (`←` / `→` / `Z` / `X`).
-- Per-kind row colours (book / chapter / subchapter / paragraph) +
-  open-paragraph marker.
+- Per-kind row colours (book / chapter / subchapter / paragraph / image)
+  + open-paragraph marker.
 - Plain-letter shortcuts for add (`B`/`C`/`V`/`A`/`S`/`+`/`P`),
   delete (`D`/`-`), reorder (`U`/`J`).
+- **Document status badge** column — one character per row colour-
+  coded to the workflow stage (`n` / `1` / `2` / `3` / `F` / `R`).
 - Mouse: click to focus + select; scroll wheel scrolls.
 
 ### AI pane
@@ -84,10 +103,14 @@ to the paragraph you're working on.
   and **Full** (augment with general knowledge). Help inferences are pinned
   to Local automatically.
 - Persistent **chat history** with one-key clear (`Ctrl+B C`).
-- **Place / Character RAG** — `Ctrl+B P` / `Ctrl+B C` in the editor sweep
-  the selected name through the `Places` / `Characters` books and prepend
-  the lookup result to the next AI prompt.
+- **Full-screen AI layout** (`Ctrl+B K`) — AI pane + scrollable chat
+  history + AI prompt; persisted to `.inkhaven-chat.json` between
+  sessions; `Ctrl+F` searches; `Ctrl+C` enters a turn-selection mode.
+- **Lexicon RAG** — `Ctrl+B P` / `C` / `G` / `Y` in the editor sweep
+  the selection through `Places` / `Characters` / `Notes` / `Artefacts`
+  and prepend the lookup to the next AI prompt.
 - **F1 Help-manual** floating query → grounded answer over the Help book.
+  `inkhaven import-typst-help` seeds Help with a curated typst reference.
 - **F7 Grammar check** with deterministic correction extraction (`g`
   replaces the buffer with just the corrected text, preserving Typst
   markup).

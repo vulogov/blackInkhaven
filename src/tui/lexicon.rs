@@ -34,11 +34,14 @@ use uuid::Uuid;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::NodeKind;
 
-/// Highlight category for a lexicon hit.
+/// Highlight category for a lexicon hit. Drives both the editor
+/// overlay style and the per-category status messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LexCategory {
     Place,
     Character,
+    Note,
+    Artefact,
 }
 
 /// One match on a row of editor text, in character (not byte) coordinates.
@@ -71,26 +74,27 @@ pub struct Lexicon {
 }
 
 impl Lexicon {
-    /// Walk the hierarchy, collect paragraph titles under each system book,
-    /// and stem them with every configured Snowball algorithm. Either book
-    /// being absent or having no descendants results in an empty category.
+    /// Walk the hierarchy, collect paragraph titles under each
+    /// supplied book, and stem them with every configured Snowball
+    /// algorithm. `books` is a list of `(book_id, category)` pairs;
+    /// duplicate titles across categories are deduplicated case-
+    /// insensitively but the FIRST entry's category wins, so put the
+    /// higher-priority category first.
     pub fn build(
         hierarchy: &Hierarchy,
-        places_book: Option<Uuid>,
-        characters_book: Option<Uuid>,
+        books: &[(Uuid, LexCategory)],
         algorithms: Vec<Algorithm>,
     ) -> Self {
         let mut names: Vec<CompiledName> = Vec::new();
-        if let Some(id) = places_book {
-            collect_names(hierarchy, id, LexCategory::Place, &algorithms, &mut names);
-        }
-        if let Some(id) = characters_book {
-            collect_names(
+        let mut seen: HashMap<String, ()> = HashMap::new();
+        for (book_id, category) in books {
+            collect_names_into(
                 hierarchy,
-                id,
-                LexCategory::Character,
+                *book_id,
+                *category,
                 &algorithms,
                 &mut names,
+                &mut seen,
             );
         }
         // Longer phrases first so we prefer "King's Landing" over "King".
@@ -163,14 +167,14 @@ impl Lexicon {
     }
 }
 
-fn collect_names(
+fn collect_names_into(
     hierarchy: &Hierarchy,
     root: Uuid,
     category: LexCategory,
     algos: &[Algorithm],
     out: &mut Vec<CompiledName>,
+    seen: &mut HashMap<String, ()>,
 ) {
-    let mut seen: HashMap<String, ()> = HashMap::new();
     for id in hierarchy.collect_subtree(root) {
         if id == root {
             continue;
@@ -289,29 +293,46 @@ mod tests {
         characters: &[&str],
         algos: Vec<Algorithm>,
     ) -> Lexicon {
+        build_test_lex_cats(&[
+            (LexCategory::Place, places),
+            (LexCategory::Character, characters),
+        ], algos)
+    }
+
+    fn build_test_lex_cats(
+        groups: &[(LexCategory, &[&str])],
+        algos: Vec<Algorithm>,
+    ) -> Lexicon {
         let mut names: Vec<CompiledName> = Vec::new();
-        for n in places {
-            let words = tokenize_words(n);
-            if words.is_empty() {
-                continue;
+        for (cat, list) in groups {
+            for n in *list {
+                let words = tokenize_words(n);
+                if words.is_empty() {
+                    continue;
+                }
+                names.push(CompiledName {
+                    stems_per_word: words.iter().map(|w| stems_for(w, &algos)).collect(),
+                    category: *cat,
+                });
             }
-            names.push(CompiledName {
-                stems_per_word: words.iter().map(|w| stems_for(w, &algos)).collect(),
-                category: LexCategory::Place,
-            });
-        }
-        for n in characters {
-            let words = tokenize_words(n);
-            if words.is_empty() {
-                continue;
-            }
-            names.push(CompiledName {
-                stems_per_word: words.iter().map(|w| stems_for(w, &algos)).collect(),
-                category: LexCategory::Character,
-            });
         }
         names.sort_by(|a, b| b.stems_per_word.len().cmp(&a.stems_per_word.len()));
         Lexicon { names, algos }
+    }
+
+    #[test]
+    fn notes_and_artefacts_hit_with_distinct_categories() {
+        let lex = build_test_lex_cats(
+            &[
+                (LexCategory::Note, &["dragonglass"]),
+                (LexCategory::Artefact, &["valyrian steel"]),
+            ],
+            vec![Algorithm::English],
+        );
+        let hits = lex.row_hits("She wielded the Valyrian Steel against the Dragonglass.");
+        let cats: Vec<LexCategory> = hits.iter().map(|h| h.category).collect();
+        assert!(cats.contains(&LexCategory::Note), "got: {hits:?}");
+        assert!(cats.contains(&LexCategory::Artefact), "got: {hits:?}");
     }
 
     #[test]

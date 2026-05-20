@@ -15,8 +15,10 @@ pub enum StreamMsg {
 
 /// A prior turn in an ongoing chat, replayed back to the model so it has
 /// context for follow-up questions. The TUI accumulates these in
-/// `App::chat_history`; F9 clears them.
-#[derive(Debug, Clone)]
+/// `App::chat_history`; F9 clears them. Serde derives let the
+/// `Ctrl+B K` exit hook persist the history into the project
+/// directory and re-load it on the next entry.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ChatTurn {
     User(String),
     Assistant(String),

@@ -1,6 +1,6 @@
 [package]
 name = "inkhaven"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
@@ -122,6 +122,25 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # Human-friendly duration parsing for the auto-backup `max_age` config knob.
 humantime = "2"
 humantime-serde = "1"
+# Typewriter sounds (Enter / focus-out). The output stream is initialised
+# lazily and silently skipped when the host has no audio device, so a
+# headless build (CI, SSH session without audio forwarding) still works.
+# Linux release builds need `libasound2-dev` at build time.
+rodio = { version = "0.20", default-features = false }
+# Image preview in the editor pane. The Picker is created lazily by
+# querying the host terminal's graphics-protocol support; on terminals
+# that don't speak kitty / sixel / iterm2 the half-block backend is the
+# fallback. Disabled at the application level by `images.preview_enabled`.
+ratatui-image = "5"
+# In-memory decoder for the image bytes we feed to ratatui-image.
+# Limit codecs to the formats we accept on import to keep the binary
+# from pulling in TIFF / OpenEXR / etc.
+image = { version = "0.25", default-features = false, features = [
+  "png",
+  "jpeg",
+  "gif",
+  "webp",
+] }
 
 [dev-dependencies]
 tempfile = "3"

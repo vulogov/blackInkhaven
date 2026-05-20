@@ -4,6 +4,7 @@ pub mod backup;
 pub mod delete;
 pub mod export;
 pub mod import_help;
+pub mod import_typst_help;
 pub mod init;
 pub mod list;
 pub mod mv;
@@ -129,12 +130,21 @@ pub enum Command {
         documents_directory: PathBuf,
     },
 
+    /// Import inkhaven's curated Typst reference into the Help system
+    /// book. Creates / refreshes a `Typst reference` chapter so F1
+    /// (RAG over Help) can answer typst questions from grounded
+    /// context. Offline — the reference is bundled with the binary.
+    ImportTypstHelp,
+
     /// Zip the project into a dated backup archive
     /// (`blackinkhaven_YYYYDDMM_HHMMSS.zip`).
     Backup {
         /// Output directory for the archive. Created if missing.
+        /// Omit to use the project-relative default
+        /// (`<parent-of-project>/inkhaven-backups/<project-basename>/`)
+        /// — same location the TUI's exit hook writes to.
         #[arg(long)]
-        out: PathBuf,
+        out: Option<PathBuf>,
     },
 
     /// Restore a backup archive into a fresh directory.
@@ -221,7 +231,10 @@ impl Cli {
             Command::ImportHelp {
                 documents_directory,
             } => import_help::run(&project, &documents_directory).map_err(Into::into),
-            Command::Backup { out } => backup::run(&project, &out).map_err(Into::into),
+            Command::ImportTypstHelp => {
+                import_typst_help::run(&project).map_err(Into::into)
+            }
+            Command::Backup { out } => backup::run(&project, out.as_deref()).map_err(Into::into),
             Command::Restore { archive, to } => {
                 restore::run(&archive, &to).map_err(Into::into)
             }
