@@ -109,6 +109,14 @@ pub struct Node {
     /// the field is serde-optional with the typst default.
     #[serde(default)]
     pub content_type: Option<String>,
+
+    /// Document-status workflow tag — Ctrl+B R in the editor cycles
+    /// through Napkin → First → Second → Third → Final → Ready (and
+    /// back to None) so the writer can mark progress without leaving
+    /// the buffer. None / empty = no badge. Stored as a string so
+    /// future projects can extend the workflow without a migration.
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 impl Node {
@@ -129,6 +137,7 @@ impl Node {
             "image_caption": self.image_caption,
             "image_alt":     self.image_alt,
             "content_type":  self.content_type,
+            "status":        self.status,
         })
     }
 
@@ -223,6 +232,10 @@ impl Node {
             .get("content_type")
             .and_then(|v| v.as_str())
             .map(str::to_owned);
+        let status = obj
+            .get("status")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
 
         Ok(Self {
             id,
@@ -241,6 +254,7 @@ impl Node {
             image_caption,
             image_alt,
             content_type,
+            status,
         })
     }
 
