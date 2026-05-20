@@ -8949,11 +8949,11 @@ impl App {
             .store
             .update_paragraph_content(&mut node, body.as_bytes())
         {
-            self.status = format!("bdslib update failed: {e}");
+            self.status = format!("store update failed: {e}");
             return Ok(());
         }
         if let Err(e) = self.store.sync() {
-            self.status = format!("bdslib sync failed: {e}");
+            self.status = format!("store sync failed: {e}");
             return Ok(());
         }
 
@@ -9633,7 +9633,7 @@ impl App {
                     )),
                     Line::from(""),
                     Line::from(Span::styled(
-                        " Removes files from disk AND records from bdslib.",
+                        " Removes files from disk AND records from the store.",
                         Style::default().add_modifier(Modifier::DIM),
                     )),
                     Line::from(Span::styled(
@@ -12364,7 +12364,9 @@ Rules:
 /// scroll through. When you add a new direct dep in Cargo.toml, add it
 /// here too.
 const CREDITS_COMPONENTS: &[(&str, &str, &str)] = &[
-    ("bdslib",                "Apache-2.0",      "DuckDB + Tantivy + fastembed + HNSW document store (V. Ulogov)"),
+    ("duckdb",                "MIT",             "embedded SQL engine — metadata + blob stores"),
+    ("vecstore",              "MIT",             "HNSW vector index — semantic search"),
+    ("fastembed",             "Apache-2.0",      "multilingual ONNX text embeddings"),
     ("ratatui",               "MIT",             "TUI rendering framework"),
     ("tui-textarea",          "MIT",             "multi-line text widget (state model)"),
     ("crossterm",             "MIT",             "cross-platform terminal control"),

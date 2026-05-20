@@ -91,9 +91,9 @@ pub enum Command {
         limit: usize,
     },
 
-    /// Re-index all `.typ` files from disk into bdslib.
+    /// Re-index all `.typ` files from disk into the document store.
     Reindex {
-        /// Remove bdslib records whose file is missing on disk.
+        /// Remove store records whose file is missing on disk.
         #[arg(long)]
         prune: bool,
         /// Register every orphan .typ file under the deepest hierarchy
