@@ -1,12 +1,12 @@
 [package]
 name = "inkhaven"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
 rust-version = "1.85"
 license = "Apache-2.0"
-description = "Inkhaven — TUI literary work editor for Typst books, backed by bdslib"
+description = "Inkhaven — TUI literary work editor for Typst books"
 authors = ["Vladimir Ulogov <vulogov@gmail.com>"]
 repository = "https://github.com/vulogov/blackInkhaven"
 homepage = "https://github.com/vulogov/blackInkhaven"
@@ -22,9 +22,8 @@ categories = ["command-line-utilities", "text-editors", "text-processing"]
 #   * Direct download from https://github.com/vulogov/blackInkhaven/releases
 #
 # crates.io publishing is intentionally disabled — see `publish = false`
-# below. If you ever want to flip to crates.io, bdslib and
-# tree-sitter-typst would need to be published first (see git history
-# for the path-dep arrangement that almost-works).
+# below. If you ever want to flip to crates.io, tree-sitter-typst (the
+# last remaining vendored path-dep) would need to be published first.
 publish = false
 
 # `cargo-binstall` metadata: tells `cargo binstall inkhaven` where to
@@ -48,11 +47,17 @@ name = "inkhaven"
 path = "src/main.rs"
 
 [dependencies]
-# Storage / search. Vendored at `vendor/bdslib/` (cloned from
-# github.com/vulogov/bdslib) so the source tree is self-contained and
-# `cargo install --git` works in one shot without resolving against
-# crates.io.
-bdslib = { path = "vendor/bdslib" }
+# Storage / search. Inkhaven owns its own slim storage layer at
+# `src/storage/` — DuckDB-backed metadata + blob stores, an HNSW vector
+# index via `vecstore`, and a fastembed wrapper for multilingual
+# embeddings. This module replaces what used to be a dependency on
+# `bdslib` (vendored at vendor/bdslib/), shedding ~300+ transitive
+# crates that inkhaven never reached (Tantivy, augurs, axum, …).
+duckdb = { version = "1", features = ["bundled", "r2d2"] }
+fastembed = "5"
+vecstore = "1"
+r2d2 = "0.8"
+parking_lot = "0.12"
 
 # CLI
 clap = { version = "4", features = ["derive", "wrap_help"] }
@@ -62,7 +67,7 @@ serde-hjson = "1.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Async runtime (required by bdslib + genai)
+# Async runtime (required by genai)
 tokio = { version = "1", features = [
   "macros",
   "rt-multi-thread",
@@ -156,4 +161,4 @@ strip = "symbols"
 # them on every `cargo` invocation.
 [workspace]
 members = ["."]
-exclude = ["vendor/bdslib", "vendor/tree-sitter-typst"]
+exclude = ["vendor/tree-sitter-typst"]
