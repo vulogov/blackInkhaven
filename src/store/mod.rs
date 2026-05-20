@@ -399,6 +399,16 @@ impl Store {
         self.inner.sync().map_err(|e| Error::Store(e.to_string()))
     }
 
+    /// Drain DuckDB's WAL into the main `.db` files. Used by the
+    /// background sync tick and the TUI shutdown path; per-save
+    /// callers don't need this because every commit is already
+    /// fsync-durable.
+    pub fn checkpoint(&self) -> Result<()> {
+        self.inner
+            .checkpoint()
+            .map_err(|e| Error::Store(e.to_string()))
+    }
+
     /// Add a hierarchy node to bdslib. The metadata is serialized; the content
     /// bytes are indexed for vector search. Returns the bdslib-assigned UUIDv7
     /// after we copy it back onto the Node.

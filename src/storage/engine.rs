@@ -114,6 +114,14 @@ impl StorageEngine {
         Ok(())
     }
 
+    /// Force a DuckDB `CHECKPOINT` — drains WAL into the main `.db`
+    /// file. Cheap when the WAL is empty (DuckDB short-circuits).
+    /// Called from the background sync tick and the TUI shutdown
+    /// path; per-save callers shouldn't invoke this directly because
+    /// every commit is already durable.
+    pub fn checkpoint(&self) -> Result<()> {
+        self.execute("CHECKPOINT;")
+    }
 }
 
 // ── BlobStorage ──────────────────────────────────────────────────────
@@ -190,6 +198,10 @@ impl BlobStorage {
             "DELETE FROM blobs WHERE id = '{}'",
             sql_escape(&id.to_string()),
         ))
+    }
+
+    pub fn checkpoint(&self) -> Result<()> {
+        self.engine.checkpoint()
     }
 }
 
@@ -321,6 +333,10 @@ impl JsonStorage {
             out.push((id, doc));
         }
         Ok(out)
+    }
+
+    pub fn checkpoint(&self) -> Result<()> {
+        self.engine.checkpoint()
     }
 }
 
