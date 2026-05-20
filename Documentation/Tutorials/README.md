@@ -21,6 +21,9 @@ covers.
 | 9 | [`09-exporting-to-typst-and-pdf.md`](09-exporting-to-typst-and-pdf.md) | `inkhaven export typst` / `export pdf`; what a book-level config paragraph looks like. |
 | 10 | [`10-backups-and-recovery.md`](10-backups-and-recovery.md) | Manual backup, restore, the auto-backup-on-exit hook, recovery from drift. |
 | 11 | [`11-theming.md`](11-theming.md) | The Catppuccin Mocha defaults and every colour knob in the HJSON. |
+| 12 | [`12-configuring-ai-providers.md`](12-configuring-ai-providers.md) | The six bundled provider stanzas (Gemini / Claude / OpenAI / DeepSeek / Grok / Ollama), Ctrl+B L live-switching, model upgrades. |
+| 13 | [`13-ai-full-screen-mode.md`](13-ai-full-screen-mode.md) | Ctrl+B K layout, persistent chat history, Ctrl+F search, Ctrl+C selection mode that copies / inserts turns. |
+| 14 | [`14-document-status.md`](14-document-status.md) | Ctrl+B R workflow ring, status badges in tree + editor header, Ctrl+B 1..7 scoped filter modal. |
 
 ## Conventions used in these tutorials
 
