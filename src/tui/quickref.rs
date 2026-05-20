@@ -48,7 +48,7 @@ pub fn entries_for(focus: Focus) -> Vec<Entry> {
     out
 }
 
-fn global_entries() -> [Entry; 26] {
+fn global_entries() -> [Entry; 27] {
     [
         header("─── Global ───"),
         entry("Ctrl+Q", "Quit (autosaves dirty paragraph)"),
@@ -71,6 +71,7 @@ fn global_entries() -> [Entry; 26] {
         entry("Ctrl+B W", "Toggle full-screen typewriter mode (hides every other pane)"),
         entry("Ctrl+B K", "Toggle full-screen AI mode (AI pane | chat history + AI prompt)"),
         entry("Ctrl+F", "(in AI fullscreen) Search chat history — Ctrl+X for next (older) match"),
+        entry("Ctrl+C", "(in AI fullscreen) Selection mode — ↑↓ pick turn · c=copy · t=insert into editor"),
         entry("F1", "Help-manual question (RAG over the Help book)"),
         entry("F7", "Grammar check the open paragraph (→ AI pane)"),
         entry("F9", "Cycle AI scope: None→Sel→Para→Sub→Chap→Book→None"),
