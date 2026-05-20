@@ -116,6 +116,33 @@
   // so a generous interval costs nothing during idle. 0 disables.
   sync_interval_seconds: 600
 
+  // Bund scripting sandbox. Inkhaven exposes the Bund language
+  // (`inkhaven bund <code>`, plus later phases for save-hooks and
+  // user-authored scripts) and applies a category-based deny list
+  // to the registered words.
+  //
+  // Default (no entries below): destructive categories
+  // `fs_write`, `net`, `shell`, `code_eval` are denied; the other
+  // categories (`store_read`, `store_write`, `fs_read`) are
+  // allowed. Currently inkhaven only ships `store_read` words.
+  //
+  // Resolution: enabled_words > disabled_words > disabled_categories.
+  scripting: {
+    // Additional categories to deny on top of the built-in defaults.
+    // Choices: store_read, store_write, fs_read, fs_write, net,
+    // shell, code_eval.
+    disabled_categories: []
+    // Specific word names to deny regardless of their category.
+    disabled_words: []
+    // Specific word names to allow even when their category is denied.
+    // Useful for "give me one tool out of an otherwise-blocked family".
+    enabled_words: []
+    // Power-user switch: when true, the built-in default deny list
+    // (fs_write, net, shell, code_eval) is cleared and only
+    // `disabled_*` above apply. Off in stock projects.
+    no_default_deny: false
+  }
+
   // Auto-backup on TUI exit. The TUI checks `.inkhaven-backup.json` for
   // the last successful backup timestamp; if older than `max_age`, the
   // store is closed, a splash with a progress bar is shown, and a fresh

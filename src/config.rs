@@ -35,6 +35,12 @@ pub struct Config {
     pub typst_layout: TypstLayoutConfig,
     #[serde(default)]
     pub images: ImagesConfig,
+    /// Bund scripting sandbox policy. Defaults deny destructive
+    /// categories (fs_write, net, shell, code_eval); writers opt
+    /// in by listing the categories or words they want to allow.
+    /// See `src/scripting/policy.rs`.
+    #[serde(default)]
+    pub scripting: crate::scripting::policy::Policy,
     /// Primary writing language of the project. Drives:
     /// * Snowball stemmers for the editor's Places/Characters highlight
     ///   overlay (overrides `editor.stemming.languages` when non-empty).
@@ -101,6 +107,7 @@ impl Default for Config {
             typst_fonts: TypstFontsConfig::default(),
             typst_layout: TypstLayoutConfig::default(),
             images: ImagesConfig::default(),
+            scripting: crate::scripting::policy::Policy::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
             artefacts_directory: default_artefacts_directory(),

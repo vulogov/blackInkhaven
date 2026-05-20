@@ -31,6 +31,7 @@
 //! - **P5**: first-class `NodeKind::Script` + Bund-aware editor.
 //! - **P6**: ephemeral worker pool + result queue.
 
+pub mod policy;
 pub mod stdlib;
 
 use anyhow::{anyhow, Result};
@@ -40,6 +41,7 @@ use rust_dynamic::value::Value;
 use std::sync::OnceLock;
 
 use crate::store::Store;
+use policy::Policy;
 
 /// Process-wide singleton Bund VM. Borrows the bundcore "Adam"
 /// terminology — see module docs.
@@ -52,10 +54,17 @@ static ADAM: OnceLock<RwLock<Bund>> = OnceLock::new();
 /// a clean "no project store registered" error.
 static ACTIVE_STORE: OnceLock<Store> = OnceLock::new();
 
+/// Sandbox policy to apply when Adam is built. Setters land before
+/// the first `eval()` triggers lazy init; once Adam exists, the
+/// policy is frozen for the process. `None` (no setter called) ⇒
+/// the bundcore vanilla default, which deny destructive categories.
+static POLICY: OnceLock<Policy> = OnceLock::new();
+
 /// Initialise the Adam VM exactly once. Idempotent — subsequent
 /// calls are no-ops. Loads bundcore's stdlib (arithmetic, string,
-/// conditional, …) via the `Bund::new()` constructor and then
-/// layers on inkhaven's read-only store words.
+/// conditional, …) via the `Bund::new()` constructor, layers on
+/// inkhaven's read-only `ink.*` words, then applies the sandbox
+/// policy (re-registers denied words with a stub).
 pub fn init_adam() -> Result<()> {
     if ADAM.get().is_some() {
         return Ok(());
@@ -63,8 +72,21 @@ pub fn init_adam() -> Result<()> {
     let mut bund = Bund::new();
     stdlib::register_ink_stdlib(&mut bund.vm)
         .map_err(|e| anyhow!("register ink stdlib: {e}"))?;
+    let p = POLICY.get().cloned().unwrap_or_default();
+    if !p.is_open() {
+        policy::apply_policy(&mut bund.vm, &p)
+            .map_err(|e| anyhow!("apply policy: {e}"))?;
+    }
     let _ = ADAM.set(RwLock::new(bund));
     Ok(())
+}
+
+/// Install the sandbox policy. Must be called BEFORE the first
+/// `eval()` — otherwise Adam is already constructed under the
+/// default policy and the call is a no-op. Idempotent in practice
+/// (single-project-per-process).
+pub fn set_policy(policy: Policy) {
+    let _ = POLICY.set(policy);
 }
 
 /// Install the project store into the global slot. Called by the
