@@ -6,6 +6,7 @@ mod config;
 mod error;
 mod grammar;
 mod project;
+mod scripting;
 mod storage;
 mod store;
 mod tui;
