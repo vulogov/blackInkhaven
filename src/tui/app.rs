@@ -968,6 +968,33 @@ mod book_info_tests {
     }
 
     #[test]
+    fn next_status_walks_the_ring() {
+        assert_eq!(next_status(None), "Napkin");
+        assert_eq!(next_status(Some("Napkin")), "First");
+        assert_eq!(next_status(Some("First")), "Second");
+        assert_eq!(next_status(Some("Second")), "Third");
+        assert_eq!(next_status(Some("Third")), "Final");
+        assert_eq!(next_status(Some("Final")), "Ready");
+        // Wrap.
+        assert_eq!(next_status(Some("Ready")), "None");
+        // Empty string = same as None.
+        assert_eq!(next_status(Some("")), "Napkin");
+    }
+
+    #[test]
+    fn next_status_unknown_value_treated_as_none() {
+        assert_eq!(next_status(Some("WeirdCustom")), "Napkin");
+    }
+
+    #[test]
+    fn display_status_collapses_none_variants() {
+        assert_eq!(display_status(None), "None");
+        assert_eq!(display_status(Some("")), "None");
+        assert_eq!(display_status(Some("   ")), "None");
+        assert_eq!(display_status(Some("Napkin")), "Napkin");
+    }
+
+    #[test]
     fn byte_offset_for_cursor_basic() {
         let src = "abc\ndef\nghi";
         // Row 0, col 0 → byte 0.
@@ -2190,7 +2217,7 @@ impl App {
                         .into()
                 }
                 Focus::Editor => {
-                    "META · S save · N snapshot · R history · F split · T retitle · P place · C character · G notes · Y artefacts · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · Esc cancel"
+                    "META · S save · N snapshot · R status · F func · T retitle · P place/pic · C character · G notes · Y artefacts · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · Esc cancel"
                         .into()
                 }
                 Focus::Ai | Focus::AiPrompt => {
@@ -4587,10 +4614,14 @@ impl App {
                 self.open_quickref();
                 true
             }
-            // R: snapshot histoRy picker (== F6). Moved off H so Help can
-            // claim that letter across every pane.
+            // R: cycle the open paragraph's `status` workflow tag —
+            // None → Napkin → First → Second → Third → Final → Ready → None.
+            // F6 still opens the snapshot history (the previous meaning
+            // of Ctrl+B R); the chord is reclaimed here because writers
+            // touch their draft status far more often than they browse
+            // snapshot history.
             KeyCode::Char('R') | KeyCode::Char('r') => {
-                self.open_snapshot_picker();
+                self.cycle_paragraph_status();
                 true
             }
             // L was a duplicate of F3 (load file). Reclaimed as the
@@ -5953,6 +5984,41 @@ impl App {
     /// streams the result into the AI pane. The AI pane is read-only by
     /// construction (no editor lives there), so the user can scroll the
     /// answer but can't edit it.
+    /// Editor meta `Ctrl+B R`: advance the open paragraph's status one
+    /// step through the workflow ring. The cycle wraps back to None
+    /// after Ready; pressing R repeatedly walks the whole sequence
+    /// without any other UI. Persisted to bdslib so it survives the
+    /// next launch.
+    fn cycle_paragraph_status(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "no paragraph open".into();
+            return;
+        };
+        let id = doc.id;
+        let Some(node) = self.hierarchy.get(id).cloned() else {
+            self.status = "couldn't find the open paragraph in the hierarchy".into();
+            return;
+        };
+        let next = next_status(node.status.as_deref());
+        let mut updated = node.clone();
+        updated.status = if next == "None" {
+            None
+        } else {
+            Some(next.to_string())
+        };
+        if let Err(e) = self
+            .store
+            .raw()
+            .update_metadata(id, updated.to_json())
+        {
+            self.status = format!("status update failed: {e}");
+            return;
+        }
+        // Refresh hierarchy so the status reads back next frame.
+        self.reload_hierarchy();
+        self.status = format!("status: `{}` → `{}`", display_status(node.status.as_deref()), next);
+    }
+
     /// Editor meta `Ctrl+B T`: rerun the placeholder-title derivation on
     /// the currently-open paragraph. Same logic that fires on save when
     /// the title is still `PARAGRAPH_PLACEHOLDER_TITLE`, but exposed
@@ -9099,18 +9165,37 @@ impl App {
                     Some("hjson") => " [hjson]",
                     _ => "",
                 };
-                Line::from(vec![
-                    Span::raw(format!(
-                        " Editor — {}{}{}{} · ",
-                        d.title, lang_tag, ro, dirty
-                    )),
-                    Span::styled(format!("L{} C{} ", row + 1, col + 1), stats_style),
-                    Span::raw("· "),
-                    Span::styled(format!("{words}w"), stats_style),
-                    Span::raw(" · "),
-                    Span::styled(reading, stats_style),
-                    Span::raw(" "),
-                ])
+                // Status badge: hidden when None to keep the header
+                // visually quiet on fresh paragraphs; colour-coded
+                // through the workflow when set. The badge wraps in
+                // brackets so it reads as metadata, not prose.
+                let status_node = self.hierarchy.get(d.id);
+                let status_label = status_node
+                    .and_then(|n| n.status.as_deref())
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty() && *s != "None");
+                let mut spans: Vec<Span<'_>> = Vec::new();
+                spans.push(Span::raw(format!(
+                    " Editor — {}{}{}{} · ",
+                    d.title, lang_tag, ro, dirty
+                )));
+                if let Some(label) = status_label {
+                    spans.push(Span::styled(
+                        format!("[{label}]"),
+                        status_style(label, &self.theme),
+                    ));
+                    spans.push(Span::raw(" · "));
+                }
+                spans.push(Span::styled(
+                    format!("L{} C{} ", row + 1, col + 1),
+                    stats_style,
+                ));
+                spans.push(Span::raw("· "));
+                spans.push(Span::styled(format!("{words}w"), stats_style));
+                spans.push(Span::raw(" · "));
+                spans.push(Span::styled(reading, stats_style));
+                spans.push(Span::raw(" "));
+                Line::from(spans)
             }
             None => Line::from(" Editor "),
         };
@@ -9969,6 +10054,53 @@ pub fn byte_offset_for_cursor(source: &str, row: usize, col: usize) -> usize {
         current_row += 1;
     }
     source.len()
+}
+
+/// Document-status workflow ring. `Ctrl+B R` advances through this
+/// sequence; the ring wraps back to "None" after "Ready". `None` is
+/// represented by both the absence of `status` on the Node and the
+/// literal "None" string in the ring — the helpers below collapse
+/// the two views.
+pub const STATUS_CYCLE: &[&str] = &[
+    "None", "Napkin", "First", "Second", "Third", "Final", "Ready",
+];
+
+pub fn next_status(current: Option<&str>) -> &'static str {
+    let cur = display_status(current);
+    let idx = STATUS_CYCLE
+        .iter()
+        .position(|s| *s == cur)
+        .unwrap_or(0);
+    STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.len()]
+}
+
+pub fn display_status(current: Option<&str>) -> &str {
+    match current {
+        None => "None",
+        Some(s) if s.trim().is_empty() => "None",
+        Some(s) => s,
+    }
+}
+
+/// Colour the editor header uses for each status — picks from the
+/// existing theme palette so users with custom themes keep their
+/// preferred hues.
+pub fn status_style(label: &str, theme: &super::theme::Theme) -> Style {
+    let base = match label {
+        "None" => return Style::default().add_modifier(Modifier::DIM),
+        "Napkin" => theme.grammar_change_fg,           // red — "rough"
+        "First" => theme.ai_scope_fg,                  // peach
+        "Second" => theme.characters_fg,               // amber
+        "Third" => theme.places_fg,                    // cyan
+        "Final" => theme.border_saved,                 // green
+        "Ready" => theme.border_saved,                 // green + bold
+        _ => return Style::default(),
+    };
+    let mut style = Style::default().fg(base).add_modifier(Modifier::BOLD);
+    if label == "Ready" {
+        style = style.add_modifier(Modifier::REVERSED);
+    }
+    style
 }
 
 /// Open-bracket → matching close pair the auto-close logic emits.

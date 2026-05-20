@@ -115,7 +115,7 @@ fn tree_entries() -> [Entry; 35] {
     ]
 }
 
-fn editor_entries() -> [Entry; 56] {
+fn editor_entries() -> [Entry; 57] {
     [
         entry("arrows", "Move cursor"),
         entry("Ctrl+← / →", "Word back / forward"),
@@ -161,7 +161,8 @@ fn editor_entries() -> [Entry; 56] {
         header("─ Editor meta (Ctrl+B …) ─"),
         entry("Ctrl+B S", "Save (alternative to Ctrl+S)"),
         entry("Ctrl+B N", "New snapshot of current paragraph"),
-        entry("Ctrl+B R", "Open snapshot history (== F6)"),
+        entry("Ctrl+B R", "Cycle paragraph status: None→Napkin→First→Second→Third→Final→Ready"),
+        entry("F6", "Snapshot history picker (was Ctrl+B R until 1.1)"),
         entry("Ctrl+B F", "Typst function picker — type to filter, Enter inserts #name(…)"),
         entry("Ctrl+B T", "Retitle paragraph from its first sentence"),
         entry(

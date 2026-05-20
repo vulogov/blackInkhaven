@@ -230,6 +230,7 @@ fn adopt_orphans(
             image_caption: None,
             image_alt: None,
             content_type: None,
+            status: None,
         };
 
         store.put_node(&mut node, &bytes)?;
