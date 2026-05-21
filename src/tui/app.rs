@@ -1669,6 +1669,15 @@ enum Modal {
         body: String,
         label: String,
     },
+    /// Ctrl+V L (1.2.4+) — linked-paragraphs floating modal.
+    /// Lists the open paragraph's outgoing `linked_paragraphs`
+    /// metadata entries. `D` on a row removes the link.
+    LinkPicker {
+        owner: Uuid,
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
     /// F6 picker → `V` opens a two-pane diff of the cursor's
     /// snapshot against the open paragraph's current buffer.
     /// Read-only; Esc returns to the snapshot picker.
@@ -1854,6 +1863,11 @@ pub(crate) struct App {
     /// per-frame redraws don't trigger a hierarchy walk. `None`
     /// means "progress disabled / not yet computed".
     progress_cache: Option<crate::progress::ProgressSnapshot>,
+    /// "Select paragraph to link" mode (1.2.4+). When Some, the
+    /// tree pane shows a custom title and `Enter` on a paragraph
+    /// links it to the owning UUID stashed here. Esc / tree-focus
+    /// loss exits the mode and restores normal Enter semantics.
+    link_pick_for: Option<Uuid>,
     /// In similar-paragraph mode, which pane has keyboard focus.
     /// `false` (default) → left pane = `self.opened` is the
     /// keyboard target. `true` → right pane = `self.secondary`
@@ -2234,6 +2248,7 @@ impl App {
             secondary: None,
             secondary_focused: false,
             progress_cache: None,
+            link_pick_for: None,
             status: String::from(
                 "Tab=panes · Enter=open · Ctrl+S=save · Ctrl+B then B/C/S/P add · D delete · ↑/↓ reorder · Ctrl+Q quit",
             ),
@@ -3086,7 +3101,18 @@ impl App {
             KeyCode::Char('q') | KeyCode::Char('Q') if plain => return Ok(self.request_quit()),
             // Esc cycles Tree → Search bar (third leg of the
             // Editor → Tree → Search → Editor rotation).
-            KeyCode::Esc => self.change_focus(Focus::SearchBar),
+            // 1.2.4+: Esc exits link-pick mode (returning to
+            // the editor) instead of cycling focus to the
+            // search bar.
+            KeyCode::Esc => {
+                if self.link_pick_for.is_some() {
+                    self.link_pick_for = None;
+                    self.status = "link cancelled".into();
+                    self.change_focus(Focus::Editor);
+                } else {
+                    self.change_focus(Focus::SearchBar);
+                }
+            }
             // F2 (rename) and F3 (file picker) now flow through
             // the top_level binding-table dispatch in handle_key.
             KeyCode::Up => self.move_cursor(-1),
@@ -3097,7 +3123,16 @@ impl App {
                     self.tree_cursor = self.rows.len() - 1;
                 }
             }
-            KeyCode::Enter => self.open_selected()?,
+            // 1.2.4+: when link-pick mode is active, Enter on a
+            // tree row links the row's paragraph to the
+            // pick-mode owner rather than opening it for editing.
+            KeyCode::Enter => {
+                if self.link_pick_for.is_some() {
+                    self.commit_link_pick();
+                } else {
+                    self.open_selected()?;
+                }
+            }
 
             // Right arrow: expand cursor's branch (no-op for leaves).
             // Left arrow: collapse cursor's branch if expanded, else move
@@ -5285,6 +5320,202 @@ impl App {
     /// and write to the launch cwd with a `<title>-<stamp>.md`
     /// filename. Errors land on the status bar; nothing else
     /// changes.
+    /// Resolve the tree-cursor row to a paragraph and link it to
+    /// the link-pick owner. Always exits pick mode (success or
+    /// failure) and returns focus to the editor.
+    fn commit_link_pick(&mut self) {
+        let Some(owner) = self.link_pick_for else { return };
+        let target = self
+            .rows
+            .get(self.tree_cursor)
+            .map(|(id, _)| *id);
+        // Exit pick mode first so any status-message we set below
+        // reflects the post-action state.
+        self.link_pick_for = None;
+        let Some(target) = target else {
+            self.status = "link cancelled: no tree row selected".into();
+            self.change_focus(Focus::Editor);
+            return;
+        };
+        let target_kind = self.hierarchy.get(target).map(|n| n.kind);
+        if !matches!(target_kind, Some(NodeKind::Paragraph)) {
+            self.status =
+                "link cancelled: target is not a paragraph".into();
+            self.change_focus(Focus::Editor);
+            return;
+        }
+        match self.add_paragraph_link(owner, target) {
+            Ok(()) => {
+                let title = self
+                    .hierarchy
+                    .get(target)
+                    .map(|n| n.title.clone())
+                    .unwrap_or_else(|| "?".into());
+                self.status = format!("linked → `{title}`");
+            }
+            Err(e) => {
+                self.status = format!("link: {e}");
+            }
+        }
+        self.change_focus(Focus::Editor);
+    }
+
+    // ── Wiki-links (1.2.4+) ────────────────────────────────
+
+    /// Enter "select paragraph to link" mode. Tree pane gets a
+    /// custom title; Enter on a paragraph adds it to the open
+    /// paragraph's outgoing links (with a circular-reference
+    /// guard). Esc / loss-of-focus cancels.
+    fn enter_link_pick_mode(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view A: no paragraph open".into();
+            return;
+        };
+        self.link_pick_for = Some(doc.id);
+        self.change_focus(Focus::Tree);
+        self.status =
+            "link: select paragraph to link · Enter confirms · Esc cancels".into();
+    }
+
+    /// Open the linked-paragraphs modal for the open paragraph.
+    /// Lists each outgoing link with title + slug path; `D`
+    /// removes a row.
+    fn open_link_picker_modal(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view L: no paragraph open".into();
+            return;
+        };
+        let owner = doc.id;
+        let entries = self.collect_link_entries(owner);
+        if entries.is_empty() {
+            self.status =
+                "view L: no linked paragraphs (Ctrl+V A adds one)".into();
+            return;
+        }
+        self.modal = Modal::LinkPicker {
+            owner,
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status =
+            "links: ↑↓ select · D removes · Esc closes".into();
+    }
+
+    /// Resolve the open paragraph's outgoing links into picker
+    /// entries (title + slug path). Stale UUIDs (target deleted)
+    /// are silently filtered.
+    fn collect_link_entries(&self, owner: Uuid) -> Vec<ScriptPickerEntry> {
+        let Some(node) = self.hierarchy.get(owner) else {
+            return Vec::new();
+        };
+        node.linked_paragraphs
+            .iter()
+            .filter_map(|id| self.hierarchy.get(*id))
+            .map(|n| ScriptPickerEntry {
+                id: n.id,
+                title: n.title.clone(),
+                slug_path: self.hierarchy.slug_path(n),
+            })
+            .collect()
+    }
+
+    /// Add `target` to `owner`'s outgoing links. Rejects self-
+    /// linking and circular references (walks `target`'s
+    /// outgoing closure looking for `owner`). Persists via
+    /// `Store::update_metadata`.
+    fn add_paragraph_link(
+        &mut self,
+        owner: Uuid,
+        target: Uuid,
+    ) -> std::result::Result<(), String> {
+        if owner == target {
+            return Err("can't link a paragraph to itself".into());
+        }
+        let owner_node = self
+            .hierarchy
+            .get(owner)
+            .cloned()
+            .ok_or_else(|| format!("owner paragraph {owner} not in hierarchy"))?;
+        if owner_node.linked_paragraphs.contains(&target) {
+            return Err("already linked".into());
+        }
+        // Circular guard: walk target's outgoing transitive closure
+        // depth-first; if owner appears in it, we'd create a loop.
+        if self.link_path_exists(target, owner) {
+            return Err(
+                "You can not create circular references".into(),
+            );
+        }
+        let target_node = self
+            .hierarchy
+            .get(target)
+            .ok_or_else(|| format!("target paragraph {target} not in hierarchy"))?;
+        if target_node.kind != NodeKind::Paragraph {
+            return Err(format!("`{}` is not a paragraph", target_node.title));
+        }
+        let mut updated = owner_node.clone();
+        updated.linked_paragraphs.push(target);
+        updated.modified_at = chrono::Utc::now();
+        self.store
+            .raw()
+            .update_metadata(owner, updated.to_json())
+            .map_err(|e| format!("store update: {e}"))?;
+        self.reload_hierarchy();
+        Ok(())
+    }
+
+    /// Remove `target` from `owner`'s outgoing links. Returns
+    /// `false` when the link wasn't present (no-op).
+    fn remove_paragraph_link(
+        &mut self,
+        owner: Uuid,
+        target: Uuid,
+    ) -> std::result::Result<bool, String> {
+        let owner_node = self
+            .hierarchy
+            .get(owner)
+            .cloned()
+            .ok_or_else(|| format!("owner paragraph {owner} not in hierarchy"))?;
+        if !owner_node.linked_paragraphs.contains(&target) {
+            return Ok(false);
+        }
+        let mut updated = owner_node.clone();
+        updated.linked_paragraphs.retain(|u| *u != target);
+        updated.modified_at = chrono::Utc::now();
+        self.store
+            .raw()
+            .update_metadata(owner, updated.to_json())
+            .map_err(|e| format!("store update: {e}"))?;
+        self.reload_hierarchy();
+        Ok(true)
+    }
+
+    /// True when `start`'s outgoing-link transitive closure
+    /// reaches `goal`. Used by `add_paragraph_link` to refuse
+    /// cycles. Bounded DFS — a malformed graph with a cycle in
+    /// it (shouldn't be possible given this very check, but
+    /// stay safe) terminates via `visited`.
+    fn link_path_exists(&self, start: Uuid, goal: Uuid) -> bool {
+        let mut stack: Vec<Uuid> = vec![start];
+        let mut visited: std::collections::HashSet<Uuid> =
+            std::collections::HashSet::new();
+        while let Some(id) = stack.pop() {
+            if id == goal {
+                return true;
+            }
+            if !visited.insert(id) {
+                continue;
+            }
+            if let Some(node) = self.hierarchy.get(id) {
+                for next in &node.linked_paragraphs {
+                    stack.push(*next);
+                }
+            }
+        }
+        false
+    }
+
     /// Dispatch one of the three Ctrl+V markdown-export scopes
     /// through the per-scope `prepare_*` helpers, then open the
     /// SaveMarkdown modal pre-filled with the default
@@ -5753,6 +5984,8 @@ impl App {
             A::ViewToggleSimilarMode => self.toggle_similar_paragraph_mode(),
             A::ViewOpenProgress => self.open_progress_modal(),
             A::ViewOpenParagraphTarget => self.open_paragraph_target_modal(),
+            A::ViewAddLink => self.enter_link_pick_mode(),
+            A::ViewListLinks => self.open_link_picker_modal(),
 
             // ── Top-level F-keys (1.2.4+ migration) ───────────
             A::HelpQuery => self.open_help_query_modal(),
@@ -7230,6 +7463,28 @@ impl App {
                 out.push_str(" ──\n");
                 out.push_str(&live);
                 out.push_str("\n── end paragraph ──");
+                // 1.2.4+: also include every linked paragraph's
+                // body so the model has the related-material the
+                // user explicitly curated. Direct outgoing only
+                // (matches the status-bar "links N" count). Bodies
+                // come from disk (saved state) — same source the
+                // export / similar-paragraph paths use.
+                let linked_ids: Vec<Uuid> = self
+                    .hierarchy
+                    .get(doc.id)
+                    .map(|n| n.linked_paragraphs.clone())
+                    .unwrap_or_default();
+                for id in linked_ids {
+                    let Some(linked) = self.hierarchy.get(id) else { continue };
+                    let Some(rel) = linked.file.as_ref() else { continue };
+                    let abs = self.layout.root.join(rel);
+                    let body = std::fs::read_to_string(&abs).unwrap_or_default();
+                    out.push_str("\n\n── Linked paragraph: ");
+                    out.push_str(&linked.title);
+                    out.push_str(" ──\n");
+                    out.push_str(&body);
+                    out.push_str("\n── end linked paragraph ──");
+                }
                 Ok(Some(out))
             }
             AiMode::Subchapter | AiMode::Chapter | AiMode::Book => {
@@ -9643,6 +9898,7 @@ impl App {
         let is_paragraph_target = matches!(self.modal, Modal::ParagraphTarget { .. });
         let is_save_markdown = matches!(self.modal, Modal::SaveMarkdown { .. });
         let is_snapshot_diff = matches!(self.modal, Modal::SnapshotDiff { .. });
+        let is_link_picker = matches!(self.modal, Modal::LinkPicker { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -9733,6 +9989,11 @@ impl App {
 
         if is_progress {
             self.progress_modal_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_link_picker {
+            self.link_picker_handle_key(key);
             return Ok(false);
         }
 
@@ -11407,6 +11668,159 @@ impl App {
         );
     }
 
+    fn link_picker_handle_key(&mut self, key: KeyEvent) {
+        // Collect intent; close over the modal's mutable state.
+        let (owner, target_to_remove) = {
+            let Modal::LinkPicker { owner, entries, cursor, scroll } = &mut self.modal else {
+                return;
+            };
+            let total = entries.len();
+            let page: usize = 12;
+            let mut target_to_remove: Option<Uuid> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1));
+                }
+                KeyCode::Home => *cursor = 0,
+                KeyCode::End => *cursor = total.saturating_sub(1),
+                KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Delete => {
+                    if let Some(e) = entries.get(*cursor) {
+                        target_to_remove = Some(e.id);
+                    }
+                }
+                _ => {}
+            }
+            // Keep cursor visible.
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            (*owner, target_to_remove)
+        };
+
+        if let Some(target) = target_to_remove {
+            match self.remove_paragraph_link(owner, target) {
+                Ok(true) => {
+                    self.status = "link removed".into();
+                    // Rebuild the modal entries from the fresh
+                    // hierarchy; close the modal if no links remain.
+                    let entries = self.collect_link_entries(owner);
+                    if entries.is_empty() {
+                        self.modal = Modal::None;
+                    } else if let Modal::LinkPicker { entries: e, cursor, scroll, .. } =
+                        &mut self.modal
+                    {
+                        *cursor = (*cursor).min(entries.len() - 1);
+                        *scroll = (*scroll).min(*cursor);
+                        *e = entries;
+                    }
+                }
+                Ok(false) => {
+                    self.status = "link not found (stale view)".into();
+                }
+                Err(e) => {
+                    self.status = format!("link remove: {e}");
+                }
+            }
+        }
+    }
+
+    fn draw_link_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::LinkPicker { entries, cursor, scroll, .. } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Linked paragraphs ({}) ", entries.len());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+
+        let lines: Vec<Line<'_>> = entries
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .map(|(i, e)| {
+                let head = format!(" → {}", e.title);
+                let path_dim = format!("    {}", e.slug_path);
+                let mut spans: Vec<Span> = vec![
+                    Span::raw(head),
+                    Span::styled(
+                        path_dim,
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                ];
+                let mut line = Line::from(std::mem::take(&mut spans));
+                if i == *cursor {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                line
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = if entries.is_empty() {
+            " (empty) · Esc close ".to_string()
+        } else {
+            format!(
+                " ↑↓ select · D removes · Esc closes    ({}/{}) ",
+                cursor + 1,
+                entries.len()
+            )
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     fn similar_picker_handle_key(&mut self, key: KeyEvent) {
         let (selected_id, total, was_enter) = {
             let Modal::SimilarPicker { entries, cursor, scroll } = &mut self.modal else {
@@ -12204,6 +12618,10 @@ impl App {
             self.draw_snapshot_diff_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::LinkPicker { .. }) {
+            self.draw_link_picker_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -12228,6 +12646,7 @@ impl App {
             Modal::SimilarPicker { .. } => unreachable!("similar picker handled above"),
             Modal::Progress { .. } => unreachable!("progress modal handled above"),
             Modal::SnapshotDiff { .. } => unreachable!("snapshot diff handled above"),
+            Modal::LinkPicker { .. } => unreachable!("link picker handled above"),
             Modal::ParagraphTarget { input } => {
                 let body = vec![
                     Line::from(""),
@@ -12817,7 +13236,12 @@ impl App {
     }
 
     fn draw_tree(&self, f: &mut ratatui::Frame, area: Rect) {
-        let block = self.pane_block("Tree", Focus::Tree);
+        let tree_title: String = if self.link_pick_for.is_some() {
+            " Tree · select paragraph to link · Esc cancels ".into()
+        } else {
+            "Tree".into()
+        };
+        let block = self.pane_block(&tree_title, Focus::Tree);
         let inner = block.inner(area);
         f.render_widget(block, area);
 
@@ -14221,6 +14645,17 @@ impl App {
         }
         if snap.streak.days > 0 {
             parts.push(format!("streak {}d", snap.streak.days));
+        }
+        // Outgoing-link count for the open paragraph (1.2.4+).
+        // Only shown when > 0 to keep the line short on the
+        // common "no links yet" case.
+        if let Some(doc) = self.opened.as_ref() {
+            if let Some(node) = self.hierarchy.get(doc.id) {
+                let n = node.linked_paragraphs.len();
+                if n > 0 {
+                    parts.push(format!("links {n}"));
+                }
+            }
         }
         // Surface the focused book's pace if a deadline is set.
         if let Some(book) = snap.books.iter().find(|b| {

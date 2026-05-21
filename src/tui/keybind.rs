@@ -215,6 +215,15 @@ pub enum Action {
     /// Ctrl+V T — open the per-paragraph target-words input modal.
     #[serde(rename = "view.open_paragraph_target")]
     ViewOpenParagraphTarget,
+    /// Ctrl+V A — switch the tree pane into "select paragraph
+    /// to link" mode. Enter on a paragraph adds it to the open
+    /// paragraph's `linked_paragraphs`.
+    #[serde(rename = "view.add_link")]
+    ViewAddLink,
+    /// Ctrl+V L — open the linked-paragraphs floating modal
+    /// (`D` removes a link).
+    #[serde(rename = "view.list_links")]
+    ViewListLinks,
 
     /// Explicit "this chord does nothing" — overlay entries can
     /// set `action: "none"` to disable a default chord.
@@ -297,6 +306,8 @@ impl Action {
             Action::ViewToggleSimilarMode => "similar".into(),
             Action::ViewOpenProgress => "progress".into(),
             Action::ViewOpenParagraphTarget => "para target".into(),
+            Action::ViewAddLink => "add link".into(),
+            Action::ViewListLinks => "list links".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) => format!("λ {name}"),
@@ -432,6 +443,10 @@ impl Action {
                 "Open the writing-progress modal (today / streak / per-book pace / 30-day sparkline / status-ladder counts).".into(),
             Action::ViewOpenParagraphTarget =>
                 "Set or clear the open paragraph's word-count goal. Saves that cross the target auto-promote status one ladder step.".into(),
+            Action::ViewAddLink =>
+                "Add a linked paragraph — tree pane switches to `select paragraph to link` mode; Enter links, Esc cancels. Stored as metadata, never embedded in typst source.".into(),
+            Action::ViewListLinks =>
+                "Open the linked-paragraphs modal — list outgoing wiki-links for the open paragraph; press D on a row to remove.".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) =>
@@ -560,6 +575,8 @@ impl KeyBindings {
                 entry("s", Action::ViewToggleSimilarMode, Scope::Any),
                 entry("g", Action::ViewOpenProgress, Scope::Any),
                 entry("t", Action::ViewOpenParagraphTarget, Scope::Any),
+                entry("a", Action::ViewAddLink, Scope::Any),
+                entry("l", Action::ViewListLinks, Scope::Any),
             ],
             top_level: vec![
                 // F1 anywhere: Help-book RAG modal.
