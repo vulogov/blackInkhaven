@@ -30,6 +30,7 @@ the next time you press it.
 keys: {
   meta_prefix: "Ctrl+b"
   bund_prefix: "Ctrl+z"
+  view_prefix: "Ctrl+v"     // 1.2.4+
 
   bindings: [
     // Re-letter: Ctrl+B Y also cycles type
@@ -43,15 +44,22 @@ keys: {
 
     // Add a bund sub-chord
     { chord: "Ctrl+z m", action: "bund.run_buffer" }
+
+    // 1.2.4+: view sub-chord (Ctrl+V prefix)
+    { chord: "Ctrl+v X", action: "view.fuzzy_paragraph_picker" }
+
+    // 1.2.4+: rebind a top-level F-key
+    { chord: "F7", action: "view.add_link" }
   ]
 }
 ```
 
 Each entry is `{ chord, action, scope? }`:
 
-- **`chord`** — `"<prefix> <suffix>"` shorthand. Two whitespace-
-  separated tokens. The prefix must match either `meta_prefix` or
-  `bund_prefix`.
+- **`chord`** — `"<prefix> <suffix>"` for meta / bund / view
+  sub-chords (two whitespace-separated tokens; the prefix must
+  match `meta_prefix`, `bund_prefix`, or `view_prefix`). For
+  top-level keys (F-keys, 1.2.4+) use a single token: `"F7"`.
 - **`action`** — dotted name from the [action table](#action-table).
   Use `"none"` to disable a default chord.
 - **`scope`** — `"any"` (default) / `"editor"` / `"tree"` / `"ai"`.
@@ -161,6 +169,46 @@ is what you type, not what the table key is.
 | `bund.run_buffer` | `Ctrl+Z R` | Eval the open `.bund` Script buffer against Adam |
 | `bund.new_script` | `Ctrl+Z N` | Open Add modal under the Scripts system book for a new `.bund` node |
 | `bund.open_eval_modal` | `Ctrl+Z E` | Pop a one-shot Bund expression modal |
+| `bund.open_script_picker` | `Ctrl+Z ?` | Pick + eval a `.bund` Script under the branch scope |
+
+### View sub-chords (Ctrl+V prefix, 1.2.4+)
+
+Layer name: `view_sub`. Rebind via HJSON or `ink.key.bind_view_sub`.
+
+| Action | Default chord | Effect |
+|--------|---------------|--------|
+| `view.export_markdown_buffer` | `Ctrl+V 1` (editor) | Save-as-picker — write open paragraph's buffer as markdown |
+| `view.export_markdown_subchapter` | `Ctrl+V 2` (editor) | Save-as-picker — write subchapter subtree as markdown |
+| `view.export_markdown_subtree` | `Ctrl+V 1` (tree) | Save-as-picker — write cursor's subtree as markdown |
+| `view.toggle_similar_mode` | `Ctrl+V S` | Open / close the similar-paragraph picker + secondary editor |
+| `view.open_progress` | `Ctrl+V G` | Open the writing-progress modal |
+| `view.open_paragraph_target` | `Ctrl+V T` | Set / clear the per-paragraph word-count target |
+| `view.add_link` | `Ctrl+V A` | Add outgoing wiki-link (tree picks target) |
+| `view.add_incoming_link` | `Ctrl+V I` | Add incoming wiki-link (tree picks source) |
+| `view.list_links` | `Ctrl+V L` | Open the outgoing-links picker |
+| `view.list_backlinks` | `Ctrl+V K` | Open the backlinks picker |
+| `view.toggle_bookmark` | `Ctrl+V B` | Toggle bookmark on open paragraph |
+| `view.list_bookmarks` | `Ctrl+V M` | Open the bookmark picker |
+| `view.fuzzy_paragraph_picker` | `Ctrl+V P` | Open the fuzzy paragraph picker |
+
+### Top-level keys (1.2.4+)
+
+Layer name: `top_level`. F-keys migrated from hardcoded
+matches into the bindings table — overlays accept single-token
+chords (`f7`, `shift+f5`, …).
+
+| Action | Default chord | Effect |
+|--------|---------------|--------|
+| `help_query` | `F1` | RAG over the Help book |
+| `rename_node` | `F2` | Open the rename modal |
+| `file_picker_tree_import` | `F3` (tree focus) | File-picker: import a file or directory |
+| `file_picker_editor_load` | `F3` (editor focus) | File-picker: replace open buffer |
+| `toggle_split` | `F4` | Toggle split-edit historical view |
+| `accept_split_snapshot` | `F5` | Save a versioned snapshot |
+| `open_snapshot_picker` | `F6` | Open the snapshot picker |
+| `grammar_check` | `F7` | Grammar correction (default; rebindable) |
+| `cycle_ai_mode` | `F9` | Cycle AI scope (Selection / Paragraph / Chapter / Book) |
+| `toggle_inference_mode` | `F10` | Toggle inference mode (one-shot / chat) |
 
 ### Special
 

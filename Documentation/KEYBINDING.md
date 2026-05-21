@@ -6,6 +6,11 @@ focus. Keys flagged **configurable** are read from
 shipping defaults. Everything else is hard-coded and not user-overridable in
 this release.
 
+> **Printable companion**: [`INKHAVEN_CHEAT_SHEET.typ`](INKHAVEN_CHEAT_SHEET.typ)
+> — a two-column A4 reference. Compile with `typst compile
+> Documentation/INKHAVEN_CHEAT_SHEET.typ` or open the file in the TUI
+> (F3 → pick → `Ctrl+B B` to build).
+
 The TUI has five focus states (Tree, Editor, AI, Search bar, AI prompt) plus
 three transient overlays (Search results, Prompt picker, and a modal stack of
 Add prompt / Delete confirm). Overlays absorb keys; the underlying pane keeps
@@ -110,19 +115,29 @@ before tui-textarea sees them, so they never insert a literal tab.
 
 ### 1.2 View mode (Ctrl+V prefix)
 
-The third meta prefix, added in 1.2.3. Routes to in-process
-exporters, the similar-paragraph picker, and the progress modal.
-Hardcoded (not yet rebindable through `keys.bindings`); see tutorials
-15 / 16 / 17 for the full workflows.
+The third meta prefix. Routes to in-process exporters, pickers,
+the writing-progress modal, wiki-links, and bookmarks. In
+1.2.4+ all view-sub chords are rebindable through HJSON
+`keys.bindings.view_sub` and `ink.key.bind_view_sub`; the
+prefix itself is rebindable via `keys.view_prefix` (default
+`"Ctrl+V"`). See tutorials 15 / 16 / 17 / 19 / 21 for the
+full workflows.
 
 | Chord (after `Ctrl+V`) | Pane (focus filter)      | Action                                                                 |
 | ---------------------- | ------------------------ | ---------------------------------------------------------------------- |
-| `1`                    | Editor / AI-prompt       | Write the **open paragraph's buffer** as markdown to cwd (`<title>-YYYYDDMM-HHMM.md`). Live in-memory text — unsaved edits flow through. |
-| `2`                    | Editor / AI-prompt       | Write the **containing subchapter's subtree** as markdown to cwd (falls back to the chapter if no subchapter wraps). |
-| `1`                    | Tree                     | Write the tree-cursor's **node and all descendants** as markdown to cwd. |
-| `S` / `s`              | any                      | Toggle **similar-paragraph mode** — saves the buffer, picks via vector search, opens a second editor side-by-side (AI pane steps aside). Re-press to save both and exit. |
-| `G` / `g`              | any                      | Open the **writing-progress modal** (today / streak / per-book pace / 30-day sparkline / status-ladder counts). |
+| `1`                    | Editor / AI-prompt       | Write the **open paragraph's buffer** as markdown via the save-as picker (1.2.4 — default path pre-filled; bare Enter writes there). |
+| `2`                    | Editor / AI-prompt       | Write the **containing subchapter's subtree** as markdown via the save-as picker. |
+| `1`                    | Tree                     | Write the tree-cursor's **node and all descendants** as markdown via the save-as picker. |
+| `S` / `s`              | any                      | Toggle **similar-paragraph mode** — saves the buffer, picks via vector search, opens a second editor side-by-side. Re-press to save both and exit. Both editors autosave on idle (1.2.4). |
+| `G` / `g`              | any                      | Open the **writing-progress modal** (today / streak / per-book pace / 30-day sparkline / status-ladder counts / per-book bar chart). |
 | `T` / `t`              | any (needs open paragraph) | Set / clear the **per-paragraph word-count target** (1.2.4+). Empty / `0` clears. Saves that cross the target auto-promote status one ladder step when `goals.auto_promote_on_target` is true. |
+| `A` / `a`              | any (needs open paragraph) | **Add outgoing wiki-link** (1.2.4) — tree pane enters select-paragraph-to-link mode; Enter confirms. Self-link / duplicate / cycle are rejected with a status-bar message. |
+| `I` / `i`              | any (needs open paragraph) | **Add incoming wiki-link** (1.2.4) — tree pane enters select-paragraph-that-will-link-to-current mode. Reverse of `A`. |
+| `L` / `l`              | any (needs open paragraph) | **List outgoing links** (1.2.4) — floating picker. Enter opens (autosaves prev); D removes the link. |
+| `K` / `k`              | any (needs open paragraph) | **List backlinks** (1.2.4) — paragraphs that link TO the open one. D removes the source's outgoing link. |
+| `B` / `b`              | any (needs open paragraph) | Toggle **bookmark** on the open paragraph (1.2.4). |
+| `M` / `m`              | any                      | Open the **bookmark picker** (1.2.4). Enter opens; D removes the bookmark. |
+| `P` / `p`              | any                      | **Fuzzy paragraph picker** (1.2.4) — type-to-filter modal over every user-book paragraph. Three-tier ranking (title-starts > title-contains > slug-contains). |
 | `Esc`                  | any                      | Cancel the chord without acting.                                       |
 
 While in similar-paragraph mode, `Tab` inside the editor toggles
@@ -189,8 +204,15 @@ confirmation.
 | `J` / `j` | **Move down** — swap the cursor's node with its next sibling. Plain-letter form of `Ctrl+B ↓`. |
 | `Z` / `z` | **Collapse subchapter** — folds the cursor's enclosing Subchapter (or the cursor's node itself if it IS a Subchapter). Lands the tree cursor on the folded row. |
 | `X` / `x` | **Collapse all** — folds every expanded branch in the tree. Empty branches and paragraphs are untouched. |
+| `Space`   | (1.2.4) **Mark / unmark** the cursor row for multi-select. Status bar shows `marked N`. `Esc` clears all marks. |
+| `T` / `t` | (1.2.4) **Cycle node type** (`paragraph → json → script`). No marks: cursor row only (folders skipped). With marks: every marked leaf. |
+| `O` / `o` | (1.2.4) **Cycle status** one rung up the ladder (`napkin → first → … → ready → napkin`). No marks: cursor row. With marks: every marked paragraph. |
 
 Empty paragraph titles are allowed for `+` and `P` — the first sentence of the body becomes the title on next save.
+
+**Multi-select interaction** (1.2.4): with at least one row marked,
+`Ctrl+B I` (reindex) and `Del` walk the mark set instead of the
+cursor row. `Ctrl+B R` (rename) is intentionally single-row only.
 
 Why kind-specific delete? Safety. `-` won't nuke an entire chapter if your
 cursor accidentally landed on it, and `D` won't kill a paragraph you meant
@@ -390,10 +412,15 @@ Edit them and Enter to re-run.
 | `F3` | Open the **file picker** dialog. Pick a file with Enter to replace the open paragraph's editor buffer (bold marks the change vs the saved version). Directories are rejected in this context. See §12 for navigation. |
 | `F4` | Toggle **split-edit** mode — see §3.9. |
 | `F5` | Save a versioned **snapshot** of the open paragraph's current body (stored as a bdslib document with `kind:"snapshot"` and a `parent_id` back-reference; doesn't appear in vector search). |
-| `F6` | Open the **snapshot picker** overlay listing every snapshot for the open paragraph, newest first. `↑↓` navigates, `Enter` loads the selected snapshot into the editor (marks dirty so the next save commits the rollback), `Esc` cancels. |
+| `F6` | Open the **snapshot picker** overlay listing every snapshot for the open paragraph, newest first. `↑↓` navigates, `Enter` loads the selected snapshot (1.2.4: takes a **pre-restore safety snapshot** of the live buffer first), `V` opens a **side-by-side diff** of the snapshot vs current (1.2.4 — Esc returns to picker), `D` / `Del` removes the snapshot, `Esc` cancels. |
 
 Snapshots are independent documents — they survive paragraph saves and aren't
 deleted when their parent is deleted, so they can act as a recovery hatch.
+
+**Pre-restore safety net (1.2.4)**: Enter in the snapshot picker first creates
+a snapshot of the live buffer, then replaces. If creating the safety snapshot
+fails, the load aborts entirely — the buffer stays untouched. To undo an
+unwanted restore: F6 again, the safety snapshot is at the top, Enter.
 Currently they're not surfaced from the CLI; that's an easy follow-up if you
 need scripted access.
 
@@ -666,6 +693,7 @@ keys: {
   page_down:        PageDown
   meta_prefix:      Ctrl+b           // chord prefix for tree / editor / AI actions
   bund_prefix:      Ctrl+z           // chord prefix for Bund scripting (1.2+)
+  view_prefix:      Ctrl+v           // chord prefix for view sub-chords (1.2.4+)
   bindings:         []               // user overlay; see KEYS_REASSIGNMENT.md
 }
 
@@ -678,16 +706,28 @@ editor: {
 sync_interval_seconds: 600
 ```
 
-**Rebinding sub-chords** (the letters under `Ctrl+B …` and `Ctrl+Z …`)
-went data-driven in 1.2 — list overrides in `keys.bindings` or, at
-runtime, via the `ink.key.*` Bund stdlib. The full action table and
-both rebinding channels are documented in
-[`KEYS_REASSIGNMENT.md`](KEYS_REASSIGNMENT.md).
+**Rebinding sub-chords** (the letters under `Ctrl+B …`, `Ctrl+Z …`,
+and `Ctrl+V …`) went data-driven in 1.2 — list overrides in
+`keys.bindings` or, at runtime, via the `ink.key.*` Bund stdlib.
+The full action table and both rebinding channels are documented
+in [`KEYS_REASSIGNMENT.md`](KEYS_REASSIGNMENT.md).
+
+**F-keys in the binding table (1.2.4)** — F1 through F10 and the
+Shift-F variants migrated from hardcoded matches into
+`Layer::TopLevel`. HJSON overlays accept single-token chords:
+
+```hjson
+keys: {
+  bindings: [
+    { layer: "view_sub",  key: "P",  action: "view.fuzzy_paragraph_picker" }
+    { layer: "top_level", key: "F7", action: "view.add_link" }  // rebind F7
+  ]
+}
+```
 
 Non-configurable bindings (the editor's modern shortcut overrides, the
-AI-action `r/i/t/b/c` keys, the modal `y/n` confirmations, F-keys, and
-`Ctrl+Q` hard-quit) are hard-coded for this release. F-key migration
-into the binding table is a planned follow-up.
+AI-action `r/i/t/b/c` keys, the modal `y/n` confirmations, and
+`Ctrl+Q` hard-quit) remain hard-coded.
 
 ---
 

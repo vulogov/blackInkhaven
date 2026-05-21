@@ -182,6 +182,12 @@ words that reach into the project store.
 | `ink.input` | `( prompt hookname -- )` | open the input modal; on Enter pushes the typed string and fires `hookname` |
 | `ink.paragraph.target` | `( path -- int \| NODATA )` | 1.2.4+: read the per-paragraph word-count goal (NODATA when unset) |
 | `ink.paragraph.set_target` | `( path target -- )` | 1.2.4+: set / clear the per-paragraph goal. `target ≤ 0` clears. `store_write` — opt in via `enabled_categories: ["store_write"]` |
+| `ink.search.load` | `( query -- )` | 1.2.4+: run semantic search and load the top hit into the editor (autosaves the previous buffer). `editor_write` |
+| `ink.editor.replace_all` | `( old new -- count )` | 1.2.4+: in-buffer find/replace on the open editor; returns the number of replacements. `editor_write` |
+| `ink.ai.send_blocking` | `( prompt -- response )` | 1.2.4+: synchronous AI send. Blocks the script (UI keeps repainting). `ai_write` |
+| `ink.ai.poll` | `( -- string )` | 1.2.4+: non-blocking poll of the async AI response slot. Empty string when none ready. `ai_read` |
+| `ink.fs.read` | `( path -- string )` | 1.2.4+: read a file. `fs_read` (default-allowed). |
+| `ink.fs.write` | `( path content -- )` | 1.2.4+: write a file. `fs_write` — **default-denied**. Opt in: `enabled_categories: ["fs_write"]`. |
 
 The pane + input words live under the `editor_read` policy
 category (non-destructive UI), so they're allowed by default.

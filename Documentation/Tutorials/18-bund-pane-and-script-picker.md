@@ -210,6 +210,41 @@ A small example that combines all three new features:
 Press `Ctrl+Z` `?`, pick the script, see the input modal, hit
 Enter, watch the report stream into the floating output pane.
 
+## New `ink.*` words in 1.2.4
+
+Six words landed in 1.2.4 that close the most common
+scripting gaps. They pair well with the pane + input + script
+picker:
+
+| Word | What | Policy |
+|------|------|--------|
+| `ink.editor.replace_all ( old new -- count )` | Find/replace on the open editor buffer. | `editor_write` |
+| `ink.search.load ( query -- )` | Run semantic search, load top hit into editor (autosaves prev). | `editor_write` |
+| `ink.ai.send_blocking ( prompt -- response )` | Sync AI send — blocks the script, UI keeps repainting. | `ai_write` |
+| `ink.ai.poll ( -- string )` | Non-blocking poll of the async AI slot. Empty when none. | `ai_read` |
+| `ink.fs.read ( path -- string )` | Read a file. | `fs_read` (default-allowed) |
+| `ink.fs.write ( path content -- )` | Write a file. | `fs_write` (**default-denied** — opt in via `enabled_categories: ["fs_write"]`) |
+
+Worked combo — "export the open paragraph's body and pipe it
+through an AI for a one-shot summary, then drop the summary
+into a sibling file":
+
+```bund
+:hook.summarize ( -- )
+  ink.paragraph.text                  ( -- body )
+  "Summarize the following paragraph in 50 words:\n" swap concat
+  ink.ai.send_blocking                ( -- summary )
+  "summary.md" swap ink.fs.write      ( -- )
+;
+
+"Summarize open paragraph?" "summarize" ink.input
+```
+
+This script needs `enabled_categories: ["ai_write", "fs_write"]`
+because writing files is in the deny-by-default bucket. The
+read direction (`ink.fs.read`) is allowed out of the box —
+the asymmetry is deliberate.
+
 ## See also
 
 - [`../Bund/BUND_TUTORIAL.md`](../Bund/BUND_TUTORIAL.md) — the
