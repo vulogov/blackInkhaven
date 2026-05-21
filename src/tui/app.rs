@@ -4966,10 +4966,15 @@ impl App {
     /// Closes + reopens the buffer (if open on the converted node)
     /// so the new highlighter + content_type take effect immediately.
     fn cycle_leaf_type(&mut self) {
-        // Pick the node to convert.
+        // Pick the node to convert. From the Editor pane: prefer
+        // the open buffer; fall back to the tree cursor when the
+        // editor pane has nothing open (so M still does the
+        // right thing if the user pressed it from a blank editor).
+        // From any other pane: always tree cursor.
+        let cursor_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
         let target_id: Option<Uuid> = match self.focus {
-            Focus::Editor => self.opened.as_ref().map(|d| d.id),
-            _ => self.rows.get(self.tree_cursor).map(|(id, _)| *id),
+            Focus::Editor => self.opened.as_ref().map(|d| d.id).or(cursor_id),
+            _ => cursor_id,
         };
         let Some(node_id) = target_id else {
             self.status = "type-cycle: nothing selected".into();
