@@ -4,9 +4,7 @@ pub mod node;
 use std::path::Path;
 use std::sync::Arc;
 
-use bdslib::DocumentStorage;
-use bdslib::EmbeddingEngine;
-use bdslib::embedding::Model;
+use crate::storage::{DocumentStorage, EmbeddingEngine, Model};
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
@@ -18,10 +16,16 @@ use crate::store::node::{Node, NodeKind as NK};
 
 pub use node::NodeKind;
 
-/// Canonical ordering of the six project-managed books. The tag is the
-/// `system_tag` we write into metadata; the second element is the human-
-/// facing default title used when the book is freshly created. Display order
-/// matches array order (Notes first, Help last).
+/// Canonical ordering of the project-managed books. The tag is the
+/// `system_tag` we write into metadata; the second element is the
+/// human-facing default title used when the book is freshly created.
+/// Display order matches array order (Notes first, Help last).
+///
+/// The `Scripts` system book is the default home for Bund script
+/// nodes (`NodeKind::Script`) that aren't logically tied to a
+/// particular user Book — global hooks, lint rules, AI templates.
+/// Scripts can also live inside any user Book if they belong to
+/// that book's workflow; nothing forces them under `Scripts`.
 pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("notes", "Notes"),
     ("research", "Research"),
@@ -30,6 +34,7 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("characters", "Characters"),
     ("artefacts", "Artefacts"),
     ("typst", "Typst"),
+    ("scripts", "Scripts"),
     ("help", "Help"),
 ];
 
@@ -39,6 +44,7 @@ pub const SYSTEM_TAG_PLACES: &str = "places";
 pub const SYSTEM_TAG_CHARACTERS: &str = "characters";
 pub const SYSTEM_TAG_ARTEFACTS: &str = "artefacts";
 pub const SYSTEM_TAG_TYPST: &str = "typst";
+pub const SYSTEM_TAG_SCRIPTS: &str = "scripts";
 pub const SYSTEM_TAG_HELP: &str = "help";
 
 /// Where a newly-created node lands among its parent's existing children.
@@ -101,6 +107,11 @@ impl Store {
         };
         store.ensure_system_books(cfg)?;
         store.ensure_artefacts_directory(cfg)?;
+        // Arm the scripting layer for every path that opens a
+        // project — TUI, `inkhaven bund`, `inkhaven add`,
+        // `inkhaven reindex`, etc. Idempotent in practice
+        // (single-project-per-process).
+        crate::scripting::configure(cfg.scripting.clone(), store.clone());
         Ok(store)
     }
 
@@ -401,6 +412,16 @@ impl Store {
         self.inner.sync().map_err(|e| Error::Store(e.to_string()))
     }
 
+    /// Drain DuckDB's WAL into the main `.db` files. Used by the
+    /// background sync tick and the TUI shutdown path; per-save
+    /// callers don't need this because every commit is already
+    /// fsync-durable.
+    pub fn checkpoint(&self) -> Result<()> {
+        self.inner
+            .checkpoint()
+            .map_err(|e| Error::Store(e.to_string()))
+    }
+
     /// Add a hierarchy node to bdslib. The metadata is serialized; the content
     /// bytes are indexed for vector search. Returns the bdslib-assigned UUIDv7
     /// after we copy it back onto the Node.
@@ -414,6 +435,16 @@ impl Store {
         self.inner
             .update_metadata(id, node.to_json())
             .map_err(|e| Error::Store(format!("update_metadata: {e}")))?;
+        // Fire hook.on_create ( uuid kind -- ). Errors are logged
+        // and swallowed inside `hooks::fire` — a misbehaving hook
+        // never aborts the create.
+        fire_hook(
+            "hook.on_create",
+            vec![
+                bund_string(&id.to_string()),
+                bund_string(node.kind.as_str()),
+            ],
+        );
         Ok(())
     }
 
@@ -576,6 +607,24 @@ impl Store {
                 node.word_count = template.split_whitespace().count() as u64;
                 template.into_bytes()
             }
+            NK::Script => {
+                if let Some(parent_dir) = abs_path.parent() {
+                    std::fs::create_dir_all(parent_dir)?;
+                }
+                let template = format!(
+                    "// {}\n// Bund script — evaluated into the Adam VM at\n\
+                     // project open. Register hooks via:\n\
+                     //   \"hook.on_save\" {{ drop \"saved\" println }} register\n\n",
+                    node.title
+                );
+                std::fs::write(&abs_path, &template)?;
+                node.file = Some(rel_path.to_string_lossy().into_owned());
+                node.word_count = template.split_whitespace().count() as u64;
+                // Drive the Bund syntax highlighter via the same
+                // content_type channel the HJSON path uses.
+                node.content_type = Some("bund".to_string());
+                template.into_bytes()
+            }
             _ => {
                 std::fs::create_dir_all(&abs_path)?;
                 node.title.clone().into_bytes()
@@ -669,6 +718,11 @@ impl Store {
             .reembed_document(node.id)
             .map_err(|e| Error::Store(format!("reembed_document: {e}")))?;
         self.sync()?;
+        // Fire hook.on_rename ( uuid new_title -- ).
+        fire_hook(
+            "hook.on_rename",
+            vec![bund_string(&node.id.to_string()), bund_string(trimmed)],
+        );
         Ok(())
     }
 
@@ -839,6 +893,14 @@ impl Store {
             .add_document_no_embed(meta, content)
             .map_err(|e| Error::Store(format!("create_snapshot: {e}")))?;
         self.sync()?;
+        // Fire hook.on_snapshot ( parent_uuid snapshot_uuid -- ).
+        fire_hook(
+            "hook.on_snapshot",
+            vec![
+                bund_string(&parent.id.to_string()),
+                bund_string(&id.to_string()),
+            ],
+        );
         Ok(id)
     }
 
@@ -994,7 +1056,110 @@ impl Store {
             }
         }
         self.sync()?;
+        // Fire hook.on_delete ( uuid -- ) once per deleted id, in
+        // the same order the store walks them. Best-effort: hook
+        // failures are logged inside `hooks::fire`, never abort.
+        for id in ids {
+            fire_hook("hook.on_delete", vec![bund_string(&id.to_string())]);
+        }
         Ok(())
+    }
+
+    /// Convert a text-leaf node between its three flavours:
+    ///
+    ///   Paragraph(typst)  ←→  Paragraph(hjson)  ←→  Script(bund)
+    ///
+    /// The conversion renames the file on disk to match the new
+    /// extension (`.typ` / `.hjson` / `.bund`), stamps the new
+    /// `kind` and `content_type` into the metadata, and persists
+    /// via `update_metadata`. Body contents are NOT translated —
+    /// switching `.typ` → `.bund` just changes the kind label;
+    /// the writer is responsible for the body making sense in
+    /// the new flavour.
+    ///
+    /// `new_kind` must be either `Paragraph` or `Script`;
+    /// `new_content_type` is `None` for plain typst, `Some("hjson")`
+    /// for HJSON, `Some("bund")` for Bund scripts. Other
+    /// combinations are rejected.
+    pub fn convert_leaf(
+        &self,
+        hierarchy: &Hierarchy,
+        node_id: Uuid,
+        new_kind: NodeKind,
+        new_content_type: Option<&str>,
+    ) -> Result<Node> {
+        let node = hierarchy
+            .get(node_id)
+            .cloned()
+            .ok_or_else(|| Error::Store(format!("convert_leaf: missing {node_id}")))?;
+        if !matches!(node.kind, NodeKind::Paragraph | NodeKind::Script) {
+            return Err(Error::Store(format!(
+                "convert_leaf: can't convert a {} (only paragraph / script)",
+                node.kind.as_str()
+            )));
+        }
+        if !matches!(new_kind, NodeKind::Paragraph | NodeKind::Script) {
+            return Err(Error::Store(format!(
+                "convert_leaf: new kind {} is not a text leaf",
+                new_kind.as_str()
+            )));
+        }
+        // Validate content_type vs new kind.
+        match (new_kind, new_content_type) {
+            (NodeKind::Paragraph, None | Some("typst") | Some("hjson")) => {}
+            (NodeKind::Script, Some("bund")) => {}
+            (k, ct) => {
+                return Err(Error::Store(format!(
+                    "convert_leaf: content_type {ct:?} not valid for {}",
+                    k.as_str()
+                )));
+            }
+        }
+
+        let Some(old_rel) = node.file.clone() else {
+            return Err(Error::Store(
+                "convert_leaf: node has no file on disk".into(),
+            ));
+        };
+        let old_abs = self.layout.root.join(&old_rel);
+
+        let mut new_node = node.clone();
+        new_node.kind = new_kind;
+        new_node.content_type = new_content_type.map(str::to_string);
+        // "typst" as an explicit content_type is redundant — None
+        // is the canonical default. Keep persistence terse.
+        if new_node.content_type.as_deref() == Some("typst") {
+            new_node.content_type = None;
+        }
+        new_node.modified_at = chrono::Utc::now();
+
+        let new_name = new_node.fs_name();
+        let parent_dir = old_abs
+            .parent()
+            .ok_or_else(|| Error::Store("convert_leaf: no parent directory".into()))?;
+        let new_abs = parent_dir.join(&new_name);
+
+        if new_abs != old_abs {
+            if new_abs.exists() {
+                return Err(Error::Store(format!(
+                    "convert_leaf: target `{}` already exists",
+                    new_abs.display()
+                )));
+            }
+            std::fs::rename(&old_abs, &new_abs)?;
+            let new_rel = new_abs
+                .strip_prefix(&self.layout.root)
+                .unwrap_or(&new_abs)
+                .to_string_lossy()
+                .into_owned();
+            new_node.file = Some(new_rel);
+        }
+
+        self.inner
+            .update_metadata(new_node.id, new_node.to_json())
+            .map_err(|e| Error::Store(format!("update_metadata: {e}")))?;
+        self.sync()?;
+        Ok(new_node)
     }
 
     /// Update a paragraph's stored content + metadata and re-embed both
@@ -1016,8 +1181,24 @@ impl Store {
         self.inner
             .reembed_document(id)
             .map_err(|e| Error::Store(format!("reembed_document: {e}")))?;
+        // Fire hook.on_save ( uuid -- ).
+        fire_hook("hook.on_save", vec![bund_string(&id.to_string())]);
         Ok(())
     }
+}
+
+// ── Bund hook helpers ─────────────────────────────────────────────────
+
+/// Forward a hook fire request to the scripting layer. Behind a
+/// helper so the call sites in this module stay one-liners.
+fn fire_hook(name: &str, args: Vec<rust_dynamic::value::Value>) {
+    crate::scripting::hooks::fire(name, args);
+}
+
+/// Build a Bund STRING value. Used to push `Uuid`, `&str`, etc.
+/// onto the workbench in hook fire calls.
+fn bund_string(s: &str) -> rust_dynamic::value::Value {
+    rust_dynamic::value::Value::from_string(s)
 }
 
 fn first_prose_line(content: &[u8]) -> String {

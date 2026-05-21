@@ -30,7 +30,9 @@ return whenever you need to remember a specific knob.
 | -------- | -------------- |
 | [`CONFIGURATION.md`](CONFIGURATION.md) | Every field in the project's `inkhaven.hjson`: embeddings, LLM providers, editor, theme, keys, hierarchy, backup, language, snowball stemmers. Includes valid value ranges and default values. |
 | [`KEYBINDING.md`](KEYBINDING.md)       | Every keystroke the TUI honours, organised by pane (Tree / Editor / AI / Search / AI prompt) and overlay (file picker, prompt picker, modal stack). Mouse semantics included. |
+| [`KEYS_REASSIGNMENT.md`](KEYS_REASSIGNMENT.md) | Rebind chords via `keys.bindings` in HJSON or via the `ink.key.*` Bund stdlib. Includes the full action table. |
 | [`MAINTENANCE.md`](MAINTENANCE.md)     | Backup, restore, auto-backup-on-exit, the `reindex` command, log files, recovering from drift, troubleshooting first-run model downloads. |
+| [`Bund/`](Bund/README.md)              | Bund — the embedded scripting language. Hook lambdas (`hook.on_save`, …), the `ink.*` stdlib, sandbox policy, `.bund` Script nodes. Start at [`Bund/BUND_TUTORIAL.md`](Bund/BUND_TUTORIAL.md). |
 
 ## Topic guides
 
@@ -67,6 +69,7 @@ don't need them all up front.
 
 | Version | Notes |
 | ------- | ----- |
+| **1.2** | *(unreleased — branch `1.2`)* — bdslib + tree-sitter-typst absorbed in-tree (crates.io-publishable), Bund scripting (`ink.*` stdlib, 5 hook points, `.bund` Script nodes, Scripts system book), data-driven keymap with HJSON + Bund rebinding, `Ctrl+B M` cycle-type, `Ctrl+Z` Bund prefix. |
 | **1.1** | [`RELEASE_NOTES/1.1.md`](RELEASE_NOTES/1.1.md) — first-class images + ratatui-image preview, eight-book seeding (Artefacts added), Book assembly / build / take pipeline, HJSON-driven `settings.typ`, six bundled LLM providers, full-screen typewriter + AI layouts, document-status workflow, HJSON data nodes, much more. |
 
 ## What lives on disk in a project
@@ -79,28 +82,38 @@ my-novel/
 ├── prompts.hjson            Prompt library (see PROMPTS.md)
 ├── .session.json            TUI session state — cursor, open paragraph, focus
 ├── .inkhaven-backup.json    Timestamp of the last successful backup
+├── .inkhaven-chat.json      Persistent AI chat history (full-screen mode)
 ├── .inkhaven.log            Rotating log file (writes during the TUI session)
-├── metadata.db              bdslib DuckDB — hierarchy node metadata as JSON
-├── blobs.db                 bdslib BLOB store — paragraph bodies
-├── frequency.db             bdslib auxiliary store
-├── vectors/                 bdslib HNSW vector index (multilingual embeddings)
-├── backups/                 zipped snapshots (default `backup.out_dir`)
+├── metadata.db              DuckDB — hierarchy node metadata as JSON
+├── blobs.db                 DuckDB BLOB store — paragraph / image / script bodies
+├── vectors/                 HNSW vector index (multilingual embeddings)
 └── books/
-    └── my-novel/
-        ├── 01-preface.typ
-        ├── 02-the-beginning/
-        │   ├── 01-morning-light/
-        │   │   ├── 01-opening-scene.typ
-        │   │   └── 02-the-storm-breaks.typ
-        │   └── 02-chapter-intro.typ
-        └── 03-finale.typ
+    ├── my-novel/                       (user book — your manuscript)
+    │   ├── 01-preface.typ              (Paragraph, content_type = typst)
+    │   ├── 02-the-beginning/
+    │   │   ├── 01-morning-light/
+    │   │   │   ├── 01-opening-scene.typ
+    │   │   │   └── 02-the-storm-breaks.typ
+    │   │   └── 02-chapter-intro.typ
+    │   └── 03-data-notes.hjson         (Paragraph, content_type = hjson)
+    └── scripts/                        (Scripts system book)
+        └── 01-on-save-warn.bund        (Script node — Bund source)
 ```
 
-The `.typ` files are the **canonical** source of your prose — version them
-with git, render them with `typst compile`, edit them in another tool any
-time. The bdslib database mirrors them for hierarchy queries and search.
-If they ever drift, `inkhaven reindex` reconciles
-(see [`MAINTENANCE.md`](MAINTENANCE.md)).
+Three leaf kinds live under `books/<...>/`:
+
+- **`.typ`** — Paragraph (default). Typst source; the canonical
+  form of your prose. Versionable with git, renderable with
+  `typst compile`.
+- **`.hjson`** — Paragraph with `content_type=hjson`. Structured
+  data nodes (worldbuilding tables, prop catalogs, etc.).
+- **`.bund`** — Script node. Bund source evaluated into the Adam
+  VM at project open. See [`Bund/`](Bund/README.md).
+
+`inkhaven reindex` reconciles disk against the DuckDB blob store
+when something drifts (see [`MAINTENANCE.md`](MAINTENANCE.md)).
+Images are stored binary in `blobs.db` and shipped to disk as
+`.png` / `.jpg` / `.webp` working copies on assembly.
 
 ## The hierarchy
 
@@ -125,9 +138,9 @@ both display order in the Tree pane and the on-disk `NN-` filename
 prefix), and a parent pointer. Names like `01-preface.typ` and
 `02-the-beginning/` sort correctly under `ls`.
 
-### Eight system books
+### Nine system books
 
-Every project ships with eight pre-seeded books at the top of the tree,
+Every project ships with nine pre-seeded books at the top of the tree,
 in this order:
 
 | Book         | Purpose                                                   | Special behaviour |
@@ -139,6 +152,7 @@ in this order:
 | **Characters**  | Characters referenced by the prose                     | Names light up in yellow; `Ctrl+B C` queries this book ([CHARACTERS.md](CHARACTERS.md)) |
 | **Artefacts**   | Objects, items, worldbuilding props                    | Names light up in peach; `Ctrl+B Y` queries this book (added in 1.1) |
 | **Typst**       | Per-user-book Typst skeleton (globals / settings / index) | Read/write; auto-seeded for every new user book (added in 1.1) |
+| **Scripts**     | Bund scripts (`.bund`) loaded into the Adam VM at startup | Default home for project-global hooks / chord rebinds; `Ctrl+Z N` creates a new script (added in 1.2) — see [`Bund/`](Bund/README.md) |
 | **Help**        | Inkhaven's own help manual, queryable from F1          | Read-only; populated via `inkhaven import-help` or `inkhaven import-typst-help` |
 
 User-added books are inserted **above** Notes — the system block stays

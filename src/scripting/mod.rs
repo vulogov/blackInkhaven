@@ -1,0 +1,298 @@
+//! Bund scripting integration.
+//!
+//! Inkhaven's foothold for Vladimir's Bund language — a stack-based
+//! scripting layer (`bundcore` + `bund_language_parser` +
+//! `rust_multistackvm`) intended to host user-authored hooks, custom
+//! AI prompt templates, and save-time rules.
+//!
+//! ## Adam
+//!
+//! "Adam" is the canonical name for the process-wide singleton VM —
+//! the first one, the one that already has stdlib loaded. The name
+//! comes from bundcore itself (`BundVM::adam`). `init_adam()` is
+//! called exactly once per process, lazily on the first `eval()`.
+//!
+//! ## Active store
+//!
+//! `ink.*` stdlib words (Phase 1) need access to the project's
+//! `Store`. Inkhaven runs single-project-per-process, so we install
+//! the store into a global `ACTIVE_STORE` slot once and read it out
+//! of each word handler. CLI commands that don't open a project
+//! (only `inkhaven bund` so far) simply leave the slot empty and
+//! the ink words error gracefully.
+//!
+//! ## What's wired in each phase
+//!
+//! - **P0**: `init_adam()`, `eval()` — round-trip a Bund script.
+//! - **P1** *(this file)*: `register_active_store()` + read-only
+//!   `ink.*` stdlib words via `stdlib::register_ink_stdlib`.
+//! - **P3**: sandbox policy.
+//! - **P4**: hook points fired from `src/store/mod.rs`.
+//! - **P5**: first-class `NodeKind::Script` + Bund-aware editor.
+//! - **P6**: ephemeral worker pool + result queue.
+
+pub mod hooks;
+pub mod policy;
+pub mod stdlib;
+
+use anyhow::{anyhow, Result};
+use bundcore::bundcore::Bund;
+use parking_lot::RwLock;
+use rust_dynamic::value::Value;
+use std::sync::OnceLock;
+
+use crate::store::Store;
+use policy::Policy;
+
+/// Process-wide singleton Bund VM. Borrows the bundcore "Adam"
+/// terminology — see module docs.
+static ADAM: OnceLock<RwLock<Bund>> = OnceLock::new();
+
+/// The project store, set once at startup (either when the TUI
+/// opens a project or when the CLI's `bund` subcommand chooses to
+/// expose the project). `None` is a valid state: scripts that try
+/// to use `ink.*` words against a script-only invocation will see
+/// a clean "no project store registered" error.
+static ACTIVE_STORE: OnceLock<Store> = OnceLock::new();
+
+/// Sandbox policy to apply when Adam is built. Setters land before
+/// the first `eval()` triggers lazy init; once Adam exists, the
+/// policy is frozen for the process. `None` (no setter called) ⇒
+/// the bundcore vanilla default, which deny destructive categories.
+static POLICY: OnceLock<Policy> = OnceLock::new();
+
+/// Initialise the Adam VM exactly once. Idempotent — subsequent
+/// calls are no-ops. The order matters:
+///
+/// 1. `Bund::new()` loads bundcore's vanilla stdlib (arithmetic,
+///    strings, conditionals, lambdas).
+/// 2. `register_ink_stdlib` adds inkhaven's read-only `ink.*` words.
+/// 3. `policy::apply_policy` re-registers denied words with a stub.
+/// 4. The inline `scripting.bootstrap` HJSON script runs once.
+/// 5. Every `NodeKind::Script` in the active store gets eval'd in
+///    tree order — that's where most user-authored hook lambdas
+///    actually live (P5).
+///
+/// Steps 4 and 5 are best-effort: a syntax error in a single
+/// script logs a WARN and skips that script; the others still
+/// run, and Adam still finishes constructing.
+pub fn init_adam() -> Result<()> {
+    if ADAM.get().is_some() {
+        return Ok(());
+    }
+    let mut bund = Bund::new();
+    stdlib::register_ink_stdlib(&mut bund.vm)
+        .map_err(|e| anyhow!("register ink stdlib: {e}"))?;
+    let p = POLICY.get().cloned().unwrap_or_default();
+    if !p.is_open() {
+        policy::apply_policy(&mut bund.vm, &p)
+            .map_err(|e| anyhow!("apply policy: {e}"))?;
+    }
+    if !p.bootstrap.trim().is_empty() {
+        if let Err(e) = bund.eval(p.bootstrap.clone()) {
+            tracing::warn!(
+                target: "inkhaven::scripting",
+                "bootstrap script failed: {}",
+                e
+            );
+        }
+    }
+    load_store_scripts(&mut bund);
+    let _ = ADAM.set(RwLock::new(bund));
+    Ok(())
+}
+
+/// Walk the active store for every `NodeKind::Script` node, read
+/// its body, and `bund.eval` it against the supplied VM. Errors
+/// per-script are logged and continue; no script can break the
+/// rest of init.
+///
+/// No-ops cleanly when no project store is registered (e.g., a
+/// pure `inkhaven bund "40 2 +"` invocation outside any project).
+fn load_store_scripts(bund: &mut Bund) {
+    let Some(store) = active_store() else { return };
+    let hierarchy = match crate::store::hierarchy::Hierarchy::load(store) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::warn!(
+                target: "inkhaven::scripting",
+                "load_store_scripts: hierarchy load failed: {}",
+                e
+            );
+            return;
+        }
+    };
+    for node in hierarchy.iter() {
+        if node.kind != crate::store::NodeKind::Script {
+            continue;
+        }
+        let bytes = match store.get_content(node.id) {
+            Ok(Some(b)) => b,
+            Ok(None) => continue,
+            Err(e) => {
+                tracing::warn!(
+                    target: "inkhaven::scripting",
+                    "script {} read failed: {}",
+                    node.id,
+                    e
+                );
+                continue;
+            }
+        };
+        let body = String::from_utf8_lossy(&bytes).into_owned();
+        if body.trim().is_empty() {
+            continue;
+        }
+        if let Err(e) = bund.eval(body) {
+            tracing::warn!(
+                target: "inkhaven::scripting",
+                "script `{}` ({}) eval failed: {}",
+                node.title,
+                node.id,
+                e
+            );
+        }
+    }
+}
+
+/// Run `f` with a mutable reference to Adam. Returns `None` when
+/// Adam hasn't been built yet — callers handle that as "no script
+/// runtime available, skip". Used internally by `hooks::fire`.
+pub(crate) fn with_adam<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut Bund) -> R,
+{
+    let adam = ADAM.get()?;
+    let mut guard = adam.write();
+    Some(f(&mut guard))
+}
+
+/// Install the sandbox policy. Must be called BEFORE the first
+/// `eval()` — otherwise Adam is already constructed under the
+/// default policy and the call is a no-op. Idempotent in practice
+/// (single-project-per-process).
+pub fn set_policy(policy: Policy) {
+    let _ = POLICY.set(policy);
+}
+
+/// Install the project store into the global slot. Called by the
+/// TUI startup path and by the CLI when a subcommand wants its
+/// Bund expressions to see the project. Idempotent in practice —
+/// subsequent calls silently no-op (single-project-per-process).
+pub fn register_active_store(store: Store) {
+    let _ = ACTIVE_STORE.set(store);
+}
+
+/// One-shot helper called from `Store::open` so every code path
+/// that opens a project — TUI, `inkhaven bund`, `inkhaven add`,
+/// `inkhaven reindex`, etc. — automatically arms the scripting
+/// layer. Equivalent to `set_policy(cfg.scripting.clone())`
+/// followed by `register_active_store(store)`.
+///
+/// Both inner calls are idempotent (single-project-per-process),
+/// so a second open against the same project is harmless.
+pub fn configure(policy: Policy, store: Store) {
+    set_policy(policy);
+    register_active_store(store);
+}
+
+/// Read access to the active store, used by `ink.*` word handlers.
+/// `None` means no project has been opened in this process.
+pub fn active_store() -> Option<&'static Store> {
+    ACTIVE_STORE.get()
+}
+
+/// Result of an `eval` call: any text written to bundcore's
+/// (overridden) `print` / `println` stream, plus whatever value
+/// remained on the top of the workbench when the script finished.
+///
+/// Both fields are optional in spirit:
+///   * `stdout` is "" when nothing printed
+///   * `top` is `None` when the stack was empty after the script
+///
+/// Callers decide how to surface them — CLI bund prints stdout to
+/// the real terminal and then the top; TUI Ctrl+Z E concatenates
+/// them on the status bar.
+#[derive(Debug, Default)]
+pub struct EvalOutput {
+    pub stdout: String,
+    pub top: Option<Value>,
+}
+
+/// Parse + evaluate `code` against Adam. Returns an `EvalOutput`
+/// containing the captured print buffer and the top of the
+/// workbench. Auto-initialises Adam on the first call.
+pub fn eval(code: &str) -> Result<EvalOutput> {
+    init_adam()?;
+    let adam = ADAM.get().ok_or_else(|| anyhow!("Adam VM missing after init"))?;
+    // Discard any leftover from a previous eval so the buffer
+    // returned to the caller only reflects THIS script.
+    let _ = stdlib::io::drain_print_buffer();
+    let mut guard = adam.write();
+    guard
+        .eval(code)
+        .map_err(|e| anyhow!("bund eval failed: {e}"))?;
+    let top = guard.vm.stack.pull();
+    drop(guard);
+    let stdout = stdlib::io::drain_print_buffer();
+    Ok(EvalOutput { stdout, top })
+}
+
+/// Render a `rust_dynamic::Value` as a human-readable string. Used
+/// by the CLI subcommand and (eventually) the TUI command output.
+///
+/// Strategy: scalar variants (string/int/float/bool) render as
+/// their bare value so `inkhaven bund "40 2 +"` prints `42` rather
+/// than `Value { … }`. Compound variants (list, map) go through
+/// rust_dynamic's `cast_value_to_json` and get pretty-printed —
+/// suitable for piping into `jq` or eyeballing the structure.
+pub fn format_value(v: &Value) -> String {
+    if let Ok(s) = v.clone().cast_string() {
+        return s;
+    }
+    if let Ok(i) = v.clone().cast_int() {
+        return i.to_string();
+    }
+    if let Ok(f) = v.clone().cast_float() {
+        return f.to_string();
+    }
+    if let Ok(b) = v.clone().cast_bool() {
+        return b.to_string();
+    }
+    let j = value_to_json(v);
+    serde_json::to_string_pretty(&j).unwrap_or_else(|_| j.to_string())
+}
+
+/// Recursive `Value` → `serde_json::Value` converter that fills the
+/// gap in `rust_dynamic::Value::cast_value_to_json`: the upstream
+/// helper doesn't handle the STRING variant (it errors at the
+/// `_ =>` arm), so a list-of-maps-of-strings — which is exactly
+/// what every `ink.*` word returns — comes out as Debug noise.
+/// This walks the value ourselves and falls through to a debug
+/// stringification only for variants we don't recognise.
+fn value_to_json(v: &Value) -> serde_json::Value {
+    if let Ok(s) = v.clone().cast_string() {
+        return serde_json::Value::String(s);
+    }
+    if let Ok(i) = v.clone().cast_int() {
+        return serde_json::Value::from(i);
+    }
+    if let Ok(f) = v.clone().cast_float() {
+        return serde_json::Value::from(f);
+    }
+    if let Ok(b) = v.clone().cast_bool() {
+        return serde_json::Value::Bool(b);
+    }
+    if let Ok(list) = v.clone().cast_list() {
+        return serde_json::Value::Array(list.iter().map(value_to_json).collect());
+    }
+    if let Ok(dict) = v.clone().cast_dict() {
+        let mut m = serde_json::Map::new();
+        for (k, val) in dict.iter() {
+            m.insert(k.clone(), value_to_json(val));
+        }
+        return serde_json::Value::Object(m);
+    }
+    // Last resort: NONE, NODATA, unrecognised variants.
+    serde_json::Value::Null
+}

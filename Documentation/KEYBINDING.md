@@ -290,7 +290,10 @@ clipboard. Each saves and restores the yank buffer around the operation, so
 | `Ctrl+E`  | **Delete to end of line** — removes from the cursor to the line end.   |
 | `Ctrl+W`  | **Delete to start of line** — removes from the cursor back to column 0. |
 
-*(`Ctrl+Z` is intentionally unbound — see §1 Global. Undo is `Ctrl+U`, delete-to-EOL is `Ctrl+E`.)*
+*(`Ctrl+Z` is the **Bund-meta prefix** in 1.2+ — runs scripting actions
+like `Ctrl+Z R` run-buffer, `Ctrl+Z N` new-script, `Ctrl+Z E` eval.
+See [`KEYS_REASSIGNMENT.md`](KEYS_REASSIGNMENT.md). Undo is `Ctrl+U`,
+delete-to-EOL is `Ctrl+E`.)*
 
 **Note on `Ctrl+W`**: bash, tmux, and some terminals interpret `Ctrl+W` as
 "delete previous word" before forwarding the keystroke. If your shell layer
@@ -636,7 +639,9 @@ keys: {
   prev_pane:        Shift+Tab
   page_up:          PageUp
   page_down:        PageDown
-  meta_prefix:      Ctrl+b
+  meta_prefix:      Ctrl+b           // chord prefix for tree / editor / AI actions
+  bund_prefix:      Ctrl+z           // chord prefix for Bund scripting (1.2+)
+  bindings:         []               // user overlay; see KEYS_REASSIGNMENT.md
 }
 
 editor: {
@@ -645,16 +650,19 @@ editor: {
 }
 
 // Background flush interval. 0 disables.
-sync_interval_seconds: 60
+sync_interval_seconds: 600
 ```
 
-The add/delete/reorder actions don't have direct chords any more — they
-fire through the `meta_prefix` followed by the action letter (§1.1).
+**Rebinding sub-chords** (the letters under `Ctrl+B …` and `Ctrl+Z …`)
+went data-driven in 1.2 — list overrides in `keys.bindings` or, at
+runtime, via the `ink.key.*` Bund stdlib. The full action table and
+both rebinding channels are documented in
+[`KEYS_REASSIGNMENT.md`](KEYS_REASSIGNMENT.md).
 
 Non-configurable bindings (the editor's modern shortcut overrides, the
-AI-action `r/i/t/b/c` keys, the modal `y/n` confirmations, etc.) are
-hard-coded for this release. Open a PR or issue if you need any of them
-configurable.
+AI-action `r/i/t/b/c` keys, the modal `y/n` confirmations, F-keys, and
+`Ctrl+Q` hard-quit) are hard-coded for this release. F-key migration
+into the binding table is a planned follow-up.
 
 ---
 
