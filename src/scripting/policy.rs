@@ -198,6 +198,14 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // through `hooks::fire(name, …)` which honours its own
     // policy gate when the hook itself calls write words.
     ("ink.input", category::EDITOR_READ),
+
+    // ── fs_read / fs_write (default-denied) ─────────────────
+    // 1.2.4+: filesystem IO from Bund. Default-denied — opt in
+    // via `enabled_categories: ["fs_read"]` etc. Paths are
+    // passed verbatim, no sandboxing — the user opts in, the
+    // user gets the responsibility.
+    ("ink.fs.read", category::FS_READ),
+    ("ink.fs.write", category::FS_WRITE),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
