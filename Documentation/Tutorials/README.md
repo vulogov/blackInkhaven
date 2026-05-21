@@ -25,6 +25,16 @@ covers.
 | 13 | [`13-ai-full-screen-mode.md`](13-ai-full-screen-mode.md) | Ctrl+B K layout, persistent chat history, Ctrl+F search, Ctrl+C selection mode that copies / inserts turns. |
 | 14 | [`14-document-status.md`](14-document-status.md) | Ctrl+B R workflow ring, status badges in tree + editor header, Ctrl+B 1..7 scoped filter modal. |
 
+## Scripting + chord customisation
+
+Two narrative docs sit outside the numbered tutorial sequence
+because they cross-cut every other topic:
+
+| Topic | Doc |
+| ----- | --- |
+| **Bund — the embedded scripting language** | [`../Bund/BUND_TUTORIAL.md`](../Bund/BUND_TUTORIAL.md) — stack model, lambdas, hooks, `ink.*` stdlib, sandbox. |
+| **Reassigning chord keys** | [`../KEYS_REASSIGNMENT.md`](../KEYS_REASSIGNMENT.md) — HJSON `keys.bindings` + `ink.key.*`. Includes the full action table. |
+
 ## Conventions used in these tutorials
 
 - Commands you should run are in fenced code blocks. Lines starting

@@ -169,6 +169,61 @@ pub enum Action {
     BundLambda(Arc<str>),
 }
 
+impl Action {
+    /// Short label used in the auto-generated status-bar meta
+    /// hint ("add chapter", "morph-type", …). Returns `""` for
+    /// `None` and the lambda name for `BundLambda`.
+    pub fn label(&self) -> String {
+        match self {
+            Action::AddBook => "add book".into(),
+            Action::AddChapter => "add chapter".into(),
+            Action::AddSubchapter => "add subchapter".into(),
+            Action::AddParagraph => "add paragraph".into(),
+            Action::DeleteNode => "delete".into(),
+            Action::MorphType => "morph-type".into(),
+            Action::ReorderUp => "↑ reorder".into(),
+            Action::ReorderDown => "↓ reorder".into(),
+
+            Action::Save => "save".into(),
+            Action::CreateSnapshot => "snapshot".into(),
+            Action::CycleStatus => "status".into(),
+            Action::OpenFunctionPicker => "func".into(),
+            Action::RenameToFirstSentence => "retitle".into(),
+            Action::LookupPlacesOrImage => "place/pic".into(),
+            Action::LookupCharacters => "character".into(),
+            Action::LookupNotes => "notes".into(),
+            Action::LookupArtefacts => "artefacts".into(),
+            Action::OpenQuickref => "help".into(),
+
+            Action::OpenCredits => "credits".into(),
+            Action::OpenBookInfo => "info".into(),
+            Action::OpenLlmPicker => "LLM".into(),
+            Action::ToggleSound => "sound".into(),
+            Action::ScheduleAssemble => "assemble".into(),
+            Action::ScheduleBuild => "build".into(),
+            Action::ScheduleTake => "take".into(),
+            Action::ToggleTypewriter => "typewriter".into(),
+            Action::ToggleAiFullscreen => "AI-full".into(),
+            Action::StatusFilterReady => "Ready".into(),
+            Action::StatusFilterFinal => "Final".into(),
+            Action::StatusFilterThird => "Third".into(),
+            Action::StatusFilterSecond => "Second".into(),
+            Action::StatusFilterFirst => "First".into(),
+            Action::StatusFilterNapkin => "Napkin".into(),
+            Action::StatusFilterNone => "None".into(),
+
+            Action::ClearChat => "clear chat".into(),
+
+            Action::BundRunBuffer => "run buffer".into(),
+            Action::BundNewScript => "new script".into(),
+            Action::BundOpenEvalModal => "eval".into(),
+
+            Action::None => String::new(),
+            Action::BundLambda(name) => format!("λ {name}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BindingEntry {
     pub chord: KeyChord,
@@ -380,6 +435,49 @@ impl KeyBindings {
             ));
         }
         Ok((layer, suffix))
+    }
+}
+
+impl KeyBindings {
+    /// Build the status-bar hint string for the meta-prefix
+    /// chord on the given focus. Iterates `meta_sub` in
+    /// registration order, skipping disabled entries and
+    /// deduplicating actions (so `Up` + `u` for ReorderUp
+    /// surface as one entry).
+    pub fn meta_hint(&self, focus: Focus) -> String {
+        self.hint_for(&self.meta_sub, "META", focus)
+    }
+
+    /// Same for the bund-prefix chord.
+    pub fn bund_hint(&self, focus: Focus) -> String {
+        self.hint_for(&self.bund_sub, "BUND", focus)
+    }
+
+    fn hint_for(&self, table: &[BindingEntry], prefix: &str, focus: Focus) -> String {
+        use std::collections::HashSet;
+        let mut parts: Vec<String> = vec![prefix.to_string()];
+        let mut seen: HashSet<String> = HashSet::new();
+        for entry in table {
+            if !entry.scope.matches(focus) {
+                continue;
+            }
+            if matches!(entry.action, Action::None) {
+                continue;
+            }
+            let label = entry.action.label();
+            if label.is_empty() {
+                continue;
+            }
+            // De-dupe by action label: a user who bound the same
+            // action to two chords (e.g. ReorderUp on Up and u)
+            // only sees the action once in the hint.
+            if !seen.insert(label.clone()) {
+                continue;
+            }
+            parts.push(format!("{} {}", entry.chord.to_display_string(), label));
+        }
+        parts.push("Esc cancel".into());
+        parts.join(" · ")
     }
 }
 
