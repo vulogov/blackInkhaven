@@ -2230,6 +2230,9 @@ impl App {
     /// walk + a handful of small DuckDB selects). The status bar
     /// always reads from the cache so it doesn't pay the cost on
     /// every redraw.
+    ///
+    /// 1.2.4+: fires two Bund hooks when the snapshot transitions
+    /// across a meaningful threshold — see `fire_progress_hooks`.
     pub(crate) fn refresh_progress_cache(&mut self) {
         let (per_book_vec, project_total) = self.compute_word_totals_now();
         let mut per_book: std::collections::HashMap<Uuid, i64> =
@@ -2251,8 +2254,55 @@ impl App {
             book_titles,
             book_slugs,
         };
+        let prev = self.progress_cache.clone();
         let snap = crate::progress::snapshot(&self.cfg.goals, &live);
+        self.fire_progress_hooks(prev.as_ref(), &snap);
         self.progress_cache = Some(snap);
+    }
+
+    /// Diff the previous progress snapshot against the new one
+    /// and fire the matching transition hooks.
+    ///
+    /// * `hook.on_goal_hit ( today_words daily_goal -- )` — fired
+    ///   the first time `today_words` crosses `daily_goal` on a
+    ///   given day. Doesn't re-fire while still over the line;
+    ///   self-resets if the user deletes back below it.
+    /// * `hook.on_streak_break ( prev_streak_days -- )` — fired
+    ///   when the streak transitions from positive to zero. The
+    ///   argument is the streak length immediately before the
+    ///   break so a hook can log/notify "you just broke a 12-day
+    ///   streak".
+    fn fire_progress_hooks(
+        &self,
+        prev: Option<&crate::progress::ProgressSnapshot>,
+        new: &crate::progress::ProgressSnapshot,
+    ) {
+        // on_goal_hit
+        if let Some(goal) = new.project.daily_goal.filter(|n| *n > 0) {
+            let prev_today = prev
+                .map(|p| p.project.today_words)
+                .unwrap_or(0);
+            let new_today = new.project.today_words;
+            if prev_today < goal && new_today >= goal {
+                crate::scripting::hooks::fire(
+                    "hook.on_goal_hit",
+                    vec![
+                        rust_dynamic::value::Value::from_int(new_today),
+                        rust_dynamic::value::Value::from_int(goal),
+                    ],
+                );
+            }
+        }
+        // on_streak_break — only fires when we had a positive
+        // streak previously and now we have zero. First-launch
+        // (prev is None) doesn't count as a break.
+        let prev_streak = prev.map(|p| p.streak.days).unwrap_or(0);
+        if prev_streak > 0 && new.streak.days == 0 {
+            crate::scripting::hooks::fire(
+                "hook.on_streak_break",
+                vec![rust_dynamic::value::Value::from_int(prev_streak)],
+            );
+        }
     }
 
     /// Walk the hierarchy and compute current per-book + project
@@ -7313,6 +7363,19 @@ impl App {
         crate::progress::record_status_change(
             id, book_id, &from_label, &to_label, total_words,
         );
+        // hook.on_status_promoted ( uuid from_status to_status -- )
+        // Fires on every transition — manual cycles AND the
+        // auto-promote path. Scripts that want to act only on
+        // promotions (not demotions / wraps to "none") can
+        // inspect the labels.
+        crate::scripting::hooks::fire(
+            "hook.on_status_promoted",
+            vec![
+                rust_dynamic::value::Value::from_string(id.to_string()),
+                rust_dynamic::value::Value::from_string(from_label.clone()),
+                rust_dynamic::value::Value::from_string(to_label.clone()),
+            ],
+        );
         self.status = format!("status: `{}` → `{}`", display_status(node.status.as_deref()), next);
     }
 
@@ -8413,6 +8476,22 @@ impl App {
                     r.root_typ.display(),
                     r.root_typ.display(),
                 );
+                // hook.on_assemble ( uuid slug root_typ_path files_written -- )
+                // Fired after a successful Ctrl+B A. Lets scripts
+                // post-process the assembled tree (e.g. patch the
+                // root .typ, copy artefacts, kick off a custom
+                // build pipeline).
+                crate::scripting::hooks::fire(
+                    "hook.on_assemble",
+                    vec![
+                        rust_dynamic::value::Value::from_string(book.id.to_string()),
+                        rust_dynamic::value::Value::from_string(book.slug.clone()),
+                        rust_dynamic::value::Value::from_string(
+                            r.root_typ.to_string_lossy().into_owned(),
+                        ),
+                        rust_dynamic::value::Value::from_int(r.files_written as i64),
+                    ],
+                );
             }
             Err(e) => {
                 self.status = format!("Book assembly failed: {e}");
@@ -8531,6 +8610,26 @@ impl App {
                             dest.display(),
                             extras_msg,
                             outcome.pdf_path.display()
+                        );
+                        // hook.on_take ( uuid slug pdf_dest -- )
+                        // Fired once the PDF is copied to the
+                        // launch cwd (and any configured extra
+                        // formats are written alongside). Lets
+                        // scripts upload the artefact, post a
+                        // chat notification, etc.
+                        crate::scripting::hooks::fire(
+                            "hook.on_take",
+                            vec![
+                                rust_dynamic::value::Value::from_string(
+                                    book.id.to_string(),
+                                ),
+                                rust_dynamic::value::Value::from_string(
+                                    book.slug.clone(),
+                                ),
+                                rust_dynamic::value::Value::from_string(
+                                    dest.to_string_lossy().into_owned(),
+                                ),
+                            ],
                         );
                     }
                     Err(e) => {
@@ -10184,6 +10283,17 @@ impl App {
         let book_id = self.book_of_node(id);
         crate::progress::record_status_change(
             id, book_id, &from_label, &to_label, current_words,
+        );
+        // hook.on_status_promoted fires from both auto-promote
+        // and manual-cycle paths; see `cycle_paragraph_status`
+        // for the signature and rationale.
+        crate::scripting::hooks::fire(
+            "hook.on_status_promoted",
+            vec![
+                rust_dynamic::value::Value::from_string(id.to_string()),
+                rust_dynamic::value::Value::from_string(from_label.clone()),
+                rust_dynamic::value::Value::from_string(to_label.clone()),
+            ],
         );
         self.status = format!(
             "goal-hit: `{}` promoted {} → {}",
