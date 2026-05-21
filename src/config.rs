@@ -442,14 +442,14 @@ impl TypstCompileConfig {
         }
     }
 
-    /// True when the user has asked for the in-process engine (and
-    /// the binary was built with that path available). Today always
-    /// returns `false` — the in-process compile lands in Phase 4
-    /// of the typst-as-library plan; this gate is the foundation
-    /// the user's HJSON setting flows through.
+    /// True when the user has asked for the in-process engine. The
+    /// in-process compiler stack (typst + typst-pdf + typst-kit
+    /// fonts) is always linked in 1.2.5+; the user opts in by
+    /// setting `typst_compile.engine = "inprocess"` in
+    /// `inkhaven.hjson`. Anything else falls back to the external
+    /// `typst` binary on PATH.
     pub fn use_inprocess_engine(&self) -> bool {
-        // Future: `self.engine == "inprocess" && cfg!(feature = "typst-inprocess")`
-        false
+        self.engine.eq_ignore_ascii_case("inprocess")
     }
 }
 

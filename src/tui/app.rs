@@ -326,23 +326,20 @@ pub fn run(project: &Path) -> Result<()> {
 
     let cfg = Config::load(&layout.config_path()).map_err(anyhow::Error::from)?;
 
-    // 1.2.5+: foundation gate for the typst-as-library engine
-    // switch. If the user has set `typst_compile.engine =
-    // "inprocess"` in HJSON, but the binary wasn't built with the
-    // in-process compiler available, log a warning so the
-    // fallback to `external` isn't silent. `use_inprocess_engine`
-    // currently always returns false (Phase 1 doesn't ship the
-    // engine yet); the call exists so the user's HJSON choice
-    // flows through one well-known check the future Phase 4
-    // implementation will extend.
-    if cfg.typst_compile.engine == "inprocess"
-        && !cfg.typst_compile.use_inprocess_engine()
-    {
-        tracing::warn!(
+    // 1.2.5+: log the typst engine at startup so users can confirm
+    // their HJSON setting took effect. Both engines are always
+    // available — the in-process compiler ships in every 1.2.5
+    // build — but the default stays `external` to match prior
+    // behaviour exactly.
+    if cfg.typst_compile.use_inprocess_engine() {
+        tracing::info!(
             target: "inkhaven::typst",
-            "typst_compile.engine = \"inprocess\" set in HJSON but the \
-             in-process Typst engine is not available in this build — \
-             falling back to the external `typst` binary on PATH.",
+            "typst engine: in-process (typst::compile + typst-pdf)",
+        );
+    } else {
+        tracing::info!(
+            target: "inkhaven::typst",
+            "typst engine: external (`typst` binary on PATH)",
         );
     }
 
@@ -9839,18 +9836,19 @@ impl App {
         book_display: &str,
         root_typ: &Path,
     ) -> Option<crate::typst_compile::CompileOutcome> {
-        let (child, pdf_path) = match crate::typst_compile::spawn(root_typ) {
-            Ok(pair) => pair,
+        let mut handle = match crate::typst_compile::spawn_with_config(&self.cfg, root_typ) {
+            Ok(h) => h,
             Err(e) => {
                 self.status = format!("typst compile: {e}");
                 return None;
             }
         };
-        // Animate the splash while the child runs. ~80ms per frame
-        // keeps the spinner readable without burning CPU.
+        // Animate the splash while the compile runs (external child
+        // or in-process worker thread — same loop, same UX).
+        // ~80ms per frame keeps the spinner readable without
+        // burning CPU.
         let started = std::time::Instant::now();
         let mut spin_idx: usize = 0;
-        let mut child = child;
         loop {
             let elapsed = started.elapsed().as_secs();
             let spinner = TYPST_COMPILE_SPINNER[spin_idx % TYPST_COMPILE_SPINNER.len()];
@@ -9858,7 +9856,7 @@ impl App {
                 draw_typst_compile_splash(f, book_display, elapsed, spinner)
             });
             spin_idx = spin_idx.wrapping_add(1);
-            match child.try_wait() {
+            match handle.try_wait() {
                 Ok(Some(_)) => break,
                 Ok(None) => {
                     std::thread::sleep(std::time::Duration::from_millis(80));
@@ -9869,7 +9867,7 @@ impl App {
                 }
             }
         }
-        match crate::typst_compile::finish(child, pdf_path) {
+        match crate::typst_compile::finish(handle) {
             Ok(o) => Some(o),
             Err(e) => {
                 self.status = format!("typst compile: {e}");

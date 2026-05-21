@@ -1,0 +1,298 @@
+//! In-process Typst compile path (1.2.5+).
+//!
+//! Mirrors the `spawn` / `finish` shape of `crate::typst_compile` so
+//! the TUI's spinner loop can drive both engines through the same
+//! abstraction. The two differences from the external child-process
+//! path:
+//!
+//! * Errors / warnings are first-class `SourceDiagnostic`s with span
+//!   info, not opaque stderr blobs. We format them into a stderr-shaped
+//!   string for compat with the existing `start_typst_error_analysis`
+//!   handler, but a future commit can lift the raw diagnostic list up
+//!   to the editor for in-line markers.
+//! * The whole compile runs on a worker thread; the foreground TUI
+//!   thread polls a channel for completion the same way it currently
+//!   polls `Child::try_wait()`.
+
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
+
+use typst::diag::{Severity, SourceDiagnostic, Warned};
+use typst::layout::PagedDocument;
+use typst::syntax::{FileId, Span};
+use typst::World;
+use typst_pdf::PdfOptions;
+
+use crate::error::{Error, Result};
+use crate::typst_compile::CompileOutcome;
+use crate::typst_world::InkhavenWorld;
+
+/// Handle to an in-flight in-process compile. Modelled on
+/// `std::process::Child` so the TUI's spinner loop can use the
+/// same poll-until-done shape for both engines.
+pub struct InprocessHandle {
+    rx: mpsc::Receiver<CompileOutcome>,
+    pdf_path: PathBuf,
+    /// Once `try_wait_mut` has drained the channel it stashes the
+    /// outcome here so `into_outcome` can recover it without
+    /// blocking on a second `recv`.
+    stash: Option<CompileOutcome>,
+}
+
+impl InprocessHandle {
+    /// Non-blocking poll. `Ok(Some(()))` means "the worker has
+    /// finished — call `into_outcome` to recover the result";
+    /// `Ok(None)` means "still running". Mirrors `Child::try_wait`
+    /// so the spinner loop doesn't need to branch on engine.
+    pub fn try_wait_mut(&mut self) -> std::io::Result<Option<()>> {
+        if self.stash.is_some() {
+            return Ok(Some(()));
+        }
+        match self.rx.try_recv() {
+            Ok(outcome) => {
+                self.stash = Some(outcome);
+                Ok(Some(()))
+            }
+            Err(mpsc::TryRecvError::Empty) => Ok(None),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                // Worker panicked / disconnected without sending.
+                // Synthesise a generic failure so the foreground
+                // thread still gets a clean outcome.
+                self.stash = Some(CompileOutcome {
+                    success: false,
+                    stderr: "in-process compile: worker thread disconnected".to_owned(),
+                    stdout: String::new(),
+                    pdf_path: self.pdf_path.clone(),
+                });
+                Ok(Some(()))
+            }
+        }
+    }
+
+    /// Consume the handle and return the compile outcome. If the
+    /// caller never polled `try_wait_mut` we block here as a
+    /// safety net — the foreground thread shouldn't return while
+    /// the worker is still alive.
+    pub fn into_outcome(mut self) -> CompileOutcome {
+        if let Some(out) = self.stash.take() {
+            return out;
+        }
+        match self.rx.recv() {
+            Ok(out) => out,
+            Err(_) => CompileOutcome {
+                success: false,
+                stderr: "in-process compile: worker thread disconnected".to_owned(),
+                stdout: String::new(),
+                pdf_path: self.pdf_path,
+            },
+        }
+    }
+}
+
+/// Spawn a worker thread that compiles `main_typ` rooted at
+/// `project_root` into a PDF on disk. Returns a poll-able handle.
+pub fn spawn_thread(project_root: &Path, main_typ: &Path) -> Result<InprocessHandle> {
+    let pdf_path = main_typ.with_extension("pdf");
+    let project_root = project_root.to_path_buf();
+    let main_typ = main_typ.to_path_buf();
+    let pdf_path_for_thread = pdf_path.clone();
+    let (tx, rx) = mpsc::channel();
+    thread::Builder::new()
+        .name("inkhaven-typst-compile".into())
+        .spawn(move || {
+            let outcome = compile_to_pdf(&project_root, &main_typ, &pdf_path_for_thread);
+            let _ = tx.send(outcome);
+        })
+        .map_err(|e| Error::Store(format!("spawn typst worker thread: {e}")))?;
+    Ok(InprocessHandle {
+        rx,
+        pdf_path,
+        stash: None,
+    })
+}
+
+/// The synchronous compile core — runs on the worker thread.
+fn compile_to_pdf(project_root: &Path, main_typ: &Path, pdf_path: &Path) -> CompileOutcome {
+    let world = match InkhavenWorld::new(project_root, main_typ) {
+        Ok(w) => w,
+        Err(e) => {
+            return CompileOutcome {
+                success: false,
+                stderr: format!("in-process compile: {e}"),
+                stdout: String::new(),
+                pdf_path: pdf_path.to_path_buf(),
+            };
+        }
+    };
+    let Warned { output, warnings } = typst::compile::<PagedDocument>(&world);
+    let document = match output {
+        Ok(doc) => doc,
+        Err(errors) => {
+            return CompileOutcome {
+                success: false,
+                stderr: format_diagnostics(&world, &errors),
+                stdout: format_diagnostics(&world, &warnings),
+                pdf_path: pdf_path.to_path_buf(),
+            };
+        }
+    };
+    // typst-pdf turns the laid-out document into a `Vec<u8>`.
+    // PdfOptions::default() = standard defaults, same as
+    // `typst compile` with no flags.
+    let options = PdfOptions::default();
+    let bytes = match typst_pdf::pdf(&document, &options) {
+        Ok(b) => b,
+        Err(errors) => {
+            return CompileOutcome {
+                success: false,
+                stderr: format_diagnostics(&world, &errors),
+                stdout: format_diagnostics(&world, &warnings),
+                pdf_path: pdf_path.to_path_buf(),
+            };
+        }
+    };
+    if let Err(e) = std::fs::write(pdf_path, &bytes) {
+        return CompileOutcome {
+            success: false,
+            stderr: format!("write {}: {e}", pdf_path.display()),
+            stdout: String::new(),
+            pdf_path: pdf_path.to_path_buf(),
+        };
+    }
+    CompileOutcome {
+        success: true,
+        stderr: String::new(),
+        stdout: format_diagnostics(&world, &warnings),
+        pdf_path: pdf_path.to_path_buf(),
+    }
+}
+
+/// Render a list of `SourceDiagnostic`s into a multi-line string
+/// that resembles `typst compile`'s stderr — `error: <message>`
+/// followed by an indented `--> path:line:col` source pointer and
+/// any `hint:` lines. Empty input → empty string.
+fn format_diagnostics(world: &InkhavenWorld, diags: &[SourceDiagnostic]) -> String {
+    if diags.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    for d in diags {
+        let label = match d.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        };
+        let (path, line, col) = locate(world, d.span);
+        out.push_str(&format!("{label}: {}\n", d.message));
+        out.push_str(&format!("  --> {path}:{line}:{col}\n"));
+        for hint in &d.hints {
+            out.push_str(&format!("  hint: {hint}\n"));
+        }
+    }
+    out
+}
+
+fn locate(world: &InkhavenWorld, span: Span) -> (String, usize, usize) {
+    let id = match span.id() {
+        Some(id) => id,
+        None => return ("<detached>".to_owned(), 0, 0),
+    };
+    let path_label = file_id_label(id);
+    let source = match world.source(id) {
+        Ok(s) => s,
+        Err(_) => return (path_label, 0, 0),
+    };
+    let range = match source.range(span) {
+        Some(r) => r,
+        None => return (path_label, 0, 0),
+    };
+    let (line0, col0) = source
+        .lines()
+        .byte_to_line_column(range.start)
+        .unwrap_or((0, 0));
+    (path_label, line0 + 1, col0 + 1)
+}
+
+fn file_id_label(id: FileId) -> String {
+    match id.package() {
+        Some(pkg) => format!("{}/{}", pkg, id.vpath().as_rooted_path().display()),
+        None => id.vpath().as_rooted_path().display().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn write_tmp(content: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("probe.typ");
+        std::fs::write(&path, content).expect("write");
+        (dir, path)
+    }
+
+    /// End-to-end smoke: spawn the worker, poll to completion,
+    /// recover the outcome, and confirm we got *something
+    /// sensible* — either a non-empty PDF on disk OR a structured
+    /// failure message. Marked `#[ignore]` because the test exercises
+    /// system-font discovery which is genuinely environmental;
+    /// CI boxes with zero fonts will surface a `font not found`
+    /// diagnostic that the test should not flag as a regression.
+    /// Run manually with `cargo test --ignored typst_inprocess`.
+    #[test]
+    #[ignore]
+    fn end_to_end_compile_smoke() {
+        let (dir, path) = write_tmp(
+            "#set page(width: 10cm, height: 5cm, margin: 1cm)\n\
+             = Hello\nProse.\n",
+        );
+        let mut handle = spawn_thread(dir.path(), &path).expect("spawn");
+        let started = std::time::Instant::now();
+        loop {
+            match handle.try_wait_mut().expect("try_wait") {
+                Some(_) => break,
+                None => std::thread::sleep(std::time::Duration::from_millis(50)),
+            }
+            assert!(
+                started.elapsed().as_secs() < 30,
+                "in-process compile hung",
+            );
+        }
+        let outcome = handle.into_outcome();
+        if outcome.success {
+            let bytes = std::fs::metadata(&outcome.pdf_path)
+                .expect("pdf written")
+                .len();
+            assert!(bytes > 100, "PDF suspiciously small: {bytes} bytes");
+        } else {
+            // Acceptable failure modes: no fonts on this box, or
+            // some other diagnostic. Just confirm the error stream
+            // is non-empty and well-structured.
+            assert!(
+                !outcome.stderr.is_empty(),
+                "failed compile should populate stderr",
+            );
+            eprintln!("in-process compile failed (acceptable on bare hosts):\n{}", outcome.stderr);
+        }
+    }
+
+    /// Catch the early-exit path: a `main.typ` outside the project
+    /// root should fail fast with a clear message — no worker
+    /// thread, no half-finished PDF.
+    #[test]
+    fn rejects_main_outside_root() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let other = tempfile::tempdir().expect("tempdir2");
+        let main = other.path().join("probe.typ");
+        std::fs::write(&main, "= hi\n").expect("write");
+        // Drive the World constructor directly — `spawn_thread`
+        // doesn't surface the construction error itself (the
+        // worker would emit it through stderr instead). This test
+        // also exercises the canonicalisation logic.
+        let err = InkhavenWorld::new(dir.path(), &main)
+            .err()
+            .expect("should reject");
+        assert!(err.contains("not inside project root"), "got: {err}");
+    }
+}
