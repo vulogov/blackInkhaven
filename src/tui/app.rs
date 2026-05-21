@@ -1715,6 +1715,13 @@ pub(crate) struct App {
     /// True after the user pressed the meta-prefix chord (default Ctrl+B).
     /// The next key is interpreted as an action selector and clears this.
     meta_pending: bool,
+    /// True for one keystroke after the user presses Ctrl+V. The
+    /// next key picks an export variant — `1` / `2` whose meaning
+    /// depends on the current focus (editor: buffer / subchapter;
+    /// tree: current node + descendants). All variants produce
+    /// markdown and write to the launch cwd with a deterministic
+    /// stem so the user can find the file without a save dialog.
+    view_pending: bool,
     /// True after the user pressed the Bund-meta prefix (default
     /// Ctrl+Z). The next key dispatches into `handle_bund_action`
     /// (R run, E eval, N new script).
@@ -2090,6 +2097,7 @@ impl App {
             collapsed_nodes,
             meta_pending: false,
             bund_pending: false,
+            view_pending: false,
             focus: Focus::Tree,
             tree_cursor: 0,
             tree_scroll: 0,
@@ -2492,6 +2500,26 @@ impl App {
         // requires the CONTROL modifier flag.
         if matches!(key.code, KeyCode::Null) {
             self.change_focus(Focus::Tree);
+            return Ok(false);
+        }
+
+        // View-prefix dispatch (Ctrl+V): markdown export to cwd.
+        // Captures the next keystroke. Currently 1.2.3 — chord
+        // table is hardcoded (not in keybind::KeyBindings); when
+        // there's appetite for rebinding it gets promoted to the
+        // binding table like meta/bund have been.
+        if self.view_pending {
+            self.handle_view_action(key);
+            return Ok(false);
+        }
+        if matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
+            self.view_pending = true;
+            self.status =
+                "view: 1 = buffer · 2 = subchapter (tree: 1 = subtree) · Esc cancel"
+                    .into();
             return Ok(false);
         }
 
@@ -4950,6 +4978,125 @@ impl App {
     ///   R — run the buffer (eval the open Script's body against Adam)
     ///   N — new script (Add modal under the Scripts system book)
     ///   E — eval one expression (modal prompt, like F1)
+    /// Dispatch the view-prefix chord (Ctrl+V): markdown export.
+    /// Two suffixes are recognised; their meaning shifts by focus:
+    ///
+    ///   * Editor pane + `1`  → current paragraph buffer (in-memory,
+    ///     includes unsaved edits).
+    ///   * Editor pane + `2`  → containing subchapter's subtree.
+    ///   * Tree pane   + `1`  → tree-cursor's node and all descendants.
+    ///
+    /// All variants run the source through `typst_to_markdown`
+    /// and write to the launch cwd with a `<title>-<stamp>.md`
+    /// filename. Errors land on the status bar; nothing else
+    /// changes.
+    fn handle_view_action(&mut self, key: KeyEvent) {
+        self.view_pending = false;
+        if matches!(key.code, KeyCode::Esc) {
+            self.status = "view cancelled".into();
+            return;
+        }
+        let outcome = match (self.focus, key.code) {
+            (Focus::Editor | Focus::AiPrompt, KeyCode::Char('1')) => {
+                self.export_markdown_buffer()
+            }
+            (Focus::Editor | Focus::AiPrompt, KeyCode::Char('2')) => {
+                self.export_markdown_subchapter()
+            }
+            (Focus::Tree | Focus::SearchBar, KeyCode::Char('1')) => {
+                self.export_markdown_tree_subtree()
+            }
+            _ => {
+                self.status = "view: unknown chord (Editor: 1/2 · Tree: 1)".into();
+                return;
+            }
+        };
+        self.status = match outcome {
+            Ok(path) => format!("view: wrote {}", path.display()),
+            Err(e) => format!("view: {e}"),
+        };
+    }
+
+    fn export_markdown_buffer(&self) -> std::result::Result<std::path::PathBuf, String> {
+        let doc = self
+            .opened
+            .as_ref()
+            .ok_or_else(|| "no paragraph open".to_string())?;
+        let typst_src = doc.textarea.lines().join("\n");
+        let md = crate::export::markdown::typst_to_markdown(&typst_src);
+        let stem = slug::slugify(&doc.title);
+        self.write_markdown_to_cwd(&stem, &md)
+    }
+
+    fn export_markdown_subchapter(&self) -> std::result::Result<std::path::PathBuf, String> {
+        let doc = self
+            .opened
+            .as_ref()
+            .ok_or_else(|| "no paragraph open".to_string())?;
+        // Walk up the hierarchy to the nearest Subchapter (or
+        // Chapter as fallback so the chord stays useful even at
+        // chapter-only depth).
+        let para = self
+            .hierarchy
+            .get(doc.id)
+            .ok_or_else(|| "paragraph not in hierarchy".to_string())?;
+        let root = self
+            .hierarchy
+            .ancestors(para)
+            .into_iter()
+            .find(|a| {
+                matches!(
+                    a.kind,
+                    crate::store::node::NodeKind::Subchapter
+                        | crate::store::node::NodeKind::Chapter
+                )
+            })
+            .ok_or_else(|| "no containing subchapter".to_string())?;
+        self.export_markdown_subtree_of(root)
+    }
+
+    fn export_markdown_tree_subtree(&self) -> std::result::Result<std::path::PathBuf, String> {
+        let (id, _) = *self
+            .rows
+            .get(self.tree_cursor)
+            .ok_or_else(|| "no tree row under cursor".to_string())?;
+        let node = self
+            .hierarchy
+            .get(id)
+            .ok_or_else(|| "node missing from hierarchy".to_string())?;
+        self.export_markdown_subtree_of(node)
+    }
+
+    fn export_markdown_subtree_of(
+        &self,
+        root: &crate::store::node::Node,
+    ) -> std::result::Result<std::path::PathBuf, String> {
+        let layout = crate::project::ProjectLayout::new(self.store.project_root());
+        let combined = crate::export::assemble_typst_source(
+            &layout,
+            &self.hierarchy,
+            Some(root.id),
+        )
+        .map_err(|e| format!("assemble: {e:#}"))?;
+        let md = crate::export::markdown::typst_to_markdown(&combined);
+        let stem = slug::slugify(&root.title);
+        self.write_markdown_to_cwd(&stem, &md)
+    }
+
+    fn write_markdown_to_cwd(
+        &self,
+        stem: &str,
+        body: &str,
+    ) -> std::result::Result<std::path::PathBuf, String> {
+        let cwd = std::env::current_dir().map_err(|e| format!("cwd: {e}"))?;
+        let stamp = chrono::Local::now().format("%Y%d%m-%H%M");
+        let safe_stem = if stem.is_empty() { "buffer" } else { stem };
+        let dest = cwd.join(format!("{safe_stem}-{stamp}.md"));
+        std::fs::write(&dest, body.as_bytes())
+            .map_err(|e| format!("write {}: {e}", dest.display()))?;
+        Ok(dest)
+    }
+
     fn handle_bund_action(&mut self, key: KeyEvent) {
         self.bund_pending = false;
         if matches!(key.code, KeyCode::Esc) {
@@ -7976,9 +8123,21 @@ impl App {
             if take {
                 match self.take_book_pdf(&book, &outcome.pdf_path) {
                     Ok(dest) => {
+                        // Multi-format extras live next to the PDF
+                        // with matching stem. Errors are reported
+                        // (status bar) but never abort the take —
+                        // the PDF the user actually asked for is
+                        // already on disk.
+                        let extras = self.take_extra_formats(&book, &dest);
+                        let extras_msg = if extras.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" · extras: {}", extras.join(", "))
+                        };
                         self.status = format!(
-                            "Took the book · {}  (source PDF: {})",
+                            "Took the book · {}{}  (source PDF: {})",
                             dest.display(),
+                            extras_msg,
                             outcome.pdf_path.display()
                         );
                     }
@@ -8048,6 +8207,105 @@ impl App {
                 self.status = format!("typst compile: {e}");
                 None
             }
+        }
+    }
+
+    /// Write each format in `cfg.output.extra_formats` alongside
+    /// `pdf_dest`, sharing the same stem. The combined `.typ`
+    /// source is built once from `book`'s subtree and reused for
+    /// every format. Per-format errors are logged and surfaced in
+    /// the returned brief list (`["markdown", "tex error: …"]`),
+    /// never aborting — the PDF the user asked for is already on
+    /// disk before this fires.
+    fn take_extra_formats(
+        &self,
+        book: &crate::store::node::Node,
+        pdf_dest: &Path,
+    ) -> Vec<String> {
+        let formats = &self.cfg.output.extra_formats;
+        if formats.is_empty() {
+            return Vec::new();
+        }
+        let hierarchy = match crate::store::hierarchy::Hierarchy::load(&self.store) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::warn!(
+                    target: "inkhaven::take",
+                    "extra formats: hierarchy load: {e}",
+                );
+                return vec![format!("hierarchy load failed: {e}")];
+            }
+        };
+        let layout = crate::project::ProjectLayout::new(self.store.project_root());
+        let combined = match crate::export::assemble_typst_source(
+            &layout,
+            &hierarchy,
+            Some(book.id),
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    target: "inkhaven::take",
+                    "extra formats: assemble: {e}",
+                );
+                return vec![format!("assemble failed: {e}")];
+            }
+        };
+        let mut produced: Vec<String> = Vec::new();
+        for raw in formats {
+            let fmt = raw.trim().to_ascii_lowercase();
+            let outcome = self.build_one_extra_format(&fmt, &combined, &book.title);
+            let artefact = match outcome {
+                Some(Ok(art)) => art,
+                Some(Err(e)) => {
+                    tracing::warn!(
+                        target: "inkhaven::take",
+                        "extra format {fmt}: {e}",
+                    );
+                    produced.push(format!("{fmt} error"));
+                    continue;
+                }
+                None => {
+                    tracing::warn!(
+                        target: "inkhaven::take",
+                        "extra format {fmt}: unknown — skipped",
+                    );
+                    produced.push(format!("{fmt}?"));
+                    continue;
+                }
+            };
+            let dest = crate::export::with_artefact_extension(pdf_dest, &artefact);
+            if let Err(e) = artefact.write_to(&dest) {
+                tracing::warn!(
+                    target: "inkhaven::take",
+                    "extra format {fmt} write {}: {e}",
+                    dest.display(),
+                );
+                produced.push(format!("{fmt} write error"));
+                continue;
+            }
+            produced.push(dest.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&fmt)
+                .to_string());
+        }
+        produced
+    }
+
+    fn build_one_extra_format(
+        &self,
+        fmt: &str,
+        combined: &str,
+        book_title: &str,
+    ) -> Option<anyhow::Result<crate::export::Artefact>> {
+        match fmt {
+            "markdown" | "md" => Some(Ok(crate::export::build_markdown(combined))),
+            "tex" | "latex" => Some(Ok(crate::export::build_tex(combined))),
+            "epub" => {
+                let md = crate::export::markdown::typst_to_markdown(combined);
+                Some(crate::export::build_epub(&md, book_title))
+            }
+            _ => None,
         }
     }
 

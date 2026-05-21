@@ -35,6 +35,12 @@ pub struct Config {
     pub typst_layout: TypstLayoutConfig,
     #[serde(default)]
     pub images: ImagesConfig,
+    /// Multi-format export configuration — drives the Ctrl+B O
+    /// extra-format pipeline. CLI `inkhaven export <fmt>` uses
+    /// the same converters but ignores this list (it picks one
+    /// format explicitly).
+    #[serde(default)]
+    pub output: OutputConfig,
     /// Bund scripting sandbox policy. Defaults deny destructive
     /// categories (fs_write, net, shell, code_eval); writers opt
     /// in by listing the categories or words they want to allow.
@@ -107,6 +113,7 @@ impl Default for Config {
             typst_fonts: TypstFontsConfig::default(),
             typst_layout: TypstLayoutConfig::default(),
             images: ImagesConfig::default(),
+            output: OutputConfig::default(),
             scripting: crate::scripting::policy::Policy::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
@@ -1088,6 +1095,23 @@ impl Config {
             .map_err(|e| crate::error::Error::Config(e.to_string()))?;
         std::fs::write(path, s).map_err(crate::error::Error::Io)
     }
+}
+
+/// Multi-format export hookup for Ctrl+B O.
+///
+/// When the user "takes" the book, inkhaven first builds the
+/// PDF (the existing flow). If `extra_formats` is non-empty, the
+/// same combined `.typ` source feeds the in-process converters
+/// in `src/export/` and the resulting files land next to the
+/// PDF with matching stem. Each entry is a case-insensitive
+/// format name — supported today: `markdown`, `tex`, `epub`.
+/// Unknown entries log a WARN and are skipped. Per-format
+/// errors are reported in the status bar but never abort the
+/// take.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct OutputConfig {
+    pub extra_formats: Vec<String>,
 }
 
 #[cfg(test)]

@@ -198,8 +198,20 @@ impl From<CliNodeKind> for NodeKind {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ExportFormat {
+    /// Concatenated `.typ` source.
     Typst,
+    /// PDF via the `typst` CLI (must be on PATH).
     Pdf,
+    /// Markdown via the in-process typst→markdown converter
+    /// (`src/export/markdown.rs`).
+    Markdown,
+    /// LaTeX via the `tylax` crate. No external `pdflatex` needed
+    /// for emit — but the user wants `pdflatex` / `xelatex` if they
+    /// later compile the result.
+    Tex,
+    /// EPUB3 zip — markdown intermediate, written via the bundled
+    /// `zip` crate.
+    Epub,
 }
 
 impl Cli {

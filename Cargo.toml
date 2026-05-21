@@ -128,7 +128,14 @@ unicode-segmentation = "1"
 # a paragraph via r/i/t/b.
 pulldown-cmark = { version = "0.13", default-features = false }
 # Zip backup / restore commands and the TUI auto-backup-on-exit path.
+# Also reused by the `inkhaven export epub` pipeline to assemble the
+# EPUB3 container — same `deflate` feature flag, no extra dep cost.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# Pure-Rust Typst→LaTeX converter for `inkhaven export tex` and the
+# Ctrl+B O extra-format pipeline. `default-features = false` drops
+# the bundled clap CLI; we only consume the library API
+# (`tylax::typst_document_to_latex` / `typst_to_latex`).
+tylax = { version = "0.3", default-features = false }
 # Human-friendly duration parsing for the auto-backup `max_age` config knob.
 humantime = "2"
 humantime-serde = "1"

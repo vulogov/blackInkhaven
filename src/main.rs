@@ -4,6 +4,7 @@ mod backup;
 mod cli;
 mod config;
 mod error;
+mod export;
 mod grammar;
 mod project;
 mod scripting;
