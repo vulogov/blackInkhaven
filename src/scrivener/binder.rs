@@ -32,10 +32,13 @@ pub struct BinderItem {
     pub children: Vec<BinderItem>,
 }
 
+#[cfg(test)]
 impl BinderItem {
     /// Convenience: walk this subtree and call `visit(depth,
-    /// &item)` on every item, depth-first, pre-order.
-    pub fn walk(&self, depth: usize, visit: &mut dyn FnMut(usize, &BinderItem)) {
+    /// &item)` on every item, depth-first, pre-order. Only used
+    /// by tests in this file; production code walks via the
+    /// orchestrator's own depth tracker in `WalkCtx`.
+    fn walk(&self, depth: usize, visit: &mut dyn FnMut(usize, &BinderItem)) {
         visit(depth, self);
         for child in &self.children {
             child.walk(depth + 1, visit);

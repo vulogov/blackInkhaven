@@ -48,15 +48,6 @@ pub struct ImportReport {
     pub errors: Vec<String>,
 }
 
-impl ImportReport {
-    pub fn total_created(&self) -> usize {
-        self.books_created
-            + self.chapters_created
-            + self.subchapters_created
-            + self.paragraphs_created
-    }
-}
-
 /// Top-level entry point. `scriv_root` is the `.scriv` directory.
 pub fn import_scrivener_project(
     scriv_root: &Path,
@@ -69,7 +60,6 @@ pub fn import_scrivener_project(
     let docs_dir = scriv_root.join("Files").join("Docs");
     let mut report = ImportReport::default();
     let mut ctx = WalkCtx {
-        scriv_root: scriv_root.to_path_buf(),
         docs_dir,
         store,
         cfg,
@@ -85,7 +75,6 @@ pub fn import_scrivener_project(
 }
 
 struct WalkCtx<'a> {
-    scriv_root: PathBuf,
     docs_dir: PathBuf,
     store: &'a Store,
     cfg: &'a Config,

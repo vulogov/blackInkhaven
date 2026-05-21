@@ -24,4 +24,4 @@ pub mod import;
 pub mod mapping;
 pub mod rtf;
 
-pub use import::{import_scrivener_project, ImportOpts, ImportReport};
+pub use import::{import_scrivener_project, ImportOpts};
