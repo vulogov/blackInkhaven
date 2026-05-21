@@ -496,6 +496,7 @@ goals: {
 | `books.<slug>.target_words` | int          | `0`     | Total words the book should reach. `0` hides the per-book pace line. |
 | `books.<slug>.deadline`  | str (`YYYY-MM-DD`) | `""` | Date by which `target_words` should be hit. Empty disables deadline pacing. Past-due deadlines collapse to "remaining gap, all at once". |
 | `status_ladder`          | map<status, int> | `{}` | Trailing-7-days promotion targets keyed by status name **lowercased** (`ready`, `final`, `third`, `second`, `first`, `napkin`). Modal shows `→ ready: N/M this week`. |
+| `auto_promote_on_target` | bool             | `true` | 1.2.4+. When a save crosses a paragraph's `target_words` (set via `Ctrl+V T` or `ink.paragraph.set_target`), advance its status one ladder rung. Idempotent per `(paragraph, status)`; a manual `Ctrl+B R` resets the bookkeeping. Set `false` to keep promotions manual. |
 
 **Today's words** = current total − today's morning baseline.
 The baseline is captured per UTC day on project open (idempotent

@@ -122,6 +122,7 @@ Hardcoded (not yet rebindable through `keys.bindings`); see tutorials
 | `1`                    | Tree                     | Write the tree-cursor's **node and all descendants** as markdown to cwd. |
 | `S` / `s`              | any                      | Toggle **similar-paragraph mode** — saves the buffer, picks via vector search, opens a second editor side-by-side (AI pane steps aside). Re-press to save both and exit. |
 | `G` / `g`              | any                      | Open the **writing-progress modal** (today / streak / per-book pace / 30-day sparkline / status-ladder counts). |
+| `T` / `t`              | any (needs open paragraph) | Set / clear the **per-paragraph word-count target** (1.2.4+). Empty / `0` clears. Saves that cross the target auto-promote status one ladder step when `goals.auto_promote_on_target` is true. |
 | `Esc`                  | any                      | Cancel the chord without acting.                                       |
 
 While in similar-paragraph mode, `Tab` inside the editor toggles

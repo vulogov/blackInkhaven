@@ -204,6 +204,70 @@ rm <project>/progress.db
 Per-book and per-day deletion are not exposed through the CLI in
 v1 — `duckdb` directly on `progress.db` if you really need it.
 
+## Per-paragraph goals (1.2.4+)
+
+Beyond project-wide + per-book targets, 1.2.4 adds a goal on
+**individual paragraphs**.
+
+Set it with `Ctrl+V T` while the paragraph is open:
+
+```
+┌── Per-paragraph goal — Ctrl+V T ─────────────────────────┐
+│                                                          │
+│  Paragraph word-count target:                            │
+│   › 500                                                  │
+│                                                          │
+│   Enter sets · empty/0 clears · Esc cancels              │
+└──────────────────────────────────────────────────────────┘
+```
+
+Paragraphs with a goal grow a 4-cell Unicode gauge + percentage
+in the tree pane:
+
+```
+¶ N The morning  [██▒░] 60%
+¶ F Lightning    [████] 100%
+¶ R Storm at sea [████] 142%
+```
+
+Colour buckets: red <25%, light-red <50%, yellow <75%,
+light-green <100%, green-bold ≥100%.
+
+### Auto-promote on goal hit
+
+When a save crosses a paragraph's target, inkhaven advances its
+status one rung on the ladder (Napkin → First → Second → Third
+→ Final → Ready). The promotion is **idempotent per
+`(paragraph, status)`**: once promoted, repeated saves at the
+same status won't re-fire. A manual `Ctrl+B R` cycle resets the
+bookkeeping — cycle backwards then save again above target and
+the auto-promote fires from the new (lower) status.
+
+Disable in `inkhaven.hjson` if you'd rather promote manually:
+
+```hjson
+goals: {
+  auto_promote_on_target: false
+}
+```
+
+### Bund
+
+Two new words for the scripting surface:
+
+| Word                       | Stack                       | Category     |
+| -------------------------- | --------------------------- | ------------ |
+| `ink.paragraph.set_target` | `( path target -- )`        | `store_write`|
+| `ink.paragraph.target`     | `( path -- int \| NODATA )` | `store_read` |
+
+`target ≤ 0` clears the goal. `path` is the slug-path the rest
+of the `ink.*` API uses.
+
+```bund
+"story/01-arrival/scene-one" 750 ink.paragraph.set_target
+"story/01-arrival/scene-one"     ink.paragraph.target println
+```
+
 ## See also
 
 - [`14-document-status.md`](14-document-status.md) — the status

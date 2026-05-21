@@ -130,6 +130,28 @@ pub struct Node {
     /// future projects can extend the workflow without a migration.
     #[serde(default)]
     pub status: Option<String>,
+
+    /// Per-paragraph word-count goal (1.2.4+). When set, the tree
+    /// pane shows a 4-char Unicode gauge + percent beside the
+    /// paragraph; on save, the auto-promote machinery checks
+    /// whether `word_count >= target_words` and bumps `status` one
+    /// ladder step if `goals.auto_promote_on_target` is true. None
+    /// = no goal. Stored as `i32` so the field round-trips cleanly
+    /// through JSON / DuckDB without unsigned-conversion surprises;
+    /// negative values are clamped to None at load time.
+    #[serde(default)]
+    pub target_words: Option<i32>,
+
+    /// Bookkeeping for "promote once per `(paragraph, status)`"
+    /// (1.2.4+). Holds the status the paragraph held immediately
+    /// after the most recent auto-promotion (i.e. the new status,
+    /// not the pre-promotion one). Subsequent saves that stay at
+    /// or above `target_words` won't re-promote while this matches
+    /// the current status. A manual `Ctrl+B R` cycle clears /
+    /// changes the status field; the next save will re-fire
+    /// auto-promote if the goal is still met.
+    #[serde(default)]
+    pub target_hit_at_status: Option<String>,
 }
 
 impl Node {
@@ -151,6 +173,8 @@ impl Node {
             "image_alt":     self.image_alt,
             "content_type":  self.content_type,
             "status":        self.status,
+            "target_words":         self.target_words,
+            "target_hit_at_status": self.target_hit_at_status,
         })
     }
 
@@ -249,6 +273,17 @@ impl Node {
             .get("status")
             .and_then(|v| v.as_str())
             .map(str::to_owned);
+        // Per-paragraph goal — accept any integer JSON shape.
+        // Negative values are nonsense; clamp to None.
+        let target_words = obj
+            .get("target_words")
+            .and_then(|v| v.as_i64())
+            .filter(|n| *n > 0)
+            .map(|n| n.clamp(0, i32::MAX as i64) as i32);
+        let target_hit_at_status = obj
+            .get("target_hit_at_status")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
 
         Ok(Self {
             id,
@@ -268,6 +303,8 @@ impl Node {
             image_alt,
             content_type,
             status,
+            target_words,
+            target_hit_at_status,
         })
     }
 

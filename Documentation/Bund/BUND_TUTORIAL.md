@@ -180,6 +180,8 @@ words that reach into the project store.
 | `ink.pane.clear` | `( -- cleared )` | empty the pane buffer; returns false if no pane is open |
 | `ink.pane.line` | `( text -- routed )` | append one line; returns false if no pane is open |
 | `ink.input` | `( prompt hookname -- )` | open the input modal; on Enter pushes the typed string and fires `hookname` |
+| `ink.paragraph.target` | `( path -- int \| NODATA )` | 1.2.4+: read the per-paragraph word-count goal (NODATA when unset) |
+| `ink.paragraph.set_target` | `( path target -- )` | 1.2.4+: set / clear the per-paragraph goal. `target ≤ 0` clears. `store_write` — opt in via `enabled_categories: ["store_write"]` |
 
 The pane + input words live under the `editor_read` policy
 category (non-destructive UI), so they're allowed by default.

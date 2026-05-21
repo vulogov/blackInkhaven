@@ -1611,6 +1611,12 @@ enum Modal {
     Progress {
         scroll: usize,
     },
+    /// Ctrl+V T — set / clear the per-paragraph word-count goal.
+    /// Empty or `0` clears the target. Lives in the same input-
+    /// modal family as BundEval / HelpQuery.
+    ParagraphTarget {
+        input: TextInput,
+    },
     /// Ctrl+V S — pick a paragraph similar to the current buffer.
     /// Result list comes from the vector index seeded with the
     /// current paragraph's text; entries always exclude the
@@ -5182,6 +5188,12 @@ impl App {
             self.open_progress_modal();
             return;
         }
+        // `T` / `t` sets the per-paragraph word-count goal for
+        // the open paragraph. Empty / `0` clears.
+        if matches!(key.code, KeyCode::Char('T') | KeyCode::Char('t')) {
+            self.open_paragraph_target_modal();
+            return;
+        }
         let outcome = match (self.focus, key.code) {
             (Focus::Editor | Focus::AiPrompt, KeyCode::Char('1')) => {
                 self.export_markdown_buffer()
@@ -7278,6 +7290,10 @@ impl App {
         } else {
             Some(next.to_string())
         };
+        // Manual cycle clears the auto-promote bookkeeping so a
+        // future save that's still above target will re-promote
+        // from whichever status the user just rolled into.
+        updated.target_hit_at_status = None;
         if let Err(e) = self
             .store
             .raw()
@@ -9260,6 +9276,7 @@ impl App {
         let is_bund_input = matches!(self.modal, Modal::BundInput { .. });
         let is_similar_picker = matches!(self.modal, Modal::SimilarPicker { .. });
         let is_progress = matches!(self.modal, Modal::Progress { .. });
+        let is_paragraph_target = matches!(self.modal, Modal::ParagraphTarget { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -9350,6 +9367,22 @@ impl App {
 
         if is_progress {
             self.progress_modal_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_paragraph_target {
+            if matches!(key.code, KeyCode::Enter) {
+                let raw = match &self.modal {
+                    Modal::ParagraphTarget { input } => input.as_str().trim().to_string(),
+                    _ => String::new(),
+                };
+                self.modal = Modal::None;
+                self.commit_paragraph_target(&raw);
+                return Ok(false);
+            }
+            if let Modal::ParagraphTarget { input } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
             return Ok(false);
         }
 
@@ -10037,9 +10070,78 @@ impl App {
         let new_words = crate::progress::count_words(&body);
         let book_id = self.book_of_node(node.id);
         crate::progress::record_save(node.id, book_id, prev_words, new_words);
+        // Auto-promote on goal-hit. Idempotent per
+        // (paragraph, status) — see Goals.auto_promote_on_target
+        // semantics.
+        self.maybe_auto_promote_on_target(node.id, new_words);
         self.reload_hierarchy();
         self.refresh_progress_cache();
         Ok(())
+    }
+
+    /// Promote the paragraph one ladder step if (a) the project
+    /// has `goals.auto_promote_on_target = true`, (b) the
+    /// paragraph carries a positive `target_words`, (c) the
+    /// current `word_count` meets or exceeds it, and (d) the
+    /// last auto-promote isn't already at the current status.
+    /// On promotion: bumps `status` via `next_status`, sets
+    /// `target_hit_at_status` to the new status, fires the
+    /// status-change progress event, persists via
+    /// `store.raw().update_metadata`.
+    fn maybe_auto_promote_on_target(&mut self, id: Uuid, current_words: i64) {
+        if !self.cfg.goals.auto_promote_on_target {
+            return;
+        }
+        let node = match self.hierarchy.get(id) {
+            Some(n) => n.clone(),
+            None => return,
+        };
+        if node.kind != NodeKind::Paragraph {
+            return;
+        }
+        let Some(target) = node.target_words.filter(|n| *n > 0) else {
+            return;
+        };
+        if current_words < target as i64 {
+            return;
+        }
+        let current_status = node.status.clone();
+        // Idempotent: already promoted at this status → bail.
+        if node.target_hit_at_status.as_deref() == current_status.as_deref() {
+            return;
+        }
+        let promoted = next_status(current_status.as_deref()).to_string();
+        let new_status = if promoted == "None" {
+            None
+        } else {
+            Some(promoted.clone())
+        };
+        let mut updated = node.clone();
+        updated.status = new_status.clone();
+        updated.target_hit_at_status = new_status.clone();
+        updated.modified_at = chrono::Utc::now();
+        if let Err(e) = self
+            .store
+            .raw()
+            .update_metadata(id, updated.to_json())
+        {
+            tracing::warn!(
+                target: "inkhaven::goal_promote",
+                "auto-promote update_metadata failed: {e}"
+            );
+            return;
+        }
+        let from_label = display_status(current_status.as_deref())
+            .to_ascii_lowercase();
+        let to_label = promoted.to_ascii_lowercase();
+        let book_id = self.book_of_node(id);
+        crate::progress::record_status_change(
+            id, book_id, &from_label, &to_label, current_words,
+        );
+        self.status = format!(
+            "goal-hit: `{}` promoted {} → {}",
+            node.title, from_label, to_label
+        );
     }
 
     /// Resolve the user book a paragraph belongs to. Returns
@@ -11063,6 +11165,97 @@ impl App {
         );
     }
 
+    /// Open the per-paragraph goal-setting modal. Pre-fills the
+    /// input box with the current `target_words` (if any) so
+    /// editing a goal is one keystroke; empty / `0` on Enter
+    /// clears the goal.
+    fn open_paragraph_target_modal(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view T: no paragraph open".into();
+            return;
+        };
+        let current = self
+            .hierarchy
+            .get(doc.id)
+            .and_then(|n| n.target_words)
+            .filter(|n| *n > 0);
+        let mut input = TextInput::new();
+        if let Some(n) = current {
+            for c in n.to_string().chars() {
+                input.insert_char(c);
+            }
+        }
+        self.modal = Modal::ParagraphTarget { input };
+        self.status =
+            "paragraph target: type a number, Enter to set, empty/0 to clear, Esc to cancel"
+                .into();
+    }
+
+    /// Commit `raw` as the open paragraph's `target_words`. Empty
+    /// or `"0"` clears the goal (sets to None). Non-numeric input
+    /// surfaces an error and leaves the existing value untouched.
+    fn commit_paragraph_target(&mut self, raw: &str) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view T: paragraph closed during input".into();
+            return;
+        };
+        let id = doc.id;
+        let new_target: Option<i32> = if raw.is_empty() || raw == "0" {
+            None
+        } else {
+            match raw.parse::<i32>() {
+                Ok(n) if n > 0 => Some(n),
+                Ok(_) => {
+                    self.status = "view T: target must be > 0".into();
+                    return;
+                }
+                Err(_) => {
+                    self.status = format!("view T: `{raw}` is not a number");
+                    return;
+                }
+            }
+        };
+        match self.set_paragraph_target_now(id, new_target) {
+            Ok(()) => {
+                self.status = match new_target {
+                    Some(n) => format!("paragraph target: {} words", n),
+                    None => "paragraph target: cleared".into(),
+                };
+            }
+            Err(e) => self.status = format!("view T: {e}"),
+        }
+    }
+
+    /// Mutate `target_words` on the node `id` and persist via
+    /// `store.raw().update_metadata`. Used by both the Ctrl+V T
+    /// modal and the `ink.paragraph.set_target` Bund word.
+    /// Setting target to None also clears `target_hit_at_status`
+    /// so re-enabling the goal starts fresh.
+    pub(crate) fn set_paragraph_target_now(
+        &mut self,
+        id: Uuid,
+        target: Option<i32>,
+    ) -> std::result::Result<(), String> {
+        let node = self
+            .hierarchy
+            .get(id)
+            .ok_or_else(|| format!("paragraph {id} not in hierarchy"))?;
+        if node.kind != NodeKind::Paragraph {
+            return Err(format!("`{}` is not a paragraph", node.title));
+        }
+        let mut updated = node.clone();
+        updated.target_words = target;
+        if target.is_none() {
+            updated.target_hit_at_status = None;
+        }
+        self.store
+            .raw()
+            .update_metadata(id, updated.to_json())
+            .map_err(|e| format!("store update: {e}"))?;
+        self.reload_hierarchy();
+        Ok(())
+    }
+
     /// Open the writing-progress modal. Forces a cache refresh
     /// so the user always sees fresh numbers (the per-redraw
     /// path stays cheap by reading the cache).
@@ -11370,6 +11563,28 @@ impl App {
             Modal::ScriptPicker { .. } => unreachable!("script picker handled above"),
             Modal::SimilarPicker { .. } => unreachable!("similar picker handled above"),
             Modal::Progress { .. } => unreachable!("progress modal handled above"),
+            Modal::ParagraphTarget { input } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Paragraph word-count target:",
+                        Style::default()
+                            .fg(self.theme.tree_script_fg)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter sets · empty/0 clears · Esc cancels",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Per-paragraph goal — Ctrl+V T ".to_string(),
+                    self.theme.tree_script_fg,
+                    body,
+                )
+            }
             Modal::HelpQuery { input } => {
                 let body = vec![
                     Line::from(""),
@@ -12031,6 +12246,21 @@ impl App {
                 },
             ));
             spans.push(Span::styled(display_title.to_string(), row_style));
+            // Per-paragraph progress gauge (1.2.4+). Only rendered
+            // when the paragraph carries a non-zero `target_words`.
+            // Format: `  [██▒░] 60%` — colour bucket by progress.
+            if matches!(node.kind, NodeKind::Paragraph) {
+                if let Some(target) = node.target_words.filter(|n| *n > 0) {
+                    let (gauge, pct, gauge_style) =
+                        format_progress_gauge(node.word_count as i64, target as i64);
+                    spans.push(Span::raw("  "));
+                    spans.push(Span::styled(gauge, gauge_style));
+                    spans.push(Span::styled(
+                        format!(" {pct}%"),
+                        gauge_style,
+                    ));
+                }
+            }
             lines.push(Line::from(spans));
         }
 
@@ -13652,6 +13882,87 @@ fn truncate_title(title: &str, max_chars: usize) -> String {
     let mut out: String = chars.iter().take(max_chars - 1).collect();
     out.push('…');
     out
+}
+
+/// Render a 4-cell Unicode gauge + percent for a per-paragraph
+/// word-count goal. Each cell represents 25% of progress; the
+/// last partial cell uses a medium-shade glyph when the gauge
+/// is between thresholds. Colour buckets:
+///   <25% red, <50% yellow, <75% light-green, ≥100% green-bold,
+///   between 75 and 100 green-dim. Returns `(gauge_str, percent_int, style)`.
+fn format_progress_gauge(current: i64, target: i64) -> (String, i64, Style) {
+    if target <= 0 {
+        return ("[░░░░]".into(), 0, Style::default());
+    }
+    let pct = (current.max(0) * 100 / target).clamp(0, 999);
+    // 4 cells, eighths-resolution per cell would be cleaner but
+    // overkill — full / medium / light glyphs are enough.
+    let full_cells = (pct / 25).min(4) as usize;
+    let remainder = (pct % 25) as usize;
+    let mut gauge = String::with_capacity(6);
+    gauge.push('[');
+    for _ in 0..full_cells {
+        gauge.push('█');
+    }
+    if full_cells < 4 {
+        if remainder >= 12 {
+            gauge.push('▒');
+        } else if remainder > 0 {
+            gauge.push('░');
+        } else {
+            gauge.push('░');
+        }
+        for _ in (full_cells + 1)..4 {
+            gauge.push('░');
+        }
+    }
+    gauge.push(']');
+    let style = if pct >= 100 {
+        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+    } else if pct >= 75 {
+        Style::default().fg(Color::LightGreen)
+    } else if pct >= 50 {
+        Style::default().fg(Color::Yellow)
+    } else if pct >= 25 {
+        Style::default().fg(Color::LightRed)
+    } else {
+        Style::default()
+            .fg(Color::Red)
+            .add_modifier(Modifier::DIM)
+    };
+    (gauge, pct, style)
+}
+
+#[cfg(test)]
+mod tests_gauge {
+    use super::*;
+
+    #[test]
+    fn gauge_zero() {
+        let (g, p, _) = format_progress_gauge(0, 100);
+        assert_eq!(p, 0);
+        assert_eq!(g, "[░░░░]");
+    }
+
+    #[test]
+    fn gauge_partial() {
+        let (_, p, _) = format_progress_gauge(60, 100);
+        assert_eq!(p, 60);
+    }
+
+    #[test]
+    fn gauge_full() {
+        let (g, p, _) = format_progress_gauge(100, 100);
+        assert_eq!(p, 100);
+        assert_eq!(g, "[████]");
+    }
+
+    #[test]
+    fn gauge_over() {
+        let (g, p, _) = format_progress_gauge(250, 100);
+        assert_eq!(p, 250);
+        assert_eq!(g, "[████]");
+    }
 }
 
 /// Try to derive a usable title from a paragraph body. Skips Typst heading
