@@ -383,22 +383,52 @@ impl TypstTemplatesConfig {
     }
 }
 
-/// Behaviour of the `typst compile` step driven by Ctrl+B B / Ctrl+B O.
-/// Today only the AI error-analysis prompt is configurable, but the
-/// stanza is its own struct so new knobs (timeouts, custom typst path,
-/// extra args) can land without breaking serde compatibility.
+/// Behaviour of the `typst compile` step driven by Ctrl+B B / Ctrl+B O,
+/// plus the typst-as-library knobs added in 1.2.5. The stanza is its
+/// own struct so new knobs (timeouts, custom typst path, extra args)
+/// can land without breaking serde compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TypstCompileConfig {
     /// System prompt fed to the AI when `typst compile` returns
     /// non-zero. Empty → falls back to the baked-in default.
     pub error_system_prompt: String,
+    /// Which engine drives Ctrl+B B / Ctrl+B O (the user-visible
+    /// "Take the book → PDF" path).
+    ///
+    /// * `"external"` (default) — spawn the host's `typst` binary as
+    ///   a child process. Pure shell-out, smallest binary footprint,
+    ///   output exactly matches what the user gets typing
+    ///   `typst compile` themselves.
+    /// * `"inprocess"` — run the in-process typst compiler. Not yet
+    ///   wired up in 1.2.5; the value is accepted today so HJSON
+    ///   configs written now survive when the engine lands. Falls
+    ///   back to `external` at runtime when the in-process engine
+    ///   isn't compiled in.
+    ///
+    /// See the typst-as-library Phase plan in `Documentation/`.
+    pub engine: String,
+    /// Run `typst-syntax` against the open buffer on idle / save
+    /// and surface parse errors in the status bar (1.2.5+). Pure
+    /// parser — no eval, layout, render, fonts, or package
+    /// resolution. Adds no shell-out and is independent of which
+    /// `engine` is selected for PDF builds.
+    pub diagnostics: bool,
+    /// Minimum seconds of editor idle time before a diagnostics
+    /// re-check runs. Same units as `editor.autosave_seconds` and
+    /// piggy-backs on the same idle clock — set to `0` to check
+    /// on every keystroke (cheap on small buffers; can stutter on
+    /// chapter-sized pastes).
+    pub diagnostics_idle_seconds: u64,
 }
 
 impl Default for TypstCompileConfig {
     fn default() -> Self {
         Self {
             error_system_prompt: String::new(),
+            engine: "external".to_owned(),
+            diagnostics: true,
+            diagnostics_idle_seconds: 2,
         }
     }
 }
@@ -410,6 +440,16 @@ impl TypstCompileConfig {
         } else {
             self.error_system_prompt.clone()
         }
+    }
+
+    /// True when the user has asked for the in-process engine (and
+    /// the binary was built with that path available). Today always
+    /// returns `false` — the in-process compile lands in Phase 4
+    /// of the typst-as-library plan; this gate is the foundation
+    /// the user's HJSON setting flows through.
+    pub fn use_inprocess_engine(&self) -> bool {
+        // Future: `self.engine == "inprocess" && cfg!(feature = "typst-inprocess")`
+        false
     }
 }
 

@@ -170,6 +170,14 @@ image = { version = "0.25", default-features = false, features = [
   "gif",
   "webp",
 ] }
+# typst-syntax — Phase 1 of the typst-as-library plan (1.2.5+). Pulls
+# in the Typst parser only (no eval, no layout, no render, no fonts).
+# Used by `src/typst_check.rs` to surface parse errors at the source
+# line/col while the user edits, without the binary-size / font /
+# package-resolver cost of typst-render. The full in-process compiler
+# stack (typst + typst-pdf) is the future Phase 4 — gated behind
+# `typst.engine = "inprocess"` in HJSON when it lands.
+typst-syntax = "0.14"
 
 [build-dependencies]
 # Compiles the in-tree Typst tree-sitter grammar (`src/grammar/`)

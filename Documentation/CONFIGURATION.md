@@ -23,6 +23,7 @@ into your file.
 - [`keys`](#keys)
 - [`backup`](#backup)
 - [`prompts_file` and `language`](#prompts_file-and-language)
+- [`typst_compile`](#typst_compile)
 - [`output`](#output)
 - [`goals`](#goals)
 - [`sync_interval_seconds`](#sync_interval_seconds)
@@ -447,6 +448,38 @@ editor: {
   stemming: { languages: ["english", "russian"] }
 }
 ```
+
+## `typst_compile`
+
+Controls `Ctrl+B B` / `Ctrl+B O` ("compile / take the book") and the
+new typst-as-library knobs introduced in 1.2.5. Today the engine
+switch only honors `external` — the in-process engine is reserved
+for the Phase 4 step of the typst-as-library plan; setting it to
+`inprocess` now is accepted but logs a warning and falls back to
+`external` at runtime so the HJSON setting survives the eventual
+upgrade.
+
+```hjson
+typst_compile: {
+  engine:                   "external"   // "external" | "inprocess" (future)
+  diagnostics:              true         // typst-syntax parse errors on idle/save
+  diagnostics_idle_seconds: 2            // debounce for the idle recheck
+  error_system_prompt:      ""           // override the AI compile-error prompt
+}
+```
+
+| Field                       | Type   | Default      | Description |
+| --------------------------- | ------ | ------------ | ----------- |
+| `engine`                    | string | `"external"` | Picks the compiler driving `Ctrl+B B` / `Ctrl+B O`. `external` shells out to the host's `typst` binary (no extra binary size). `inprocess` is the future in-process compile (not yet shipped — Phase 4 of the typst-as-library plan); set today, it falls back to `external` with a one-line tracing warning so the config survives the upgrade. |
+| `diagnostics`               | bool   | `true`       | When true, run `typst-syntax` against the open paragraph on save and on idle (`diagnostics_idle_seconds`). Parse errors land on the status bar as `typst: line L:C — <message>`. Pure parser — no eval / layout / render, no font setup, no package resolution. Bund and HJSON content types are skipped automatically. Set `false` to suppress entirely. |
+| `diagnostics_idle_seconds`  | int    | `2`          | Minimum seconds of editor idle before the typst recheck runs. `0` is allowed (every tick); large values approach "only on save". Piggy-backs on the same idle clock as `editor.autosave_seconds`. |
+| `error_system_prompt`       | string | `""`         | Override the AI system prompt used when `typst compile` returns non-zero. Empty falls back to the baked-in default. |
+
+The diagnostics path is entirely additive — turning it off
+restores the exact 1.2.4 behaviour. Turning the `engine` to
+`inprocess` is a no-op today (logs and reverts) and will be the
+single switch that lights up the in-process compile when Phase 4
+lands.
 
 ## `output`
 
