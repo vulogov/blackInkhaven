@@ -110,6 +110,16 @@ pub enum Command {
         /// Output path (file for typst, directory for pdf builds).
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Name of the user book to export. Required when the
+        /// project holds more than one user book; with a single user
+        /// book it can be omitted and that book is used implicitly.
+        /// System books (Help / Scripts / Typst / Prompts / Places /
+        /// Characters / Notes / Artefacts / Research) are never
+        /// included — they're inkhaven internals, not manuscript
+        /// content. Matched case-insensitively against `Node.title`;
+        /// falls back to slug match.
+        #[arg(long)]
+        book_name: Option<String>,
     },
 
     /// Run a one-shot AI inference from the command line.
@@ -198,8 +208,20 @@ impl From<CliNodeKind> for NodeKind {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ExportFormat {
+    /// Concatenated `.typ` source.
     Typst,
+    /// PDF via the `typst` CLI (must be on PATH).
     Pdf,
+    /// Markdown via the in-process typst→markdown converter
+    /// (`src/export/markdown.rs`).
+    Markdown,
+    /// LaTeX via the `tylax` crate. No external `pdflatex` needed
+    /// for emit — but the user wants `pdflatex` / `xelatex` if they
+    /// later compile the result.
+    Tex,
+    /// EPUB3 zip — markdown intermediate, written via the bundled
+    /// `zip` crate.
+    Epub,
 }
 
 impl Cli {
@@ -237,9 +259,12 @@ impl Cli {
             Command::Reindex { prune, adopt } => {
                 reindex::run(&project, prune, adopt).map_err(Into::into)
             }
-            Command::Export { format, output } => {
-                export::run(&project, format, output.as_deref()).map_err(Into::into)
-            }
+            Command::Export {
+                format,
+                output,
+                book_name,
+            } => export::run(&project, format, output.as_deref(), book_name.as_deref())
+                .map_err(Into::into),
             Command::Ai { prompt, provider } => {
                 ai::run(&project, &prompt, provider.as_deref()).map_err(Into::into)
             }

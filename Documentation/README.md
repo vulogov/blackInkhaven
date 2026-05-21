@@ -64,12 +64,17 @@ don't need them all up front.
 | [`Tutorials/12-configuring-ai-providers.md`](Tutorials/12-configuring-ai-providers.md) | The six bundled provider stanzas + Ctrl+B L live switcher. |
 | [`Tutorials/13-ai-full-screen-mode.md`](Tutorials/13-ai-full-screen-mode.md)     | Ctrl+B K layout, persistent chat history, Ctrl+F search, selection mode. |
 | [`Tutorials/14-document-status.md`](Tutorials/14-document-status.md)             | Document-status workflow, Ctrl+B R cycle, Ctrl+B 1..7 filter. |
+| [`Tutorials/15-multi-format-export.md`](Tutorials/15-multi-format-export.md)     | Markdown / TeX (via tylax) / EPUB export, `--book-name`, Ctrl+B O extras, Ctrl+V markdown. |
+| [`Tutorials/16-similar-paragraphs.md`](Tutorials/16-similar-paragraphs.md)       | Ctrl+V S — vector-similarity picker + side-by-side editor. |
+| [`Tutorials/17-writing-goals.md`](Tutorials/17-writing-goals.md)                 | Writing-progress subsystem, the `goals:` HJSON stanza, Ctrl+V G overview modal. |
+| [`Tutorials/18-bund-pane-and-script-picker.md`](Tutorials/18-bund-pane-and-script-picker.md) | The floating Bund pane, Ctrl+Z ? script picker, `ink.input` prompt modal. |
 
 ## Release notes
 
 | Version | Notes |
 | ------- | ----- |
-| **1.2** | *(unreleased — branch `1.2`)* — bdslib + tree-sitter-typst absorbed in-tree (crates.io-publishable), Bund scripting (`ink.*` stdlib, 5 hook points, `.bund` Script nodes, Scripts system book), data-driven keymap with HJSON + Bund rebinding, `Ctrl+B M` cycle-type, `Ctrl+Z` Bund prefix. |
+| **1.2.3** | [`RELEASE_NOTES/1.2.3.md`](RELEASE_NOTES/1.2.3.md) — multi-format export (markdown / TeX / EPUB) + `--book-name`, writing-progress subsystem (Ctrl+V G), similar-paragraph mode (Ctrl+V S), Bund output pane + Ctrl+Z ? script picker + `ink.input`, dynamic Quick Help. |
+| **1.2.1** | [`RELEASE_NOTES/1.2.1.md`](RELEASE_NOTES/1.2.1.md) — bdslib + tree-sitter-typst absorbed in-tree (crates.io-publishable), Bund scripting (`ink.*` stdlib, 5 hook points, `.bund` Script nodes, Scripts system book), data-driven keymap with HJSON + Bund rebinding, `Ctrl+B M` cycle-type, `Ctrl+Z` Bund prefix. |
 | **1.1** | [`RELEASE_NOTES/1.1.md`](RELEASE_NOTES/1.1.md) — first-class images + ratatui-image preview, eight-book seeding (Artefacts added), Book assembly / build / take pipeline, HJSON-driven `settings.typ`, six bundled LLM providers, full-screen typewriter + AI layouts, document-status workflow, HJSON data nodes, much more. |
 
 ## What lives on disk in a project

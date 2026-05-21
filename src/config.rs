@@ -35,6 +35,18 @@ pub struct Config {
     pub typst_layout: TypstLayoutConfig,
     #[serde(default)]
     pub images: ImagesConfig,
+    /// Multi-format export configuration — drives the Ctrl+B O
+    /// extra-format pipeline. CLI `inkhaven export <fmt>` uses
+    /// the same converters but ignores this list (it picks one
+    /// format explicitly).
+    #[serde(default)]
+    pub output: OutputConfig,
+    /// Writing-progress goals. Feeds the status-bar widget and
+    /// the Ctrl+V G progress modal. Empty defaults disable goals
+    /// + targets but still record events so the modal has data
+    /// to show.
+    #[serde(default)]
+    pub goals: GoalsConfig,
     /// Bund scripting sandbox policy. Defaults deny destructive
     /// categories (fs_write, net, shell, code_eval); writers opt
     /// in by listing the categories or words they want to allow.
@@ -107,6 +119,8 @@ impl Default for Config {
             typst_fonts: TypstFontsConfig::default(),
             typst_layout: TypstLayoutConfig::default(),
             images: ImagesConfig::default(),
+            output: OutputConfig::default(),
+            goals: GoalsConfig::default(),
             scripting: crate::scripting::policy::Policy::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
@@ -1088,6 +1102,60 @@ impl Config {
             .map_err(|e| crate::error::Error::Config(e.to_string()))?;
         std::fs::write(path, s).map_err(crate::error::Error::Io)
     }
+}
+
+/// Writing-progress goals — fuels the status-bar widget +
+/// Ctrl+V G modal.
+///
+/// All numeric fields are inclusive; absent / zero means
+/// "no target set" rather than "must be zero". Per-book entries
+/// live under `goals.books.<book-slug>` so the slug is the
+/// natural lookup key (case-insensitive in the
+/// hierarchy → snapshot mapping).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct GoalsConfig {
+    /// Project-wide daily word-count target. Status-bar shows
+    /// `today X/daily_words`. `0` (default) hides the slash.
+    pub daily_words: i64,
+    /// Missed days forgiven per rolling 7-day window before the
+    /// streak breaks. `0` = strict; `1` = one rest day per week.
+    pub streak_grace_per_week: i64,
+    /// Per-book targets. Key is the book slug (matches
+    /// `Node.slug` case-insensitively).
+    pub books: std::collections::HashMap<String, BookGoal>,
+    /// Trailing-week status-promotion targets. Key is the
+    /// status string ("ready", "final", "third", …) lowercased.
+    pub status_ladder: std::collections::HashMap<String, i64>,
+}
+
+/// Per-book writing target.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct BookGoal {
+    /// Total words the book should reach. `0` hides the
+    /// per-book pace line.
+    pub target_words: i64,
+    /// ISO date (`YYYY-MM-DD`) by which `target_words` should
+    /// be hit. Empty string disables deadline pacing.
+    pub deadline: String,
+}
+
+/// Multi-format export hookup for Ctrl+B O.
+///
+/// When the user "takes" the book, inkhaven first builds the
+/// PDF (the existing flow). If `extra_formats` is non-empty, the
+/// same combined `.typ` source feeds the in-process converters
+/// in `src/export/` and the resulting files land next to the
+/// PDF with matching stem. Each entry is a case-insensitive
+/// format name — supported today: `markdown`, `tex`, `epub`.
+/// Unknown entries log a WARN and are skipped. Per-format
+/// errors are reported in the status bar but never abort the
+/// take.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct OutputConfig {
+    pub extra_formats: Vec<String>,
 }
 
 #[cfg(test)]

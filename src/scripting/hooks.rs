@@ -55,6 +55,14 @@ thread_local! {
 /// bottom of its workbench and the last on top. Hooks that need
 /// no args pass an empty `Vec`.
 pub fn fire(name: &str, args: Vec<Value>) {
+    // If we're already inside a `bund::eval` on this thread, the
+    // mutation that triggered the hook originated from the script
+    // itself. Firing the hook now would re-enter Adam's write
+    // lock and deadlock. Skip silently — the script is in
+    // explicit control of its own side effects.
+    if super::is_in_eval() {
+        return;
+    }
     let depth = DEPTH.with(|c| c.get());
     if depth >= MAX_DEPTH {
         tracing::warn!(

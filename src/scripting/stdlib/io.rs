@@ -67,12 +67,22 @@ fn capture(vm: &mut VM, newline: bool) -> std::result::Result<&mut VM, BundError
     let text = str_value
         .cast_string()
         .map_err(|e| easy_error::err_msg(format!("PRINT cast: {e}")))?;
-    PRINT_BUFFER.with(|b| {
-        let mut g = b.borrow_mut();
-        g.push_str(&text);
-        if newline {
-            g.push('\n');
-        }
-    });
+    // Smart routing: if a Bund output pane is open on the
+    // active App, append there so multi-line script output
+    // doesn't clobber the status bar. Otherwise fall back to
+    // the print buffer that the eval caller drains.
+    let routed_to_pane = crate::scripting::with_active_app(|app| {
+        app.append_to_bund_pane(&text, newline)
+    })
+    .unwrap_or(false);
+    if !routed_to_pane {
+        PRINT_BUFFER.with(|b| {
+            let mut g = b.borrow_mut();
+            g.push_str(&text);
+            if newline {
+                g.push('\n');
+            }
+        });
+    }
     Ok(vm)
 }
