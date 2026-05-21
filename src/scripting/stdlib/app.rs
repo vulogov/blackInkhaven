@@ -53,6 +53,23 @@ pub fn register(vm: &mut VM) -> Result<()> {
     // ── AI ────────────────────────────────────────────────────
     vm.register_inline("ink.ai.clear_history".to_string(), ink_ai_clear_history)
         .map_err(|e| anyhow!("register ink.ai.clear_history: {e}"))?;
+    vm.register_inline("ink.ai.send".to_string(), ink_ai_send)
+        .map_err(|e| anyhow!("register ink.ai.send: {e}"))?;
+    vm.register_inline("ink.ai.history".to_string(), ink_ai_history)
+        .map_err(|e| anyhow!("register ink.ai.history: {e}"))?;
+    vm.register_inline(
+        "ink.ai.set_system_prompt".to_string(),
+        ink_ai_set_system_prompt,
+    )
+    .map_err(|e| anyhow!("register ink.ai.set_system_prompt: {e}"))?;
+
+    // ── Theme ─────────────────────────────────────────────────
+    vm.register_inline("ink.theme.set".to_string(), ink_theme_set)
+        .map_err(|e| anyhow!("register ink.theme.set: {e}"))?;
+
+    // ── Editor (Phase C) ──────────────────────────────────────
+    vm.register_inline("ink.editor.replace".to_string(), ink_editor_replace)
+        .map_err(|e| anyhow!("register ink.editor.replace: {e}"))?;
 
     // ── Typst ─────────────────────────────────────────────────
     vm.register_inline("ink.typst.assemble".to_string(), ink_typst_assemble)
@@ -278,5 +295,114 @@ where
         Ok(_) => Ok(vm),
         Err(e) => Err(to_bund_err(e)),
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase C — AI / theme / editor.replace
+// ─────────────────────────────────────────────────────────────────────
+
+// ── ink.ai.send ──────────────────────────────────────────────────────
+// Stack: ( prompt -- )
+// Posts a user turn through the same streaming pipeline Ctrl+I /
+// AI-prompt-Enter use. Returns immediately — the response is
+// async and lands in chat_history once complete.
+
+fn ink_ai_send(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_ai_send(vm).map_err(to_bund_err)
+}
+
+fn do_ink_ai_send(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.ai.send";
+    require_depth(vm, 1, tag)?;
+    let prompt = value_to_string(pull(vm, tag)?, "prompt", tag)?;
+    with_app(tag, |app| {
+        app.ink_ai_send(&prompt).map_err(|e| anyhow!("{tag}: {e}"))
+    })?;
+    Ok(vm)
+}
+
+// ── ink.ai.history ───────────────────────────────────────────────────
+// Stack: ( -- list[hash{role, content}] )
+
+fn ink_ai_history(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_ai_history(vm).map_err(to_bund_err)
+}
+
+fn do_ink_ai_history(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.ai.history";
+    let turns = with_app(tag, |app| Ok(app.ink_ai_history()))?;
+    let items: Vec<Value> = turns
+        .into_iter()
+        .map(|(role, content)| {
+            let mut h = std::collections::HashMap::new();
+            h.insert("role".to_string(), Value::from_string(role));
+            h.insert("content".to_string(), Value::from_string(content));
+            Value::from_dict(h)
+        })
+        .collect();
+    push(vm, Value::from_list(items));
+    Ok(vm)
+}
+
+// ── ink.ai.set_system_prompt ─────────────────────────────────────────
+// Stack: ( text -- )
+// Empty string clears the override (falling back to the
+// inference-mode default).
+
+fn ink_ai_set_system_prompt(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_ai_set_system_prompt(vm).map_err(to_bund_err)
+}
+
+fn do_ink_ai_set_system_prompt(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.ai.set_system_prompt";
+    require_depth(vm, 1, tag)?;
+    let text = value_to_string(pull(vm, tag)?, "text", tag)?;
+    with_app(tag, |app| {
+        app.ink_ai_set_system_prompt(&text);
+        Ok::<_, anyhow::Error>(())
+    })?;
+    Ok(vm)
+}
+
+// ── ink.theme.set ────────────────────────────────────────────────────
+// Stack: ( field hex -- )
+// Mutates one theme colour at runtime. Volatile — not persisted.
+
+fn ink_theme_set(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_theme_set(vm).map_err(to_bund_err)
+}
+
+fn do_ink_theme_set(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.theme.set";
+    require_depth(vm, 2, tag)?;
+    let hex = value_to_string(pull(vm, tag)?, "hex", tag)?;
+    let field = value_to_string(pull(vm, tag)?, "field", tag)?;
+    with_app(tag, |app| {
+        app.ink_theme_set(&field, &hex)
+            .map_err(|e| anyhow!("{tag}: {e}"))
+    })?;
+    Ok(vm)
+}
+
+// ── ink.editor.replace ───────────────────────────────────────────────
+// Stack: ( find replace -- replaced_bool )
+// Replaces the first occurrence of `find` with `replace`. Pushes
+// true / false depending on whether a match was found.
+
+fn ink_editor_replace(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_editor_replace(vm).map_err(to_bund_err)
+}
+
+fn do_ink_editor_replace(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.editor.replace";
+    require_depth(vm, 2, tag)?;
+    let replace = value_to_string(pull(vm, tag)?, "replace", tag)?;
+    let find = value_to_string(pull(vm, tag)?, "find", tag)?;
+    let did = with_app(tag, |app| {
+        app.ink_editor_replace(&find, &replace)
+            .map_err(|e| anyhow!("{tag}: {e}"))
+    })?;
+    push(vm, Value::from_bool(did));
+    Ok(vm)
 }
 

@@ -75,8 +75,13 @@ pub mod category {
     /// of their hooks / scripts gain editor reach.
     pub const EDITOR_WRITE: &str = "editor_write";
     /// AI state mutation — clear chat history, set system
-    /// prompt (Phase B+). Default-denied.
+    /// prompt, post a user prompt. Default-denied.
     pub const AI_WRITE: &str = "ai_write";
+    /// Read AI chat history. Default-allowed.
+    pub const AI_READ: &str = "ai_read";
+    /// Runtime theme mutation (`ink.theme.set`). Default-denied —
+    /// a script can otherwise recolour the interface invisibly.
+    pub const THEME_WRITE: &str = "theme_write";
 }
 
 /// Categories denied out of the box. A user has to actively flip
@@ -87,6 +92,7 @@ pub const DEFAULT_DENIED_CATEGORIES: &[&str] = &[
     category::STORE_WRITE,
     category::EDITOR_WRITE,
     category::AI_WRITE,
+    category::THEME_WRITE,
     category::FS_WRITE,
     category::NET,
     category::SHELL,
@@ -147,8 +153,19 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.editor.delete_to_bol", category::EDITOR_WRITE),
     ("ink.editor.delete_to_eol", category::EDITOR_WRITE),
 
+    // ── ai_read (default-allowed) ─────────────────────────────
+    ("ink.ai.history", category::AI_READ),
+
     // ── ai_write (default-denied) ─────────────────────────────
     ("ink.ai.clear_history", category::AI_WRITE),
+    ("ink.ai.send", category::AI_WRITE),
+    ("ink.ai.set_system_prompt", category::AI_WRITE),
+
+    // ── editor_write (Phase C addition) ───────────────────────
+    ("ink.editor.replace", category::EDITOR_WRITE),
+
+    // ── theme_write (default-denied) ──────────────────────────
+    ("ink.theme.set", category::THEME_WRITE),
 
     // ── store_write (Typst pipeline mutates artefacts dir) ────
     ("ink.typst.assemble", category::STORE_WRITE),

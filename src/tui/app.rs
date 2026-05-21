@@ -1720,6 +1720,13 @@ pub(crate) struct App {
     /// they're one-shot RAG flows with a separate strict system prompt and
     /// don't benefit from carrying chat context.
     chat_history: Vec<ChatTurn>,
+    /// User-supplied system-prompt override set via the
+    /// `ink.ai.set_system_prompt` Bund stdlib word. When `Some`,
+    /// every AI inference (start_inference / start_help_inference
+    /// / grammar check) uses this string instead of the
+    /// inference-mode-derived default. Cleared by passing empty
+    /// string. Volatile — not persisted to HJSON.
+    system_prompt_override: Option<String>,
     /// Captures the user message of the currently-streaming chat inference
     /// so we can record the matching Assistant turn into `chat_history`
     /// once the stream finishes. None during one-shot (Help) inferences.
@@ -2054,6 +2061,7 @@ impl App {
             prompt_picker_cursor: 0,
             paragraph_cursors: std::collections::HashMap::new(),
             chat_history: Vec::new(),
+            system_prompt_override: None,
             pending_chat_user_msg: None,
             pending_rag_prefix: None,
             layout_search: Rect::default(),
@@ -4230,10 +4238,14 @@ impl App {
         // System prompt depends on the inference mode. Local clamps the
         // model to supplied context only; Full lets it augment with
         // general knowledge while still treating context as ground truth.
-        let system_prompt = match self.inference_mode {
-            InferenceMode::Local => Some(LOCAL_SYSTEM_PROMPT.to_string()),
-            InferenceMode::Full => Some(FULL_SYSTEM_PROMPT.to_string()),
-        };
+        // `ink.ai.set_system_prompt` overrides both via a Bund script.
+        let system_prompt = self
+            .system_prompt_override
+            .clone()
+            .or_else(|| match self.inference_mode {
+                InferenceMode::Local => Some(LOCAL_SYSTEM_PROMPT.to_string()),
+                InferenceMode::Full => Some(FULL_SYSTEM_PROMPT.to_string()),
+            });
         let rx = spawn_chat_stream(
             self.ai.client.clone(),
             model.clone(),
@@ -11550,6 +11562,107 @@ impl App {
 
     pub(crate) fn ink_typst_take(&mut self) {
         self.schedule_take();
+    }
+
+    // ── Phase C: AI / theme / editor.replace ─────────────────────────
+
+    /// Send a user prompt through the same AI pipeline the
+    /// `Ctrl+I` chord uses: kicks off streaming inference,
+    /// returns immediately. Response lands in `chat_history`
+    /// once the stream completes. No synchronous result —
+    /// Bund scripts that want the response read
+    /// `ink.ai.history` later (e.g. in a hook firing on a
+    /// subsequent action).
+    pub(crate) fn ink_ai_send(&mut self, prompt: &str) -> Result<(), String> {
+        if prompt.trim().is_empty() {
+            return Err("empty prompt".into());
+        }
+        // Borrow the existing input-driven path: pre-load
+        // `ai_input` then call `start_inference`. Same code
+        // path the AI prompt input field uses.
+        self.ai_input.clear();
+        for c in prompt.chars() {
+            self.ai_input.insert_char(c);
+        }
+        self.start_inference();
+        Ok(())
+    }
+
+    /// Return the chat history as a Vec of (role, content)
+    /// pairs. `role` is `"user"` or `"assistant"`. Most recent
+    /// turn is last.
+    pub(crate) fn ink_ai_history(&self) -> Vec<(String, String)> {
+        self.chat_history
+            .iter()
+            .map(|t| match t {
+                ChatTurn::User(s) => ("user".into(), s.clone()),
+                ChatTurn::Assistant(s) => ("assistant".into(), s.clone()),
+            })
+            .collect()
+    }
+
+    /// Set (or clear) the script-supplied system-prompt override.
+    /// Empty string clears it; otherwise the inference path
+    /// consults the override before falling back to the
+    /// inference-mode default. See `system_prompt_override` field.
+    pub(crate) fn ink_ai_set_system_prompt(&mut self, text: &str) {
+        if text.trim().is_empty() {
+            self.system_prompt_override = None;
+        } else {
+            self.system_prompt_override = Some(text.to_string());
+        }
+    }
+
+    /// Mutate one theme colour at runtime. `field` is the
+    /// theme struct's field name (`tree_paragraph_fg`,
+    /// `syntax_keyword`, etc.); `hex` is `#rrggbb` or a named
+    /// colour. Volatile — not persisted to HJSON; user re-runs
+    /// the script on next launch (or sets the colour in HJSON
+    /// for permanent change).
+    pub(crate) fn ink_theme_set(
+        &mut self,
+        field: &str,
+        hex: &str,
+    ) -> Result<(), String> {
+        self.theme.set_by_name(field, hex)
+    }
+
+    /// Replace the first occurrence of `find` in the open
+    /// buffer with `replace`. Cursor lands at the start of the
+    /// replacement. Returns `true` if a match was found and
+    /// replaced; `false` if no match.
+    pub(crate) fn ink_editor_replace(
+        &mut self,
+        find: &str,
+        replace: &str,
+    ) -> Result<bool, String> {
+        let Some(doc) = self.opened.as_mut() else {
+            return Err("no buffer open".into());
+        };
+        if find.is_empty() {
+            return Err("find string is empty".into());
+        }
+        // Linear scan over lines for the first match.
+        let target: Option<(usize, usize)> = doc
+            .textarea
+            .lines()
+            .iter()
+            .enumerate()
+            .find_map(|(r, line)| line.find(find).map(|c| (r, c)));
+        let Some((row, col)) = target else {
+            return Ok(false);
+        };
+        doc.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(row as u16, col as u16));
+        // Delete `find.len()` chars; tui-textarea's delete_char
+        // works one char at a time and there's no bulk delete
+        // by length, so iterate.
+        for _ in 0..find.chars().count() {
+            doc.textarea.delete_next_char();
+        }
+        doc.textarea.insert_str(replace);
+        doc.dirty = true;
+        Ok(true)
     }
 }
 
