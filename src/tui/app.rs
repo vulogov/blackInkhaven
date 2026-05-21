@@ -1853,6 +1853,16 @@ pub(crate) struct App {
 
     search_input: TextInput,
     ai_input: TextInput,
+    /// Sent AI prompts in chronological order (oldest first).
+    /// Up/Down in the AI prompt walks this list when no prompt
+    /// picker is showing. Cleared on every send via push_back.
+    /// 1.2.4+.
+    ai_prompt_history: Vec<String>,
+    /// Cursor into `ai_prompt_history`. None when not navigating;
+    /// `Some(i)` when the user is stepping through history. Any
+    /// edit (typing, backspace, etc.) clears it so the next Up
+    /// arrow starts at the end of the list again.
+    ai_prompt_history_cursor: Option<usize>,
 
     opened: Option<OpenedDoc>,
     /// "Similar paragraphs" mode: when `Some`, a second
@@ -2254,6 +2264,8 @@ impl App {
             tree_scroll: 0,
             search_input: TextInput::new(),
             ai_input: TextInput::new(),
+            ai_prompt_history: Vec::new(),
+            ai_prompt_history_cursor: None,
             opened: None,
             secondary: None,
             secondary_focused: false,
@@ -4348,6 +4360,41 @@ impl App {
                     self.prompt_picker_cursor += 1;
                 }
             }
+            // 1.2.4+: Up / Down in the AI prompt (no picker
+            // showing) walks `ai_prompt_history`. Shell-style.
+            KeyCode::Up if !is_search => {
+                if !self.ai_prompt_history.is_empty() {
+                    let next = match self.ai_prompt_history_cursor {
+                        Some(0) => 0,
+                        Some(i) => i - 1,
+                        None => self.ai_prompt_history.len() - 1,
+                    };
+                    self.ai_prompt_history_cursor = Some(next);
+                    let entry = self.ai_prompt_history[next].clone();
+                    self.ai_input.clear();
+                    for c in entry.chars() {
+                        self.ai_input.insert_char(c);
+                    }
+                }
+            }
+            KeyCode::Down if !is_search => {
+                if let Some(cur) = self.ai_prompt_history_cursor {
+                    let next = cur + 1;
+                    if next >= self.ai_prompt_history.len() {
+                        // Past the newest entry → leave history
+                        // navigation, clear the input.
+                        self.ai_prompt_history_cursor = None;
+                        self.ai_input.clear();
+                    } else {
+                        self.ai_prompt_history_cursor = Some(next);
+                        let entry = self.ai_prompt_history[next].clone();
+                        self.ai_input.clear();
+                        for c in entry.chars() {
+                            self.ai_input.insert_char(c);
+                        }
+                    }
+                }
+            }
             KeyCode::Tab if !is_search && self.show_prompt_picker => {
                 self.commit_prompt_pick();
             }
@@ -4356,11 +4403,17 @@ impl App {
                 if is_search {
                     self.show_results_overlay = false;
                 }
+                if !is_search {
+                    self.ai_prompt_history_cursor = None;
+                }
             }
             KeyCode::Delete => {
                 self.current_input(is_search).delete();
                 if is_search {
                     self.show_results_overlay = false;
+                }
+                if !is_search {
+                    self.ai_prompt_history_cursor = None;
                 }
             }
             KeyCode::Left => self.current_input(is_search).move_left(),
@@ -4402,6 +4455,11 @@ impl App {
                     if is_search {
                         self.show_results_overlay = false;
                     } else {
+                        // 1.2.4+: typing in the AI prompt
+                        // breaks history-recall navigation —
+                        // the next Up arrow starts at the
+                        // newest entry again.
+                        self.ai_prompt_history_cursor = None;
                         self.refresh_prompt_picker();
                     }
                 }
@@ -4432,19 +4490,44 @@ impl App {
         let q = self.ai_input.as_str();
         let filter = q.strip_prefix('/').unwrap_or("").trim().to_lowercase();
 
-        let mut out: Vec<PromptCandidate> = Vec::new();
+        // 1.2.4+: rank candidates so prefix matches beat
+        // mid-word substring matches. Empty filter → keep
+        // insertion order (system before book). Match scores:
+        //   3 = name starts with filter
+        //   2 = description starts with filter (after splitting
+        //       on whitespace — so "summarize selection" matches
+        //       a /sel prefix on the second word)
+        //   1 = name or description contains filter
+        //   0 = no match (excluded)
+        let score = |name: &str, desc: &str| -> i32 {
+            if filter.is_empty() {
+                return 1;
+            }
+            let nl = name.to_lowercase();
+            let dl = desc.to_lowercase();
+            if nl.starts_with(&filter) {
+                return 3;
+            }
+            if dl.split_whitespace().any(|w| w.starts_with(&filter)) {
+                return 2;
+            }
+            if nl.contains(&filter) || dl.contains(&filter) {
+                return 1;
+            }
+            0
+        };
+
+        let mut scored: Vec<(i32, PromptCandidate)> = Vec::new();
         // 1) prompts.hjson (system)
         for p in &self.prompts.prompts {
-            if filter.is_empty()
-                || p.name.to_lowercase().contains(&filter)
-                || p.description.to_lowercase().contains(&filter)
-            {
-                out.push(PromptCandidate {
+            let s = score(&p.name, &p.description);
+            if s > 0 {
+                scored.push((s, PromptCandidate {
                     name: p.name.clone(),
                     description: p.description.clone(),
                     body: PromptBody::Static(p.template.clone()),
                     source: PromptSource::System,
-                });
+                }));
             }
         }
         // 2) Paragraphs under the Prompts system book
@@ -4461,19 +4544,21 @@ impl App {
                 }
                 let name = node.slug.clone();
                 let title = node.title.clone();
-                if filter.is_empty()
-                    || name.to_lowercase().contains(&filter)
-                    || title.to_lowercase().contains(&filter)
-                {
-                    out.push(PromptCandidate {
+                let s = score(&name, &title);
+                if s > 0 {
+                    scored.push((s, PromptCandidate {
                         name,
                         description: title,
                         body: PromptBody::BookParagraph(node.id),
                         source: PromptSource::Book,
-                    });
+                    }));
                 }
             }
         }
+        // Stable sort by descending score — preserves the
+        // "system before book" within-tier ordering.
+        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        let out: Vec<PromptCandidate> = scored.into_iter().map(|(_, c)| c).collect();
         out
     }
 
@@ -4592,6 +4677,21 @@ impl App {
             self.status = "empty prompt".into();
             return;
         }
+        // 1.2.4+: stash the raw prompt in the history ring for
+        // Up/Down recall. Avoids dupes-against-most-recent so
+        // the list stays useful when the user re-sends the same
+        // prompt repeatedly.
+        if self.ai_prompt_history.last() != Some(&raw) {
+            self.ai_prompt_history.push(raw.clone());
+            // Cap the history so a long session doesn't grow
+            // unbounded. 500 entries is past any reasonable
+            // recall horizon.
+            if self.ai_prompt_history.len() > 500 {
+                let drop_n = self.ai_prompt_history.len() - 500;
+                self.ai_prompt_history.drain(..drop_n);
+            }
+        }
+        self.ai_prompt_history_cursor = None;
         // "Help!" prefix (case-sensitive) reroutes through the F1 Help-book
         // RAG flow. The rest of the line becomes the question; the AI pane
         // shows the same grounded answer the F1 modal produces.
