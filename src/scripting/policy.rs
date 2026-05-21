@@ -67,6 +67,16 @@ pub mod category {
     /// muscle memory or lock them out (well — Ctrl+Q is hard-
     /// blocked, but everything else is fair game).
     pub const KEYMAP: &str = "keymap";
+    /// Read-only access to the live editor buffer (cursor query,
+    /// buffer text, find). Default-allowed — non-destructive.
+    pub const EDITOR_READ: &str = "editor_read";
+    /// Mutate the live editor buffer — insert, scroll, delete,
+    /// goto. Default-denied. The user opts in once and the rest
+    /// of their hooks / scripts gain editor reach.
+    pub const EDITOR_WRITE: &str = "editor_write";
+    /// AI state mutation — clear chat history, set system
+    /// prompt (Phase B+). Default-denied.
+    pub const AI_WRITE: &str = "ai_write";
 }
 
 /// Categories denied out of the box. A user has to actively flip
@@ -75,6 +85,8 @@ pub mod category {
 /// the deny is forward-looking, ready for P4/P5 additions.
 pub const DEFAULT_DENIED_CATEGORIES: &[&str] = &[
     category::STORE_WRITE,
+    category::EDITOR_WRITE,
+    category::AI_WRITE,
     category::FS_WRITE,
     category::NET,
     category::SHELL,
@@ -121,6 +133,27 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.key.bind_lambda", category::KEYMAP),
     ("ink.key.unbind", category::KEYMAP),
     ("ink.key.list", category::KEYMAP),
+
+    // ── editor_read (default-allowed) ─────────────────────────
+    ("ink.editor.cursor", category::EDITOR_READ),
+    ("ink.editor.text", category::EDITOR_READ),
+    ("ink.editor.find", category::EDITOR_READ),
+
+    // ── editor_write (default-denied) ─────────────────────────
+    ("ink.editor.goto", category::EDITOR_WRITE),
+    ("ink.editor.insert", category::EDITOR_WRITE),
+    ("ink.editor.scroll", category::EDITOR_WRITE),
+    ("ink.editor.delete_line", category::EDITOR_WRITE),
+    ("ink.editor.delete_to_bol", category::EDITOR_WRITE),
+    ("ink.editor.delete_to_eol", category::EDITOR_WRITE),
+
+    // ── ai_write (default-denied) ─────────────────────────────
+    ("ink.ai.clear_history", category::AI_WRITE),
+
+    // ── store_write (Typst pipeline mutates artefacts dir) ────
+    ("ink.typst.assemble", category::STORE_WRITE),
+    ("ink.typst.build", category::STORE_WRITE),
+    ("ink.typst.take", category::STORE_WRITE),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
