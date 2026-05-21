@@ -9284,6 +9284,38 @@ impl App {
             }
         };
 
+        // Safety net (1.2.4+): before we replace the editor buffer,
+        // snapshot whatever is currently in it. Without this, hitting
+        // Enter on an old snapshot would silently discard any
+        // unsaved typing — "oops! a day of work gone". Now the
+        // recoverable history grows by one row instead.
+        //
+        // The pre-restore snapshot fires `hook.on_snapshot` like any
+        // other snapshot. If snapshot creation itself fails, we
+        // abort the load: the whole point is data safety, so doing
+        // the replace without the safety net would defeat the
+        // change. The user can fix the underlying error (disk full,
+        // store offline) and retry.
+        let pre_restore_id = if let Some(doc) = self.opened.as_ref() {
+            let body_now = doc.textarea.lines().join("\n");
+            let node = self.hierarchy.get(doc.id).cloned();
+            match node {
+                Some(n) => match self.store.create_snapshot(&n, body_now.as_bytes()) {
+                    Ok(id) => Some(id),
+                    Err(e) => {
+                        self.status = format!(
+                            "snapshot load aborted: safety snapshot failed ({e}) — retry once the store is healthy"
+                        );
+                        self.modal = Modal::None;
+                        return;
+                    }
+                },
+                None => None,
+            }
+        } else {
+            None
+        };
+
         let body = String::from_utf8_lossy(&content).into_owned();
         let Some(doc) = self.opened.as_mut() else {
             self.modal = Modal::None;
@@ -9302,9 +9334,14 @@ impl App {
         // by hitting Ctrl+S.
         self.modal = Modal::None;
         self.change_focus(Focus::Editor);
+        let safety_msg = match pre_restore_id {
+            Some(id) => format!(" · safety snapshot {} created", id.simple()),
+            None => String::new(),
+        };
         self.status = format!(
-            "loaded snapshot from {} — bold marks the change vs saved",
-            when.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S %z")
+            "loaded snapshot from {} — bold marks the change vs saved{}",
+            when.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S %z"),
+            safety_msg,
         );
     }
 
