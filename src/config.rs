@@ -1112,7 +1112,7 @@ impl Config {
 /// live under `goals.books.<book-slug>` so the slug is the
 /// natural lookup key (case-insensitive in the
 /// hierarchy → snapshot mapping).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GoalsConfig {
     /// Project-wide daily word-count target. Status-bar shows
@@ -1127,6 +1127,30 @@ pub struct GoalsConfig {
     /// Trailing-week status-promotion targets. Key is the
     /// status string ("ready", "final", "third", …) lowercased.
     pub status_ladder: std::collections::HashMap<String, i64>,
+    /// Auto-promote a paragraph's status to the next ladder rung
+    /// (Napkin → First → Second → Third → Final → Ready) on the
+    /// first save where `word_count` crosses the paragraph's
+    /// `target_words`. Idempotent per `(paragraph, status)` —
+    /// won't re-fire until the user manually cycles status.
+    /// Default `true`; set `false` to keep promotions manual.
+    #[serde(default = "default_auto_promote_on_target")]
+    pub auto_promote_on_target: bool,
+}
+
+fn default_auto_promote_on_target() -> bool {
+    true
+}
+
+impl Default for GoalsConfig {
+    fn default() -> Self {
+        Self {
+            daily_words: 0,
+            streak_grace_per_week: 0,
+            books: std::collections::HashMap::new(),
+            status_ladder: std::collections::HashMap::new(),
+            auto_promote_on_target: default_auto_promote_on_target(),
+        }
+    }
 }
 
 /// Per-book writing target.
