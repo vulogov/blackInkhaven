@@ -330,18 +330,14 @@ pub fn run(project: &Path) -> Result<()> {
     // their HJSON setting took effect. Both engines are always
     // available — the in-process compiler ships in every 1.2.5
     // build — but the default stays `external` to match prior
-    // behaviour exactly.
-    if cfg.typst_compile.use_inprocess_engine() {
-        tracing::info!(
-            target: "inkhaven::typst",
-            "typst engine: in-process (typst::compile + typst-pdf)",
-        );
-    } else {
-        tracing::info!(
-            target: "inkhaven::typst",
-            "typst engine: external (`typst` binary on PATH)",
-        );
-    }
+    // behaviour exactly. The same one-liner also lands on the
+    // status bar after first paint, and persistently in the
+    // Ctrl+B V credits pane.
+    let engine_summary = crate::typst_compile::engine_summary(&cfg);
+    tracing::info!(
+        target: "inkhaven::typst",
+        "typst engine: {engine_summary}",
+    );
 
     // Install the panic hook BEFORE we touch the terminal so a panic during
     // DB load (or anywhere later) still restores the screen.
@@ -701,12 +697,13 @@ fn draw_assembly_splash(
 fn draw_typst_compile_splash(
     f: &mut ratatui::Frame,
     book_display: &str,
+    engine_label: &str,
     elapsed_secs: u64,
     spinner: char,
 ) {
     let area = f.area();
     let width = area.width.saturating_sub(8).clamp(50, 100);
-    let height: u16 = 9;
+    let height: u16 = 11;
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + (area.height.saturating_sub(height)) / 2;
     let rect = Rect { x, y, width, height };
@@ -736,8 +733,16 @@ fn draw_typst_compile_splash(
             Style::default().add_modifier(Modifier::DIM),
         )),
         Line::from(Span::styled(
+            format!("  Engine:  {engine_label}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(Span::styled(
             format!("  Elapsed: {elapsed_secs}s"),
             Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(Span::styled(
+            "  Press Esc to cancel.",
+            Style::default().fg(Color::Gray),
         )),
     ];
     f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
@@ -9567,6 +9572,12 @@ impl App {
     /// it's a user book, then stash the uuid so the main loop drives
     /// the assembly with the splash.
     fn schedule_assembly(&mut self) {
+        // 1.2.5+: assembly walks the on-disk .typ files. If the
+        // user has unsaved edits in the editor (primary or
+        // secondary), assemble would see stale bytes. Save first
+        // so what the user sees in the editor is what hits the
+        // assembler.
+        self.save_all_before_build_step("Book assembly");
         let hierarchy = match Hierarchy::load(&self.store) {
             Ok(h) => h,
             Err(e) => {
@@ -9676,6 +9687,9 @@ impl App {
     /// Ctrl+B B — schedule a Book "build": assembly + `typst compile`.
     /// On error the build path opens a fresh AI chat for analysis.
     fn schedule_build(&mut self) {
+        // 1.2.5+: flush unsaved edits before assemble fires (see
+        // schedule_assembly for the rationale).
+        self.save_all_before_build_step("Book build");
         let Some(book_id) = self.resolve_current_user_book("Book build") else {
             return;
         };
@@ -9686,11 +9700,49 @@ impl App {
     /// Ctrl+B O — schedule a Book "take": build, then copy the PDF
     /// into the launch cwd with a timestamped filename.
     fn schedule_take(&mut self) {
+        // 1.2.5+: flush unsaved edits before assemble fires (see
+        // schedule_assembly for the rationale).
+        self.save_all_before_build_step("Take the book");
         let Some(book_id) = self.resolve_current_user_book("Take the book") else {
             return;
         };
         self.pending_take = Some(book_id);
         self.status = "Take the book: assembling + compiling + copying…".into();
+    }
+
+    /// 1.2.5+: shared autosave step for Ctrl+B A / B / O. Saves
+    /// the primary editor and, when similar-paragraph mode has
+    /// a secondary editor open, that one too. Errors are logged
+    /// at WARN and stamped on the status bar but never abort
+    /// the build — the user can react to a save failure by
+    /// dismissing the splash on Esc, which still happens. The
+    /// helper is a no-op when neither buffer is dirty.
+    fn save_all_before_build_step(&mut self, ctx: &str) {
+        if let Some(doc) = self.opened.as_ref() {
+            if doc.dirty {
+                if let Err(e) = self.save_current() {
+                    tracing::warn!(
+                        target: "inkhaven::build",
+                        "{ctx}: primary autosave failed: {e}",
+                    );
+                    self.status = format!("{ctx}: autosave failed: {e}");
+                }
+            }
+        }
+        // Mirror the autosave loop's `Option::take()` dance so we
+        // can call `save_doc(&mut self, &mut OpenedDoc)` without
+        // an aliasing borrow.
+        if let Some(mut doc) = self.secondary.take() {
+            if doc.dirty {
+                if let Err(e) = self.save_doc(&mut doc) {
+                    tracing::warn!(
+                        target: "inkhaven::build",
+                        "{ctx}: secondary autosave failed: {e}",
+                    );
+                }
+            }
+            self.secondary = Some(doc);
+        }
     }
 
     /// Common preflight for Ctrl+B A / B / O. Returns the uuid of the
@@ -9846,16 +9898,32 @@ impl App {
         // Animate the splash while the compile runs (external child
         // or in-process worker thread — same loop, same UX).
         // ~80ms per frame keeps the spinner readable without
-        // burning CPU.
+        // burning CPU. The same loop also polls for Esc so a stuck
+        // compile can be interrupted by the user.
+        let engine_label = crate::typst_compile::engine_summary(&self.cfg);
         let started = std::time::Instant::now();
         let mut spin_idx: usize = 0;
+        let mut cancelled = false;
         loop {
             let elapsed = started.elapsed().as_secs();
             let spinner = TYPST_COMPILE_SPINNER[spin_idx % TYPST_COMPILE_SPINNER.len()];
             let _ = terminal.draw(|f| {
-                draw_typst_compile_splash(f, book_display, elapsed, spinner)
+                draw_typst_compile_splash(f, book_display, &engine_label, elapsed, spinner)
             });
             spin_idx = spin_idx.wrapping_add(1);
+            // Poll for input WITHOUT consuming non-Esc keys — we
+            // re-emit nothing here; any user typing during the
+            // compile is just dropped (the alternate-screen
+            // splash is modal). Esc → cancel.
+            if let Ok(true) = crossterm::event::poll(std::time::Duration::from_millis(0)) {
+                if let Ok(crossterm::event::Event::Key(k)) = crossterm::event::read() {
+                    if matches!(k.code, crossterm::event::KeyCode::Esc) {
+                        handle.kill();
+                        cancelled = true;
+                        break;
+                    }
+                }
+            }
             match handle.try_wait() {
                 Ok(Some(_)) => break,
                 Ok(None) => {
@@ -9868,7 +9936,18 @@ impl App {
             }
         }
         match crate::typst_compile::finish(handle) {
-            Ok(o) => Some(o),
+            Ok(o) => {
+                if cancelled {
+                    // Promote the outcome's failure state into a
+                    // user-visible "cancelled" message rather than
+                    // running the AI error-analysis path.
+                    self.status = format!(
+                        "typst compile cancelled — partial output (if any) discarded · engine: {engine_label}",
+                    );
+                    return None;
+                }
+                Some(o)
+            }
             Err(e) => {
                 self.status = format!("typst compile: {e}");
                 None
@@ -11916,7 +11995,8 @@ impl App {
     /// what Cargo.toml actually depends on — automating from Cargo.lock
     /// would dump 200+ transitive crates that no user wants to read).
     fn draw_credits_modal(&self, f: &mut ratatui::Frame, area: Rect, scroll: usize) {
-        let lines = build_credits_lines(&self.theme);
+        let engine_summary = crate::typst_compile::engine_summary(&self.cfg);
+        let lines = build_credits_lines(&self.theme, &engine_summary);
         let total = lines.len();
 
         let width = area.width.saturating_sub(8).max(60);
@@ -18190,7 +18270,10 @@ const CREDITS_COMPONENTS: &[(&str, &str, &str)] = &[
 /// modal-border colour, descriptions in dim. Each crate row is wrapped
 /// to fit a reasonable terminal width; very long descriptions naturally
 /// truncate at the right edge of the modal.
-fn build_credits_lines(theme: &super::theme::Theme) -> Vec<Line<'static>> {
+fn build_credits_lines(
+    theme: &super::theme::Theme,
+    engine_summary: &str,
+) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     let bold_accent = Style::default()
@@ -18207,6 +18290,15 @@ fn build_credits_lines(theme: &super::theme::Theme) -> Vec<Line<'static>> {
         format!("  {}", env!("CARGO_PKG_DESCRIPTION")),
         dim,
     )));
+    lines.push(Line::from(""));
+
+    // 1.2.5+: surface the active Typst engine so users can confirm
+    // their HJSON setting took effect without going to the logs.
+    lines.push(Line::from(vec![Span::styled(
+        "  Typst engine".to_string(),
+        bold_accent,
+    )]));
+    lines.push(Line::from(format!("    {engine_summary}")));
     lines.push(Line::from(""));
 
     lines.push(Line::from(vec![Span::styled(
