@@ -1787,6 +1787,29 @@ pub(crate) enum SnapshotDiffKind {
     Changed,
 }
 
+/// One page of a rendered paragraph kept in the preview modal —
+/// just enough state for ratatui-image to repaint it and for the
+/// title bar to show "page N/M · width×height".
+struct RenderedPageProto {
+    proto: ratatui_image::protocol::StatefulProtocol,
+    width: u32,
+    height: u32,
+}
+
+/// Save-mode for the SaveRenderedPng picker. Drives whether one
+/// page or every page lands on disk.
+#[derive(Debug, Clone)]
+enum PagesToSave {
+    /// Single page at the given 0-based index. File path is the
+    /// user's input verbatim.
+    Single(usize),
+    /// Every page. The user's input is the *base* path
+    /// (`/path/to/render` or `/path/to/render.png`); inkhaven
+    /// inserts `-page-NNN` before the `.png` extension and
+    /// writes one file per page.
+    All,
+}
+
 enum Modal {
     None,
     Adding {
@@ -1982,31 +2005,33 @@ enum Modal {
         proto: ratatui_image::protocol::StatefulProtocol,
     },
     /// Ctrl+V R (1.2.5+) — float a rasterised PNG of the open
-    /// paragraph on top of the editor. `proto` drives the
-    /// ratatui-image widget for display; `body` + `settings` are
-    /// captured so an `S` keypress can re-render at high DPI and
-    /// dump a PNG to a user-picked path.
+    /// paragraph on top of the editor. `pages` holds one
+    /// ratatui-image protocol per page of the compiled
+    /// document; `current_page` selects which one renders.
+    /// `body` + `settings` are captured so an `S` or `A`
+    /// keypress can re-render at high DPI without re-prompting.
     RenderedPreview {
         title: String,
         body: String,
         settings: crate::typst_world::WorldSettings,
-        proto: ratatui_image::protocol::StatefulProtocol,
-        preview_width: u32,
-        preview_height: u32,
-        total_pages: usize,
+        pages: Vec<RenderedPageProto>,
+        current_page: usize,
     },
-    /// `S` from `RenderedPreview` — save-as path picker for the
-    /// full-DPI PNG. Same shape as `SaveMarkdown`: pre-filled
-    /// `<title>-YYYYDDMM-HHMM.png` default. Enter writes the
-    /// file; Esc closes the picker AND the preview (the
-    /// `StatefulProtocol` holding the bitmap can't be cloned
-    /// back into the preview without re-rendering, so we keep
-    /// the UX simple: Ctrl+V R re-opens the preview).
+    /// `S` (current page) or `A` (all pages) from
+    /// `RenderedPreview` — save-as path picker for the full-DPI
+    /// PNG(s). Enter writes the file(s); Esc restores the
+    /// underlying `RenderedPreview` so navigation state survives
+    /// a cancelled save.
     SaveRenderedPng {
         input: TextInput,
         body: String,
         settings: crate::typst_world::WorldSettings,
         title: String,
+        pages: PagesToSave,
+        /// Stash of the underlying preview modal so Esc returns
+        /// to it. Same `return_to: Box<Modal>` pattern the
+        /// snapshot-diff picker uses.
+        return_to: Box<Modal>,
     },
     /// Ctrl+B F (editor pane) — Typst function picker. The filter
     /// input narrows the baked-in list as the user types; Enter
@@ -6007,40 +6032,44 @@ impl App {
             &self.cfg.typst_compile,
         );
         // Preview DPI: 2.0 ppt = ~144 dpi. Good for screen,
-        // doesn't blow up memory on long paragraphs.
-        match crate::typst_paragraph_render::render(
+        // doesn't blow up memory on long paragraphs. Renders
+        // every page up front so Left/Right inside the modal is
+        // a pure protocol swap (no re-compile).
+        match crate::typst_paragraph_render::render_all(
             &body,
             settings.clone(),
             2.0,
         ) {
             Ok(rendered) => {
-                let proto = picker.new_resize_protocol(rendered.image);
+                let total = rendered.len();
+                let first_w = rendered[0].width;
+                let first_h = rendered[0].height;
+                let pages: Vec<RenderedPageProto> = rendered
+                    .into_iter()
+                    .map(|r| RenderedPageProto {
+                        proto: picker.new_resize_protocol(r.image),
+                        width: r.width,
+                        height: r.height,
+                    })
+                    .collect();
                 self.modal = Modal::RenderedPreview {
                     title: title.clone(),
                     body,
                     settings,
-                    proto,
-                    preview_width: rendered.width,
-                    preview_height: rendered.height,
-                    total_pages: rendered.total_pages,
+                    pages,
+                    current_page: 0,
                 };
-                let pages_note = if rendered.total_pages > 1 {
-                    format!(" · page 1/{}", rendered.total_pages)
+                let pages_note = if total > 1 {
+                    format!(" · page 1/{}  · ←/→ navigate", total)
                 } else {
                     String::new()
                 };
                 self.status = format!(
-                    "render ¶ `{}` · {}×{}{}  ·  Esc closes · S saves full-DPI PNG",
-                    title,
-                    rendered.width,
-                    rendered.height,
-                    pages_note,
+                    "render ¶ `{}` · {}×{}{}  ·  Esc closes · S saves current · A saves all",
+                    title, first_w, first_h, pages_note,
                 );
             }
             Err(err) => {
-                // The error string is potentially multi-line —
-                // show the first useful line on the status bar so
-                // the AI error-analysis path isn't required.
                 let first_line = err
                     .lines()
                     .find(|l| !l.trim().is_empty())
@@ -6655,16 +6684,26 @@ impl App {
         Ok(cwd.join(format!("{safe_stem}-{stamp}.png")))
     }
 
-    /// `S` inside Modal::RenderedPreview — pop the save-as picker
-    /// with a sensible default path pre-filled.
-    fn open_save_rendered_png_picker(&mut self) {
-        let (body, settings, title) = match &self.modal {
+    /// `S` (single) or `A` (all) inside Modal::RenderedPreview —
+    /// pop the save-as picker with a sensible default path
+    /// pre-filled. `all = true` stamps a multi-page-aware default
+    /// (still a single base path; we append `-page-NNN` per page
+    /// at write time). The picker stashes the underlying preview
+    /// modal in `return_to` so Esc preserves navigation state.
+    fn open_save_rendered_png_picker(&mut self, all: bool) {
+        let (body, settings, title, current_page) = match &self.modal {
             Modal::RenderedPreview {
                 body,
                 settings,
                 title,
+                current_page,
                 ..
-            } => (body.clone(), settings.clone(), title.clone()),
+            } => (
+                body.clone(),
+                settings.clone(),
+                title.clone(),
+                *current_page,
+            ),
             _ => return,
         };
         let default_dest = match self.default_rendered_png_dest(&title) {
@@ -6678,28 +6717,46 @@ impl App {
         for c in default_dest.to_string_lossy().chars() {
             input.insert_char(c);
         }
+        // Move the current modal into the picker's return_to
+        // stash — std::mem::replace avoids cloning the protos.
+        let return_to = Box::new(std::mem::replace(&mut self.modal, Modal::None));
+        let pages = if all {
+            PagesToSave::All
+        } else {
+            PagesToSave::Single(current_page)
+        };
+        let mode_label = match &pages {
+            PagesToSave::Single(idx) => format!("page {}", idx + 1),
+            PagesToSave::All => "all pages".to_string(),
+        };
         self.modal = Modal::SaveRenderedPng {
             input,
             body,
             settings,
             title,
+            pages,
+            return_to,
         };
-        self.status =
-            "save PNG as: edit path or just hit Enter to save · Esc cancels"
-                .into();
+        self.status = format!(
+            "save PNG as ({mode_label}): edit path or hit Enter · Esc returns to preview",
+        );
     }
 
     /// Re-render the paragraph at full DPI (4.0 px/pt) and write
-    /// to the picked path. Status-bar reports outcome.
+    /// to the picked path. Status-bar reports outcome. For
+    /// `PagesToSave::All` we strip a trailing `.png` from the
+    /// user's input (if present) and append `-page-NNN.png` per
+    /// page; for `Single(idx)` the input is used verbatim.
     fn commit_save_rendered_png(
         &mut self,
         body: &str,
         settings: &crate::typst_world::WorldSettings,
         raw: &str,
         title: &str,
+        pages: PagesToSave,
     ) {
         let path_str = raw.trim();
-        let path = if path_str.is_empty() {
+        let base_path = if path_str.is_empty() {
             match self.default_rendered_png_dest(title) {
                 Ok(p) => p,
                 Err(e) => {
@@ -6717,25 +6774,93 @@ impl App {
         };
         // 4.0 px/pt ≈ 288 dpi. Print-quality without going
         // wild on memory for chapter-sized paragraphs.
-        match crate::typst_paragraph_render::render(body, settings.clone(), 4.0) {
-            Ok(rendered) => match std::fs::write(&path, &rendered.png_bytes) {
-                Ok(()) => {
-                    self.status = format!(
-                        "save PNG: wrote {} ({}×{} · {} bytes)",
-                        path.display(),
-                        rendered.width,
-                        rendered.height,
-                        rendered.png_bytes.len(),
-                    );
-                }
+        match pages {
+            PagesToSave::Single(idx) => match crate::typst_paragraph_render::render_page(
+                body,
+                settings.clone(),
+                4.0,
+                idx,
+            ) {
+                Ok(rendered) => match std::fs::write(&base_path, &rendered.png_bytes) {
+                    Ok(()) => {
+                        self.status = format!(
+                            "save PNG: wrote {} (page {} · {}×{} · {} bytes)",
+                            base_path.display(),
+                            idx + 1,
+                            rendered.width,
+                            rendered.height,
+                            rendered.png_bytes.len(),
+                        );
+                    }
+                    Err(e) => {
+                        self.status =
+                            format!("save PNG: write {}: {e}", base_path.display());
+                    }
+                },
                 Err(e) => {
+                    let first =
+                        e.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
                     self.status =
-                        format!("save PNG: write {}: {e}", path.display());
+                        format!("save PNG: re-render failed: {first}");
                 }
             },
-            Err(e) => {
-                let first = e.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
-                self.status = format!("save PNG: re-render failed: {first}");
+            PagesToSave::All => {
+                // Strip a trailing .png so `myrender.png` and
+                // `myrender` both become `myrender-page-001.png` etc.
+                let stem = base_path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "render".to_string());
+                let parent = base_path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+                match crate::typst_paragraph_render::render_all(
+                    body,
+                    settings.clone(),
+                    4.0,
+                ) {
+                    Ok(rendered_pages) => {
+                        let total = rendered_pages.len();
+                        let pad = total.to_string().len().max(3);
+                        let mut written: Vec<String> = Vec::with_capacity(total);
+                        for (i, page) in rendered_pages.iter().enumerate() {
+                            let fname =
+                                format!("{stem}-page-{:0pad$}.png", i + 1, pad = pad);
+                            let dest = parent.join(&fname);
+                            if let Err(e) = std::fs::write(&dest, &page.png_bytes) {
+                                self.status = format!(
+                                    "save PNG: write {} failed: {e} (wrote {} of {})",
+                                    dest.display(),
+                                    written.len(),
+                                    total,
+                                );
+                                return;
+                            }
+                            written.push(fname);
+                        }
+                        let in_dir = if parent.as_os_str().is_empty() {
+                            "(cwd)".to_string()
+                        } else {
+                            parent.display().to_string()
+                        };
+                        self.status = format!(
+                            "save PNG: wrote {} pages to {} ({})",
+                            total,
+                            in_dir,
+                            // Show first..last filename for context
+                            // — full list would blow the status bar.
+                            if total == 1 {
+                                written[0].clone()
+                            } else {
+                                format!("{}…{}", written[0], written[total - 1])
+                            },
+                        );
+                    }
+                    Err(e) => {
+                        let first =
+                            e.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+                        self.status =
+                            format!("save PNG (all): re-render failed: {first}");
+                    }
+                }
             }
         }
     }
@@ -8337,18 +8462,25 @@ impl App {
     /// Ctrl+V R floating preview. Same plumbing as the image-
     /// preview modal — ratatui-image's StatefulImage widget
     /// repaints on every frame so a terminal resize Just Works.
+    /// Multi-page documents: ← / → cycle between page protos.
     fn draw_rendered_preview_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
         let Modal::RenderedPreview {
             title,
-            proto,
-            preview_width,
-            preview_height,
-            total_pages,
+            pages,
+            current_page,
             ..
         } = &mut self.modal
         else {
             return;
         };
+        let total = pages.len();
+        let idx = (*current_page).min(total.saturating_sub(1));
+        let page = match pages.get_mut(idx) {
+            Some(p) => p,
+            None => return,
+        };
+        let preview_width = page.width;
+        let preview_height = page.height;
 
         let width = area.width.saturating_sub(4).max(40);
         let height = area.height.saturating_sub(4).max(12);
@@ -8357,8 +8489,8 @@ impl App {
         let rect = Rect { x, y, width, height };
         f.render_widget(ratatui::widgets::Clear, rect);
 
-        let pages_note = if *total_pages > 1 {
-            format!(" · page 1/{total_pages}")
+        let pages_note = if total > 1 {
+            format!(" · page {}/{}", idx + 1, total)
         } else {
             String::new()
         };
@@ -8396,11 +8528,16 @@ impl App {
         };
 
         let widget = ratatui_image::StatefulImage::new();
-        f.render_stateful_widget(widget, body_rect, proto);
+        f.render_stateful_widget(widget, body_rect, &mut page.proto);
 
+        let hint = if total > 1 {
+            "  ← / → navigate  ·  S saves current  ·  A saves all  ·  Esc closes ".to_string()
+        } else {
+            "  Esc closes  ·  S saves full-DPI PNG  ·  A saves all (same here) ".to_string()
+        };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                "  Esc closes  ·  S saves full-DPI PNG  ·  resize the terminal to re-fit ".to_string(),
+                hint,
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,
@@ -11068,6 +11205,16 @@ impl App {
                 self.status = "diff closed".into();
                 return Ok(false);
             }
+            // 1.2.5+ SaveRenderedPng follows the same pattern —
+            // restore the underlying RenderedPreview so the user
+            // doesn't lose their navigation state when they
+            // cancel a save.
+            if let Modal::SaveRenderedPng { return_to, .. } = &mut self.modal {
+                let prev = std::mem::replace(return_to.as_mut(), Modal::None);
+                self.modal = prev;
+                self.status = "save PNG: cancelled · preview restored".into();
+                return Ok(false);
+            }
             self.modal = Modal::None;
             return Ok(false);
         }
@@ -11275,37 +11422,102 @@ impl App {
         }
 
         if is_rendered_preview {
-            // Esc is intercepted by the top-of-function global
-            // handler that closes any modal; we just need to
-            // handle S → save-as picker here. Everything else
-            // is swallowed so the underlying editor doesn't see
-            // it.
-            if matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S')) {
-                self.open_save_rendered_png_picker();
+            // Esc is intercepted by the global modal-close
+            // handler at the top of this function. Local keys:
+            //   ← / →  — navigate pages
+            //   S / s — save current page (open picker, mode Single)
+            //   A / a — save every page (open picker, mode All)
+            //   anything else — swallowed so the editor doesn't see it
+            match key.code {
+                KeyCode::Left | KeyCode::Up => {
+                    if let Modal::RenderedPreview {
+                        pages,
+                        current_page,
+                        ..
+                    } = &mut self.modal
+                    {
+                        if *current_page > 0 {
+                            *current_page -= 1;
+                            let total = pages.len();
+                            let p = &pages[*current_page];
+                            self.status = format!(
+                                "render ¶ · page {}/{}  · {}×{}",
+                                *current_page + 1,
+                                total,
+                                p.width,
+                                p.height,
+                            );
+                        }
+                    }
+                }
+                KeyCode::Right | KeyCode::Down => {
+                    if let Modal::RenderedPreview {
+                        pages,
+                        current_page,
+                        ..
+                    } = &mut self.modal
+                    {
+                        if *current_page + 1 < pages.len() {
+                            *current_page += 1;
+                            let total = pages.len();
+                            let p = &pages[*current_page];
+                            self.status = format!(
+                                "render ¶ · page {}/{}  · {}×{}",
+                                *current_page + 1,
+                                total,
+                                p.width,
+                                p.height,
+                            );
+                        }
+                    }
+                }
+                KeyCode::Home => {
+                    if let Modal::RenderedPreview { current_page, .. } =
+                        &mut self.modal
+                    {
+                        *current_page = 0;
+                    }
+                }
+                KeyCode::End => {
+                    if let Modal::RenderedPreview {
+                        pages,
+                        current_page,
+                        ..
+                    } = &mut self.modal
+                    {
+                        *current_page = pages.len().saturating_sub(1);
+                    }
+                }
+                KeyCode::Char('s') | KeyCode::Char('S') => {
+                    self.open_save_rendered_png_picker(false);
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    self.open_save_rendered_png_picker(true);
+                }
+                _ => {}
             }
             return Ok(false);
         }
 
         if is_save_rendered_png {
+            // Esc → restore the preview, handled at the top of
+            // this function via the `return_to` stash pattern.
             if matches!(key.code, KeyCode::Enter) {
-                let (body, settings, raw, title) = match &self.modal {
-                    Modal::SaveRenderedPng {
-                        input,
-                        body,
-                        settings,
-                        title,
-                    } => (
-                        body.clone(),
-                        settings.clone(),
-                        input.as_str().to_string(),
-                        title.clone(),
-                    ),
-                    _ => {
-                        return Ok(false);
-                    }
-                };
-                self.modal = Modal::None;
-                self.commit_save_rendered_png(&body, &settings, &raw, &title);
+                let taken = std::mem::replace(&mut self.modal, Modal::None);
+                if let Modal::SaveRenderedPng {
+                    input,
+                    body,
+                    settings,
+                    title,
+                    pages,
+                    return_to: _,
+                } = taken
+                {
+                    let raw = input.as_str().to_string();
+                    self.commit_save_rendered_png(
+                        &body, &settings, &raw, &title, pages,
+                    );
+                }
                 return Ok(false);
             }
             if let Modal::SaveRenderedPng { input, .. } = &mut self.modal {

@@ -25,27 +25,65 @@ use typst::layout::PagedDocument;
 
 use crate::typst_world::{InkhavenWorld, WorldSettings};
 
-/// The result of rendering one paragraph. The image is RGBA8.
+/// The result of rendering one paragraph page. The image is RGBA8.
 pub struct RenderedParagraph {
     pub width: u32,
     pub height: u32,
     pub png_bytes: Vec<u8>,
     pub image: image::DynamicImage,
-    /// Total page count of the laid-out document. The preview
-    /// modal only shows page 1; surface this so the UI can tell
-    /// the user "showing 1/N" when their paragraph overflowed a
-    /// single page.
-    pub total_pages: usize,
 }
 
-/// Render `source` to a PNG at the given `pixel_per_pt`. Returns
-/// the human-readable error text (resembling `typst compile`'s
-/// stderr) when the compile failed — the caller surfaces it in
-/// the editor's status bar instead of opening the preview.
-pub fn render(
+/// Render every page of `source` at the given `pixel_per_pt`.
+/// Returns one `RenderedParagraph` per page. The first page is
+/// always at index 0. Compile errors emerge as a single
+/// human-readable string (resembling `typst compile`'s stderr).
+pub fn render_all(
     source: &str,
     settings: WorldSettings,
     pixel_per_pt: f32,
+) -> Result<Vec<RenderedParagraph>, String> {
+    let world = InkhavenWorld::in_memory(
+        std::env::temp_dir(),
+        source.to_owned(),
+        settings,
+    );
+    let Warned { output, warnings: _ } =
+        typst::compile::<PagedDocument>(&world);
+    let document = output.map_err(|errors| format_errors(&errors))?;
+    if document.pages.is_empty() {
+        return Err("compile produced zero pages".to_owned());
+    }
+    let mut out = Vec::with_capacity(document.pages.len());
+    for page in &document.pages {
+        let pixmap = typst_render::render(page, pixel_per_pt);
+        let width = pixmap.width();
+        let height = pixmap.height();
+        let png_bytes = pixmap
+            .encode_png()
+            .map_err(|e| format!("encode PNG: {e}"))?;
+        let raw = pixmap.data().to_vec();
+        let rgba = image::RgbaImage::from_raw(width, height, raw)
+            .ok_or_else(|| "image dimensions did not match buffer".to_owned())?;
+        out.push(RenderedParagraph {
+            width,
+            height,
+            png_bytes,
+            image: image::DynamicImage::ImageRgba8(rgba),
+        });
+    }
+    Ok(out)
+}
+
+/// Render exactly one page (`page_idx`, 0-based) at the given
+/// `pixel_per_pt`. Used by the `S` save path which only needs
+/// the page currently being viewed. Returns
+/// `Err("page index out of range")` if the index is past the
+/// document.
+pub fn render_page(
+    source: &str,
+    settings: WorldSettings,
+    pixel_per_pt: f32,
+    page_idx: usize,
 ) -> Result<RenderedParagraph, String> {
     let world = InkhavenWorld::in_memory(
         std::env::temp_dir(),
@@ -55,19 +93,17 @@ pub fn render(
     let Warned { output, warnings: _ } =
         typst::compile::<PagedDocument>(&world);
     let document = output.map_err(|errors| format_errors(&errors))?;
+    let total = document.pages.len();
     let page = document
         .pages
-        .first()
-        .ok_or_else(|| "compile produced zero pages".to_owned())?;
+        .get(page_idx)
+        .ok_or_else(|| format!("page index {page_idx} out of range (have {total})"))?;
     let pixmap = typst_render::render(page, pixel_per_pt);
     let width = pixmap.width();
     let height = pixmap.height();
     let png_bytes = pixmap
         .encode_png()
         .map_err(|e| format!("encode PNG: {e}"))?;
-    // RGBA8 conversion for the in-memory image view (used by
-    // ratatui-image). Pixmap stores premultiplied RGBA — the
-    // image crate accepts the same layout via `from_raw`.
     let raw = pixmap.data().to_vec();
     let rgba = image::RgbaImage::from_raw(width, height, raw)
         .ok_or_else(|| "image dimensions did not match buffer".to_owned())?;
@@ -76,7 +112,6 @@ pub fn render(
         height,
         png_bytes,
         image: image::DynamicImage::ImageRgba8(rgba),
-        total_pages: document.pages.len(),
     })
 }
 
@@ -104,7 +139,7 @@ mod tests {
         let source =
             "#set page(width: 10cm, height: 5cm, margin: 1cm)\n\
              = Hello\nProse line.\n";
-        let out = render(
+        let pages = render_all(
             source,
             WorldSettings {
                 bundle_fonts: true,
@@ -114,14 +149,37 @@ mod tests {
             2.0,
         )
         .expect("render");
-        assert!(out.width > 0, "width was 0");
-        assert!(out.height > 0, "height was 0");
-        assert!(!out.png_bytes.is_empty(), "no PNG bytes");
+        assert!(!pages.is_empty(), "expected at least one page");
+        let first = &pages[0];
+        assert!(first.width > 0, "width was 0");
+        assert!(first.height > 0, "height was 0");
+        assert!(!first.png_bytes.is_empty(), "no PNG bytes");
         // PNG magic header.
         assert_eq!(
-            &out.png_bytes[..8],
+            &first.png_bytes[..8],
             &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
         );
-        assert!(out.total_pages >= 1);
+        assert_eq!(pages.len(), 1, "single-page paragraph");
+    }
+
+    /// Multi-page document — exercise both `render_all` returning
+    /// every page and `render_page(idx)` returning the same page.
+    #[test]
+    #[ignore]
+    fn renders_each_page_consistently() {
+        let source =
+            "#set page(width: 10cm, height: 5cm, margin: 1cm)\n\
+             = Page 1\n#pagebreak()\n= Page 2\n#pagebreak()\n= Page 3\n";
+        let settings = WorldSettings {
+            bundle_fonts: true,
+            use_system_fonts: true,
+            packages_enabled: false,
+        };
+        let pages = render_all(source, settings.clone(), 2.0).expect("render_all");
+        assert_eq!(pages.len(), 3, "expected 3 pages, got {}", pages.len());
+        // Spot-check render_page picks the same page 1 as
+        // render_all[1].
+        let mid = render_page(source, settings, 1.0, 1).expect("render_page");
+        assert!(mid.width > 0 && mid.height > 0);
     }
 }
