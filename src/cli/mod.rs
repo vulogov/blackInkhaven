@@ -5,6 +5,7 @@ pub mod bund;
 pub mod delete;
 pub mod export;
 pub mod import_help;
+pub mod import_scrivener;
 pub mod import_typst_help;
 pub mod init;
 pub mod list;
@@ -12,6 +13,7 @@ pub mod mv;
 pub mod reindex;
 pub mod restore;
 pub mod search;
+pub mod stats;
 
 use std::path::PathBuf;
 
@@ -120,6 +122,15 @@ pub enum Command {
         /// falls back to slug match.
         #[arg(long)]
         book_name: Option<String>,
+        /// Status floor (1.2.4+) — keep only paragraphs whose
+        /// status sits at or above this rung on the workflow
+        /// ladder. Lowercased: `napkin`, `first`, `second`,
+        /// `third`, `final`, `ready`. `--status=ready` ships
+        /// only Ready paragraphs (typical "submit to the agent"
+        /// workflow). Unset = include every paragraph regardless
+        /// of status (including paragraphs with no status set).
+        #[arg(long)]
+        status: Option<String>,
     },
 
     /// Run a one-shot AI inference from the command line.
@@ -146,6 +157,28 @@ pub enum Command {
     /// (RAG over Help) can answer typst questions from grounded
     /// context. Offline — the reference is bundled with the binary.
     ImportTypstHelp,
+
+    /// Import a Scrivener (.scriv) project into the current
+    /// inkhaven project (1.2.4+). Walks the binder, converts
+    /// every Text document's RTF body to Typst, and
+    /// materialises the hierarchy as inkhaven nodes. Single-
+    /// binary — no Scrivener / pandoc / textutil required.
+    ImportScrivener {
+        /// Path to the `.scriv` package directory.
+        scriv_path: PathBuf,
+        /// Override the title used for the user book created
+        /// from the Scrivener Draft folder. None → use the
+        /// Draft folder's own title.
+        #[arg(long)]
+        draft_as_book: Option<String>,
+        /// Skip everything outside the Draft (Research,
+        /// Characters, Places folders Scrivener defaults to).
+        #[arg(long)]
+        skip_research: bool,
+        /// Parse + report without creating any nodes.
+        #[arg(long)]
+        dry_run: bool,
+    },
 
     /// Zip the project into a dated backup archive
     /// (`blackinkhaven_YYYYDDMM_HHMMSS.zip`).
@@ -176,6 +209,18 @@ pub enum Command {
     Bund {
         /// The Bund script to run, e.g. `"40 2 + ."`.
         code: String,
+    },
+
+    /// Print a per-paragraph stats table (1.2.4+). Title, slug,
+    /// status, word count, target %, last modified. System
+    /// books are excluded; `--book-name` scopes to one user book
+    /// the same way `inkhaven export` does.
+    Stats {
+        /// Name of the user book to report on. Required when the
+        /// project holds more than one user book; with a single
+        /// user book it can be omitted.
+        #[arg(long)]
+        book_name: Option<String>,
     },
 
     /// Launch the TUI editor (default if no subcommand is given).
@@ -263,8 +308,15 @@ impl Cli {
                 format,
                 output,
                 book_name,
-            } => export::run(&project, format, output.as_deref(), book_name.as_deref())
-                .map_err(Into::into),
+                status,
+            } => export::run(
+                &project,
+                format,
+                output.as_deref(),
+                book_name.as_deref(),
+                status.as_deref(),
+            )
+            .map_err(Into::into),
             Command::Ai { prompt, provider } => {
                 ai::run(&project, &prompt, provider.as_deref()).map_err(Into::into)
             }
@@ -274,11 +326,27 @@ impl Cli {
             Command::ImportTypstHelp => {
                 import_typst_help::run(&project).map_err(Into::into)
             }
+            Command::ImportScrivener {
+                scriv_path,
+                draft_as_book,
+                skip_research,
+                dry_run,
+            } => import_scrivener::run(
+                &project,
+                &scriv_path,
+                draft_as_book.as_deref(),
+                skip_research,
+                dry_run,
+            )
+            .map_err(Into::into),
             Command::Backup { out } => backup::run(&project, out.as_deref()).map_err(Into::into),
             Command::Restore { archive, to } => {
                 restore::run(&archive, &to).map_err(Into::into)
             }
             Command::Bund { code } => bund::run(&code, &project),
+            Command::Stats { book_name } => {
+                stats::run(&project, book_name.as_deref()).map_err(Into::into)
+            }
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
         }
     }

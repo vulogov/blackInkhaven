@@ -234,6 +234,10 @@ fn adopt_orphans(
             image_alt: None,
             content_type: None,
             status: None,
+            target_words: None,
+            target_hit_at_status: None,
+            linked_paragraphs: Vec::new(),
+            bookmark: false,
         };
 
         store.put_node(&mut node, &bytes)?;

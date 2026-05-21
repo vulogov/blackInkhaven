@@ -230,6 +230,13 @@
       // final:  3
       // third:  5
     }
+    // 1.2.4+: when a save crosses a paragraph's per-paragraph
+    // `target_words` (set via Ctrl+V T or
+    // `ink.paragraph.set_target`), bump its status one ladder
+    // rung. Idempotent per (paragraph, status). Manual Ctrl+B R
+    // resets the bookkeeping. Set false to keep promotions
+    // manual.
+    auto_promote_on_target: true
   }
 
   // Typewriter-style sound effects. Two events emit a synthesised

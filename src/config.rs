@@ -81,6 +81,10 @@ pub struct Config {
     pub sync_interval_seconds: u64,
 }
 
+fn default_view_prefix() -> String {
+    "Ctrl+v".into()
+}
+
 fn default_sync_interval() -> u64 {
     600
 }
@@ -952,6 +956,16 @@ pub struct EditorConfig {
     /// names accepted by `rust-stemmers::Algorithm` (lowercased), see
     /// `parse_stemmer_language` for the supported set.
     pub stemming: StemmingConfig,
+    /// Show the project-pulse splash on startup (1.2.4+).
+    /// 7-second timed overlay with today/streak/active +
+    /// status-ladder counts. Any key press dismisses early.
+    /// Set false to skip directly into the editor.
+    #[serde(default = "default_startup_splash")]
+    pub startup_splash: bool,
+}
+
+fn default_startup_splash() -> bool {
+    true
 }
 
 impl Default for EditorConfig {
@@ -963,6 +977,7 @@ impl Default for EditorConfig {
             autosave_seconds: 5,
             auto_close_pairs: true,
             stemming: StemmingConfig::default(),
+            startup_splash: default_startup_splash(),
         }
     }
 }
@@ -1033,6 +1048,13 @@ pub struct KeyBindings {
     /// Ctrl+U in this codebase. Set to an empty string to disable
     /// the Bund chord entirely.
     pub bund_prefix: String,
+    /// View meta-prefix chord (1.2.4+). Parallel to meta_prefix +
+    /// bund_prefix but for markdown export / similar mode /
+    /// progress / paragraph target. Defaults to Ctrl+V. Empty
+    /// string disables the layer (a terminal that wants Ctrl+V
+    /// for "verbatim next" can opt out).
+    #[serde(default = "default_view_prefix")]
+    pub view_prefix: String,
     /// User overlay for chord-action bindings under the meta- and
     /// bund-prefixes. Each entry is `{ chord, action, scope? }`.
     /// The `chord` string uses shorthand `"<prefix> <suffix>"`
@@ -1069,6 +1091,7 @@ impl Default for KeyBindings {
             page_down: "PageDown".into(),
             meta_prefix: "Ctrl+b".into(),
             bund_prefix: "Ctrl+z".into(),
+            view_prefix: default_view_prefix(),
             bindings: Vec::new(),
         }
     }
@@ -1112,12 +1135,17 @@ impl Config {
 /// live under `goals.books.<book-slug>` so the slug is the
 /// natural lookup key (case-insensitive in the
 /// hierarchy → snapshot mapping).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GoalsConfig {
     /// Project-wide daily word-count target. Status-bar shows
     /// `today X/daily_words`. `0` (default) hides the slash.
     pub daily_words: i64,
+    /// Project-wide daily active-time target, in minutes (1.2.4+).
+    /// Status-bar shows `Nm/Mm` against this when set; the
+    /// `hook.on_active_goal_hit` fires the first time today's
+    /// active-time crosses the line. `0` (default) disables.
+    pub active_minutes_daily: i64,
     /// Missed days forgiven per rolling 7-day window before the
     /// streak breaks. `0` = strict; `1` = one rest day per week.
     pub streak_grace_per_week: i64,
@@ -1127,6 +1155,31 @@ pub struct GoalsConfig {
     /// Trailing-week status-promotion targets. Key is the
     /// status string ("ready", "final", "third", …) lowercased.
     pub status_ladder: std::collections::HashMap<String, i64>,
+    /// Auto-promote a paragraph's status to the next ladder rung
+    /// (Napkin → First → Second → Third → Final → Ready) on the
+    /// first save where `word_count` crosses the paragraph's
+    /// `target_words`. Idempotent per `(paragraph, status)` —
+    /// won't re-fire until the user manually cycles status.
+    /// Default `true`; set `false` to keep promotions manual.
+    #[serde(default = "default_auto_promote_on_target")]
+    pub auto_promote_on_target: bool,
+}
+
+fn default_auto_promote_on_target() -> bool {
+    true
+}
+
+impl Default for GoalsConfig {
+    fn default() -> Self {
+        Self {
+            daily_words: 0,
+            active_minutes_daily: 0,
+            streak_grace_per_week: 0,
+            books: std::collections::HashMap::new(),
+            status_ladder: std::collections::HashMap::new(),
+            auto_promote_on_target: default_auto_promote_on_target(),
+        }
+    }
 }
 
 /// Per-book writing target.

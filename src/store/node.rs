@@ -130,6 +130,45 @@ pub struct Node {
     /// future projects can extend the workflow without a migration.
     #[serde(default)]
     pub status: Option<String>,
+
+    /// Per-paragraph word-count goal (1.2.4+). When set, the tree
+    /// pane shows a 4-char Unicode gauge + percent beside the
+    /// paragraph; on save, the auto-promote machinery checks
+    /// whether `word_count >= target_words` and bumps `status` one
+    /// ladder step if `goals.auto_promote_on_target` is true. None
+    /// = no goal. Stored as `i32` so the field round-trips cleanly
+    /// through JSON / DuckDB without unsigned-conversion surprises;
+    /// negative values are clamped to None at load time.
+    #[serde(default)]
+    pub target_words: Option<i32>,
+
+    /// Bookkeeping for "promote once per `(paragraph, status)`"
+    /// (1.2.4+). Holds the status the paragraph held immediately
+    /// after the most recent auto-promotion (i.e. the new status,
+    /// not the pre-promotion one). Subsequent saves that stay at
+    /// or above `target_words` won't re-promote while this matches
+    /// the current status. A manual `Ctrl+B R` cycle clears /
+    /// changes the status field; the next save will re-fire
+    /// auto-promote if the goal is still met.
+    #[serde(default)]
+    pub target_hit_at_status: Option<String>,
+
+    /// Outgoing wiki-links to other paragraphs (1.2.4+). Stored as
+    /// metadata only — the link does NOT appear in the typst
+    /// source, so it travels safely through export pipelines. The
+    /// status-bar widget surfaces the count; the AI inference
+    /// path inlines each linked paragraph's body into the prompt
+    /// when scope=Paragraph; the Ctrl+V L modal lets the user
+    /// inspect / delete them. Circular references are rejected at
+    /// `add_link` time.
+    #[serde(default)]
+    pub linked_paragraphs: Vec<Uuid>,
+
+    /// User-toggled bookmark flag (1.2.4+). `Ctrl+V B` flips it;
+    /// `Ctrl+V M` opens a picker over every bookmarked
+    /// paragraph in the project.
+    #[serde(default)]
+    pub bookmark: bool,
 }
 
 impl Node {
@@ -151,6 +190,13 @@ impl Node {
             "image_alt":     self.image_alt,
             "content_type":  self.content_type,
             "status":        self.status,
+            "target_words":         self.target_words,
+            "target_hit_at_status": self.target_hit_at_status,
+            "linked_paragraphs":    self.linked_paragraphs
+                .iter()
+                .map(|u| u.to_string())
+                .collect::<Vec<_>>(),
+            "bookmark":             self.bookmark,
         })
     }
 
@@ -249,6 +295,30 @@ impl Node {
             .get("status")
             .and_then(|v| v.as_str())
             .map(str::to_owned);
+        // Per-paragraph goal — accept any integer JSON shape.
+        // Negative values are nonsense; clamp to None.
+        let target_words = obj
+            .get("target_words")
+            .and_then(|v| v.as_i64())
+            .filter(|n| *n > 0)
+            .map(|n| n.clamp(0, i32::MAX as i64) as i32);
+        let target_hit_at_status = obj
+            .get("target_hit_at_status")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        // Outgoing wiki-links — array of UUID strings. Silently
+        // drops malformed entries (a renamed/deleted target whose
+        // UUID went away survives a round-trip as missing here).
+        let linked_paragraphs = obj
+            .get("linked_paragraphs")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter_map(|s| Uuid::parse_str(s).ok())
+                    .collect::<Vec<Uuid>>()
+            })
+            .unwrap_or_default();
 
         Ok(Self {
             id,
@@ -268,6 +338,13 @@ impl Node {
             image_alt,
             content_type,
             status,
+            target_words,
+            target_hit_at_status,
+            linked_paragraphs,
+            bookmark: obj
+                .get("bookmark")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         })
     }
 

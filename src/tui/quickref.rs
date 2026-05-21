@@ -75,11 +75,17 @@ pub fn entries_for(focus: Focus) -> Vec<Entry> {
     // Comes last so users who rebound something can see the actual
     // chord without scanning the static layer above.
     out.push(blank());
+    out.push(header("─── F-keys + top-level (live keymap) ───"));
+    out.extend(live_chord_entries(keybind::Layer::TopLevel, focus));
+    out.push(blank());
     out.push(header("─── Meta chords (live keymap) ───"));
     out.extend(live_chord_entries(keybind::Layer::MetaSub, focus));
     out.push(blank());
     out.push(header("─── Bund chords (live keymap) ───"));
     out.extend(live_chord_entries(keybind::Layer::BundSub, focus));
+    out.push(blank());
+    out.push(header("─── View chords (live keymap) ───"));
+    out.extend(live_chord_entries(keybind::Layer::ViewSub, focus));
     out
 }
 
@@ -210,6 +216,8 @@ fn live_chord_entries(layer: keybind::Layer, focus: Focus) -> Vec<Entry> {
     let table: &Vec<BindingEntry> = match layer {
         keybind::Layer::MetaSub => &bindings.meta_sub,
         keybind::Layer::BundSub => &bindings.bund_sub,
+        keybind::Layer::ViewSub => &bindings.view_sub,
+        keybind::Layer::TopLevel => &bindings.top_level,
     };
     let prefix = match layer {
         keybind::Layer::MetaSub => bindings.meta_prefix.to_display_string(),
@@ -217,6 +225,12 @@ fn live_chord_entries(layer: keybind::Layer, focus: Focus) -> Vec<Entry> {
             .bund_prefix
             .map(|c| c.to_display_string())
             .unwrap_or_else(|| "(bund prefix disabled)".to_string()),
+        keybind::Layer::ViewSub => bindings
+            .view_prefix
+            .map(|c| c.to_display_string())
+            .unwrap_or_else(|| "(view prefix disabled)".to_string()),
+        // Top-level chords have no prefix to render.
+        keybind::Layer::TopLevel => String::new(),
     };
     let mut out: Vec<Entry> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -240,7 +254,13 @@ fn live_chord_entries(layer: keybind::Layer, focus: Focus) -> Vec<Entry> {
         // Quick-help uses the long, user-friendly description.
         // The short `label()` is reserved for the status-bar
         // hint where horizontal space is at a premium.
-        let chord = format!("{} {}", prefix, be.chord.to_display_string());
+        // Top-level chords render bare (no prefix); sub-layer
+        // chords render `<prefix> <suffix>`.
+        let chord = if prefix.is_empty() {
+            be.chord.to_display_string()
+        } else {
+            format!("{} {}", prefix, be.chord.to_display_string())
+        };
         let desc = be.action.description();
         let desc = if desc.is_empty() { label } else { desc };
         out.push(entry(chord, desc));

@@ -9,6 +9,7 @@ mod grammar;
 mod progress;
 mod project;
 mod scripting;
+mod scrivener;
 mod storage;
 mod store;
 mod tui;

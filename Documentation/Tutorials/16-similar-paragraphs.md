@@ -88,14 +88,16 @@ with the focused-pane border.
 
 ## Saving — what about autosave?
 
-The primary doc still autosaves on idle, just like normal mode.
-The **secondary doc does not autosave** in 1.2.3 — to flush it,
-either press `Ctrl+S` while focused on the right pane, or exit
-similar mode with `Ctrl+V` `S` (which saves both).
+Both editors autosave on idle (1.2.4+). The primary uses the
+existing idle-after-`editor.autosave_seconds` trigger; the
+secondary uses the same threshold, fired from the same
+`tick_autosave` pass. Pressing `Ctrl+S` while focused on either
+pane saves immediately; `Ctrl+V S` (exit similar mode) flushes
+both as a final pass before dropping the secondary.
 
-This is intentional: the secondary is meant for read-mostly
-side-by-side comparison; if you want full editing parity with
-the primary, save explicitly.
+In 1.2.3 the secondary was flush-on-exit only — fixed in 1.2.4
+after users typed in the right pane, walked away, and saw a
+dirty buffer when they came back.
 
 ## Common workflows
 

@@ -181,6 +181,7 @@ editor: {
 | `tab_width` | int | `2` | Currently informational — tui-textarea inserts a literal `\t`. |
 | `wrap` | bool | `true` | Soft word-wrap inside the editor. `false` → horizontal scroll on long lines. |
 | `autosave_seconds` | int | `5` | Seconds of editor inactivity after which a dirty paragraph is auto-saved. `0` disables idle autosave (Ctrl+S, paragraph-switch and quit-time autosaves still fire). Suspended while a grammar-correction highlight is active. |
+| `startup_splash` | bool | `true` | 1.2.4+. Show a 7-second floating splash at launch with today's words / active minutes / streak / project shape. Any key dismisses early. Set `false` to skip. |
 | `stemming.languages` | list of strings | `["english", "russian"]` | **Legacy** — superseded by top-level `language` when that is non-empty. See [`language`](#prompts_file-and-language). |
 
 The grammar-correction-highlight interaction: while you have an active
@@ -355,6 +356,9 @@ keys: {
   page_up:          PageUp
   page_down:        PageDown
   meta_prefix:      Ctrl+b
+  bund_prefix:      Ctrl+z
+  view_prefix:      Ctrl+v
+  bindings:         []
 }
 ```
 
@@ -368,6 +372,9 @@ keys: {
 | `page_up`     | `PageUp`     | PageUp (used in Tree + Editor; configurable for users on terminals that re-encode it). |
 | `page_down`   | `PageDown`   | PageDown. |
 | `meta_prefix` | `Ctrl+b`     | The Meta prefix chord. The action table is pane-specific — see [`KEYBINDING.md`](KEYBINDING.md) §1.1. |
+| `bund_prefix` | `Ctrl+z`     | The Bund prefix chord (1.2+). |
+| `view_prefix` | `Ctrl+v`     | The View prefix chord (1.2.4+) — markdown export, similar-paragraph mode, progress modal, wiki-links, bookmarks, fuzzy picker. |
+| `bindings`    | `[]`         | User overlay rebinding sub-chords. Supports `layer: "meta_sub" | "bund_sub" | "view_sub" | "top_level"`. See [`KEYS_REASSIGNMENT.md`](KEYS_REASSIGNMENT.md). |
 
 If your terminal multiplexer eats `Ctrl+B` (tmux uses it as the default
 prefix), set `meta_prefix: Ctrl+g` or `Ctrl+;` or similar.
@@ -477,7 +484,9 @@ history to show.
 ```hjson
 goals: {
   daily_words: 1500
+  active_minutes_daily: 60
   streak_grace_per_week: 1
+  auto_promote_on_target: true
   books: {
     story: { target_words: 80000, deadline: "2026-12-31" }
   }
@@ -491,11 +500,13 @@ goals: {
 | Field                    | Type            | Default | Description |
 | ------------------------ | --------------- | ------- | ----------- |
 | `daily_words`            | int             | `0`     | Project-wide daily target. Status-bar shows `today N/M words` when non-zero. |
+| `active_minutes_daily`   | int             | `0`     | 1.2.4+. Daily active-time target. Active time sums save→save gaps capped at 5 minutes per gap (AFK breaks don't count). Status-bar shows `45m / 60m` when non-zero. |
 | `streak_grace_per_week`  | int             | `0`     | Missed days forgiven inside a rolling 7-day window before the streak breaks. `0` = strict, `1` = one rest day allowed per week. |
 | `books`                  | map<slug, BookGoal> | `{}` | Per-book targets, keyed by **book slug** (matches `Node.slug`, case-insensitive). |
 | `books.<slug>.target_words` | int          | `0`     | Total words the book should reach. `0` hides the per-book pace line. |
 | `books.<slug>.deadline`  | str (`YYYY-MM-DD`) | `""` | Date by which `target_words` should be hit. Empty disables deadline pacing. Past-due deadlines collapse to "remaining gap, all at once". |
 | `status_ladder`          | map<status, int> | `{}` | Trailing-7-days promotion targets keyed by status name **lowercased** (`ready`, `final`, `third`, `second`, `first`, `napkin`). Modal shows `→ ready: N/M this week`. |
+| `auto_promote_on_target` | bool             | `true` | 1.2.4+. When a save crosses a paragraph's `target_words` (set via `Ctrl+V T` or `ink.paragraph.set_target`), advance its status one ladder rung. Idempotent per `(paragraph, status)`; a manual `Ctrl+B R` resets the bookkeeping. Set `false` to keep promotions manual. |
 
 **Today's words** = current total − today's morning baseline.
 The baseline is captured per UTC day on project open (idempotent

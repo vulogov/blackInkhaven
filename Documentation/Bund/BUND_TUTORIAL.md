@@ -180,6 +180,14 @@ words that reach into the project store.
 | `ink.pane.clear` | `( -- cleared )` | empty the pane buffer; returns false if no pane is open |
 | `ink.pane.line` | `( text -- routed )` | append one line; returns false if no pane is open |
 | `ink.input` | `( prompt hookname -- )` | open the input modal; on Enter pushes the typed string and fires `hookname` |
+| `ink.paragraph.target` | `( path -- int \| NODATA )` | 1.2.4+: read the per-paragraph word-count goal (NODATA when unset) |
+| `ink.paragraph.set_target` | `( path target -- )` | 1.2.4+: set / clear the per-paragraph goal. `target ≤ 0` clears. `store_write` — opt in via `enabled_categories: ["store_write"]` |
+| `ink.search.load` | `( query -- )` | 1.2.4+: run semantic search and load the top hit into the editor (autosaves the previous buffer). `editor_write` |
+| `ink.editor.replace_all` | `( old new -- count )` | 1.2.4+: in-buffer find/replace on the open editor; returns the number of replacements. `editor_write` |
+| `ink.ai.send_blocking` | `( prompt -- response )` | 1.2.4+: synchronous AI send. Blocks the script (UI keeps repainting). `ai_write` |
+| `ink.ai.poll` | `( -- string )` | 1.2.4+: non-blocking poll of the async AI response slot. Empty string when none ready. `ai_read` |
+| `ink.fs.read` | `( path -- string )` | 1.2.4+: read a file. `fs_read` (default-allowed). |
+| `ink.fs.write` | `( path content -- )` | 1.2.4+: write a file. `fs_write` — **default-denied**. Opt in: `enabled_categories: ["fs_write"]`. |
 
 The pane + input words live under the `editor_read` policy
 category (non-destructive UI), so they're allowed by default.
@@ -198,15 +206,21 @@ your own user books).
 
 ### Hooks (the "code that runs on…" pattern)
 
-Five hook points fire after the matching store mutation succeeds:
+Hook points fire after the matching store mutation or pipeline
+step succeeds:
 
 | Hook name | Stack on entry | Fires after |
 |-----------|----------------|-------------|
 | `hook.on_create` | `( uuid kind -- )` | new node |
 | `hook.on_save` | `( uuid -- )` | paragraph content saved |
-| `hook.on_rename` | `( uuid new_title -- )` | node renamed |
+| `hook.on_rename` | `( uuid new_title -- )` | node renamed (or auto-renamed; 1.2.4+ also rename `.typ` on disk) |
 | `hook.on_snapshot` | `( parent_uuid snap_uuid -- )` | snapshot taken |
 | `hook.on_delete` | `( uuid -- )` | each id in a deleted subtree |
+| `hook.on_status_promoted` | `( uuid from_status to_status -- )` | 1.2.4+: paragraph status changes (`Ctrl+B R` cycle OR auto-promote on goal hit). Status strings are lowercased (`napkin`, `first`, …, `ready`, `none`). |
+| `hook.on_goal_hit` | `( today_words daily_goal -- )` | 1.2.4+: project-wide `today_words` crosses `goals.daily_words` on the current day. Doesn't re-fire while still above the line — self-resets if the user dips back below. |
+| `hook.on_streak_break` | `( prev_streak_days -- )` | 1.2.4+: writing streak transitions from positive to zero (grace exhausted). Arg is the streak length at the moment of the break. |
+| `hook.on_assemble` | `( uuid slug root_typ_path files_written -- )` | 1.2.4+: successful `Ctrl+B A` Book assembly. `root_typ_path` is the absolute path the user feeds to `typst compile`. |
+| `hook.on_take` | `( uuid slug pdf_dest -- )` | 1.2.4+: PDF copied to launch cwd by `Ctrl+B O` (extra formats may or may not have succeeded; `on_take` fires once the PDF lands). |
 
 Register one in your `inkhaven.hjson`'s `scripting.bootstrap`:
 

@@ -159,6 +159,92 @@ pub enum Action {
     #[serde(rename = "bund.open_script_picker")]
     BundOpenScriptPicker,
 
+    // ── Top-level (1.2.4+ F-key migration) ────────────────────
+    /// F1 anywhere — open the Help-book query modal.
+    #[serde(rename = "help.query")]
+    HelpQuery,
+    /// F2 in Tree — rename the cursor's node.
+    #[serde(rename = "tree.rename")]
+    RenameNode,
+    /// F3 in Tree — file picker, import context.
+    #[serde(rename = "tree.file_picker_import")]
+    FilePickerTreeImport,
+    /// F3 in Editor — file picker, "load into buffer" context.
+    #[serde(rename = "editor.file_picker_load")]
+    FilePickerEditorLoad,
+    /// F4 in Editor — toggle split-edit mode.
+    #[serde(rename = "editor.toggle_split")]
+    ToggleSplit,
+    /// Ctrl+F4 in Editor — accept the snapshot pane into the
+    /// live buffer.
+    #[serde(rename = "editor.accept_split_snapshot")]
+    AcceptSplitSnapshot,
+    /// F6 in Editor — open the snapshot picker.
+    #[serde(rename = "editor.snapshot_picker")]
+    OpenSnapshotPicker,
+    /// F7 in Editor — grammar check the open paragraph.
+    #[serde(rename = "editor.grammar_check")]
+    GrammarCheck,
+    /// F9 anywhere — cycle AI scope mode.
+    #[serde(rename = "ai.cycle_mode")]
+    CycleAiMode,
+    /// F10 anywhere — toggle inference mode (Local ↔ Full).
+    #[serde(rename = "ai.toggle_inference_mode")]
+    ToggleInferenceMode,
+
+    // ── View prefix (1.2.4+, default Ctrl+V) ──────────────────
+    /// Ctrl+V 1 (Editor) — write the open paragraph's live buffer
+    /// as markdown to cwd.
+    #[serde(rename = "view.export_markdown_buffer")]
+    ViewExportMarkdownBuffer,
+    /// Ctrl+V 2 (Editor) — write the containing subchapter's
+    /// subtree as markdown to cwd.
+    #[serde(rename = "view.export_markdown_subchapter")]
+    ViewExportMarkdownSubchapter,
+    /// Ctrl+V 1 (Tree) — write the tree-cursor's node + descendants
+    /// as markdown to cwd.
+    #[serde(rename = "view.export_markdown_subtree")]
+    ViewExportMarkdownSubtree,
+    /// Ctrl+V S — toggle similar-paragraph mode (vector-similarity
+    /// picker, side-by-side editor).
+    #[serde(rename = "view.toggle_similar_mode")]
+    ViewToggleSimilarMode,
+    /// Ctrl+V G — open the writing-progress modal.
+    #[serde(rename = "view.open_progress")]
+    ViewOpenProgress,
+    /// Ctrl+V T — open the per-paragraph target-words input modal.
+    #[serde(rename = "view.open_paragraph_target")]
+    ViewOpenParagraphTarget,
+    /// Ctrl+V A — switch the tree pane into "select paragraph
+    /// to link" mode. Enter on a paragraph adds it to the open
+    /// paragraph's `linked_paragraphs`.
+    #[serde(rename = "view.add_link")]
+    ViewAddLink,
+    /// Ctrl+V I — reverse of `view.add_link`. Tree pane picker;
+    /// Enter on a paragraph adds the OPEN paragraph to THAT
+    /// paragraph's outgoing links (creates an incoming link
+    /// for current).
+    #[serde(rename = "view.add_incoming_link")]
+    ViewAddIncomingLink,
+    /// Ctrl+V L — open the linked-paragraphs floating modal
+    /// (`D` removes a link).
+    #[serde(rename = "view.list_links")]
+    ViewListLinks,
+    /// Ctrl+V K — open the backlinks floating modal. Reverse of
+    /// `view.list_links`: shows paragraphs whose
+    /// `linked_paragraphs` contains the open paragraph.
+    #[serde(rename = "view.list_backlinks")]
+    ViewListBacklinks,
+    /// Ctrl+V B — toggle bookmark on the open paragraph.
+    #[serde(rename = "view.toggle_bookmark")]
+    ViewToggleBookmark,
+    /// Ctrl+V M — open the bookmark picker.
+    #[serde(rename = "view.list_bookmarks")]
+    ViewListBookmarks,
+    /// Ctrl+V P — fuzzy paragraph picker (1.2.4+).
+    #[serde(rename = "view.fuzzy_paragraph_picker")]
+    ViewFuzzyParagraphPicker,
+
     /// Explicit "this chord does nothing" — overlay entries can
     /// set `action: "none"` to disable a default chord.
     #[serde(rename = "none")]
@@ -222,6 +308,31 @@ impl Action {
             Action::BundNewScript => "new script".into(),
             Action::BundOpenEvalModal => "eval".into(),
             Action::BundOpenScriptPicker => "pick script".into(),
+
+            Action::HelpQuery => "help".into(),
+            Action::RenameNode => "rename".into(),
+            Action::FilePickerTreeImport => "file picker".into(),
+            Action::FilePickerEditorLoad => "load file".into(),
+            Action::ToggleSplit => "split".into(),
+            Action::AcceptSplitSnapshot => "accept snap".into(),
+            Action::OpenSnapshotPicker => "snapshots".into(),
+            Action::GrammarCheck => "grammar".into(),
+            Action::CycleAiMode => "AI mode".into(),
+            Action::ToggleInferenceMode => "infer mode".into(),
+
+            Action::ViewExportMarkdownBuffer => "md buffer".into(),
+            Action::ViewExportMarkdownSubchapter => "md subchap".into(),
+            Action::ViewExportMarkdownSubtree => "md subtree".into(),
+            Action::ViewToggleSimilarMode => "similar".into(),
+            Action::ViewOpenProgress => "progress".into(),
+            Action::ViewOpenParagraphTarget => "para target".into(),
+            Action::ViewAddLink => "add link".into(),
+            Action::ViewAddIncomingLink => "add ← link".into(),
+            Action::ViewListLinks => "list links".into(),
+            Action::ViewListBacklinks => "backlinks".into(),
+            Action::ViewToggleBookmark => "bookmark".into(),
+            Action::ViewListBookmarks => "bookmarks".into(),
+            Action::ViewFuzzyParagraphPicker => "find ¶".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) => format!("λ {name}"),
@@ -322,6 +433,56 @@ impl Action {
             Action::BundOpenScriptPicker =>
                 "Open the script picker — list scripts in the current branch (A toggles to Scripts book), Enter runs.".into(),
 
+            // ── Top-level F-keys (1.2.4+) ──────────────────────
+            Action::HelpQuery =>
+                "Open the Help-book RAG query modal — natural-language question against the Help book.".into(),
+            Action::RenameNode =>
+                "Rename the tree-cursor's node (paragraphs also rename their .typ on disk).".into(),
+            Action::FilePickerTreeImport =>
+                "Open the file picker in import mode — a file becomes a new paragraph, a directory recursively imports as branches.".into(),
+            Action::FilePickerEditorLoad =>
+                "Open the file picker in load mode — replaces the open paragraph's buffer with the picked file's content.".into(),
+            Action::ToggleSplit =>
+                "Toggle split-edit mode — captures the current buffer as a read-only lower pane.".into(),
+            Action::AcceptSplitSnapshot =>
+                "Replace the live buffer with the split's captured snapshot, exit split, mark dirty.".into(),
+            Action::OpenSnapshotPicker =>
+                "Open the snapshot picker for the current paragraph (↑↓ navigate · Enter loads · V diff · D delete).".into(),
+            Action::GrammarCheck =>
+                "Grammar-check the open paragraph — runs the configured F7 prompt against the AI, applies via `g` in the AI pane.".into(),
+            Action::CycleAiMode =>
+                "Cycle AI scope: None → Selection → Paragraph → Subchapter → Chapter → Book → None.".into(),
+            Action::ToggleInferenceMode =>
+                "Toggle inference mode: Local-only RAG ↔ Full general knowledge (Help is pinned to Local regardless).".into(),
+
+            // ── View prefix ────────────────────────────────────
+            Action::ViewExportMarkdownBuffer =>
+                "Export the open paragraph's live buffer (including unsaved edits) as markdown to the launch cwd.".into(),
+            Action::ViewExportMarkdownSubchapter =>
+                "Export the containing subchapter's subtree as markdown to the launch cwd.".into(),
+            Action::ViewExportMarkdownSubtree =>
+                "Export the tree-cursor's node and all descendants as markdown to the launch cwd.".into(),
+            Action::ViewToggleSimilarMode =>
+                "Toggle similar-paragraph mode — vector-similarity picker; selecting a hit opens a second editor side-by-side. Re-press to save both and exit.".into(),
+            Action::ViewOpenProgress =>
+                "Open the writing-progress modal (today / streak / per-book pace / 30-day sparkline / status-ladder counts).".into(),
+            Action::ViewOpenParagraphTarget =>
+                "Set or clear the open paragraph's word-count goal. Saves that cross the target auto-promote status one ladder step.".into(),
+            Action::ViewAddLink =>
+                "Add a linked paragraph — tree pane switches to `select paragraph to link` mode; Enter links, Esc cancels. Stored as metadata, never embedded in typst source.".into(),
+            Action::ViewAddIncomingLink =>
+                "Add an incoming link — tree pane picker; Enter on a paragraph adds the OPEN paragraph to THAT paragraph's outgoing links (reverse of Ctrl+V A).".into(),
+            Action::ViewListLinks =>
+                "Open the linked-paragraphs modal — list outgoing wiki-links for the open paragraph; press D on a row to remove.".into(),
+            Action::ViewListBacklinks =>
+                "Open the backlinks modal — list paragraphs that link to the open paragraph (reverse of Ctrl+V L). Enter opens; D removes the source's outgoing link to current.".into(),
+            Action::ViewToggleBookmark =>
+                "Toggle bookmark on the open paragraph. Bookmarks are surfaced by the Ctrl+V M picker; survive restart via metadata.".into(),
+            Action::ViewListBookmarks =>
+                "Open the bookmark picker — every bookmarked paragraph in the project. Enter opens; D removes the bookmark.".into(),
+            Action::ViewFuzzyParagraphPicker =>
+                "Fuzzy paragraph picker — type any substring of the title or slug path, Enter opens the highlighted hit.".into(),
+
             Action::None => String::new(),
             Action::BundLambda(name) =>
                 format!("User-bound Bund lambda `{name}` (registered via ink.key.bind_lambda)."),
@@ -350,8 +511,18 @@ pub struct KeyBindings {
     /// Same for the Bund sub-chord table (default `Ctrl+Z`).
     /// `None` when the user disabled it via empty config.
     pub bund_prefix: Option<KeyChord>,
+    /// View-prefix chord (1.2.4+, default `Ctrl+V`). Gates the
+    /// markdown-export / similar-mode / progress / paragraph-target
+    /// sub-chords. `None` disables the layer entirely.
+    pub view_prefix: Option<KeyChord>,
     pub meta_sub: Vec<BindingEntry>,
     pub bund_sub: Vec<BindingEntry>,
+    pub view_sub: Vec<BindingEntry>,
+    /// Top-level (no-prefix) chords. 1.2.4+ home for the F-keys
+    /// that used to be hardcoded in `handle_key`. Single-token
+    /// chord strings in HJSON `keys.bindings` (e.g. `"F1"`,
+    /// `"Shift+F4"`) route here.
+    pub top_level: Vec<BindingEntry>,
 }
 
 impl Default for KeyBindings {
@@ -369,6 +540,7 @@ impl KeyBindings {
         Self {
             meta_prefix: KeyChord::parse("Ctrl+b").expect("default meta_prefix"),
             bund_prefix: Some(KeyChord::parse("Ctrl+z").expect("default bund_prefix")),
+            view_prefix: Some(KeyChord::parse("Ctrl+v").expect("default view_prefix")),
             meta_sub: vec![
                 // ── Tree pane ─────────────────────────────────
                 entry("c", Action::AddChapter, Scope::Tree),
@@ -425,7 +597,61 @@ impl KeyBindings {
                 entry("e", Action::BundOpenEvalModal, Scope::Any),
                 entry("?", Action::BundOpenScriptPicker, Scope::Any),
             ],
+            view_sub: vec![
+                // Editor / AI-prompt: 1 = buffer markdown, 2 =
+                // containing-subchapter subtree markdown.
+                entry("1", Action::ViewExportMarkdownBuffer, Scope::Editor),
+                entry("2", Action::ViewExportMarkdownSubchapter, Scope::Editor),
+                entry("1", Action::ViewExportMarkdownBuffer, Scope::Ai),
+                entry("2", Action::ViewExportMarkdownSubchapter, Scope::Ai),
+                // Tree: 1 = subtree markdown.
+                entry("1", Action::ViewExportMarkdownSubtree, Scope::Tree),
+                // Global suffixes.
+                entry("s", Action::ViewToggleSimilarMode, Scope::Any),
+                entry("g", Action::ViewOpenProgress, Scope::Any),
+                entry("t", Action::ViewOpenParagraphTarget, Scope::Any),
+                entry("a", Action::ViewAddLink, Scope::Any),
+                entry("i", Action::ViewAddIncomingLink, Scope::Any),
+                entry("l", Action::ViewListLinks, Scope::Any),
+                entry("k", Action::ViewListBacklinks, Scope::Any),
+                entry("b", Action::ViewToggleBookmark, Scope::Any),
+                entry("m", Action::ViewListBookmarks, Scope::Any),
+                entry("p", Action::ViewFuzzyParagraphPicker, Scope::Any),
+            ],
+            top_level: vec![
+                // F1 anywhere: Help-book RAG modal.
+                entry("F1", Action::HelpQuery, Scope::Any),
+                // F2: rename — pane-aware-content but bound in Tree
+                // (where the cursor lives) + Editor (where rename
+                // can still be triggered for the open paragraph).
+                entry("F2", Action::RenameNode, Scope::Tree),
+                entry("F2", Action::RenameNode, Scope::Editor),
+                // F3: pane-specific file picker. Tree → import,
+                // Editor → load.
+                entry("F3", Action::FilePickerTreeImport, Scope::Tree),
+                entry("F3", Action::FilePickerEditorLoad, Scope::Editor),
+                // F4 / Ctrl+F4 — split-edit and "accept split".
+                entry("F4", Action::ToggleSplit, Scope::Editor),
+                entry("Ctrl+F4", Action::AcceptSplitSnapshot, Scope::Editor),
+                // F5 — snapshot the open paragraph (same as
+                // Ctrl+B N inside meta_sub).
+                entry("F5", Action::CreateSnapshot, Scope::Editor),
+                // F6 — snapshot picker.
+                entry("F6", Action::OpenSnapshotPicker, Scope::Editor),
+                // F7 — grammar check.
+                entry("F7", Action::GrammarCheck, Scope::Editor),
+                // F9 / F10 — global AI mode + inference toggle.
+                entry("F9", Action::CycleAiMode, Scope::Any),
+                entry("F10", Action::ToggleInferenceMode, Scope::Any),
+            ],
         }
+    }
+
+    /// Resolve a single (top-level) keystroke against the
+    /// `top_level` table — the home for F-keys after 1.2.4's
+    /// migration.
+    pub fn resolve_top_level(&self, ev: &KeyEvent, focus: Focus) -> Option<Action> {
+        resolve_in(&self.top_level, ev, focus)
     }
 
     /// Resolve a meta sub-chord against the current focus. Returns
@@ -440,38 +666,54 @@ impl KeyBindings {
         resolve_in(&self.bund_sub, ev, focus)
     }
 
+    /// Same as `resolve_meta_sub` for chords after the view_prefix
+    /// (1.2.4+, default Ctrl+V).
+    pub fn resolve_view_sub(&self, ev: &KeyEvent, focus: Focus) -> Option<Action> {
+        resolve_in(&self.view_sub, ev, focus)
+    }
+
     /// Apply a list of `(layer, entry)` overlay pairs on top of
     /// the existing table. Each new entry replaces any existing
     /// `(chord, scope)` match in the same layer and gets
     /// prepended so it wins resolution against the defaults.
     pub fn apply_overlay(&mut self, overlay: Vec<(Layer, BindingEntry)>) {
         for (layer, new) in overlay {
-            let table = match layer {
-                Layer::MetaSub => &mut self.meta_sub,
-                Layer::BundSub => &mut self.bund_sub,
-            };
+            let table = self.layer_table_mut(layer);
             table.retain(|b| !(b.chord == new.chord && b.scope == new.scope));
             table.insert(0, new);
         }
     }
 
+    fn layer_table_mut(&mut self, layer: Layer) -> &mut Vec<BindingEntry> {
+        match layer {
+            Layer::MetaSub => &mut self.meta_sub,
+            Layer::BundSub => &mut self.bund_sub,
+            Layer::ViewSub => &mut self.view_sub,
+            Layer::TopLevel => &mut self.top_level,
+        }
+    }
+
     /// Build a `KeyBindings` from `defaults()` overlaid with the
     /// parsed HJSON `keys.bindings` entries. Caller supplies the
-    /// already-parsed meta + bund prefixes so the overlay parser
-    /// can route `"Ctrl+b m"` → meta_sub table by prefix match.
+    /// already-parsed meta + bund + view prefixes so the overlay
+    /// parser can route `"Ctrl+b m"` → meta_sub table by prefix
+    /// match.
     pub fn from_overrides(
         meta_prefix: KeyChord,
         bund_prefix: Option<KeyChord>,
+        view_prefix: Option<KeyChord>,
         overrides: &[(String, String, Option<String>)],
     ) -> Result<Self, String> {
         let mut bindings = Self::defaults();
         bindings.meta_prefix = meta_prefix;
         bindings.bund_prefix = bund_prefix;
+        bindings.view_prefix = view_prefix;
         let mut overlay: Vec<(Layer, BindingEntry)> = Vec::new();
         for (chord_str, action_str, scope_str) in overrides {
             let entry = parse_overlay(
                 meta_prefix,
                 bund_prefix.unwrap_or_else(disabled_chord_placeholder),
+                view_prefix.unwrap_or_else(disabled_chord_placeholder),
                 chord_str,
                 action_str,
                 scope_str,
@@ -487,10 +729,7 @@ impl KeyBindings {
     /// semantics as the HJSON overlay: a new entry shadows any
     /// existing one with matching key.
     pub fn add(&mut self, layer: Layer, entry: BindingEntry) {
-        let table = match layer {
-            Layer::MetaSub => &mut self.meta_sub,
-            Layer::BundSub => &mut self.bund_sub,
-        };
+        let table = self.layer_table_mut(layer);
         table.retain(|b| !(b.chord == entry.chord && b.scope == entry.scope));
         table.insert(0, entry);
     }
@@ -498,10 +737,7 @@ impl KeyBindings {
     /// Remove every entry whose `(chord, scope)` matches. Returns
     /// the number of entries removed (zero when nothing matched).
     pub fn remove(&mut self, layer: Layer, chord: &KeyChord, scope: Scope) -> usize {
-        let table = match layer {
-            Layer::MetaSub => &mut self.meta_sub,
-            Layer::BundSub => &mut self.bund_sub,
-        };
+        let table = self.layer_table_mut(layer);
         let before = table.len();
         table.retain(|b| !(b.chord == *chord && b.scope == scope));
         before - table.len()
@@ -530,12 +766,17 @@ impl KeyBindings {
             Layer::MetaSub
         } else if Some(prefix) == self.bund_prefix {
             Layer::BundSub
+        } else if Some(prefix) == self.view_prefix {
+            Layer::ViewSub
         } else {
             return Err(format!(
-                "chord `{s}`: prefix `{prefix_str}` is not meta_prefix or bund_prefix"
+                "chord `{s}`: prefix `{prefix_str}` is not meta_prefix / bund_prefix / view_prefix"
             ));
         };
-        if suffix == self.meta_prefix || Some(suffix) == self.bund_prefix {
+        if suffix == self.meta_prefix
+            || Some(suffix) == self.bund_prefix
+            || Some(suffix) == self.view_prefix
+        {
             return Err(format!(
                 "chord `{s}`: suffix collides with a prefix chord"
             ));
@@ -557,6 +798,11 @@ impl KeyBindings {
     /// Same for the bund-prefix chord.
     pub fn bund_hint(&self, focus: Focus) -> String {
         self.hint_for(&self.bund_sub, "BUND", focus)
+    }
+
+    /// Same for the view-prefix chord (1.2.4+, default Ctrl+V).
+    pub fn view_hint(&self, focus: Focus) -> String {
+        self.hint_for(&self.view_sub, "VIEW", focus)
     }
 
     fn hint_for(&self, table: &[BindingEntry], prefix: &str, focus: Focus) -> String {
@@ -602,11 +848,19 @@ fn disabled_chord_placeholder() -> KeyChord {
 pub enum Layer {
     MetaSub,
     BundSub,
+    /// 1.2.4+: Ctrl+V family — markdown export / similar mode /
+    /// progress / paragraph target.
+    ViewSub,
+    /// 1.2.4+: top-level (no-prefix) chords — home for the
+    /// F-keys after the migration. HJSON `keys.bindings` chord
+    /// strings that contain a single token (no prefix) land here.
+    TopLevel,
 }
 
 fn parse_overlay(
     meta_prefix: KeyChord,
     bund_prefix: KeyChord,
+    view_prefix: KeyChord,
     chord: &str,
     action: &str,
     scope: &Option<String>,
@@ -614,17 +868,27 @@ fn parse_overlay(
     // Shorthand split: "Ctrl+b y" → ["Ctrl+b", "y"]. Trim runs of
     // whitespace so "Ctrl+b   y" also parses cleanly.
     let parts: Vec<&str> = chord.split_whitespace().collect();
+    // 1.2.4+: single-token chord strings (e.g. `"F1"`, `"Shift+F4"`)
+    // bind into the `top_level` table — no prefix required.
+    if parts.len() == 1 {
+        let single = KeyChord::parse(parts[0])
+            .map_err(|e| format!("binding chord `{chord}`: {e}"))?;
+        let action_enum = parse_action(action)?;
+        let scope_enum = parse_scope(scope.as_deref())?;
+        return Ok((
+            Layer::TopLevel,
+            BindingEntry {
+                chord: single,
+                action: action_enum,
+                scope: scope_enum,
+            },
+        ));
+    }
     let (prefix_str, suffix_str) = match parts.as_slice() {
-        [single] => {
-            return Err(format!(
-                "binding chord `{single}`: top-level (no-prefix) rebinding isn't supported \
-                 in Stage 1 — use `<meta_prefix> <key>` or `<bund_prefix> <key>`"
-            ));
-        }
         [prefix, suffix] => (*prefix, *suffix),
         _ => {
             return Err(format!(
-                "binding chord `{chord}`: expected `<prefix> <suffix>` (two tokens)"
+                "binding chord `{chord}`: expected `<prefix> <suffix>` (two tokens) or single top-level chord"
             ));
         }
     };
@@ -636,15 +900,17 @@ fn parse_overlay(
         Layer::MetaSub
     } else if prefix == bund_prefix {
         Layer::BundSub
+    } else if prefix == view_prefix {
+        Layer::ViewSub
     } else {
         return Err(format!(
-            "binding chord `{chord}`: prefix `{prefix_str}` is not meta_prefix or bund_prefix"
+            "binding chord `{chord}`: prefix `{prefix_str}` is not meta_prefix / bund_prefix / view_prefix"
         ));
     };
     // Reject rebinding the prefixes themselves and the hard-quit
     // chord — those are configured via top-level `keys.*` slots,
     // not the bindings overlay.
-    if suffix == meta_prefix || suffix == bund_prefix {
+    if suffix == meta_prefix || suffix == bund_prefix || suffix == view_prefix {
         return Err(format!(
             "binding chord `{chord}`: suffix collides with a prefix chord"
         ));
