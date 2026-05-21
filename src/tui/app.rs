@@ -1533,6 +1533,16 @@ pub(crate) struct ScriptPickerEntry {
     pub slug_path: String,
 }
 
+/// One row in the similar-paragraph picker modal.
+#[derive(Debug, Clone)]
+pub(crate) struct SimilarPickerEntry {
+    pub id: Uuid,
+    pub title: String,
+    pub slug_path: String,
+    pub score: f64,
+    pub snippet: String,
+}
+
 enum Modal {
     None,
     Adding {
@@ -1590,6 +1600,15 @@ enum Modal {
     ScriptPicker {
         scope: ScriptPickerScope,
         entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
+    /// Ctrl+V S — pick a paragraph similar to the current buffer.
+    /// Result list comes from the vector index seeded with the
+    /// current paragraph's text; entries always exclude the
+    /// current paragraph itself.
+    SimilarPicker {
+        entries: Vec<SimilarPickerEntry>,
         cursor: usize,
         scroll: usize,
     },
@@ -1736,6 +1755,27 @@ pub(crate) struct App {
     ai_input: TextInput,
 
     opened: Option<OpenedDoc>,
+    /// "Similar paragraphs" mode: when `Some`, a second
+    /// paragraph is loaded side-by-side with `opened`. The right
+    /// editor pane (which normally holds the AI pane) is
+    /// repurposed to render this doc. Set by the SimilarPicker
+    /// modal; cleared by re-pressing Ctrl+V S, which first saves
+    /// both buffers.
+    ///
+    /// `self.opened` always carries the **focused** doc — Tab in
+    /// similar mode swaps `opened` ↔ `secondary` so the existing
+    /// editor key handlers keep working unchanged. The
+    /// `secondary_in_left_pane` flag tells the renderer which
+    /// physical pane currently holds `opened`.
+    secondary: Option<OpenedDoc>,
+    /// In similar-paragraph mode, which pane has keyboard focus.
+    /// `false` (default) → left pane = `self.opened` is the
+    /// keyboard target. `true` → right pane = `self.secondary`
+    /// is the target. Tab inside `Focus::Editor` flips this flag.
+    /// All existing editor handlers continue to read/write
+    /// `self.opened`; routing happens via a swap performed at
+    /// the key-dispatch + save boundaries.
+    secondary_focused: bool,
     status: String,
     show_results_overlay: bool,
     results: Vec<SearchHit>,
@@ -2104,6 +2144,8 @@ impl App {
             search_input: TextInput::new(),
             ai_input: TextInput::new(),
             opened: None,
+            secondary: None,
+            secondary_focused: false,
             status: String::from(
                 "Tab=panes · Enter=open · Ctrl+S=save · Ctrl+B then B/C/S/P add · D delete · ↑/↓ reorder · Ctrl+Q quit",
             ),
@@ -2755,6 +2797,22 @@ impl App {
             // the user really meant to (no other modifiers were on). If we
             // didn't intercept here, Tab would insert a literal tab via
             // tui-textarea.
+            //
+            // Similar-paragraph mode special case: when the AI pane
+            // has been replaced by a second editor (`self.secondary
+            // .is_some()`), Tab inside the editor pane toggles
+            // keyboard focus between the two editor panes instead
+            // of cycling to a non-existent AI pane. Shift+Tab does
+            // the same — there's only one "other pane" to flip to.
+            if self.secondary.is_some() {
+                self.secondary_focused = !self.secondary_focused;
+                self.status = if self.secondary_focused {
+                    "similar: right editor focused".into()
+                } else {
+                    "similar: left editor focused".into()
+                };
+                return Ok(false);
+            }
             let next = if self.keymap.next_pane.matches(&key) {
                 self.focus.next()
             } else {
@@ -3037,7 +3095,24 @@ impl App {
         self.open_delete_modal();
     }
 
+    /// Entry point for the editor pane. When in similar-paragraph
+    /// mode + the secondary pane has keyboard focus
+    /// (`self.secondary_focused`), we swap `opened ↔ secondary` so
+    /// every downstream handler — all of which target
+    /// `self.opened` — naturally operates on the right-pane doc.
+    /// Swap back after the call returns. This keeps the 100+
+    /// existing editor key handlers unchanged.
     fn handle_editor_key(&mut self, key: KeyEvent) -> Result<bool> {
+        if self.secondary_focused && self.secondary.is_some() {
+            std::mem::swap(&mut self.opened, &mut self.secondary);
+            let r = self.handle_editor_key_inner(key);
+            std::mem::swap(&mut self.opened, &mut self.secondary);
+            return r;
+        }
+        self.handle_editor_key_inner(key)
+    }
+
+    fn handle_editor_key_inner(&mut self, key: KeyEvent) -> Result<bool> {
         if self.opened.is_none() {
             if matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q')) {
                 return Ok(self.request_quit());
@@ -4996,6 +5071,14 @@ impl App {
             self.status = "view cancelled".into();
             return;
         }
+        // `S` / `s` toggles "similar paragraphs" mode.
+        // The chord is global (works in any pane) because the
+        // current paragraph is whatever's loaded in `self.opened`,
+        // independent of where focus happens to be.
+        if matches!(key.code, KeyCode::Char('S') | KeyCode::Char('s')) {
+            self.toggle_similar_paragraph_mode();
+            return;
+        }
         let outcome = match (self.focus, key.code) {
             (Focus::Editor | Focus::AiPrompt, KeyCode::Char('1')) => {
                 self.export_markdown_buffer()
@@ -5007,7 +5090,7 @@ impl App {
                 self.export_markdown_tree_subtree()
             }
             _ => {
-                self.status = "view: unknown chord (Editor: 1/2 · Tree: 1)".into();
+                self.status = "view: unknown chord (Editor: 1/2/S · Tree: 1/S)".into();
                 return;
             }
         };
@@ -5015,6 +5098,176 @@ impl App {
             Ok(path) => format!("view: wrote {}", path.display()),
             Err(e) => format!("view: {e}"),
         };
+    }
+
+    /// Entry point for the Ctrl+V S chord. Behaviour depends on
+    /// whether we're already in similar-paragraph mode:
+    ///
+    /// * Not in mode → save the current buffer, embed it as a
+    ///   similarity query against the vector index, and open the
+    ///   SimilarPicker modal with the results (current paragraph
+    ///   filtered out, paragraphs only).
+    /// * Already in mode → save both buffers and drop the
+    ///   secondary doc so the layout returns to tree | editor | AI.
+    fn toggle_similar_paragraph_mode(&mut self) {
+        if self.secondary.is_some() {
+            // Save both, then exit similar mode. If the focused
+            // (= `self.opened`) doc fails to save, surface that
+            // first and keep the user in similar mode so they can
+            // fix it. The unfocused doc's save error is swallowed
+            // with a tracing log — it's the secondary buffer,
+            // less critical to surface immediately.
+            if let Err(e) = self.save_current() {
+                self.status = format!("view S: save primary failed — {e:#}");
+                return;
+            }
+            if let Some(mut sec) = self.secondary.take() {
+                if sec.dirty {
+                    if let Err(e) = self.save_doc(&mut sec) {
+                        tracing::warn!(
+                            target: "inkhaven::view_similar",
+                            "secondary save failed: {e:#}",
+                        );
+                        self.status = format!(
+                            "view S: exited (secondary save warning: {e:#})"
+                        );
+                        self.secondary_focused = false;
+                        return;
+                    }
+                }
+            }
+            self.secondary_focused = false;
+            self.status = "view S: exited similar-paragraphs mode".into();
+            return;
+        }
+        // Not in mode — open the picker. Need an open paragraph
+        // to derive the similarity query from.
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view S: no paragraph open — nothing to compare against".into();
+            return;
+        };
+        // Save the current buffer first so the similarity search
+        // sees on-disk text (the vector index is refreshed on
+        // save). If save fails, abort — searching against stale
+        // bytes would mislead.
+        if doc.dirty {
+            if let Err(e) = self.save_current() {
+                self.status = format!("view S: save failed — {e:#}");
+                return;
+            }
+        }
+        let (current_id, query) = match self.opened.as_ref() {
+            Some(d) => (d.id, d.textarea.lines().join("\n")),
+            None => {
+                self.status = "view S: paragraph closed during save".into();
+                return;
+            }
+        };
+        if query.trim().is_empty() {
+            self.status = "view S: paragraph is empty — nothing to compare".into();
+            return;
+        }
+        match self.find_similar_paragraphs(current_id, &query, 20) {
+            Ok(entries) if entries.is_empty() => {
+                self.status =
+                    "view S: no similar paragraphs found (need more indexed content)".into();
+            }
+            Ok(entries) => {
+                self.modal = Modal::SimilarPicker {
+                    entries,
+                    cursor: 0,
+                    scroll: 0,
+                };
+                self.status =
+                    "similar: ↑↓ select · Enter open side-by-side · Esc cancel".into();
+            }
+            Err(e) => {
+                self.status = format!("view S: search failed — {e:#}");
+            }
+        }
+    }
+
+    /// Run a vector-similarity search seeded with `query` and
+    /// turn the raw hits into picker entries. Filters out
+    /// `exclude_id` (the current paragraph; would otherwise top
+    /// the list with score = 1.0) and any non-Paragraph kind
+    /// (Help-book content, Notes/Places/etc. should surface
+    /// elsewhere — the user asked for paragraphs).
+    fn find_similar_paragraphs(
+        &self,
+        exclude_id: Uuid,
+        query: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<SimilarPickerEntry>> {
+        use crate::tui::search_results::SearchHit;
+        // Over-fetch: the dedup pass inside the store collapses
+        // meta/content slots, but our own filters (current id,
+        // non-paragraph kinds) still drop rows. Aim for `limit`
+        // *survivors*, not `limit` raw hits.
+        let raw = self
+            .store
+            .search_text(query, (limit + 4).max(8))
+            .map_err(|e| anyhow::anyhow!("similarity search: {e}"))?;
+        let mut out: Vec<SimilarPickerEntry> = Vec::new();
+        for v in raw.iter() {
+            let Some(hit) = SearchHit::parse(v) else {
+                continue;
+            };
+            if hit.id == exclude_id {
+                continue;
+            }
+            if !matches!(hit.kind, crate::store::node::NodeKind::Paragraph) {
+                continue;
+            }
+            // Only surface paragraphs that still live in the
+            // hierarchy (the vector index can lag a fast delete).
+            let Some(node) = self.hierarchy.get(hit.id) else {
+                continue;
+            };
+            let slug_path = self.hierarchy.slug_path(node);
+            out.push(SimilarPickerEntry {
+                id: hit.id,
+                title: hit.title.clone(),
+                slug_path,
+                score: hit.score,
+                snippet: hit.snippet.clone(),
+            });
+            if out.len() >= limit {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Save an arbitrary OpenedDoc to disk. Used by the
+    /// similar-paragraph mode toggle to flush the secondary doc
+    /// (which lives in `self.secondary`, outside the normal
+    /// save_current path). Mirrors save_current's body so the
+    /// two stay in sync; refactoring both onto one impl is
+    /// future work.
+    fn save_doc(
+        &mut self,
+        doc: &mut OpenedDoc,
+    ) -> std::result::Result<(), String> {
+        let abs = self.layout.root.join(&doc.rel_path);
+        let body = doc.textarea.lines().join("\n");
+        std::fs::write(&abs, body.as_bytes())
+            .map_err(|e| format!("write {}: {e}", abs.display()))?;
+        // Refresh the store so subsequent searches see the new
+        // text. We deliberately skip the snapshot machinery —
+        // secondary saves are routine + cheap; explicit snapshots
+        // go through the F5 / Ctrl+B N flow on the primary doc.
+        let mut node = self
+            .hierarchy
+            .get(doc.id)
+            .cloned()
+            .ok_or_else(|| format!("paragraph {} not in hierarchy", doc.id))?;
+        self.store
+            .update_paragraph_content(&mut node, body.as_bytes())
+            .map_err(|e| format!("store update: {e}"))?;
+        doc.dirty = false;
+        doc.saved_lines = doc.textarea.lines().to_vec();
+        Ok(())
     }
 
     fn export_markdown_buffer(&self) -> std::result::Result<std::path::PathBuf, String> {
@@ -8887,6 +9140,7 @@ impl App {
         let is_bund_pane = matches!(self.modal, Modal::BundPane { .. });
         let is_script_picker = matches!(self.modal, Modal::ScriptPicker { .. });
         let is_bund_input = matches!(self.modal, Modal::BundInput { .. });
+        let is_similar_picker = matches!(self.modal, Modal::SimilarPicker { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -8967,6 +9221,11 @@ impl App {
 
         if is_script_picker {
             self.script_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_similar_picker {
+            self.similar_picker_handle_key(key);
             return Ok(false);
         }
 
@@ -9774,8 +10033,32 @@ impl App {
 
         self.draw_search_bar(f, outer[0]);
         self.draw_tree(f, body[0]);
-        self.draw_editor(f, body[1]);
-        self.draw_ai(f, body[2]);
+        if self.secondary.is_some() {
+            // Similar-paragraph mode: AI pane is repurposed as
+            // the second editor. Both panes carve off the bottom
+            // row of their rect for the full slug-path footer
+            // the spec asks for.
+            let primary_rect = body[1];
+            let footer_h: u16 = 1;
+            let primary_editor_rect = Rect {
+                x: primary_rect.x,
+                y: primary_rect.y,
+                width: primary_rect.width,
+                height: primary_rect.height.saturating_sub(footer_h),
+            };
+            let primary_footer_rect = Rect {
+                x: primary_rect.x,
+                y: primary_rect.y + primary_rect.height.saturating_sub(footer_h),
+                width: primary_rect.width,
+                height: footer_h,
+            };
+            self.draw_editor(f, primary_editor_rect);
+            self.draw_primary_pane_footer(f, primary_footer_rect);
+            self.draw_secondary_editor(f, body[2]);
+        } else {
+            self.draw_editor(f, body[1]);
+            self.draw_ai(f, body[2]);
+        }
         self.draw_ai_prompt(f, outer[2]);
         self.draw_status(f, outer[3]);
 
@@ -10407,6 +10690,229 @@ impl App {
         );
     }
 
+    fn similar_picker_handle_key(&mut self, key: KeyEvent) {
+        let (selected_id, total, was_enter) = {
+            let Modal::SimilarPicker { entries, cursor, scroll } = &mut self.modal else {
+                return;
+            };
+            let total = entries.len();
+            let page: usize = 12;
+            let mut enter = false;
+            let mut selected: Option<Uuid> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1).max(0));
+                }
+                KeyCode::Home => *cursor = 0,
+                KeyCode::End => *cursor = total.saturating_sub(1),
+                KeyCode::Enter => {
+                    if let Some(e) = entries.get(*cursor) {
+                        selected = Some(e.id);
+                    }
+                    enter = true;
+                }
+                _ => {}
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            (selected, total, enter)
+        };
+
+        if was_enter {
+            self.modal = Modal::None;
+            if let Some(id) = selected_id {
+                if let Err(e) = self.load_secondary_paragraph(id) {
+                    self.status = format!("similar: {e}");
+                }
+            } else if total == 0 {
+                self.status = "similar: nothing to open".into();
+            }
+        }
+    }
+
+    /// Materialise the picked paragraph as a `secondary` OpenedDoc
+    /// rendered in the right pane (replacing AI while in similar
+    /// mode). Mirrors `load_paragraph`'s body construction; cursor
+    /// memory is honoured so re-opening lands where the user left
+    /// it (consistent with primary-pane behaviour).
+    fn load_secondary_paragraph(
+        &mut self,
+        id: Uuid,
+    ) -> std::result::Result<(), String> {
+        let node = self
+            .hierarchy
+            .get(id)
+            .cloned()
+            .ok_or_else(|| format!("paragraph {id} not in hierarchy"))?;
+        if node.kind != NodeKind::Paragraph {
+            return Err(format!("`{}` is not a paragraph", node.title));
+        }
+        let rel = node
+            .file
+            .as_ref()
+            .ok_or_else(|| format!("paragraph `{}` has no file on disk", node.title))?;
+        let abs = self.layout.root.join(rel);
+        let body = std::fs::read_to_string(&abs)
+            .map_err(|e| format!("read {}: {e}", abs.display()))?;
+        let lines = body_to_lines(&body);
+        let saved_lines = lines.clone();
+        let mut textarea = TextArea::new(lines);
+        textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
+        textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
+        let read_only = self.hierarchy.ancestors(&node).iter().any(|a| {
+            a.protected && a.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_HELP)
+        });
+        let saved_cursor = self.paragraph_cursors.get(&node.id).copied();
+        let (init_row, init_col, init_scroll_row, init_scroll_col) = match saved_cursor {
+            Some(pc) => {
+                let max_row = textarea.lines().len().saturating_sub(1);
+                let row = pc.cursor_row.min(max_row);
+                let line_len = textarea
+                    .lines()
+                    .get(row)
+                    .map_or(0, |s| s.chars().count());
+                let col = pc.cursor_col.min(line_len);
+                (row, col, pc.scroll_row.min(max_row), pc.scroll_col)
+            }
+            None => (0, 0, 0, 0),
+        };
+        if init_row > 0 || init_col > 0 {
+            textarea.move_cursor(CursorMove::Jump(init_row as u16, init_col as u16));
+        }
+        self.secondary = Some(OpenedDoc {
+            id: node.id,
+            title: node.title.clone(),
+            rel_path: rel.clone(),
+            textarea,
+            dirty: false,
+            scroll_row: init_scroll_row,
+            scroll_col: init_scroll_col,
+            block_anchor: None,
+            last_activity: std::time::Instant::now(),
+            saved_lines,
+            split: None,
+            search: None,
+            read_only,
+            correction_baseline: None,
+            content_type: node.content_type.clone(),
+        });
+        self.secondary_focused = false;
+        self.status = format!(
+            "similar: `{}` opened side-by-side (Tab swaps focus · Ctrl+V S exits)",
+            node.title
+        );
+        Ok(())
+    }
+
+    fn draw_similar_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::SimilarPicker { entries, cursor, scroll } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Similar paragraphs ({} hits) ", entries.len());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+
+        let lines: Vec<Line<'_>> = entries
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .map(|(i, e)| {
+                let score_pct = (e.score * 100.0).round() as i64;
+                let head = format!(" {:>3}%  {}", score_pct, e.title);
+                let path_dim = format!("    {}", e.slug_path);
+                let snippet_dim = if e.snippet.is_empty() {
+                    String::new()
+                } else {
+                    format!("    {}", e.snippet)
+                };
+                let mut spans: Vec<Span> = vec![
+                    Span::raw(head),
+                    Span::raw("   "),
+                    Span::styled(path_dim, Style::default().add_modifier(Modifier::DIM)),
+                ];
+                if !snippet_dim.is_empty() {
+                    spans.push(Span::raw("  · "));
+                    spans.push(Span::styled(
+                        snippet_dim,
+                        Style::default().add_modifier(Modifier::DIM),
+                    ));
+                }
+                let mut line = Line::from(spans);
+                if i == *cursor {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                line
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = if entries.is_empty() {
+            " (empty) · Esc close ".to_string()
+        } else {
+            format!(
+                " ↑↓ select · Enter open side-by-side · Esc cancel    ({}/{}) ",
+                cursor + 1,
+                entries.len()
+            )
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     fn draw_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
         // The file picker needs a much larger panel than the fixed
         // 80-wide / 8-high box used for confirms — give it its own renderer.
@@ -10454,6 +10960,10 @@ impl App {
             self.draw_script_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::SimilarPicker { .. }) {
+            self.draw_similar_picker_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -10475,6 +10985,7 @@ impl App {
             Modal::StatusFilter { .. } => unreachable!("status filter handled above"),
             Modal::BundPane { .. } => unreachable!("bund pane handled above"),
             Modal::ScriptPicker { .. } => unreachable!("script picker handled above"),
+            Modal::SimilarPicker { .. } => unreachable!("similar picker handled above"),
             Modal::HelpQuery { input } => {
                 let body = vec![
                     Line::from(""),
@@ -10879,6 +11390,99 @@ impl App {
             }
         }
         self.focus = new;
+    }
+
+    /// Render the secondary editor pane (right side, replaces AI
+    /// when in similar-paragraph mode). Simpler than draw_editor —
+    /// no syntax highlighting, no find/replace overlay, no split
+    /// view — but supports a moving cursor so the user can edit.
+    /// Focus highlight comes from `self.secondary_focused`, which
+    /// is independent of `self.focus` (keystrokes get routed to
+    /// secondary by the swap-on-dispatch wrapper in
+    /// `handle_editor_key`).
+    fn draw_secondary_editor(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Some(doc) = self.secondary.as_ref() else {
+            return;
+        };
+        let focused = self.focus == Focus::Editor && self.secondary_focused;
+        let border_color = if focused {
+            self.theme.border_focused
+        } else {
+            self.theme.border_unfocused
+        };
+        let title = format!(" {}  ·  (similar) ", doc.title);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.pane_bg)
+                    .fg(self.theme.pane_fg),
+            );
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        // Reserve one row at the bottom for the slug-path footer.
+        let footer_h: u16 = 1;
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(footer_h),
+            width: inner.width,
+            height: footer_h,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(footer_h),
+        };
+
+        // Render the textarea via the existing widget so cursor,
+        // selection, scroll all behave correctly. tui-textarea
+        // honours focus via cursor_line_style which we already
+        // configured at load time.
+        f.render_widget(&doc.textarea, body_rect);
+
+        // Footer: full slug path (the spec calls for full path on
+        // each editor pane in similar mode).
+        let path = if let Some(node) = self.hierarchy.get(doc.id) {
+            self.hierarchy.slug_path(node)
+        } else {
+            doc.rel_path.clone()
+        };
+        let footer = format!(" {}", path);
+        let style = Style::default().add_modifier(Modifier::DIM);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(footer, style))),
+            footer_rect,
+        );
+    }
+
+    /// Slug-path footer drawn UNDER the primary editor pane when
+    /// in similar-paragraph mode (so both panes show their path).
+    /// Carved out of the primary editor's rect by the layout in
+    /// `draw()`. No-op when not in similar mode — primary editor
+    /// keeps its full area.
+    fn draw_primary_pane_footer(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Some(doc) = self.opened.as_ref() else {
+            return;
+        };
+        let path = if let Some(node) = self.hierarchy.get(doc.id) {
+            self.hierarchy.slug_path(node)
+        } else {
+            doc.rel_path.clone()
+        };
+        let footer = format!(" {}", path);
+        let style = Style::default().add_modifier(Modifier::DIM);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(footer, style))),
+            area,
+        );
     }
 
     fn draw_search_bar(&self, f: &mut ratatui::Frame, area: Rect) {
