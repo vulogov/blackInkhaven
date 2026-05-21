@@ -1561,6 +1561,18 @@ enum Modal {
     BundEval {
         input: TextInput,
     },
+    /// Generic input modal opened by the `ink.input` Bund word.
+    /// Shows `prompt`, reads a single line of text, and on Enter
+    /// fires the named hook with the typed string on the stack
+    /// (`scripting::hooks::fire(hook, [Value::String])`). Esc
+    /// closes without firing. Hook-driven rather than synchronous
+    /// because a blocking modal would freeze autosave + inference
+    /// polling for the duration of the prompt.
+    BundInput {
+        prompt: String,
+        input: TextInput,
+        hook: String,
+    },
     /// Floating Bund output pane. Opened by `ink.pane.show`,
     /// receives every subsequent `print`/`println` output until
     /// `ink.pane.close` (or Esc). While this is open, the print
@@ -8616,6 +8628,7 @@ impl App {
         let is_bund_eval = matches!(self.modal, Modal::BundEval { .. });
         let is_bund_pane = matches!(self.modal, Modal::BundPane { .. });
         let is_script_picker = matches!(self.modal, Modal::ScriptPicker { .. });
+        let is_bund_input = matches!(self.modal, Modal::BundInput { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -8696,6 +8709,29 @@ impl App {
 
         if is_script_picker {
             self.script_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_bund_input {
+            if matches!(key.code, KeyCode::Enter) {
+                let (typed, hook) = match &self.modal {
+                    Modal::BundInput { input, hook, .. } => {
+                        (input.as_str().to_string(), hook.clone())
+                    }
+                    _ => (String::new(), String::new()),
+                };
+                self.modal = Modal::None;
+                if !hook.is_empty() {
+                    crate::scripting::hooks::fire(
+                        &hook,
+                        vec![rust_dynamic::value::Value::from_string(typed)],
+                    );
+                }
+                return Ok(false);
+            }
+            if let Modal::BundInput { input, .. } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
             return Ok(false);
         }
 
@@ -10196,6 +10232,30 @@ impl App {
                     )),
                 ];
                 (" Help — F1 ".to_string(), Color::Cyan, body)
+            }
+            Modal::BundInput { prompt, input, hook } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(" {prompt}"),
+                        Style::default()
+                            .fg(self.theme.tree_script_fg)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(
+                            "  Enter fires hook `{hook}` with your input · Esc cancels"
+                        ),
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Bund — ink.input ".to_string(),
+                    self.theme.tree_script_fg,
+                    body,
+                )
             }
             Modal::BundEval { input } => {
                 let body = vec![
@@ -12120,6 +12180,20 @@ impl App {
         hex: &str,
     ) -> Result<(), String> {
         self.theme.set_by_name(field, hex)
+    }
+
+    /// Open the BundInput modal. The user's typed string lands
+    /// on the Adam workbench via `hooks::fire(hook, [string])`
+    /// when they press Enter. Esc closes without firing. The
+    /// caller (the `ink.input` word handler) is responsible for
+    /// ensuring `hook` names a registered lambda — otherwise
+    /// `hooks::fire` silently no-ops.
+    pub(crate) fn open_bund_input(&mut self, prompt: &str, hook: &str) {
+        self.modal = Modal::BundInput {
+            prompt: prompt.to_string(),
+            input: TextInput::new(),
+            hook: hook.to_string(),
+        };
     }
 
     /// Append text to the active Bund output pane, if any.
