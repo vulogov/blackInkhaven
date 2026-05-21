@@ -956,6 +956,16 @@ pub struct EditorConfig {
     /// names accepted by `rust-stemmers::Algorithm` (lowercased), see
     /// `parse_stemmer_language` for the supported set.
     pub stemming: StemmingConfig,
+    /// Show the project-pulse splash on startup (1.2.4+).
+    /// 7-second timed overlay with today/streak/active +
+    /// status-ladder counts. Any key press dismisses early.
+    /// Set false to skip directly into the editor.
+    #[serde(default = "default_startup_splash")]
+    pub startup_splash: bool,
+}
+
+fn default_startup_splash() -> bool {
+    true
 }
 
 impl Default for EditorConfig {
@@ -967,6 +977,7 @@ impl Default for EditorConfig {
             autosave_seconds: 5,
             auto_close_pairs: true,
             stemming: StemmingConfig::default(),
+            startup_splash: default_startup_splash(),
         }
     }
 }

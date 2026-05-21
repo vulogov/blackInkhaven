@@ -163,6 +163,12 @@ pub struct Node {
     /// `add_link` time.
     #[serde(default)]
     pub linked_paragraphs: Vec<Uuid>,
+
+    /// User-toggled bookmark flag (1.2.4+). `Ctrl+V B` flips it;
+    /// `Ctrl+V M` opens a picker over every bookmarked
+    /// paragraph in the project.
+    #[serde(default)]
+    pub bookmark: bool,
 }
 
 impl Node {
@@ -190,6 +196,7 @@ impl Node {
                 .iter()
                 .map(|u| u.to_string())
                 .collect::<Vec<_>>(),
+            "bookmark":             self.bookmark,
         })
     }
 
@@ -334,6 +341,10 @@ impl Node {
             target_words,
             target_hit_at_status,
             linked_paragraphs,
+            bookmark: obj
+                .get("bookmark")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         })
     }
 
