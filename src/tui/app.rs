@@ -12246,19 +12246,42 @@ impl App {
                 },
             ));
             spans.push(Span::styled(display_title.to_string(), row_style));
-            // Per-paragraph progress gauge (1.2.4+). Only rendered
-            // when the paragraph carries a non-zero `target_words`.
-            // Format: `  [██▒░] 60%` — colour bucket by progress.
+            // Per-paragraph progress glyph (1.2.4+). The full gauge
+            // lives on the editor pane's bottom border (see
+            // `editor_goal_footer_text`); the tree pane just shows
+            // a compact 1-char status pip so users can scan which
+            // paragraphs carry goals without losing room to a
+            // long auto-derived title.
             if matches!(node.kind, NodeKind::Paragraph) {
                 if let Some(target) = node.target_words.filter(|n| *n > 0) {
-                    let (gauge, pct, gauge_style) =
-                        format_progress_gauge(node.word_count as i64, target as i64);
-                    spans.push(Span::raw("  "));
-                    spans.push(Span::styled(gauge, gauge_style));
-                    spans.push(Span::styled(
-                        format!(" {pct}%"),
-                        gauge_style,
-                    ));
+                    let pct =
+                        (node.word_count as i64 * 100 / target as i64).clamp(0, 999);
+                    let pip = if pct >= 100 {
+                        "●"
+                    } else if pct >= 75 {
+                        "◕"
+                    } else if pct >= 50 {
+                        "◑"
+                    } else if pct >= 25 {
+                        "◔"
+                    } else {
+                        "○"
+                    };
+                    let style = if pct >= 100 {
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD)
+                    } else if pct >= 75 {
+                        Style::default().fg(Color::LightGreen)
+                    } else if pct >= 50 {
+                        Style::default().fg(Color::Yellow)
+                    } else if pct >= 25 {
+                        Style::default().fg(Color::LightRed)
+                    } else {
+                        Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
+                    };
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(pip.to_string(), style));
                 }
             }
             lines.push(Line::from(spans));
@@ -12360,6 +12383,33 @@ impl App {
             return;
         }
 
+        // Per-paragraph goal footer (1.2.4+). Carve one row off
+        // the bottom of the editor area when the open paragraph
+        // has a target word-count set. Provides reliable space
+        // for the gauge — the tree pane can't fit it for long
+        // auto-derived titles.
+        let goal_footer = self.editor_goal_footer_text();
+        let (editor_rect, footer_rect) = match goal_footer.as_ref() {
+            Some(_) => {
+                let footer_h: u16 = 1;
+                let er = Rect {
+                    x: inner.x,
+                    y: inner.y,
+                    width: inner.width,
+                    height: inner.height.saturating_sub(footer_h),
+                };
+                let fr = Rect {
+                    x: inner.x,
+                    y: inner.y + inner.height.saturating_sub(footer_h),
+                    width: inner.width,
+                    height: footer_h,
+                };
+                (er, Some(fr))
+            }
+            None => (inner, None),
+        };
+        let inner = editor_rect;
+
         // Split-edit mode: divide the editor area into two halves; upper is
         // the live editor, lower is the read-only snapshot.
         let split_active = self.opened.as_ref().is_some_and(|d| d.split.is_some());
@@ -12381,6 +12431,50 @@ impl App {
         } else {
             self.draw_editor_unwrapped(f, inner);
         }
+
+        // Render the goal footer last so it sits on top of the
+        // textarea's bottom row (the carve-out above shrunk the
+        // textarea, leaving exactly one free row for us).
+        if let (Some((gauge, words, target)), Some(rect)) =
+            (goal_footer, footer_rect)
+        {
+            let pct = (words.max(0) * 100 / target.max(1)).clamp(0, 999);
+            let (gauge_str, _pct, gauge_style) =
+                format_progress_gauge(words, target);
+            let pct_str = format!(" {pct}%");
+            let counts =
+                format!("  {words}/{target} words");
+            let line = Line::from(vec![
+                Span::raw(" "),
+                Span::styled(gauge_str, gauge_style),
+                Span::styled(pct_str, gauge_style),
+                Span::styled(
+                    counts,
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+                Span::raw(format!("  · goal: {gauge}")),
+            ]);
+            f.render_widget(Paragraph::new(line), rect);
+        }
+    }
+
+    /// Compute the editor-pane goal footer text from the open
+    /// doc + its node metadata. Returns `(gauge_label, words,
+    /// target)` when a goal is set, otherwise `None`. The
+    /// gauge_label is the slug-path "story/01-arrival/scene-one"
+    /// printed alongside the percentage so the writer can
+    /// confirm at a glance which paragraph the gauge is for.
+    fn editor_goal_footer_text(&self) -> Option<(String, i64, i64)> {
+        let doc = self.opened.as_ref()?;
+        let node = self.hierarchy.get(doc.id)?;
+        let target = node.target_words.filter(|n| *n > 0)? as i64;
+        // Count live in-memory text via the same algorithm the
+        // save path uses so the footer matches what the save
+        // event will record.
+        let body = doc.textarea.lines().join("\n");
+        let words = crate::progress::count_words(&body);
+        let slug_path = self.hierarchy.slug_path(node);
+        Some((slug_path, words, target))
     }
 
     /// Render the lower (read-only) pane of split-edit mode. No cursor,

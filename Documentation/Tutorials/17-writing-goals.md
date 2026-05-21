@@ -221,17 +221,42 @@ Set it with `Ctrl+V T` while the paragraph is open:
 └──────────────────────────────────────────────────────────┘
 ```
 
-Paragraphs with a goal grow a 4-cell Unicode gauge + percentage
-in the tree pane:
+Two visual cues land when a goal is set:
+
+**Tree pane — a compact "pip" glyph after the title.** Long
+auto-derived paragraph titles can already crowd the tree pane,
+so the pip is a single character whose shape tracks progress:
+
+| Glyph | Progress | Colour      |
+| ----- | -------- | ----------- |
+| `○`   | 0%–24%   | red (dim)   |
+| `◔`   | 25%–49%  | light red   |
+| `◑`   | 50%–74%  | yellow      |
+| `◕`   | 75%–99%  | light green |
+| `●`   | ≥100%    | green bold  |
 
 ```
-¶ N The morning  [██▒░] 60%
-¶ F Lightning    [████] 100%
-¶ R Storm at sea [████] 142%
+¶ N The morning  ◑
+¶ F Lightning    ●
+¶ R Storm at sea ●
+```
+
+**Editor pane — full gauge on the bottom border** for whichever
+paragraph is open:
+
+```
+┌── Editor — The morning · [F] · L1 C0 · 300w · 1m 12s · edited 5m ago ─┐
+│ = The morning                                                          │
+│                                                                        │
+│ The first light came through the eastern shutters…                     │
+│ …                                                                      │
+│ [██▒░] 60%  300/500 words  · goal: story/01-arrival/morning            │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 Colour buckets: red <25%, light-red <50%, yellow <75%,
-light-green <100%, green-bold ≥100%.
+light-green <100%, green-bold ≥100%. The trailing slug-path
+confirms which paragraph the gauge belongs to.
 
 ### Auto-promote on goal hit
 
