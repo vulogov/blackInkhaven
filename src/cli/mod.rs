@@ -120,6 +120,15 @@ pub enum Command {
         /// falls back to slug match.
         #[arg(long)]
         book_name: Option<String>,
+        /// Status floor (1.2.4+) — keep only paragraphs whose
+        /// status sits at or above this rung on the workflow
+        /// ladder. Lowercased: `napkin`, `first`, `second`,
+        /// `third`, `final`, `ready`. `--status=ready` ships
+        /// only Ready paragraphs (typical "submit to the agent"
+        /// workflow). Unset = include every paragraph regardless
+        /// of status (including paragraphs with no status set).
+        #[arg(long)]
+        status: Option<String>,
     },
 
     /// Run a one-shot AI inference from the command line.
@@ -263,8 +272,15 @@ impl Cli {
                 format,
                 output,
                 book_name,
-            } => export::run(&project, format, output.as_deref(), book_name.as_deref())
-                .map_err(Into::into),
+                status,
+            } => export::run(
+                &project,
+                format,
+                output.as_deref(),
+                book_name.as_deref(),
+                status.as_deref(),
+            )
+            .map_err(Into::into),
             Command::Ai { prompt, provider } => {
                 ai::run(&project, &prompt, provider.as_deref()).map_err(Into::into)
             }

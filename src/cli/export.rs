@@ -15,6 +15,7 @@ pub fn run(
     format: ExportFormat,
     output: Option<&Path>,
     book_name: Option<&str>,
+    status_floor: Option<&str>,
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
@@ -23,7 +24,8 @@ pub fn run(
     let h = Hierarchy::load(&store)?;
 
     let scope = resolve_export_scope(&h, book_name)?;
-    let combined = build_combined(&layout, &h, scope.root_id)?;
+    let floor_idx = parse_status_floor(status_floor)?;
+    let combined = build_combined(&layout, &h, scope.root_id, floor_idx)?;
     let epub_title = scope.title_for_epub(project);
 
     match format {
@@ -192,11 +194,37 @@ fn build_combined(
     layout: &ProjectLayout,
     h: &Hierarchy,
     root_id: Option<uuid::Uuid>,
+    status_floor: Option<usize>,
 ) -> Result<String> {
-    export::assemble_typst_source(layout, h, root_id).map_err(|e| {
-        Error::Store(format!("assemble: {e:#}"))
-    })
+    export::assemble_typst_source_filtered(layout, h, root_id, status_floor)
+        .map_err(|e| Error::Store(format!("assemble: {e:#}")))
 }
+
+/// Parse `--status` against the canonical workflow ladder.
+/// Lowercased; returns the **index** into [`STATUS_LADDER`] (a
+/// higher index = more advanced). None → no floor applied.
+fn parse_status_floor(s: Option<&str>) -> Result<Option<usize>> {
+    let Some(raw) = s else { return Ok(None) };
+    let lowered = raw.trim().to_ascii_lowercase();
+    match STATUS_LADDER
+        .iter()
+        .position(|name| *name == lowered.as_str())
+    {
+        Some(i) => Ok(Some(i)),
+        None => Err(Error::Store(format!(
+            "export: unknown --status `{raw}`. Valid: {}",
+            STATUS_LADDER.join(", ")
+        ))),
+    }
+}
+
+/// Canonical status ladder, lowest → highest. Index used by
+/// `--status` to compare a paragraph's status against the floor.
+/// `none` is the implicit zero rung — paragraphs with no status
+/// set sit there.
+const STATUS_LADDER: &[&str] = &[
+    "none", "napkin", "first", "second", "third", "final", "ready",
+];
 
 fn write_typst(combined: &str, output: Option<&Path>) -> Result<()> {
     match output {

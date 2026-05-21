@@ -1118,6 +1118,11 @@ pub struct GoalsConfig {
     /// Project-wide daily word-count target. Status-bar shows
     /// `today X/daily_words`. `0` (default) hides the slash.
     pub daily_words: i64,
+    /// Project-wide daily active-time target, in minutes (1.2.4+).
+    /// Status-bar shows `Nm/Mm` against this when set; the
+    /// `hook.on_active_goal_hit` fires the first time today's
+    /// active-time crosses the line. `0` (default) disables.
+    pub active_minutes_daily: i64,
     /// Missed days forgiven per rolling 7-day window before the
     /// streak breaks. `0` = strict; `1` = one rest day per week.
     pub streak_grace_per_week: i64,
@@ -1145,6 +1150,7 @@ impl Default for GoalsConfig {
     fn default() -> Self {
         Self {
             daily_words: 0,
+            active_minutes_daily: 0,
             streak_grace_per_week: 0,
             books: std::collections::HashMap::new(),
             status_ladder: std::collections::HashMap::new(),

@@ -1545,6 +1545,28 @@ pub(crate) struct SimilarPickerEntry {
     pub snippet: String,
 }
 
+/// One aligned row in the snapshot-diff view. `left_*` holds the
+/// snapshot side (or `None` for an addition); `right_*` holds the
+/// current-buffer side (or `None` for a deletion).
+#[derive(Debug, Clone)]
+pub(crate) struct SnapshotDiffRow {
+    pub left: Option<String>,
+    pub right: Option<String>,
+    pub kind: SnapshotDiffKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SnapshotDiffKind {
+    /// Same line on both sides.
+    Equal,
+    /// Snapshot had it, buffer dropped it.
+    Removed,
+    /// Buffer added it.
+    Added,
+    /// Both sides have a line at this position but they differ.
+    Changed,
+}
+
 enum Modal {
     None,
     Adding {
@@ -1616,6 +1638,21 @@ enum Modal {
     /// modal family as BundEval / HelpQuery.
     ParagraphTarget {
         input: TextInput,
+    },
+    /// F6 picker → `V` opens a two-pane diff of the cursor's
+    /// snapshot against the open paragraph's current buffer.
+    /// Read-only; Esc returns to the snapshot picker.
+    SnapshotDiff {
+        paragraph_title: String,
+        when: String,
+        /// Aligned line pairs: `(left_label, left_text,
+        /// right_label, right_text, kind)` per row. `kind`
+        /// drives the row colour.
+        rows: Vec<SnapshotDiffRow>,
+        scroll: usize,
+        /// Stashed snapshot picker we came from, so `Esc`
+        /// restores it intact instead of closing both layers.
+        return_to: Box<Modal>,
     },
     /// Ctrl+V S — pick a paragraph similar to the current buffer.
     /// Result list comes from the vector index seeded with the
@@ -2302,6 +2339,22 @@ impl App {
                 "hook.on_streak_break",
                 vec![rust_dynamic::value::Value::from_int(prev_streak)],
             );
+        }
+        // on_active_goal_hit — same transitional semantics as
+        // on_goal_hit but against `goals.active_minutes_daily`.
+        let active_goal_secs = self.cfg.goals.active_minutes_daily.max(0) * 60;
+        if active_goal_secs > 0 {
+            let prev_active = prev.map(|p| p.active_seconds_today).unwrap_or(0);
+            let new_active = new.active_seconds_today;
+            if prev_active < active_goal_secs && new_active >= active_goal_secs {
+                crate::scripting::hooks::fire(
+                    "hook.on_active_goal_hit",
+                    vec![
+                        rust_dynamic::value::Value::from_int(new_active),
+                        rust_dynamic::value::Value::from_int(active_goal_secs),
+                    ],
+                );
+            }
         }
     }
 
@@ -9255,6 +9308,58 @@ impl App {
         );
     }
 
+    /// Open the snapshot-diff modal against the cursor's snapshot.
+    /// Stashes the current `SnapshotPicker` modal inside the new
+    /// variant so `Esc` returns to the picker rather than closing
+    /// both layers.
+    fn open_snapshot_diff(&mut self) {
+        let (snap_id, when, paragraph_title) = match &self.modal {
+            Modal::SnapshotPicker {
+                snapshots,
+                cursor,
+                paragraph_title,
+                ..
+            } => {
+                let Some(snap) = snapshots.get(*cursor) else {
+                    return;
+                };
+                (snap.id, snap.created_at, paragraph_title.clone())
+            }
+            _ => return,
+        };
+        let snapshot_bytes = match self.store.snapshot_content(snap_id) {
+            Ok(Some(b)) => b,
+            Ok(None) => {
+                self.status = "snapshot has no body".into();
+                return;
+            }
+            Err(e) => {
+                self.status = format!("snapshot load failed: {e}");
+                return;
+            }
+        };
+        let snapshot_text = String::from_utf8_lossy(&snapshot_bytes).into_owned();
+        let current_text = self
+            .opened
+            .as_ref()
+            .map(|d| d.textarea.lines().join("\n"))
+            .unwrap_or_default();
+        let rows = compute_line_diff(&snapshot_text, &current_text);
+        let when_str = when
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S %z")
+            .to_string();
+        let return_to = Box::new(std::mem::replace(&mut self.modal, Modal::None));
+        self.modal = Modal::SnapshotDiff {
+            paragraph_title,
+            when: when_str,
+            rows,
+            scroll: 0,
+            return_to,
+        };
+        self.status = "diff: snapshot ← left · current → right · ↑↓ scroll · Esc back".into();
+    }
+
     fn delete_current_snapshot(&mut self) {
         let (snap_id, when, paragraph_id, paragraph_title) = match &self.modal {
             Modal::SnapshotPicker {
@@ -9363,6 +9468,15 @@ impl App {
 
     fn handle_modal_key(&mut self, key: KeyEvent) -> Result<bool> {
         if matches!(key.code, KeyCode::Esc) {
+            // SnapshotDiff stashes the picker it opened from in
+            // `return_to`; popping that back makes Esc behave
+            // like "close the diff, stay in the picker".
+            if let Modal::SnapshotDiff { return_to, .. } = &mut self.modal {
+                let prev = std::mem::replace(return_to.as_mut(), Modal::None);
+                self.modal = prev;
+                self.status = "diff closed".into();
+                return Ok(false);
+            }
             self.modal = Modal::None;
             return Ok(false);
         }
@@ -9389,6 +9503,7 @@ impl App {
         let is_similar_picker = matches!(self.modal, Modal::SimilarPicker { .. });
         let is_progress = matches!(self.modal, Modal::Progress { .. });
         let is_paragraph_target = matches!(self.modal, Modal::ParagraphTarget { .. });
+        let is_snapshot_diff = matches!(self.modal, Modal::SnapshotDiff { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -9479,6 +9594,29 @@ impl App {
 
         if is_progress {
             self.progress_modal_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_snapshot_diff {
+            if let Modal::SnapshotDiff { scroll, rows, .. } = &mut self.modal {
+                let total = rows.len();
+                let page: usize = 12;
+                match key.code {
+                    KeyCode::Up => *scroll = scroll.saturating_sub(1),
+                    KeyCode::Down => {
+                        if *scroll + 1 < total {
+                            *scroll += 1;
+                        }
+                    }
+                    KeyCode::PageUp => *scroll = scroll.saturating_sub(page),
+                    KeyCode::PageDown => {
+                        *scroll = (*scroll + page).min(total.saturating_sub(1));
+                    }
+                    KeyCode::Home => *scroll = 0,
+                    KeyCode::End => *scroll = total.saturating_sub(1),
+                    _ => {}
+                }
+            }
             return Ok(false);
         }
 
@@ -9701,6 +9839,7 @@ impl App {
         if is_snapshot {
             let mut commit = false;
             let mut delete = false;
+            let mut view_diff = false;
             if let Modal::SnapshotPicker {
                 snapshots, cursor, ..
             } = &mut self.modal
@@ -9728,6 +9867,14 @@ impl App {
                     KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Delete => {
                         delete = true;
                     }
+                    // V (case-insensitive) opens the snapshot
+                    // diff modal against the open paragraph's
+                    // current buffer. Read-only — Esc returns to
+                    // the picker; closing the picker entirely
+                    // requires another Esc.
+                    KeyCode::Char('V') | KeyCode::Char('v') => {
+                        view_diff = true;
+                    }
                     _ => {}
                 }
             }
@@ -9735,6 +9882,8 @@ impl App {
                 self.commit_snapshot_load();
             } else if delete {
                 self.delete_current_snapshot();
+            } else if view_diff {
+                self.open_snapshot_diff();
             }
             return Ok(false);
         }
@@ -11609,16 +11758,27 @@ impl App {
         let visible: Vec<Line> = lines.into_iter().skip(scroll).take(body_h).collect();
         f.render_widget(Paragraph::new(visible), text_rect);
 
-        // ── Chart panel ────────────────────────────────────────
-        // 30-day daily-words bar chart (ratatui's built-in
-        // BarChart — Apache-2.0-compatible).
+        // ── Chart column ───────────────────────────────────────
+        // Top half: 30-day daily-words sparkline.
+        // Bottom half: per-book progress bar chart (current %
+        // of target, capped at 100 for the bar height; bars
+        // can overshoot in the label).
+        let chart_split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
+            ])
+            .split(chart_rect);
+        let sparkline_rect = chart_split[0];
+        let bars_rect = chart_split[1];
+
         let data: Vec<u64> = snap
             .sparkline
             .iter()
             .map(|n| (*n).max(0) as u64)
             .collect();
-        let chart_inner = chart_rect;
-        if !data.is_empty() && chart_inner.height > 4 {
+        if !data.is_empty() && sparkline_rect.height > 4 {
             let sparkline = ratatui::widgets::Sparkline::default()
                 .block(
                     Block::default()
@@ -11627,7 +11787,7 @@ impl App {
                 )
                 .data(&data)
                 .style(Style::default().fg(self.theme.tree_script_fg));
-            f.render_widget(sparkline, chart_inner);
+            f.render_widget(sparkline, sparkline_rect);
         } else {
             f.render_widget(
                 Paragraph::new(Line::from(Span::styled(
@@ -11635,7 +11795,67 @@ impl App {
                     dim,
                 )))
                 .block(Block::default().borders(Borders::ALL).title(" 30d ")),
-                chart_inner,
+                sparkline_rect,
+            );
+        }
+
+        // Per-book BarChart (1.2.4+). Each user book with a
+        // target shows one bar = pct of target, capped at 100.
+        // The labels are short slugs so multiple books fit in
+        // the narrow chart column.
+        let book_bars: Vec<(String, u64)> = snap
+            .books
+            .iter()
+            .filter_map(|b| {
+                let target = b.target_words?;
+                if target <= 0 {
+                    return None;
+                }
+                let pct = (b.total_words.max(0) * 100 / target).clamp(0, 100) as u64;
+                // Slugify the label so a wide book title doesn't
+                // truncate the bar.
+                let label = slug::slugify(&b.label);
+                Some((label, pct))
+            })
+            .collect();
+        if !book_bars.is_empty() && bars_rect.height > 4 {
+            let data: Vec<(&str, u64)> =
+                book_bars.iter().map(|(s, n)| (s.as_str(), *n)).collect();
+            let max_label_w = data
+                .iter()
+                .map(|(s, _)| s.len())
+                .max()
+                .unwrap_or(8)
+                .max(6) as u16;
+            let bar_chart = ratatui::widgets::BarChart::default()
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" books: % of target "),
+                )
+                .data(&data)
+                .max(100)
+                .bar_width(max_label_w)
+                .bar_gap(1)
+                .bar_style(Style::default().fg(self.theme.tree_script_fg))
+                .value_style(
+                    Style::default()
+                        .fg(self.theme.modal_fg)
+                        .add_modifier(Modifier::BOLD),
+                );
+            f.render_widget(bar_chart, bars_rect);
+        } else {
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    " (no per-book targets set)",
+                    dim,
+                )))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" books "),
+                ),
+                bars_rect,
             );
         }
 
@@ -11643,6 +11863,125 @@ impl App {
         let hint = " ↑↓ / PgUp/PgDn scroll · r refresh · Esc close ";
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(hint, dim))),
+            footer_rect,
+        );
+    }
+
+    fn draw_snapshot_diff_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let (paragraph_title, when, rows, scroll) = match &self.modal {
+            Modal::SnapshotDiff {
+                paragraph_title,
+                when,
+                rows,
+                scroll,
+                ..
+            } => (
+                paragraph_title.clone(),
+                when.clone(),
+                rows.clone(),
+                *scroll,
+            ),
+            _ => return,
+        };
+
+        // Roomy modal — almost full screen so wide lines fit.
+        let width = area.width.saturating_sub(4).max(80);
+        let height = area.height.saturating_sub(2).max(20);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header =
+            format!(" Diff · `{paragraph_title}` · snapshot {when} → current ");
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Footer.
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        // Split body into two columns: snapshot (left) | current (right).
+        let split = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
+            ])
+            .split(body_rect);
+        let left_rect = split[0];
+        let right_rect = split[1];
+
+        let body_h = left_rect.height as usize;
+        let visible: Vec<&SnapshotDiffRow> =
+            rows.iter().skip(scroll).take(body_h).collect();
+
+        let mut left_lines: Vec<Line<'static>> = Vec::with_capacity(visible.len());
+        let mut right_lines: Vec<Line<'static>> = Vec::with_capacity(visible.len());
+
+        let removed_style = Style::default()
+            .fg(Color::Red)
+            .add_modifier(Modifier::BOLD);
+        let added_style = Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD);
+        let changed_style = Style::default().fg(Color::Yellow);
+        let dim = Style::default().add_modifier(Modifier::DIM);
+
+        for row in visible {
+            let (l_marker, r_marker, l_style, r_style) = match row.kind {
+                SnapshotDiffKind::Equal => (" ", " ", dim, dim),
+                SnapshotDiffKind::Removed => ("-", " ", removed_style, dim),
+                SnapshotDiffKind::Added => (" ", "+", dim, added_style),
+                SnapshotDiffKind::Changed => ("~", "~", changed_style, changed_style),
+            };
+            let left_text = row.left.clone().unwrap_or_default();
+            let right_text = row.right.clone().unwrap_or_default();
+            left_lines.push(Line::from(Span::styled(
+                format!("{l_marker} {left_text}"),
+                l_style,
+            )));
+            right_lines.push(Line::from(Span::styled(
+                format!("{r_marker} {right_text}"),
+                r_style,
+            )));
+        }
+
+        f.render_widget(Paragraph::new(left_lines), left_rect);
+        f.render_widget(Paragraph::new(right_lines), right_rect);
+
+        let hint = format!(
+            " ↑↓ / PgUp/PgDn / Home/End scroll · Esc back ({}/{}) ",
+            scroll + 1,
+            rows.len().max(1)
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
             footer_rect,
         );
     }
@@ -11702,6 +12041,10 @@ impl App {
             self.draw_progress_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::SnapshotDiff { .. }) {
+            self.draw_snapshot_diff_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -11725,6 +12068,7 @@ impl App {
             Modal::ScriptPicker { .. } => unreachable!("script picker handled above"),
             Modal::SimilarPicker { .. } => unreachable!("similar picker handled above"),
             Modal::Progress { .. } => unreachable!("progress modal handled above"),
+            Modal::SnapshotDiff { .. } => unreachable!("snapshot diff handled above"),
             Modal::ParagraphTarget { input } => {
                 let body = vec![
                     Line::from(""),
@@ -13682,7 +14026,16 @@ impl App {
             Some(goal) => parts.push(format!("today {today}/{goal}w")),
             None => parts.push(format!("today {today}w")),
         }
-        if snap.active_seconds_today > 0 {
+        // Active-time chip — bare duration when no goal is set,
+        // `<spent>/<goal>` when there is one.
+        let active_goal_secs = self.cfg.goals.active_minutes_daily.max(0) * 60;
+        if active_goal_secs > 0 {
+            parts.push(format!(
+                "{}/{}",
+                format_active_duration(snap.active_seconds_today),
+                format_active_duration(active_goal_secs),
+            ));
+        } else if snap.active_seconds_today > 0 {
             parts.push(format_active_duration(snap.active_seconds_today));
         }
         if snap.streak.days > 0 {
@@ -14150,6 +14503,116 @@ fn truncate_title(title: &str, max_chars: usize) -> String {
 /// is between thresholds. Colour buckets:
 ///   <25% red, <50% yellow, <75% light-green, ≥100% green-bold,
 ///   between 75 and 100 green-dim. Returns `(gauge_str, percent_int, style)`.
+/// Compute aligned line-by-line diff rows for the F6 → V
+/// snapshot-diff modal. Uses `similar`'s `TextDiff::from_lines`
+/// (Myers algorithm) to get a sequence of `(tag, line)` chunks,
+/// then aligns them into side-by-side rows.
+///
+/// Heuristic for `Changed` rows: when a Delete is immediately
+/// followed by an Insert, fuse the pair into one Changed row
+/// rather than rendering them as a removal + an addition on
+/// different lines. This is what most diff viewers do.
+fn compute_line_diff(left: &str, right: &str) -> Vec<SnapshotDiffRow> {
+    use similar::{ChangeTag, TextDiff};
+    let diff = TextDiff::from_lines(left, right);
+    let mut out: Vec<SnapshotDiffRow> = Vec::new();
+    // Walk the change list; on a Delete, peek to see if the
+    // next change is an Insert and fuse them.
+    let changes: Vec<_> = diff.iter_all_changes().collect();
+    let mut i = 0;
+    while i < changes.len() {
+        let c = &changes[i];
+        let text = c
+            .value()
+            .strip_suffix('\n')
+            .unwrap_or(c.value())
+            .to_string();
+        match c.tag() {
+            ChangeTag::Equal => {
+                out.push(SnapshotDiffRow {
+                    left: Some(text.clone()),
+                    right: Some(text),
+                    kind: SnapshotDiffKind::Equal,
+                });
+                i += 1;
+            }
+            ChangeTag::Delete => {
+                // Look ahead for a paired Insert to fuse.
+                if let Some(next) = changes.get(i + 1) {
+                    if next.tag() == ChangeTag::Insert {
+                        let next_text = next
+                            .value()
+                            .strip_suffix('\n')
+                            .unwrap_or(next.value())
+                            .to_string();
+                        out.push(SnapshotDiffRow {
+                            left: Some(text),
+                            right: Some(next_text),
+                            kind: SnapshotDiffKind::Changed,
+                        });
+                        i += 2;
+                        continue;
+                    }
+                }
+                out.push(SnapshotDiffRow {
+                    left: Some(text),
+                    right: None,
+                    kind: SnapshotDiffKind::Removed,
+                });
+                i += 1;
+            }
+            ChangeTag::Insert => {
+                out.push(SnapshotDiffRow {
+                    left: None,
+                    right: Some(text),
+                    kind: SnapshotDiffKind::Added,
+                });
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests_diff {
+    use super::*;
+
+    #[test]
+    fn identical() {
+        let r = compute_line_diff("a\nb\nc\n", "a\nb\nc\n");
+        assert_eq!(r.len(), 3);
+        assert!(r.iter().all(|x| x.kind == SnapshotDiffKind::Equal));
+    }
+
+    #[test]
+    fn pure_add() {
+        let r = compute_line_diff("a\n", "a\nb\n");
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].kind, SnapshotDiffKind::Equal);
+        assert_eq!(r[1].kind, SnapshotDiffKind::Added);
+        assert_eq!(r[1].right.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn pure_remove() {
+        let r = compute_line_diff("a\nb\n", "a\n");
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[1].kind, SnapshotDiffKind::Removed);
+        assert_eq!(r[1].left.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn fused_change() {
+        // Single-line rewrite fuses to Changed.
+        let r = compute_line_diff("foo\n", "bar\n");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].kind, SnapshotDiffKind::Changed);
+        assert_eq!(r[0].left.as_deref(), Some("foo"));
+        assert_eq!(r[0].right.as_deref(), Some("bar"));
+    }
+}
+
 /// Render an active-time count in shorthand:
 ///   <60s   → "0m"
 ///   <60m   → "Nm"
