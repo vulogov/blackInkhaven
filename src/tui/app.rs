@@ -2518,6 +2518,32 @@ impl App {
         if due {
             let _ = self.save_current();
         }
+
+        // 1.2.4+: also autosave the secondary editor (similar-
+        // paragraph mode's right pane). Before this, the secondary
+        // doc was flush-only-on-Ctrl+V-S-exit, which surprised
+        // users who typed in the right pane and walked away.
+        // Same idle-threshold as the primary; no correction-overlay
+        // gate since correction overlays only apply to the primary.
+        // `Option::take()` pulls the doc out so we can call
+        // `save_doc(&mut self, &mut OpenedDoc)` without aliasing
+        // self.secondary against itself; the doc goes straight
+        // back regardless of save outcome.
+        let sec_due = match self.secondary.as_ref() {
+            Some(doc) if doc.dirty => doc.last_activity.elapsed().as_secs() >= secs,
+            _ => false,
+        };
+        if sec_due {
+            if let Some(mut doc) = self.secondary.take() {
+                if let Err(e) = self.save_doc(&mut doc) {
+                    tracing::warn!(
+                        target: "inkhaven::autosave",
+                        "secondary autosave failed: {e}",
+                    );
+                }
+                self.secondary = Some(doc);
+            }
+        }
     }
 
     fn is_streaming(&self) -> bool {
