@@ -21,51 +21,70 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.3
+## Latest release · 1.2.4
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.3.md`](Documentation/RELEASE_NOTES/1.2.3.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.4.md`](Documentation/RELEASE_NOTES/1.2.4.md)
 
 Headlines:
-- **Multi-format export.** `inkhaven export markdown / tex / epub`
-  joins the existing `typst` / `pdf` paths — all in-process, no
-  `pandoc` / `tex live` needed. TeX runs through the pure-Rust
-  [`tylax`](https://crates.io/crates/tylax) converter; EPUB ships
-  as a valid EPUB3 zip with markdown rendered to XHTML via
-  `pulldown-cmark`.
-- **`--book-name` flag** disambiguates multi-book projects. System
-  books (Help / Scripts / Typst / Prompts / Places / Characters /
-  Notes / Artefacts / Research) are excluded from every export
-  path — they're inkhaven internals, not manuscript content.
-- **`Ctrl+B O` extras.** New `output.extra_formats: []` HJSON knob
-  produces markdown / tex / epub alongside the PDF with matching
-  file stem on every "take the book". Errors logged but never
-  abort the take.
-- **Writing-progress subsystem.** Append-only event log in
-  `progress.db`, configurable goals (daily words, streak grace,
-  per-book deadlines, status-ladder targets). Status-bar widget
-  shows `today N/Mw · streak Nd · book X/Yw (pace Zw/d)`.
-- **`Ctrl+V G` progress modal.** Two-column overview — today /
-  streak / per-book / status-ladder counts plus a 30-day
-  daily-words sparkline. `r` refreshes.
-- **`Ctrl+V S` similar-paragraph mode.** Save buffer, vector-search
-  for similar paragraphs, pick one, edit side-by-side with the AI
-  pane replaced by a second editor. `Tab` swaps focus; re-press
-  `Ctrl+V S` saves both and exits.
-- **`Ctrl+V 1 / 2` markdown extraction.** Buffer / subchapter /
-  subtree (depending on focus) → `<slug>-YYYYDDMM-HHMM.md` in cwd.
-- **Bund: floating output pane.** `ink.pane.show` opens a modal;
-  `print` / `println` re-route there. `Ctrl+Z ?` script picker
-  lists scripts in the current branch (with `A` toggle to the
-  Scripts book). `ink.input ( prompt hook -- )` adds hook-driven
-  prompts.
-- **Dynamic Quick Help.** `Ctrl+B H` synthesises meta + bund
-  chord sections from `KeyBindings::active()` so HJSON / runtime
-  overrides reflect immediately. Each row shows a full
-  user-friendly action description.
-- New tutorials: [Multi-format export](Documentation/Tutorials/15-multi-format-export.md),
-  [Similar paragraphs](Documentation/Tutorials/16-similar-paragraphs.md),
-  [Writing goals](Documentation/Tutorials/17-writing-goals.md),
-  [Bund pane + script picker](Documentation/Tutorials/18-bund-pane-and-script-picker.md).
+- **Wiki-links + backlinks** — typed references between paragraphs
+  stored as **metadata**, never embedded in the Typst source.
+  Four chords: `Ctrl+V A` (add outgoing), `Ctrl+V I` (add
+  incoming), `Ctrl+V L` (outgoing picker), `Ctrl+V K`
+  (backlinks picker). Self-link, duplicate, and cycle guards.
+  When the AI scope is Paragraph (F9), linked paragraphs are
+  appended to the prompt context wrapped in delimited blocks.
+- **Snapshot diff + safety net.** In the F6 picker, **`V`** opens
+  a side-by-side line diff of the snapshot vs the live buffer
+  (Myers via the `similar` crate, with fused Changed rows).
+  **`Enter`** restores — but first takes a pre-restore safety
+  snapshot of the live buffer, so undoing an unwanted restore
+  is one more F6+Enter away.
+- **Navigation pack.** `Ctrl+V P` fuzzy paragraph picker (three-
+  tier prefix ranking), `Ctrl+V B` / `Ctrl+V M` bookmarks,
+  AI-prompt **`Up`-arrow history** (capped at 500), prefix-
+  ranked slash-command picker.
+- **Per-paragraph word-count goals.** `Ctrl+V T` sets a target;
+  saves crossing it can auto-promote status one rung
+  (`goals.auto_promote_on_target`). The editor footer renders a
+  title-breadcrumb gauge.
+- **Active-time tracking.** `writing_events` adds a `LAG`-window
+  aggregate that sums save→save gaps capped at 5 minutes — AFK
+  breaks don't count. Status-bar shows `45m / 60m`.
+- **`inkhaven export --status=<floor>`.** Ship only paragraphs at
+  or above a ladder rung (`napkin` / `first` / … / `ready`).
+- **Scrivener import.** `inkhaven import-scrivener PATH.scriv`
+  walks the binder via `quick-xml`, converts every Text
+  document's RTF body to Typst (`**bold**` / `_italic_` / escapes)
+  via `rtf-parser-tt`, materialises Draft → Book / Folder →
+  Chapter / Text → Paragraph. Pure Rust — no Scrivener install,
+  no `pandoc`, no `textutil`. `--dry-run`, `--draft-as-book`,
+  `--skip-research`.
+- **Tree multi-select.** `Space` marks / unmarks; **`T`** cycles
+  node type, **`O`** cycles status — both work on single OR
+  multi-selection. `Del` and `Ctrl+B I` also read the mark set.
+- **Bund stdlib gaps closed.** `ink.editor.replace_all`,
+  `ink.search.load`, `ink.ai.send_blocking`, `ink.ai.poll`,
+  `ink.fs.read` (allowed), `ink.fs.write` (**default-denied**).
+  Five new hook points: `hook.on_goal_hit`,
+  `hook.on_streak_break`, `hook.on_status_promoted`,
+  `hook.on_assemble`, `hook.on_take`.
+- **`Ctrl+V` is a first-class meta key.** All view sub-chords
+  are rebindable via HJSON `keys.bindings.view_sub` and
+  `ink.key.bind_view_sub`. F-keys migrated into the bindings
+  table — `keys.bindings.f7 = "view.add_link"` works.
+- **Theme persistence to HJSON, save-as picker for Ctrl+V
+  markdown, secondary-editor autosave, paragraph file rename
+  follows title rename, `inkhaven stats` CLI, 7-second startup
+  splash, Windows CI re-enabled** via vcpkg.
+- **Printable cheat sheet** —
+  [`Documentation/INKHAVEN_CHEAT_SHEET.typ`](Documentation/INKHAVEN_CHEAT_SHEET.typ),
+  two-column A4. `typst compile` it and pin the PDF next to
+  your terminal.
+- New tutorials: [Wiki-links](Documentation/Tutorials/19-wiki-links.md),
+  [Snapshot diff](Documentation/Tutorials/20-snapshot-diff.md),
+  [Navigation pack](Documentation/Tutorials/21-navigation.md),
+  [Tree multi-select](Documentation/Tutorials/22-tree-multiselect.md),
+  [Scrivener import](Documentation/Tutorials/23-scrivener-import.md).
 
 Every prior release lives under [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
 
