@@ -1647,7 +1647,7 @@ enum Modal {
     },
 }
 
-struct App {
+pub(crate) struct App {
     layout: ProjectLayout,
     store: Store,
     keymap: Keymap,
@@ -2083,6 +2083,19 @@ impl App {
     /// `.db.wal` files are drained while we can still surface errors
     /// — the pool's own Drop impl would checkpoint implicitly, but
     /// silently.
+    /// Evaluate a Bund script with `self` installed as the
+    /// active `App`. Lets `ink.editor.* / ink.ai.* / ink.typst.*`
+    /// stdlib words reach App state. Pure wrapper around
+    /// `scripting::eval` — sets the global ACTIVE_APP slot via
+    /// `AppGuard` before invoking, restores on RAII drop.
+    pub(crate) fn scripting_eval(
+        &mut self,
+        code: &str,
+    ) -> anyhow::Result<crate::scripting::EvalOutput> {
+        let _guard = crate::scripting::AppGuard::enter(self);
+        crate::scripting::eval(code)
+    }
+
     fn shutdown_flush(&self) {
         if let Err(e) = self.store.sync() {
             tracing::warn!("shutdown sync failed: {e}");
@@ -5062,25 +5075,34 @@ impl App {
     /// Ctrl+Z R — eval the currently-open Script's body against Adam.
     /// No-ops with a status message when no Script is open.
     fn bund_run_buffer(&mut self) {
-        let Some(doc) = self.opened.as_ref() else {
-            self.status = "bund: no buffer open — Ctrl+Z R needs an open .bund".into();
-            return;
+        // Snapshot everything we need out of self before invoking
+        // scripting_eval — that needs &mut self, so we can't hold
+        // any borrow of self.opened / self.hierarchy across the
+        // call.
+        let (body, title) = {
+            let Some(doc) = self.opened.as_ref() else {
+                self.status = "bund: no buffer open — Ctrl+Z R needs an open .bund".into();
+                return;
+            };
+            let Some(node) = self.hierarchy.get(doc.id) else {
+                self.status = "bund: open buffer's node is missing from hierarchy".into();
+                return;
+            };
+            if node.kind != NodeKind::Script {
+                self.status = format!(
+                    "bund: open buffer is a {}, not a script",
+                    node.kind.as_str()
+                );
+                return;
+            }
+            (doc.textarea.lines().join("\n"), node.title.clone())
         };
-        let Some(node) = self.hierarchy.get(doc.id) else {
-            self.status = "bund: open buffer's node is missing from hierarchy".into();
-            return;
-        };
-        if node.kind != NodeKind::Script {
-            self.status = format!(
-                "bund: open buffer is a {}, not a script",
-                node.kind.as_str()
-            );
-            return;
-        }
-        let body = doc.textarea.lines().join("\n");
-        match crate::scripting::eval(&body) {
+        // Go through `scripting_eval` so the App-state-accessing
+        // `ink.editor.* / ink.ai.* / ink.typst.*` stdlib words can
+        // reach `self`.
+        match self.scripting_eval(&body) {
             Ok(out) => {
-                self.status = format_eval_output(&out, Some(&node.title));
+                self.status = format_eval_output(&out, Some(&title));
             }
             Err(e) => {
                 self.status = format!("bund: eval failed — {e:#}");
@@ -8493,7 +8515,7 @@ impl App {
                     _ => String::new(),
                 };
                 self.modal = Modal::None;
-                match crate::scripting::eval(&expr) {
+                match self.scripting_eval(&expr) {
                     Ok(out) => {
                         self.status = format_eval_output(&out, None);
                     }
@@ -11423,6 +11445,111 @@ impl App {
                 ),
         );
         f.render_widget(body, rect);
+    }
+
+    // ── Bund stdlib bridge ───────────────────────────────────────────
+    //
+    // Called by `src/scripting/stdlib/app.rs` via `with_active_app`.
+    // Each `ink_*` method exposes a single primitive operation; the
+    // Bund word handler takes care of argument parsing + status
+    // reporting. Methods return Option<…> for queries and Result<…>
+    // for mutations so the stdlib can surface a clean error when
+    // there's no open buffer / no AI session.
+
+    pub(crate) fn ink_editor_cursor(&self) -> Option<(usize, usize)> {
+        self.opened.as_ref().map(|d| d.textarea.cursor())
+    }
+
+    pub(crate) fn ink_editor_goto(&mut self, row: usize, col: usize) -> Result<(), String> {
+        let Some(doc) = self.opened.as_mut() else {
+            return Err("no buffer open".into());
+        };
+        doc.textarea.move_cursor(tui_textarea::CursorMove::Jump(
+            row as u16, col as u16,
+        ));
+        Ok(())
+    }
+
+    pub(crate) fn ink_editor_insert(&mut self, text: &str) -> Result<(), String> {
+        let Some(doc) = self.opened.as_mut() else {
+            return Err("no buffer open".into());
+        };
+        doc.textarea.insert_str(text);
+        doc.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn ink_editor_scroll(&mut self, delta: i32) -> Result<(), String> {
+        let Some(doc) = self.opened.as_mut() else {
+            return Err("no buffer open".into());
+        };
+        let max = doc.textarea.lines().len().saturating_sub(1);
+        let new = (doc.scroll_row as i64).saturating_add(delta as i64).max(0) as usize;
+        doc.scroll_row = new.min(max);
+        Ok(())
+    }
+
+    pub(crate) fn ink_editor_delete_line(&mut self) -> Result<(), String> {
+        let Some(doc) = self.opened.as_mut() else {
+            return Err("no buffer open".into());
+        };
+        // Kill the whole line: move to start, delete to end.
+        doc.textarea.move_cursor(tui_textarea::CursorMove::Head);
+        doc.textarea.delete_line_by_end();
+        doc.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn ink_editor_delete_to_bol(&mut self) -> Result<(), String> {
+        let Some(doc) = self.opened.as_mut() else {
+            return Err("no buffer open".into());
+        };
+        doc.textarea.delete_line_by_head();
+        doc.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn ink_editor_delete_to_eol(&mut self) -> Result<(), String> {
+        let Some(doc) = self.opened.as_mut() else {
+            return Err("no buffer open".into());
+        };
+        doc.textarea.delete_line_by_end();
+        doc.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn ink_editor_text(&self) -> Option<String> {
+        self.opened.as_ref().map(|d| d.textarea.lines().join("\n"))
+    }
+
+    /// First substring match in the buffer, returned as `(row, col)`.
+    pub(crate) fn ink_editor_find(&self, needle: &str) -> Option<(usize, usize)> {
+        if needle.is_empty() {
+            return None;
+        }
+        let doc = self.opened.as_ref()?;
+        for (row, line) in doc.textarea.lines().iter().enumerate() {
+            if let Some(col) = line.find(needle) {
+                return Some((row, col));
+            }
+        }
+        None
+    }
+
+    pub(crate) fn ink_ai_clear_history(&mut self) {
+        self.clear_chat_history();
+    }
+
+    pub(crate) fn ink_typst_assemble(&mut self) {
+        self.schedule_assembly();
+    }
+
+    pub(crate) fn ink_typst_build(&mut self) {
+        self.schedule_build();
+    }
+
+    pub(crate) fn ink_typst_take(&mut self) {
+        self.schedule_take();
     }
 }
 

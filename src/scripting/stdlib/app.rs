@@ -1,0 +1,282 @@
+//! Bund stdlib words that mutate App-level state.
+//!
+//! Phase B of the editor-integration roadmap. Where Phase A
+//! (`ink.tree.*`, `ink.paragraph.*`, `ink.db.*`) only touched the
+//! project Store — accessible globally via `ACTIVE_STORE` — these
+//! words reach into the running `App`'s editor buffer, AI chat
+//! history, and Typst scheduler. Access goes through the
+//! `with_active_app` helper which dereferences a thread-local
+//! raw pointer set by `App::scripting_eval` (see the
+//! SAFETY-contract comment on `scripting::ACTIVE_APP`).
+//!
+//! These words error with "no active App (run inside the TUI)"
+//! when invoked from `inkhaven bund` outside a TUI session.
+//!
+//! ## Categories
+//!
+//! - `ink.editor.*` → `editor_write` (default-denied)
+//! - `ink.editor.text` / `.cursor` / `.find` → `editor_read`
+//! - `ink.ai.*` → `ai_write` (default-denied)
+//! - `ink.typst.*` → `store_write` — runs Book assembly, which
+//!   mutates the artefacts directory.
+
+use anyhow::{anyhow, Result};
+use easy_error::Error as BundError;
+use rust_dynamic::value::Value;
+use rust_multistackvm::multistackvm::VM;
+
+use super::helpers::{pull, push, require_depth, value_to_i64, value_to_string};
+
+pub fn register(vm: &mut VM) -> Result<()> {
+    // ── Editor read ───────────────────────────────────────────
+    vm.register_inline("ink.editor.cursor".to_string(), ink_editor_cursor)
+        .map_err(|e| anyhow!("register ink.editor.cursor: {e}"))?;
+    vm.register_inline("ink.editor.text".to_string(), ink_editor_text)
+        .map_err(|e| anyhow!("register ink.editor.text: {e}"))?;
+    vm.register_inline("ink.editor.find".to_string(), ink_editor_find)
+        .map_err(|e| anyhow!("register ink.editor.find: {e}"))?;
+
+    // ── Editor write ──────────────────────────────────────────
+    vm.register_inline("ink.editor.goto".to_string(), ink_editor_goto)
+        .map_err(|e| anyhow!("register ink.editor.goto: {e}"))?;
+    vm.register_inline("ink.editor.insert".to_string(), ink_editor_insert)
+        .map_err(|e| anyhow!("register ink.editor.insert: {e}"))?;
+    vm.register_inline("ink.editor.scroll".to_string(), ink_editor_scroll)
+        .map_err(|e| anyhow!("register ink.editor.scroll: {e}"))?;
+    vm.register_inline("ink.editor.delete_line".to_string(), ink_editor_delete_line)
+        .map_err(|e| anyhow!("register ink.editor.delete_line: {e}"))?;
+    vm.register_inline("ink.editor.delete_to_bol".to_string(), ink_editor_delete_to_bol)
+        .map_err(|e| anyhow!("register ink.editor.delete_to_bol: {e}"))?;
+    vm.register_inline("ink.editor.delete_to_eol".to_string(), ink_editor_delete_to_eol)
+        .map_err(|e| anyhow!("register ink.editor.delete_to_eol: {e}"))?;
+
+    // ── AI ────────────────────────────────────────────────────
+    vm.register_inline("ink.ai.clear_history".to_string(), ink_ai_clear_history)
+        .map_err(|e| anyhow!("register ink.ai.clear_history: {e}"))?;
+
+    // ── Typst ─────────────────────────────────────────────────
+    vm.register_inline("ink.typst.assemble".to_string(), ink_typst_assemble)
+        .map_err(|e| anyhow!("register ink.typst.assemble: {e}"))?;
+    vm.register_inline("ink.typst.build".to_string(), ink_typst_build)
+        .map_err(|e| anyhow!("register ink.typst.build: {e}"))?;
+    vm.register_inline("ink.typst.take".to_string(), ink_typst_take)
+        .map_err(|e| anyhow!("register ink.typst.take: {e}"))?;
+
+    Ok(())
+}
+
+fn to_bund_err(e: anyhow::Error) -> BundError {
+    easy_error::err_msg(e.to_string())
+}
+
+fn with_app<F, R>(tag: &str, f: F) -> Result<R>
+where
+    F: FnOnce(&mut crate::tui::app::App) -> Result<R>,
+{
+    let outcome = crate::scripting::with_active_app(f);
+    match outcome {
+        Some(r) => r,
+        None => Err(anyhow!(
+            "{tag}: no active App (run inside the TUI; `inkhaven bund` from the CLI has no editor / AI / typst state)"
+        )),
+    }
+}
+
+// ── ink.editor.cursor ────────────────────────────────────────────────
+// Stack: ( -- list[row col] | NODATA )
+
+fn ink_editor_cursor(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_editor_cursor(vm).map_err(to_bund_err)
+}
+
+fn do_ink_editor_cursor(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.editor.cursor";
+    let cursor = with_app(tag, |app| Ok(app.ink_editor_cursor()))?;
+    let val = match cursor {
+        Some((row, col)) => Value::from_list(vec![
+            Value::from_int(row as i64),
+            Value::from_int(col as i64),
+        ]),
+        None => Value::nodata(),
+    };
+    push(vm, val);
+    Ok(vm)
+}
+
+// ── ink.editor.text ──────────────────────────────────────────────────
+// Stack: ( -- string | NODATA )
+
+fn ink_editor_text(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_editor_text(vm).map_err(to_bund_err)
+}
+
+fn do_ink_editor_text(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.editor.text";
+    let text = with_app(tag, |app| Ok(app.ink_editor_text()))?;
+    let val = match text {
+        Some(s) => Value::from_string(s),
+        None => Value::nodata(),
+    };
+    push(vm, val);
+    Ok(vm)
+}
+
+// ── ink.editor.find ──────────────────────────────────────────────────
+// Stack: ( needle -- list[row col] | NODATA )
+
+fn ink_editor_find(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_editor_find(vm).map_err(to_bund_err)
+}
+
+fn do_ink_editor_find(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.editor.find";
+    require_depth(vm, 1, tag)?;
+    let needle = value_to_string(pull(vm, tag)?, "needle", tag)?;
+    let pos = with_app(tag, |app| Ok(app.ink_editor_find(&needle)))?;
+    let val = match pos {
+        Some((row, col)) => Value::from_list(vec![
+            Value::from_int(row as i64),
+            Value::from_int(col as i64),
+        ]),
+        None => Value::nodata(),
+    };
+    push(vm, val);
+    Ok(vm)
+}
+
+// ── ink.editor.goto ──────────────────────────────────────────────────
+// Stack: ( row col -- )
+
+fn ink_editor_goto(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_editor_goto(vm).map_err(to_bund_err)
+}
+
+fn do_ink_editor_goto(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.editor.goto";
+    require_depth(vm, 2, tag)?;
+    let col = value_to_i64(pull(vm, tag)?, "col", tag)?.max(0) as usize;
+    let row = value_to_i64(pull(vm, tag)?, "row", tag)?.max(0) as usize;
+    with_app(tag, |app| {
+        app.ink_editor_goto(row, col)
+            .map_err(|e| anyhow!("{tag}: {e}"))
+    })?;
+    Ok(vm)
+}
+
+// ── ink.editor.insert ────────────────────────────────────────────────
+// Stack: ( text -- )
+
+fn ink_editor_insert(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_editor_insert(vm).map_err(to_bund_err)
+}
+
+fn do_ink_editor_insert(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.editor.insert";
+    require_depth(vm, 1, tag)?;
+    let text = value_to_string(pull(vm, tag)?, "text", tag)?;
+    with_app(tag, |app| {
+        app.ink_editor_insert(&text)
+            .map_err(|e| anyhow!("{tag}: {e}"))
+    })?;
+    Ok(vm)
+}
+
+// ── ink.editor.scroll ────────────────────────────────────────────────
+// Stack: ( delta -- )
+// Positive scrolls down; negative scrolls up. Clamps at the edges.
+
+fn ink_editor_scroll(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_editor_scroll(vm).map_err(to_bund_err)
+}
+
+fn do_ink_editor_scroll(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.editor.scroll";
+    require_depth(vm, 1, tag)?;
+    let delta = value_to_i64(pull(vm, tag)?, "delta", tag)?;
+    with_app(tag, |app| {
+        app.ink_editor_scroll(delta as i32)
+            .map_err(|e| anyhow!("{tag}: {e}"))
+    })?;
+    Ok(vm)
+}
+
+// ── ink.editor.delete_line / .delete_to_bol / .delete_to_eol ─────────
+// Stack: ( -- )
+
+fn ink_editor_delete_line(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_call_unit(vm, "ink.editor.delete_line", |app| app.ink_editor_delete_line())
+        .map_err(to_bund_err)
+}
+
+fn ink_editor_delete_to_bol(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_call_unit(vm, "ink.editor.delete_to_bol", |app| {
+        app.ink_editor_delete_to_bol()
+    })
+    .map_err(to_bund_err)
+}
+
+fn ink_editor_delete_to_eol(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_call_unit(vm, "ink.editor.delete_to_eol", |app| {
+        app.ink_editor_delete_to_eol()
+    })
+    .map_err(to_bund_err)
+}
+
+/// Shared shape for words that take no stack args, run one App
+/// method that returns `Result<(), String>`, and push nothing.
+fn do_call_unit<'a, F>(vm: &'a mut VM, tag: &'static str, f: F) -> Result<&'a mut VM>
+where
+    F: FnOnce(&mut crate::tui::app::App) -> std::result::Result<(), String>,
+{
+    with_app(tag, |app| f(app).map_err(|e| anyhow!("{tag}: {e}")))?;
+    Ok(vm)
+}
+
+// ── ink.ai.clear_history ─────────────────────────────────────────────
+// Stack: ( -- )
+
+fn ink_ai_clear_history(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let tag = "ink.ai.clear_history";
+    match with_app(tag, |app| {
+        app.ink_ai_clear_history();
+        Ok::<_, anyhow::Error>(())
+    }) {
+        Ok(_) => Ok(vm),
+        Err(e) => Err(to_bund_err(e)),
+    }
+}
+
+// ── ink.typst.assemble / .build / .take ──────────────────────────────
+// Stack: ( -- )
+// Schedule asynchronously — these post a background task; the
+// script returns immediately. Result lands on the TUI's status bar.
+
+fn ink_typst_assemble(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    typst_call(vm, "ink.typst.assemble", |app| app.ink_typst_assemble())
+}
+
+fn ink_typst_build(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    typst_call(vm, "ink.typst.build", |app| app.ink_typst_build())
+}
+
+fn ink_typst_take(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    typst_call(vm, "ink.typst.take", |app| app.ink_typst_take())
+}
+
+fn typst_call<'a, F>(
+    vm: &'a mut VM,
+    tag: &'static str,
+    f: F,
+) -> std::result::Result<&'a mut VM, BundError>
+where
+    F: FnOnce(&mut crate::tui::app::App),
+{
+    match with_app(tag, |app| {
+        f(app);
+        Ok::<_, anyhow::Error>(())
+    }) {
+        Ok(_) => Ok(vm),
+        Err(e) => Err(to_bund_err(e)),
+    }
+}
+

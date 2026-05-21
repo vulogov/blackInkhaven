@@ -44,11 +44,77 @@ thread_local! {
     /// hook) would re-enter `with_adam` and deadlock against
     /// the write lock the current eval is holding.
     static IN_BUND_EVAL: Cell<bool> = const { Cell::new(false) };
+
+    /// Raw pointer to the live `App` set by `App::scripting_eval`
+    /// for the duration of one Bund evaluation, then cleared.
+    /// Stays null in CLI / non-TUI contexts — `ink.editor.*` /
+    /// `ink.ai.*` / `ink.typst.*` words error with a clear
+    /// "no active App" message when the slot is null.
+    ///
+    /// SAFETY contract:
+    /// - The pointer is set from a `&mut self` on App; while it
+    ///   is non-null, App is borrowed by the call that set it.
+    /// - Bund word handlers cast back to `&mut App` via this
+    ///   pointer. That creates a *second* mutable reference in
+    ///   Rust's eyes — technically aliasing — but the TUI is
+    ///   single-threaded and the access is strictly nested
+    ///   inside the call that holds the outer borrow.
+    /// - Always cleared by the RAII guard on drop, so panics +
+    ///   early returns can't leak a stale pointer.
+    static ACTIVE_APP: Cell<*mut crate::tui::app::App> = const {
+        Cell::new(std::ptr::null_mut())
+    };
 }
 
 /// True if the current thread is inside a `bund::eval`.
 pub(crate) fn is_in_eval() -> bool {
     IN_BUND_EVAL.with(|c| c.get())
+}
+
+/// Run `f` with a mutable reference to the active `App`, if one
+/// is installed. Returns `None` when called outside an
+/// `App::scripting_eval` (e.g., from CLI `inkhaven bund` or from
+/// a hook fired without an App in scope). Stdlib words use this
+/// to reach App state for editor / AI / Typst mutation.
+///
+/// SAFETY: see the module-level doc-comment on `ACTIVE_APP`.
+pub(crate) fn with_active_app<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut crate::tui::app::App) -> R,
+{
+    let ptr = ACTIVE_APP.with(|c| c.get());
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: the pointer is non-null only between
+    // App::scripting_eval entry (which sets the slot from
+    // `self as *mut _`) and the matching RAII drop. The TUI is
+    // single-threaded; nothing else can take a reference to
+    // App during that window. The aliasing-with-the-outer-
+    // borrow concern is documented in ACTIVE_APP's doc-comment.
+    Some(f(unsafe { &mut *ptr }))
+}
+
+/// RAII guard for `ACTIVE_APP`. Constructed by
+/// `App::scripting_eval`, restores the prior pointer on drop so
+/// nested evals (we never nest in practice, but defensively)
+/// don't leak the wrong reference.
+pub(crate) struct AppGuard {
+    prev: *mut crate::tui::app::App,
+}
+
+impl AppGuard {
+    pub(crate) fn enter(app: &mut crate::tui::app::App) -> Self {
+        let new: *mut crate::tui::app::App = app;
+        let prev = ACTIVE_APP.with(|c| c.replace(new));
+        Self { prev }
+    }
+}
+
+impl Drop for AppGuard {
+    fn drop(&mut self) {
+        ACTIVE_APP.with(|c| c.set(self.prev));
+    }
 }
 
 /// RAII guard that flips `IN_BUND_EVAL` true on construction and
