@@ -137,6 +137,13 @@
     // Specific word names to allow even when their category is denied.
     // Useful for "give me one tool out of an otherwise-blocked family".
     enabled_words: []
+    // Categories to opt INTO from the built-in default-deny list.
+    // The defaults deny `fs_write`, `net`, `shell`, `code_eval`,
+    // and `keymap`; entries listed here are subtracted from that
+    // baseline so a user can grant a single family without
+    // unlocking everything with `no_default_deny`.
+    //   Example: enabled_categories: ["keymap"]
+    enabled_categories: []
     // Power-user switch: when true, the built-in default deny list
     // (fs_write, net, shell, code_eval) is cleared and only
     // `disabled_*` above apply. Off in stock projects.

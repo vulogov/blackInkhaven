@@ -1651,10 +1651,6 @@ struct App {
     layout: ProjectLayout,
     store: Store,
     keymap: Keymap,
-    /// Chord-action table consulted by `handle_meta_action` and
-    /// `handle_bund_action`. Loaded with `KeyBindings::defaults()`
-    /// and then overlaid with the user's HJSON `keys.bindings`.
-    keys: super::keybind::KeyBindings,
     cfg: Config,
     ai: AiClient,
     prompts: PromptLibrary,
@@ -1942,33 +1938,22 @@ impl App {
         let keymap = Keymap::from_config(&cfg).map_err(anyhow::Error::from)?;
         // Build the chord-action table from the user's HJSON
         // overlay. Defaults first, then `keys.bindings` rewrites.
-        let keys = {
-            // Only meta_sub / bund_sub overlays make sense; bund_prefix
-            // may be unset, in which case parse_overlay rejects any
-            // entry referencing it.
-            let bund_prefix = keymap.bund_prefix.unwrap_or_else(|| {
-                // A placeholder chord that nothing real ever matches.
-                // Concretely: KeyCode::Null + no modifiers — only
-                // arrives from a terminal misbehaviour, so collision
-                // is harmless.
-                super::keymap::KeyChord {
-                    code: crossterm::event::KeyCode::Null,
-                    modifiers: crossterm::event::KeyModifiers::NONE,
-                }
-            });
-            let overrides: Vec<(String, String, Option<String>)> = cfg
-                .keys
-                .bindings
-                .iter()
-                .map(|b| (b.chord.clone(), b.action.clone(), b.scope.clone()))
-                .collect();
-            super::keybind::KeyBindings::from_overrides(
-                keymap.meta_prefix,
-                bund_prefix,
-                &overrides,
-            )
-            .map_err(|e| Error::Config(format!("keys.bindings: {e}")))?
-        };
+        // Install into the process-wide slot so `ink.key.*` Bund
+        // stdlib words can mutate the same source of truth the
+        // App reads from on every chord dispatch.
+        let overrides: Vec<(String, String, Option<String>)> = cfg
+            .keys
+            .bindings
+            .iter()
+            .map(|b| (b.chord.clone(), b.action.clone(), b.scope.clone()))
+            .collect();
+        let keys = super::keybind::KeyBindings::from_overrides(
+            keymap.meta_prefix,
+            keymap.bund_prefix,
+            &overrides,
+        )
+        .map_err(|e| Error::Config(format!("keys.bindings: {e}")))?;
+        super::keybind::install(keys);
         let hierarchy = Hierarchy::load(&store).map_err(anyhow::Error::from)?;
         let lexicon = build_lexicon(&hierarchy, &cfg);
         let collapsed_nodes: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
@@ -2038,7 +2023,6 @@ impl App {
             layout,
             store,
             keymap,
-            keys,
             cfg,
             ai,
             prompts,
@@ -4879,9 +4863,9 @@ impl App {
             self.status = "meta cancelled".into();
             return;
         }
-        match self.keys.resolve_meta_sub(&key, self.focus) {
+        let resolved = super::keybind::read().resolve_meta_sub(&key, self.focus);
+        match resolved {
             Some(super::keybind::Action::None) => {
-                // Explicit user-disabled chord.
                 self.status = "meta: chord disabled by config".into();
             }
             Some(action) => self.run_action(action),
@@ -4913,7 +4897,8 @@ impl App {
             self.status = "bund cancelled".into();
             return;
         }
-        match self.keys.resolve_bund_sub(&key, self.focus) {
+        let resolved = super::keybind::read().resolve_bund_sub(&key, self.focus);
+        match resolved {
             Some(super::keybind::Action::None) => {
                 self.status = "bund: chord disabled by config".into();
             }
@@ -4992,6 +4977,14 @@ impl App {
             A::BundRunBuffer => self.bund_run_buffer(),
             A::BundNewScript => self.bund_new_script(),
             A::BundOpenEvalModal => self.bund_open_eval_modal(),
+
+            // Runtime-bound Bund lambda. Dispatch through the
+            // hooks machinery so the recursion-cap + policy-deny
+            // semantics already in place apply uniformly. No args
+            // pushed; the lambda body sees an empty workbench.
+            A::BundLambda(name) => {
+                crate::scripting::hooks::fire(name.as_ref(), Vec::new());
+            }
 
             // Explicit "do nothing" — should never reach here
             // because the dispatcher catches it first, but harmless.

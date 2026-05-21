@@ -24,7 +24,9 @@
 //! * Migration of F-keys (F1/F3/F4/F5/F6/F7) into the table.
 
 use crossterm::event::KeyEvent;
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, LazyLock};
 
 use super::focus::Focus;
 use super::keymap::KeyChord;
@@ -61,7 +63,7 @@ impl Scope {
 /// variant here + an arm in `App::run_action`. Variant names
 /// serialise (via serde) to the canonical dotted form used in
 /// HJSON `keys.bindings`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
     // ── Tree pane ─────────────────────────────────────────────
@@ -157,6 +159,14 @@ pub enum Action {
     /// set `action: "none"` to disable a default chord.
     #[serde(rename = "none")]
     None,
+
+    /// Runtime-only: a Bund lambda registered under the given
+    /// name via `ink.key.bind_lambda`. Dispatch routes to
+    /// `scripting::hooks::fire(name, vec![])`. `#[serde(skip)]` —
+    /// these can't appear in HJSON; they live only in memory and
+    /// vanish on process exit.
+    #[serde(skip)]
+    BundLambda(Arc<str>),
 }
 
 #[derive(Debug, Clone)]
@@ -166,14 +176,28 @@ pub struct BindingEntry {
     pub scope: Scope,
 }
 
-/// Live binding table. Held by `App` and consulted on every
-/// meta- and bund-sub-chord dispatch.
-#[derive(Debug, Clone, Default)]
+/// Live binding table. Held in the process-wide `ACTIVE` slot
+/// and consulted on every meta- / bund-sub-chord dispatch.
+/// `ink.key.*` stdlib words mutate the same struct under the
+/// shared RwLock.
+#[derive(Debug, Clone)]
 pub struct KeyBindings {
-    /// Sub-chords resolved after the meta_prefix (`Ctrl+B …`).
+    /// Prefix chord that gates the meta sub-chord table (default
+    /// `Ctrl+B`). Stored here so `ink.key.*` stdlib words can
+    /// parse `"Ctrl+b m"` shorthand without taking a separate
+    /// dependency on the App.
+    pub meta_prefix: KeyChord,
+    /// Same for the Bund sub-chord table (default `Ctrl+Z`).
+    /// `None` when the user disabled it via empty config.
+    pub bund_prefix: Option<KeyChord>,
     pub meta_sub: Vec<BindingEntry>,
-    /// Sub-chords resolved after the bund_prefix (`Ctrl+Z …`).
     pub bund_sub: Vec<BindingEntry>,
+}
+
+impl Default for KeyBindings {
+    fn default() -> Self {
+        Self::defaults()
+    }
 }
 
 impl KeyBindings {
@@ -183,6 +207,8 @@ impl KeyBindings {
     /// pane-specific bindings beat global ones when both match.
     pub fn defaults() -> Self {
         Self {
+            meta_prefix: KeyChord::parse("Ctrl+b").expect("default meta_prefix"),
+            bund_prefix: Some(KeyChord::parse("Ctrl+z").expect("default bund_prefix")),
             meta_sub: vec![
                 // ── Tree pane ─────────────────────────────────
                 entry("c", Action::AddChapter, Scope::Tree),
@@ -274,17 +300,96 @@ impl KeyBindings {
     /// can route `"Ctrl+b m"` → meta_sub table by prefix match.
     pub fn from_overrides(
         meta_prefix: KeyChord,
-        bund_prefix: KeyChord,
+        bund_prefix: Option<KeyChord>,
         overrides: &[(String, String, Option<String>)],
     ) -> Result<Self, String> {
         let mut bindings = Self::defaults();
+        bindings.meta_prefix = meta_prefix;
+        bindings.bund_prefix = bund_prefix;
         let mut overlay: Vec<(Layer, BindingEntry)> = Vec::new();
         for (chord_str, action_str, scope_str) in overrides {
-            let entry = parse_overlay(meta_prefix, bund_prefix, chord_str, action_str, scope_str)?;
+            let entry = parse_overlay(
+                meta_prefix,
+                bund_prefix.unwrap_or_else(disabled_chord_placeholder),
+                chord_str,
+                action_str,
+                scope_str,
+            )?;
             overlay.push(entry);
         }
         bindings.apply_overlay(overlay);
         Ok(bindings)
+    }
+
+    /// Add or replace a single binding. Used by `ink.key.bind` /
+    /// `ink.key.bind_lambda`. Same `(chord, scope)` uniqueness
+    /// semantics as the HJSON overlay: a new entry shadows any
+    /// existing one with matching key.
+    pub fn add(&mut self, layer: Layer, entry: BindingEntry) {
+        let table = match layer {
+            Layer::MetaSub => &mut self.meta_sub,
+            Layer::BundSub => &mut self.bund_sub,
+        };
+        table.retain(|b| !(b.chord == entry.chord && b.scope == entry.scope));
+        table.insert(0, entry);
+    }
+
+    /// Remove every entry whose `(chord, scope)` matches. Returns
+    /// the number of entries removed (zero when nothing matched).
+    pub fn remove(&mut self, layer: Layer, chord: &KeyChord, scope: Scope) -> usize {
+        let table = match layer {
+            Layer::MetaSub => &mut self.meta_sub,
+            Layer::BundSub => &mut self.bund_sub,
+        };
+        let before = table.len();
+        table.retain(|b| !(b.chord == *chord && b.scope == scope));
+        before - table.len()
+    }
+
+    /// Parse a `"<prefix> <suffix>"` shorthand and return
+    /// `(layer, suffix_chord)`. Used by `ink.key.*` stdlib words
+    /// AND the HJSON overlay parser via `parse_overlay`.
+    pub fn parse_sub_chord(&self, s: &str) -> Result<(Layer, KeyChord), String> {
+        let parts: Vec<&str> = s.split_whitespace().collect();
+        let (prefix_str, suffix_str) = match parts.as_slice() {
+            [single] => {
+                return Err(format!(
+                    "chord `{single}`: top-level (no-prefix) binding not yet supported \
+                     — use `<meta_prefix> <key>` or `<bund_prefix> <key>`"
+                ));
+            }
+            [prefix, suffix] => (*prefix, *suffix),
+            _ => return Err(format!("chord `{s}`: expected `<prefix> <suffix>`")),
+        };
+        let prefix = KeyChord::parse(prefix_str)
+            .map_err(|e| format!("chord `{s}` prefix: {e}"))?;
+        let suffix = KeyChord::parse(suffix_str)
+            .map_err(|e| format!("chord `{s}` suffix: {e}"))?;
+        let layer = if prefix == self.meta_prefix {
+            Layer::MetaSub
+        } else if Some(prefix) == self.bund_prefix {
+            Layer::BundSub
+        } else {
+            return Err(format!(
+                "chord `{s}`: prefix `{prefix_str}` is not meta_prefix or bund_prefix"
+            ));
+        };
+        if suffix == self.meta_prefix || Some(suffix) == self.bund_prefix {
+            return Err(format!(
+                "chord `{s}`: suffix collides with a prefix chord"
+            ));
+        }
+        Ok((layer, suffix))
+    }
+}
+
+/// Placeholder chord matched by nothing real — used to satisfy
+/// `parse_overlay`'s `bund_prefix` arg when the user disabled the
+/// bund prefix via empty config.
+fn disabled_chord_placeholder() -> KeyChord {
+    KeyChord {
+        code: crossterm::event::KeyCode::Null,
+        modifiers: crossterm::event::KeyModifiers::NONE,
     }
 }
 
@@ -376,7 +481,7 @@ fn resolve_in(table: &[BindingEntry], ev: &KeyEvent, focus: Focus) -> Option<Act
     table
         .iter()
         .find(|b| b.scope.matches(focus) && b.chord.matches(ev))
-        .map(|b| b.action)
+        .map(|b| b.action.clone())
 }
 
 fn entry(chord: &str, action: Action, scope: Scope) -> BindingEntry {
@@ -385,6 +490,38 @@ fn entry(chord: &str, action: Action, scope: Scope) -> BindingEntry {
         action,
         scope,
     }
+}
+
+// ── Shared active KeyBindings ────────────────────────────────────────
+//
+// App reads from this on every chord dispatch; `ink.key.*` Bund
+// stdlib writes to it. Lazily initialised with `KeyBindings::defaults()`
+// on first access — so CLI subcommands (`inkhaven bund`) that don't
+// build an `App` still see a functioning binding table.
+//
+// `install` replaces the contents under the write lock, so TUI
+// startup (which parses the HJSON overlay) wins over the lazy
+// defaults whenever it runs.
+
+static ACTIVE: LazyLock<RwLock<KeyBindings>> =
+    LazyLock::new(|| RwLock::new(KeyBindings::defaults()));
+
+/// Replace the active KeyBindings. Called by `App::new` after
+/// applying the HJSON overlay. Cheap because the new value is
+/// move-swapped under the write lock.
+pub fn install(bindings: KeyBindings) {
+    *ACTIVE.write() = bindings;
+}
+
+/// Read access. Lazy default-init means this never blocks on
+/// missing installation — CLI smoke usage gets defaults.
+pub fn read() -> RwLockReadGuard<'static, KeyBindings> {
+    ACTIVE.read()
+}
+
+/// Write access for `ink.key.*` Bund stdlib words.
+pub fn write() -> RwLockWriteGuard<'static, KeyBindings> {
+    ACTIVE.write()
 }
 
 #[cfg(test)]

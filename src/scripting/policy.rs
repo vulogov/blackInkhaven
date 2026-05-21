@@ -62,6 +62,11 @@ pub mod category {
     pub const NET: &str = "net";
     pub const SHELL: &str = "shell";
     pub const CODE_EVAL: &str = "code_eval";
+    /// Runtime keymap mutation via `ink.key.*`. Default-denied
+    /// because a script can otherwise hijack the user's chord
+    /// muscle memory or lock them out (well — Ctrl+Q is hard-
+    /// blocked, but everything else is fair game).
+    pub const KEYMAP: &str = "keymap";
 }
 
 /// Categories denied out of the box. A user has to actively flip
@@ -73,6 +78,7 @@ pub const DEFAULT_DENIED_CATEGORIES: &[&str] = &[
     category::NET,
     category::SHELL,
     category::CODE_EVAL,
+    category::KEYMAP,
 ];
 
 /// Word → category table. Every word inkhaven registers should
@@ -90,6 +96,12 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.paragraph.text", category::STORE_READ),
     ("ink.search.text", category::STORE_READ),
     ("ink.snapshot.list", category::STORE_READ),
+    // Stage-2 runtime keymap mutation. Default-denied via
+    // DEFAULT_DENIED_CATEGORIES.
+    ("ink.key.bind", category::KEYMAP),
+    ("ink.key.bind_lambda", category::KEYMAP),
+    ("ink.key.unbind", category::KEYMAP),
+    ("ink.key.list", category::KEYMAP),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
@@ -114,6 +126,13 @@ pub struct Policy {
     #[serde(default)]
     pub enabled_words: Vec<String>,
 
+    /// Categories the user has actively enabled, overriding the
+    /// built-in defaults. Use this to opt in to a single
+    /// destructive family (e.g. `"keymap"`) without disabling
+    /// the entire default-deny baseline.
+    #[serde(default)]
+    pub enabled_categories: Vec<String>,
+
     /// When `true`, disable the built-in default deny list and use
     /// only `disabled_categories` / `disabled_words` verbatim. Power
     /// users only — off by default.
@@ -134,6 +153,7 @@ impl Default for Policy {
             disabled_categories: Vec::new(),
             disabled_words: Vec::new(),
             enabled_words: Vec::new(),
+            enabled_categories: Vec::new(),
             no_default_deny: false,
             bootstrap: String::new(),
         }
@@ -149,8 +169,11 @@ impl Policy {
             && self.no_default_deny
     }
 
-    /// Resolve effective denied categories (defaults + user
-    /// additions, deduplicated).
+    /// Resolve effective denied categories: defaults +
+    /// `disabled_categories`, with anything in `enabled_categories`
+    /// subtracted so a user can opt in to a single default-denied
+    /// family (e.g. `keymap`) without disabling the rest of the
+    /// baseline.
     fn effective_denied_categories(&self) -> HashSet<&str> {
         let mut s: HashSet<&str> = HashSet::new();
         if !self.no_default_deny {
@@ -160,6 +183,9 @@ impl Policy {
         }
         for c in &self.disabled_categories {
             s.insert(c.as_str());
+        }
+        for c in &self.enabled_categories {
+            s.remove(c.as_str());
         }
         s
     }
