@@ -38,6 +38,10 @@ pub struct InprocessHandle {
     /// outcome here so `into_outcome` can recover it without
     /// blocking on a second `recv`.
     stash: Option<CompileOutcome>,
+    /// User-requested cancel flag. `cancel()` flips it; the
+    /// `into_outcome` path short-circuits with a synthetic
+    /// "cancelled" outcome instead of blocking on the receiver.
+    cancelled: bool,
 }
 
 impl InprocessHandle {
@@ -73,10 +77,21 @@ impl InprocessHandle {
     /// Consume the handle and return the compile outcome. If the
     /// caller never polled `try_wait_mut` we block here as a
     /// safety net — the foreground thread shouldn't return while
-    /// the worker is still alive.
+    /// the worker is still alive (unless we cancelled).
     pub fn into_outcome(mut self) -> CompileOutcome {
         if let Some(out) = self.stash.take() {
             return out;
+        }
+        if self.cancelled {
+            return CompileOutcome {
+                success: false,
+                stderr: "in-process compile: cancelled by user — worker thread \
+                         abandoned, may continue using CPU until typst finishes \
+                         on its own"
+                    .to_owned(),
+                stdout: String::new(),
+                pdf_path: self.pdf_path,
+            };
         }
         match self.rx.recv() {
             Ok(out) => out,
@@ -87,6 +102,15 @@ impl InprocessHandle {
                 pdf_path: self.pdf_path,
             },
         }
+    }
+
+    /// Cooperative cancel — flips the handle into "abandoned"
+    /// state. The worker thread keeps running because
+    /// `typst::compile` has no interrupt point, but the TUI
+    /// stops blocking on it. Subsequent `into_outcome` returns
+    /// a synthesized cancellation outcome.
+    pub fn cancel(&mut self) {
+        self.cancelled = true;
     }
 }
 
@@ -118,6 +142,7 @@ pub fn spawn_thread(
         rx,
         pdf_path,
         stash: None,
+        cancelled: false,
     })
 }
 

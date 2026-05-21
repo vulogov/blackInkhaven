@@ -502,6 +502,27 @@ effect.
   pin the host's `typst` binary to the same release (`0.14.x`
   for 1.2.5) so the output stays byte-identical.
 
+**TUI integration (1.2.5+):**
+
+- **Splash + interrupt** — Ctrl+B B / Ctrl+B O paint a centered
+  splash with the spinner, the book title, the active engine
+  (e.g. `internal · fonts: bundled + system · @preview: on`
+  *or* `external · /usr/local/bin/typst`), elapsed seconds, and
+  a footer hint. **Esc** in the splash cancels the compile:
+  external engine receives SIGTERM, in-process worker is
+  abandoned (it keeps running until typst finishes naturally;
+  the foreground unblocks immediately).
+- **Autosave before A/B/O** — Ctrl+B A (assemble), Ctrl+B B
+  (build), and Ctrl+B O (take) all flush the primary editor
+  (and the secondary editor in similar-paragraph mode) to disk
+  before the assembler walks `.typ` files. No more "I just
+  pressed Ctrl+B B and the build used yesterday's saved
+  version".
+- **Engine visibility** — Ctrl+B V (credits / version pane)
+  carries a `Typst engine` line with the same summary the
+  splash uses; the engine identity is also logged at INFO at
+  TUI startup so the choice shows up in `inkhaven.log`.
+
 ## `output`
 
 Multi-format export hookup for `Ctrl+B O` ("take the book"). Each

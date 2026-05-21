@@ -243,7 +243,7 @@ fn write_pdf(combined: &str, output: Option<&Path>) -> Result<()> {
     let output = output.ok_or_else(|| {
         Error::Store("PDF export needs --output <path.pdf>".into())
     })?;
-    if which("typst").is_none() {
+    if crate::typst_compile::typst_external_path().is_none() {
         return Err(Error::Store(
             "the `typst` binary is not on PATH — install it from https://typst.app/ \
              or run `inkhaven export typst -o file.typ` and compile manually"
@@ -272,19 +272,3 @@ fn write_pdf(combined: &str, output: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-/// Minimal `which` — returns the first match on PATH, or None.
-fn which(prog: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(prog);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        // Windows compatibility — never hit on macOS/Linux but cheap.
-        let with_ext = dir.join(format!("{prog}.exe"));
-        if with_ext.is_file() {
-            return Some(with_ext);
-        }
-    }
-    None
-}
