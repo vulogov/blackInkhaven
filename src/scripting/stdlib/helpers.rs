@@ -67,3 +67,67 @@ pub fn active_store(err_prefix: &str) -> Result<&'static Store> {
         )
     })
 }
+
+/// Look up the active project config. Used by the tree-mutating
+/// `ink.*` words that need `cfg` for hierarchy validation /
+/// artefact-path resolution.
+pub fn active_config(err_prefix: &str) -> Result<&'static crate::config::Config> {
+    crate::scripting::active_config().ok_or_else(|| {
+        anyhow!(
+            "{err_prefix} no project config registered \
+             (run inside the TUI or pass --project on the CLI)"
+        )
+    })
+}
+
+/// Resolve a slug-path (`"book/chapter/paragraph"`) to a node
+/// UUID by walking the hierarchy. Empty path returns `None`
+/// (signalling "root").
+///
+/// Each component is matched against `Node::slug` of the
+/// children of the current cursor. Order prefixes (`01-`) are
+/// stripped automatically so both `"story/morning-light"` and
+/// `"story/01-morning-light"` resolve to the same node.
+pub fn resolve_path(
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    path: &str,
+    err_prefix: &str,
+) -> Result<Option<uuid::Uuid>> {
+    let trimmed = path.trim().trim_matches('/');
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let mut current: Option<uuid::Uuid> = None;
+    for raw in trimmed.split('/') {
+        // Strip `NN-` order prefix so the writer can paste in a
+        // path from `fs_name()` and have it still resolve.
+        let segment = raw
+            .split_once('-')
+            .map(|(prefix, rest)| {
+                if prefix.chars().all(|c| c.is_ascii_digit()) && !prefix.is_empty() {
+                    rest
+                } else {
+                    raw
+                }
+            })
+            .unwrap_or(raw);
+        let candidates = hierarchy.children_of(current);
+        let found = candidates
+            .iter()
+            .find(|n| n.slug == segment)
+            .ok_or_else(|| {
+                anyhow!(
+                    "{err_prefix} segment `{segment}` not found under {}",
+                    match current {
+                        Some(id) => hierarchy
+                            .get(id)
+                            .map(|n| n.slug.clone())
+                            .unwrap_or_else(|| id.to_string()),
+                        None => "<root>".to_string(),
+                    }
+                )
+            })?;
+        current = Some(found.id);
+    }
+    Ok(current)
+}

@@ -35,12 +35,50 @@ pub mod hooks;
 pub mod policy;
 pub mod stdlib;
 
+use std::cell::Cell;
+
+thread_local! {
+    /// Set while a `bund::eval` is in progress on this thread.
+    /// `hooks::fire` checks this and short-circuits — otherwise
+    /// any `ink.*` word that mutates the store (and so fires a
+    /// hook) would re-enter `with_adam` and deadlock against
+    /// the write lock the current eval is holding.
+    static IN_BUND_EVAL: Cell<bool> = const { Cell::new(false) };
+}
+
+/// True if the current thread is inside a `bund::eval`.
+pub(crate) fn is_in_eval() -> bool {
+    IN_BUND_EVAL.with(|c| c.get())
+}
+
+/// RAII guard that flips `IN_BUND_EVAL` true on construction and
+/// resets to its prior value on drop. Used inside `eval` so a
+/// panic still clears the flag and subsequent hooks fire
+/// normally.
+struct EvalGuard {
+    prev: bool,
+}
+
+impl EvalGuard {
+    fn enter() -> Self {
+        let prev = IN_BUND_EVAL.with(|c| c.replace(true));
+        Self { prev }
+    }
+}
+
+impl Drop for EvalGuard {
+    fn drop(&mut self) {
+        IN_BUND_EVAL.with(|c| c.set(self.prev));
+    }
+}
+
 use anyhow::{anyhow, Result};
 use bundcore::bundcore::Bund;
 use parking_lot::RwLock;
 use rust_dynamic::value::Value;
 use std::sync::OnceLock;
 
+use crate::config::Config;
 use crate::store::Store;
 use policy::Policy;
 
@@ -54,6 +92,12 @@ static ADAM: OnceLock<RwLock<Bund>> = OnceLock::new();
 /// to use `ink.*` words against a script-only invocation will see
 /// a clean "no project store registered" error.
 static ACTIVE_STORE: OnceLock<Store> = OnceLock::new();
+
+/// Project Config, set alongside `ACTIVE_STORE`. Several
+/// `Store::*` methods (`create_node`, snapshot semantics)
+/// require it for hierarchy validation + artefact path
+/// resolution.
+static ACTIVE_CONFIG: OnceLock<Config> = OnceLock::new();
 
 /// Sandbox policy to apply when Adam is built. Setters land before
 /// the first `eval()` triggers lazy init; once Adam exists, the
@@ -183,17 +227,29 @@ pub fn register_active_store(store: Store) {
     let _ = ACTIVE_STORE.set(store);
 }
 
+/// Read access to the active project config. Used by `ink.tree.*`
+/// write words that need `cfg` for hierarchy validation.
+pub fn active_config() -> Option<&'static Config> {
+    ACTIVE_CONFIG.get()
+}
+
+/// Install the project config into the global slot. Called from
+/// `Store::open` via `configure`.
+pub fn register_active_config(cfg: Config) {
+    let _ = ACTIVE_CONFIG.set(cfg);
+}
+
 /// One-shot helper called from `Store::open` so every code path
 /// that opens a project — TUI, `inkhaven bund`, `inkhaven add`,
 /// `inkhaven reindex`, etc. — automatically arms the scripting
-/// layer. Equivalent to `set_policy(cfg.scripting.clone())`
-/// followed by `register_active_store(store)`.
+/// layer. Installs policy + store + config together.
 ///
-/// Both inner calls are idempotent (single-project-per-process),
-/// so a second open against the same project is harmless.
-pub fn configure(policy: Policy, store: Store) {
+/// All three inner calls are idempotent (single-project-per-
+/// process), so a second open against the same project is harmless.
+pub fn configure(policy: Policy, store: Store, cfg: Config) {
     set_policy(policy);
     register_active_store(store);
+    register_active_config(cfg);
 }
 
 /// Read access to the active store, used by `ink.*` word handlers.
@@ -225,9 +281,12 @@ pub struct EvalOutput {
 pub fn eval(code: &str) -> Result<EvalOutput> {
     init_adam()?;
     let adam = ADAM.get().ok_or_else(|| anyhow!("Adam VM missing after init"))?;
-    // Discard any leftover from a previous eval so the buffer
-    // returned to the caller only reflects THIS script.
     let _ = stdlib::io::drain_print_buffer();
+    // Mark this thread as "inside eval" so hook fires that
+    // originate from Store mutations the script triggers (via
+    // `ink.tree.*`, `ink.paragraph.*`, etc.) short-circuit
+    // instead of re-entering the write lock we're about to take.
+    let _eval_guard = EvalGuard::enter();
     let mut guard = adam.write();
     guard
         .eval(code)
