@@ -1065,6 +1065,103 @@ impl Store {
         Ok(())
     }
 
+    /// Convert a text-leaf node between its three flavours:
+    ///
+    ///   Paragraph(typst)  ←→  Paragraph(hjson)  ←→  Script(bund)
+    ///
+    /// The conversion renames the file on disk to match the new
+    /// extension (`.typ` / `.hjson` / `.bund`), stamps the new
+    /// `kind` and `content_type` into the metadata, and persists
+    /// via `update_metadata`. Body contents are NOT translated —
+    /// switching `.typ` → `.bund` just changes the kind label;
+    /// the writer is responsible for the body making sense in
+    /// the new flavour.
+    ///
+    /// `new_kind` must be either `Paragraph` or `Script`;
+    /// `new_content_type` is `None` for plain typst, `Some("hjson")`
+    /// for HJSON, `Some("bund")` for Bund scripts. Other
+    /// combinations are rejected.
+    pub fn convert_leaf(
+        &self,
+        hierarchy: &Hierarchy,
+        node_id: Uuid,
+        new_kind: NodeKind,
+        new_content_type: Option<&str>,
+    ) -> Result<Node> {
+        let node = hierarchy
+            .get(node_id)
+            .cloned()
+            .ok_or_else(|| Error::Store(format!("convert_leaf: missing {node_id}")))?;
+        if !matches!(node.kind, NodeKind::Paragraph | NodeKind::Script) {
+            return Err(Error::Store(format!(
+                "convert_leaf: can't convert a {} (only paragraph / script)",
+                node.kind.as_str()
+            )));
+        }
+        if !matches!(new_kind, NodeKind::Paragraph | NodeKind::Script) {
+            return Err(Error::Store(format!(
+                "convert_leaf: new kind {} is not a text leaf",
+                new_kind.as_str()
+            )));
+        }
+        // Validate content_type vs new kind.
+        match (new_kind, new_content_type) {
+            (NodeKind::Paragraph, None | Some("typst") | Some("hjson")) => {}
+            (NodeKind::Script, Some("bund")) => {}
+            (k, ct) => {
+                return Err(Error::Store(format!(
+                    "convert_leaf: content_type {ct:?} not valid for {}",
+                    k.as_str()
+                )));
+            }
+        }
+
+        let Some(old_rel) = node.file.clone() else {
+            return Err(Error::Store(
+                "convert_leaf: node has no file on disk".into(),
+            ));
+        };
+        let old_abs = self.layout.root.join(&old_rel);
+
+        let mut new_node = node.clone();
+        new_node.kind = new_kind;
+        new_node.content_type = new_content_type.map(str::to_string);
+        // "typst" as an explicit content_type is redundant — None
+        // is the canonical default. Keep persistence terse.
+        if new_node.content_type.as_deref() == Some("typst") {
+            new_node.content_type = None;
+        }
+        new_node.modified_at = chrono::Utc::now();
+
+        let new_name = new_node.fs_name();
+        let parent_dir = old_abs
+            .parent()
+            .ok_or_else(|| Error::Store("convert_leaf: no parent directory".into()))?;
+        let new_abs = parent_dir.join(&new_name);
+
+        if new_abs != old_abs {
+            if new_abs.exists() {
+                return Err(Error::Store(format!(
+                    "convert_leaf: target `{}` already exists",
+                    new_abs.display()
+                )));
+            }
+            std::fs::rename(&old_abs, &new_abs)?;
+            let new_rel = new_abs
+                .strip_prefix(&self.layout.root)
+                .unwrap_or(&new_abs)
+                .to_string_lossy()
+                .into_owned();
+            new_node.file = Some(new_rel);
+        }
+
+        self.inner
+            .update_metadata(new_node.id, new_node.to_json())
+            .map_err(|e| Error::Store(format!("update_metadata: {e}")))?;
+        self.sync()?;
+        Ok(new_node)
+    }
+
     /// Update a paragraph's stored content + metadata and re-embed both
     /// vectors from the attached embedding engine. `node` is mutated to
     /// reflect the new word_count and modified_at.

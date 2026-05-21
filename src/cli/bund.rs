@@ -23,9 +23,21 @@ use crate::store::Store;
 
 pub fn run(code: &str, project: &Path) -> Result<()> {
     maybe_open_project(project);
-    match crate::scripting::eval(code)? {
+    let out = crate::scripting::eval(code)?;
+    // print/println captured during the eval — emit before the
+    // result so the user sees them in script order.
+    if !out.stdout.is_empty() {
+        print!("{}", out.stdout);
+        // Ensure a trailing newline so the result on the next
+        // line isn't smashed against the buffer's last character.
+        if !out.stdout.ends_with('\n') {
+            println!();
+        }
+    }
+    match out.top {
         Some(value) => println!("{}", crate::scripting::format_value(&value)),
-        None => println!("(no result)"),
+        None if out.stdout.is_empty() => println!("(no result)"),
+        None => {} // stdout was already shown; nothing to add
     }
     Ok(())
 }

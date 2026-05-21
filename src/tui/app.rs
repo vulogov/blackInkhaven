@@ -2437,7 +2437,7 @@ impl App {
             // pane. Generic suffix (· H help · Esc cancel) is shared.
             self.status = match self.focus {
                 Focus::Tree | Focus::SearchBar => {
-                    "META · C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel"
+                    "META · C/S/P add · D delete · T cycle-type · U/J ↑/↓ reorder · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel"
                         .into()
                 }
                 Focus::Editor => {
@@ -4958,6 +4958,70 @@ impl App {
         }
     }
 
+    /// Ctrl+B T — cycle the selected leaf node's flavour through
+    /// `Paragraph(typst) → Paragraph(hjson) → Script(bund)` and
+    /// back. Target picked from:
+    ///   * the open buffer when the focus is on the editor, or
+    ///   * the tree cursor otherwise.
+    /// Closes + reopens the buffer (if open on the converted node)
+    /// so the new highlighter + content_type take effect immediately.
+    fn cycle_leaf_type(&mut self) {
+        // Pick the node to convert.
+        let target_id: Option<Uuid> = match self.focus {
+            Focus::Editor => self.opened.as_ref().map(|d| d.id),
+            _ => self.rows.get(self.tree_cursor).map(|(id, _)| *id),
+        };
+        let Some(node_id) = target_id else {
+            self.status = "type-cycle: nothing selected".into();
+            return;
+        };
+        let Some(node) = self.hierarchy.get(node_id).cloned() else {
+            self.status = "type-cycle: node missing from hierarchy".into();
+            return;
+        };
+        let (new_kind, new_ct, label) = match (node.kind, node.content_type.as_deref()) {
+            (NodeKind::Paragraph, None | Some("typst")) => {
+                (NodeKind::Paragraph, Some("hjson"), "hjson")
+            }
+            (NodeKind::Paragraph, Some("hjson")) => {
+                (NodeKind::Script, Some("bund"), "bund")
+            }
+            (NodeKind::Script, _) => (NodeKind::Paragraph, None, "typst"),
+            (k, ct) => {
+                self.status = format!(
+                    "type-cycle: {} ({ct:?}) is not a text leaf — only paragraphs / scripts cycle",
+                    k.as_str()
+                );
+                return;
+            }
+        };
+
+        // Snapshot whether the buffer is open on this node so we
+        // can reopen after conversion. Drop the live editor doc
+        // before conversion to avoid file-handle / path mismatch.
+        let buffer_was_open = self.opened.as_ref().is_some_and(|d| d.id == node_id);
+        if buffer_was_open {
+            self.opened = None;
+        }
+
+        match self
+            .store
+            .convert_leaf(&self.hierarchy, node_id, new_kind, new_ct)
+        {
+            Ok(converted) => {
+                self.status =
+                    format!("type-cycle: `{}` is now {label}", converted.title);
+                self.reload_hierarchy();
+                if buffer_was_open {
+                    let _ = self.load_paragraph(&converted);
+                }
+            }
+            Err(e) => {
+                self.status = format!("type-cycle failed: {e}");
+            }
+        }
+    }
+
     /// Ctrl+Z R — eval the currently-open Script's body against Adam.
     /// No-ops with a status message when no Script is open.
     fn bund_run_buffer(&mut self) {
@@ -4978,11 +5042,8 @@ impl App {
         }
         let body = doc.textarea.lines().join("\n");
         match crate::scripting::eval(&body) {
-            Ok(Some(value)) => {
-                self.status = format!("bund → {}", crate::scripting::format_value(&value));
-            }
-            Ok(None) => {
-                self.status = format!("bund: ran `{}` (no result)", node.title);
+            Ok(out) => {
+                self.status = format_eval_output(&out, Some(&node.title));
             }
             Err(e) => {
                 self.status = format!("bund: eval failed — {e:#}");
@@ -5047,6 +5108,14 @@ impl App {
             }
             KeyCode::Char('D') | KeyCode::Char('d') => {
                 self.open_delete_modal();
+                true
+            }
+            // T cycles the cursor row's leaf type
+            // (Paragraph(typst) → Paragraph(hjson) → Script(bund)).
+            // Only valid on text leaves; branches / images get a
+            // status-bar refusal.
+            KeyCode::Char('T') | KeyCode::Char('t') => {
+                self.cycle_leaf_type();
                 true
             }
             KeyCode::Up => {
@@ -8525,12 +8594,8 @@ impl App {
                 };
                 self.modal = Modal::None;
                 match crate::scripting::eval(&expr) {
-                    Ok(Some(value)) => {
-                        self.status =
-                            format!("bund → {}", crate::scripting::format_value(&value));
-                    }
-                    Ok(None) => {
-                        self.status = "bund: (no result)".into();
+                    Ok(out) => {
+                        self.status = format_eval_output(&out, None);
                     }
                     Err(e) => {
                         self.status = format!("bund: eval failed — {e:#}");
@@ -10151,10 +10216,21 @@ impl App {
                 "►"
             } else {
                 match node.kind {
-                    NodeKind::Paragraph => "¶ ",
+                    // Paragraphs split by content_type: HJSON data
+                    // nodes get curly-brace glyph, plain typst keeps
+                    // the pilcrow.
+                    NodeKind::Paragraph => match node.content_type.as_deref() {
+                        Some("hjson") => "❴ ",
+                        _ => "¶ ",
+                    },
                     NodeKind::Image => "▣ ",
-                    // For branches, use ▾ (expanded) / ▸ (collapsed) glyphs
-                    // so the expand/collapse state is visible at a glance.
+                    // Bund scripts: lambda glyph signals "executable
+                    // code, not prose". Paired with the mauve row
+                    // colour from tree_script_fg.
+                    NodeKind::Script => "λ ",
+                    // For branches, use ▾ (expanded) / ▸ (collapsed)
+                    // glyphs so the expand/collapse state is visible
+                    // at a glance.
                     _ => {
                         if is_collapsed {
                             "▸ "
@@ -12445,6 +12521,29 @@ fn build_lexicon(hierarchy: &Hierarchy, cfg: &Config) -> super::lexicon::Lexicon
 /// Standard text-input key dispatch: typing, navigation, deletion. Shared
 /// helper so new modals don't have to re-implement the pattern that older
 /// modals (Add, Rename, FindReplace) inline.
+/// One-line status-bar summary of a `bund eval` result. Surfaces
+/// captured stdout (from print / println) and the top-of-stack
+/// value in a stable order. `context` is an optional preamble —
+/// passed when the eval came from a named buffer ("ran `script-
+/// name`").
+fn format_eval_output(out: &crate::scripting::EvalOutput, context: Option<&str>) -> String {
+    let stdout = out.stdout.trim_end().to_string();
+    let top_str = out
+        .top
+        .as_ref()
+        .map(crate::scripting::format_value);
+    let preamble = match context {
+        Some(name) => format!("bund `{name}`"),
+        None => "bund".to_string(),
+    };
+    match (stdout.is_empty(), top_str) {
+        (true, Some(v)) => format!("{preamble} → {v}"),
+        (false, Some(v)) => format!("{preamble} → {v}  ·  stdout: {stdout}"),
+        (false, None) => format!("{preamble} stdout: {stdout}"),
+        (true, None) => format!("{preamble}: (no result)"),
+    }
+}
+
 fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) {
     use KeyCode::*;
     match key.code {

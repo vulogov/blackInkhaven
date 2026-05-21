@@ -202,19 +202,40 @@ pub fn active_store() -> Option<&'static Store> {
     ACTIVE_STORE.get()
 }
 
-/// Parse + evaluate `code` against Adam, then pop and return the top
-/// of the workbench (current stack). Returns `Ok(None)` when the
-/// script produced no result.
+/// Result of an `eval` call: any text written to bundcore's
+/// (overridden) `print` / `println` stream, plus whatever value
+/// remained on the top of the workbench when the script finished.
 ///
-/// Auto-initialises Adam on the first call.
-pub fn eval(code: &str) -> Result<Option<Value>> {
+/// Both fields are optional in spirit:
+///   * `stdout` is "" when nothing printed
+///   * `top` is `None` when the stack was empty after the script
+///
+/// Callers decide how to surface them — CLI bund prints stdout to
+/// the real terminal and then the top; TUI Ctrl+Z E concatenates
+/// them on the status bar.
+#[derive(Debug, Default)]
+pub struct EvalOutput {
+    pub stdout: String,
+    pub top: Option<Value>,
+}
+
+/// Parse + evaluate `code` against Adam. Returns an `EvalOutput`
+/// containing the captured print buffer and the top of the
+/// workbench. Auto-initialises Adam on the first call.
+pub fn eval(code: &str) -> Result<EvalOutput> {
     init_adam()?;
     let adam = ADAM.get().ok_or_else(|| anyhow!("Adam VM missing after init"))?;
+    // Discard any leftover from a previous eval so the buffer
+    // returned to the caller only reflects THIS script.
+    let _ = stdlib::io::drain_print_buffer();
     let mut guard = adam.write();
     guard
         .eval(code)
         .map_err(|e| anyhow!("bund eval failed: {e}"))?;
-    Ok(guard.vm.stack.pull())
+    let top = guard.vm.stack.pull();
+    drop(guard);
+    let stdout = stdlib::io::drain_print_buffer();
+    Ok(EvalOutput { stdout, top })
 }
 
 /// Render a `rust_dynamic::Value` as a human-readable string. Used

@@ -10,13 +10,18 @@
 
 pub mod helpers;
 mod ink;
+pub mod io;
 
 use anyhow::Result;
 use rust_multistackvm::multistackvm::VM;
 
 /// Register every inkhaven-specific word on the supplied VM. Called
 /// once from `init_adam()` after `Bund::new()` has loaded bundcore's
-/// own stdlib.
+/// own stdlib. Order matters: we register `io` *after* `ink` so the
+/// buffered print/println overrides win over bundcore's stdout
+/// versions.
 pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
-    ink::register(vm)
+    ink::register(vm)?;
+    io::register(vm)?;
+    Ok(())
 }
