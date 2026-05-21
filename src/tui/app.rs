@@ -12366,7 +12366,7 @@ impl App {
                 }
                 body.push(Line::from(""));
                 body.push(Line::from(Span::styled(
-                    " ↑↓ navigate · Enter loads (current edits become dirty) · D / Del delete · Esc cancel ",
+                    " ↑↓ navigate · Enter loads · V diff vs current · D / Del delete · Esc cancel ",
                     Style::default().add_modifier(Modifier::DIM),
                 )));
                 (header, Color::Cyan, body)
