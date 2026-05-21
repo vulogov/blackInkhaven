@@ -152,6 +152,17 @@ pub struct Node {
     /// auto-promote if the goal is still met.
     #[serde(default)]
     pub target_hit_at_status: Option<String>,
+
+    /// Outgoing wiki-links to other paragraphs (1.2.4+). Stored as
+    /// metadata only — the link does NOT appear in the typst
+    /// source, so it travels safely through export pipelines. The
+    /// status-bar widget surfaces the count; the AI inference
+    /// path inlines each linked paragraph's body into the prompt
+    /// when scope=Paragraph; the Ctrl+V L modal lets the user
+    /// inspect / delete them. Circular references are rejected at
+    /// `add_link` time.
+    #[serde(default)]
+    pub linked_paragraphs: Vec<Uuid>,
 }
 
 impl Node {
@@ -175,6 +186,10 @@ impl Node {
             "status":        self.status,
             "target_words":         self.target_words,
             "target_hit_at_status": self.target_hit_at_status,
+            "linked_paragraphs":    self.linked_paragraphs
+                .iter()
+                .map(|u| u.to_string())
+                .collect::<Vec<_>>(),
         })
     }
 
@@ -284,6 +299,19 @@ impl Node {
             .get("target_hit_at_status")
             .and_then(|v| v.as_str())
             .map(str::to_owned);
+        // Outgoing wiki-links — array of UUID strings. Silently
+        // drops malformed entries (a renamed/deleted target whose
+        // UUID went away survives a round-trip as missing here).
+        let linked_paragraphs = obj
+            .get("linked_paragraphs")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter_map(|s| Uuid::parse_str(s).ok())
+                    .collect::<Vec<Uuid>>()
+            })
+            .unwrap_or_default();
 
         Ok(Self {
             id,
@@ -305,6 +333,7 @@ impl Node {
             status,
             target_words,
             target_hit_at_status,
+            linked_paragraphs,
         })
     }
 
