@@ -132,4 +132,64 @@ impl Theme {
             syntax_quote: color_or(&cfg.syntax_quote, Color::Rgb(0x93, 0x99, 0xb2)),
         }
     }
+
+    /// Set a theme colour by field name at runtime. Used by the
+    /// `ink.theme.set` Bund stdlib word so scripts can recolour
+    /// the interface without restarting the TUI. `hex` is parsed
+    /// via the same `color_or` helper as HJSON config so the
+    /// accepted forms match.
+    ///
+    /// Returns `Err` with the offending field name when no field
+    /// matches — keeps the script's error message useful.
+    pub fn set_by_name(&mut self, field: &str, hex: &str) -> Result<(), String> {
+        let parsed = crate::config::parse_color(hex).ok_or_else(|| {
+            format!("unrecognised colour `{hex}` — use #rrggbb or a named colour")
+        })?;
+        match field {
+            "pane_bg" => self.pane_bg = parsed,
+            "pane_fg" => self.pane_fg = parsed,
+            "line_number_fg" => self.line_number_fg = parsed,
+            "current_line_bg" => self.current_line_bg = parsed,
+            "border_focused" => self.border_focused = parsed,
+            "border_unfocused" => self.border_unfocused = parsed,
+            "border_dirty" => self.border_dirty = parsed,
+            "border_saved" => self.border_saved = parsed,
+            "border_readonly" => self.border_readonly = parsed,
+            "modal_bg" => self.modal_bg = parsed,
+            "modal_border" => self.modal_border = parsed,
+            "modal_fg" => self.modal_fg = parsed,
+            "places_fg" => self.places_fg = parsed,
+            "characters_fg" => self.characters_fg = parsed,
+            "artefacts_fg" => self.artefacts_fg = parsed,
+            "notes_underline_fg" => self.notes_underline_fg = parsed,
+            "search_match_bg" => self.search_match_bg = parsed,
+            "search_current_bg" => self.search_current_bg = parsed,
+            "tree_open_marker" => self.tree_open_marker = parsed,
+            "tree_book_fg" => self.tree_book_fg = parsed,
+            "tree_chapter_fg" => self.tree_chapter_fg = parsed,
+            "tree_subchapter_fg" => self.tree_subchapter_fg = parsed,
+            "tree_paragraph_fg" => self.tree_paragraph_fg = parsed,
+            "tree_image_fg" => self.tree_image_fg = parsed,
+            "tree_script_fg" => self.tree_script_fg = parsed,
+            "editor_position_fg" => self.editor_position_fg = parsed,
+            "ai_scope_fg" => self.ai_scope_fg = parsed,
+            "ai_infer_fg" => self.ai_infer_fg = parsed,
+            "grammar_change_fg" => self.grammar_change_fg = parsed,
+            "syntax_heading" => self.syntax_heading = parsed,
+            "syntax_bold" => self.syntax_bold = parsed,
+            "syntax_italic" => self.syntax_italic = parsed,
+            "syntax_string" => self.syntax_string = parsed,
+            "syntax_number" => self.syntax_number = parsed,
+            "syntax_comment" => self.syntax_comment = parsed,
+            "syntax_keyword" => self.syntax_keyword = parsed,
+            "syntax_function" => self.syntax_function = parsed,
+            "syntax_operator" => self.syntax_operator = parsed,
+            "syntax_list_marker" => self.syntax_list_marker = parsed,
+            "syntax_raw" => self.syntax_raw = parsed,
+            "syntax_tag" => self.syntax_tag = parsed,
+            "syntax_quote" => self.syntax_quote = parsed,
+            other => return Err(format!("unknown theme field `{other}`")),
+        }
+        Ok(())
+    }
 }

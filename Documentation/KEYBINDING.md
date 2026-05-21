@@ -108,6 +108,26 @@ see §2.2. To run a tree action from the Editor, switch focus first
 paragraph — they cycle anyway in our implementation because we intercept them
 before tui-textarea sees them, so they never insert a literal tab.
 
+### 1.2 View mode (Ctrl+V prefix)
+
+The third meta prefix, added in 1.2.3. Routes to in-process
+exporters, the similar-paragraph picker, and the progress modal.
+Hardcoded (not yet rebindable through `keys.bindings`); see tutorials
+15 / 16 / 17 for the full workflows.
+
+| Chord (after `Ctrl+V`) | Pane (focus filter)      | Action                                                                 |
+| ---------------------- | ------------------------ | ---------------------------------------------------------------------- |
+| `1`                    | Editor / AI-prompt       | Write the **open paragraph's buffer** as markdown to cwd (`<title>-YYYYDDMM-HHMM.md`). Live in-memory text — unsaved edits flow through. |
+| `2`                    | Editor / AI-prompt       | Write the **containing subchapter's subtree** as markdown to cwd (falls back to the chapter if no subchapter wraps). |
+| `1`                    | Tree                     | Write the tree-cursor's **node and all descendants** as markdown to cwd. |
+| `S` / `s`              | any                      | Toggle **similar-paragraph mode** — saves the buffer, picks via vector search, opens a second editor side-by-side (AI pane steps aside). Re-press to save both and exit. |
+| `G` / `g`              | any                      | Open the **writing-progress modal** (today / streak / per-book pace / 30-day sparkline / status-ladder counts). |
+| `Esc`                  | any                      | Cancel the chord without acting.                                       |
+
+While in similar-paragraph mode, `Tab` inside the editor toggles
+keyboard focus between the left and right editor panes (instead
+of cycling to the missing AI pane).
+
 ---
 
 ## 2. Tree pane
@@ -291,9 +311,13 @@ clipboard. Each saves and restores the yank buffer around the operation, so
 | `Ctrl+W`  | **Delete to start of line** — removes from the cursor back to column 0. |
 
 *(`Ctrl+Z` is the **Bund-meta prefix** in 1.2+ — runs scripting actions
-like `Ctrl+Z R` run-buffer, `Ctrl+Z N` new-script, `Ctrl+Z E` eval.
-See [`KEYS_REASSIGNMENT.md`](KEYS_REASSIGNMENT.md). Undo is `Ctrl+U`,
-delete-to-EOL is `Ctrl+E`.)*
+like `Ctrl+Z R` run-buffer, `Ctrl+Z N` new-script, `Ctrl+Z E` eval,
+`Ctrl+Z ?` script-picker. See [`KEYS_REASSIGNMENT.md`](KEYS_REASSIGNMENT.md).
+Undo is `Ctrl+U`, delete-to-EOL is `Ctrl+E`.)*
+
+*(`Ctrl+V` is the **view-meta prefix** in 1.2.3+ — markdown export,
+similar-paragraph mode, and progress tracking. See section 1.2 below
+and tutorials 15 / 16 / 17.)*
 
 **Note on `Ctrl+W`**: bash, tmux, and some terminals interpret `Ctrl+W` as
 "delete previous word" before forwarding the keystroke. If your shell layer

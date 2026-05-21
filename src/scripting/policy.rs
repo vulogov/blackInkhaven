@@ -67,6 +67,21 @@ pub mod category {
     /// muscle memory or lock them out (well — Ctrl+Q is hard-
     /// blocked, but everything else is fair game).
     pub const KEYMAP: &str = "keymap";
+    /// Read-only access to the live editor buffer (cursor query,
+    /// buffer text, find). Default-allowed — non-destructive.
+    pub const EDITOR_READ: &str = "editor_read";
+    /// Mutate the live editor buffer — insert, scroll, delete,
+    /// goto. Default-denied. The user opts in once and the rest
+    /// of their hooks / scripts gain editor reach.
+    pub const EDITOR_WRITE: &str = "editor_write";
+    /// AI state mutation — clear chat history, set system
+    /// prompt, post a user prompt. Default-denied.
+    pub const AI_WRITE: &str = "ai_write";
+    /// Read AI chat history. Default-allowed.
+    pub const AI_READ: &str = "ai_read";
+    /// Runtime theme mutation (`ink.theme.set`). Default-denied —
+    /// a script can otherwise recolour the interface invisibly.
+    pub const THEME_WRITE: &str = "theme_write";
 }
 
 /// Categories denied out of the box. A user has to actively flip
@@ -74,6 +89,10 @@ pub mod category {
 /// Currently inkhaven registers zero words in these categories —
 /// the deny is forward-looking, ready for P4/P5 additions.
 pub const DEFAULT_DENIED_CATEGORIES: &[&str] = &[
+    category::STORE_WRITE,
+    category::EDITOR_WRITE,
+    category::AI_WRITE,
+    category::THEME_WRITE,
     category::FS_WRITE,
     category::NET,
     category::SHELL,
@@ -90,18 +109,82 @@ pub const DEFAULT_DENIED_CATEGORIES: &[&str] = &[
 /// add the destructive variants under `store_write`; phase 6+
 /// might surface filesystem and network words.
 pub const WORD_CATEGORIES: &[(&str, &str)] = &[
+    // ── store_read (default-allowed) ──────────────────────────
     ("ink.node.list", category::STORE_READ),
     ("ink.node.get", category::STORE_READ),
     ("ink.node.children", category::STORE_READ),
     ("ink.paragraph.text", category::STORE_READ),
     ("ink.search.text", category::STORE_READ),
     ("ink.snapshot.list", category::STORE_READ),
-    // Stage-2 runtime keymap mutation. Default-denied via
-    // DEFAULT_DENIED_CATEGORIES.
+    ("ink.path.to_uuid", category::STORE_READ),
+
+    // ── store_write (default-denied) ──────────────────────────
+    // 1.2.3+: Bund scripts can mutate the project tree, status
+    // tags, paragraph bodies, and DB state. Default-denied; opt
+    // in by listing "store_write" in scripting.enabled_categories.
+    ("ink.tree.add", category::STORE_WRITE),
+    ("ink.tree.delete", category::STORE_WRITE),
+    ("ink.tree.rename", category::STORE_WRITE),
+    ("ink.tree.move_up", category::STORE_WRITE),
+    ("ink.tree.move_down", category::STORE_WRITE),
+    ("ink.tree.morph", category::STORE_WRITE),
+    ("ink.paragraph.set_status", category::STORE_WRITE),
+    ("ink.paragraph.save", category::STORE_WRITE),
+    ("ink.db.sync", category::STORE_WRITE),
+    ("ink.db.checkpoint", category::STORE_WRITE),
+    ("ink.db.reindex", category::STORE_WRITE),
+
+    // ── keymap (default-denied) ───────────────────────────────
     ("ink.key.bind", category::KEYMAP),
     ("ink.key.bind_lambda", category::KEYMAP),
     ("ink.key.unbind", category::KEYMAP),
     ("ink.key.list", category::KEYMAP),
+
+    // ── editor_read (default-allowed) ─────────────────────────
+    ("ink.editor.cursor", category::EDITOR_READ),
+    ("ink.editor.text", category::EDITOR_READ),
+    ("ink.editor.find", category::EDITOR_READ),
+
+    // ── editor_write (default-denied) ─────────────────────────
+    ("ink.editor.goto", category::EDITOR_WRITE),
+    ("ink.editor.insert", category::EDITOR_WRITE),
+    ("ink.editor.scroll", category::EDITOR_WRITE),
+    ("ink.editor.delete_line", category::EDITOR_WRITE),
+    ("ink.editor.delete_to_bol", category::EDITOR_WRITE),
+    ("ink.editor.delete_to_eol", category::EDITOR_WRITE),
+
+    // ── ai_read (default-allowed) ─────────────────────────────
+    ("ink.ai.history", category::AI_READ),
+
+    // ── ai_write (default-denied) ─────────────────────────────
+    ("ink.ai.clear_history", category::AI_WRITE),
+    ("ink.ai.send", category::AI_WRITE),
+    ("ink.ai.set_system_prompt", category::AI_WRITE),
+
+    // ── editor_write (Phase C addition) ───────────────────────
+    ("ink.editor.replace", category::EDITOR_WRITE),
+
+    // ── theme_write (default-denied) ──────────────────────────
+    ("ink.theme.set", category::THEME_WRITE),
+
+    // ── store_write (Typst pipeline mutates artefacts dir) ────
+    ("ink.typst.assemble", category::STORE_WRITE),
+    ("ink.typst.build", category::STORE_WRITE),
+    ("ink.typst.take", category::STORE_WRITE),
+
+    // ── editor_read (Bund output pane is non-destructive UI) ──
+    // Pane open/close/clear/line only mutate transient modal
+    // state, recoverable with Esc, never touch the project.
+    ("ink.pane.show", category::EDITOR_READ),
+    ("ink.pane.close", category::EDITOR_READ),
+    ("ink.pane.clear", category::EDITOR_READ),
+    ("ink.pane.line", category::EDITOR_READ),
+
+    // ── editor_read (Bund input modal — UI prompt, hook-driven) ──
+    // ink.input only opens a modal; the typed string flows back
+    // through `hooks::fire(name, …)` which honours its own
+    // policy gate when the hook itself calls write words.
+    ("ink.input", category::EDITOR_READ),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All

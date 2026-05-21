@@ -24,6 +24,10 @@ covers.
 | 12 | [`12-configuring-ai-providers.md`](12-configuring-ai-providers.md) | The six bundled provider stanzas (Gemini / Claude / OpenAI / DeepSeek / Grok / Ollama), Ctrl+B L live-switching, model upgrades. |
 | 13 | [`13-ai-full-screen-mode.md`](13-ai-full-screen-mode.md) | Ctrl+B K layout, persistent chat history, Ctrl+F search, Ctrl+C selection mode that copies / inserts turns. |
 | 14 | [`14-document-status.md`](14-document-status.md) | Ctrl+B R workflow ring, status badges in tree + editor header, Ctrl+B 1..7 scoped filter modal. |
+| 15 | [`15-multi-format-export.md`](15-multi-format-export.md) | `inkhaven export markdown / tex / epub`, `--book-name` for multi-book projects, Ctrl+B O extra formats, Ctrl+V markdown extraction. |
+| 16 | [`16-similar-paragraphs.md`](16-similar-paragraphs.md) | Ctrl+V S — vector-similarity picker + side-by-side editor with the AI pane replaced by a second editor. |
+| 17 | [`17-writing-goals.md`](17-writing-goals.md) | Writing-progress tracking, the `goals:` HJSON stanza, daily-words vs morning-baseline, streak with grace, per-book deadlines, the Ctrl+V G modal. |
+| 18 | [`18-bund-pane-and-script-picker.md`](18-bund-pane-and-script-picker.md) | The floating Bund output pane (`ink.pane.*`), the Ctrl+Z ? script picker, the `ink.input` prompt modal. |
 
 ## Scripting + chord customisation
 

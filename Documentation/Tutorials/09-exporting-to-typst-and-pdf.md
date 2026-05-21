@@ -5,6 +5,13 @@ a single combined file or a PDF, use `inkhaven export`. This
 tutorial covers both targets, the depth-first ordering, the role of
 a book-level configuration paragraph, and what Typst is doing for you.
 
+> **1.2.3+**: `inkhaven export` also supports `markdown`, `tex` (via
+> tylax), and `epub` formats. For projects with more than one user
+> book, pass `--book-name <name>` to disambiguate. See
+> [tutorial 15](15-multi-format-export.md) for the full set + the
+> `Ctrl+B O extra_formats` HJSON knob + the `Ctrl+V` markdown
+> extraction chords.
+
 ## A note on Typst
 
 [Typst](https://typst.app/) is a modern typesetting language — a

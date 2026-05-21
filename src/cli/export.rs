@@ -4,24 +4,178 @@ use std::process::Command;
 use crate::cli::ExportFormat;
 use crate::config::Config;
 use crate::error::{Error, Result};
+use crate::export;
 use crate::project::ProjectLayout;
 use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
-use crate::store::node::NodeKind;
+use crate::store::node::{Node, NodeKind};
 
-pub fn run(project: &Path, format: ExportFormat, output: Option<&Path>) -> Result<()> {
+pub fn run(
+    project: &Path,
+    format: ExportFormat,
+    output: Option<&Path>,
+    book_name: Option<&str>,
+) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg)?;
     let h = Hierarchy::load(&store)?;
 
-    let combined = build_combined(&layout, &h)?;
+    let scope = resolve_export_scope(&h, book_name)?;
+    let combined = build_combined(&layout, &h, scope.root_id)?;
+    let epub_title = scope.title_for_epub(project);
 
     match format {
         ExportFormat::Typst => write_typst(&combined, output),
         ExportFormat::Pdf => write_pdf(&combined, output),
+        ExportFormat::Markdown => write_artefact(
+            export::build_markdown(&combined),
+            output,
+            "markdown",
+        ),
+        ExportFormat::Tex => write_artefact(
+            export::build_tex(&combined),
+            output,
+            "tex",
+        ),
+        ExportFormat::Epub => {
+            // Markdown is the EPUB intermediate. We re-use the same
+            // typst→markdown converter so what the user sees in the
+            // .md export is exactly what's inside the .epub.
+            let md = export::markdown::typst_to_markdown(&combined);
+            let artefact = export::build_epub(&md, &epub_title)
+                .map_err(|e| Error::Store(format!("epub: {e:#}")))?;
+            write_artefact(artefact, output, "epub")
+        }
     }
+}
+
+/// Resolved subtree the exporter walks. `root_id = None` means
+/// "whole project" (legacy 1.2.2 behaviour); `Some(id)` is a
+/// single book picked via `--book-name`.
+struct ExportScope<'a> {
+    /// `None` → whole project; `Some(id)` → only paragraphs under
+    /// that book in DFS preorder.
+    root_id: Option<uuid::Uuid>,
+    /// Display title used by the EPUB writer's metadata. Borrowed
+    /// from the matched book when scope is single-book, otherwise
+    /// derived from the project directory name at the call site.
+    book_title: Option<&'a str>,
+}
+
+impl<'a> ExportScope<'a> {
+    fn title_for_epub(&self, project: &Path) -> String {
+        if let Some(t) = self.book_title {
+            return t.to_string();
+        }
+        project
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("inkhaven book")
+            .to_string()
+    }
+}
+
+/// Match `--book-name` against the hierarchy. Without the flag,
+/// "whole project" is OK only when the project has at most one
+/// user book — otherwise we refuse and list the available books so
+/// the user knows what to pass.
+///
+/// Matching tries (in order):
+///   1. Case-insensitive title equality.
+///   2. Case-insensitive slug equality.
+/// System books (Help / Scripts / Typst / …) are excluded from
+/// both the match list and the disambiguation list — those don't
+/// contain the user's manuscript content.
+fn resolve_export_scope<'a>(
+    h: &'a Hierarchy,
+    book_name: Option<&str>,
+) -> Result<ExportScope<'a>> {
+    let user_books: Vec<&Node> = h
+        .children_of(None)
+        .into_iter()
+        .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
+        .collect();
+
+    match book_name {
+        Some(name) => {
+            let needle = name.trim().to_ascii_lowercase();
+            let pick = user_books.iter().copied().find(|b| {
+                b.title.to_ascii_lowercase() == needle
+                    || b.slug.to_ascii_lowercase() == needle
+            });
+            match pick {
+                Some(book) => Ok(ExportScope {
+                    root_id: Some(book.id),
+                    book_title: Some(book.title.as_str()),
+                }),
+                None => {
+                    let listing = user_books
+                        .iter()
+                        .map(|b| format!("`{}` (slug: {})", b.title, b.slug))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let listing = if listing.is_empty() {
+                        "no user books in this project".into()
+                    } else {
+                        listing
+                    };
+                    Err(Error::Store(format!(
+                        "export: no book matches `--book-name {name}`. Available: {listing}"
+                    )))
+                }
+            }
+        }
+        None => {
+            if user_books.len() > 1 {
+                let listing = user_books
+                    .iter()
+                    .map(|b| format!("`{}`", b.title))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(Error::Store(format!(
+                    "export: project has {n} user books — pass --book-name <name>. Available: {listing}",
+                    n = user_books.len(),
+                )));
+            }
+            // Zero or one user books: scope to the whole project,
+            // preserving 1.2.2's behaviour for single-book setups
+            // (and "just dump what's there" for projects that only
+            // contain system books / orphans).
+            let book_title = user_books.first().map(|b| b.title.as_str());
+            Ok(ExportScope {
+                root_id: user_books.first().map(|b| b.id),
+                book_title,
+            })
+        }
+    }
+}
+
+fn write_artefact(
+    artefact: export::Artefact,
+    output: Option<&Path>,
+    fmt_label: &str,
+) -> Result<()> {
+    match output {
+        Some(path) => {
+            artefact.write_to(path).map_err(|e| {
+                Error::Store(format!("write {fmt_label}: {e:#}"))
+            })?;
+            eprintln!("wrote {} ({fmt_label})", path.display());
+        }
+        None => match &artefact {
+            export::Artefact::Markdown(s) | export::Artefact::Tex(s) => {
+                print!("{s}");
+            }
+            export::Artefact::Epub(_) => {
+                return Err(Error::Store(
+                    "epub export needs --output <path.epub> (binary archive)".into(),
+                ));
+            }
+        },
+    }
+    Ok(())
 }
 
 /// Concatenate every paragraph's `.typ` file in DFS preorder. Branch nodes
@@ -30,30 +184,18 @@ pub fn run(project: &Path, format: ExportFormat, output: Option<&Path>) -> Resul
 /// document structure by ordering paragraphs at each level (book-level
 /// paragraphs come first → that's where Typst config like `#set page(...)`
 /// belongs).
-fn build_combined(layout: &ProjectLayout, h: &Hierarchy) -> Result<String> {
-    let mut out = String::new();
-    for (node, _depth) in h.flatten() {
-        if node.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Some(rel) = node.file.as_ref() else {
-            continue;
-        };
-        let abs = layout.root.join(rel);
-        let body = std::fs::read_to_string(&abs).map_err(Error::Io)?;
-        if !out.is_empty() && !out.ends_with("\n\n") {
-            if out.ends_with('\n') {
-                out.push('\n');
-            } else {
-                out.push_str("\n\n");
-            }
-        }
-        out.push_str(&body);
-        if !body.ends_with('\n') {
-            out.push('\n');
-        }
-    }
-    Ok(out)
+///
+/// `root_id = None` walks the whole hierarchy. `Some(id)` restricts the
+/// walk to that book's subtree — used by `--book-name` to keep system
+/// books and sibling user books out of the export.
+fn build_combined(
+    layout: &ProjectLayout,
+    h: &Hierarchy,
+    root_id: Option<uuid::Uuid>,
+) -> Result<String> {
+    export::assemble_typst_source(layout, h, root_id).map_err(|e| {
+        Error::Store(format!("assemble: {e:#}"))
+    })
 }
 
 fn write_typst(combined: &str, output: Option<&Path>) -> Result<()> {
