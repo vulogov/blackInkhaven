@@ -79,6 +79,16 @@ pub fn register(vm: &mut VM) -> Result<()> {
     vm.register_inline("ink.typst.take".to_string(), ink_typst_take)
         .map_err(|e| anyhow!("register ink.typst.take: {e}"))?;
 
+    // ── Bund output pane ──────────────────────────────────────
+    vm.register_inline("ink.pane.show".to_string(), ink_pane_show)
+        .map_err(|e| anyhow!("register ink.pane.show: {e}"))?;
+    vm.register_inline("ink.pane.close".to_string(), ink_pane_close)
+        .map_err(|e| anyhow!("register ink.pane.close: {e}"))?;
+    vm.register_inline("ink.pane.clear".to_string(), ink_pane_clear)
+        .map_err(|e| anyhow!("register ink.pane.clear: {e}"))?;
+    vm.register_inline("ink.pane.line".to_string(), ink_pane_line)
+        .map_err(|e| anyhow!("register ink.pane.line: {e}"))?;
+
     Ok(())
 }
 
@@ -406,3 +416,77 @@ fn do_ink_editor_replace(vm: &mut VM) -> Result<&mut VM> {
     Ok(vm)
 }
 
+// ── ink.pane.show ────────────────────────────────────────────────────
+// Stack: ( title -- )
+// Open the floating Bund output pane. Any subsequent print /
+// println from the script (or future scripts while the pane stays
+// open) lands in the pane rather than the status bar.
+//
+// If a pane is already open it's reset to `title` with an empty
+// buffer — same shape as Esc-then-show.
+
+fn ink_pane_show(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_pane_show(vm).map_err(to_bund_err)
+}
+
+fn do_ink_pane_show(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.pane.show";
+    require_depth(vm, 1, tag)?;
+    let title = value_to_string(pull(vm, tag)?, "title", tag)?;
+    with_app(tag, |app| {
+        app.open_bund_pane(&title);
+        Ok(())
+    })?;
+    Ok(vm)
+}
+
+// ── ink.pane.close ───────────────────────────────────────────────────
+// Stack: ( -- )
+
+fn ink_pane_close(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_pane_close(vm).map_err(to_bund_err)
+}
+
+fn do_ink_pane_close(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.pane.close";
+    with_app(tag, |app| {
+        app.close_bund_pane();
+        Ok(())
+    })?;
+    Ok(vm)
+}
+
+// ── ink.pane.clear ───────────────────────────────────────────────────
+// Stack: ( -- cleared_bool )
+// Empties the line buffer; pane stays open. Returns false if no
+// pane is open (script wrote to a closed pane by mistake).
+
+fn ink_pane_clear(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_pane_clear(vm).map_err(to_bund_err)
+}
+
+fn do_ink_pane_clear(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.pane.clear";
+    let cleared = with_app(tag, |app| Ok(app.clear_bund_pane()))?;
+    push(vm, Value::from_bool(cleared));
+    Ok(vm)
+}
+
+// ── ink.pane.line ────────────────────────────────────────────────────
+// Stack: ( text -- routed_bool )
+// Append `text` to the pane as a fresh line. Returns false if no
+// pane is open (lets scripts branch on visibility without first
+// calling ink.pane.show).
+
+fn ink_pane_line(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_pane_line(vm).map_err(to_bund_err)
+}
+
+fn do_ink_pane_line(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.pane.line";
+    require_depth(vm, 1, tag)?;
+    let text = value_to_string(pull(vm, tag)?, "text", tag)?;
+    let routed = with_app(tag, |app| Ok(app.append_to_bund_pane(&text, true)))?;
+    push(vm, Value::from_bool(routed));
+    Ok(vm)
+}

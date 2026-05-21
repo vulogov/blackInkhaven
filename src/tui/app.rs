@@ -1514,6 +1514,25 @@ fn strip_leading_typst_heading(body: &str) -> String {
     lines.join("\n")
 }
 
+/// Where the `Ctrl+Z ?` script picker is sourcing entries from.
+/// `A` inside the modal toggles between the two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScriptPickerScope {
+    /// Scripts under the cursor's nearest containing branch
+    /// (subchapter / chapter / book — whichever is closest).
+    Branch,
+    /// Scripts under the `Scripts` system book.
+    ScriptsBook,
+}
+
+/// One row in the script-picker modal.
+#[derive(Debug, Clone)]
+pub(crate) struct ScriptPickerEntry {
+    pub id: Uuid,
+    pub title: String,
+    pub slug_path: String,
+}
+
 enum Modal {
     None,
     Adding {
@@ -1541,6 +1560,26 @@ enum Modal {
     /// result onto the status bar. Esc cancels.
     BundEval {
         input: TextInput,
+    },
+    /// Floating Bund output pane. Opened by `ink.pane.show`,
+    /// receives every subsequent `print`/`println` output until
+    /// `ink.pane.close` (or Esc). While this is open, the print
+    /// buffer that normally drains to the status bar is bypassed
+    /// and text lands here instead — letting scripts emit long /
+    /// multi-line output without clobbering the status line.
+    BundPane {
+        title: String,
+        lines: Vec<String>,
+        scroll: usize,
+    },
+    /// Ctrl+Z ? — pick + execute a Bund script. `scope`
+    /// switches between the cursor's containing branch and the
+    /// global `Scripts` system book via the `A` key.
+    ScriptPicker {
+        scope: ScriptPickerScope,
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
     },
     FilePicker(FilePicker),
     /// Ctrl+H quick reference. Pane-aware: content is fetched from
@@ -4992,6 +5031,7 @@ impl App {
             A::BundRunBuffer => self.bund_run_buffer(),
             A::BundNewScript => self.bund_new_script(),
             A::BundOpenEvalModal => self.bund_open_eval_modal(),
+            A::BundOpenScriptPicker => self.bund_open_script_picker(),
 
             // Runtime-bound Bund lambda. Dispatch through the
             // hooks machinery so the recursion-cap + policy-deny
@@ -5158,6 +5198,110 @@ impl App {
             input: TextInput::new(),
         };
         self.status = "bund eval: type an expression, Enter to run, Esc to cancel".into();
+    }
+
+    /// Ctrl+Z ? — list executable scripts. Starts in `Branch`
+    /// scope (the cursor's nearest containing book / chapter /
+    /// subchapter). `A` toggles to `ScriptsBook` scope. Enter
+    /// runs the highlighted script.
+    fn bund_open_script_picker(&mut self) {
+        let scope = ScriptPickerScope::Branch;
+        let entries = self.collect_script_entries(scope);
+        if entries.is_empty() {
+            // Fall back to Scripts book if the branch is empty —
+            // saves the user one keystroke and matches the
+            // "show me something useful" expectation.
+            let fallback = self.collect_script_entries(ScriptPickerScope::ScriptsBook);
+            if fallback.is_empty() {
+                self.status = "bund: no scripts found (try Ctrl+Z N to create one)".into();
+                return;
+            }
+            self.modal = Modal::ScriptPicker {
+                scope: ScriptPickerScope::ScriptsBook,
+                entries: fallback,
+                cursor: 0,
+                scroll: 0,
+            };
+            self.status =
+                "bund: no scripts in current branch — showing Scripts book".into();
+            return;
+        }
+        self.modal = Modal::ScriptPicker {
+            scope,
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status =
+            "bund: ↑↓ select · Enter run · A toggle scope · Esc cancel".into();
+    }
+
+    /// Walk the requested scope and pull every Script node out.
+    /// Returns them in slug-path order so the modal listing is
+    /// stable across openings.
+    fn collect_script_entries(
+        &self,
+        scope: ScriptPickerScope,
+    ) -> Vec<ScriptPickerEntry> {
+        let root_id: Option<Uuid> = match scope {
+            ScriptPickerScope::Branch => self.current_branch_root_id(),
+            ScriptPickerScope::ScriptsBook => self
+                .hierarchy
+                .iter()
+                .find(|n| {
+                    n.kind == NodeKind::Book
+                        && n.parent_id.is_none()
+                        && n.title.eq_ignore_ascii_case("Scripts")
+                })
+                .map(|n| n.id),
+        };
+        let Some(root_id) = root_id else {
+            return Vec::new();
+        };
+        let mut ids = self.hierarchy.collect_subtree(root_id);
+        // collect_subtree includes the root — drop it if it's
+        // not itself a script.
+        let mut entries: Vec<ScriptPickerEntry> = Vec::new();
+        for id in ids.drain(..) {
+            let Some(node) = self.hierarchy.get(id) else {
+                continue;
+            };
+            if node.kind != NodeKind::Script {
+                continue;
+            }
+            let slug_path = self.hierarchy.slug_path(node);
+            entries.push(ScriptPickerEntry {
+                id: node.id,
+                title: node.title.clone(),
+                slug_path,
+            });
+        }
+        entries.sort_by(|a, b| a.slug_path.cmp(&b.slug_path));
+        entries
+    }
+
+    /// The nearest book / chapter / subchapter ancestor of the
+    /// tree cursor (or the cursor itself if it already names a
+    /// branch). Returns `None` if no row is selected.
+    fn current_branch_root_id(&self) -> Option<Uuid> {
+        let (id, _) = *self.rows.get(self.tree_cursor)?;
+        let node = self.hierarchy.get(id)?;
+        if matches!(
+            node.kind,
+            NodeKind::Subchapter | NodeKind::Chapter | NodeKind::Book
+        ) {
+            return Some(node.id);
+        }
+        // Leaf node — walk ancestors until we hit a branch.
+        for anc in self.hierarchy.ancestors(node) {
+            if matches!(
+                anc.kind,
+                NodeKind::Subchapter | NodeKind::Chapter | NodeKind::Book
+            ) {
+                return Some(anc.id);
+            }
+        }
+        None
     }
 
     // dispatch_meta_tree was absorbed into keybind::KeyBindings —
@@ -8470,6 +8614,8 @@ impl App {
         let is_help_query = matches!(self.modal, Modal::HelpQuery { .. });
         let is_chat_search_prompt = matches!(self.modal, Modal::ChatSearchPrompt { .. });
         let is_bund_eval = matches!(self.modal, Modal::BundEval { .. });
+        let is_bund_pane = matches!(self.modal, Modal::BundPane { .. });
+        let is_script_picker = matches!(self.modal, Modal::ScriptPicker { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -8540,6 +8686,16 @@ impl App {
             if let Modal::BundEval { input } = &mut self.modal {
                 handle_text_input_key(input, key);
             }
+            return Ok(false);
+        }
+
+        if is_bund_pane {
+            self.bund_pane_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_script_picker {
+            self.script_picker_handle_key(key);
             return Ok(false);
         }
 
@@ -9628,6 +9784,335 @@ impl App {
         f.render_widget(Paragraph::new(hint), footer_rect);
     }
 
+    fn bund_pane_handle_key(&mut self, key: KeyEvent) {
+        // Esc closes the pane (top of handle_modal_key already
+        // covers it). Here we just handle scrolling.
+        let Modal::BundPane { lines, scroll, .. } = &mut self.modal else {
+            return;
+        };
+        let total = lines.len();
+        let page: usize = 12; // approximate visible window
+        match key.code {
+            KeyCode::Up => {
+                *scroll = scroll.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                if *scroll + 1 < total {
+                    *scroll += 1;
+                }
+            }
+            KeyCode::PageUp => {
+                *scroll = scroll.saturating_sub(page);
+            }
+            KeyCode::PageDown => {
+                let max = total.saturating_sub(page.max(1));
+                *scroll = (*scroll + page).min(max);
+            }
+            KeyCode::Home => {
+                *scroll = 0;
+            }
+            KeyCode::End => {
+                *scroll = total.saturating_sub(page);
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+C inside the pane clears its buffer — convenient
+                // when the pane keeps catching subsequent script output.
+                lines.clear();
+                *scroll = 0;
+            }
+            _ => {}
+        }
+    }
+
+    fn draw_bund_pane_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::BundPane { title, lines, scroll } = &self.modal else {
+            return;
+        };
+        // Roomy panel — same shape as the quickref modal.
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let total = lines.len();
+        let header = format!(" Bund · {} ({} lines) ", title, total);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.tree_script_fg)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+
+        let visible: Vec<Line<'_>> = lines
+            .iter()
+            .skip(*scroll)
+            .take(body_h)
+            .map(|l| Line::from(l.as_str()))
+            .collect();
+        f.render_widget(Paragraph::new(visible), body_rect);
+
+        let at_end = scroll + body_h >= total;
+        let more = if at_end { " " } else { " · more below" };
+        let shown_start = scroll + 1;
+        let shown_end = (scroll + body_h).min(total);
+        let hint = format!(
+            " ↑↓ / PgUp/PgDn / Home/End scroll · Ctrl+C clear · Esc close{more}    ({}–{} of {total}) ",
+            shown_start.min(total.max(1)),
+            shown_end
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    fn script_picker_handle_key(&mut self, key: KeyEvent) {
+        // Snapshot fields we need without holding the borrow
+        // across `run_script_by_id` (which takes &mut self).
+        let (selected_id, total, was_a_toggle, was_enter): (Option<Uuid>, usize, bool, bool) = {
+            let Modal::ScriptPicker {
+                entries,
+                cursor,
+                scroll,
+                scope,
+                ..
+            } = &mut self.modal
+            else {
+                return;
+            };
+            let total = entries.len();
+            let page: usize = 12;
+            let mut a_toggle = false;
+            let mut enter = false;
+            let mut selected: Option<Uuid> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => {
+                    *cursor = cursor.saturating_sub(page);
+                }
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1).max(0));
+                }
+                KeyCode::Home => *cursor = 0,
+                KeyCode::End => *cursor = total.saturating_sub(1),
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    *scope = match scope {
+                        ScriptPickerScope::Branch => ScriptPickerScope::ScriptsBook,
+                        ScriptPickerScope::ScriptsBook => ScriptPickerScope::Branch,
+                    };
+                    a_toggle = true;
+                }
+                KeyCode::Enter => {
+                    if let Some(e) = entries.get(*cursor) {
+                        selected = Some(e.id);
+                    }
+                    enter = true;
+                }
+                _ => {}
+            }
+            // Keep cursor visible (cheap: clamp scroll).
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            (selected, total, a_toggle, enter)
+        };
+
+        if was_a_toggle {
+            // Rebuild entries against the new scope.
+            let new_scope = match &self.modal {
+                Modal::ScriptPicker { scope, .. } => *scope,
+                _ => return,
+            };
+            let new_entries = self.collect_script_entries(new_scope);
+            if let Modal::ScriptPicker {
+                entries,
+                cursor,
+                scroll,
+                ..
+            } = &mut self.modal
+            {
+                *entries = new_entries;
+                *cursor = 0;
+                *scroll = 0;
+            }
+            self.status = match new_scope {
+                ScriptPickerScope::Branch => "bund: branch scope".into(),
+                ScriptPickerScope::ScriptsBook => "bund: Scripts book scope".into(),
+            };
+            return;
+        }
+
+        if was_enter {
+            self.modal = Modal::None;
+            if let Some(id) = selected_id {
+                if let Err(e) = self.bund_run_script_by_id(id) {
+                    self.status = format!("bund: {e}");
+                }
+            } else if total == 0 {
+                self.status = "bund: no script to run".into();
+            }
+        }
+    }
+
+    /// Load the Script node `id`, eval its body against Adam,
+    /// and route the result (or error) to the status bar — or
+    /// to the Bund pane if one is open.
+    fn bund_run_script_by_id(&mut self, id: Uuid) -> std::result::Result<(), String> {
+        let node = self
+            .hierarchy
+            .get(id)
+            .ok_or_else(|| format!("script {id} not found"))?
+            .clone();
+        if node.kind != NodeKind::Script {
+            return Err(format!("“{}” is not a Script node", node.title));
+        }
+        let bytes = self
+            .store
+            .get_content(node.id)
+            .map_err(|e| format!("load {}: {e}", node.title))?
+            .unwrap_or_default();
+        let body = String::from_utf8(bytes)
+            .map_err(|e| format!("script “{}” not utf-8: {e}", node.title))?;
+        if body.trim().is_empty() {
+            self.status = format!("bund: “{}” is empty", node.title);
+            return Ok(());
+        }
+        match self.scripting_eval(&body) {
+            Ok(out) => {
+                self.status = format_eval_output(&out, Some(&node.title));
+                Ok(())
+            }
+            Err(e) => Err(format!("eval “{}” failed — {e:#}", node.title)),
+        }
+    }
+
+    fn draw_script_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::ScriptPicker {
+            scope,
+            entries,
+            cursor,
+            scroll,
+        } = &self.modal
+        else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let scope_label = match scope {
+            ScriptPickerScope::Branch => "current branch",
+            ScriptPickerScope::ScriptsBook => "Scripts book",
+        };
+        let header = format!(" Bund · pick a script ({}) ", scope_label);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.tree_script_fg)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+
+        let lines: Vec<Line<'_>> = entries
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .map(|(i, e)| {
+                let glyph = "λ ";
+                let text = format!(" {glyph}{}    {}", e.title, e.slug_path);
+                let mut style = Style::default();
+                if i == *cursor {
+                    style = style.add_modifier(Modifier::REVERSED);
+                }
+                Line::from(Span::styled(text, style))
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let total = entries.len();
+        let hint = if total == 0 {
+            " (empty) · A toggle scope · Esc close ".to_string()
+        } else {
+            format!(
+                " ↑↓ select · Enter run · A toggle scope · Esc close    ({}/{}) ",
+                cursor + 1,
+                total
+            )
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     fn draw_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
         // The file picker needs a much larger panel than the fixed
         // 80-wide / 8-high box used for confirms — give it its own renderer.
@@ -9667,6 +10152,14 @@ impl App {
             self.draw_status_filter_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::BundPane { .. }) {
+            self.draw_bund_pane_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::ScriptPicker { .. }) {
+            self.draw_script_picker_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -9686,6 +10179,8 @@ impl App {
             Modal::ImagePreview { .. } => unreachable!("image preview handled above"),
             Modal::FunctionPicker { .. } => unreachable!("function picker handled above"),
             Modal::StatusFilter { .. } => unreachable!("status filter handled above"),
+            Modal::BundPane { .. } => unreachable!("bund pane handled above"),
+            Modal::ScriptPicker { .. } => unreachable!("script picker handled above"),
             Modal::HelpQuery { input } => {
                 let body = vec![
                     Line::from(""),
@@ -11625,6 +12120,73 @@ impl App {
         hex: &str,
     ) -> Result<(), String> {
         self.theme.set_by_name(field, hex)
+    }
+
+    /// Append text to the active Bund output pane, if any.
+    /// Returns `true` if the text was routed to the pane,
+    /// `false` if no pane is open (caller falls back to the
+    /// print buffer / status bar). When `newline` is true the
+    /// text becomes its own line; otherwise it's concatenated
+    /// to the last line.
+    pub(crate) fn append_to_bund_pane(&mut self, text: &str, newline: bool) -> bool {
+        let Modal::BundPane { lines, scroll, .. } = &mut self.modal else {
+            return false;
+        };
+        if newline {
+            for chunk in text.split('\n') {
+                lines.push(chunk.to_string());
+            }
+        } else {
+            // Split on embedded newlines so a single print of
+            // "a\nb" still produces two lines, but the LAST
+            // chunk stays append-to-prior.
+            let mut parts = text.split('\n');
+            if let Some(first) = parts.next() {
+                if let Some(last) = lines.last_mut() {
+                    last.push_str(first);
+                } else {
+                    lines.push(first.to_string());
+                }
+            }
+            for chunk in parts {
+                lines.push(chunk.to_string());
+            }
+        }
+        // Auto-scroll to bottom so streaming output is visible
+        // without manual scrolling. User can scroll back later.
+        let visible = 20usize; // approximate; clamped by renderer
+        if lines.len() > visible {
+            *scroll = lines.len() - visible;
+        }
+        true
+    }
+
+    /// Open (or reuse) the Bund output pane with `title`. If a
+    /// pane is already open it's replaced — same as Esc-then-
+    /// open. Used by `ink.pane.show`.
+    pub(crate) fn open_bund_pane(&mut self, title: &str) {
+        self.modal = Modal::BundPane {
+            title: title.to_string(),
+            lines: Vec::new(),
+            scroll: 0,
+        };
+    }
+
+    /// Close the Bund pane (no-op if not open).
+    pub(crate) fn close_bund_pane(&mut self) {
+        if matches!(self.modal, Modal::BundPane { .. }) {
+            self.modal = Modal::None;
+        }
+    }
+
+    /// Clear the Bund pane's line buffer while keeping it open.
+    pub(crate) fn clear_bund_pane(&mut self) -> bool {
+        let Modal::BundPane { lines, scroll, .. } = &mut self.modal else {
+            return false;
+        };
+        lines.clear();
+        *scroll = 0;
+        true
     }
 
     /// Replace the first occurrence of `find` in the open
