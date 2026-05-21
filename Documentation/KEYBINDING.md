@@ -138,6 +138,7 @@ full workflows.
 | `B` / `b`              | any (needs open paragraph) | Toggle **bookmark** on the open paragraph (1.2.4). |
 | `M` / `m`              | any                      | Open the **bookmark picker** (1.2.4). Enter opens; D removes the bookmark. |
 | `P` / `p`              | any                      | **Fuzzy paragraph picker** (1.2.4) — type-to-filter modal over every user-book paragraph. Three-tier ranking (title-starts > title-contains > slug-contains). |
+| `R` / `r`              | any (needs open paragraph) | (1.2.5) **Render paragraph** — save the buffer, compile it in-process via `typst-render`, float a PNG preview on top of the editor. Inside the preview: `Esc` closes back to the editor; `S` opens a save-as picker for a full-DPI PNG (288 dpi). |
 | `Esc`                  | any                      | Cancel the chord without acting.                                       |
 
 While in similar-paragraph mode, `Tab` inside the editor toggles

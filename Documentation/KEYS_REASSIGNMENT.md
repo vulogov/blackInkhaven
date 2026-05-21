@@ -190,6 +190,7 @@ Layer name: `view_sub`. Rebind via HJSON or `ink.key.bind_view_sub`.
 | `view.toggle_bookmark` | `Ctrl+V B` | Toggle bookmark on open paragraph |
 | `view.list_bookmarks` | `Ctrl+V M` | Open the bookmark picker |
 | `view.fuzzy_paragraph_picker` | `Ctrl+V P` | Open the fuzzy paragraph picker |
+| `view.render_paragraph` | `Ctrl+V R` | (1.2.5) Save the open paragraph, render via `typst-render`, float a PNG preview (S = save full-DPI PNG, Esc = close) |
 
 ### Top-level keys (1.2.4+)
 

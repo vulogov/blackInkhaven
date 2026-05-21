@@ -244,6 +244,12 @@ pub enum Action {
     /// Ctrl+V P — fuzzy paragraph picker (1.2.4+).
     #[serde(rename = "view.fuzzy_paragraph_picker")]
     ViewFuzzyParagraphPicker,
+    /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
+    /// via typst-render and float a PNG preview on top of the
+    /// editor. `Esc` closes, `S` opens a save-as picker for the
+    /// full-DPI PNG.
+    #[serde(rename = "view.render_paragraph")]
+    ViewRenderParagraph,
 
     /// Explicit "this chord does nothing" — overlay entries can
     /// set `action: "none"` to disable a default chord.
@@ -333,6 +339,7 @@ impl Action {
             Action::ViewToggleBookmark => "bookmark".into(),
             Action::ViewListBookmarks => "bookmarks".into(),
             Action::ViewFuzzyParagraphPicker => "find ¶".into(),
+            Action::ViewRenderParagraph => "render ¶".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) => format!("λ {name}"),
@@ -482,6 +489,8 @@ impl Action {
                 "Open the bookmark picker — every bookmarked paragraph in the project. Enter opens; D removes the bookmark.".into(),
             Action::ViewFuzzyParagraphPicker =>
                 "Fuzzy paragraph picker — type any substring of the title or slug path, Enter opens the highlighted hit.".into(),
+            Action::ViewRenderParagraph =>
+                "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) =>
@@ -617,6 +626,7 @@ impl KeyBindings {
                 entry("b", Action::ViewToggleBookmark, Scope::Any),
                 entry("m", Action::ViewListBookmarks, Scope::Any),
                 entry("p", Action::ViewFuzzyParagraphPicker, Scope::Any),
+                entry("r", Action::ViewRenderParagraph, Scope::Any),
             ],
             top_level: vec![
                 // F1 anywhere: Help-book RAG modal.
