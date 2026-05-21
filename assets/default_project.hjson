@@ -188,6 +188,18 @@
     max_age: "7d"
   }
 
+  // Ctrl+B O multi-format hookup. Each format in `extra_formats`
+  // is generated alongside the PDF using the same combined Typst
+  // source. Supported (case-insensitive): "markdown", "tex" (via
+  // the tylax converter), "epub" (markdown intermediate, zipped).
+  // Unknown entries log a WARN and are skipped. Per-format errors
+  // are reported on the status bar but never abort the take —
+  // the PDF the user asked for is already on disk before extras
+  // run. Empty list (the default) = PDF-only, same as 1.2.2.
+  output: {
+    extra_formats: []
+  }
+
   // Typewriter-style sound effects. Two events emit a synthesised
   // click: pressing Enter in the editor ("end of line, hit Enter") and
   // the editor pane losing focus ("remove page from machine"). The

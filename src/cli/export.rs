@@ -4,6 +4,7 @@ use std::process::Command;
 use crate::cli::ExportFormat;
 use crate::config::Config;
 use crate::error::{Error, Result};
+use crate::export;
 use crate::project::ProjectLayout;
 use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
@@ -21,7 +22,57 @@ pub fn run(project: &Path, format: ExportFormat, output: Option<&Path>) -> Resul
     match format {
         ExportFormat::Typst => write_typst(&combined, output),
         ExportFormat::Pdf => write_pdf(&combined, output),
+        ExportFormat::Markdown => write_artefact(
+            export::build_markdown(&combined),
+            output,
+            "markdown",
+        ),
+        ExportFormat::Tex => write_artefact(
+            export::build_tex(&combined),
+            output,
+            "tex",
+        ),
+        ExportFormat::Epub => {
+            // Markdown is the EPUB intermediate. We re-use the same
+            // typst→markdown converter so what the user sees in the
+            // .md export is exactly what's inside the .epub.
+            let md = export::markdown::typst_to_markdown(&combined);
+            let title = project
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("inkhaven book")
+                .to_string();
+            let artefact = export::build_epub(&md, &title)
+                .map_err(|e| Error::Store(format!("epub: {e:#}")))?;
+            write_artefact(artefact, output, "epub")
+        }
     }
+}
+
+fn write_artefact(
+    artefact: export::Artefact,
+    output: Option<&Path>,
+    fmt_label: &str,
+) -> Result<()> {
+    match output {
+        Some(path) => {
+            artefact.write_to(path).map_err(|e| {
+                Error::Store(format!("write {fmt_label}: {e:#}"))
+            })?;
+            eprintln!("wrote {} ({fmt_label})", path.display());
+        }
+        None => match &artefact {
+            export::Artefact::Markdown(s) | export::Artefact::Tex(s) => {
+                print!("{s}");
+            }
+            export::Artefact::Epub(_) => {
+                return Err(Error::Store(
+                    "epub export needs --output <path.epub> (binary archive)".into(),
+                ));
+            }
+        },
+    }
+    Ok(())
 }
 
 /// Concatenate every paragraph's `.typ` file in DFS preorder. Branch nodes
