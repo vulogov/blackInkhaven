@@ -5,6 +5,7 @@ mod focus;
 mod highlight;
 mod hjson_highlight;
 mod input;
+mod keybind;
 mod keymap;
 mod lexicon;
 mod markdown;

@@ -1651,6 +1651,10 @@ struct App {
     layout: ProjectLayout,
     store: Store,
     keymap: Keymap,
+    /// Chord-action table consulted by `handle_meta_action` and
+    /// `handle_bund_action`. Loaded with `KeyBindings::defaults()`
+    /// and then overlaid with the user's HJSON `keys.bindings`.
+    keys: super::keybind::KeyBindings,
     cfg: Config,
     ai: AiClient,
     prompts: PromptLibrary,
@@ -1936,6 +1940,35 @@ struct SplitView {
 impl App {
     fn new(layout: ProjectLayout, cfg: Config, store: Store) -> Result<Self> {
         let keymap = Keymap::from_config(&cfg).map_err(anyhow::Error::from)?;
+        // Build the chord-action table from the user's HJSON
+        // overlay. Defaults first, then `keys.bindings` rewrites.
+        let keys = {
+            // Only meta_sub / bund_sub overlays make sense; bund_prefix
+            // may be unset, in which case parse_overlay rejects any
+            // entry referencing it.
+            let bund_prefix = keymap.bund_prefix.unwrap_or_else(|| {
+                // A placeholder chord that nothing real ever matches.
+                // Concretely: KeyCode::Null + no modifiers — only
+                // arrives from a terminal misbehaviour, so collision
+                // is harmless.
+                super::keymap::KeyChord {
+                    code: crossterm::event::KeyCode::Null,
+                    modifiers: crossterm::event::KeyModifiers::NONE,
+                }
+            });
+            let overrides: Vec<(String, String, Option<String>)> = cfg
+                .keys
+                .bindings
+                .iter()
+                .map(|b| (b.chord.clone(), b.action.clone(), b.scope.clone()))
+                .collect();
+            super::keybind::KeyBindings::from_overrides(
+                keymap.meta_prefix,
+                bund_prefix,
+                &overrides,
+            )
+            .map_err(|e| Error::Config(format!("keys.bindings: {e}")))?
+        };
         let hierarchy = Hierarchy::load(&store).map_err(anyhow::Error::from)?;
         let lexicon = build_lexicon(&hierarchy, &cfg);
         let collapsed_nodes: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
@@ -2005,6 +2038,7 @@ impl App {
             layout,
             store,
             keymap,
+            keys,
             cfg,
             ai,
             prompts,
@@ -4845,86 +4879,18 @@ impl App {
             self.status = "meta cancelled".into();
             return;
         }
-
-        // V is a global action: version / author / credits floating
-        // pane. Handled before pane dispatch so every pane gets the same
-        // chord without having to repeat it in three places.
-        if matches!(key.code, KeyCode::Char('V') | KeyCode::Char('v')) {
-            self.open_credits();
-            return;
-        }
-        // I is the global "current book info" panel — paths + stats +
-        // PDF status for the book the cursor (or the open paragraph) is
-        // inside. Same pane-agnostic dispatch as V.
-        if matches!(key.code, KeyCode::Char('I') | KeyCode::Char('i')) {
-            self.open_book_info();
-            return;
-        }
-        // L is the global "switch LLM provider" picker — pick a
-        // different `default` from `llm.providers`, save it back to
-        // inkhaven.hjson in place.
-        if matches!(key.code, KeyCode::Char('L') | KeyCode::Char('l')) {
-            self.open_llm_picker();
-            return;
-        }
-        // E toggles typewriter sound effects (Enter / focus-out) and
-        // persists the choice to inkhaven.hjson in place.
-        if matches!(key.code, KeyCode::Char('E') | KeyCode::Char('e')) {
-            self.toggle_sound();
-            return;
-        }
-        // A starts Book assembly — generates a typst-compilable tree
-        // for the current user book under <artefacts>/<book-slug>/.
-        if matches!(key.code, KeyCode::Char('A') | KeyCode::Char('a')) {
-            self.schedule_assembly();
-            return;
-        }
-        // Digit chords 1..7 → status-filter modal. The user picks a
-        // workflow stage and we list every paragraph in the project
-        // tagged with that status.
-        if let KeyCode::Char(c) = key.code {
-            if let Some(target) = digit_to_status(c) {
-                self.open_status_filter(target);
-                return;
+        match self.keys.resolve_meta_sub(&key, self.focus) {
+            Some(super::keybind::Action::None) => {
+                // Explicit user-disabled chord.
+                self.status = "meta: chord disabled by config".into();
             }
-        }
-        // B runs Book assembly + `typst compile`. On error, opens a
-        // fresh AI chat tuned to diagnose the typst stderr.
-        if matches!(key.code, KeyCode::Char('B') | KeyCode::Char('b')) {
-            self.schedule_build();
-            return;
-        }
-        // O = "take the book": build, then copy the resulting PDF into
-        // the launch cwd with a timestamped filename.
-        if matches!(key.code, KeyCode::Char('O') | KeyCode::Char('o')) {
-            self.schedule_take();
-            return;
-        }
-        // W toggles full-screen typewriter mode — hides every pane
-        // except the editor (and modals when they're open). Same
-        // chord returns to the normal layout.
-        if matches!(key.code, KeyCode::Char('W') | KeyCode::Char('w')) {
-            self.toggle_typewriter_mode();
-            return;
-        }
-        // K toggles full-screen AI mode — left half AI pane, right
-        // half scrolling chat history, bottom AI prompt. Same chord
-        // returns to the normal layout.
-        if matches!(key.code, KeyCode::Char('K') | KeyCode::Char('k')) {
-            self.toggle_ai_fullscreen();
-            return;
-        }
-
-        let consumed = match self.focus {
-            Focus::Tree | Focus::SearchBar => self.dispatch_meta_tree(key),
-            Focus::Editor => self.dispatch_meta_editor(key),
-            Focus::Ai | Focus::AiPrompt => self.dispatch_meta_ai(key),
-        };
-        if !consumed {
-            self.status = format!(
-                "meta {}: unknown action — use Ctrl+B again to retry",
-                self.focus.label()
-            );
+            Some(action) => self.run_action(action),
+            None => {
+                self.status = format!(
+                    "meta {}: unknown action — use Ctrl+B again to retry",
+                    self.focus.label()
+                );
+            }
         }
     }
 
@@ -4947,14 +4913,89 @@ impl App {
             self.status = "bund cancelled".into();
             return;
         }
-        match key.code {
-            KeyCode::Char('R') | KeyCode::Char('r') => self.bund_run_buffer(),
-            KeyCode::Char('N') | KeyCode::Char('n') => self.bund_new_script(),
-            KeyCode::Char('E') | KeyCode::Char('e') => self.bund_open_eval_modal(),
-            _ => {
+        match self.keys.resolve_bund_sub(&key, self.focus) {
+            Some(super::keybind::Action::None) => {
+                self.status = "bund: chord disabled by config".into();
+            }
+            Some(action) => self.run_action(action),
+            None => {
                 self.status =
                     "bund: unknown action — R run · N new · E eval · Esc cancel".into();
             }
+        }
+    }
+
+    /// Central dispatcher for every chord-action. Stage 1 of the
+    /// rebindable-keys roadmap (`Documentation/RELEASE_NOTES/…`):
+    /// the table at `self.keys` resolves `KeyEvent` → `Action`,
+    /// and this switch is the single point where each variant
+    /// hits its concrete handler. Adding a new action means a
+    /// new variant in `keybind::Action`, a new arm here, and an
+    /// entry in `KeyBindings::defaults()`.
+    fn run_action(&mut self, action: super::keybind::Action) {
+        use super::keybind::Action as A;
+        match action {
+            // ── Tree pane ─────────────────────────────────────
+            A::AddBook => self.open_add_modal(NodeKind::Book),
+            A::AddChapter => self.open_add_modal(NodeKind::Chapter),
+            A::AddSubchapter => self.open_add_modal(NodeKind::Subchapter),
+            A::AddParagraph => self.open_add_modal(NodeKind::Paragraph),
+            A::DeleteNode => self.open_delete_modal(),
+            A::MorphType => self.cycle_leaf_type(),
+            A::ReorderUp => self.move_current(MoveDir::Up),
+            A::ReorderDown => self.move_current(MoveDir::Down),
+
+            // ── Editor pane ───────────────────────────────────
+            A::Save => {
+                if self.opened.is_some() {
+                    let _ = self.save_current();
+                } else {
+                    self.status = "no paragraph open".into();
+                }
+            }
+            A::CreateSnapshot => self.create_snapshot_of_current(),
+            A::CycleStatus => self.cycle_paragraph_status(),
+            A::OpenFunctionPicker => self.open_function_picker(),
+            A::RenameToFirstSentence => self.rename_paragraph_to_first_sentence(),
+            A::LookupPlacesOrImage => {
+                if !self.try_open_image_picker() {
+                    self.start_lexicon_inference(LexiconKind::Places);
+                }
+            }
+            A::LookupCharacters => self.start_lexicon_inference(LexiconKind::Characters),
+            A::LookupNotes => self.start_lexicon_inference(LexiconKind::Notes),
+            A::LookupArtefacts => self.start_lexicon_inference(LexiconKind::Artefacts),
+            A::OpenQuickref => self.open_quickref(),
+
+            // ── Global ────────────────────────────────────────
+            A::OpenCredits => self.open_credits(),
+            A::OpenBookInfo => self.open_book_info(),
+            A::OpenLlmPicker => self.open_llm_picker(),
+            A::ToggleSound => self.toggle_sound(),
+            A::ScheduleAssemble => self.schedule_assembly(),
+            A::ScheduleBuild => self.schedule_build(),
+            A::ScheduleTake => self.schedule_take(),
+            A::ToggleTypewriter => self.toggle_typewriter_mode(),
+            A::ToggleAiFullscreen => self.toggle_ai_fullscreen(),
+            A::StatusFilterReady => self.open_status_filter("Ready"),
+            A::StatusFilterFinal => self.open_status_filter("Final"),
+            A::StatusFilterThird => self.open_status_filter("Third"),
+            A::StatusFilterSecond => self.open_status_filter("Second"),
+            A::StatusFilterFirst => self.open_status_filter("First"),
+            A::StatusFilterNapkin => self.open_status_filter("Napkin"),
+            A::StatusFilterNone => self.open_status_filter("None"),
+
+            // ── AI pane ───────────────────────────────────────
+            A::ClearChat => self.clear_chat_history(),
+
+            // ── Bund prefix ───────────────────────────────────
+            A::BundRunBuffer => self.bund_run_buffer(),
+            A::BundNewScript => self.bund_new_script(),
+            A::BundOpenEvalModal => self.bund_open_eval_modal(),
+
+            // Explicit "do nothing" — should never reach here
+            // because the dispatcher catches it first, but harmless.
+            A::None => {}
         }
     }
 
@@ -5102,162 +5143,15 @@ impl App {
         self.status = "bund eval: type an expression, Enter to run, Esc to cancel".into();
     }
 
-    fn dispatch_meta_tree(&mut self, key: KeyEvent) -> bool {
-        match key.code {
-            // Note: `B` is now the global "build the book" chord (see
-            // `handle_meta_action`). Plain `B` in the tree pane still
-            // adds a book — see `handle_tree_key`.
-            KeyCode::Char('C') | KeyCode::Char('c') => {
-                self.open_add_modal(NodeKind::Chapter);
-                true
-            }
-            KeyCode::Char('S') | KeyCode::Char('s') => {
-                self.open_add_modal(NodeKind::Subchapter);
-                true
-            }
-            KeyCode::Char('P') | KeyCode::Char('p') => {
-                self.open_add_modal(NodeKind::Paragraph);
-                true
-            }
-            KeyCode::Char('D') | KeyCode::Char('d') => {
-                self.open_delete_modal();
-                true
-            }
-            // M morphs the cursor row's leaf type
-            // (Paragraph(typst) → Paragraph(hjson) → Script(bund)).
-            // Only valid on text leaves; branches / images get a
-            // status-bar refusal. (T was already retitle in the
-            // editor meta table; M is the next unclaimed letter
-            // — "mode" / "morph" — and is free in every pane.)
-            KeyCode::Char('M') | KeyCode::Char('m') => {
-                self.cycle_leaf_type();
-                true
-            }
-            KeyCode::Up => {
-                self.move_current(MoveDir::Up);
-                true
-            }
-            KeyCode::Down => {
-                self.move_current(MoveDir::Down);
-                true
-            }
-            // H: pane-aware Quick reference overlay.
-            KeyCode::Char('H') | KeyCode::Char('h') => {
-                self.open_quickref();
-                true
-            }
-            _ => false,
-        }
-    }
+    // dispatch_meta_tree was absorbed into keybind::KeyBindings —
+    // the meta_sub table now carries every tree-pane chord via
+    // Scope::Tree entries, and resolution flows through
+    // handle_meta_action → resolve_meta_sub → run_action.
 
-    fn dispatch_meta_editor(&mut self, key: KeyEvent) -> bool {
-        match key.code {
-            // S: save (alternative when Ctrl+S is eaten by the terminal).
-            KeyCode::Char('S') | KeyCode::Char('s') => {
-                if self.opened.is_some() {
-                    let _ = self.save_current();
-                } else {
-                    self.status = "no paragraph open".into();
-                }
-                true
-            }
-            // N: new snapshot (== F5).
-            KeyCode::Char('N') | KeyCode::Char('n') => {
-                self.create_snapshot_of_current();
-                true
-            }
-            // H: pane-aware Quick reference overlay.
-            KeyCode::Char('H') | KeyCode::Char('h') => {
-                self.open_quickref();
-                true
-            }
-            // R: cycle the open paragraph's `status` workflow tag —
-            // None → Napkin → First → Second → Third → Final → Ready → None.
-            // F6 still opens the snapshot history (the previous meaning
-            // of Ctrl+B R); the chord is reclaimed here because writers
-            // touch their draft status far more often than they browse
-            // snapshot history.
-            KeyCode::Char('R') | KeyCode::Char('r') => {
-                self.cycle_paragraph_status();
-                true
-            }
-            // L was a duplicate of F3 (load file). Reclaimed as the
-            // global "switch LLM provider" chord — F3 still loads files
-            // in the editor pane.
-            // F: Typst function picker (== a baked-in autocomplete
-            // for `#funcname(`). F4 still toggles split-edit.
-            KeyCode::Char('F') | KeyCode::Char('f') => {
-                self.open_function_picker();
-                true
-            }
-            // T: re-derive the paragraph's display title from its first
-            // sentence (same logic that fires on save for placeholder-
-            // named paragraphs, but explicit so the user can re-run it
-            // after editing the lead).
-            KeyCode::Char('T') | KeyCode::Char('t') => {
-                self.rename_paragraph_to_first_sentence();
-                true
-            }
-            // M morphs the open buffer's leaf type
-            // (Paragraph(typst) → Paragraph(hjson) → Script(bund)).
-            // Same handler as Tree-pane M; cycle_leaf_type picks
-            // the target from focus.
-            KeyCode::Char('M') | KeyCode::Char('m') => {
-                self.cycle_leaf_type();
-                true
-            }
-            // P: context-sensitive. When the cursor sits inside a
-            // `#image("…")` call, open the image-picker that lists
-            // sibling Image nodes; otherwise dispatch to the Places
-            // RAG flow.
-            KeyCode::Char('P') | KeyCode::Char('p') => {
-                if self.try_open_image_picker() {
-                    true
-                } else {
-                    self.start_lexicon_inference(LexiconKind::Places);
-                    true
-                }
-            }
-            // C: character-RAG inference. Same as P but against the
-            // Characters book.
-            KeyCode::Char('C') | KeyCode::Char('c') => {
-                self.start_lexicon_inference(LexiconKind::Characters);
-                true
-            }
-            // G: notes-RAG inference. Notes don't have a clean
-            // single-letter mnemonic (N is taken by snapshot), so
-            // we picked `G` for "Glossary / Get notes".
-            KeyCode::Char('G') | KeyCode::Char('g') => {
-                self.start_lexicon_inference(LexiconKind::Notes);
-                true
-            }
-            // Y: artefacts-RAG inference. `A` is taken globally by
-            // Book Assembly; `Y` echoes the yellow editor highlight.
-            KeyCode::Char('Y') | KeyCode::Char('y') => {
-                self.start_lexicon_inference(LexiconKind::Artefacts);
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn dispatch_meta_ai(&mut self, key: KeyEvent) -> bool {
-        match key.code {
-            // C: clear the current inference + chat history (same as F9).
-            // Cancels streaming, discards the finished result, and drops the
-            // accumulated turns so the next prompt starts a fresh chat.
-            KeyCode::Char('C') | KeyCode::Char('c') => {
-                self.clear_chat_history();
-                true
-            }
-            // H: pane-aware Quick reference overlay.
-            KeyCode::Char('H') | KeyCode::Char('h') => {
-                self.open_quickref();
-                true
-            }
-            _ => false,
-        }
-    }
+    // dispatch_meta_editor + dispatch_meta_ai were absorbed into
+    // keybind::KeyBindings — every chord they handled now lives in
+    // the meta_sub table under Scope::Editor / Scope::Ai. See
+    // run_action for the action→handler dispatch.
 
     fn open_quickref(&mut self) {
         self.modal = Modal::QuickRef {
@@ -11653,6 +11547,12 @@ pub fn byte_offset_for_cursor(source: &str, row: usize, col: usize) -> usize {
 /// Map digit chars '1'..'7' to a status label. Empty for any other
 /// char. 1 is the most-advanced status so the typical writer query —
 /// "what's actually ready to ship?" — is the lowest-effort chord.
+/// Map a digit chord (`1`..`7`) to its workflow-status string.
+/// Once used inline by the meta dispatcher; the dispatcher now
+/// resolves to `StatusFilter*` actions via the binding table, so
+/// this stays only as a unit-test helper for the digit→status
+/// mapping itself.
+#[cfg(test)]
 pub fn digit_to_status(c: char) -> Option<&'static str> {
     match c {
         '1' => Some("Ready"),
