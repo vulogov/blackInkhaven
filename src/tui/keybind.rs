@@ -224,6 +224,11 @@ pub enum Action {
     /// (`D` removes a link).
     #[serde(rename = "view.list_links")]
     ViewListLinks,
+    /// Ctrl+V K — open the backlinks floating modal. Reverse of
+    /// `view.list_links`: shows paragraphs whose
+    /// `linked_paragraphs` contains the open paragraph.
+    #[serde(rename = "view.list_backlinks")]
+    ViewListBacklinks,
 
     /// Explicit "this chord does nothing" — overlay entries can
     /// set `action: "none"` to disable a default chord.
@@ -308,6 +313,7 @@ impl Action {
             Action::ViewOpenParagraphTarget => "para target".into(),
             Action::ViewAddLink => "add link".into(),
             Action::ViewListLinks => "list links".into(),
+            Action::ViewListBacklinks => "backlinks".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) => format!("λ {name}"),
@@ -447,6 +453,8 @@ impl Action {
                 "Add a linked paragraph — tree pane switches to `select paragraph to link` mode; Enter links, Esc cancels. Stored as metadata, never embedded in typst source.".into(),
             Action::ViewListLinks =>
                 "Open the linked-paragraphs modal — list outgoing wiki-links for the open paragraph; press D on a row to remove.".into(),
+            Action::ViewListBacklinks =>
+                "Open the backlinks modal — list paragraphs that link to the open paragraph (reverse of Ctrl+V L). Enter opens; D removes the source's outgoing link to current.".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) =>
@@ -577,6 +585,7 @@ impl KeyBindings {
                 entry("t", Action::ViewOpenParagraphTarget, Scope::Any),
                 entry("a", Action::ViewAddLink, Scope::Any),
                 entry("l", Action::ViewListLinks, Scope::Any),
+                entry("k", Action::ViewListBacklinks, Scope::Any),
             ],
             top_level: vec![
                 // F1 anywhere: Help-book RAG modal.

@@ -1678,6 +1678,16 @@ enum Modal {
         cursor: usize,
         scroll: usize,
     },
+    /// Ctrl+V K (1.2.4+) — backlinks floating modal. Reverse of
+    /// LinkPicker: lists paragraphs whose `linked_paragraphs`
+    /// contains `target`. `D` removes the source's outgoing
+    /// link to `target` (mutates the source paragraph).
+    BacklinkPicker {
+        target: Uuid,
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
     /// F6 picker → `V` opens a two-pane diff of the cursor's
     /// snapshot against the open paragraph's current buffer.
     /// Read-only; Esc returns to the snapshot picker.
@@ -5402,6 +5412,54 @@ impl App {
             "links: ↑↓ select · D removes · Esc closes".into();
     }
 
+    /// Open the backlinks modal for the open paragraph.
+    fn open_backlink_picker_modal(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view K: no paragraph open".into();
+            return;
+        };
+        let target = doc.id;
+        let entries = self.collect_backlink_entries(target);
+        if entries.is_empty() {
+            self.status =
+                "view K: no incoming links to this paragraph".into();
+            return;
+        }
+        self.modal = Modal::BacklinkPicker {
+            target,
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status =
+            "backlinks: ↑↓ select · Enter opens · D removes source link · Esc closes"
+                .into();
+    }
+
+    /// Walk every paragraph and collect the ones whose
+    /// `linked_paragraphs` contains `target`. O(N) over the
+    /// hierarchy — acceptable for typical project sizes; if it
+    /// ever bites, the obvious next step is a reverse-index
+    /// cached at hierarchy-load time.
+    fn collect_backlink_entries(&self, target: Uuid) -> Vec<ScriptPickerEntry> {
+        let mut out: Vec<ScriptPickerEntry> = Vec::new();
+        for (n, _) in self.hierarchy.flatten() {
+            if n.kind != NodeKind::Paragraph {
+                continue;
+            }
+            if !n.linked_paragraphs.contains(&target) {
+                continue;
+            }
+            out.push(ScriptPickerEntry {
+                id: n.id,
+                title: n.title.clone(),
+                slug_path: self.hierarchy.slug_path(n),
+            });
+        }
+        out.sort_by(|a, b| a.slug_path.cmp(&b.slug_path));
+        out
+    }
+
     /// Resolve the open paragraph's outgoing links into picker
     /// entries (title + slug path). Stale UUIDs (target deleted)
     /// are silently filtered.
@@ -5986,6 +6044,7 @@ impl App {
             A::ViewOpenParagraphTarget => self.open_paragraph_target_modal(),
             A::ViewAddLink => self.enter_link_pick_mode(),
             A::ViewListLinks => self.open_link_picker_modal(),
+            A::ViewListBacklinks => self.open_backlink_picker_modal(),
 
             // ── Top-level F-keys (1.2.4+ migration) ───────────
             A::HelpQuery => self.open_help_query_modal(),
@@ -9899,6 +9958,7 @@ impl App {
         let is_save_markdown = matches!(self.modal, Modal::SaveMarkdown { .. });
         let is_snapshot_diff = matches!(self.modal, Modal::SnapshotDiff { .. });
         let is_link_picker = matches!(self.modal, Modal::LinkPicker { .. });
+        let is_backlink_picker = matches!(self.modal, Modal::BacklinkPicker { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -9994,6 +10054,11 @@ impl App {
 
         if is_link_picker {
             self.link_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_backlink_picker {
+            self.backlink_picker_handle_key(key);
             return Ok(false);
         }
 
@@ -11844,6 +11909,174 @@ impl App {
         );
     }
 
+    fn backlink_picker_handle_key(&mut self, key: KeyEvent) {
+        let (target, source_to_unlink, target_to_open) = {
+            let Modal::BacklinkPicker { target, entries, cursor, scroll } = &mut self.modal else {
+                return;
+            };
+            let total = entries.len();
+            let page: usize = 12;
+            let mut source_to_unlink: Option<Uuid> = None;
+            let mut target_to_open: Option<Uuid> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1));
+                }
+                KeyCode::Home => *cursor = 0,
+                KeyCode::End => *cursor = total.saturating_sub(1),
+                KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Delete => {
+                    if let Some(e) = entries.get(*cursor) {
+                        source_to_unlink = Some(e.id);
+                    }
+                }
+                KeyCode::Enter => {
+                    if let Some(e) = entries.get(*cursor) {
+                        target_to_open = Some(e.id);
+                    }
+                }
+                _ => {}
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            (*target, source_to_unlink, target_to_open)
+        };
+
+        if let Some(to_open) = target_to_open {
+            self.modal = Modal::None;
+            self.open_search_result(to_open);
+            return;
+        }
+
+        if let Some(source) = source_to_unlink {
+            // Remove the source's outgoing link to `target`. That's
+            // what makes this the symmetric "delete" for backlinks:
+            // the link metadata lives on the source paragraph, so
+            // mutating it from the backlinks view is honest about
+            // what changes on disk.
+            match self.remove_paragraph_link(source, target) {
+                Ok(true) => {
+                    self.status = "backlink removed (source's outgoing link to current)".into();
+                    let entries = self.collect_backlink_entries(target);
+                    if entries.is_empty() {
+                        self.modal = Modal::None;
+                    } else if let Modal::BacklinkPicker { entries: e, cursor, scroll, .. } =
+                        &mut self.modal
+                    {
+                        *cursor = (*cursor).min(entries.len() - 1);
+                        *scroll = (*scroll).min(*cursor);
+                        *e = entries;
+                    }
+                }
+                Ok(false) => {
+                    self.status = "backlink not found (stale view)".into();
+                }
+                Err(e) => {
+                    self.status = format!("backlink remove: {e}");
+                }
+            }
+        }
+    }
+
+    fn draw_backlink_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::BacklinkPicker { entries, cursor, scroll, .. } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Backlinks ({}) ", entries.len());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+
+        let lines: Vec<Line<'_>> = entries
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .map(|(i, e)| {
+                // "←" arrow signals incoming direction (vs the
+                // "→" used by the outgoing-links picker).
+                let head = format!(" ← {}", e.title);
+                let path_dim = format!("    {}", e.slug_path);
+                let spans: Vec<Span> = vec![
+                    Span::raw(head),
+                    Span::styled(
+                        path_dim,
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                ];
+                let mut line = Line::from(spans);
+                if i == *cursor {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                line
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = if entries.is_empty() {
+            " (empty) · Esc close ".to_string()
+        } else {
+            format!(
+                " ↑↓ select · Enter opens · D removes source link · Esc closes    ({}/{}) ",
+                cursor + 1,
+                entries.len()
+            )
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     fn similar_picker_handle_key(&mut self, key: KeyEvent) {
         let (selected_id, total, was_enter) = {
             let Modal::SimilarPicker { entries, cursor, scroll } = &mut self.modal else {
@@ -12645,6 +12878,10 @@ impl App {
             self.draw_link_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::BacklinkPicker { .. }) {
+            self.draw_backlink_picker_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -12670,6 +12907,7 @@ impl App {
             Modal::Progress { .. } => unreachable!("progress modal handled above"),
             Modal::SnapshotDiff { .. } => unreachable!("snapshot diff handled above"),
             Modal::LinkPicker { .. } => unreachable!("link picker handled above"),
+            Modal::BacklinkPicker { .. } => unreachable!("backlink picker handled above"),
             Modal::ParagraphTarget { input } => {
                 let body = vec![
                     Line::from(""),
