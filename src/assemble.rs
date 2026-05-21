@@ -640,6 +640,7 @@ mod tests {
             target_words: None,
             target_hit_at_status: None,
             linked_paragraphs: Vec::new(),
+            bookmark: false,
         }
     }
 

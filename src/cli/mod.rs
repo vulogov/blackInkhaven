@@ -12,6 +12,7 @@ pub mod mv;
 pub mod reindex;
 pub mod restore;
 pub mod search;
+pub mod stats;
 
 use std::path::PathBuf;
 
@@ -187,6 +188,18 @@ pub enum Command {
         code: String,
     },
 
+    /// Print a per-paragraph stats table (1.2.4+). Title, slug,
+    /// status, word count, target %, last modified. System
+    /// books are excluded; `--book-name` scopes to one user book
+    /// the same way `inkhaven export` does.
+    Stats {
+        /// Name of the user book to report on. Required when the
+        /// project holds more than one user book; with a single
+        /// user book it can be omitted.
+        #[arg(long)]
+        book_name: Option<String>,
+    },
+
     /// Launch the TUI editor (default if no subcommand is given).
     Tui,
 }
@@ -295,6 +308,9 @@ impl Cli {
                 restore::run(&archive, &to).map_err(Into::into)
             }
             Command::Bund { code } => bund::run(&code, &project),
+            Command::Stats { book_name } => {
+                stats::run(&project, book_name.as_deref()).map_err(Into::into)
+            }
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
         }
     }

@@ -229,6 +229,15 @@ pub enum Action {
     /// `linked_paragraphs` contains the open paragraph.
     #[serde(rename = "view.list_backlinks")]
     ViewListBacklinks,
+    /// Ctrl+V B — toggle bookmark on the open paragraph.
+    #[serde(rename = "view.toggle_bookmark")]
+    ViewToggleBookmark,
+    /// Ctrl+V M — open the bookmark picker.
+    #[serde(rename = "view.list_bookmarks")]
+    ViewListBookmarks,
+    /// Ctrl+V P — fuzzy paragraph picker (1.2.4+).
+    #[serde(rename = "view.fuzzy_paragraph_picker")]
+    ViewFuzzyParagraphPicker,
 
     /// Explicit "this chord does nothing" — overlay entries can
     /// set `action: "none"` to disable a default chord.
@@ -314,6 +323,9 @@ impl Action {
             Action::ViewAddLink => "add link".into(),
             Action::ViewListLinks => "list links".into(),
             Action::ViewListBacklinks => "backlinks".into(),
+            Action::ViewToggleBookmark => "bookmark".into(),
+            Action::ViewListBookmarks => "bookmarks".into(),
+            Action::ViewFuzzyParagraphPicker => "find ¶".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) => format!("λ {name}"),
@@ -455,6 +467,12 @@ impl Action {
                 "Open the linked-paragraphs modal — list outgoing wiki-links for the open paragraph; press D on a row to remove.".into(),
             Action::ViewListBacklinks =>
                 "Open the backlinks modal — list paragraphs that link to the open paragraph (reverse of Ctrl+V L). Enter opens; D removes the source's outgoing link to current.".into(),
+            Action::ViewToggleBookmark =>
+                "Toggle bookmark on the open paragraph. Bookmarks are surfaced by the Ctrl+V M picker; survive restart via metadata.".into(),
+            Action::ViewListBookmarks =>
+                "Open the bookmark picker — every bookmarked paragraph in the project. Enter opens; D removes the bookmark.".into(),
+            Action::ViewFuzzyParagraphPicker =>
+                "Fuzzy paragraph picker — type any substring of the title or slug path, Enter opens the highlighted hit.".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) =>
@@ -586,6 +604,9 @@ impl KeyBindings {
                 entry("a", Action::ViewAddLink, Scope::Any),
                 entry("l", Action::ViewListLinks, Scope::Any),
                 entry("k", Action::ViewListBacklinks, Scope::Any),
+                entry("b", Action::ViewToggleBookmark, Scope::Any),
+                entry("m", Action::ViewListBookmarks, Scope::Any),
+                entry("p", Action::ViewFuzzyParagraphPicker, Scope::Any),
             ],
             top_level: vec![
                 // F1 anywhere: Help-book RAG modal.

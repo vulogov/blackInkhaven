@@ -161,6 +161,165 @@ fn draw_splash(f: &mut ratatui::Frame, project_display: &str, spinner: char, ela
     f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
 }
 
+/// 1.2.4+: project-pulse splash shown right after project open.
+/// Renders for up to `STARTUP_SPLASH_SECS` seconds or until a key
+/// press; the key press is consumed so it doesn't leak into the
+/// editor's first frame. Failures (`terminal.draw` returning Err)
+/// silently fall through — we'd rather skip the splash than block
+/// the editor from launching.
+fn run_startup_pulse_splash<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app: &App,
+) {
+    const STARTUP_SPLASH_SECS: u64 = 7;
+    let started = std::time::Instant::now();
+    let snap = app.progress_cache.clone();
+    let project_display = app
+        .layout
+        .root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("project")
+        .to_string();
+    let total_paragraphs = app
+        .hierarchy
+        .iter()
+        .filter(|n| {
+            n.kind == NodeKind::Paragraph
+                && !app
+                    .hierarchy
+                    .ancestors(n)
+                    .into_iter()
+                    .any(|a| a.kind == NodeKind::Book && a.system_tag.is_some())
+        })
+        .count();
+    let mut by_status: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for n in app.hierarchy.iter() {
+        if n.kind != NodeKind::Paragraph {
+            continue;
+        }
+        if app
+            .hierarchy
+            .ancestors(n)
+            .into_iter()
+            .any(|a| a.kind == NodeKind::Book && a.system_tag.is_some())
+        {
+            continue;
+        }
+        let key = n.status.as_deref().unwrap_or("None").to_string();
+        *by_status.entry(key).or_insert(0) += 1;
+    }
+
+    loop {
+        let elapsed = started.elapsed().as_secs();
+        if elapsed >= STARTUP_SPLASH_SECS {
+            break;
+        }
+        let remaining = STARTUP_SPLASH_SECS - elapsed;
+        let _ = terminal.draw(|f| {
+            draw_pulse_splash(
+                f,
+                &project_display,
+                snap.as_ref(),
+                total_paragraphs,
+                &by_status,
+                remaining,
+            )
+        });
+        // Poll for keys with a short timeout. Any keystroke
+        // dismisses the splash; consume it so the editor's
+        // first frame doesn't see it as input.
+        if crossterm::event::poll(std::time::Duration::from_millis(100))
+            .unwrap_or(false)
+        {
+            if let Ok(crossterm::event::Event::Key(_)) = crossterm::event::read() {
+                break;
+            }
+        }
+    }
+}
+
+/// Render the startup project-pulse splash. See
+/// `run_startup_pulse_splash` for the lifecycle.
+fn draw_pulse_splash(
+    f: &mut ratatui::Frame,
+    project_display: &str,
+    snap: Option<&crate::progress::ProgressSnapshot>,
+    total_paragraphs: usize,
+    by_status: &std::collections::BTreeMap<String, usize>,
+    remaining_secs: u64,
+) {
+    let area = f.area();
+    let width = area.width.saturating_sub(8).clamp(50, 90);
+    let height: u16 = 15;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let rect = Rect { x, y, width, height };
+
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Inkhaven · {project_display} "))
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(" Today's pulse", bold)));
+    if let Some(s) = snap {
+        let today_line = match s.project.daily_goal {
+            Some(goal) => {
+                let pct = if goal > 0 {
+                    (s.project.today_words.max(0) * 100 / goal).clamp(0, 999)
+                } else {
+                    0
+                };
+                format!(
+                    "   words: {}/{} ({}%)",
+                    s.project.today_words, goal, pct
+                )
+            }
+            None => format!("   words: {}", s.project.today_words),
+        };
+        lines.push(Line::from(today_line));
+        lines.push(Line::from(format!(
+            "   streak: {}d · active: {}",
+            s.streak.days,
+            format_active_duration(s.active_seconds_today)
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "   (progress tracking disabled or no data yet)",
+            dim,
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(" Project", bold)));
+    lines.push(Line::from(format!("   {total_paragraphs} paragraphs total")));
+    if !by_status.is_empty() {
+        let summary = by_status
+            .iter()
+            .map(|(k, v)| format!("{v} {k}"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        lines.push(Line::from(format!("   by status: {summary}")));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!("  any key dismisses · auto-close in {remaining_secs}s"),
+        dim,
+    )));
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
 pub fn run(project: &Path) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized().map_err(anyhow::Error::from)?;
@@ -234,6 +393,14 @@ pub fn run(project: &Path) -> Result<()> {
     let mut app = App::new(layout, cfg, store)?;
     app.restore_session();
     app.install_progress();
+
+    // 1.2.4+: project-pulse startup splash. Renders today /
+    // streak / active-time / by-status counts; auto-closes
+    // after 7 seconds or on any key press. Disabled via
+    // `editor.startup_splash = false` in HJSON.
+    if app.cfg.editor.startup_splash {
+        run_startup_pulse_splash(&mut terminal, &app);
+    }
 
     let result = app.run(&mut terminal);
 
@@ -1688,6 +1855,24 @@ enum Modal {
         cursor: usize,
         scroll: usize,
     },
+    /// Ctrl+V M (1.2.4+) — bookmark picker. Lists every
+    /// paragraph with `bookmark = true`. Enter opens; D
+    /// clears the bookmark flag.
+    BookmarkPicker {
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
+    /// Ctrl+V P (1.2.4+) — fuzzy paragraph picker. The
+    /// `entries` field is pre-computed from every paragraph
+    /// node; the input box narrows the visible list as the
+    /// user types.
+    FuzzyParagraphPicker {
+        input: TextInput,
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
     /// F6 picker → `V` opens a two-pane diff of the cursor's
     /// snapshot against the open paragraph's current buffer.
     /// Read-only; Esc returns to the snapshot picker.
@@ -1888,6 +2073,12 @@ pub(crate) struct App {
     /// links it to the owning UUID stashed here. Esc / tree-focus
     /// loss exits the mode and restores normal Enter semantics.
     link_pick_for: Option<Uuid>,
+    /// Multi-select set in the tree pane (1.2.4+). Toggled by
+    /// `Space` on a row; when non-empty, `Ctrl+B R` (cycle
+    /// status) and `Ctrl+V T` (set target) operate on every
+    /// marked paragraph instead of just the cursor's. Cleared
+    /// by `Esc` in the tree.
+    tree_marked: std::collections::HashSet<Uuid>,
     /// In similar-paragraph mode, which pane has keyboard focus.
     /// `false` (default) → left pane = `self.opened` is the
     /// keyboard target. `true` → right pane = `self.secondary`
@@ -2271,6 +2462,7 @@ impl App {
             secondary_focused: false,
             progress_cache: None,
             link_pick_for: None,
+            tree_marked: std::collections::HashSet::new(),
             status: String::from(
                 "Tab=panes · Enter=open · Ctrl+S=save · Ctrl+B then B/C/S/P add · D delete · ↑/↓ reorder · Ctrl+Q quit",
             ),
@@ -3125,14 +3317,48 @@ impl App {
             // Editor → Tree → Search → Editor rotation).
             // 1.2.4+: Esc exits link-pick mode (returning to
             // the editor) instead of cycling focus to the
-            // search bar.
+            // search bar. Also clears any multi-select marks
+            // so the next chord operates on the cursor row,
+            // not stale marks.
             KeyCode::Esc => {
                 if self.link_pick_for.is_some() {
                     self.link_pick_for = None;
                     self.status = "link cancelled".into();
                     self.change_focus(Focus::Editor);
+                } else if !self.tree_marked.is_empty() {
+                    let n = self.tree_marked.len();
+                    self.tree_marked.clear();
+                    self.status =
+                        format!("multi-select cleared ({n} paragraph(s))");
                 } else {
                     self.change_focus(Focus::SearchBar);
+                }
+            }
+            // 1.2.4+: Space toggles multi-select on the
+            // cursor row (paragraphs only — branches don't
+            // accept the bulk operations).
+            KeyCode::Char(' ') if plain => {
+                if let Some((id, _)) = self.rows.get(self.tree_cursor) {
+                    let id = *id;
+                    if let Some(node) = self.hierarchy.get(id) {
+                        if node.kind == NodeKind::Paragraph {
+                            if self.tree_marked.remove(&id) {
+                                self.status = format!(
+                                    "unmarked · {} marked",
+                                    self.tree_marked.len()
+                                );
+                            } else {
+                                self.tree_marked.insert(id);
+                                self.status = format!(
+                                    "marked · {} marked",
+                                    self.tree_marked.len()
+                                );
+                            }
+                        } else {
+                            self.status =
+                                "multi-select only marks paragraphs".into();
+                        }
+                    }
                 }
             }
             // F2 (rename) and F3 (file picker) now flow through
@@ -5512,6 +5738,123 @@ impl App {
             "links: ↑↓ select · D removes · Esc closes".into();
     }
 
+    /// Toggle bookmark on the open paragraph. Persists via the
+    /// existing metadata-update path (`Store::raw().update_metadata`).
+    fn toggle_bookmark(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view B: no paragraph open".into();
+            return;
+        };
+        let id = doc.id;
+        let Some(node) = self.hierarchy.get(id).cloned() else {
+            self.status = "view B: paragraph not in hierarchy".into();
+            return;
+        };
+        let new_value = !node.bookmark;
+        let mut updated = node.clone();
+        updated.bookmark = new_value;
+        updated.modified_at = chrono::Utc::now();
+        if let Err(e) = self
+            .store
+            .raw()
+            .update_metadata(id, updated.to_json())
+        {
+            self.status = format!("bookmark: store update failed: {e}");
+            return;
+        }
+        self.reload_hierarchy();
+        self.status = format!(
+            "bookmark {}: `{}`",
+            if new_value { "added" } else { "cleared" },
+            node.title
+        );
+    }
+
+    /// Open the bookmark picker — every paragraph whose
+    /// `bookmark` flag is true.
+    fn open_bookmark_picker_modal(&mut self) {
+        let entries = self.collect_bookmark_entries();
+        if entries.is_empty() {
+            self.status =
+                "view M: no bookmarks (Ctrl+V B toggles one on the open paragraph)".into();
+            return;
+        }
+        self.modal = Modal::BookmarkPicker {
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status =
+            "bookmarks: ↑↓ select · Enter opens · D clears bookmark · Esc closes"
+                .into();
+    }
+
+    /// Open the fuzzy paragraph picker. Pre-builds the full
+    /// paragraph list (title + slug-path) so subsequent
+    /// keystrokes only filter, never re-walk the hierarchy.
+    fn open_fuzzy_paragraph_picker(&mut self) {
+        let entries = self.collect_all_paragraph_entries();
+        if entries.is_empty() {
+            self.status =
+                "view P: no paragraphs in this project".into();
+            return;
+        }
+        self.modal = Modal::FuzzyParagraphPicker {
+            input: TextInput::new(),
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status =
+            "find ¶: type to filter · ↑↓ select · Enter opens · Esc cancels".into();
+    }
+
+    /// Collect every paragraph in the project (excluding
+    /// system-book content) as picker entries.
+    fn collect_all_paragraph_entries(&self) -> Vec<ScriptPickerEntry> {
+        let mut out: Vec<ScriptPickerEntry> = Vec::new();
+        for (n, _) in self.hierarchy.flatten() {
+            if n.kind != NodeKind::Paragraph {
+                continue;
+            }
+            // Skip system-book content — Help reference, Typst
+            // reference, etc., aren't manuscript paragraphs.
+            let in_system = self
+                .hierarchy
+                .ancestors(n)
+                .into_iter()
+                .any(|a| a.kind == NodeKind::Book && a.system_tag.is_some());
+            if in_system {
+                continue;
+            }
+            out.push(ScriptPickerEntry {
+                id: n.id,
+                title: n.title.clone(),
+                slug_path: self.hierarchy.slug_path(n),
+            });
+        }
+        out.sort_by(|a, b| a.slug_path.cmp(&b.slug_path));
+        out
+    }
+
+    /// Walk the hierarchy and collect every paragraph whose
+    /// `bookmark` flag is true.
+    fn collect_bookmark_entries(&self) -> Vec<ScriptPickerEntry> {
+        let mut out: Vec<ScriptPickerEntry> = Vec::new();
+        for (n, _) in self.hierarchy.flatten() {
+            if n.kind != NodeKind::Paragraph || !n.bookmark {
+                continue;
+            }
+            out.push(ScriptPickerEntry {
+                id: n.id,
+                title: n.title.clone(),
+                slug_path: self.hierarchy.slug_path(n),
+            });
+        }
+        out.sort_by(|a, b| a.title.cmp(&b.title));
+        out
+    }
+
     /// Open the backlinks modal for the open paragraph.
     fn open_backlink_picker_modal(&mut self) {
         let Some(doc) = self.opened.as_ref() else {
@@ -6145,6 +6488,9 @@ impl App {
             A::ViewAddLink => self.enter_link_pick_mode(),
             A::ViewListLinks => self.open_link_picker_modal(),
             A::ViewListBacklinks => self.open_backlink_picker_modal(),
+            A::ViewToggleBookmark => self.toggle_bookmark(),
+            A::ViewListBookmarks => self.open_bookmark_picker_modal(),
+            A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
 
             // ── Top-level F-keys (1.2.4+ migration) ───────────
             A::HelpQuery => self.open_help_query_modal(),
@@ -7891,7 +8237,57 @@ impl App {
     /// after Ready; pressing R repeatedly walks the whole sequence
     /// without any other UI. Persisted to bdslib so it survives the
     /// next launch.
+    /// Single-paragraph status cycle, used by the multi-select
+    /// path in `cycle_paragraph_status`. No hook firing — that's
+    /// reserved for the explicit one-paragraph chord so a bulk
+    /// op doesn't fire 30 hooks in sequence.
+    fn cycle_status_single(&mut self, id: Uuid) -> std::result::Result<(), String> {
+        let node = self
+            .hierarchy
+            .get(id)
+            .cloned()
+            .ok_or_else(|| format!("paragraph {id} not in hierarchy"))?;
+        if node.kind != NodeKind::Paragraph {
+            return Err(format!("`{}` is not a paragraph", node.title));
+        }
+        let next = next_status(node.status.as_deref());
+        let mut updated = node.clone();
+        updated.status = if next == "None" {
+            None
+        } else {
+            Some(next.to_string())
+        };
+        updated.target_hit_at_status = None;
+        self.store
+            .raw()
+            .update_metadata(id, updated.to_json())
+            .map_err(|e| format!("store update: {e}"))?;
+        Ok(())
+    }
+
     fn cycle_paragraph_status(&mut self) {
+        // 1.2.4+: when the tree has a multi-select set, apply
+        // the cycle to every marked paragraph instead of just
+        // the open one.
+        if !self.tree_marked.is_empty() {
+            let ids: Vec<Uuid> = self.tree_marked.iter().copied().collect();
+            let mut ok = 0usize;
+            let mut fail = 0usize;
+            for id in &ids {
+                if self.cycle_status_single(*id).is_ok() {
+                    ok += 1;
+                } else {
+                    fail += 1;
+                }
+            }
+            self.reload_hierarchy();
+            self.status = if fail == 0 {
+                format!("status cycled on {ok} paragraph(s)")
+            } else {
+                format!("status cycled on {ok} · {fail} failed")
+            };
+            return;
+        }
         let Some(doc) = self.opened.as_ref() else {
             self.status = "no paragraph open".into();
             return;
@@ -10059,6 +10455,8 @@ impl App {
         let is_snapshot_diff = matches!(self.modal, Modal::SnapshotDiff { .. });
         let is_link_picker = matches!(self.modal, Modal::LinkPicker { .. });
         let is_backlink_picker = matches!(self.modal, Modal::BacklinkPicker { .. });
+        let is_bookmark_picker = matches!(self.modal, Modal::BookmarkPicker { .. });
+        let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -10159,6 +10557,16 @@ impl App {
 
         if is_backlink_picker {
             self.backlink_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_bookmark_picker {
+            self.bookmark_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_fuzzy_paragraph_picker {
+            self.fuzzy_paragraph_picker_handle_key(key);
             return Ok(false);
         }
 
@@ -12009,6 +12417,328 @@ impl App {
         );
     }
 
+    fn fuzzy_paragraph_picker_handle_key(&mut self, key: KeyEvent) {
+        let to_open = {
+            let Modal::FuzzyParagraphPicker { input, entries, cursor, scroll } =
+                &mut self.modal
+            else {
+                return;
+            };
+            let matches = fuzzy_filter_entries(entries, input.as_str());
+            let total = matches.len();
+            let page: usize = 12;
+            let mut to_open: Option<Uuid> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1));
+                }
+                KeyCode::Enter => {
+                    if let Some(idx) = matches.get(*cursor).copied() {
+                        to_open = Some(entries[idx].id);
+                    }
+                }
+                _ => {
+                    handle_text_input_key(input, key);
+                    // Reset cursor on input edit; matches list
+                    // may have shifted.
+                    *cursor = 0;
+                    *scroll = 0;
+                }
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            to_open
+        };
+
+        if let Some(id) = to_open {
+            self.modal = Modal::None;
+            self.open_search_result(id);
+        }
+    }
+
+    fn draw_fuzzy_paragraph_picker_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::FuzzyParagraphPicker { input, entries, cursor, scroll } = &self.modal
+        else {
+            return;
+        };
+        let matches = fuzzy_filter_entries(entries, input.as_str());
+
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(14);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(
+            " Find paragraph ({}/{}) ",
+            matches.len(),
+            entries.len()
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Top input row, body list, footer hint.
+        let input_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 1,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y + 1,
+            width: inner.width,
+            height: inner.height.saturating_sub(2),
+        };
+
+        f.render_widget(
+            Paragraph::new(Line::from(format!(
+                " › {}",
+                input.render_with_cursor('│')
+            ))),
+            input_rect,
+        );
+
+        let body_h = body_rect.height as usize;
+        let lines: Vec<Line<'_>> = matches
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .map(|(i, idx)| {
+                let e = &entries[*idx];
+                let head = format!(" {}", e.title);
+                let path = format!("    {}", e.slug_path);
+                let spans: Vec<Span> = vec![
+                    Span::raw(head),
+                    Span::styled(
+                        path,
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                ];
+                let mut line = Line::from(spans);
+                if i == *cursor {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                line
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = " ↑↓ select · Enter opens · Esc closes ";
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    fn bookmark_picker_handle_key(&mut self, key: KeyEvent) {
+        let (id_to_unbookmark, id_to_open) = {
+            let Modal::BookmarkPicker { entries, cursor, scroll } = &mut self.modal else {
+                return;
+            };
+            let total = entries.len();
+            let page: usize = 12;
+            let mut to_unbookmark: Option<Uuid> = None;
+            let mut to_open: Option<Uuid> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1));
+                }
+                KeyCode::Home => *cursor = 0,
+                KeyCode::End => *cursor = total.saturating_sub(1),
+                KeyCode::Enter => {
+                    if let Some(e) = entries.get(*cursor) {
+                        to_open = Some(e.id);
+                    }
+                }
+                KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Delete => {
+                    if let Some(e) = entries.get(*cursor) {
+                        to_unbookmark = Some(e.id);
+                    }
+                }
+                _ => {}
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            (to_unbookmark, to_open)
+        };
+
+        if let Some(id) = id_to_open {
+            self.modal = Modal::None;
+            self.open_search_result(id);
+            return;
+        }
+
+        if let Some(id) = id_to_unbookmark {
+            if let Some(node) = self.hierarchy.get(id).cloned() {
+                let mut updated = node.clone();
+                updated.bookmark = false;
+                updated.modified_at = chrono::Utc::now();
+                if let Err(e) = self
+                    .store
+                    .raw()
+                    .update_metadata(id, updated.to_json())
+                {
+                    self.status = format!("bookmark clear: {e}");
+                    return;
+                }
+                self.reload_hierarchy();
+                let entries = self.collect_bookmark_entries();
+                if entries.is_empty() {
+                    self.modal = Modal::None;
+                    self.status = "bookmark cleared · no bookmarks left".into();
+                } else if let Modal::BookmarkPicker { entries: e, cursor, scroll } =
+                    &mut self.modal
+                {
+                    *cursor = (*cursor).min(entries.len() - 1);
+                    *scroll = (*scroll).min(*cursor);
+                    *e = entries;
+                    self.status = "bookmark cleared".into();
+                }
+            }
+        }
+    }
+
+    fn draw_bookmark_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::BookmarkPicker { entries, cursor, scroll } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Bookmarks ({}) ", entries.len());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+
+        let lines: Vec<Line<'_>> = entries
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .map(|(i, e)| {
+                let head = format!(" ★ {}", e.title);
+                let path_dim = format!("    {}", e.slug_path);
+                let spans: Vec<Span> = vec![
+                    Span::raw(head),
+                    Span::styled(
+                        path_dim,
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                ];
+                let mut line = Line::from(spans);
+                if i == *cursor {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                line
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = if entries.is_empty() {
+            " (empty) · Esc close ".to_string()
+        } else {
+            format!(
+                " ↑↓ select · Enter opens · D removes bookmark · Esc closes    ({}/{}) ",
+                cursor + 1,
+                entries.len()
+            )
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     fn backlink_picker_handle_key(&mut self, key: KeyEvent) {
         let (target, source_to_unlink, target_to_open) = {
             let Modal::BacklinkPicker { target, entries, cursor, scroll } = &mut self.modal else {
@@ -12405,6 +13135,20 @@ impl App {
     /// editing a goal is one keystroke; empty / `0` on Enter
     /// clears the goal.
     fn open_paragraph_target_modal(&mut self) {
+        // 1.2.4+: when the tree has multi-select active, the
+        // modal opens for ALL marked paragraphs and the commit
+        // applies the same target to each. Prefill is empty
+        // (no single "current" to display across a set).
+        if !self.tree_marked.is_empty() {
+            self.modal = Modal::ParagraphTarget {
+                input: TextInput::new(),
+            };
+            self.status = format!(
+                "paragraph target × {}: type a number, Enter sets all, Esc cancels",
+                self.tree_marked.len()
+            );
+            return;
+        }
         let Some(doc) = self.opened.as_ref() else {
             self.status = "view T: no paragraph open".into();
             return;
@@ -12429,12 +13173,11 @@ impl App {
     /// Commit `raw` as the open paragraph's `target_words`. Empty
     /// or `"0"` clears the goal (sets to None). Non-numeric input
     /// surfaces an error and leaves the existing value untouched.
+    ///
+    /// 1.2.4+: when `tree_marked` is non-empty, the same target
+    /// is applied to every marked paragraph instead of the open
+    /// one.
     fn commit_paragraph_target(&mut self, raw: &str) {
-        let Some(doc) = self.opened.as_ref() else {
-            self.status = "view T: paragraph closed during input".into();
-            return;
-        };
-        let id = doc.id;
         let new_target: Option<i32> = if raw.is_empty() || raw == "0" {
             None
         } else {
@@ -12450,6 +13193,36 @@ impl App {
                 }
             }
         };
+        // Multi-select path: apply the same target to every
+        // marked paragraph.
+        if !self.tree_marked.is_empty() {
+            let ids: Vec<Uuid> = self.tree_marked.iter().copied().collect();
+            let mut ok = 0usize;
+            let mut fail = 0usize;
+            for id in &ids {
+                if self.set_paragraph_target_now(*id, new_target).is_ok() {
+                    ok += 1;
+                } else {
+                    fail += 1;
+                }
+            }
+            self.status = match new_target {
+                Some(n) => format!(
+                    "target {n} set on {ok} paragraph(s){}",
+                    if fail > 0 { format!(" · {fail} failed") } else { String::new() }
+                ),
+                None => format!(
+                    "target cleared on {ok} paragraph(s){}",
+                    if fail > 0 { format!(" · {fail} failed") } else { String::new() }
+                ),
+            };
+            return;
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view T: paragraph closed during input".into();
+            return;
+        };
+        let id = doc.id;
         match self.set_paragraph_target_now(id, new_target) {
             Ok(()) => {
                 self.status = match new_target {
@@ -12982,6 +13755,14 @@ impl App {
             self.draw_backlink_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::BookmarkPicker { .. }) {
+            self.draw_bookmark_picker_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::FuzzyParagraphPicker { .. }) {
+            self.draw_fuzzy_paragraph_picker_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -13008,6 +13789,9 @@ impl App {
             Modal::SnapshotDiff { .. } => unreachable!("snapshot diff handled above"),
             Modal::LinkPicker { .. } => unreachable!("link picker handled above"),
             Modal::BacklinkPicker { .. } => unreachable!("backlink picker handled above"),
+            Modal::BookmarkPicker { .. } => unreachable!("bookmark picker handled above"),
+            Modal::FuzzyParagraphPicker { .. } =>
+                unreachable!("fuzzy paragraph picker handled above"),
             Modal::ParagraphTarget { input } => {
                 let body = vec![
                     Line::from(""),
@@ -13702,8 +14486,22 @@ impl App {
             let status_letter = status_letter(status_label);
             let status_badge_style = status_style(status_label, &self.theme);
             let mut spans: Vec<Span<'_>> = Vec::new();
+            // 1.2.4+: multi-select marker. A `✓` glyph in
+            // front of the kind-marker when this row is in
+            // `tree_marked`. Costs one char of indent at most.
+            let select_prefix = if self.tree_marked.contains(&node.id) {
+                "✓ "
+            } else if !self.tree_marked.is_empty()
+                && matches!(node.kind, NodeKind::Paragraph)
+            {
+                // Reserve the column when ANY row is marked so
+                // the list visually aligns.
+                "  "
+            } else {
+                ""
+            };
             spans.push(Span::styled(
-                format!("{indent}{marker}"),
+                format!("{indent}{select_prefix}{marker}"),
                 row_style,
             ));
             // Always reserve the badge column (a space when None) so
@@ -15758,6 +16556,45 @@ mod tests_diff {
         assert_eq!(r[0].left.as_deref(), Some("foo"));
         assert_eq!(r[0].right.as_deref(), Some("bar"));
     }
+}
+
+/// Fuzzy-rank `entries` against `query`. Returns indices into
+/// the original Vec, ordered by score (descending). Scoring:
+///   3 — title starts with query (case-insensitive)
+///   2 — title contains query as a substring
+///   1 — slug path contains query as a substring
+///   0 — excluded
+/// Empty query keeps the original ordering and returns all
+/// indices (the picker treats this as "no filter applied").
+fn fuzzy_filter_entries(
+    entries: &[ScriptPickerEntry],
+    query: &str,
+) -> Vec<usize> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return (0..entries.len()).collect();
+    }
+    let mut scored: Vec<(i32, usize)> = Vec::new();
+    for (i, e) in entries.iter().enumerate() {
+        let tl = e.title.to_lowercase();
+        let sl = e.slug_path.to_lowercase();
+        let score = if tl.starts_with(&q) {
+            3
+        } else if tl.contains(&q) {
+            2
+        } else if sl.contains(&q) {
+            1
+        } else {
+            0
+        };
+        if score > 0 {
+            scored.push((score, i));
+        }
+    }
+    // Stable sort by descending score preserves the original
+    // (slug-path-sorted) order within each tier.
+    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.into_iter().map(|(_, i)| i).collect()
 }
 
 /// Render an active-time count in shorthand:
