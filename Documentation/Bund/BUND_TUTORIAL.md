@@ -175,6 +175,16 @@ words that reach into the project store.
 | `ink.paragraph.text` | `( uuid -- string \| NODATA )` | body of a Paragraph |
 | `ink.search.text` | `( query limit -- list )` | semantic search hits |
 | `ink.snapshot.list` | `( paragraph_uuid -- list )` | snapshots of a paragraph |
+| `ink.pane.show` | `( title -- )` | open the floating Bund output pane; `print` / `println` reroute there |
+| `ink.pane.close` | `( -- )` | close the pane (no-op when not open) |
+| `ink.pane.clear` | `( -- cleared )` | empty the pane buffer; returns false if no pane is open |
+| `ink.pane.line` | `( text -- routed )` | append one line; returns false if no pane is open |
+| `ink.input` | `( prompt hookname -- )` | open the input modal; on Enter pushes the typed string and fires `hookname` |
+
+The pane + input words live under the `editor_read` policy
+category (non-destructive UI), so they're allowed by default.
+See [`../Tutorials/18-bund-pane-and-script-picker.md`](../Tutorials/18-bund-pane-and-script-picker.md)
+for the full pane + input + script-picker workflow.
 
 Example — print the title of every system book:
 
