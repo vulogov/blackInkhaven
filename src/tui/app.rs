@@ -11530,6 +11530,11 @@ impl App {
             "   streak: {}d (grace {}/{} per week)",
             snap.streak.days, snap.streak.grace_used, snap.streak.grace_per_week
         )));
+        lines.push(Line::from(format!(
+            "   active: {} today · {} this week",
+            format_active_duration(snap.active_seconds_today),
+            format_active_duration(snap.active_seconds_week),
+        )));
         lines.push(Line::from(""));
 
         // Per-book breakdown
@@ -13677,6 +13682,9 @@ impl App {
             Some(goal) => parts.push(format!("today {today}/{goal}w")),
             None => parts.push(format!("today {today}w")),
         }
+        if snap.active_seconds_today > 0 {
+            parts.push(format_active_duration(snap.active_seconds_today));
+        }
         if snap.streak.days > 0 {
             parts.push(format!("streak {}d", snap.streak.days));
         }
@@ -14142,6 +14150,49 @@ fn truncate_title(title: &str, max_chars: usize) -> String {
 /// is between thresholds. Colour buckets:
 ///   <25% red, <50% yellow, <75% light-green, ≥100% green-bold,
 ///   between 75 and 100 green-dim. Returns `(gauge_str, percent_int, style)`.
+/// Render an active-time count in shorthand:
+///   <60s   → "0m"
+///   <60m   → "Nm"
+///   else   → "Hh Mm" (zero-padded minutes)
+/// Used by the status-bar widget + Ctrl+V G modal.
+fn format_active_duration(seconds: i64) -> String {
+    let s = seconds.max(0);
+    if s < 60 {
+        return "0m".to_string();
+    }
+    let minutes = s / 60;
+    if minutes < 60 {
+        return format!("{minutes}m");
+    }
+    let h = minutes / 60;
+    let m = minutes % 60;
+    format!("{h}h {m:02}m")
+}
+
+#[cfg(test)]
+mod tests_active_duration {
+    use super::format_active_duration;
+
+    #[test]
+    fn under_a_minute_is_zero() {
+        assert_eq!(format_active_duration(0), "0m");
+        assert_eq!(format_active_duration(45), "0m");
+    }
+
+    #[test]
+    fn minutes_only() {
+        assert_eq!(format_active_duration(60), "1m");
+        assert_eq!(format_active_duration(3540), "59m");
+    }
+
+    #[test]
+    fn hours_with_minutes() {
+        assert_eq!(format_active_duration(3600), "1h 00m");
+        assert_eq!(format_active_duration(3660), "1h 01m");
+        assert_eq!(format_active_duration(7325), "2h 02m");
+    }
+}
+
 fn format_progress_gauge(current: i64, target: i64) -> (String, i64, Style) {
     if target <= 0 {
         return ("[░░░░]".into(), 0, Style::default());

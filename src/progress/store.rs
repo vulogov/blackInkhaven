@@ -275,6 +275,51 @@ impl ProgressStore {
         }
         Ok(out)
     }
+
+    /// Active writing time inside the window `[from_secs, until_secs)`
+    /// — sum of gaps between consecutive `save` events, with each
+    /// gap capped at `cap_seconds` so AFK time doesn't inflate the
+    /// total. Per the user spec: 300 s (5 min) is the default cap.
+    ///
+    /// Returns total seconds of active time. The first event of
+    /// the window contributes zero (no prior gap to measure
+    /// against); a single save in isolation = 0 active seconds.
+    /// Saves with word_delta == 0 still count — opening a file
+    /// and re-saving a metadata change is still "time at the
+    /// keyboard" in this model.
+    pub fn active_seconds_in_range(
+        &self,
+        from_secs: i64,
+        until_secs: i64,
+        cap_seconds: i64,
+    ) -> Result<i64> {
+        // DuckDB's LAG inside a CTE gives us the prior save's
+        // timestamp; LEAST clamps each gap to the cap. We coalesce
+        // the SUM so a no-events window returns 0 instead of NULL.
+        let rows = self.engine.select_all(&format!(
+            "WITH saves AS (
+                 SELECT ts FROM writing_events
+                 WHERE kind = 'save' AND ts >= {from_secs} AND ts < {until_secs}
+                 ORDER BY ts
+             ),
+             gaps AS (
+                 SELECT ts - LAG(ts) OVER (ORDER BY ts) AS gap FROM saves
+             )
+             SELECT COALESCE(SUM(LEAST(gap, {cap_seconds})), 0)
+             FROM gaps WHERE gap IS NOT NULL",
+        ))?;
+        let value = rows
+            .into_iter()
+            .next()
+            .and_then(|row| row.into_iter().next());
+        Ok(match value {
+            Some(DuckValue::Int(i)) => i as i64,
+            Some(DuckValue::BigInt(i)) => i,
+            Some(DuckValue::HugeInt(i)) => i as i64,
+            Some(DuckValue::Double(f)) => f as i64,
+            _ => 0,
+        })
+    }
 }
 
 /// Days since the Unix epoch, UTC.
