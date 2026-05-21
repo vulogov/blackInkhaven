@@ -77,7 +77,9 @@ pub fn spawn_with_config(cfg: &Config, typ_path: &Path) -> Result<CompileHandle>
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
-        let handle = spawn_thread(&root, typ_path)?;
+        let settings =
+            crate::typst_world::WorldSettings::from_cfg(&cfg.typst_compile);
+        let handle = spawn_thread(&root, typ_path, settings)?;
         return Ok(CompileHandle::Inprocess(handle));
     }
     spawn_external(typ_path)

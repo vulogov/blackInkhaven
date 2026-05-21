@@ -11614,7 +11614,30 @@ impl App {
             return;
         }
         let body = doc.textarea.lines().join("\n");
-        doc.typst_diagnostics = crate::typst_check::check(&body);
+        // Phase 1 baseline: parse-only diagnostics via `typst-syntax`.
+        // Cheap, always available, no engine dependency.
+        let mut diags = crate::typst_check::check(&body);
+        // 1.2.5+: when the user has the in-process engine on AND
+        // opted into semantic diagnostics, run a full
+        // `typst::compile` against the paragraph in isolation and
+        // surface semantic errors the parser can't catch
+        // (unknown functions, type errors, etc.). We APPEND to
+        // the parse diagnostics rather than replace — a
+        // syntactically-broken buffer often produces a flurry of
+        // confusing semantic errors and the parse error is the
+        // root cause to surface first.
+        if self.cfg.typst_compile.semantic_diagnostics
+            && self.cfg.typst_compile.use_inprocess_engine()
+            && diags.is_empty()
+        {
+            let settings = crate::typst_world::WorldSettings::from_cfg(
+                &self.cfg.typst_compile,
+            );
+            let semantic =
+                crate::typst_inprocess::check_semantic(&body, settings);
+            diags.extend(semantic);
+        }
+        doc.typst_diagnostics = diags;
         doc.typst_diagnostics_checked_at = std::time::Instant::now();
         if let Some(first) = doc.typst_diagnostics.first() {
             // Don't blow away a more-recent status (a save's own

@@ -26,7 +26,7 @@ use typst_pdf::PdfOptions;
 
 use crate::error::{Error, Result};
 use crate::typst_compile::CompileOutcome;
-use crate::typst_world::InkhavenWorld;
+use crate::typst_world::{InkhavenWorld, WorldSettings};
 
 /// Handle to an in-flight in-process compile. Modelled on
 /// `std::process::Child` so the TUI's spinner loop can use the
@@ -92,7 +92,11 @@ impl InprocessHandle {
 
 /// Spawn a worker thread that compiles `main_typ` rooted at
 /// `project_root` into a PDF on disk. Returns a poll-able handle.
-pub fn spawn_thread(project_root: &Path, main_typ: &Path) -> Result<InprocessHandle> {
+pub fn spawn_thread(
+    project_root: &Path,
+    main_typ: &Path,
+    settings: WorldSettings,
+) -> Result<InprocessHandle> {
     let pdf_path = main_typ.with_extension("pdf");
     let project_root = project_root.to_path_buf();
     let main_typ = main_typ.to_path_buf();
@@ -101,7 +105,12 @@ pub fn spawn_thread(project_root: &Path, main_typ: &Path) -> Result<InprocessHan
     thread::Builder::new()
         .name("inkhaven-typst-compile".into())
         .spawn(move || {
-            let outcome = compile_to_pdf(&project_root, &main_typ, &pdf_path_for_thread);
+            let outcome = compile_to_pdf(
+                &project_root,
+                &main_typ,
+                &pdf_path_for_thread,
+                settings,
+            );
             let _ = tx.send(outcome);
         })
         .map_err(|e| Error::Store(format!("spawn typst worker thread: {e}")))?;
@@ -113,8 +122,13 @@ pub fn spawn_thread(project_root: &Path, main_typ: &Path) -> Result<InprocessHan
 }
 
 /// The synchronous compile core — runs on the worker thread.
-fn compile_to_pdf(project_root: &Path, main_typ: &Path, pdf_path: &Path) -> CompileOutcome {
-    let world = match InkhavenWorld::new(project_root, main_typ) {
+fn compile_to_pdf(
+    project_root: &Path,
+    main_typ: &Path,
+    pdf_path: &Path,
+    settings: WorldSettings,
+) -> CompileOutcome {
+    let world = match InkhavenWorld::new(project_root, main_typ, settings) {
         Ok(w) => w,
         Err(e) => {
             return CompileOutcome {
@@ -220,6 +234,102 @@ fn file_id_label(id: FileId) -> String {
     }
 }
 
+/// 1.2.5+ semantic-diagnostics path: run `typst::compile` against
+/// a synthesised single-paragraph document and surface its
+/// diagnostics as `TypstDiagnostic`s (same shape the editor
+/// already consumes from `crate::typst_check`).
+///
+/// The paragraph is compiled **in isolation** — no book preamble,
+/// no `#show`/`#set` rules from anywhere else in the project. This
+/// catches semantic errors (unknown function names, type errors,
+/// missing fonts referenced by name) that `typst-syntax` can't see,
+/// but it WILL report false positives for paragraphs that depend
+/// on book-level definitions. The HJSON knob
+/// `typst_compile.semantic_diagnostics` defaults to off for that
+/// reason; users opt in when their manuscripts are mostly
+/// self-contained.
+///
+/// Runs synchronously on the caller's thread — the editor only
+/// calls this on idle / save, and a stand-alone paragraph compile
+/// is fast (typically 20–200 ms once the World's font cache is
+/// warm).
+pub fn check_semantic(
+    source: &str,
+    settings: WorldSettings,
+) -> Vec<crate::typst_check::TypstDiagnostic> {
+    // No tempfile — the World short-circuits its `main` source to
+    // the in-memory body. The "root" is the system temp dir; it
+    // never gets read because there are no relative imports a
+    // single-paragraph buffer can resolve (those that try will
+    // surface their own `FileError::NotFound` diagnostics, which
+    // we filter to in-paragraph spans below).
+    let world = InkhavenWorld::in_memory(
+        std::env::temp_dir(),
+        source.to_owned(),
+        settings,
+    );
+    let typst::diag::Warned { output, warnings } =
+        typst::compile::<typst::layout::PagedDocument>(&world);
+    let main_id = world.main();
+    let mut diags = Vec::new();
+    match output {
+        Ok(_) => {
+            for w in warnings {
+                if let Some(d) = lift(&world, &w, main_id) {
+                    diags.push(d);
+                }
+            }
+        }
+        Err(errors) => {
+            for e in errors {
+                if let Some(d) = lift(&world, &e, main_id) {
+                    diags.push(d);
+                }
+            }
+            // Include warnings too — they're often the actionable
+            // signal even when the compile failed for a different
+            // reason.
+            for w in warnings {
+                if let Some(d) = lift(&world, &w, main_id) {
+                    diags.push(d);
+                }
+            }
+        }
+    }
+    diags
+}
+
+/// Lift one `SourceDiagnostic` into the editor's `TypstDiagnostic`
+/// shape. Returns `None` for diagnostics whose span doesn't point
+/// inside the open paragraph (e.g. errors from imported stdlib
+/// definitions); we only surface what the user can directly edit.
+fn lift(
+    world: &InkhavenWorld,
+    diag: &typst::diag::SourceDiagnostic,
+    main_id: FileId,
+) -> Option<crate::typst_check::TypstDiagnostic> {
+    let id = diag.span.id()?;
+    if id != main_id {
+        return None;
+    }
+    let source = world.source(id).ok()?;
+    let range = source.range(diag.span)?;
+    let (line0, col0) =
+        source.lines().byte_to_line_column(range.start).unwrap_or((0, 0));
+    let mut message = diag.message.to_string();
+    if matches!(diag.severity, typst::diag::Severity::Warning) {
+        message = format!("warning: {message}");
+    }
+    Some(crate::typst_check::TypstDiagnostic {
+        line: line0 + 1,
+        col: col0 + 1,
+        byte_start: range.start,
+        byte_end: range.end,
+        message,
+        hints: diag.hints.iter().map(|h| h.to_string()).collect(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,7 +357,16 @@ mod tests {
             "#set page(width: 10cm, height: 5cm, margin: 1cm)\n\
              = Hello\nProse.\n",
         );
-        let mut handle = spawn_thread(dir.path(), &path).expect("spawn");
+        let mut handle = spawn_thread(
+            dir.path(),
+            &path,
+            WorldSettings {
+                bundle_fonts: true,
+                use_system_fonts: true,
+                packages_enabled: false,
+            },
+        )
+        .expect("spawn");
         let started = std::time::Instant::now();
         loop {
             match handle.try_wait_mut().expect("try_wait") {
@@ -277,6 +396,40 @@ mod tests {
         }
     }
 
+    /// `check_semantic` against an obviously-broken paragraph
+    /// (call to an undefined function) should produce at least
+    /// one diagnostic anchored at the bad call. Marked `#[ignore]`
+    /// because semantic checks need the font cache + library to
+    /// be loadable — same environmental dependency as the
+    /// end-to-end smoke.
+    #[test]
+    #[ignore]
+    fn semantic_catches_undefined_function() {
+        let source = "#this_function_does_not_exist()\n";
+        let diags = check_semantic(
+            source,
+            WorldSettings {
+                bundle_fonts: true,
+                use_system_fonts: true,
+                packages_enabled: false,
+            },
+        );
+        assert!(
+            !diags.is_empty(),
+            "expected a semantic diagnostic for the undefined function",
+        );
+        // The first error should mention the bogus identifier.
+        let first = &diags[0];
+        assert!(first.line >= 1);
+        assert!(
+            first.message.contains("this_function_does_not_exist")
+                || first.message.to_lowercase().contains("unknown")
+                || first.message.to_lowercase().contains("not found"),
+            "unexpected diagnostic message: {}",
+            first.message,
+        );
+    }
+
     /// Catch the early-exit path: a `main.typ` outside the project
     /// root should fail fast with a clear message — no worker
     /// thread, no half-finished PDF.
@@ -290,9 +443,17 @@ mod tests {
         // doesn't surface the construction error itself (the
         // worker would emit it through stderr instead). This test
         // also exercises the canonicalisation logic.
-        let err = InkhavenWorld::new(dir.path(), &main)
-            .err()
-            .expect("should reject");
+        let err = InkhavenWorld::new(
+            dir.path(),
+            &main,
+            WorldSettings {
+                bundle_fonts: false,
+                use_system_fonts: false,
+                packages_enabled: false,
+            },
+        )
+        .err()
+        .expect("should reject");
         assert!(err.contains("not inside project root"), "got: {err}");
     }
 }
