@@ -21,35 +21,51 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.1
+## Latest release · 1.2.3
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.1.md`](Documentation/RELEASE_NOTES/1.2.1.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.3.md`](Documentation/RELEASE_NOTES/1.2.3.md)
 
 Headlines:
-- **bdslib + tree-sitter-typst absorbed in-tree.** All path-deps gone;
-  `cargo publish` works. 998 → 635 transitive crates in `Cargo.lock`.
-- **Bund scripting embedded** as inkhaven's user-customisation surface.
-  Six read-only `ink.*` stdlib words let scripts walk the project; five
-  hook points (`hook.on_save`, `hook.on_create`, `hook.on_rename`,
-  `hook.on_snapshot`, `hook.on_delete`) fire after every store mutation.
-- **First-class `.bund` Script nodes** in the tree, auto-loaded into the
-  Adam VM at project open. New **Scripts** system book (9th — between
-  Typst and Help). `Ctrl+Z N` creates one; `Ctrl+Z R` runs the open
-  buffer; `Ctrl+Z E` pops a one-shot eval modal.
-- **Data-driven keymap.** ~40 chord-action mappings moved into a runtime
-  table. Both [HJSON `keys.bindings`](Documentation/KEYS_REASSIGNMENT.md)
-  and the **`ink.key.*`** Bund stdlib (sandbox-gated) can rewrite chords.
-  Status-bar hints auto-update from the live table.
-- **`Ctrl+B M` cycle-type** — flip a leaf's flavour:
-  `Paragraph(typst) → Paragraph(hjson) → Script(bund)`. Renames the file
-  on disk and stamps metadata in one atomic step.
-- **Sandbox policy** for scripts — `fs_write` / `net` / `shell` /
-  `code_eval` / `keymap` denied out of the box, opt in per category.
-- **Tree glyphs** per leaf kind: `¶` typst · `❴` hjson · `λ` script · `▣` image.
-- **Bund syntax highlighter** with comment / string / number / keyword colours.
-- **Background sync**: dirty-flag + DuckDB CHECKPOINT, default cadence 60s → 600s. Idle editors produce zero disk traffic.
-- New: [Bund tutorial](Documentation/Bund/BUND_TUTORIAL.md) and
-  [keys reassignment guide](Documentation/KEYS_REASSIGNMENT.md).
+- **Multi-format export.** `inkhaven export markdown / tex / epub`
+  joins the existing `typst` / `pdf` paths — all in-process, no
+  `pandoc` / `tex live` needed. TeX runs through the pure-Rust
+  [`tylax`](https://crates.io/crates/tylax) converter; EPUB ships
+  as a valid EPUB3 zip with markdown rendered to XHTML via
+  `pulldown-cmark`.
+- **`--book-name` flag** disambiguates multi-book projects. System
+  books (Help / Scripts / Typst / Prompts / Places / Characters /
+  Notes / Artefacts / Research) are excluded from every export
+  path — they're inkhaven internals, not manuscript content.
+- **`Ctrl+B O` extras.** New `output.extra_formats: []` HJSON knob
+  produces markdown / tex / epub alongside the PDF with matching
+  file stem on every "take the book". Errors logged but never
+  abort the take.
+- **Writing-progress subsystem.** Append-only event log in
+  `progress.db`, configurable goals (daily words, streak grace,
+  per-book deadlines, status-ladder targets). Status-bar widget
+  shows `today N/Mw · streak Nd · book X/Yw (pace Zw/d)`.
+- **`Ctrl+V G` progress modal.** Two-column overview — today /
+  streak / per-book / status-ladder counts plus a 30-day
+  daily-words sparkline. `r` refreshes.
+- **`Ctrl+V S` similar-paragraph mode.** Save buffer, vector-search
+  for similar paragraphs, pick one, edit side-by-side with the AI
+  pane replaced by a second editor. `Tab` swaps focus; re-press
+  `Ctrl+V S` saves both and exits.
+- **`Ctrl+V 1 / 2` markdown extraction.** Buffer / subchapter /
+  subtree (depending on focus) → `<slug>-YYYYDDMM-HHMM.md` in cwd.
+- **Bund: floating output pane.** `ink.pane.show` opens a modal;
+  `print` / `println` re-route there. `Ctrl+Z ?` script picker
+  lists scripts in the current branch (with `A` toggle to the
+  Scripts book). `ink.input ( prompt hook -- )` adds hook-driven
+  prompts.
+- **Dynamic Quick Help.** `Ctrl+B H` synthesises meta + bund
+  chord sections from `KeyBindings::active()` so HJSON / runtime
+  overrides reflect immediately. Each row shows a full
+  user-friendly action description.
+- New tutorials: [Multi-format export](Documentation/Tutorials/15-multi-format-export.md),
+  [Similar paragraphs](Documentation/Tutorials/16-similar-paragraphs.md),
+  [Writing goals](Documentation/Tutorials/17-writing-goals.md),
+  [Bund pane + script picker](Documentation/Tutorials/18-bund-pane-and-script-picker.md).
 
 Every prior release lives under [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
 
