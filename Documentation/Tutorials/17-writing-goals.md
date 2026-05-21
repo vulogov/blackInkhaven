@@ -119,13 +119,15 @@ The right edge of the status bar shows a one-line summary,
 refreshed on every save:
 
 ```
-today 1,247/1500w · streak 3d · story 12,300/80,000w (pace 165w/d)
+today 1,247/1500w · 45m · streak 3d · story 12,300/80,000w (pace 165w/d)
 ```
 
 Components:
 
 - `today X/Yw` — today's net words against `daily_words`. If no
   goal is set, just `today Xw`.
+- `Nm` / `Hh Mm` — **active writing time** today (1.2.4+). See
+  next section for the heuristic.
 - `streak Nd` — only shown when N > 0.
 - Per-book pace line — only shown when the open paragraph belongs
   to a book that has both `target_words` and `deadline` set.
@@ -133,6 +135,47 @@ Components:
 
 The widget is dimmed by default — it doesn't compete with the
 status message on the left.
+
+## Active writing time (1.2.4+)
+
+Inkhaven tracks "time at the keyboard" without watching every
+keystroke. The heuristic is dead simple:
+
+- On every save, look at the gap to the previous save in the
+  current day.
+- Cap each gap at **5 minutes**. Anything longer is assumed to
+  be AFK time (lunch, meetings, doom-scrolling…).
+- Sum the (capped) gaps over the window — today, week, all-time.
+
+What this means in practice:
+
+- A 90-second pause between saves contributes 90 s of active
+  time.
+- A 4-minute pause contributes 4 min.
+- A 2-hour pause (you left for lunch and came back) contributes
+  5 min — the cap.
+- The very first save of a day contributes 0 (no prior gap to
+  measure against). A single isolated save = 0 active time.
+
+The status-bar widget shows today's total; the Ctrl+V G modal
+shows both today + this week:
+
+```
+ Today
+   words: 1,247/1500 (83%)
+   streak: 3d (grace 0/1 per week)
+   active: 45m today · 4h 12m this week
+```
+
+This is intentionally **not** a "session timer" — there's no
+START / STOP. Open inkhaven, write, save, repeat: the active
+counter accumulates honestly. Leave for lunch and come back:
+you lose a single 5-minute cap per absence, not the whole gap.
+
+Active time isn't tied to a specific paragraph or book — it's
+project-wide. Per-book / per-paragraph time tracking would
+need keystroke buffering and is out of scope for the v1
+heuristic.
 
 ## The progress modal: Ctrl+V G
 
@@ -143,6 +186,7 @@ Press `Ctrl+V` then `G` for the full overview. Layout:
 │  Today                            ┌── 30d words/day ───┐ │
 │    words: 1,247/1500 (83%)        │ ▁▂▃▅▆▇█▇▅▃▂▁    ▁▂│ │
 │    streak: 3d (grace 0/1 per wk)  │                    │ │
+│    active: 45m today · 4h 12m wk  │                    │ │
 │                                   │                    │ │
 │  Books                            │                    │ │
 │    Story: 12,300w · target        │                    │ │
