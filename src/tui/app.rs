@@ -326,6 +326,26 @@ pub fn run(project: &Path) -> Result<()> {
 
     let cfg = Config::load(&layout.config_path()).map_err(anyhow::Error::from)?;
 
+    // 1.2.5+: foundation gate for the typst-as-library engine
+    // switch. If the user has set `typst_compile.engine =
+    // "inprocess"` in HJSON, but the binary wasn't built with the
+    // in-process compiler available, log a warning so the
+    // fallback to `external` isn't silent. `use_inprocess_engine`
+    // currently always returns false (Phase 1 doesn't ship the
+    // engine yet); the call exists so the user's HJSON choice
+    // flows through one well-known check the future Phase 4
+    // implementation will extend.
+    if cfg.typst_compile.engine == "inprocess"
+        && !cfg.typst_compile.use_inprocess_engine()
+    {
+        tracing::warn!(
+            target: "inkhaven::typst",
+            "typst_compile.engine = \"inprocess\" set in HJSON but the \
+             in-process Typst engine is not available in this build — \
+             falling back to the external `typst` binary on PATH.",
+        );
+    }
+
     // Install the panic hook BEFORE we touch the terminal so a panic during
     // DB load (or anywhere later) still restores the screen.
     let original_hook = std::panic::take_hook();
@@ -2361,6 +2381,16 @@ struct OpenedDoc {
     /// (implicit "accept the corrections") or when the user opens a
     /// different paragraph.
     correction_baseline: Option<Vec<String>>,
+    /// Cached typst parse-time diagnostics (1.2.5+). Recomputed on
+    /// save and on idle when `typst_compile.diagnostics` is on and
+    /// the buffer's content type is `None` (default = typst) or
+    /// `Some("typst")`. Empty when the buffer parses cleanly OR
+    /// when diagnostics are disabled in HJSON. See
+    /// `crate::typst_check`.
+    typst_diagnostics: Vec<crate::typst_check::TypstDiagnostic>,
+    /// Wall-clock of the last typst-syntax recheck. Throttles the
+    /// idle re-check against `typst_compile.diagnostics_idle_seconds`.
+    typst_diagnostics_checked_at: std::time::Instant,
 }
 
 struct SplitView {
@@ -2790,6 +2820,33 @@ impl App {
                     );
                 }
                 self.secondary = Some(doc);
+            }
+        }
+
+        // 1.2.5+: idle typst-syntax recheck. Independent of save
+        // — runs whenever the user has paused for
+        // `typst_compile.diagnostics_idle_seconds` and the buffer
+        // has moved on since the last check. Save itself already
+        // calls `refresh_typst_diagnostics_for_opened`, so this
+        // covers the "I'm staring at the buffer wondering why
+        // typst errored" case where no save has fired yet.
+        if self.cfg.typst_compile.diagnostics {
+            let idle = self.cfg.typst_compile.diagnostics_idle_seconds;
+            let due = match self.opened.as_ref() {
+                Some(doc) => {
+                    let idle_ok =
+                        doc.last_activity.elapsed().as_secs() >= idle;
+                    let stale = doc
+                        .typst_diagnostics_checked_at
+                        .elapsed()
+                        .as_secs()
+                        >= idle.max(1);
+                    idle_ok && stale && doc.dirty
+                }
+                None => false,
+            };
+            if due {
+                self.refresh_typst_diagnostics_for_opened();
             }
         }
     }
@@ -11394,7 +11451,10 @@ impl App {
                     NodeKind::Script => Some("bund".to_string()),
                     _ => None,
                 }),
+            typst_diagnostics: Vec::new(),
+            typst_diagnostics_checked_at: std::time::Instant::now(),
         });
+        self.refresh_typst_diagnostics_for_opened();
         self.change_focus(Focus::Editor);
         self.status = format!("opened {}", abs.display());
         Ok(())
@@ -11520,7 +11580,53 @@ impl App {
         self.maybe_auto_promote_on_target(node.id, new_words);
         self.reload_hierarchy();
         self.refresh_progress_cache();
+        // 1.2.5+: refresh typst-syntax diagnostics on save. Pulls
+        // the most-recently-saved body straight from the editor's
+        // mutable doc so the next render reflects errors the user
+        // just introduced (or fixed).
+        self.refresh_typst_diagnostics_for_opened();
         Ok(())
+    }
+
+    /// 1.2.5+: re-parse the open paragraph with `typst-syntax` and
+    /// cache the resulting diagnostics on `OpenedDoc`. Honors the
+    /// `typst_compile.diagnostics` HJSON flag and the buffer's
+    /// `content_type` — only typst sources are checked (Bund /
+    /// HJSON / others skip out cleanly). Status bar surfaces the
+    /// first error so the user sees the line number at a glance;
+    /// the rest stay cached on the doc for any future "next error"
+    /// chord.
+    fn refresh_typst_diagnostics_for_opened(&mut self) {
+        if !self.cfg.typst_compile.diagnostics {
+            return;
+        }
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        // Anything not typst-shaped — Bund scripts, HJSON data
+        // nodes, images — should never be fed to the typst
+        // parser; just clear stale diagnostics and bail.
+        let is_typst = match doc.content_type.as_deref() {
+            None | Some("") | Some("typst") => true,
+            _ => false,
+        };
+        if !is_typst {
+            doc.typst_diagnostics.clear();
+            doc.typst_diagnostics_checked_at = std::time::Instant::now();
+            return;
+        }
+        let body = doc.textarea.lines().join("\n");
+        doc.typst_diagnostics = crate::typst_check::check(&body);
+        doc.typst_diagnostics_checked_at = std::time::Instant::now();
+        if let Some(first) = doc.typst_diagnostics.first() {
+            // Don't blow away a more-recent status (a save's own
+            // "wrote N bytes" message etc.) — only stamp the
+            // diagnostics line if we have errors to show. The
+            // save-path caller is OK with this being the final
+            // status because errors-on-save are exactly what the
+            // user needs to see next.
+            self.status = first.summary();
+        }
     }
 
     /// Promote the paragraph one ladder step if (a) the project
@@ -13182,6 +13288,8 @@ impl App {
             read_only,
             correction_baseline: None,
             content_type: node.content_type.clone(),
+            typst_diagnostics: Vec::new(),
+            typst_diagnostics_checked_at: std::time::Instant::now(),
         });
         self.secondary_focused = false;
         self.status = format!(

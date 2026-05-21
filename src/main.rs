@@ -13,6 +13,7 @@ mod scrivener;
 mod storage;
 mod store;
 mod tui;
+mod typst_check;
 mod typst_compile;
 
 use clap::Parser;
