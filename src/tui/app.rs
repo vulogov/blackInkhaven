@@ -2827,24 +2827,20 @@ impl App {
         }
 
 
-        // F1 anywhere opens the help-manual query modal. Modal eats every
-        // other key until Enter (submit) / Esc (cancel).
-        if matches!(key.code, KeyCode::F(1))
-            && !key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
-        {
-            self.open_help_query_modal();
-            return Ok(false);
-        }
-
-        // F7 runs a grammar check on the currently-open paragraph. The
-        // prompt template is resolved with precedence: Prompts book entry
-        // titled "Grammar check" > prompts.hjson entry of the same name >
-        // a built-in fallback that asks the model to check syntax /
-        // punctuation in the configured `language` while preserving any
-        // Typst markup.
-        if matches!(key.code, KeyCode::F(7)) {
-            self.start_grammar_check();
-            return Ok(false);
+        // 1.2.4+: F-keys + every top-level (no-prefix) chord
+        // flow through the `top_level` binding table. The table
+        // is pane-aware via Scope, so F-keys that only made
+        // sense in one pane (F2 rename / F3 file picker /
+        // F4-F6 editor) keep their per-pane behaviour without
+        // hardcoded match arms. The user can rebind any of
+        // them via HJSON `keys.bindings` (single-token chord
+        // strings route to TopLevel) or runtime
+        // `ink.key.bind`.
+        if let Some(action) = super::keybind::read().resolve_top_level(&key, self.focus) {
+            if !matches!(action, super::keybind::Action::None) {
+                self.run_action(action);
+                return Ok(false);
+            }
         }
 
         // AI-fullscreen Ctrl+C toggles "Chat selection mode" — the
@@ -2969,23 +2965,9 @@ impl App {
             }
         }
 
-        // F9 cycles the AI scope mode (None → Selection → Paragraph →
-        // Subchapter → Chapter → Book → None). The next prompt sent from
-        // the AI prompt bar will prepend that context, then auto-reset to
-        // None. F9 works from every pane — Editor/Tree/AI/Search/AI prompt.
-        // (Chat history is cleared via Ctrl+B C, not F9.)
-        if matches!(key.code, KeyCode::F(9)) {
-            self.cycle_ai_mode();
-            return Ok(false);
-        }
-        // F10 toggles the inference mode (Local ↔ Full). Local constrains
-        // the model to supplied context only; Full lets it augment with
-        // general knowledge. Help-RAG inferences are pinned to Local
-        // regardless of this setting.
-        if matches!(key.code, KeyCode::F(10)) {
-            self.toggle_inference_mode();
-            return Ok(false);
-        }
+        // F9 / F10 / F7 / F1 et al. now flow through the
+        // top_level binding-table dispatch above. The hardcoded
+        // match arms were removed in the 1.2.4 F-key migration.
 
         // Save works from anywhere as long as a doc is open.
         if self.keymap.save.matches(&key) && self.opened.is_some() {
@@ -3069,10 +3051,8 @@ impl App {
             // Esc cycles Tree → Search bar (third leg of the
             // Editor → Tree → Search → Editor rotation).
             KeyCode::Esc => self.change_focus(Focus::SearchBar),
-            KeyCode::F(2) => self.open_rename_modal(),
-            // F3 in Tree: import a file (becomes new paragraph after cursor)
-            // or a directory tree (dirs → subchapters, files → paragraphs).
-            KeyCode::F(3) => self.open_file_picker(PickerContext::TreeInsertOrImport),
+            // F2 (rename) and F3 (file picker) now flow through
+            // the top_level binding-table dispatch in handle_key.
             KeyCode::Up => self.move_cursor(-1),
             KeyCode::Down => self.move_cursor(1),
             KeyCode::Home => self.tree_cursor = 0,
@@ -3377,22 +3357,8 @@ impl App {
             }
         }
 
-        // F5 creates a snapshot of the current paragraph; F6 opens the picker.
-        // Function keys are rarely intercepted by terminals or multiplexers.
-        if matches!(key.code, KeyCode::F(5)) {
-            self.create_snapshot_of_current();
-            return Ok(false);
-        }
-        if matches!(key.code, KeyCode::F(6)) {
-            self.open_snapshot_picker();
-            return Ok(false);
-        }
-        // F3 opens the file-load dialog: pick a file, its content replaces
-        // the editor buffer (and marks dirty).
-        if matches!(key.code, KeyCode::F(3)) {
-            self.open_file_picker(PickerContext::EditorLoad);
-            return Ok(false);
-        }
+        // F3 / F5 / F6 now resolve through the top_level binding
+        // table at the top of handle_key (1.2.4+ migration).
         // Ctrl+F open find, Ctrl+X "repeat" (advance / replace+advance),
         // Ctrl+R open replace dialog or "replace all" when already in
         // replace mode.
@@ -3447,16 +3413,9 @@ impl App {
             return Ok(false);
         }
 
-        // F4 toggles split-edit mode; Ctrl+F4 accepts the snapshot and
-        // replaces the live buffer with it.
-        if matches!(key.code, KeyCode::F(4)) {
-            if key.modifiers.contains(KeyModifiers::CONTROL) {
-                self.accept_split_snapshot();
-            } else {
-                self.toggle_split();
-            }
-            return Ok(false);
-        }
+        // F4 / Ctrl+F4 resolve through the top_level binding
+        // table at the top of handle_key.
+
         // Ctrl+H / Ctrl+J scroll the lower (read-only) pane while split is
         // open. Without split, they fall through to normal editor handling
         // (tui-textarea / our backspace-word / etc.).
@@ -5691,6 +5650,22 @@ impl App {
             A::ViewToggleSimilarMode => self.toggle_similar_paragraph_mode(),
             A::ViewOpenProgress => self.open_progress_modal(),
             A::ViewOpenParagraphTarget => self.open_paragraph_target_modal(),
+
+            // ── Top-level F-keys (1.2.4+ migration) ───────────
+            A::HelpQuery => self.open_help_query_modal(),
+            A::RenameNode => self.open_rename_modal(),
+            A::FilePickerTreeImport => {
+                self.open_file_picker(PickerContext::TreeInsertOrImport)
+            }
+            A::FilePickerEditorLoad => {
+                self.open_file_picker(PickerContext::EditorLoad)
+            }
+            A::ToggleSplit => self.toggle_split(),
+            A::AcceptSplitSnapshot => self.accept_split_snapshot(),
+            A::OpenSnapshotPicker => self.open_snapshot_picker(),
+            A::GrammarCheck => self.start_grammar_check(),
+            A::CycleAiMode => self.cycle_ai_mode(),
+            A::ToggleInferenceMode => self.toggle_inference_mode(),
 
             // Runtime-bound Bund lambda. Dispatch through the
             // hooks machinery so the recursion-cap + policy-deny
