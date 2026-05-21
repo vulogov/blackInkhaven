@@ -2441,7 +2441,7 @@ impl App {
                         .into()
                 }
                 Focus::Editor => {
-                    "META · S save · N snapshot · R status · F func · T retitle · P place/pic · C character · G notes · Y artefacts · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel"
+                    "META · S save · N snapshot · R status · F func · T retitle · M morph-type · P place/pic · C character · G notes · Y artefacts · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel"
                         .into()
                 }
                 Focus::Ai | Focus::AiPrompt => {
@@ -4996,10 +4996,13 @@ impl App {
             }
         };
 
-        // Snapshot whether the buffer is open on this node so we
-        // can reopen after conversion. Drop the live editor doc
-        // before conversion to avoid file-handle / path mismatch.
+        // Snapshot whether the buffer is open on this node + the
+        // focus we should be on when we return. `load_paragraph`
+        // unconditionally focuses Editor at the end, so if the
+        // user invoked the cycle from the Tree pane we'd steal
+        // their focus otherwise.
         let buffer_was_open = self.opened.as_ref().is_some_and(|d| d.id == node_id);
+        let saved_focus = self.focus;
         if buffer_was_open {
             self.opened = None;
         }
@@ -5014,6 +5017,11 @@ impl App {
                 self.reload_hierarchy();
                 if buffer_was_open {
                     let _ = self.load_paragraph(&converted);
+                    // `load_paragraph` focuses the editor; restore
+                    // the pane the user was actually in.
+                    if saved_focus != Focus::Editor {
+                        self.change_focus(saved_focus);
+                    }
                 }
             }
             Err(e) => {
@@ -5183,6 +5191,14 @@ impl App {
             // after editing the lead).
             KeyCode::Char('T') | KeyCode::Char('t') => {
                 self.rename_paragraph_to_first_sentence();
+                true
+            }
+            // M morphs the open buffer's leaf type
+            // (Paragraph(typst) → Paragraph(hjson) → Script(bund)).
+            // Same handler as Tree-pane M; cycle_leaf_type picks
+            // the target from focus.
+            KeyCode::Char('M') | KeyCode::Char('m') => {
+                self.cycle_leaf_type();
                 true
             }
             // P: context-sensitive. When the cursor sits inside a
