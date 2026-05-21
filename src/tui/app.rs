@@ -1981,6 +1981,33 @@ enum Modal {
         size_bytes: u64,
         proto: ratatui_image::protocol::StatefulProtocol,
     },
+    /// Ctrl+V R (1.2.5+) — float a rasterised PNG of the open
+    /// paragraph on top of the editor. `proto` drives the
+    /// ratatui-image widget for display; `body` + `settings` are
+    /// captured so an `S` keypress can re-render at high DPI and
+    /// dump a PNG to a user-picked path.
+    RenderedPreview {
+        title: String,
+        body: String,
+        settings: crate::typst_world::WorldSettings,
+        proto: ratatui_image::protocol::StatefulProtocol,
+        preview_width: u32,
+        preview_height: u32,
+        total_pages: usize,
+    },
+    /// `S` from `RenderedPreview` — save-as path picker for the
+    /// full-DPI PNG. Same shape as `SaveMarkdown`: pre-filled
+    /// `<title>-YYYYDDMM-HHMM.png` default. Enter writes the
+    /// file; Esc closes the picker AND the preview (the
+    /// `StatefulProtocol` holding the bitmap can't be cloned
+    /// back into the preview without re-rendering, so we keep
+    /// the UX simple: Ctrl+V R re-opens the preview).
+    SaveRenderedPng {
+        input: TextInput,
+        body: String,
+        settings: crate::typst_world::WorldSettings,
+        title: String,
+    },
     /// Ctrl+B F (editor pane) — Typst function picker. The filter
     /// input narrows the baked-in list as the user types; Enter
     /// inserts `#<name>(|)` at the cursor with the editor cursor
@@ -5919,6 +5946,111 @@ impl App {
     /// Open the fuzzy paragraph picker. Pre-builds the full
     /// paragraph list (title + slug-path) so subsequent
     /// keystrokes only filter, never re-walk the hierarchy.
+    /// Ctrl+V R (1.2.5+) — render the open paragraph in-process,
+    /// pop a floating preview modal on top of the editor. Saves
+    /// the current buffer first so the rendered preview matches
+    /// the on-disk source the user just edited.
+    fn open_rendered_paragraph_preview(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status =
+                "render ¶: no paragraph open in the editor".into();
+            return;
+        };
+        // Skip Bund / HJSON / images — only typst sources render
+        // through the typst pipeline.
+        let is_typst = matches!(
+            doc.content_type.as_deref(),
+            None | Some("") | Some("typst"),
+        );
+        if !is_typst {
+            self.status = format!(
+                "render ¶: `{}` is not a typst source — Ctrl+V R only renders .typ buffers",
+                doc.title,
+            );
+            return;
+        }
+        // Capture the title before we save (save may renumber /
+        // re-derive the title from the first sentence).
+        let title_before = doc.title.clone();
+        // Save first — the spec says "Save current buffer" before
+        // render. If save fails, abort the render (we shouldn't
+        // render bytes that aren't on disk).
+        if doc.dirty {
+            if let Err(e) = self.save_current() {
+                self.status =
+                    format!("render ¶: autosave failed: {e}");
+                return;
+            }
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "render ¶: editor closed during save".into();
+            return;
+        };
+        let body = doc.textarea.lines().join("\n");
+        let title = doc.title.clone();
+        if body.trim().is_empty() {
+            self.status =
+                "render ¶: buffer is empty — nothing to render".into();
+            return;
+        }
+        let _ = title_before;
+        // Image picker (ratatui-image) is required to display the
+        // PNG. Without it (terminals without graphics support and
+        // `images.preview_enabled = false`) fall back to status
+        // bar with a hint.
+        let Some(picker) = self.image_picker.as_ref() else {
+            self.status =
+                "render ¶: terminal can't display images (set `images.preview_enabled: true` or use a kitty / iterm2 / sixel-capable terminal)".into();
+            return;
+        };
+        let settings = crate::typst_world::WorldSettings::from_cfg(
+            &self.cfg.typst_compile,
+        );
+        // Preview DPI: 2.0 ppt = ~144 dpi. Good for screen,
+        // doesn't blow up memory on long paragraphs.
+        match crate::typst_paragraph_render::render(
+            &body,
+            settings.clone(),
+            2.0,
+        ) {
+            Ok(rendered) => {
+                let proto = picker.new_resize_protocol(rendered.image);
+                self.modal = Modal::RenderedPreview {
+                    title: title.clone(),
+                    body,
+                    settings,
+                    proto,
+                    preview_width: rendered.width,
+                    preview_height: rendered.height,
+                    total_pages: rendered.total_pages,
+                };
+                let pages_note = if rendered.total_pages > 1 {
+                    format!(" · page 1/{}", rendered.total_pages)
+                } else {
+                    String::new()
+                };
+                self.status = format!(
+                    "render ¶ `{}` · {}×{}{}  ·  Esc closes · S saves full-DPI PNG",
+                    title,
+                    rendered.width,
+                    rendered.height,
+                    pages_note,
+                );
+            }
+            Err(err) => {
+                // The error string is potentially multi-line —
+                // show the first useful line on the status bar so
+                // the AI error-analysis path isn't required.
+                let first_line = err
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("compile failed");
+                self.status =
+                    format!("render ¶: {first_line}");
+            }
+        }
+    }
+
     fn open_fuzzy_paragraph_picker(&mut self) {
         let entries = self.collect_all_paragraph_entries();
         if entries.is_empty() {
@@ -6510,6 +6642,104 @@ impl App {
         Ok(cwd.join(format!("{safe_stem}-{stamp}.md")))
     }
 
+    /// 1.2.5+ — default destination for `S` on Modal::RenderedPreview.
+    /// Mirrors the markdown dest shape but with `.png` extension.
+    fn default_rendered_png_dest(
+        &self,
+        title: &str,
+    ) -> std::result::Result<std::path::PathBuf, String> {
+        let cwd = std::env::current_dir().map_err(|e| format!("cwd: {e}"))?;
+        let stamp = chrono::Local::now().format("%Y%d%m-%H%M");
+        let stem = slug::slugify(title);
+        let safe_stem = if stem.is_empty() { "render".to_string() } else { stem };
+        Ok(cwd.join(format!("{safe_stem}-{stamp}.png")))
+    }
+
+    /// `S` inside Modal::RenderedPreview — pop the save-as picker
+    /// with a sensible default path pre-filled.
+    fn open_save_rendered_png_picker(&mut self) {
+        let (body, settings, title) = match &self.modal {
+            Modal::RenderedPreview {
+                body,
+                settings,
+                title,
+                ..
+            } => (body.clone(), settings.clone(), title.clone()),
+            _ => return,
+        };
+        let default_dest = match self.default_rendered_png_dest(&title) {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!("save PNG as: {e}");
+                return;
+            }
+        };
+        let mut input = TextInput::new();
+        for c in default_dest.to_string_lossy().chars() {
+            input.insert_char(c);
+        }
+        self.modal = Modal::SaveRenderedPng {
+            input,
+            body,
+            settings,
+            title,
+        };
+        self.status =
+            "save PNG as: edit path or just hit Enter to save · Esc cancels"
+                .into();
+    }
+
+    /// Re-render the paragraph at full DPI (4.0 px/pt) and write
+    /// to the picked path. Status-bar reports outcome.
+    fn commit_save_rendered_png(
+        &mut self,
+        body: &str,
+        settings: &crate::typst_world::WorldSettings,
+        raw: &str,
+        title: &str,
+    ) {
+        let path_str = raw.trim();
+        let path = if path_str.is_empty() {
+            match self.default_rendered_png_dest(title) {
+                Ok(p) => p,
+                Err(e) => {
+                    self.status = format!("save PNG: {e}");
+                    return;
+                }
+            }
+        } else if let Some(rest) = path_str.strip_prefix("~/") {
+            match std::env::var_os("HOME") {
+                Some(home) => std::path::PathBuf::from(home).join(rest),
+                None => std::path::PathBuf::from(path_str),
+            }
+        } else {
+            std::path::PathBuf::from(path_str)
+        };
+        // 4.0 px/pt ≈ 288 dpi. Print-quality without going
+        // wild on memory for chapter-sized paragraphs.
+        match crate::typst_paragraph_render::render(body, settings.clone(), 4.0) {
+            Ok(rendered) => match std::fs::write(&path, &rendered.png_bytes) {
+                Ok(()) => {
+                    self.status = format!(
+                        "save PNG: wrote {} ({}×{} · {} bytes)",
+                        path.display(),
+                        rendered.width,
+                        rendered.height,
+                        rendered.png_bytes.len(),
+                    );
+                }
+                Err(e) => {
+                    self.status =
+                        format!("save PNG: write {}: {e}", path.display());
+                }
+            },
+            Err(e) => {
+                let first = e.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+                self.status = format!("save PNG: re-render failed: {first}");
+            }
+        }
+    }
+
     fn handle_bund_action(&mut self, key: KeyEvent) {
         self.bund_pending = false;
         if matches!(key.code, KeyCode::Esc) {
@@ -6619,6 +6849,7 @@ impl App {
             A::ViewToggleBookmark => self.toggle_bookmark(),
             A::ViewListBookmarks => self.open_bookmark_picker_modal(),
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
+            A::ViewRenderParagraph => self.open_rendered_paragraph_preview(),
 
             // ── Top-level F-keys (1.2.4+ migration) ───────────
             A::HelpQuery => self.open_help_query_modal(),
@@ -8101,6 +8332,128 @@ impl App {
             ))),
             footer_rect,
         );
+    }
+
+    /// Ctrl+V R floating preview. Same plumbing as the image-
+    /// preview modal — ratatui-image's StatefulImage widget
+    /// repaints on every frame so a terminal resize Just Works.
+    fn draw_rendered_preview_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::RenderedPreview {
+            title,
+            proto,
+            preview_width,
+            preview_height,
+            total_pages,
+            ..
+        } = &mut self.modal
+        else {
+            return;
+        };
+
+        let width = area.width.saturating_sub(4).max(40);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let pages_note = if *total_pages > 1 {
+            format!(" · page 1/{total_pages}")
+        } else {
+            String::new()
+        };
+        let title_line = format!(
+            " 🖨 {title}  ·  {preview_width}×{preview_height}{pages_note} "
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title_line)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1);
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: body_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: 1,
+        };
+
+        let widget = ratatui_image::StatefulImage::new();
+        f.render_stateful_widget(widget, body_rect, proto);
+
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  Esc closes  ·  S saves full-DPI PNG  ·  resize the terminal to re-fit ".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    /// Save-as picker triggered by `S` in the rendered preview.
+    /// Same dimensions / style as the markdown save-as picker so
+    /// the UX is consistent.
+    fn draw_save_rendered_png_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::SaveRenderedPng { input, title, .. } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).clamp(40, 96);
+        let height: u16 = 7;
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Save rendered PNG · {title} "))
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let cursor = '│';
+        let body = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                format!(" Path: {}", input.render_with_cursor(cursor)),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Enter saves · Esc cancels · ~/ expands to home".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            )),
+        ];
+        f.render_widget(Paragraph::new(body), inner);
     }
 
     fn cycle_ai_mode(&mut self) {
@@ -10747,6 +11100,8 @@ impl App {
         let is_backlink_picker = matches!(self.modal, Modal::BacklinkPicker { .. });
         let is_bookmark_picker = matches!(self.modal, Modal::BookmarkPicker { .. });
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
+        let is_rendered_preview = matches!(self.modal, Modal::RenderedPreview { .. });
+        let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -10914,6 +11269,46 @@ impl App {
                 return Ok(false);
             }
             if let Modal::SaveMarkdown { input, .. } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
+            return Ok(false);
+        }
+
+        if is_rendered_preview {
+            // Esc is intercepted by the top-of-function global
+            // handler that closes any modal; we just need to
+            // handle S → save-as picker here. Everything else
+            // is swallowed so the underlying editor doesn't see
+            // it.
+            if matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S')) {
+                self.open_save_rendered_png_picker();
+            }
+            return Ok(false);
+        }
+
+        if is_save_rendered_png {
+            if matches!(key.code, KeyCode::Enter) {
+                let (body, settings, raw, title) = match &self.modal {
+                    Modal::SaveRenderedPng {
+                        input,
+                        body,
+                        settings,
+                        title,
+                    } => (
+                        body.clone(),
+                        settings.clone(),
+                        input.as_str().to_string(),
+                        title.clone(),
+                    ),
+                    _ => {
+                        return Ok(false);
+                    }
+                };
+                self.modal = Modal::None;
+                self.commit_save_rendered_png(&body, &settings, &raw, &title);
+                return Ok(false);
+            }
+            if let Modal::SaveRenderedPng { input, .. } = &mut self.modal {
                 handle_text_input_key(input, key);
             }
             return Ok(false);
@@ -14128,6 +14523,14 @@ impl App {
             self.draw_fuzzy_paragraph_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::RenderedPreview { .. }) {
+            self.draw_rendered_preview_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::SaveRenderedPng { .. }) {
+            self.draw_save_rendered_png_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -14157,6 +14560,10 @@ impl App {
             Modal::BookmarkPicker { .. } => unreachable!("bookmark picker handled above"),
             Modal::FuzzyParagraphPicker { .. } =>
                 unreachable!("fuzzy paragraph picker handled above"),
+            Modal::RenderedPreview { .. } =>
+                unreachable!("rendered preview handled above"),
+            Modal::SaveRenderedPng { .. } =>
+                unreachable!("save rendered png handled above"),
             Modal::ParagraphTarget { input } => {
                 let body = vec![
                     Line::from(""),

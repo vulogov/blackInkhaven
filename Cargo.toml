@@ -185,6 +185,11 @@ typst = "0.14"
 # typst-pdf — PDF emitter. Pairs with `typst::compile::<PagedDocument>()`
 # to produce the same `.pdf` bytes the external CLI would.
 typst-pdf = "0.14"
+# typst-render — rasterise a compiled `Frame` to a PNG bitmap. Used
+# by the Ctrl+V R "render paragraph" feature to paint the in-process
+# compile's first page into the editor preview pane (via
+# ratatui-image) and to write a full-DPI PNG on `S`.
+typst-render = "0.14"
 # typst-kit — convenience kit for tools that embed Typst. We enable:
 # * `fonts` — fontdb-backed system-font searcher.
 # * `embed-fonts` — bundle Computer Modern + Linux Libertine so
