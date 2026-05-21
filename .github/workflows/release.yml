@@ -37,6 +37,13 @@ jobs:
   build:
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    # 1.2.4+: Windows is soft-failure. The vcpkg fontconfig install
+    # below is what makes the Rust link step succeed, but it can
+    # break in subtle ways (runner image updates, vcpkg version
+    # drift). When it does, we still want the Linux + Mac assets
+    # to publish — Windows users can fall back to `cargo install
+    # --git` until we patch the workflow.
+    continue-on-error: ${{ matrix.target == 'x86_64-pc-windows-msvc' }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +54,10 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
-          # macOS x86_64 (Intel) is temporarily disabled. The macos-13
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+          # macOS x86_64 (Intel) stays disabled. The macos-13
           # runner pool is heavily capacity-constrained — v1.0.2's job
           # sat in `queued` for 3+ hours without picking up a runner.
           # Apple stopped selling Intel Macs in 2023; modern users are
@@ -58,17 +68,18 @@ jobs:
           # - os: macos-13
           #   target: x86_64-apple-darwin
           #   archive: tar.gz
-          # Windows is temporarily disabled. yeslogic-fontconfig-sys
-          # (pulled in transitively by bdslib) is a wrapper over the
-          # POSIX fontconfig C library; on Windows it needs a vcpkg /
-          # custom-toolchain install that hasn't been worked out yet.
-          # Re-enable once the Windows build path is sorted — likely via
-          # `vcpkg install fontconfig:x64-windows-static` + appropriate
-          # env vars, or by trimming bdslib's font-using features. See
-          # github issue / log for the failing v1.0.0 / v1.0.1 runs.
-          # - os: windows-latest
-          #   target: x86_64-pc-windows-msvc
-          #   archive: zip
+          #
+          # Windows note (1.2.4+): re-enabled, gated by
+          # `continue-on-error`. The `yeslogic-fontconfig-sys`
+          # transitive dep — pulled in via
+          # `bundcore → rust_dynamic → neurons → plotters → font-kit`
+          # (NOT bdslib, which was absorbed in 1.2.1) — needs a
+          # native fontconfig install on Windows. We do that with
+          # `vcpkg install fontconfig:x64-windows-static-md` in
+          # the "Install Windows build dependencies" step below;
+          # pkg-config picks it up via PKG_CONFIG_PATH. If the
+          # vcpkg install regresses, the matrix entry still runs
+          # but its failure won't block the release.
     steps:
       - name: Resolve tag
         id: tag
@@ -89,7 +100,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # Linux: install system libs that bdslib's transitive native deps
+      # Linux: install system libs that the transitive native deps
       # need. fontconfig comes in via yeslogic-fontconfig-sys; the xcb-*
       # set covers arboard's X11 clipboard backend; libssl-dev is a common
       # baseline. macOS and Windows runners use platform-native equivalents.
@@ -106,6 +117,31 @@ jobs:
             libxcb-shape0-dev \
             libxcb-xfixes0-dev \
             libasound2-dev
+
+      # Windows: vcpkg the same fontconfig native lib that
+      # `yeslogic-fontconfig-sys` shells out to find on Linux. The
+      # `x64-windows-static-md` triplet is the standard for Rust
+      # MSVC builds (static native lib, dynamic CRT). The
+      # GitHub-hosted windows-latest runner ships vcpkg pre-
+      # installed at `$env:VCPKG_INSTALLATION_ROOT`; we just need
+      # to drive it. PKG_CONFIG_PATH points the build script at
+      # the resulting `.pc` files.
+      #
+      # Other native Windows deps:
+      # - audio (rodio/cpal) uses WASAPI from the Windows SDK,
+      #   already on the runner — no install needed.
+      # - clipboard (arboard) uses the Windows clipboard API,
+      #   same story.
+      # - duckdb's bundled SQLite/ICU build on Windows out of
+      #   the box with MSVC.
+      - name: Install Windows build dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install fontconfig:x64-windows-static-md
+          $pkgcfg = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md\lib\pkgconfig"
+          echo "PKG_CONFIG_PATH=$pkgcfg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "VCPKGRS_TRIPLET=x64-windows-static-md" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # Caches `~/.cargo` + `target/` between runs. Critical: bdslib
       # pulls in duckdb / tantivy / fastembed / augurs, so a cold build
