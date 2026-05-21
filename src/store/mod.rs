@@ -111,7 +111,7 @@ impl Store {
         // project — TUI, `inkhaven bund`, `inkhaven add`,
         // `inkhaven reindex`, etc. Idempotent in practice
         // (single-project-per-process).
-        crate::scripting::configure(cfg.scripting.clone(), store.clone());
+        crate::scripting::configure(cfg.scripting.clone(), store.clone(), cfg.clone());
         Ok(store)
     }
 

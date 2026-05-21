@@ -74,6 +74,7 @@ pub mod category {
 /// Currently inkhaven registers zero words in these categories —
 /// the deny is forward-looking, ready for P4/P5 additions.
 pub const DEFAULT_DENIED_CATEGORIES: &[&str] = &[
+    category::STORE_WRITE,
     category::FS_WRITE,
     category::NET,
     category::SHELL,
@@ -90,14 +91,32 @@ pub const DEFAULT_DENIED_CATEGORIES: &[&str] = &[
 /// add the destructive variants under `store_write`; phase 6+
 /// might surface filesystem and network words.
 pub const WORD_CATEGORIES: &[(&str, &str)] = &[
+    // ── store_read (default-allowed) ──────────────────────────
     ("ink.node.list", category::STORE_READ),
     ("ink.node.get", category::STORE_READ),
     ("ink.node.children", category::STORE_READ),
     ("ink.paragraph.text", category::STORE_READ),
     ("ink.search.text", category::STORE_READ),
     ("ink.snapshot.list", category::STORE_READ),
-    // Stage-2 runtime keymap mutation. Default-denied via
-    // DEFAULT_DENIED_CATEGORIES.
+    ("ink.path.to_uuid", category::STORE_READ),
+
+    // ── store_write (default-denied) ──────────────────────────
+    // 1.2.3+: Bund scripts can mutate the project tree, status
+    // tags, paragraph bodies, and DB state. Default-denied; opt
+    // in by listing "store_write" in scripting.enabled_categories.
+    ("ink.tree.add", category::STORE_WRITE),
+    ("ink.tree.delete", category::STORE_WRITE),
+    ("ink.tree.rename", category::STORE_WRITE),
+    ("ink.tree.move_up", category::STORE_WRITE),
+    ("ink.tree.move_down", category::STORE_WRITE),
+    ("ink.tree.morph", category::STORE_WRITE),
+    ("ink.paragraph.set_status", category::STORE_WRITE),
+    ("ink.paragraph.save", category::STORE_WRITE),
+    ("ink.db.sync", category::STORE_WRITE),
+    ("ink.db.checkpoint", category::STORE_WRITE),
+    ("ink.db.reindex", category::STORE_WRITE),
+
+    // ── keymap (default-denied) ───────────────────────────────
     ("ink.key.bind", category::KEYMAP),
     ("ink.key.bind_lambda", category::KEYMAP),
     ("ink.key.unbind", category::KEYMAP),
