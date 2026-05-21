@@ -5,6 +5,7 @@ pub mod bund;
 pub mod delete;
 pub mod export;
 pub mod import_help;
+pub mod import_scrivener;
 pub mod import_typst_help;
 pub mod init;
 pub mod list;
@@ -157,6 +158,28 @@ pub enum Command {
     /// context. Offline — the reference is bundled with the binary.
     ImportTypstHelp,
 
+    /// Import a Scrivener (.scriv) project into the current
+    /// inkhaven project (1.2.4+). Walks the binder, converts
+    /// every Text document's RTF body to Typst, and
+    /// materialises the hierarchy as inkhaven nodes. Single-
+    /// binary — no Scrivener / pandoc / textutil required.
+    ImportScrivener {
+        /// Path to the `.scriv` package directory.
+        scriv_path: PathBuf,
+        /// Override the title used for the user book created
+        /// from the Scrivener Draft folder. None → use the
+        /// Draft folder's own title.
+        #[arg(long)]
+        draft_as_book: Option<String>,
+        /// Skip everything outside the Draft (Research,
+        /// Characters, Places folders Scrivener defaults to).
+        #[arg(long)]
+        skip_research: bool,
+        /// Parse + report without creating any nodes.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Zip the project into a dated backup archive
     /// (`blackinkhaven_YYYYDDMM_HHMMSS.zip`).
     Backup {
@@ -303,6 +326,19 @@ impl Cli {
             Command::ImportTypstHelp => {
                 import_typst_help::run(&project).map_err(Into::into)
             }
+            Command::ImportScrivener {
+                scriv_path,
+                draft_as_book,
+                skip_research,
+                dry_run,
+            } => import_scrivener::run(
+                &project,
+                &scriv_path,
+                draft_as_book.as_deref(),
+                skip_research,
+                dry_run,
+            )
+            .map_err(Into::into),
             Command::Backup { out } => backup::run(&project, out.as_deref()).map_err(Into::into),
             Command::Restore { archive, to } => {
                 restore::run(&archive, &to).map_err(Into::into)
