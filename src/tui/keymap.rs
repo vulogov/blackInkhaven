@@ -101,7 +101,10 @@ fn parse_code(name: &str) -> Result<KeyCode, String> {
         "down" => KeyCode::Down,
         "left" => KeyCode::Left,
         "right" => KeyCode::Right,
-        s if s.starts_with('f') && s.len() <= 3 => {
+        // `fN` where N is 1..24. Length bound 2..=3 excludes the
+        // bare letter "f" (which is a normal Char chord) but
+        // includes "f1" through "f24".
+        s if s.starts_with('f') && s.len() >= 2 && s.len() <= 3 => {
             let n: u8 = s[1..]
                 .parse()
                 .map_err(|_| format!("bad function key `{name}`"))?;

@@ -307,6 +307,30 @@
     // Set to an empty string to disable (some users reserve Ctrl+Z
     // for their terminal multiplexer).
     bund_prefix:      Ctrl+z
+
+    // User overlay for meta- and bund-sub-chords. Each entry is
+    // `{ chord, action, scope? }`:
+    //
+    //   chord:  "<prefix> <suffix>" shorthand, e.g. "Ctrl+b y"
+    //   action: dotted action name. Examples:
+    //             tree.morph_type    editor.save        global.open_credits
+    //             ai.clear_chat      bund.run_buffer    none (disable)
+    //   scope:  "any" (default) / "editor" / "tree" / "ai"
+    //
+    // Overlay entries take precedence over the built-in defaults.
+    // Hard-blocked: Ctrl+Q (hard-quit), meta_prefix / bund_prefix
+    // (configured above, not here).
+    //
+    // Examples (uncomment to use):
+    //   bindings: [
+    //     // rebind Ctrl+B Y to type-cycle in every pane
+    //     { chord: "Ctrl+b y", action: "tree.morph_type" }
+    //     // disable Ctrl+B W (typewriter mode)
+    //     { chord: "Ctrl+b w", action: "none" }
+    //     // give Bund eval a shorter chord
+    //     { chord: "Ctrl+z m", action: "bund.run_buffer" }
+    //   ]
+    bindings: []
   }
 
   prompts_file: prompts.hjson

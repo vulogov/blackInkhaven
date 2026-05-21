@@ -1019,6 +1019,28 @@ pub struct KeyBindings {
     /// Ctrl+U in this codebase. Set to an empty string to disable
     /// the Bund chord entirely.
     pub bund_prefix: String,
+    /// User overlay for chord-action bindings under the meta- and
+    /// bund-prefixes. Each entry is `{ chord, action, scope? }`.
+    /// The `chord` string uses shorthand `"<prefix> <suffix>"`
+    /// (e.g. `"Ctrl+b y"` rebinds Ctrl+B Y). `action` is the
+    /// dotted form (`"tree.morph_type"`, `"bund.run_buffer"`,
+    /// `"none"` to disable). `scope` is one of
+    /// `"any"` / `"editor"` / `"tree"` / `"ai"` and defaults to
+    /// `"any"`. Hard-blocked chords (Ctrl+Q, meta_prefix,
+    /// bund_prefix) are rejected with a clear error.
+    #[serde(default)]
+    pub bindings: Vec<BindingOverride>,
+}
+
+/// Single entry inside `keys.bindings`. Parsed at startup into a
+/// `keybind::BindingEntry` and applied on top of
+/// `KeyBindings::defaults()`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BindingOverride {
+    pub chord: String,
+    pub action: String,
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 impl Default for KeyBindings {
@@ -1033,6 +1055,7 @@ impl Default for KeyBindings {
             page_down: "PageDown".into(),
             meta_prefix: "Ctrl+b".into(),
             bund_prefix: "Ctrl+z".into(),
+            bindings: Vec::new(),
         }
     }
 }
