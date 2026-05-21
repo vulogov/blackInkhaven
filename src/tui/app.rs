@@ -1659,6 +1659,16 @@ enum Modal {
     ParagraphTarget {
         input: TextInput,
     },
+    /// Ctrl+V 1/2 save-as modal (1.2.4+). Pre-filled with the
+    /// default markdown destination — Enter writes; Esc cancels.
+    /// `body` is the markdown bytes computed before the modal
+    /// opened; `label` is the human-readable name used for any
+    /// fallback default path computation.
+    SaveMarkdown {
+        input: TextInput,
+        body: String,
+        label: String,
+    },
     /// F6 picker → `V` opens a two-pane diff of the cursor's
     /// snapshot against the open paragraph's current buffer.
     /// Read-only; Esc returns to the snapshot picker.
@@ -5250,20 +5260,79 @@ impl App {
     /// filename. Errors land on the status bar; nothing else
     /// changes.
     /// Dispatch one of the three Ctrl+V markdown-export scopes
-    /// through the existing per-scope helpers, then surface
-    /// success / failure on the status bar. The keybind-table
-    /// arms in `run_action` call this; saves a per-action
-    /// boilerplate.
+    /// through the per-scope `prepare_*` helpers, then open the
+    /// SaveMarkdown modal pre-filled with the default
+    /// destination. Enter on the modal writes; the user can
+    /// edit the path before pressing Enter to redirect.
     fn view_export_markdown(&mut self, scope: ViewMdScope) {
-        let outcome = match scope {
-            ViewMdScope::Buffer => self.export_markdown_buffer(),
-            ViewMdScope::Subchapter => self.export_markdown_subchapter(),
-            ViewMdScope::Subtree => self.export_markdown_tree_subtree(),
+        let prepared = match scope {
+            ViewMdScope::Buffer => self.prepare_markdown_buffer(),
+            ViewMdScope::Subchapter => self.prepare_markdown_subchapter(),
+            ViewMdScope::Subtree => self.prepare_markdown_tree_subtree(),
         };
-        self.status = match outcome {
-            Ok(path) => format!("view: wrote {}", path.display()),
-            Err(e) => format!("view: {e}"),
+        match prepared {
+            Ok((body, default_dest, label)) => {
+                self.open_save_markdown_modal(body, default_dest, label);
+            }
+            Err(e) => self.status = format!("view: {e}"),
+        }
+    }
+
+    /// Open the save-as modal with the default path pre-filled.
+    /// The user can edit; Enter writes; Esc cancels.
+    fn open_save_markdown_modal(
+        &mut self,
+        body: String,
+        default_dest: std::path::PathBuf,
+        label: String,
+    ) {
+        let mut input = TextInput::new();
+        for c in default_dest.to_string_lossy().chars() {
+            input.insert_char(c);
+        }
+        self.modal = Modal::SaveMarkdown {
+            input,
+            body,
+            label,
         };
+        self.status =
+            "save as: edit path or just hit Enter to save · Esc cancels".into();
+    }
+
+    /// Commit `body` to whatever path the SaveMarkdown modal's
+    /// input contains. Empty input falls back to a fresh default
+    /// (defensive — pre-fill should make this rare).
+    fn commit_save_markdown(&mut self, body: String, label: String, raw: String) {
+        let path_str = raw.trim();
+        let path = if path_str.is_empty() {
+            match self.default_markdown_dest(&label) {
+                Ok(p) => p,
+                Err(e) => {
+                    self.status = format!("save as: {e}");
+                    return;
+                }
+            }
+        } else {
+            // Expand `~/` to home if present so users can paste a
+            // tilde path. No glob / env expansion — kept minimal.
+            let expanded = if let Some(rest) = path_str.strip_prefix("~/") {
+                match std::env::var_os("HOME") {
+                    Some(home) => std::path::PathBuf::from(home).join(rest),
+                    None => std::path::PathBuf::from(path_str),
+                }
+            } else {
+                std::path::PathBuf::from(path_str)
+            };
+            expanded
+        };
+        match std::fs::write(&path, body.as_bytes()) {
+            Ok(()) => {
+                self.status = format!("view: wrote {}", path.display());
+            }
+            Err(e) => {
+                self.status = format!("save as: write {}: {e}", path.display());
+            }
+        }
     }
 
     fn handle_view_action(&mut self, key: KeyEvent) {
@@ -5468,25 +5537,30 @@ impl App {
         Ok(())
     }
 
-    fn export_markdown_buffer(&self) -> std::result::Result<std::path::PathBuf, String> {
+    /// Compute (markdown body, default destination, status-bar
+    /// label) for the open paragraph's buffer. Used by the
+    /// save-as flow — `view_export_markdown` opens the
+    /// `SaveMarkdown` modal pre-filled with `default_dest`.
+    fn prepare_markdown_buffer(
+        &self,
+    ) -> std::result::Result<(String, std::path::PathBuf, String), String> {
         let doc = self
             .opened
             .as_ref()
             .ok_or_else(|| "no paragraph open".to_string())?;
         let typst_src = doc.textarea.lines().join("\n");
         let md = crate::export::markdown::typst_to_markdown(&typst_src);
-        let stem = slug::slugify(&doc.title);
-        self.write_markdown_to_cwd(&stem, &md)
+        let dest = self.default_markdown_dest(&doc.title)?;
+        Ok((md, dest, doc.title.clone()))
     }
 
-    fn export_markdown_subchapter(&self) -> std::result::Result<std::path::PathBuf, String> {
+    fn prepare_markdown_subchapter(
+        &self,
+    ) -> std::result::Result<(String, std::path::PathBuf, String), String> {
         let doc = self
             .opened
             .as_ref()
             .ok_or_else(|| "no paragraph open".to_string())?;
-        // Walk up the hierarchy to the nearest Subchapter (or
-        // Chapter as fallback so the chord stays useful even at
-        // chapter-only depth).
         let para = self
             .hierarchy
             .get(doc.id)
@@ -5503,10 +5577,12 @@ impl App {
                 )
             })
             .ok_or_else(|| "no containing subchapter".to_string())?;
-        self.export_markdown_subtree_of(root)
+        self.prepare_markdown_subtree_of(root)
     }
 
-    fn export_markdown_tree_subtree(&self) -> std::result::Result<std::path::PathBuf, String> {
+    fn prepare_markdown_tree_subtree(
+        &self,
+    ) -> std::result::Result<(String, std::path::PathBuf, String), String> {
         let (id, _) = *self
             .rows
             .get(self.tree_cursor)
@@ -5515,13 +5591,13 @@ impl App {
             .hierarchy
             .get(id)
             .ok_or_else(|| "node missing from hierarchy".to_string())?;
-        self.export_markdown_subtree_of(node)
+        self.prepare_markdown_subtree_of(node)
     }
 
-    fn export_markdown_subtree_of(
+    fn prepare_markdown_subtree_of(
         &self,
         root: &crate::store::node::Node,
-    ) -> std::result::Result<std::path::PathBuf, String> {
+    ) -> std::result::Result<(String, std::path::PathBuf, String), String> {
         let layout = crate::project::ProjectLayout::new(self.store.project_root());
         let combined = crate::export::assemble_typst_source(
             &layout,
@@ -5530,22 +5606,23 @@ impl App {
         )
         .map_err(|e| format!("assemble: {e:#}"))?;
         let md = crate::export::markdown::typst_to_markdown(&combined);
-        let stem = slug::slugify(&root.title);
-        self.write_markdown_to_cwd(&stem, &md)
+        let dest = self.default_markdown_dest(&root.title)?;
+        Ok((md, dest, root.title.clone()))
     }
 
-    fn write_markdown_to_cwd(
+    /// Compute the default markdown destination for a given
+    /// title. Format: `<cwd>/<slug>-YYYYDDMM-HHMM.md`. Same
+    /// scheme `write_markdown_to_cwd` used before 1.2.4's
+    /// save-as picker.
+    fn default_markdown_dest(
         &self,
-        stem: &str,
-        body: &str,
+        title: &str,
     ) -> std::result::Result<std::path::PathBuf, String> {
         let cwd = std::env::current_dir().map_err(|e| format!("cwd: {e}"))?;
         let stamp = chrono::Local::now().format("%Y%d%m-%H%M");
-        let safe_stem = if stem.is_empty() { "buffer" } else { stem };
-        let dest = cwd.join(format!("{safe_stem}-{stamp}.md"));
-        std::fs::write(&dest, body.as_bytes())
-            .map_err(|e| format!("write {}: {e}", dest.display()))?;
-        Ok(dest)
+        let stem = slug::slugify(title);
+        let safe_stem = if stem.is_empty() { "buffer".to_string() } else { stem };
+        Ok(cwd.join(format!("{safe_stem}-{stamp}.md")))
     }
 
     fn handle_bund_action(&mut self, key: KeyEvent) {
@@ -9538,6 +9615,7 @@ impl App {
         let is_similar_picker = matches!(self.modal, Modal::SimilarPicker { .. });
         let is_progress = matches!(self.modal, Modal::Progress { .. });
         let is_paragraph_target = matches!(self.modal, Modal::ParagraphTarget { .. });
+        let is_save_markdown = matches!(self.modal, Modal::SaveMarkdown { .. });
         let is_snapshot_diff = matches!(self.modal, Modal::SnapshotDiff { .. });
 
         if is_quickref {
@@ -9666,6 +9744,26 @@ impl App {
                 return Ok(false);
             }
             if let Modal::ParagraphTarget { input } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
+            return Ok(false);
+        }
+
+        if is_save_markdown {
+            if matches!(key.code, KeyCode::Enter) {
+                let (body, label, raw) = match &self.modal {
+                    Modal::SaveMarkdown { input, body, label } => (
+                        body.clone(),
+                        label.clone(),
+                        input.as_str().to_string(),
+                    ),
+                    _ => (String::new(), String::new(), String::new()),
+                };
+                self.modal = Modal::None;
+                self.commit_save_markdown(body, label, raw);
+                return Ok(false);
+            }
+            if let Modal::SaveMarkdown { input, .. } = &mut self.modal {
                 handle_text_input_key(input, key);
             }
             return Ok(false);
@@ -12122,6 +12220,28 @@ impl App {
                 ];
                 (
                     " Per-paragraph goal — Ctrl+V T ".to_string(),
+                    self.theme.tree_script_fg,
+                    body,
+                )
+            }
+            Modal::SaveMarkdown { input, label, .. } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(" Save markdown of `{label}` to:"),
+                        Style::default()
+                            .fg(self.theme.tree_script_fg)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter writes (default path pre-filled) · Esc cancels",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Save markdown — Ctrl+V ".to_string(),
                     self.theme.tree_script_fg,
                     body,
                 )
