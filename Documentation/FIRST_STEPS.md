@@ -376,6 +376,10 @@ or changing the default.
   hints.
 - [`KEYBINDING.md`](KEYBINDING.md) — bookmark this. Press `Ctrl+B H`
   inside the TUI for the same content as a floating overlay.
+- [`INKHAVEN_CHEAT_SHEET.typ`](INKHAVEN_CHEAT_SHEET.typ) — printable
+  two-column A4 cheat sheet. `typst compile
+  Documentation/INKHAVEN_CHEAT_SHEET.typ` and pin the PDF next to
+  your terminal.
 - [`Tutorials/02-organising-your-manuscript.md`](Tutorials/02-organising-your-manuscript.md)
   — folding, reordering, system books, importing existing files.
 - [`Tutorials/05-ai-writing-assistant.md`](Tutorials/05-ai-writing-assistant.md)

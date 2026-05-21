@@ -588,6 +588,10 @@ impl Store {
             image_alt: None,
             content_type: None,
             status: None,
+            target_words: None,
+            target_hit_at_status: None,
+            linked_paragraphs: Vec::new(),
+            bookmark: false,
         };
 
         let rel_path = match parent {
@@ -711,6 +715,83 @@ impl Store {
         }
         node.title = trimmed.to_string();
         node.modified_at = chrono::Utc::now();
+
+        // 1.2.4+: re-derive the slug for paragraph nodes so the
+        // on-disk filename tracks the title. The slug is stable
+        // for branches (renaming a chapter directory would also
+        // need to rewrite every descendant's `file` field — out
+        // of scope for this change; branch rename keeps the
+        // original folder name).
+        if matches!(node.kind, NodeKind::Paragraph) {
+            let new_slug_base = slug::slugify(trimmed);
+            if !new_slug_base.is_empty() && new_slug_base != node.slug {
+                let mut new_slug = new_slug_base.clone();
+                let mut n = 2;
+                let siblings = hierarchy.children_of(node.parent_id);
+                while siblings
+                    .iter()
+                    .any(|s| s.id != node.id && s.slug == new_slug)
+                {
+                    new_slug = format!("{new_slug_base}-{n}");
+                    n += 1;
+                }
+                if new_slug != node.slug {
+                    // Compute paths from the *current* slug (old)
+                    // and the post-rename slug (new). Both live in
+                    // the same parent directory so we only rename
+                    // the basename.
+                    if let Some(rel_old) = node.file.as_ref().cloned() {
+                        let old_abs = self.layout.root.join(&rel_old);
+                        // Rebuild the path with the new slug.
+                        node.slug = new_slug.clone();
+                        let new_name = node.fs_name();
+                        let parent_rel = std::path::Path::new(&rel_old)
+                            .parent()
+                            .map(|p| p.to_path_buf())
+                            .unwrap_or_default();
+                        let new_rel = parent_rel.join(&new_name);
+                        let new_abs = self.layout.root.join(&new_rel);
+                        if old_abs != new_abs {
+                            if let Err(e) = std::fs::rename(&old_abs, &new_abs) {
+                                // Don't surface a hard error here:
+                                // the metadata update can still
+                                // happen, and `inkhaven reindex`
+                                // will pick up the drift on next
+                                // launch. Roll back the slug.
+                                tracing::warn!(
+                                    target: "inkhaven::rename",
+                                    "rename {} → {} failed: {e}",
+                                    old_abs.display(),
+                                    new_abs.display(),
+                                );
+                                node.slug = rel_old
+                                    .rsplit('/')
+                                    .next()
+                                    .and_then(|n| {
+                                        // Reverse-engineer old slug
+                                        // from "NN-slug.typ".
+                                        n.trim_end_matches(".typ")
+                                            .trim_end_matches(".hjson")
+                                            .splitn(2, '-')
+                                            .nth(1)
+                                            .map(|s| s.to_string())
+                                    })
+                                    .unwrap_or(node.slug);
+                            } else {
+                                node.file =
+                                    Some(new_rel.to_string_lossy().into_owned());
+                            }
+                        }
+                    } else {
+                        // No file on disk (shouldn't happen for a
+                        // paragraph but stay safe). Just stamp the
+                        // new slug.
+                        node.slug = new_slug;
+                    }
+                }
+            }
+        }
+
         self.inner
             .update_metadata(node.id, node.to_json())
             .map_err(|e| Error::Store(format!("update_metadata: {e}")))?;

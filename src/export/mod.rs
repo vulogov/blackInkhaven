@@ -50,6 +50,23 @@ pub fn assemble_typst_source(
     hierarchy: &Hierarchy,
     root_id: Option<uuid::Uuid>,
 ) -> Result<String> {
+    assemble_typst_source_filtered(layout, hierarchy, root_id, None)
+}
+
+/// Same as [`assemble_typst_source`], but only emits paragraphs
+/// whose status sits **at or above** `status_floor_idx` on the
+/// canonical ladder `none → napkin → first → second → third →
+/// final → ready` (0..=6). None means "no floor — include every
+/// paragraph". A paragraph with no status set is treated as
+/// index 0 (`none`); a `--status=napkin` floor still includes
+/// them since 0 ≥ 0 is false → they're filtered out. Use
+/// `--status=none` (or omit the flag) to include everything.
+pub fn assemble_typst_source_filtered(
+    layout: &ProjectLayout,
+    hierarchy: &Hierarchy,
+    root_id: Option<uuid::Uuid>,
+    status_floor_idx: Option<usize>,
+) -> Result<String> {
     let mut out = String::new();
     let candidates: Vec<&Node> = if let Some(root_id) = root_id {
         // Subtree mode — only the descendants of `root_id`, plus
@@ -67,6 +84,12 @@ pub fn assemble_typst_source(
     for node in candidates {
         if node.kind != NodeKind::Paragraph {
             continue;
+        }
+        if let Some(floor) = status_floor_idx {
+            let idx = status_ladder_index(node.status.as_deref());
+            if idx < floor {
+                continue;
+            }
         }
         let Some(rel) = node.file.as_ref() else {
             continue;
@@ -86,6 +109,22 @@ pub fn assemble_typst_source(
         }
     }
     Ok(out)
+}
+
+/// Map a paragraph's `status` field to its ladder index. Unknown
+/// values + None both collapse to 0 (`none`).
+fn status_ladder_index(s: Option<&str>) -> usize {
+    let Some(s) = s else { return 0 };
+    match s.trim().to_ascii_lowercase().as_str() {
+        "none" | "" => 0,
+        "napkin" => 1,
+        "first" => 2,
+        "second" => 3,
+        "third" => 4,
+        "final" => 5,
+        "ready" => 6,
+        _ => 0,
+    }
 }
 
 /// Format-tagged output bundle. The CLI writes whichever

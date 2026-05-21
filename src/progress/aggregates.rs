@@ -25,6 +25,12 @@ pub struct ProgressSnapshot {
     pub streak: StreakStatus,
     /// Last-30-days sparkline data, oldest first, project-wide.
     pub sparkline: Vec<i64>,
+    /// Active writing seconds today — sum of save→save gaps,
+    /// each gap capped at 5 min so AFK doesn't inflate. Honest
+    /// about "time at the keyboard" without keystroke tracking.
+    pub active_seconds_today: i64,
+    /// Same calculation over the trailing 7 days.
+    pub active_seconds_week: i64,
 }
 
 impl ProgressSnapshot {
@@ -35,6 +41,8 @@ impl ProgressSnapshot {
             status: StatusLadderCounts::default(),
             streak: StreakStatus::default(),
             sparkline: Vec::new(),
+            active_seconds_today: 0,
+            active_seconds_week: 0,
         }
     }
 }
@@ -180,12 +188,28 @@ pub fn build_snapshot(
         .last_n_daily(PROJECT_SCOPE_BOOK_ID, live.project_total, 30)
         .unwrap_or_default();
 
+    // Active-time aggregates (1.2.4+). Today's window is from
+    // today-start (UTC) to now; week is last 7×86400s.
+    let today_start = today * 86_400;
+    let now_secs = today_start + 86_400; // future bound — saves can't
+                                         // be in the future anyway
+    const ACTIVE_GAP_CAP_SEC: i64 = 300; // 5 min per gap
+    let active_seconds_today = store
+        .active_seconds_in_range(today_start, now_secs, ACTIVE_GAP_CAP_SEC)
+        .unwrap_or(0);
+    let week_start = (today - 6) * 86_400;
+    let active_seconds_week = store
+        .active_seconds_in_range(week_start, now_secs, ACTIVE_GAP_CAP_SEC)
+        .unwrap_or(0);
+
     Ok(ProgressSnapshot {
         project,
         books,
         status,
         streak,
         sparkline,
+        active_seconds_today,
+        active_seconds_week,
     })
 }
 

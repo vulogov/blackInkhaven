@@ -2676,7 +2676,7 @@ dependencies = [
 
 [[package]]
 name = "inkhaven"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2697,17 +2697,20 @@ dependencies = [
  "image 0.25.10",
  "parking_lot",
  "pulldown-cmark",
+ "quick-xml",
  "r2d2",
  "ratatui",
  "ratatui-image",
  "regex",
  "rodio",
+ "rtf-parser-tt",
  "rust-stemmers",
  "rust_dynamic",
  "rust_multistackvm",
  "serde",
  "serde-hjson",
  "serde_json",
+ "similar",
  "slug",
  "tempfile",
  "thiserror 2.0.18",
@@ -4331,6 +4334,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
+name = "quick-xml"
+version = "0.36.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7649a7b4df05aed9ea7ec6f628c67c9953a43869b8bc50929569b2999d443fe"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "quinn"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4906,6 +4918,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtf-parser-tt"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df4cfcd083badf3327eeec373271053dc1901cae1a2b62c1c85e88bf06052ffc"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "rust-stemmers"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5430,6 +5451,12 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "siphasher"

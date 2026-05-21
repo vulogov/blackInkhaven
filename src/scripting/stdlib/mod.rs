@@ -9,6 +9,7 @@
 //! of the policy sandbox (P3).
 
 mod app;
+mod fs;
 pub mod helpers;
 mod ink;
 pub mod io;
@@ -28,5 +29,6 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     io::register(vm)?;
     keymap::register(vm)?;
     app::register(vm)?;
+    fs::register(vm)?;
     Ok(())
 }

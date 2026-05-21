@@ -53,6 +53,10 @@ pub fn register(vm: &mut VM) -> Result<()> {
     // ── Paragraph mutation (store_write) ──────────────────────
     vm.register_inline("ink.paragraph.set_status".to_string(), ink_paragraph_set_status)
         .map_err(|e| anyhow!("register ink.paragraph.set_status: {e}"))?;
+    vm.register_inline("ink.paragraph.set_target".to_string(), ink_paragraph_set_target)
+        .map_err(|e| anyhow!("register ink.paragraph.set_target: {e}"))?;
+    vm.register_inline("ink.paragraph.target".to_string(), ink_paragraph_target)
+        .map_err(|e| anyhow!("register ink.paragraph.target: {e}"))?;
     vm.register_inline("ink.paragraph.save".to_string(), ink_paragraph_save)
         .map_err(|e| anyhow!("register ink.paragraph.save: {e}"))?;
 
@@ -702,6 +706,73 @@ fn do_ink_db_call<'a>(vm: &'a mut VM, tag: &str, op: DbOp) -> Result<&'a mut VM>
             push(vm, Value::from_int(updated as i64));
             return Ok(vm);
         }
+    }
+    Ok(vm)
+}
+
+// ── ink.paragraph.set_target ─────────────────────────────────────────
+// Stack: ( path target -- )
+// Sets / clears the per-paragraph word-count goal. `target ≤ 0`
+// clears the goal (also clears `target_hit_at_status` so the
+// auto-promote machinery re-fires when a goal is set again).
+
+fn ink_paragraph_set_target(vm: &mut VM) -> BundResult<'_> {
+    do_ink_paragraph_set_target(vm).map_err(to_bund_err)
+}
+
+fn do_ink_paragraph_set_target(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.paragraph.set_target";
+    require_depth(vm, 2, tag)?;
+    let target = value_to_i64(pull(vm, tag)?, "target", tag)?;
+    let path = value_to_string(pull(vm, tag)?, "path", tag)?;
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let node_id = resolve_path(&hierarchy, &path, tag)?
+        .ok_or_else(|| anyhow!("{tag}: empty path"))?;
+    let mut node = hierarchy
+        .get(node_id)
+        .cloned()
+        .ok_or_else(|| anyhow!("{tag}: node missing"))?;
+    if node.kind != NodeKind::Paragraph {
+        return Err(anyhow!("{tag}: `{}` is not a paragraph", node.title));
+    }
+    if target <= 0 {
+        node.target_words = None;
+        node.target_hit_at_status = None;
+    } else {
+        node.target_words = Some(target.clamp(0, i32::MAX as i64) as i32);
+    }
+    node.modified_at = chrono::Utc::now();
+    store
+        .raw()
+        .update_metadata(node.id, node.to_json())
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    store.sync().map_err(|e| anyhow!("{tag} sync: {e}"))?;
+    Ok(vm)
+}
+
+// ── ink.paragraph.target ─────────────────────────────────────────────
+// Stack: ( path -- int | NODATA )
+// Returns the paragraph's word-count goal (None → NODATA).
+
+fn ink_paragraph_target(vm: &mut VM) -> BundResult<'_> {
+    do_ink_paragraph_target(vm).map_err(to_bund_err)
+}
+
+fn do_ink_paragraph_target(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.paragraph.target";
+    require_depth(vm, 1, tag)?;
+    let path = value_to_string(pull(vm, tag)?, "path", tag)?;
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let node_id = resolve_path(&hierarchy, &path, tag)?
+        .ok_or_else(|| anyhow!("{tag}: empty path"))?;
+    let node = hierarchy
+        .get(node_id)
+        .ok_or_else(|| anyhow!("{tag}: node missing"))?;
+    match node.target_words {
+        Some(n) => push(vm, Value::from_int(n as i64)),
+        None => push(vm, Value::nodata()),
     }
     Ok(vm)
 }

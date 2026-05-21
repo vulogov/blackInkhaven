@@ -117,6 +117,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.search.text", category::STORE_READ),
     ("ink.snapshot.list", category::STORE_READ),
     ("ink.path.to_uuid", category::STORE_READ),
+    ("ink.paragraph.target", category::STORE_READ),
 
     // ── store_write (default-denied) ──────────────────────────
     // 1.2.3+: Bund scripts can mutate the project tree, status
@@ -129,6 +130,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.tree.move_down", category::STORE_WRITE),
     ("ink.tree.morph", category::STORE_WRITE),
     ("ink.paragraph.set_status", category::STORE_WRITE),
+    ("ink.paragraph.set_target", category::STORE_WRITE),
     ("ink.paragraph.save", category::STORE_WRITE),
     ("ink.db.sync", category::STORE_WRITE),
     ("ink.db.checkpoint", category::STORE_WRITE),
@@ -163,6 +165,17 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
 
     // ── editor_write (Phase C addition) ───────────────────────
     ("ink.editor.replace", category::EDITOR_WRITE),
+    // 1.2.4+: replace_all has the same category — both rewrite
+    // the open buffer.
+    ("ink.editor.replace_all", category::EDITOR_WRITE),
+    // 1.2.4+: search.load opens an existing paragraph in the
+    // editor — no project mutation, behaves like a read.
+    ("ink.search.load", category::EDITOR_READ),
+    // 1.2.4+: AI poll is a read of in-flight inference state;
+    // send_blocking spawns one, so it shares ai_write with the
+    // existing send.
+    ("ink.ai.poll", category::AI_READ),
+    ("ink.ai.send_blocking", category::AI_WRITE),
 
     // ── theme_write (default-denied) ──────────────────────────
     ("ink.theme.set", category::THEME_WRITE),
@@ -185,6 +198,14 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // through `hooks::fire(name, …)` which honours its own
     // policy gate when the hook itself calls write words.
     ("ink.input", category::EDITOR_READ),
+
+    // ── fs_read / fs_write (default-denied) ─────────────────
+    // 1.2.4+: filesystem IO from Bund. Default-denied — opt in
+    // via `enabled_categories: ["fs_read"]` etc. Paths are
+    // passed verbatim, no sandboxing — the user opts in, the
+    // user gets the responsibility.
+    ("ink.fs.read", category::FS_READ),
+    ("ink.fs.write", category::FS_WRITE),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All

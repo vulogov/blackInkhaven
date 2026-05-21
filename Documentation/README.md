@@ -30,6 +30,7 @@ return whenever you need to remember a specific knob.
 | -------- | -------------- |
 | [`CONFIGURATION.md`](CONFIGURATION.md) | Every field in the project's `inkhaven.hjson`: embeddings, LLM providers, editor, theme, keys, hierarchy, backup, language, snowball stemmers. Includes valid value ranges and default values. |
 | [`KEYBINDING.md`](KEYBINDING.md)       | Every keystroke the TUI honours, organised by pane (Tree / Editor / AI / Search / AI prompt) and overlay (file picker, prompt picker, modal stack). Mouse semantics included. |
+| [`INKHAVEN_CHEAT_SHEET.typ`](INKHAVEN_CHEAT_SHEET.typ) | Two-column A4 cheat sheet — print or pin it next to your terminal. Compile with `typst compile Documentation/INKHAVEN_CHEAT_SHEET.typ`. Companion to `KEYBINDING.md`. |
 | [`KEYS_REASSIGNMENT.md`](KEYS_REASSIGNMENT.md) | Rebind chords via `keys.bindings` in HJSON or via the `ink.key.*` Bund stdlib. Includes the full action table. |
 | [`MAINTENANCE.md`](MAINTENANCE.md)     | Backup, restore, auto-backup-on-exit, the `reindex` command, log files, recovering from drift, troubleshooting first-run model downloads. |
 | [`Bund/`](Bund/README.md)              | Bund — the embedded scripting language. Hook lambdas (`hook.on_save`, …), the `ink.*` stdlib, sandbox policy, `.bund` Script nodes. Start at [`Bund/BUND_TUTORIAL.md`](Bund/BUND_TUTORIAL.md). |
@@ -68,11 +69,17 @@ don't need them all up front.
 | [`Tutorials/16-similar-paragraphs.md`](Tutorials/16-similar-paragraphs.md)       | Ctrl+V S — vector-similarity picker + side-by-side editor. |
 | [`Tutorials/17-writing-goals.md`](Tutorials/17-writing-goals.md)                 | Writing-progress subsystem, the `goals:` HJSON stanza, Ctrl+V G overview modal. |
 | [`Tutorials/18-bund-pane-and-script-picker.md`](Tutorials/18-bund-pane-and-script-picker.md) | The floating Bund pane, Ctrl+Z ? script picker, `ink.input` prompt modal. |
+| [`Tutorials/19-wiki-links.md`](Tutorials/19-wiki-links.md) | Metadata-only wiki-links + backlinks (Ctrl+V A / I / L / K), AI inference integration. |
+| [`Tutorials/20-snapshot-diff.md`](Tutorials/20-snapshot-diff.md) | F6 V snapshot diff view + pre-restore safety snapshot on Enter. |
+| [`Tutorials/21-navigation.md`](Tutorials/21-navigation.md) | Ctrl+V P fuzzy picker, Ctrl+V B/M bookmarks, AI Up-arrow history, slash-command ranking. |
+| [`Tutorials/22-tree-multiselect.md`](Tutorials/22-tree-multiselect.md) | Tree-pane Space mark set, T cycles type, O cycles status — bulk on demand. |
+| [`Tutorials/23-scrivener-import.md`](Tutorials/23-scrivener-import.md) | `inkhaven import-scrivener` — single-binary `.scriv` ingest with RTF→Typst. |
 
 ## Release notes
 
 | Version | Notes |
 | ------- | ----- |
+| **1.2.4** | [`RELEASE_NOTES/1.2.4.md`](RELEASE_NOTES/1.2.4.md) — wiki-links + backlinks (Ctrl+V A/I/L/K), per-paragraph word-count goals + auto-promote, active-time tracking, per-book bar chart, snapshot diff (F6 V) + safety snapshot, save-as picker, F-keys in keybind table, theme persistence to HJSON, Bund stdlib expansion (`ink.fs.*`, `ink.editor.replace_all`, `ink.search.load`, `ink.ai.poll`, `ink.ai.send_blocking`), Ctrl+V P fuzzy picker, Ctrl+V B/M bookmarks, AI prompt history, tree multi-select with T / O chords, `inkhaven stats`, startup splash, Scrivener importer, Windows CI re-enabled. |
 | **1.2.3** | [`RELEASE_NOTES/1.2.3.md`](RELEASE_NOTES/1.2.3.md) — multi-format export (markdown / TeX / EPUB) + `--book-name`, writing-progress subsystem (Ctrl+V G), similar-paragraph mode (Ctrl+V S), Bund output pane + Ctrl+Z ? script picker + `ink.input`, dynamic Quick Help. |
 | **1.2.1** | [`RELEASE_NOTES/1.2.1.md`](RELEASE_NOTES/1.2.1.md) — bdslib + tree-sitter-typst absorbed in-tree (crates.io-publishable), Bund scripting (`ink.*` stdlib, 5 hook points, `.bund` Script nodes, Scripts system book), data-driven keymap with HJSON + Bund rebinding, `Ctrl+B M` cycle-type, `Ctrl+Z` Bund prefix. |
 | **1.1** | [`RELEASE_NOTES/1.1.md`](RELEASE_NOTES/1.1.md) — first-class images + ratatui-image preview, eight-book seeding (Artefacts added), Book assembly / build / take pipeline, HJSON-driven `settings.typ`, six bundled LLM providers, full-screen typewriter + AI layouts, document-status workflow, HJSON data nodes, much more. |

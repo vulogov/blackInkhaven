@@ -110,12 +110,27 @@ snippet right now" workflow:
 | Editor    | `Ctrl+V` `2`| Markdown of the containing subchapter's subtree (falls back to the chapter if no subchapter wraps the paragraph). |
 | Tree      | `Ctrl+V` `1`| Markdown of the tree-cursor's node **and all descendants**. |
 
-All three write `<slug>-YYYYDDMM-HHMM.md` into the launch cwd.
+In 1.2.4+ each chord opens a **save-as picker** with the
+default `<slug>-YYYYDDMM-HHMM.md` path pre-filled. Bare Enter
+writes there (mimics 1.2.3 behaviour exactly). Edit the path
+before Enter to write elsewhere — useful for "stash it next to
+my notes" workflows.
+
 The status bar reports the destination on success:
 
 ```
 view: wrote /Users/you/project-dir/the-storm-20262105-1430.md
 ```
+
+`--status=<floor>` works for the equivalent CLI form:
+
+```sh
+inkhaven export markdown --status=ready -o ready-only.md
+```
+
+Keeps only paragraphs whose status sits at or above the named
+rung of the ladder. See `Documentation/Tutorials/14-document-status.md`
+for the ladder shape.
 
 ## Format-specific notes
 

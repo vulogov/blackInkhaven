@@ -161,6 +161,165 @@ fn draw_splash(f: &mut ratatui::Frame, project_display: &str, spinner: char, ela
     f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
 }
 
+/// 1.2.4+: project-pulse splash shown right after project open.
+/// Renders for up to `STARTUP_SPLASH_SECS` seconds or until a key
+/// press; the key press is consumed so it doesn't leak into the
+/// editor's first frame. Failures (`terminal.draw` returning Err)
+/// silently fall through — we'd rather skip the splash than block
+/// the editor from launching.
+fn run_startup_pulse_splash<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app: &App,
+) {
+    const STARTUP_SPLASH_SECS: u64 = 7;
+    let started = std::time::Instant::now();
+    let snap = app.progress_cache.clone();
+    let project_display = app
+        .layout
+        .root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("project")
+        .to_string();
+    let total_paragraphs = app
+        .hierarchy
+        .iter()
+        .filter(|n| {
+            n.kind == NodeKind::Paragraph
+                && !app
+                    .hierarchy
+                    .ancestors(n)
+                    .into_iter()
+                    .any(|a| a.kind == NodeKind::Book && a.system_tag.is_some())
+        })
+        .count();
+    let mut by_status: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for n in app.hierarchy.iter() {
+        if n.kind != NodeKind::Paragraph {
+            continue;
+        }
+        if app
+            .hierarchy
+            .ancestors(n)
+            .into_iter()
+            .any(|a| a.kind == NodeKind::Book && a.system_tag.is_some())
+        {
+            continue;
+        }
+        let key = n.status.as_deref().unwrap_or("None").to_string();
+        *by_status.entry(key).or_insert(0) += 1;
+    }
+
+    loop {
+        let elapsed = started.elapsed().as_secs();
+        if elapsed >= STARTUP_SPLASH_SECS {
+            break;
+        }
+        let remaining = STARTUP_SPLASH_SECS - elapsed;
+        let _ = terminal.draw(|f| {
+            draw_pulse_splash(
+                f,
+                &project_display,
+                snap.as_ref(),
+                total_paragraphs,
+                &by_status,
+                remaining,
+            )
+        });
+        // Poll for keys with a short timeout. Any keystroke
+        // dismisses the splash; consume it so the editor's
+        // first frame doesn't see it as input.
+        if crossterm::event::poll(std::time::Duration::from_millis(100))
+            .unwrap_or(false)
+        {
+            if let Ok(crossterm::event::Event::Key(_)) = crossterm::event::read() {
+                break;
+            }
+        }
+    }
+}
+
+/// Render the startup project-pulse splash. See
+/// `run_startup_pulse_splash` for the lifecycle.
+fn draw_pulse_splash(
+    f: &mut ratatui::Frame,
+    project_display: &str,
+    snap: Option<&crate::progress::ProgressSnapshot>,
+    total_paragraphs: usize,
+    by_status: &std::collections::BTreeMap<String, usize>,
+    remaining_secs: u64,
+) {
+    let area = f.area();
+    let width = area.width.saturating_sub(8).clamp(50, 90);
+    let height: u16 = 15;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let rect = Rect { x, y, width, height };
+
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Inkhaven · {project_display} "))
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(" Today's pulse", bold)));
+    if let Some(s) = snap {
+        let today_line = match s.project.daily_goal {
+            Some(goal) => {
+                let pct = if goal > 0 {
+                    (s.project.today_words.max(0) * 100 / goal).clamp(0, 999)
+                } else {
+                    0
+                };
+                format!(
+                    "   words: {}/{} ({}%)",
+                    s.project.today_words, goal, pct
+                )
+            }
+            None => format!("   words: {}", s.project.today_words),
+        };
+        lines.push(Line::from(today_line));
+        lines.push(Line::from(format!(
+            "   streak: {}d · active: {}",
+            s.streak.days,
+            format_active_duration(s.active_seconds_today)
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "   (progress tracking disabled or no data yet)",
+            dim,
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(" Project", bold)));
+    lines.push(Line::from(format!("   {total_paragraphs} paragraphs total")));
+    if !by_status.is_empty() {
+        let summary = by_status
+            .iter()
+            .map(|(k, v)| format!("{v} {k}"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        lines.push(Line::from(format!("   by status: {summary}")));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!("  any key dismisses · auto-close in {remaining_secs}s"),
+        dim,
+    )));
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
 pub fn run(project: &Path) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized().map_err(anyhow::Error::from)?;
@@ -234,6 +393,14 @@ pub fn run(project: &Path) -> Result<()> {
     let mut app = App::new(layout, cfg, store)?;
     app.restore_session();
     app.install_progress();
+
+    // 1.2.4+: project-pulse startup splash. Renders today /
+    // streak / active-time / by-status counts; auto-closes
+    // after 7 seconds or on any key press. Disabled via
+    // `editor.startup_splash = false` in HJSON.
+    if app.cfg.editor.startup_splash {
+        run_startup_pulse_splash(&mut terminal, &app);
+    }
 
     let result = app.run(&mut terminal);
 
@@ -663,6 +830,10 @@ struct Keymap {
     /// `keys.bund_prefix = ""` to disable the chord (some users
     /// reserve Ctrl+Z for their terminal multiplexer).
     bund_prefix: Option<KeyChord>,
+    /// View-meta prefix (1.2.4+, default `Ctrl+V`). `None`
+    /// disables the layer (some terminals bind Ctrl+V to "verbatim
+    /// next" and the user might want it back).
+    view_prefix: Option<KeyChord>,
 }
 
 impl Keymap {
@@ -675,6 +846,11 @@ impl Keymap {
         } else {
             Some(parse("bund_prefix", &cfg.keys.bund_prefix)?)
         };
+        let view_prefix = if cfg.keys.view_prefix.trim().is_empty() {
+            None
+        } else {
+            Some(parse("view_prefix", &cfg.keys.view_prefix)?)
+        };
         Ok(Self {
             next_pane: parse("next_pane", &cfg.keys.next_pane)?,
             prev_pane: parse("prev_pane", &cfg.keys.prev_pane)?,
@@ -685,14 +861,36 @@ impl Keymap {
             page_down: parse("page_down", &cfg.keys.page_down)?,
             meta_prefix: parse("meta_prefix", &cfg.keys.meta_prefix)?,
             bund_prefix,
+            view_prefix,
         })
     }
+}
+
+/// Which scope the Ctrl+V markdown export targets. Used by
+/// `view_export_markdown` to route through the existing
+/// per-scope helpers from one binding-table arm.
+#[derive(Debug, Clone, Copy)]
+enum ViewMdScope {
+    Buffer,
+    Subchapter,
+    Subtree,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum MoveDir {
     Up,
     Down,
+}
+
+/// Direction of a link-pick flow (Ctrl+V A vs Ctrl+V I).
+/// `Outgoing` adds the picked target to the open paragraph's
+/// outgoing links; `Incoming` adds the open paragraph to the
+/// picked target's outgoing links (== an incoming link for
+/// current).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinkPickDirection {
+    Outgoing,
+    Incoming,
 }
 
 #[derive(Default)]
@@ -1545,6 +1743,28 @@ pub(crate) struct SimilarPickerEntry {
     pub snippet: String,
 }
 
+/// One aligned row in the snapshot-diff view. `left_*` holds the
+/// snapshot side (or `None` for an addition); `right_*` holds the
+/// current-buffer side (or `None` for a deletion).
+#[derive(Debug, Clone)]
+pub(crate) struct SnapshotDiffRow {
+    pub left: Option<String>,
+    pub right: Option<String>,
+    pub kind: SnapshotDiffKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SnapshotDiffKind {
+    /// Same line on both sides.
+    Equal,
+    /// Snapshot had it, buffer dropped it.
+    Removed,
+    /// Buffer added it.
+    Added,
+    /// Both sides have a line at this position but they differ.
+    Changed,
+}
+
 enum Modal {
     None,
     Adding {
@@ -1610,6 +1830,74 @@ enum Modal {
     /// 30-day sparkline. Read-only; refresh on open.
     Progress {
         scroll: usize,
+    },
+    /// Ctrl+V T — set / clear the per-paragraph word-count goal.
+    /// Empty or `0` clears the target. Lives in the same input-
+    /// modal family as BundEval / HelpQuery.
+    ParagraphTarget {
+        input: TextInput,
+    },
+    /// Ctrl+V 1/2 save-as modal (1.2.4+). Pre-filled with the
+    /// default markdown destination — Enter writes; Esc cancels.
+    /// `body` is the markdown bytes computed before the modal
+    /// opened; `label` is the human-readable name used for any
+    /// fallback default path computation.
+    SaveMarkdown {
+        input: TextInput,
+        body: String,
+        label: String,
+    },
+    /// Ctrl+V L (1.2.4+) — linked-paragraphs floating modal.
+    /// Lists the open paragraph's outgoing `linked_paragraphs`
+    /// metadata entries. `D` on a row removes the link.
+    LinkPicker {
+        owner: Uuid,
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
+    /// Ctrl+V K (1.2.4+) — backlinks floating modal. Reverse of
+    /// LinkPicker: lists paragraphs whose `linked_paragraphs`
+    /// contains `target`. `D` removes the source's outgoing
+    /// link to `target` (mutates the source paragraph).
+    BacklinkPicker {
+        target: Uuid,
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
+    /// Ctrl+V M (1.2.4+) — bookmark picker. Lists every
+    /// paragraph with `bookmark = true`. Enter opens; D
+    /// clears the bookmark flag.
+    BookmarkPicker {
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
+    /// Ctrl+V P (1.2.4+) — fuzzy paragraph picker. The
+    /// `entries` field is pre-computed from every paragraph
+    /// node; the input box narrows the visible list as the
+    /// user types.
+    FuzzyParagraphPicker {
+        input: TextInput,
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
+    /// F6 picker → `V` opens a two-pane diff of the cursor's
+    /// snapshot against the open paragraph's current buffer.
+    /// Read-only; Esc returns to the snapshot picker.
+    SnapshotDiff {
+        paragraph_title: String,
+        when: String,
+        /// Aligned line pairs: `(left_label, left_text,
+        /// right_label, right_text, kind)` per row. `kind`
+        /// drives the row colour.
+        rows: Vec<SnapshotDiffRow>,
+        scroll: usize,
+        /// Stashed snapshot picker we came from, so `Esc`
+        /// restores it intact instead of closing both layers.
+        return_to: Box<Modal>,
     },
     /// Ctrl+V S — pick a paragraph similar to the current buffer.
     /// Result list comes from the vector index seeded with the
@@ -1761,6 +2049,16 @@ pub(crate) struct App {
 
     search_input: TextInput,
     ai_input: TextInput,
+    /// Sent AI prompts in chronological order (oldest first).
+    /// Up/Down in the AI prompt walks this list when no prompt
+    /// picker is showing. Cleared on every send via push_back.
+    /// 1.2.4+.
+    ai_prompt_history: Vec<String>,
+    /// Cursor into `ai_prompt_history`. None when not navigating;
+    /// `Some(i)` when the user is stepping through history. Any
+    /// edit (typing, backspace, etc.) clears it so the next Up
+    /// arrow starts at the end of the list again.
+    ai_prompt_history_cursor: Option<usize>,
 
     opened: Option<OpenedDoc>,
     /// "Similar paragraphs" mode: when `Some`, a second
@@ -1781,6 +2079,25 @@ pub(crate) struct App {
     /// per-frame redraws don't trigger a hierarchy walk. `None`
     /// means "progress disabled / not yet computed".
     progress_cache: Option<crate::progress::ProgressSnapshot>,
+    /// "Select paragraph to link" mode (1.2.4+). When Some, the
+    /// tree pane shows a custom title and `Enter` on a paragraph
+    /// links it to the owning UUID stashed here. Esc / tree-focus
+    /// loss exits the mode and restores normal Enter semantics.
+    ///
+    /// Direction:
+    /// * `Outgoing` — the Ctrl+V A flow. Open paragraph
+    ///   `linked_paragraphs` gains the tree-picked target.
+    /// * `Incoming` — the Ctrl+V I flow. The tree-picked
+    ///   paragraph's `linked_paragraphs` gains the open one
+    ///   (i.e. creates a link FROM the picked paragraph TO
+    ///   current).
+    link_pick_for: Option<(Uuid, LinkPickDirection)>,
+    /// Multi-select set in the tree pane (1.2.4+). Toggled by
+    /// `Space` on a row; when non-empty, `Ctrl+B R` (cycle
+    /// status) and `Ctrl+V T` (set target) operate on every
+    /// marked paragraph instead of just the cursor's. Cleared
+    /// by `Esc` in the tree.
+    tree_marked: std::collections::HashSet<Uuid>,
     /// In similar-paragraph mode, which pane has keyboard focus.
     /// `false` (default) → left pane = `self.opened` is the
     /// keyboard target. `true` → right pane = `self.secondary`
@@ -2068,6 +2385,7 @@ impl App {
         let keys = super::keybind::KeyBindings::from_overrides(
             keymap.meta_prefix,
             keymap.bund_prefix,
+            keymap.view_prefix,
             &overrides,
         )
         .map_err(|e| Error::Config(format!("keys.bindings: {e}")))?;
@@ -2156,10 +2474,14 @@ impl App {
             tree_scroll: 0,
             search_input: TextInput::new(),
             ai_input: TextInput::new(),
+            ai_prompt_history: Vec::new(),
+            ai_prompt_history_cursor: None,
             opened: None,
             secondary: None,
             secondary_focused: false,
             progress_cache: None,
+            link_pick_for: None,
+            tree_marked: std::collections::HashSet::new(),
             status: String::from(
                 "Tab=panes · Enter=open · Ctrl+S=save · Ctrl+B then B/C/S/P add · D delete · ↑/↓ reorder · Ctrl+Q quit",
             ),
@@ -2224,6 +2546,9 @@ impl App {
     /// walk + a handful of small DuckDB selects). The status bar
     /// always reads from the cache so it doesn't pay the cost on
     /// every redraw.
+    ///
+    /// 1.2.4+: fires two Bund hooks when the snapshot transitions
+    /// across a meaningful threshold — see `fire_progress_hooks`.
     pub(crate) fn refresh_progress_cache(&mut self) {
         let (per_book_vec, project_total) = self.compute_word_totals_now();
         let mut per_book: std::collections::HashMap<Uuid, i64> =
@@ -2245,8 +2570,71 @@ impl App {
             book_titles,
             book_slugs,
         };
+        let prev = self.progress_cache.clone();
         let snap = crate::progress::snapshot(&self.cfg.goals, &live);
+        self.fire_progress_hooks(prev.as_ref(), &snap);
         self.progress_cache = Some(snap);
+    }
+
+    /// Diff the previous progress snapshot against the new one
+    /// and fire the matching transition hooks.
+    ///
+    /// * `hook.on_goal_hit ( today_words daily_goal -- )` — fired
+    ///   the first time `today_words` crosses `daily_goal` on a
+    ///   given day. Doesn't re-fire while still over the line;
+    ///   self-resets if the user deletes back below it.
+    /// * `hook.on_streak_break ( prev_streak_days -- )` — fired
+    ///   when the streak transitions from positive to zero. The
+    ///   argument is the streak length immediately before the
+    ///   break so a hook can log/notify "you just broke a 12-day
+    ///   streak".
+    fn fire_progress_hooks(
+        &self,
+        prev: Option<&crate::progress::ProgressSnapshot>,
+        new: &crate::progress::ProgressSnapshot,
+    ) {
+        // on_goal_hit
+        if let Some(goal) = new.project.daily_goal.filter(|n| *n > 0) {
+            let prev_today = prev
+                .map(|p| p.project.today_words)
+                .unwrap_or(0);
+            let new_today = new.project.today_words;
+            if prev_today < goal && new_today >= goal {
+                crate::scripting::hooks::fire(
+                    "hook.on_goal_hit",
+                    vec![
+                        rust_dynamic::value::Value::from_int(new_today),
+                        rust_dynamic::value::Value::from_int(goal),
+                    ],
+                );
+            }
+        }
+        // on_streak_break — only fires when we had a positive
+        // streak previously and now we have zero. First-launch
+        // (prev is None) doesn't count as a break.
+        let prev_streak = prev.map(|p| p.streak.days).unwrap_or(0);
+        if prev_streak > 0 && new.streak.days == 0 {
+            crate::scripting::hooks::fire(
+                "hook.on_streak_break",
+                vec![rust_dynamic::value::Value::from_int(prev_streak)],
+            );
+        }
+        // on_active_goal_hit — same transitional semantics as
+        // on_goal_hit but against `goals.active_minutes_daily`.
+        let active_goal_secs = self.cfg.goals.active_minutes_daily.max(0) * 60;
+        if active_goal_secs > 0 {
+            let prev_active = prev.map(|p| p.active_seconds_today).unwrap_or(0);
+            let new_active = new.active_seconds_today;
+            if prev_active < active_goal_secs && new_active >= active_goal_secs {
+                crate::scripting::hooks::fire(
+                    "hook.on_active_goal_hit",
+                    vec![
+                        rust_dynamic::value::Value::from_int(new_active),
+                        rust_dynamic::value::Value::from_int(active_goal_secs),
+                    ],
+                );
+            }
+        }
     }
 
     /// Walk the hierarchy and compute current per-book + project
@@ -2377,6 +2765,32 @@ impl App {
         };
         if due {
             let _ = self.save_current();
+        }
+
+        // 1.2.4+: also autosave the secondary editor (similar-
+        // paragraph mode's right pane). Before this, the secondary
+        // doc was flush-only-on-Ctrl+V-S-exit, which surprised
+        // users who typed in the right pane and walked away.
+        // Same idle-threshold as the primary; no correction-overlay
+        // gate since correction overlays only apply to the primary.
+        // `Option::take()` pulls the doc out so we can call
+        // `save_doc(&mut self, &mut OpenedDoc)` without aliasing
+        // self.secondary against itself; the doc goes straight
+        // back regardless of save outcome.
+        let sec_due = match self.secondary.as_ref() {
+            Some(doc) if doc.dirty => doc.last_activity.elapsed().as_secs() >= secs,
+            _ => false,
+        };
+        if sec_due {
+            if let Some(mut doc) = self.secondary.take() {
+                if let Err(e) = self.save_doc(&mut doc) {
+                    tracing::warn!(
+                        target: "inkhaven::autosave",
+                        "secondary autosave failed: {e}",
+                    );
+                }
+                self.secondary = Some(doc);
+            }
         }
     }
 
@@ -2643,24 +3057,21 @@ impl App {
             return Ok(false);
         }
 
-        // View-prefix dispatch (Ctrl+V): markdown export to cwd.
-        // Captures the next keystroke. Currently 1.2.3 — chord
-        // table is hardcoded (not in keybind::KeyBindings); when
-        // there's appetite for rebinding it gets promoted to the
-        // binding table like meta/bund have been.
+        // View-prefix dispatch (Ctrl+V by default, 1.2.4+).
+        // Captures the next keystroke. Resolution goes through
+        // the binding table now (Layer::ViewSub), so HJSON
+        // `keys.bindings` + `ink.key.*` can rebind every chord
+        // under the prefix.
         if self.view_pending {
             self.handle_view_action(key);
             return Ok(false);
         }
-        if matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'))
-            && key.modifiers.contains(KeyModifiers::CONTROL)
-            && !key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
-        {
-            self.view_pending = true;
-            self.status =
-                "view: 1 = buffer · 2 = subchapter (tree: 1 = subtree) · Esc cancel"
-                    .into();
-            return Ok(false);
+        if let Some(view_prefix) = self.keymap.view_prefix {
+            if view_prefix.matches(&key) {
+                self.view_pending = true;
+                self.status = super::keybind::read().view_hint(self.focus);
+                return Ok(false);
+            }
         }
 
         // Bund-meta dispatch (Ctrl+Z by default). Mirrors the
@@ -2700,24 +3111,20 @@ impl App {
         }
 
 
-        // F1 anywhere opens the help-manual query modal. Modal eats every
-        // other key until Enter (submit) / Esc (cancel).
-        if matches!(key.code, KeyCode::F(1))
-            && !key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
-        {
-            self.open_help_query_modal();
-            return Ok(false);
-        }
-
-        // F7 runs a grammar check on the currently-open paragraph. The
-        // prompt template is resolved with precedence: Prompts book entry
-        // titled "Grammar check" > prompts.hjson entry of the same name >
-        // a built-in fallback that asks the model to check syntax /
-        // punctuation in the configured `language` while preserving any
-        // Typst markup.
-        if matches!(key.code, KeyCode::F(7)) {
-            self.start_grammar_check();
-            return Ok(false);
+        // 1.2.4+: F-keys + every top-level (no-prefix) chord
+        // flow through the `top_level` binding table. The table
+        // is pane-aware via Scope, so F-keys that only made
+        // sense in one pane (F2 rename / F3 file picker /
+        // F4-F6 editor) keep their per-pane behaviour without
+        // hardcoded match arms. The user can rebind any of
+        // them via HJSON `keys.bindings` (single-token chord
+        // strings route to TopLevel) or runtime
+        // `ink.key.bind`.
+        if let Some(action) = super::keybind::read().resolve_top_level(&key, self.focus) {
+            if !matches!(action, super::keybind::Action::None) {
+                self.run_action(action);
+                return Ok(false);
+            }
         }
 
         // AI-fullscreen Ctrl+C toggles "Chat selection mode" — the
@@ -2842,23 +3249,9 @@ impl App {
             }
         }
 
-        // F9 cycles the AI scope mode (None → Selection → Paragraph →
-        // Subchapter → Chapter → Book → None). The next prompt sent from
-        // the AI prompt bar will prepend that context, then auto-reset to
-        // None. F9 works from every pane — Editor/Tree/AI/Search/AI prompt.
-        // (Chat history is cleared via Ctrl+B C, not F9.)
-        if matches!(key.code, KeyCode::F(9)) {
-            self.cycle_ai_mode();
-            return Ok(false);
-        }
-        // F10 toggles the inference mode (Local ↔ Full). Local constrains
-        // the model to supplied context only; Full lets it augment with
-        // general knowledge. Help-RAG inferences are pinned to Local
-        // regardless of this setting.
-        if matches!(key.code, KeyCode::F(10)) {
-            self.toggle_inference_mode();
-            return Ok(false);
-        }
+        // F9 / F10 / F7 / F1 et al. now flow through the
+        // top_level binding-table dispatch above. The hardcoded
+        // match arms were removed in the 1.2.4 F-key migration.
 
         // Save works from anywhere as long as a doc is open.
         if self.keymap.save.matches(&key) && self.opened.is_some() {
@@ -2941,11 +3334,54 @@ impl App {
             KeyCode::Char('q') | KeyCode::Char('Q') if plain => return Ok(self.request_quit()),
             // Esc cycles Tree → Search bar (third leg of the
             // Editor → Tree → Search → Editor rotation).
-            KeyCode::Esc => self.change_focus(Focus::SearchBar),
-            KeyCode::F(2) => self.open_rename_modal(),
-            // F3 in Tree: import a file (becomes new paragraph after cursor)
-            // or a directory tree (dirs → subchapters, files → paragraphs).
-            KeyCode::F(3) => self.open_file_picker(PickerContext::TreeInsertOrImport),
+            // 1.2.4+: Esc exits link-pick mode (returning to
+            // the editor) instead of cycling focus to the
+            // search bar. Also clears any multi-select marks
+            // so the next chord operates on the cursor row,
+            // not stale marks.
+            KeyCode::Esc => {
+                if self.link_pick_for.is_some() {
+                    self.link_pick_for = None;
+                    self.status = "link cancelled".into();
+                    self.change_focus(Focus::Editor);
+                } else if !self.tree_marked.is_empty() {
+                    let n = self.tree_marked.len();
+                    self.tree_marked.clear();
+                    self.status =
+                        format!("multi-select cleared ({n} paragraph(s))");
+                } else {
+                    self.change_focus(Focus::SearchBar);
+                }
+            }
+            // 1.2.4+: Space toggles multi-select on the
+            // cursor row (paragraphs only — branches don't
+            // accept the bulk operations).
+            KeyCode::Char(' ') if plain => {
+                if let Some((id, _)) = self.rows.get(self.tree_cursor) {
+                    let id = *id;
+                    if let Some(node) = self.hierarchy.get(id) {
+                        if node.kind == NodeKind::Paragraph {
+                            if self.tree_marked.remove(&id) {
+                                self.status = format!(
+                                    "unmarked · {} marked",
+                                    self.tree_marked.len()
+                                );
+                            } else {
+                                self.tree_marked.insert(id);
+                                self.status = format!(
+                                    "marked · {} marked",
+                                    self.tree_marked.len()
+                                );
+                            }
+                        } else {
+                            self.status =
+                                "multi-select only marks paragraphs".into();
+                        }
+                    }
+                }
+            }
+            // F2 (rename) and F3 (file picker) now flow through
+            // the top_level binding-table dispatch in handle_key.
             KeyCode::Up => self.move_cursor(-1),
             KeyCode::Down => self.move_cursor(1),
             KeyCode::Home => self.tree_cursor = 0,
@@ -2954,7 +3390,16 @@ impl App {
                     self.tree_cursor = self.rows.len() - 1;
                 }
             }
-            KeyCode::Enter => self.open_selected()?,
+            // 1.2.4+: when link-pick mode is active, Enter on a
+            // tree row links the row's paragraph to the
+            // pick-mode owner rather than opening it for editing.
+            KeyCode::Enter => {
+                if self.link_pick_for.is_some() {
+                    self.commit_link_pick();
+                } else {
+                    self.open_selected()?;
+                }
+            }
 
             // Right arrow: expand cursor's branch (no-op for leaves).
             // Left arrow: collapse cursor's branch if expanded, else move
@@ -3013,6 +3458,24 @@ impl App {
             }
             KeyCode::Char('X') | KeyCode::Char('x') if plain => {
                 self.collapse_all_branches();
+            }
+
+            // 1.2.4+: tree T cycles the type of the cursor row
+            // (or every marked paragraph, when multi-select is
+            // active). Same ladder as Ctrl+B M:
+            // Paragraph(typst) → Paragraph(hjson) → Script(bund).
+            KeyCode::Char('T') | KeyCode::Char('t') if plain => {
+                if !self.tree_marked.is_empty() {
+                    self.cycle_leaf_type_bulk();
+                } else {
+                    self.cycle_leaf_type();
+                }
+            }
+            // 1.2.4+: tree O cycles paragraph status. Mirrors
+            // Ctrl+B R; honours multi-select for bulk status
+            // transitions.
+            KeyCode::Char('O') | KeyCode::Char('o') if plain => {
+                self.cycle_paragraph_status();
             }
 
             _ if self.keymap.page_up.matches(&key) => self.move_cursor(-10),
@@ -3250,22 +3713,8 @@ impl App {
             }
         }
 
-        // F5 creates a snapshot of the current paragraph; F6 opens the picker.
-        // Function keys are rarely intercepted by terminals or multiplexers.
-        if matches!(key.code, KeyCode::F(5)) {
-            self.create_snapshot_of_current();
-            return Ok(false);
-        }
-        if matches!(key.code, KeyCode::F(6)) {
-            self.open_snapshot_picker();
-            return Ok(false);
-        }
-        // F3 opens the file-load dialog: pick a file, its content replaces
-        // the editor buffer (and marks dirty).
-        if matches!(key.code, KeyCode::F(3)) {
-            self.open_file_picker(PickerContext::EditorLoad);
-            return Ok(false);
-        }
+        // F3 / F5 / F6 now resolve through the top_level binding
+        // table at the top of handle_key (1.2.4+ migration).
         // Ctrl+F open find, Ctrl+X "repeat" (advance / replace+advance),
         // Ctrl+R open replace dialog or "replace all" when already in
         // replace mode.
@@ -3320,16 +3769,9 @@ impl App {
             return Ok(false);
         }
 
-        // F4 toggles split-edit mode; Ctrl+F4 accepts the snapshot and
-        // replaces the live buffer with it.
-        if matches!(key.code, KeyCode::F(4)) {
-            if key.modifiers.contains(KeyModifiers::CONTROL) {
-                self.accept_split_snapshot();
-            } else {
-                self.toggle_split();
-            }
-            return Ok(false);
-        }
+        // F4 / Ctrl+F4 resolve through the top_level binding
+        // table at the top of handle_key.
+
         // Ctrl+H / Ctrl+J scroll the lower (read-only) pane while split is
         // open. Without split, they fall through to normal editor handling
         // (tui-textarea / our backspace-word / etc.).
@@ -4181,6 +4623,41 @@ impl App {
                     self.prompt_picker_cursor += 1;
                 }
             }
+            // 1.2.4+: Up / Down in the AI prompt (no picker
+            // showing) walks `ai_prompt_history`. Shell-style.
+            KeyCode::Up if !is_search => {
+                if !self.ai_prompt_history.is_empty() {
+                    let next = match self.ai_prompt_history_cursor {
+                        Some(0) => 0,
+                        Some(i) => i - 1,
+                        None => self.ai_prompt_history.len() - 1,
+                    };
+                    self.ai_prompt_history_cursor = Some(next);
+                    let entry = self.ai_prompt_history[next].clone();
+                    self.ai_input.clear();
+                    for c in entry.chars() {
+                        self.ai_input.insert_char(c);
+                    }
+                }
+            }
+            KeyCode::Down if !is_search => {
+                if let Some(cur) = self.ai_prompt_history_cursor {
+                    let next = cur + 1;
+                    if next >= self.ai_prompt_history.len() {
+                        // Past the newest entry → leave history
+                        // navigation, clear the input.
+                        self.ai_prompt_history_cursor = None;
+                        self.ai_input.clear();
+                    } else {
+                        self.ai_prompt_history_cursor = Some(next);
+                        let entry = self.ai_prompt_history[next].clone();
+                        self.ai_input.clear();
+                        for c in entry.chars() {
+                            self.ai_input.insert_char(c);
+                        }
+                    }
+                }
+            }
             KeyCode::Tab if !is_search && self.show_prompt_picker => {
                 self.commit_prompt_pick();
             }
@@ -4189,11 +4666,17 @@ impl App {
                 if is_search {
                     self.show_results_overlay = false;
                 }
+                if !is_search {
+                    self.ai_prompt_history_cursor = None;
+                }
             }
             KeyCode::Delete => {
                 self.current_input(is_search).delete();
                 if is_search {
                     self.show_results_overlay = false;
+                }
+                if !is_search {
+                    self.ai_prompt_history_cursor = None;
                 }
             }
             KeyCode::Left => self.current_input(is_search).move_left(),
@@ -4235,6 +4718,11 @@ impl App {
                     if is_search {
                         self.show_results_overlay = false;
                     } else {
+                        // 1.2.4+: typing in the AI prompt
+                        // breaks history-recall navigation —
+                        // the next Up arrow starts at the
+                        // newest entry again.
+                        self.ai_prompt_history_cursor = None;
                         self.refresh_prompt_picker();
                     }
                 }
@@ -4265,19 +4753,44 @@ impl App {
         let q = self.ai_input.as_str();
         let filter = q.strip_prefix('/').unwrap_or("").trim().to_lowercase();
 
-        let mut out: Vec<PromptCandidate> = Vec::new();
+        // 1.2.4+: rank candidates so prefix matches beat
+        // mid-word substring matches. Empty filter → keep
+        // insertion order (system before book). Match scores:
+        //   3 = name starts with filter
+        //   2 = description starts with filter (after splitting
+        //       on whitespace — so "summarize selection" matches
+        //       a /sel prefix on the second word)
+        //   1 = name or description contains filter
+        //   0 = no match (excluded)
+        let score = |name: &str, desc: &str| -> i32 {
+            if filter.is_empty() {
+                return 1;
+            }
+            let nl = name.to_lowercase();
+            let dl = desc.to_lowercase();
+            if nl.starts_with(&filter) {
+                return 3;
+            }
+            if dl.split_whitespace().any(|w| w.starts_with(&filter)) {
+                return 2;
+            }
+            if nl.contains(&filter) || dl.contains(&filter) {
+                return 1;
+            }
+            0
+        };
+
+        let mut scored: Vec<(i32, PromptCandidate)> = Vec::new();
         // 1) prompts.hjson (system)
         for p in &self.prompts.prompts {
-            if filter.is_empty()
-                || p.name.to_lowercase().contains(&filter)
-                || p.description.to_lowercase().contains(&filter)
-            {
-                out.push(PromptCandidate {
+            let s = score(&p.name, &p.description);
+            if s > 0 {
+                scored.push((s, PromptCandidate {
                     name: p.name.clone(),
                     description: p.description.clone(),
                     body: PromptBody::Static(p.template.clone()),
                     source: PromptSource::System,
-                });
+                }));
             }
         }
         // 2) Paragraphs under the Prompts system book
@@ -4294,19 +4807,21 @@ impl App {
                 }
                 let name = node.slug.clone();
                 let title = node.title.clone();
-                if filter.is_empty()
-                    || name.to_lowercase().contains(&filter)
-                    || title.to_lowercase().contains(&filter)
-                {
-                    out.push(PromptCandidate {
+                let s = score(&name, &title);
+                if s > 0 {
+                    scored.push((s, PromptCandidate {
                         name,
                         description: title,
                         body: PromptBody::BookParagraph(node.id),
                         source: PromptSource::Book,
-                    });
+                    }));
                 }
             }
         }
+        // Stable sort by descending score — preserves the
+        // "system before book" within-tier ordering.
+        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        let out: Vec<PromptCandidate> = scored.into_iter().map(|(_, c)| c).collect();
         out
     }
 
@@ -4425,6 +4940,21 @@ impl App {
             self.status = "empty prompt".into();
             return;
         }
+        // 1.2.4+: stash the raw prompt in the history ring for
+        // Up/Down recall. Avoids dupes-against-most-recent so
+        // the list stays useful when the user re-sends the same
+        // prompt repeatedly.
+        if self.ai_prompt_history.last() != Some(&raw) {
+            self.ai_prompt_history.push(raw.clone());
+            // Cap the history so a long session doesn't grow
+            // unbounded. 500 entries is past any reasonable
+            // recall horizon.
+            if self.ai_prompt_history.len() > 500 {
+                let drop_n = self.ai_prompt_history.len() - 500;
+                self.ai_prompt_history.drain(..drop_n);
+            }
+        }
+        self.ai_prompt_history_cursor = None;
         // "Help!" prefix (case-sensitive) reroutes through the F1 Help-book
         // RAG flow. The rest of the line becomes the question; the AI pane
         // shows the same grounded answer the F1 modal produces.
@@ -5163,44 +5693,498 @@ impl App {
     /// and write to the launch cwd with a `<title>-<stamp>.md`
     /// filename. Errors land on the status bar; nothing else
     /// changes.
+    /// Resolve the tree-cursor row to a paragraph and link it to
+    /// the link-pick owner. Always exits pick mode (success or
+    /// failure) and returns focus to the editor. Direction is
+    /// stashed in `link_pick_for.1`:
+    /// * `Outgoing` (Ctrl+V A) — `add_link(owner, picked)`
+    /// * `Incoming` (Ctrl+V I) — `add_link(picked, owner)`
+    fn commit_link_pick(&mut self) {
+        let Some((owner, direction)) = self.link_pick_for else { return };
+        let picked = self
+            .rows
+            .get(self.tree_cursor)
+            .map(|(id, _)| *id);
+        self.link_pick_for = None;
+        let Some(picked) = picked else {
+            self.status = "link cancelled: no tree row selected".into();
+            self.change_focus(Focus::Editor);
+            return;
+        };
+        let picked_kind = self.hierarchy.get(picked).map(|n| n.kind);
+        if !matches!(picked_kind, Some(NodeKind::Paragraph)) {
+            self.status =
+                "link cancelled: target is not a paragraph".into();
+            self.change_focus(Focus::Editor);
+            return;
+        }
+        // Outgoing: owner → picked.  Incoming: picked → owner.
+        let (from, to) = match direction {
+            LinkPickDirection::Outgoing => (owner, picked),
+            LinkPickDirection::Incoming => (picked, owner),
+        };
+        match self.add_paragraph_link(from, to) {
+            Ok(()) => {
+                let title = self
+                    .hierarchy
+                    .get(to)
+                    .map(|n| n.title.clone())
+                    .unwrap_or_else(|| "?".into());
+                self.status = match direction {
+                    LinkPickDirection::Outgoing => format!("linked → `{title}`"),
+                    LinkPickDirection::Incoming => {
+                        let from_title = self
+                            .hierarchy
+                            .get(from)
+                            .map(|n| n.title.clone())
+                            .unwrap_or_else(|| "?".into());
+                        format!("linked `{from_title}` → current")
+                    }
+                };
+            }
+            Err(e) => {
+                self.status = format!("link: {e}");
+            }
+        }
+        self.change_focus(Focus::Editor);
+    }
+
+    // ── Wiki-links (1.2.4+) ────────────────────────────────
+
+    /// Enter "select paragraph to link" mode. Tree pane gets a
+    /// custom title; Enter on a paragraph adds it to the open
+    /// paragraph's outgoing links (with a circular-reference
+    /// guard). Esc / loss-of-focus cancels.
+    fn enter_link_pick_mode(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view A: no paragraph open".into();
+            return;
+        };
+        self.link_pick_for = Some((doc.id, LinkPickDirection::Outgoing));
+        self.change_focus(Focus::Tree);
+        self.status =
+            "link: select paragraph to link · Enter confirms · Esc cancels".into();
+    }
+
+    /// Reverse-direction picker (1.2.4+, Ctrl+V I). The
+    /// tree-picked paragraph's outgoing links gains the open
+    /// paragraph — same circular guard.
+    fn enter_incoming_link_pick_mode(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view I: no paragraph open".into();
+            return;
+        };
+        self.link_pick_for = Some((doc.id, LinkPickDirection::Incoming));
+        self.change_focus(Focus::Tree);
+        self.status =
+            "incoming link: select paragraph that will link to current · Enter confirms · Esc cancels"
+                .into();
+    }
+
+    /// Open the linked-paragraphs modal for the open paragraph.
+    /// Lists each outgoing link with title + slug path; `D`
+    /// removes a row.
+    fn open_link_picker_modal(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view L: no paragraph open".into();
+            return;
+        };
+        let owner = doc.id;
+        let entries = self.collect_link_entries(owner);
+        if entries.is_empty() {
+            self.status =
+                "view L: no linked paragraphs (Ctrl+V A adds one)".into();
+            return;
+        }
+        self.modal = Modal::LinkPicker {
+            owner,
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status =
+            "links: ↑↓ select · D removes · Esc closes".into();
+    }
+
+    /// Toggle bookmark on the open paragraph. Persists via the
+    /// existing metadata-update path (`Store::raw().update_metadata`).
+    fn toggle_bookmark(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view B: no paragraph open".into();
+            return;
+        };
+        let id = doc.id;
+        let Some(node) = self.hierarchy.get(id).cloned() else {
+            self.status = "view B: paragraph not in hierarchy".into();
+            return;
+        };
+        let new_value = !node.bookmark;
+        let mut updated = node.clone();
+        updated.bookmark = new_value;
+        updated.modified_at = chrono::Utc::now();
+        if let Err(e) = self
+            .store
+            .raw()
+            .update_metadata(id, updated.to_json())
+        {
+            self.status = format!("bookmark: store update failed: {e}");
+            return;
+        }
+        self.reload_hierarchy();
+        self.status = format!(
+            "bookmark {}: `{}`",
+            if new_value { "added" } else { "cleared" },
+            node.title
+        );
+    }
+
+    /// Open the bookmark picker — every paragraph whose
+    /// `bookmark` flag is true.
+    fn open_bookmark_picker_modal(&mut self) {
+        let entries = self.collect_bookmark_entries();
+        if entries.is_empty() {
+            self.status =
+                "view M: no bookmarks (Ctrl+V B toggles one on the open paragraph)".into();
+            return;
+        }
+        self.modal = Modal::BookmarkPicker {
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status =
+            "bookmarks: ↑↓ select · Enter opens · D clears bookmark · Esc closes"
+                .into();
+    }
+
+    /// Open the fuzzy paragraph picker. Pre-builds the full
+    /// paragraph list (title + slug-path) so subsequent
+    /// keystrokes only filter, never re-walk the hierarchy.
+    fn open_fuzzy_paragraph_picker(&mut self) {
+        let entries = self.collect_all_paragraph_entries();
+        if entries.is_empty() {
+            self.status =
+                "view P: no paragraphs in this project".into();
+            return;
+        }
+        self.modal = Modal::FuzzyParagraphPicker {
+            input: TextInput::new(),
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status =
+            "find ¶: type to filter · ↑↓ select · Enter opens · Esc cancels".into();
+    }
+
+    /// Collect every paragraph in the project (excluding
+    /// system-book content) as picker entries.
+    fn collect_all_paragraph_entries(&self) -> Vec<ScriptPickerEntry> {
+        let mut out: Vec<ScriptPickerEntry> = Vec::new();
+        for (n, _) in self.hierarchy.flatten() {
+            if n.kind != NodeKind::Paragraph {
+                continue;
+            }
+            // Skip system-book content — Help reference, Typst
+            // reference, etc., aren't manuscript paragraphs.
+            let in_system = self
+                .hierarchy
+                .ancestors(n)
+                .into_iter()
+                .any(|a| a.kind == NodeKind::Book && a.system_tag.is_some());
+            if in_system {
+                continue;
+            }
+            out.push(ScriptPickerEntry {
+                id: n.id,
+                title: n.title.clone(),
+                slug_path: self.hierarchy.slug_path(n),
+            });
+        }
+        out.sort_by(|a, b| a.slug_path.cmp(&b.slug_path));
+        out
+    }
+
+    /// Walk the hierarchy and collect every paragraph whose
+    /// `bookmark` flag is true.
+    fn collect_bookmark_entries(&self) -> Vec<ScriptPickerEntry> {
+        let mut out: Vec<ScriptPickerEntry> = Vec::new();
+        for (n, _) in self.hierarchy.flatten() {
+            if n.kind != NodeKind::Paragraph || !n.bookmark {
+                continue;
+            }
+            out.push(ScriptPickerEntry {
+                id: n.id,
+                title: n.title.clone(),
+                slug_path: self.hierarchy.slug_path(n),
+            });
+        }
+        out.sort_by(|a, b| a.title.cmp(&b.title));
+        out
+    }
+
+    /// Open the backlinks modal for the open paragraph.
+    fn open_backlink_picker_modal(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view K: no paragraph open".into();
+            return;
+        };
+        let target = doc.id;
+        let entries = self.collect_backlink_entries(target);
+        if entries.is_empty() {
+            self.status =
+                "view K: no incoming links to this paragraph".into();
+            return;
+        }
+        self.modal = Modal::BacklinkPicker {
+            target,
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status =
+            "backlinks: ↑↓ select · Enter opens · D removes source link · Esc closes"
+                .into();
+    }
+
+    /// Walk every paragraph and collect the ones whose
+    /// `linked_paragraphs` contains `target`. O(N) over the
+    /// hierarchy — acceptable for typical project sizes; if it
+    /// ever bites, the obvious next step is a reverse-index
+    /// cached at hierarchy-load time.
+    fn collect_backlink_entries(&self, target: Uuid) -> Vec<ScriptPickerEntry> {
+        let mut out: Vec<ScriptPickerEntry> = Vec::new();
+        for (n, _) in self.hierarchy.flatten() {
+            if n.kind != NodeKind::Paragraph {
+                continue;
+            }
+            if !n.linked_paragraphs.contains(&target) {
+                continue;
+            }
+            out.push(ScriptPickerEntry {
+                id: n.id,
+                title: n.title.clone(),
+                slug_path: self.hierarchy.slug_path(n),
+            });
+        }
+        out.sort_by(|a, b| a.slug_path.cmp(&b.slug_path));
+        out
+    }
+
+    /// Resolve the open paragraph's outgoing links into picker
+    /// entries (title + slug path). Stale UUIDs (target deleted)
+    /// are silently filtered.
+    fn collect_link_entries(&self, owner: Uuid) -> Vec<ScriptPickerEntry> {
+        let Some(node) = self.hierarchy.get(owner) else {
+            return Vec::new();
+        };
+        node.linked_paragraphs
+            .iter()
+            .filter_map(|id| self.hierarchy.get(*id))
+            .map(|n| ScriptPickerEntry {
+                id: n.id,
+                title: n.title.clone(),
+                slug_path: self.hierarchy.slug_path(n),
+            })
+            .collect()
+    }
+
+    /// Add `target` to `owner`'s outgoing links. Rejects self-
+    /// linking and circular references (walks `target`'s
+    /// outgoing closure looking for `owner`). Persists via
+    /// `Store::update_metadata`.
+    fn add_paragraph_link(
+        &mut self,
+        owner: Uuid,
+        target: Uuid,
+    ) -> std::result::Result<(), String> {
+        if owner == target {
+            return Err("can't link a paragraph to itself".into());
+        }
+        let owner_node = self
+            .hierarchy
+            .get(owner)
+            .cloned()
+            .ok_or_else(|| format!("owner paragraph {owner} not in hierarchy"))?;
+        if owner_node.linked_paragraphs.contains(&target) {
+            return Err("already linked".into());
+        }
+        // Circular guard: walk target's outgoing transitive closure
+        // depth-first; if owner appears in it, we'd create a loop.
+        if self.link_path_exists(target, owner) {
+            return Err(
+                "You can not create circular references".into(),
+            );
+        }
+        let target_node = self
+            .hierarchy
+            .get(target)
+            .ok_or_else(|| format!("target paragraph {target} not in hierarchy"))?;
+        if target_node.kind != NodeKind::Paragraph {
+            return Err(format!("`{}` is not a paragraph", target_node.title));
+        }
+        let mut updated = owner_node.clone();
+        updated.linked_paragraphs.push(target);
+        updated.modified_at = chrono::Utc::now();
+        self.store
+            .raw()
+            .update_metadata(owner, updated.to_json())
+            .map_err(|e| format!("store update: {e}"))?;
+        self.reload_hierarchy();
+        Ok(())
+    }
+
+    /// Remove `target` from `owner`'s outgoing links. Returns
+    /// `false` when the link wasn't present (no-op).
+    fn remove_paragraph_link(
+        &mut self,
+        owner: Uuid,
+        target: Uuid,
+    ) -> std::result::Result<bool, String> {
+        let owner_node = self
+            .hierarchy
+            .get(owner)
+            .cloned()
+            .ok_or_else(|| format!("owner paragraph {owner} not in hierarchy"))?;
+        if !owner_node.linked_paragraphs.contains(&target) {
+            return Ok(false);
+        }
+        let mut updated = owner_node.clone();
+        updated.linked_paragraphs.retain(|u| *u != target);
+        updated.modified_at = chrono::Utc::now();
+        self.store
+            .raw()
+            .update_metadata(owner, updated.to_json())
+            .map_err(|e| format!("store update: {e}"))?;
+        self.reload_hierarchy();
+        Ok(true)
+    }
+
+    /// True when `start`'s outgoing-link transitive closure
+    /// reaches `goal`. Used by `add_paragraph_link` to refuse
+    /// cycles. Bounded DFS — a malformed graph with a cycle in
+    /// it (shouldn't be possible given this very check, but
+    /// stay safe) terminates via `visited`.
+    fn link_path_exists(&self, start: Uuid, goal: Uuid) -> bool {
+        let mut stack: Vec<Uuid> = vec![start];
+        let mut visited: std::collections::HashSet<Uuid> =
+            std::collections::HashSet::new();
+        while let Some(id) = stack.pop() {
+            if id == goal {
+                return true;
+            }
+            if !visited.insert(id) {
+                continue;
+            }
+            if let Some(node) = self.hierarchy.get(id) {
+                for next in &node.linked_paragraphs {
+                    stack.push(*next);
+                }
+            }
+        }
+        false
+    }
+
+    /// Dispatch one of the three Ctrl+V markdown-export scopes
+    /// through the per-scope `prepare_*` helpers, then open the
+    /// SaveMarkdown modal pre-filled with the default
+    /// destination. Enter on the modal writes; the user can
+    /// edit the path before pressing Enter to redirect.
+    fn view_export_markdown(&mut self, scope: ViewMdScope) {
+        let prepared = match scope {
+            ViewMdScope::Buffer => self.prepare_markdown_buffer(),
+            ViewMdScope::Subchapter => self.prepare_markdown_subchapter(),
+            ViewMdScope::Subtree => self.prepare_markdown_tree_subtree(),
+        };
+        match prepared {
+            Ok((body, default_dest, label)) => {
+                self.open_save_markdown_modal(body, default_dest, label);
+            }
+            Err(e) => self.status = format!("view: {e}"),
+        }
+    }
+
+    /// Open the save-as modal with the default path pre-filled.
+    /// The user can edit; Enter writes; Esc cancels.
+    fn open_save_markdown_modal(
+        &mut self,
+        body: String,
+        default_dest: std::path::PathBuf,
+        label: String,
+    ) {
+        let mut input = TextInput::new();
+        for c in default_dest.to_string_lossy().chars() {
+            input.insert_char(c);
+        }
+        self.modal = Modal::SaveMarkdown {
+            input,
+            body,
+            label,
+        };
+        self.status =
+            "save as: edit path or just hit Enter to save · Esc cancels".into();
+    }
+
+    /// Commit `body` to whatever path the SaveMarkdown modal's
+    /// input contains. Empty input falls back to a fresh default
+    /// (defensive — pre-fill should make this rare).
+    fn commit_save_markdown(&mut self, body: String, label: String, raw: String) {
+        let path_str = raw.trim();
+        let path = if path_str.is_empty() {
+            match self.default_markdown_dest(&label) {
+                Ok(p) => p,
+                Err(e) => {
+                    self.status = format!("save as: {e}");
+                    return;
+                }
+            }
+        } else {
+            // Expand `~/` to home if present so users can paste a
+            // tilde path. No glob / env expansion — kept minimal.
+            let expanded = if let Some(rest) = path_str.strip_prefix("~/") {
+                match std::env::var_os("HOME") {
+                    Some(home) => std::path::PathBuf::from(home).join(rest),
+                    None => std::path::PathBuf::from(path_str),
+                }
+            } else {
+                std::path::PathBuf::from(path_str)
+            };
+            expanded
+        };
+        match std::fs::write(&path, body.as_bytes()) {
+            Ok(()) => {
+                self.status = format!("view: wrote {}", path.display());
+            }
+            Err(e) => {
+                self.status = format!("save as: write {}: {e}", path.display());
+            }
+        }
+    }
+
     fn handle_view_action(&mut self, key: KeyEvent) {
         self.view_pending = false;
         if matches!(key.code, KeyCode::Esc) {
             self.status = "view cancelled".into();
             return;
         }
-        // `S` / `s` toggles "similar paragraphs" mode.
-        // The chord is global (works in any pane) because the
-        // current paragraph is whatever's loaded in `self.opened`,
-        // independent of where focus happens to be.
-        if matches!(key.code, KeyCode::Char('S') | KeyCode::Char('s')) {
-            self.toggle_similar_paragraph_mode();
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        if !plain {
+            self.status = "view cancelled".into();
             return;
         }
-        // `G` / `g` opens the writing-progress modal.
-        if matches!(key.code, KeyCode::Char('G') | KeyCode::Char('g')) {
-            self.open_progress_modal();
-            return;
+        let resolved = super::keybind::read().resolve_view_sub(&key, self.focus);
+        match resolved {
+            Some(super::keybind::Action::None) => {
+                self.status = "view: chord disabled by config".into();
+            }
+            Some(action) => self.run_action(action),
+            None => {
+                self.status =
+                    "view: unknown chord — 1/2 export · S similar · G progress · T target · Esc".into();
+            }
         }
-        let outcome = match (self.focus, key.code) {
-            (Focus::Editor | Focus::AiPrompt, KeyCode::Char('1')) => {
-                self.export_markdown_buffer()
-            }
-            (Focus::Editor | Focus::AiPrompt, KeyCode::Char('2')) => {
-                self.export_markdown_subchapter()
-            }
-            (Focus::Tree | Focus::SearchBar, KeyCode::Char('1')) => {
-                self.export_markdown_tree_subtree()
-            }
-            _ => {
-                self.status = "view: unknown chord (Editor: 1/2/S · Tree: 1/S)".into();
-                return;
-            }
-        };
-        self.status = match outcome {
-            Ok(path) => format!("view: wrote {}", path.display()),
-            Err(e) => format!("view: {e}"),
-        };
     }
 
     /// Entry point for the Ctrl+V S chord. Behaviour depends on
@@ -5379,25 +6363,30 @@ impl App {
         Ok(())
     }
 
-    fn export_markdown_buffer(&self) -> std::result::Result<std::path::PathBuf, String> {
+    /// Compute (markdown body, default destination, status-bar
+    /// label) for the open paragraph's buffer. Used by the
+    /// save-as flow — `view_export_markdown` opens the
+    /// `SaveMarkdown` modal pre-filled with `default_dest`.
+    fn prepare_markdown_buffer(
+        &self,
+    ) -> std::result::Result<(String, std::path::PathBuf, String), String> {
         let doc = self
             .opened
             .as_ref()
             .ok_or_else(|| "no paragraph open".to_string())?;
         let typst_src = doc.textarea.lines().join("\n");
         let md = crate::export::markdown::typst_to_markdown(&typst_src);
-        let stem = slug::slugify(&doc.title);
-        self.write_markdown_to_cwd(&stem, &md)
+        let dest = self.default_markdown_dest(&doc.title)?;
+        Ok((md, dest, doc.title.clone()))
     }
 
-    fn export_markdown_subchapter(&self) -> std::result::Result<std::path::PathBuf, String> {
+    fn prepare_markdown_subchapter(
+        &self,
+    ) -> std::result::Result<(String, std::path::PathBuf, String), String> {
         let doc = self
             .opened
             .as_ref()
             .ok_or_else(|| "no paragraph open".to_string())?;
-        // Walk up the hierarchy to the nearest Subchapter (or
-        // Chapter as fallback so the chord stays useful even at
-        // chapter-only depth).
         let para = self
             .hierarchy
             .get(doc.id)
@@ -5414,10 +6403,12 @@ impl App {
                 )
             })
             .ok_or_else(|| "no containing subchapter".to_string())?;
-        self.export_markdown_subtree_of(root)
+        self.prepare_markdown_subtree_of(root)
     }
 
-    fn export_markdown_tree_subtree(&self) -> std::result::Result<std::path::PathBuf, String> {
+    fn prepare_markdown_tree_subtree(
+        &self,
+    ) -> std::result::Result<(String, std::path::PathBuf, String), String> {
         let (id, _) = *self
             .rows
             .get(self.tree_cursor)
@@ -5426,13 +6417,13 @@ impl App {
             .hierarchy
             .get(id)
             .ok_or_else(|| "node missing from hierarchy".to_string())?;
-        self.export_markdown_subtree_of(node)
+        self.prepare_markdown_subtree_of(node)
     }
 
-    fn export_markdown_subtree_of(
+    fn prepare_markdown_subtree_of(
         &self,
         root: &crate::store::node::Node,
-    ) -> std::result::Result<std::path::PathBuf, String> {
+    ) -> std::result::Result<(String, std::path::PathBuf, String), String> {
         let layout = crate::project::ProjectLayout::new(self.store.project_root());
         let combined = crate::export::assemble_typst_source(
             &layout,
@@ -5441,22 +6432,23 @@ impl App {
         )
         .map_err(|e| format!("assemble: {e:#}"))?;
         let md = crate::export::markdown::typst_to_markdown(&combined);
-        let stem = slug::slugify(&root.title);
-        self.write_markdown_to_cwd(&stem, &md)
+        let dest = self.default_markdown_dest(&root.title)?;
+        Ok((md, dest, root.title.clone()))
     }
 
-    fn write_markdown_to_cwd(
+    /// Compute the default markdown destination for a given
+    /// title. Format: `<cwd>/<slug>-YYYYDDMM-HHMM.md`. Same
+    /// scheme `write_markdown_to_cwd` used before 1.2.4's
+    /// save-as picker.
+    fn default_markdown_dest(
         &self,
-        stem: &str,
-        body: &str,
+        title: &str,
     ) -> std::result::Result<std::path::PathBuf, String> {
         let cwd = std::env::current_dir().map_err(|e| format!("cwd: {e}"))?;
         let stamp = chrono::Local::now().format("%Y%d%m-%H%M");
-        let safe_stem = if stem.is_empty() { "buffer" } else { stem };
-        let dest = cwd.join(format!("{safe_stem}-{stamp}.md"));
-        std::fs::write(&dest, body.as_bytes())
-            .map_err(|e| format!("write {}: {e}", dest.display()))?;
-        Ok(dest)
+        let stem = slug::slugify(title);
+        let safe_stem = if stem.is_empty() { "buffer".to_string() } else { stem };
+        Ok(cwd.join(format!("{safe_stem}-{stamp}.md")))
     }
 
     fn handle_bund_action(&mut self, key: KeyEvent) {
@@ -5554,6 +6546,37 @@ impl App {
             A::BundOpenEvalModal => self.bund_open_eval_modal(),
             A::BundOpenScriptPicker => self.bund_open_script_picker(),
 
+            // ── View prefix ───────────────────────────────────
+            A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
+            A::ViewExportMarkdownSubchapter => self.view_export_markdown(ViewMdScope::Subchapter),
+            A::ViewExportMarkdownSubtree => self.view_export_markdown(ViewMdScope::Subtree),
+            A::ViewToggleSimilarMode => self.toggle_similar_paragraph_mode(),
+            A::ViewOpenProgress => self.open_progress_modal(),
+            A::ViewOpenParagraphTarget => self.open_paragraph_target_modal(),
+            A::ViewAddLink => self.enter_link_pick_mode(),
+            A::ViewAddIncomingLink => self.enter_incoming_link_pick_mode(),
+            A::ViewListLinks => self.open_link_picker_modal(),
+            A::ViewListBacklinks => self.open_backlink_picker_modal(),
+            A::ViewToggleBookmark => self.toggle_bookmark(),
+            A::ViewListBookmarks => self.open_bookmark_picker_modal(),
+            A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
+
+            // ── Top-level F-keys (1.2.4+ migration) ───────────
+            A::HelpQuery => self.open_help_query_modal(),
+            A::RenameNode => self.open_rename_modal(),
+            A::FilePickerTreeImport => {
+                self.open_file_picker(PickerContext::TreeInsertOrImport)
+            }
+            A::FilePickerEditorLoad => {
+                self.open_file_picker(PickerContext::EditorLoad)
+            }
+            A::ToggleSplit => self.toggle_split(),
+            A::AcceptSplitSnapshot => self.accept_split_snapshot(),
+            A::OpenSnapshotPicker => self.open_snapshot_picker(),
+            A::GrammarCheck => self.start_grammar_check(),
+            A::CycleAiMode => self.cycle_ai_mode(),
+            A::ToggleInferenceMode => self.toggle_inference_mode(),
+
             // Runtime-bound Bund lambda. Dispatch through the
             // hooks machinery so the recursion-cap + policy-deny
             // semantics already in place apply uniformly. No args
@@ -5575,6 +6598,79 @@ impl App {
     ///   * the tree cursor otherwise.
     /// Closes + reopens the buffer (if open on the converted node)
     /// so the new highlighter + content_type take effect immediately.
+    /// 1.2.4+: multi-select-aware bulk type cycle. When
+    /// `tree_marked` is non-empty, runs `cycle_leaf_type_single`
+    /// over every marked id and reports the aggregate.
+    fn cycle_leaf_type_bulk(&mut self) {
+        if self.tree_marked.is_empty() {
+            return;
+        }
+        let ids: Vec<Uuid> = self.tree_marked.iter().copied().collect();
+        let mut ok = 0usize;
+        let mut fail = 0usize;
+        // If the open buffer is in the set, close it first —
+        // its rel_path will change as part of the conversion,
+        // so reopening from the fresh hierarchy is safer than
+        // trying to keep the live doc in sync mid-loop.
+        let reopen_id = self
+            .opened
+            .as_ref()
+            .map(|d| d.id)
+            .filter(|id| self.tree_marked.contains(id));
+        if reopen_id.is_some() {
+            self.opened = None;
+        }
+        for id in &ids {
+            if self.cycle_leaf_type_single(*id).is_ok() {
+                ok += 1;
+            } else {
+                fail += 1;
+            }
+        }
+        self.reload_hierarchy();
+        // Reopen if needed.
+        if let Some(id) = reopen_id {
+            if let Some(node) = self.hierarchy.get(id).cloned() {
+                if matches!(node.kind, NodeKind::Paragraph) {
+                    let _ = self.load_paragraph(&node);
+                }
+            }
+        }
+        self.status = if fail == 0 {
+            format!("type cycled on {ok} paragraph(s)")
+        } else {
+            format!("type cycled on {ok} · {fail} failed")
+        };
+    }
+
+    /// Single-node type cycle used by both the cursor-row chord
+    /// and the multi-select wrapper. No buffer-reopen logic —
+    /// callers are responsible for that.
+    fn cycle_leaf_type_single(
+        &mut self,
+        node_id: Uuid,
+    ) -> std::result::Result<(), String> {
+        let node = self
+            .hierarchy
+            .get(node_id)
+            .cloned()
+            .ok_or_else(|| format!("node {node_id} not in hierarchy"))?;
+        let (new_kind, new_ct, _label) = match (node.kind, node.content_type.as_deref()) {
+            (NodeKind::Paragraph, None | Some("typst")) => {
+                (NodeKind::Paragraph, Some("hjson"), "hjson")
+            }
+            (NodeKind::Paragraph, Some("hjson")) => {
+                (NodeKind::Script, Some("bund"), "bund")
+            }
+            (NodeKind::Script, _) => (NodeKind::Paragraph, None, "typst"),
+            _ => return Err("not a text leaf".into()),
+        };
+        self.store
+            .convert_leaf(&self.hierarchy, node_id, new_kind, new_ct)
+            .map_err(|e| format!("convert: {e}"))?;
+        Ok(())
+    }
+
     fn cycle_leaf_type(&mut self) {
         // Pick the node to convert. From the Editor pane: prefer
         // the open buffer; fall back to the tree cursor when the
@@ -7014,6 +8110,28 @@ impl App {
                 out.push_str(" ──\n");
                 out.push_str(&live);
                 out.push_str("\n── end paragraph ──");
+                // 1.2.4+: also include every linked paragraph's
+                // body so the model has the related-material the
+                // user explicitly curated. Direct outgoing only
+                // (matches the status-bar "links N" count). Bodies
+                // come from disk (saved state) — same source the
+                // export / similar-paragraph paths use.
+                let linked_ids: Vec<Uuid> = self
+                    .hierarchy
+                    .get(doc.id)
+                    .map(|n| n.linked_paragraphs.clone())
+                    .unwrap_or_default();
+                for id in linked_ids {
+                    let Some(linked) = self.hierarchy.get(id) else { continue };
+                    let Some(rel) = linked.file.as_ref() else { continue };
+                    let abs = self.layout.root.join(rel);
+                    let body = std::fs::read_to_string(&abs).unwrap_or_default();
+                    out.push_str("\n\n── Linked paragraph: ");
+                    out.push_str(&linked.title);
+                    out.push_str(" ──\n");
+                    out.push_str(&body);
+                    out.push_str("\n── end linked paragraph ──");
+                }
                 Ok(Some(out))
             }
             AiMode::Subchapter | AiMode::Chapter | AiMode::Book => {
@@ -7261,16 +8379,19 @@ impl App {
     /// after Ready; pressing R repeatedly walks the whole sequence
     /// without any other UI. Persisted to bdslib so it survives the
     /// next launch.
-    fn cycle_paragraph_status(&mut self) {
-        let Some(doc) = self.opened.as_ref() else {
-            self.status = "no paragraph open".into();
-            return;
-        };
-        let id = doc.id;
-        let Some(node) = self.hierarchy.get(id).cloned() else {
-            self.status = "couldn't find the open paragraph in the hierarchy".into();
-            return;
-        };
+    /// Single-paragraph status cycle, used by the multi-select
+    /// path in `cycle_paragraph_status`. No hook firing — that's
+    /// reserved for the explicit one-paragraph chord so a bulk
+    /// op doesn't fire 30 hooks in sequence.
+    fn cycle_status_single(&mut self, id: Uuid) -> std::result::Result<(), String> {
+        let node = self
+            .hierarchy
+            .get(id)
+            .cloned()
+            .ok_or_else(|| format!("paragraph {id} not in hierarchy"))?;
+        if node.kind != NodeKind::Paragraph {
+            return Err(format!("`{}` is not a paragraph", node.title));
+        }
         let next = next_status(node.status.as_deref());
         let mut updated = node.clone();
         updated.status = if next == "None" {
@@ -7278,6 +8399,71 @@ impl App {
         } else {
             Some(next.to_string())
         };
+        updated.target_hit_at_status = None;
+        self.store
+            .raw()
+            .update_metadata(id, updated.to_json())
+            .map_err(|e| format!("store update: {e}"))?;
+        Ok(())
+    }
+
+    fn cycle_paragraph_status(&mut self) {
+        // 1.2.4+: when the tree has a multi-select set, apply
+        // the cycle to every marked paragraph instead of just
+        // the open one.
+        if !self.tree_marked.is_empty() {
+            let ids: Vec<Uuid> = self.tree_marked.iter().copied().collect();
+            let mut ok = 0usize;
+            let mut fail = 0usize;
+            for id in &ids {
+                if self.cycle_status_single(*id).is_ok() {
+                    ok += 1;
+                } else {
+                    fail += 1;
+                }
+            }
+            self.reload_hierarchy();
+            self.status = if fail == 0 {
+                format!("status cycled on {ok} paragraph(s)")
+            } else {
+                format!("status cycled on {ok} · {fail} failed")
+            };
+            return;
+        }
+        // 1.2.4+: when invoked without an open paragraph (e.g.
+        // from the tree pane via `O`), fall back to the
+        // cursor's row. Lets tree O cycle status without
+        // first having to open the paragraph.
+        let id = match self.opened.as_ref().map(|d| d.id) {
+            Some(id) => id,
+            None => match self.rows.get(self.tree_cursor) {
+                Some((id, _)) => *id,
+                None => {
+                    self.status = "no paragraph selected".into();
+                    return;
+                }
+            },
+        };
+        let Some(node) = self.hierarchy.get(id).cloned() else {
+            self.status = "couldn't find the target paragraph in the hierarchy".into();
+            return;
+        };
+        if node.kind != NodeKind::Paragraph {
+            self.status =
+                format!("status cycle: `{}` is not a paragraph", node.title);
+            return;
+        }
+        let next = next_status(node.status.as_deref());
+        let mut updated = node.clone();
+        updated.status = if next == "None" {
+            None
+        } else {
+            Some(next.to_string())
+        };
+        // Manual cycle clears the auto-promote bookkeeping so a
+        // future save that's still above target will re-promote
+        // from whichever status the user just rolled into.
+        updated.target_hit_at_status = None;
         if let Err(e) = self
             .store
             .raw()
@@ -7296,6 +8482,19 @@ impl App {
         let book_id = self.book_of_node(id);
         crate::progress::record_status_change(
             id, book_id, &from_label, &to_label, total_words,
+        );
+        // hook.on_status_promoted ( uuid from_status to_status -- )
+        // Fires on every transition — manual cycles AND the
+        // auto-promote path. Scripts that want to act only on
+        // promotions (not demotions / wraps to "none") can
+        // inspect the labels.
+        crate::scripting::hooks::fire(
+            "hook.on_status_promoted",
+            vec![
+                rust_dynamic::value::Value::from_string(id.to_string()),
+                rust_dynamic::value::Value::from_string(from_label.clone()),
+                rust_dynamic::value::Value::from_string(to_label.clone()),
+            ],
         );
         self.status = format!("status: `{}` → `{}`", display_status(node.status.as_deref()), next);
     }
@@ -7616,11 +8815,16 @@ impl App {
         let id = doc.id;
         match self.store.rename_node(&self.hierarchy, id, &new_title) {
             Ok(()) => {
+                self.reload_hierarchy();
                 if let Some(d) = self.opened.as_mut() {
                     d.title = new_title.clone();
+                    if let Some(node) = self.hierarchy.get(id) {
+                        if let Some(rel) = node.file.as_ref() {
+                            d.rel_path = rel.clone();
+                        }
+                    }
                 }
                 self.status = format!("renamed paragraph to `{new_title}`");
-                self.reload_hierarchy();
             }
             Err(e) => {
                 self.status = format!("rename failed: {e}");
@@ -8392,6 +9596,22 @@ impl App {
                     r.root_typ.display(),
                     r.root_typ.display(),
                 );
+                // hook.on_assemble ( uuid slug root_typ_path files_written -- )
+                // Fired after a successful Ctrl+B A. Lets scripts
+                // post-process the assembled tree (e.g. patch the
+                // root .typ, copy artefacts, kick off a custom
+                // build pipeline).
+                crate::scripting::hooks::fire(
+                    "hook.on_assemble",
+                    vec![
+                        rust_dynamic::value::Value::from_string(book.id.to_string()),
+                        rust_dynamic::value::Value::from_string(book.slug.clone()),
+                        rust_dynamic::value::Value::from_string(
+                            r.root_typ.to_string_lossy().into_owned(),
+                        ),
+                        rust_dynamic::value::Value::from_int(r.files_written as i64),
+                    ],
+                );
             }
             Err(e) => {
                 self.status = format!("Book assembly failed: {e}");
@@ -8510,6 +9730,26 @@ impl App {
                             dest.display(),
                             extras_msg,
                             outcome.pdf_path.display()
+                        );
+                        // hook.on_take ( uuid slug pdf_dest -- )
+                        // Fired once the PDF is copied to the
+                        // launch cwd (and any configured extra
+                        // formats are written alongside). Lets
+                        // scripts upload the artefact, post a
+                        // chat notification, etc.
+                        crate::scripting::hooks::fire(
+                            "hook.on_take",
+                            vec![
+                                rust_dynamic::value::Value::from_string(
+                                    book.id.to_string(),
+                                ),
+                                rust_dynamic::value::Value::from_string(
+                                    book.slug.clone(),
+                                ),
+                                rust_dynamic::value::Value::from_string(
+                                    dest.to_string_lossy().into_owned(),
+                                ),
+                            ],
                         );
                     }
                     Err(e) => {
@@ -9033,15 +10273,23 @@ impl App {
         }
         match self.store.rename_node(&self.hierarchy, node_id, &new_title) {
             Ok(()) => {
-                // Refresh editor's title if the renamed node is the open one.
+                self.reload_hierarchy();
+                // Refresh editor's title + on-disk rel_path if the
+                // renamed node is the open one. 1.2.4+: paragraphs
+                // rename their file on disk, so the open doc's
+                // rel_path needs to track the new slug.
                 if let Some(doc) = self.opened.as_mut() {
                     if doc.id == node_id {
                         doc.title = new_title.clone();
+                        if let Some(node) = self.hierarchy.get(node_id) {
+                            if let Some(rel) = node.file.as_ref() {
+                                doc.rel_path = rel.clone();
+                            }
+                        }
                     }
                 }
                 self.modal = Modal::None;
                 self.status = format!("renamed to `{new_title}`");
-                self.reload_hierarchy();
             }
             Err(e) => {
                 self.status = format!("rename failed: {e}");
@@ -9103,6 +10351,38 @@ impl App {
             }
         };
 
+        // Safety net (1.2.4+): before we replace the editor buffer,
+        // snapshot whatever is currently in it. Without this, hitting
+        // Enter on an old snapshot would silently discard any
+        // unsaved typing — "oops! a day of work gone". Now the
+        // recoverable history grows by one row instead.
+        //
+        // The pre-restore snapshot fires `hook.on_snapshot` like any
+        // other snapshot. If snapshot creation itself fails, we
+        // abort the load: the whole point is data safety, so doing
+        // the replace without the safety net would defeat the
+        // change. The user can fix the underlying error (disk full,
+        // store offline) and retry.
+        let pre_restore_id = if let Some(doc) = self.opened.as_ref() {
+            let body_now = doc.textarea.lines().join("\n");
+            let node = self.hierarchy.get(doc.id).cloned();
+            match node {
+                Some(n) => match self.store.create_snapshot(&n, body_now.as_bytes()) {
+                    Ok(id) => Some(id),
+                    Err(e) => {
+                        self.status = format!(
+                            "snapshot load aborted: safety snapshot failed ({e}) — retry once the store is healthy"
+                        );
+                        self.modal = Modal::None;
+                        return;
+                    }
+                },
+                None => None,
+            }
+        } else {
+            None
+        };
+
         let body = String::from_utf8_lossy(&content).into_owned();
         let Some(doc) = self.opened.as_mut() else {
             self.modal = Modal::None;
@@ -9121,10 +10401,67 @@ impl App {
         // by hitting Ctrl+S.
         self.modal = Modal::None;
         self.change_focus(Focus::Editor);
+        let safety_msg = match pre_restore_id {
+            Some(id) => format!(" · safety snapshot {} created", id.simple()),
+            None => String::new(),
+        };
         self.status = format!(
-            "loaded snapshot from {} — bold marks the change vs saved",
-            when.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S %z")
+            "loaded snapshot from {} — bold marks the change vs saved{}",
+            when.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S %z"),
+            safety_msg,
         );
+    }
+
+    /// Open the snapshot-diff modal against the cursor's snapshot.
+    /// Stashes the current `SnapshotPicker` modal inside the new
+    /// variant so `Esc` returns to the picker rather than closing
+    /// both layers.
+    fn open_snapshot_diff(&mut self) {
+        let (snap_id, when, paragraph_title) = match &self.modal {
+            Modal::SnapshotPicker {
+                snapshots,
+                cursor,
+                paragraph_title,
+                ..
+            } => {
+                let Some(snap) = snapshots.get(*cursor) else {
+                    return;
+                };
+                (snap.id, snap.created_at, paragraph_title.clone())
+            }
+            _ => return,
+        };
+        let snapshot_bytes = match self.store.snapshot_content(snap_id) {
+            Ok(Some(b)) => b,
+            Ok(None) => {
+                self.status = "snapshot has no body".into();
+                return;
+            }
+            Err(e) => {
+                self.status = format!("snapshot load failed: {e}");
+                return;
+            }
+        };
+        let snapshot_text = String::from_utf8_lossy(&snapshot_bytes).into_owned();
+        let current_text = self
+            .opened
+            .as_ref()
+            .map(|d| d.textarea.lines().join("\n"))
+            .unwrap_or_default();
+        let rows = compute_line_diff(&snapshot_text, &current_text);
+        let when_str = when
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S %z")
+            .to_string();
+        let return_to = Box::new(std::mem::replace(&mut self.modal, Modal::None));
+        self.modal = Modal::SnapshotDiff {
+            paragraph_title,
+            when: when_str,
+            rows,
+            scroll: 0,
+            return_to,
+        };
+        self.status = "diff: snapshot ← left · current → right · ↑↓ scroll · Esc back".into();
     }
 
     fn delete_current_snapshot(&mut self) {
@@ -9235,6 +10572,15 @@ impl App {
 
     fn handle_modal_key(&mut self, key: KeyEvent) -> Result<bool> {
         if matches!(key.code, KeyCode::Esc) {
+            // SnapshotDiff stashes the picker it opened from in
+            // `return_to`; popping that back makes Esc behave
+            // like "close the diff, stay in the picker".
+            if let Modal::SnapshotDiff { return_to, .. } = &mut self.modal {
+                let prev = std::mem::replace(return_to.as_mut(), Modal::None);
+                self.modal = prev;
+                self.status = "diff closed".into();
+                return Ok(false);
+            }
             self.modal = Modal::None;
             return Ok(false);
         }
@@ -9260,6 +10606,13 @@ impl App {
         let is_bund_input = matches!(self.modal, Modal::BundInput { .. });
         let is_similar_picker = matches!(self.modal, Modal::SimilarPicker { .. });
         let is_progress = matches!(self.modal, Modal::Progress { .. });
+        let is_paragraph_target = matches!(self.modal, Modal::ParagraphTarget { .. });
+        let is_save_markdown = matches!(self.modal, Modal::SaveMarkdown { .. });
+        let is_snapshot_diff = matches!(self.modal, Modal::SnapshotDiff { .. });
+        let is_link_picker = matches!(self.modal, Modal::LinkPicker { .. });
+        let is_backlink_picker = matches!(self.modal, Modal::BacklinkPicker { .. });
+        let is_bookmark_picker = matches!(self.modal, Modal::BookmarkPicker { .. });
+        let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -9350,6 +10703,85 @@ impl App {
 
         if is_progress {
             self.progress_modal_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_link_picker {
+            self.link_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_backlink_picker {
+            self.backlink_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_bookmark_picker {
+            self.bookmark_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_fuzzy_paragraph_picker {
+            self.fuzzy_paragraph_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_snapshot_diff {
+            if let Modal::SnapshotDiff { scroll, rows, .. } = &mut self.modal {
+                let total = rows.len();
+                let page: usize = 12;
+                match key.code {
+                    KeyCode::Up => *scroll = scroll.saturating_sub(1),
+                    KeyCode::Down => {
+                        if *scroll + 1 < total {
+                            *scroll += 1;
+                        }
+                    }
+                    KeyCode::PageUp => *scroll = scroll.saturating_sub(page),
+                    KeyCode::PageDown => {
+                        *scroll = (*scroll + page).min(total.saturating_sub(1));
+                    }
+                    KeyCode::Home => *scroll = 0,
+                    KeyCode::End => *scroll = total.saturating_sub(1),
+                    _ => {}
+                }
+            }
+            return Ok(false);
+        }
+
+        if is_paragraph_target {
+            if matches!(key.code, KeyCode::Enter) {
+                let raw = match &self.modal {
+                    Modal::ParagraphTarget { input } => input.as_str().trim().to_string(),
+                    _ => String::new(),
+                };
+                self.modal = Modal::None;
+                self.commit_paragraph_target(&raw);
+                return Ok(false);
+            }
+            if let Modal::ParagraphTarget { input } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
+            return Ok(false);
+        }
+
+        if is_save_markdown {
+            if matches!(key.code, KeyCode::Enter) {
+                let (body, label, raw) = match &self.modal {
+                    Modal::SaveMarkdown { input, body, label } => (
+                        body.clone(),
+                        label.clone(),
+                        input.as_str().to_string(),
+                    ),
+                    _ => (String::new(), String::new(), String::new()),
+                };
+                self.modal = Modal::None;
+                self.commit_save_markdown(body, label, raw);
+                return Ok(false);
+            }
+            if let Modal::SaveMarkdown { input, .. } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
             return Ok(false);
         }
 
@@ -9556,6 +10988,7 @@ impl App {
         if is_snapshot {
             let mut commit = false;
             let mut delete = false;
+            let mut view_diff = false;
             if let Modal::SnapshotPicker {
                 snapshots, cursor, ..
             } = &mut self.modal
@@ -9583,6 +11016,14 @@ impl App {
                     KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Delete => {
                         delete = true;
                     }
+                    // V (case-insensitive) opens the snapshot
+                    // diff modal against the open paragraph's
+                    // current buffer. Read-only — Esc returns to
+                    // the picker; closing the picker entirely
+                    // requires another Esc.
+                    KeyCode::Char('V') | KeyCode::Char('v') => {
+                        view_diff = true;
+                    }
                     _ => {}
                 }
             }
@@ -9590,6 +11031,8 @@ impl App {
                 self.commit_snapshot_load();
             } else if delete {
                 self.delete_current_snapshot();
+            } else if view_diff {
+                self.open_snapshot_diff();
             }
             return Ok(false);
         }
@@ -9991,11 +11434,45 @@ impl App {
         // If this paragraph still has the placeholder title, derive a real one
         // from the body's first sentence and stamp it onto the node — that
         // becomes the displayed name in the tree pane.
+        //
+        // 1.2.4+: when we auto-derive a title here, route through
+        // `rename_node` so the on-disk filename + slug track the
+        // new title. The body has already been written to the
+        // OLD path above; `rename_node` will `fs::rename` it to
+        // the new path, so the bytes follow the new name.
         let title_was_placeholder = node.title == PARAGRAPH_PLACEHOLDER_TITLE;
         if title_was_placeholder {
             if let Some(derived) = extract_first_sentence(&body) {
-                node.title = derived.clone();
-                doc.title = derived;
+                if let Err(e) =
+                    self.store.rename_node(&self.hierarchy, node.id, &derived)
+                {
+                    tracing::warn!(
+                        target: "inkhaven::save",
+                        "auto-rename to first sentence failed: {e:#}",
+                    );
+                } else {
+                    // Reload so the local `node` + the open doc
+                    // reflect the new slug + file path. If the
+                    // hierarchy reload itself fails, leave the
+                    // existing one in place — the rename is
+                    // already on disk, just no in-memory refresh.
+                    if let Ok(h) =
+                        crate::store::hierarchy::Hierarchy::load(&self.store)
+                    {
+                        self.hierarchy = h;
+                    }
+                    if let Some(refreshed) = self.hierarchy.get(node.id).cloned() {
+                        // Sync `doc` (the outstanding &mut borrow
+                        // taken at the top of save_current_inner)
+                        // so its title + rel_path match the new
+                        // on-disk layout.
+                        doc.title = refreshed.title.clone();
+                        if let Some(rel) = refreshed.file.as_ref() {
+                            doc.rel_path = rel.clone();
+                        }
+                        node = refreshed;
+                    }
+                }
             }
         }
 
@@ -10037,9 +11514,89 @@ impl App {
         let new_words = crate::progress::count_words(&body);
         let book_id = self.book_of_node(node.id);
         crate::progress::record_save(node.id, book_id, prev_words, new_words);
+        // Auto-promote on goal-hit. Idempotent per
+        // (paragraph, status) — see Goals.auto_promote_on_target
+        // semantics.
+        self.maybe_auto_promote_on_target(node.id, new_words);
         self.reload_hierarchy();
         self.refresh_progress_cache();
         Ok(())
+    }
+
+    /// Promote the paragraph one ladder step if (a) the project
+    /// has `goals.auto_promote_on_target = true`, (b) the
+    /// paragraph carries a positive `target_words`, (c) the
+    /// current `word_count` meets or exceeds it, and (d) the
+    /// last auto-promote isn't already at the current status.
+    /// On promotion: bumps `status` via `next_status`, sets
+    /// `target_hit_at_status` to the new status, fires the
+    /// status-change progress event, persists via
+    /// `store.raw().update_metadata`.
+    fn maybe_auto_promote_on_target(&mut self, id: Uuid, current_words: i64) {
+        if !self.cfg.goals.auto_promote_on_target {
+            return;
+        }
+        let node = match self.hierarchy.get(id) {
+            Some(n) => n.clone(),
+            None => return,
+        };
+        if node.kind != NodeKind::Paragraph {
+            return;
+        }
+        let Some(target) = node.target_words.filter(|n| *n > 0) else {
+            return;
+        };
+        if current_words < target as i64 {
+            return;
+        }
+        let current_status = node.status.clone();
+        // Idempotent: already promoted at this status → bail.
+        if node.target_hit_at_status.as_deref() == current_status.as_deref() {
+            return;
+        }
+        let promoted = next_status(current_status.as_deref()).to_string();
+        let new_status = if promoted == "None" {
+            None
+        } else {
+            Some(promoted.clone())
+        };
+        let mut updated = node.clone();
+        updated.status = new_status.clone();
+        updated.target_hit_at_status = new_status.clone();
+        updated.modified_at = chrono::Utc::now();
+        if let Err(e) = self
+            .store
+            .raw()
+            .update_metadata(id, updated.to_json())
+        {
+            tracing::warn!(
+                target: "inkhaven::goal_promote",
+                "auto-promote update_metadata failed: {e}"
+            );
+            return;
+        }
+        let from_label = display_status(current_status.as_deref())
+            .to_ascii_lowercase();
+        let to_label = promoted.to_ascii_lowercase();
+        let book_id = self.book_of_node(id);
+        crate::progress::record_status_change(
+            id, book_id, &from_label, &to_label, current_words,
+        );
+        // hook.on_status_promoted fires from both auto-promote
+        // and manual-cycle paths; see `cycle_paragraph_status`
+        // for the signature and rationale.
+        crate::scripting::hooks::fire(
+            "hook.on_status_promoted",
+            vec![
+                rust_dynamic::value::Value::from_string(id.to_string()),
+                rust_dynamic::value::Value::from_string(from_label.clone()),
+                rust_dynamic::value::Value::from_string(to_label.clone()),
+            ],
+        );
+        self.status = format!(
+            "goal-hit: `{}` promoted {} → {}",
+            node.title, from_label, to_label
+        );
     }
 
     /// Resolve the user book a paragraph belongs to. Returns
@@ -10840,6 +12397,672 @@ impl App {
         );
     }
 
+    fn link_picker_handle_key(&mut self, key: KeyEvent) {
+        // Collect intent; close over the modal's mutable state.
+        let (owner, target_to_remove, target_to_open) = {
+            let Modal::LinkPicker { owner, entries, cursor, scroll } = &mut self.modal else {
+                return;
+            };
+            let total = entries.len();
+            let page: usize = 12;
+            let mut target_to_remove: Option<Uuid> = None;
+            let mut target_to_open: Option<Uuid> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1));
+                }
+                KeyCode::Home => *cursor = 0,
+                KeyCode::End => *cursor = total.saturating_sub(1),
+                KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Delete => {
+                    if let Some(e) = entries.get(*cursor) {
+                        target_to_remove = Some(e.id);
+                    }
+                }
+                // 1.2.4+: Enter opens the linked paragraph in the
+                // editor (autosaving the current buffer first via
+                // `open_search_result` → `load_paragraph` →
+                // `save_current`). Tree cursor follows. Modal closes.
+                KeyCode::Enter => {
+                    if let Some(e) = entries.get(*cursor) {
+                        target_to_open = Some(e.id);
+                    }
+                }
+                _ => {}
+            }
+            // Keep cursor visible.
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            (*owner, target_to_remove, target_to_open)
+        };
+
+        if let Some(target) = target_to_open {
+            // Close the modal first so any status message the
+            // load flow sets isn't immediately overwritten by a
+            // modal-redraw cycle.
+            self.modal = Modal::None;
+            // `open_search_result` does exactly what we want:
+            // moves the tree cursor onto the target row, then
+            // loads the paragraph (which autosaves the previous
+            // buffer if it was dirty).
+            self.open_search_result(target);
+            return;
+        }
+
+        if let Some(target) = target_to_remove {
+            match self.remove_paragraph_link(owner, target) {
+                Ok(true) => {
+                    self.status = "link removed".into();
+                    // Rebuild the modal entries from the fresh
+                    // hierarchy; close the modal if no links remain.
+                    let entries = self.collect_link_entries(owner);
+                    if entries.is_empty() {
+                        self.modal = Modal::None;
+                    } else if let Modal::LinkPicker { entries: e, cursor, scroll, .. } =
+                        &mut self.modal
+                    {
+                        *cursor = (*cursor).min(entries.len() - 1);
+                        *scroll = (*scroll).min(*cursor);
+                        *e = entries;
+                    }
+                }
+                Ok(false) => {
+                    self.status = "link not found (stale view)".into();
+                }
+                Err(e) => {
+                    self.status = format!("link remove: {e}");
+                }
+            }
+        }
+    }
+
+    fn draw_link_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::LinkPicker { entries, cursor, scroll, .. } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Linked paragraphs ({}) ", entries.len());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+
+        let lines: Vec<Line<'_>> = entries
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .map(|(i, e)| {
+                let head = format!(" → {}", e.title);
+                let path_dim = format!("    {}", e.slug_path);
+                let mut spans: Vec<Span> = vec![
+                    Span::raw(head),
+                    Span::styled(
+                        path_dim,
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                ];
+                let mut line = Line::from(std::mem::take(&mut spans));
+                if i == *cursor {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                line
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = if entries.is_empty() {
+            " (empty) · Esc close ".to_string()
+        } else {
+            format!(
+                " ↑↓ select · Enter opens · D removes · Esc closes    ({}/{}) ",
+                cursor + 1,
+                entries.len()
+            )
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    fn fuzzy_paragraph_picker_handle_key(&mut self, key: KeyEvent) {
+        let to_open = {
+            let Modal::FuzzyParagraphPicker { input, entries, cursor, scroll } =
+                &mut self.modal
+            else {
+                return;
+            };
+            let matches = fuzzy_filter_entries(entries, input.as_str());
+            let total = matches.len();
+            let page: usize = 12;
+            let mut to_open: Option<Uuid> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1));
+                }
+                KeyCode::Enter => {
+                    if let Some(idx) = matches.get(*cursor).copied() {
+                        to_open = Some(entries[idx].id);
+                    }
+                }
+                _ => {
+                    handle_text_input_key(input, key);
+                    // Reset cursor on input edit; matches list
+                    // may have shifted.
+                    *cursor = 0;
+                    *scroll = 0;
+                }
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            to_open
+        };
+
+        if let Some(id) = to_open {
+            self.modal = Modal::None;
+            self.open_search_result(id);
+        }
+    }
+
+    fn draw_fuzzy_paragraph_picker_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::FuzzyParagraphPicker { input, entries, cursor, scroll } = &self.modal
+        else {
+            return;
+        };
+        let matches = fuzzy_filter_entries(entries, input.as_str());
+
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(14);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(
+            " Find paragraph ({}/{}) ",
+            matches.len(),
+            entries.len()
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Top input row, body list, footer hint.
+        let input_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 1,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y + 1,
+            width: inner.width,
+            height: inner.height.saturating_sub(2),
+        };
+
+        f.render_widget(
+            Paragraph::new(Line::from(format!(
+                " › {}",
+                input.render_with_cursor('│')
+            ))),
+            input_rect,
+        );
+
+        let body_h = body_rect.height as usize;
+        let lines: Vec<Line<'_>> = matches
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .map(|(i, idx)| {
+                let e = &entries[*idx];
+                let head = format!(" {}", e.title);
+                let path = format!("    {}", e.slug_path);
+                let spans: Vec<Span> = vec![
+                    Span::raw(head),
+                    Span::styled(
+                        path,
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                ];
+                let mut line = Line::from(spans);
+                if i == *cursor {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                line
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = " ↑↓ select · Enter opens · Esc closes ";
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    fn bookmark_picker_handle_key(&mut self, key: KeyEvent) {
+        let (id_to_unbookmark, id_to_open) = {
+            let Modal::BookmarkPicker { entries, cursor, scroll } = &mut self.modal else {
+                return;
+            };
+            let total = entries.len();
+            let page: usize = 12;
+            let mut to_unbookmark: Option<Uuid> = None;
+            let mut to_open: Option<Uuid> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1));
+                }
+                KeyCode::Home => *cursor = 0,
+                KeyCode::End => *cursor = total.saturating_sub(1),
+                KeyCode::Enter => {
+                    if let Some(e) = entries.get(*cursor) {
+                        to_open = Some(e.id);
+                    }
+                }
+                KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Delete => {
+                    if let Some(e) = entries.get(*cursor) {
+                        to_unbookmark = Some(e.id);
+                    }
+                }
+                _ => {}
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            (to_unbookmark, to_open)
+        };
+
+        if let Some(id) = id_to_open {
+            self.modal = Modal::None;
+            self.open_search_result(id);
+            return;
+        }
+
+        if let Some(id) = id_to_unbookmark {
+            if let Some(node) = self.hierarchy.get(id).cloned() {
+                let mut updated = node.clone();
+                updated.bookmark = false;
+                updated.modified_at = chrono::Utc::now();
+                if let Err(e) = self
+                    .store
+                    .raw()
+                    .update_metadata(id, updated.to_json())
+                {
+                    self.status = format!("bookmark clear: {e}");
+                    return;
+                }
+                self.reload_hierarchy();
+                let entries = self.collect_bookmark_entries();
+                if entries.is_empty() {
+                    self.modal = Modal::None;
+                    self.status = "bookmark cleared · no bookmarks left".into();
+                } else if let Modal::BookmarkPicker { entries: e, cursor, scroll } =
+                    &mut self.modal
+                {
+                    *cursor = (*cursor).min(entries.len() - 1);
+                    *scroll = (*scroll).min(*cursor);
+                    *e = entries;
+                    self.status = "bookmark cleared".into();
+                }
+            }
+        }
+    }
+
+    fn draw_bookmark_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::BookmarkPicker { entries, cursor, scroll } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Bookmarks ({}) ", entries.len());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+
+        let lines: Vec<Line<'_>> = entries
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .map(|(i, e)| {
+                let head = format!(" ★ {}", e.title);
+                let path_dim = format!("    {}", e.slug_path);
+                let spans: Vec<Span> = vec![
+                    Span::raw(head),
+                    Span::styled(
+                        path_dim,
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                ];
+                let mut line = Line::from(spans);
+                if i == *cursor {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                line
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = if entries.is_empty() {
+            " (empty) · Esc close ".to_string()
+        } else {
+            format!(
+                " ↑↓ select · Enter opens · D removes bookmark · Esc closes    ({}/{}) ",
+                cursor + 1,
+                entries.len()
+            )
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    fn backlink_picker_handle_key(&mut self, key: KeyEvent) {
+        let (target, source_to_unlink, target_to_open) = {
+            let Modal::BacklinkPicker { target, entries, cursor, scroll } = &mut self.modal else {
+                return;
+            };
+            let total = entries.len();
+            let page: usize = 12;
+            let mut source_to_unlink: Option<Uuid> = None;
+            let mut target_to_open: Option<Uuid> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1));
+                }
+                KeyCode::Home => *cursor = 0,
+                KeyCode::End => *cursor = total.saturating_sub(1),
+                KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Delete => {
+                    if let Some(e) = entries.get(*cursor) {
+                        source_to_unlink = Some(e.id);
+                    }
+                }
+                KeyCode::Enter => {
+                    if let Some(e) = entries.get(*cursor) {
+                        target_to_open = Some(e.id);
+                    }
+                }
+                _ => {}
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            (*target, source_to_unlink, target_to_open)
+        };
+
+        if let Some(to_open) = target_to_open {
+            self.modal = Modal::None;
+            self.open_search_result(to_open);
+            return;
+        }
+
+        if let Some(source) = source_to_unlink {
+            // Remove the source's outgoing link to `target`. That's
+            // what makes this the symmetric "delete" for backlinks:
+            // the link metadata lives on the source paragraph, so
+            // mutating it from the backlinks view is honest about
+            // what changes on disk.
+            match self.remove_paragraph_link(source, target) {
+                Ok(true) => {
+                    self.status = "backlink removed (source's outgoing link to current)".into();
+                    let entries = self.collect_backlink_entries(target);
+                    if entries.is_empty() {
+                        self.modal = Modal::None;
+                    } else if let Modal::BacklinkPicker { entries: e, cursor, scroll, .. } =
+                        &mut self.modal
+                    {
+                        *cursor = (*cursor).min(entries.len() - 1);
+                        *scroll = (*scroll).min(*cursor);
+                        *e = entries;
+                    }
+                }
+                Ok(false) => {
+                    self.status = "backlink not found (stale view)".into();
+                }
+                Err(e) => {
+                    self.status = format!("backlink remove: {e}");
+                }
+            }
+        }
+    }
+
+    fn draw_backlink_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::BacklinkPicker { entries, cursor, scroll, .. } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Backlinks ({}) ", entries.len());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+
+        let lines: Vec<Line<'_>> = entries
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .map(|(i, e)| {
+                // "←" arrow signals incoming direction (vs the
+                // "→" used by the outgoing-links picker).
+                let head = format!(" ← {}", e.title);
+                let path_dim = format!("    {}", e.slug_path);
+                let spans: Vec<Span> = vec![
+                    Span::raw(head),
+                    Span::styled(
+                        path_dim,
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                ];
+                let mut line = Line::from(spans);
+                if i == *cursor {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                line
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = if entries.is_empty() {
+            " (empty) · Esc close ".to_string()
+        } else {
+            format!(
+                " ↑↓ select · Enter opens · D removes source link · Esc closes    ({}/{}) ",
+                cursor + 1,
+                entries.len()
+            )
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     fn similar_picker_handle_key(&mut self, key: KeyEvent) {
         let (selected_id, total, was_enter) = {
             let Modal::SimilarPicker { entries, cursor, scroll } = &mut self.modal else {
@@ -11063,6 +13286,140 @@ impl App {
         );
     }
 
+    /// Open the per-paragraph goal-setting modal. Pre-fills the
+    /// input box with the current `target_words` (if any) so
+    /// editing a goal is one keystroke; empty / `0` on Enter
+    /// clears the goal.
+    fn open_paragraph_target_modal(&mut self) {
+        // 1.2.4+: when the tree has multi-select active, the
+        // modal opens for ALL marked paragraphs and the commit
+        // applies the same target to each. Prefill is empty
+        // (no single "current" to display across a set).
+        if !self.tree_marked.is_empty() {
+            self.modal = Modal::ParagraphTarget {
+                input: TextInput::new(),
+            };
+            self.status = format!(
+                "paragraph target × {}: type a number, Enter sets all, Esc cancels",
+                self.tree_marked.len()
+            );
+            return;
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view T: no paragraph open".into();
+            return;
+        };
+        let current = self
+            .hierarchy
+            .get(doc.id)
+            .and_then(|n| n.target_words)
+            .filter(|n| *n > 0);
+        let mut input = TextInput::new();
+        if let Some(n) = current {
+            for c in n.to_string().chars() {
+                input.insert_char(c);
+            }
+        }
+        self.modal = Modal::ParagraphTarget { input };
+        self.status =
+            "paragraph target: type a number, Enter to set, empty/0 to clear, Esc to cancel"
+                .into();
+    }
+
+    /// Commit `raw` as the open paragraph's `target_words`. Empty
+    /// or `"0"` clears the goal (sets to None). Non-numeric input
+    /// surfaces an error and leaves the existing value untouched.
+    ///
+    /// 1.2.4+: when `tree_marked` is non-empty, the same target
+    /// is applied to every marked paragraph instead of the open
+    /// one.
+    fn commit_paragraph_target(&mut self, raw: &str) {
+        let new_target: Option<i32> = if raw.is_empty() || raw == "0" {
+            None
+        } else {
+            match raw.parse::<i32>() {
+                Ok(n) if n > 0 => Some(n),
+                Ok(_) => {
+                    self.status = "view T: target must be > 0".into();
+                    return;
+                }
+                Err(_) => {
+                    self.status = format!("view T: `{raw}` is not a number");
+                    return;
+                }
+            }
+        };
+        // Multi-select path: apply the same target to every
+        // marked paragraph.
+        if !self.tree_marked.is_empty() {
+            let ids: Vec<Uuid> = self.tree_marked.iter().copied().collect();
+            let mut ok = 0usize;
+            let mut fail = 0usize;
+            for id in &ids {
+                if self.set_paragraph_target_now(*id, new_target).is_ok() {
+                    ok += 1;
+                } else {
+                    fail += 1;
+                }
+            }
+            self.status = match new_target {
+                Some(n) => format!(
+                    "target {n} set on {ok} paragraph(s){}",
+                    if fail > 0 { format!(" · {fail} failed") } else { String::new() }
+                ),
+                None => format!(
+                    "target cleared on {ok} paragraph(s){}",
+                    if fail > 0 { format!(" · {fail} failed") } else { String::new() }
+                ),
+            };
+            return;
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view T: paragraph closed during input".into();
+            return;
+        };
+        let id = doc.id;
+        match self.set_paragraph_target_now(id, new_target) {
+            Ok(()) => {
+                self.status = match new_target {
+                    Some(n) => format!("paragraph target: {} words", n),
+                    None => "paragraph target: cleared".into(),
+                };
+            }
+            Err(e) => self.status = format!("view T: {e}"),
+        }
+    }
+
+    /// Mutate `target_words` on the node `id` and persist via
+    /// `store.raw().update_metadata`. Used by both the Ctrl+V T
+    /// modal and the `ink.paragraph.set_target` Bund word.
+    /// Setting target to None also clears `target_hit_at_status`
+    /// so re-enabling the goal starts fresh.
+    pub(crate) fn set_paragraph_target_now(
+        &mut self,
+        id: Uuid,
+        target: Option<i32>,
+    ) -> std::result::Result<(), String> {
+        let node = self
+            .hierarchy
+            .get(id)
+            .ok_or_else(|| format!("paragraph {id} not in hierarchy"))?;
+        if node.kind != NodeKind::Paragraph {
+            return Err(format!("`{}` is not a paragraph", node.title));
+        }
+        let mut updated = node.clone();
+        updated.target_words = target;
+        if target.is_none() {
+            updated.target_hit_at_status = None;
+        }
+        self.store
+            .raw()
+            .update_metadata(id, updated.to_json())
+            .map_err(|e| format!("store update: {e}"))?;
+        self.reload_hierarchy();
+        Ok(())
+    }
+
     /// Open the writing-progress modal. Forces a cache refresh
     /// so the user always sees fresh numbers (the per-redraw
     /// path stays cheap by reading the cache).
@@ -11180,6 +13537,11 @@ impl App {
             "   streak: {}d (grace {}/{} per week)",
             snap.streak.days, snap.streak.grace_used, snap.streak.grace_per_week
         )));
+        lines.push(Line::from(format!(
+            "   active: {} today · {} this week",
+            format_active_duration(snap.active_seconds_today),
+            format_active_duration(snap.active_seconds_week),
+        )));
         lines.push(Line::from(""));
 
         // Per-book breakdown
@@ -11254,16 +13616,27 @@ impl App {
         let visible: Vec<Line> = lines.into_iter().skip(scroll).take(body_h).collect();
         f.render_widget(Paragraph::new(visible), text_rect);
 
-        // ── Chart panel ────────────────────────────────────────
-        // 30-day daily-words bar chart (ratatui's built-in
-        // BarChart — Apache-2.0-compatible).
+        // ── Chart column ───────────────────────────────────────
+        // Top half: 30-day daily-words sparkline.
+        // Bottom half: per-book progress bar chart (current %
+        // of target, capped at 100 for the bar height; bars
+        // can overshoot in the label).
+        let chart_split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
+            ])
+            .split(chart_rect);
+        let sparkline_rect = chart_split[0];
+        let bars_rect = chart_split[1];
+
         let data: Vec<u64> = snap
             .sparkline
             .iter()
             .map(|n| (*n).max(0) as u64)
             .collect();
-        let chart_inner = chart_rect;
-        if !data.is_empty() && chart_inner.height > 4 {
+        if !data.is_empty() && sparkline_rect.height > 4 {
             let sparkline = ratatui::widgets::Sparkline::default()
                 .block(
                     Block::default()
@@ -11272,7 +13645,7 @@ impl App {
                 )
                 .data(&data)
                 .style(Style::default().fg(self.theme.tree_script_fg));
-            f.render_widget(sparkline, chart_inner);
+            f.render_widget(sparkline, sparkline_rect);
         } else {
             f.render_widget(
                 Paragraph::new(Line::from(Span::styled(
@@ -11280,7 +13653,67 @@ impl App {
                     dim,
                 )))
                 .block(Block::default().borders(Borders::ALL).title(" 30d ")),
-                chart_inner,
+                sparkline_rect,
+            );
+        }
+
+        // Per-book BarChart (1.2.4+). Each user book with a
+        // target shows one bar = pct of target, capped at 100.
+        // The labels are short slugs so multiple books fit in
+        // the narrow chart column.
+        let book_bars: Vec<(String, u64)> = snap
+            .books
+            .iter()
+            .filter_map(|b| {
+                let target = b.target_words?;
+                if target <= 0 {
+                    return None;
+                }
+                let pct = (b.total_words.max(0) * 100 / target).clamp(0, 100) as u64;
+                // Slugify the label so a wide book title doesn't
+                // truncate the bar.
+                let label = slug::slugify(&b.label);
+                Some((label, pct))
+            })
+            .collect();
+        if !book_bars.is_empty() && bars_rect.height > 4 {
+            let data: Vec<(&str, u64)> =
+                book_bars.iter().map(|(s, n)| (s.as_str(), *n)).collect();
+            let max_label_w = data
+                .iter()
+                .map(|(s, _)| s.len())
+                .max()
+                .unwrap_or(8)
+                .max(6) as u16;
+            let bar_chart = ratatui::widgets::BarChart::default()
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" books: % of target "),
+                )
+                .data(&data)
+                .max(100)
+                .bar_width(max_label_w)
+                .bar_gap(1)
+                .bar_style(Style::default().fg(self.theme.tree_script_fg))
+                .value_style(
+                    Style::default()
+                        .fg(self.theme.modal_fg)
+                        .add_modifier(Modifier::BOLD),
+                );
+            f.render_widget(bar_chart, bars_rect);
+        } else {
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    " (no per-book targets set)",
+                    dim,
+                )))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" books "),
+                ),
+                bars_rect,
             );
         }
 
@@ -11288,6 +13721,125 @@ impl App {
         let hint = " ↑↓ / PgUp/PgDn scroll · r refresh · Esc close ";
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(hint, dim))),
+            footer_rect,
+        );
+    }
+
+    fn draw_snapshot_diff_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let (paragraph_title, when, rows, scroll) = match &self.modal {
+            Modal::SnapshotDiff {
+                paragraph_title,
+                when,
+                rows,
+                scroll,
+                ..
+            } => (
+                paragraph_title.clone(),
+                when.clone(),
+                rows.clone(),
+                *scroll,
+            ),
+            _ => return,
+        };
+
+        // Roomy modal — almost full screen so wide lines fit.
+        let width = area.width.saturating_sub(4).max(80);
+        let height = area.height.saturating_sub(2).max(20);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header =
+            format!(" Diff · `{paragraph_title}` · snapshot {when} → current ");
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Footer.
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        // Split body into two columns: snapshot (left) | current (right).
+        let split = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
+            ])
+            .split(body_rect);
+        let left_rect = split[0];
+        let right_rect = split[1];
+
+        let body_h = left_rect.height as usize;
+        let visible: Vec<&SnapshotDiffRow> =
+            rows.iter().skip(scroll).take(body_h).collect();
+
+        let mut left_lines: Vec<Line<'static>> = Vec::with_capacity(visible.len());
+        let mut right_lines: Vec<Line<'static>> = Vec::with_capacity(visible.len());
+
+        let removed_style = Style::default()
+            .fg(Color::Red)
+            .add_modifier(Modifier::BOLD);
+        let added_style = Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD);
+        let changed_style = Style::default().fg(Color::Yellow);
+        let dim = Style::default().add_modifier(Modifier::DIM);
+
+        for row in visible {
+            let (l_marker, r_marker, l_style, r_style) = match row.kind {
+                SnapshotDiffKind::Equal => (" ", " ", dim, dim),
+                SnapshotDiffKind::Removed => ("-", " ", removed_style, dim),
+                SnapshotDiffKind::Added => (" ", "+", dim, added_style),
+                SnapshotDiffKind::Changed => ("~", "~", changed_style, changed_style),
+            };
+            let left_text = row.left.clone().unwrap_or_default();
+            let right_text = row.right.clone().unwrap_or_default();
+            left_lines.push(Line::from(Span::styled(
+                format!("{l_marker} {left_text}"),
+                l_style,
+            )));
+            right_lines.push(Line::from(Span::styled(
+                format!("{r_marker} {right_text}"),
+                r_style,
+            )));
+        }
+
+        f.render_widget(Paragraph::new(left_lines), left_rect);
+        f.render_widget(Paragraph::new(right_lines), right_rect);
+
+        let hint = format!(
+            " ↑↓ / PgUp/PgDn / Home/End scroll · Esc back ({}/{}) ",
+            scroll + 1,
+            rows.len().max(1)
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
             footer_rect,
         );
     }
@@ -11347,6 +13899,26 @@ impl App {
             self.draw_progress_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::SnapshotDiff { .. }) {
+            self.draw_snapshot_diff_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::LinkPicker { .. }) {
+            self.draw_link_picker_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::BacklinkPicker { .. }) {
+            self.draw_backlink_picker_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::BookmarkPicker { .. }) {
+            self.draw_bookmark_picker_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::FuzzyParagraphPicker { .. }) {
+            self.draw_fuzzy_paragraph_picker_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -11370,6 +13942,56 @@ impl App {
             Modal::ScriptPicker { .. } => unreachable!("script picker handled above"),
             Modal::SimilarPicker { .. } => unreachable!("similar picker handled above"),
             Modal::Progress { .. } => unreachable!("progress modal handled above"),
+            Modal::SnapshotDiff { .. } => unreachable!("snapshot diff handled above"),
+            Modal::LinkPicker { .. } => unreachable!("link picker handled above"),
+            Modal::BacklinkPicker { .. } => unreachable!("backlink picker handled above"),
+            Modal::BookmarkPicker { .. } => unreachable!("bookmark picker handled above"),
+            Modal::FuzzyParagraphPicker { .. } =>
+                unreachable!("fuzzy paragraph picker handled above"),
+            Modal::ParagraphTarget { input } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Paragraph word-count target:",
+                        Style::default()
+                            .fg(self.theme.tree_script_fg)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter sets · empty/0 clears · Esc cancels",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Per-paragraph goal — Ctrl+V T ".to_string(),
+                    self.theme.tree_script_fg,
+                    body,
+                )
+            }
+            Modal::SaveMarkdown { input, label, .. } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(" Save markdown of `{label}` to:"),
+                        Style::default()
+                            .fg(self.theme.tree_script_fg)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter writes (default path pre-filled) · Esc cancels",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Save markdown — Ctrl+V ".to_string(),
+                    self.theme.tree_script_fg,
+                    body,
+                )
+            }
             Modal::HelpQuery { input } => {
                 let body = vec![
                     Line::from(""),
@@ -11645,7 +14267,7 @@ impl App {
                 }
                 body.push(Line::from(""));
                 body.push(Line::from(Span::styled(
-                    " ↑↓ navigate · Enter loads (current edits become dirty) · D / Del delete · Esc cancel ",
+                    " ↑↓ navigate · Enter loads · V diff vs current · D / Del delete · Esc cancel ",
                     Style::default().add_modifier(Modifier::DIM),
                 )));
                 (header, Color::Cyan, body)
@@ -11915,7 +14537,17 @@ impl App {
     }
 
     fn draw_tree(&self, f: &mut ratatui::Frame, area: Rect) {
-        let block = self.pane_block("Tree", Focus::Tree);
+        let tree_title: String = match self.link_pick_for {
+            Some((_, LinkPickDirection::Outgoing)) => {
+                " Tree · select paragraph to link · Esc cancels ".into()
+            }
+            Some((_, LinkPickDirection::Incoming)) => {
+                " Tree · select paragraph that will link to current · Esc cancels "
+                    .into()
+            }
+            None => "Tree".into(),
+        };
+        let block = self.pane_block(&tree_title, Focus::Tree);
         let inner = block.inner(area);
         f.render_widget(block, area);
 
@@ -12015,8 +14647,22 @@ impl App {
             let status_letter = status_letter(status_label);
             let status_badge_style = status_style(status_label, &self.theme);
             let mut spans: Vec<Span<'_>> = Vec::new();
+            // 1.2.4+: multi-select marker. A `✓` glyph in
+            // front of the kind-marker when this row is in
+            // `tree_marked`. Costs one char of indent at most.
+            let select_prefix = if self.tree_marked.contains(&node.id) {
+                "✓ "
+            } else if !self.tree_marked.is_empty()
+                && matches!(node.kind, NodeKind::Paragraph)
+            {
+                // Reserve the column when ANY row is marked so
+                // the list visually aligns.
+                "  "
+            } else {
+                ""
+            };
             spans.push(Span::styled(
-                format!("{indent}{marker}"),
+                format!("{indent}{select_prefix}{marker}"),
                 row_style,
             ));
             // Always reserve the badge column (a space when None) so
@@ -12031,6 +14677,44 @@ impl App {
                 },
             ));
             spans.push(Span::styled(display_title.to_string(), row_style));
+            // Per-paragraph progress glyph (1.2.4+). The full gauge
+            // lives on the editor pane's bottom border (see
+            // `editor_goal_footer_text`); the tree pane just shows
+            // a compact 1-char status pip so users can scan which
+            // paragraphs carry goals without losing room to a
+            // long auto-derived title.
+            if matches!(node.kind, NodeKind::Paragraph) {
+                if let Some(target) = node.target_words.filter(|n| *n > 0) {
+                    let pct =
+                        (node.word_count as i64 * 100 / target as i64).clamp(0, 999);
+                    let pip = if pct >= 100 {
+                        "●"
+                    } else if pct >= 75 {
+                        "◕"
+                    } else if pct >= 50 {
+                        "◑"
+                    } else if pct >= 25 {
+                        "◔"
+                    } else {
+                        "○"
+                    };
+                    let style = if pct >= 100 {
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD)
+                    } else if pct >= 75 {
+                        Style::default().fg(Color::LightGreen)
+                    } else if pct >= 50 {
+                        Style::default().fg(Color::Yellow)
+                    } else if pct >= 25 {
+                        Style::default().fg(Color::LightRed)
+                    } else {
+                        Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
+                    };
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(pip.to_string(), style));
+                }
+            }
             lines.push(Line::from(spans));
         }
 
@@ -12130,6 +14814,33 @@ impl App {
             return;
         }
 
+        // Per-paragraph goal footer (1.2.4+). Carve one row off
+        // the bottom of the editor area when the open paragraph
+        // has a target word-count set. Provides reliable space
+        // for the gauge — the tree pane can't fit it for long
+        // auto-derived titles.
+        let goal_footer = self.editor_goal_footer_text();
+        let (editor_rect, footer_rect) = match goal_footer.as_ref() {
+            Some(_) => {
+                let footer_h: u16 = 1;
+                let er = Rect {
+                    x: inner.x,
+                    y: inner.y,
+                    width: inner.width,
+                    height: inner.height.saturating_sub(footer_h),
+                };
+                let fr = Rect {
+                    x: inner.x,
+                    y: inner.y + inner.height.saturating_sub(footer_h),
+                    width: inner.width,
+                    height: footer_h,
+                };
+                (er, Some(fr))
+            }
+            None => (inner, None),
+        };
+        let inner = editor_rect;
+
         // Split-edit mode: divide the editor area into two halves; upper is
         // the live editor, lower is the read-only snapshot.
         let split_active = self.opened.as_ref().is_some_and(|d| d.split.is_some());
@@ -12151,6 +14862,51 @@ impl App {
         } else {
             self.draw_editor_unwrapped(f, inner);
         }
+
+        // Render the goal footer last so it sits on top of the
+        // textarea's bottom row (the carve-out above shrunk the
+        // textarea, leaving exactly one free row for us).
+        if let (Some((gauge, words, target)), Some(rect)) =
+            (goal_footer, footer_rect)
+        {
+            let pct = (words.max(0) * 100 / target.max(1)).clamp(0, 999);
+            let (gauge_str, _pct, gauge_style) =
+                format_progress_gauge(words, target);
+            let pct_str = format!(" {pct}%");
+            let counts =
+                format!("  {words}/{target} words");
+            let line = Line::from(vec![
+                Span::raw(" "),
+                Span::styled(gauge_str, gauge_style),
+                Span::styled(pct_str, gauge_style),
+                Span::styled(
+                    counts,
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+                Span::raw(format!("  · goal: {gauge}")),
+            ]);
+            f.render_widget(Paragraph::new(line), rect);
+        }
+    }
+
+    /// Compute the editor-pane goal footer text from the open
+    /// doc + its node metadata. Returns `(breadcrumb, words,
+    /// target)` when a goal is set, otherwise `None`. The
+    /// breadcrumb is the human-readable title chain
+    /// ("My book › Chapter one › The morning") rather than the
+    /// slug path — slugs are stale after a rename until we
+    /// re-derive them, and users think in titles anyway.
+    fn editor_goal_footer_text(&self) -> Option<(String, i64, i64)> {
+        let doc = self.opened.as_ref()?;
+        let node = self.hierarchy.get(doc.id)?;
+        let target = node.target_words.filter(|n| *n > 0)? as i64;
+        // Count live in-memory text via the same algorithm the
+        // save path uses so the footer matches what the save
+        // event will record.
+        let body = doc.textarea.lines().join("\n");
+        let words = crate::progress::count_words(&body);
+        let breadcrumb = self.title_breadcrumb(node.id);
+        Some((breadcrumb, words, target))
     }
 
     /// Render the lower (read-only) pane of split-edit mode. No cursor,
@@ -13195,8 +15951,31 @@ impl App {
             Some(goal) => parts.push(format!("today {today}/{goal}w")),
             None => parts.push(format!("today {today}w")),
         }
+        // Active-time chip — bare duration when no goal is set,
+        // `<spent>/<goal>` when there is one.
+        let active_goal_secs = self.cfg.goals.active_minutes_daily.max(0) * 60;
+        if active_goal_secs > 0 {
+            parts.push(format!(
+                "{}/{}",
+                format_active_duration(snap.active_seconds_today),
+                format_active_duration(active_goal_secs),
+            ));
+        } else if snap.active_seconds_today > 0 {
+            parts.push(format_active_duration(snap.active_seconds_today));
+        }
         if snap.streak.days > 0 {
             parts.push(format!("streak {}d", snap.streak.days));
+        }
+        // Outgoing-link count for the open paragraph (1.2.4+).
+        // Only shown when > 0 to keep the line short on the
+        // common "no links yet" case.
+        if let Some(doc) = self.opened.as_ref() {
+            if let Some(node) = self.hierarchy.get(doc.id) {
+                let n = node.linked_paragraphs.len();
+                if n > 0 {
+                    parts.push(format!("links {n}"));
+                }
+            }
         }
         // Surface the focused book's pace if a deadline is set.
         if let Some(book) = snap.books.iter().find(|b| {
@@ -13430,6 +16209,135 @@ impl App {
     /// Bund scripts that want the response read
     /// `ink.ai.history` later (e.g. in a hook firing on a
     /// subsequent action).
+    /// Multi-occurrence find/replace on the open buffer. Returns
+    /// the number of replacements made. Empty `find` returns 0
+    /// (defends against an infinite loop with `replace.contains(find)`).
+    pub(crate) fn ink_editor_replace_all(
+        &mut self,
+        find: &str,
+        replace: &str,
+    ) -> std::result::Result<i64, String> {
+        if find.is_empty() {
+            return Ok(0);
+        }
+        let doc = self
+            .opened
+            .as_mut()
+            .ok_or_else(|| "no paragraph open".to_string())?;
+        if doc.read_only {
+            return Err("paragraph is read-only".into());
+        }
+        // Pull the body, do all replacements at once with String::replace,
+        // then re-load the textarea. Avoids cursor-tracking complexity of
+        // doing N find/replace passes through tui-textarea.
+        let old_body = doc.textarea.lines().join("\n");
+        let new_body = old_body.replace(find, replace);
+        if new_body == old_body {
+            return Ok(0);
+        }
+        // Count occurrences by counting non-overlapping matches in the
+        // original body — same semantics as String::replace.
+        let count = old_body.matches(find).count() as i64;
+        let lines = body_to_lines(&new_body);
+        let mut ta = TextArea::new(lines);
+        ta.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
+        ta.set_line_number_style(Style::default().fg(Color::DarkGray));
+        doc.textarea = ta;
+        doc.dirty = true;
+        doc.last_activity = std::time::Instant::now();
+        Ok(count)
+    }
+
+    /// Open the `index`-th semantic-search hit for `query`.
+    /// Returns true when a paragraph was loaded, false when the
+    /// search came back empty or `index` is out of bounds.
+    pub(crate) fn ink_search_load(
+        &mut self,
+        query: &str,
+        index: usize,
+    ) -> std::result::Result<bool, String> {
+        if query.trim().is_empty() {
+            return Err("empty query".into());
+        }
+        let raw = self
+            .store
+            .search_text(query, (index + 1).max(8))
+            .map_err(|e| format!("search: {e}"))?;
+        let hits: Vec<crate::tui::search_results::SearchHit> = raw
+            .iter()
+            .filter_map(crate::tui::search_results::SearchHit::parse)
+            .collect();
+        let Some(hit) = hits.get(index) else {
+            return Ok(false);
+        };
+        let Some(node) = self.hierarchy.get(hit.id).cloned() else {
+            return Ok(false);
+        };
+        if node.kind != crate::store::node::NodeKind::Paragraph {
+            return Err(format!("hit `{}` is not a paragraph", node.title));
+        }
+        self.load_paragraph(&node)
+            .map_err(|e| format!("load_paragraph: {e:#}"))?;
+        Ok(true)
+    }
+
+    /// Snapshot the current AI inference state for `ink.ai.poll`.
+    /// Returns `(status, response, elapsed_ms)`; status is one of
+    /// `"none"` / `"streaming"` / `"done"` / `"error:<msg>"`.
+    /// `response` accumulates as the stream arrives.
+    pub(crate) fn ink_ai_poll(&self) -> (String, String, i64) {
+        let Some(inf) = self.inference.as_ref() else {
+            return ("none".into(), String::new(), 0);
+        };
+        let status = match &inf.status {
+            InferenceStatus::Streaming => "streaming".to_string(),
+            InferenceStatus::Done => "done".to_string(),
+            InferenceStatus::Error(e) => format!("error: {e}"),
+        };
+        let elapsed = inf.started_at.elapsed().as_millis() as i64;
+        (status, inf.response.clone(), elapsed)
+    }
+
+    /// Spawn an inference (same as `ink.ai.send`) and then poll
+    /// until it terminates or `timeout_ms` elapses. The TUI does
+    /// not redraw while the loop runs — that's the user's
+    /// trade-off when picking the blocking variant. Returns the
+    /// accumulated response, or `None` if the wait timed out (the
+    /// inference itself keeps streaming in the background and
+    /// can be read with `ink.ai.poll`).
+    pub(crate) fn ink_ai_send_blocking(
+        &mut self,
+        prompt: &str,
+        timeout_ms: i64,
+    ) -> std::result::Result<Option<String>, String> {
+        self.ink_ai_send(prompt)?;
+        let timeout = std::time::Duration::from_millis(timeout_ms.max(0) as u64);
+        let started = std::time::Instant::now();
+        loop {
+            // Pull whatever's accumulated in the stream channel.
+            self.pump_inference();
+            if let Some(inf) = self.inference.as_ref() {
+                match &inf.status {
+                    InferenceStatus::Done => {
+                        return Ok(Some(inf.response.clone()));
+                    }
+                    InferenceStatus::Error(e) => {
+                        return Err(format!("inference error: {e}"));
+                    }
+                    InferenceStatus::Streaming => {}
+                }
+            } else {
+                // No inference state — shouldn't happen since we
+                // just spawned one, but stay safe.
+                return Ok(None);
+            }
+            if started.elapsed() >= timeout {
+                return Ok(None);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
     pub(crate) fn ink_ai_send(&mut self, prompt: &str) -> Result<(), String> {
         if prompt.trim().is_empty() {
             return Err("empty prompt".into());
@@ -13470,18 +16378,59 @@ impl App {
         }
     }
 
-    /// Mutate one theme colour at runtime. `field` is the
-    /// theme struct's field name (`tree_paragraph_fg`,
-    /// `syntax_keyword`, etc.); `hex` is `#rrggbb` or a named
-    /// colour. Volatile — not persisted to HJSON; user re-runs
-    /// the script on next launch (or sets the colour in HJSON
-    /// for permanent change).
+    /// Mutate one theme colour at runtime AND persist the new
+    /// value to `inkhaven.hjson` so the change survives restart.
+    /// `field` is the theme struct's field name
+    /// (`tree_paragraph_fg`, `syntax_keyword`, etc.); `hex` is
+    /// `#rrggbb` or a named colour.
+    ///
+    /// In-memory update happens first; if HJSON write-back fails
+    /// (missing `theme:` block, disk error, etc.) the runtime
+    /// colour stays applied for the rest of this session — the
+    /// caller logs the persistence error but doesn't roll back.
+    /// That's deliberate: a hook running mid-session shouldn't
+    /// have its visual feedback yanked because the project's
+    /// HJSON happens to be locked.
     pub(crate) fn ink_theme_set(
         &mut self,
         field: &str,
         hex: &str,
     ) -> Result<(), String> {
-        self.theme.set_by_name(field, hex)
+        self.theme.set_by_name(field, hex)?;
+        // Persist back to inkhaven.hjson. Failure here is logged
+        // at WARN; the in-memory mutation already succeeded.
+        let config_path = self.layout.config_path();
+        let raw = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    target: "inkhaven::theme",
+                    "theme persist: read {}: {e}",
+                    config_path.display(),
+                );
+                return Ok(());
+            }
+        };
+        // HJSON colour literal is a double-quoted string.
+        let value_lit = format!("\"{}\"", hex);
+        match set_key_in_hjson_block(&raw, "theme", field, &value_lit) {
+            Ok(updated) => {
+                if let Err(e) = std::fs::write(&config_path, &updated) {
+                    tracing::warn!(
+                        target: "inkhaven::theme",
+                        "theme persist: write {}: {e}",
+                        config_path.display(),
+                    );
+                }
+            }
+            Err(reason) => {
+                tracing::warn!(
+                    target: "inkhaven::theme",
+                    "theme persist: rewrite `{field}` in `theme` block: {reason}",
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Open the BundInput modal. The user's typed string lands
@@ -13652,6 +16601,279 @@ fn truncate_title(title: &str, max_chars: usize) -> String {
     let mut out: String = chars.iter().take(max_chars - 1).collect();
     out.push('…');
     out
+}
+
+/// Render a 4-cell Unicode gauge + percent for a per-paragraph
+/// word-count goal. Each cell represents 25% of progress; the
+/// last partial cell uses a medium-shade glyph when the gauge
+/// is between thresholds. Colour buckets:
+///   <25% red, <50% yellow, <75% light-green, ≥100% green-bold,
+///   between 75 and 100 green-dim. Returns `(gauge_str, percent_int, style)`.
+/// Compute aligned line-by-line diff rows for the F6 → V
+/// snapshot-diff modal. Uses `similar`'s `TextDiff::from_lines`
+/// (Myers algorithm) to get a sequence of `(tag, line)` chunks,
+/// then aligns them into side-by-side rows.
+///
+/// Heuristic for `Changed` rows: when a Delete is immediately
+/// followed by an Insert, fuse the pair into one Changed row
+/// rather than rendering them as a removal + an addition on
+/// different lines. This is what most diff viewers do.
+fn compute_line_diff(left: &str, right: &str) -> Vec<SnapshotDiffRow> {
+    use similar::{ChangeTag, TextDiff};
+    let diff = TextDiff::from_lines(left, right);
+    let mut out: Vec<SnapshotDiffRow> = Vec::new();
+    // Walk the change list; on a Delete, peek to see if the
+    // next change is an Insert and fuse them.
+    let changes: Vec<_> = diff.iter_all_changes().collect();
+    let mut i = 0;
+    while i < changes.len() {
+        let c = &changes[i];
+        let text = c
+            .value()
+            .strip_suffix('\n')
+            .unwrap_or(c.value())
+            .to_string();
+        match c.tag() {
+            ChangeTag::Equal => {
+                out.push(SnapshotDiffRow {
+                    left: Some(text.clone()),
+                    right: Some(text),
+                    kind: SnapshotDiffKind::Equal,
+                });
+                i += 1;
+            }
+            ChangeTag::Delete => {
+                // Look ahead for a paired Insert to fuse.
+                if let Some(next) = changes.get(i + 1) {
+                    if next.tag() == ChangeTag::Insert {
+                        let next_text = next
+                            .value()
+                            .strip_suffix('\n')
+                            .unwrap_or(next.value())
+                            .to_string();
+                        out.push(SnapshotDiffRow {
+                            left: Some(text),
+                            right: Some(next_text),
+                            kind: SnapshotDiffKind::Changed,
+                        });
+                        i += 2;
+                        continue;
+                    }
+                }
+                out.push(SnapshotDiffRow {
+                    left: Some(text),
+                    right: None,
+                    kind: SnapshotDiffKind::Removed,
+                });
+                i += 1;
+            }
+            ChangeTag::Insert => {
+                out.push(SnapshotDiffRow {
+                    left: None,
+                    right: Some(text),
+                    kind: SnapshotDiffKind::Added,
+                });
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests_diff {
+    use super::*;
+
+    #[test]
+    fn identical() {
+        let r = compute_line_diff("a\nb\nc\n", "a\nb\nc\n");
+        assert_eq!(r.len(), 3);
+        assert!(r.iter().all(|x| x.kind == SnapshotDiffKind::Equal));
+    }
+
+    #[test]
+    fn pure_add() {
+        let r = compute_line_diff("a\n", "a\nb\n");
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].kind, SnapshotDiffKind::Equal);
+        assert_eq!(r[1].kind, SnapshotDiffKind::Added);
+        assert_eq!(r[1].right.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn pure_remove() {
+        let r = compute_line_diff("a\nb\n", "a\n");
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[1].kind, SnapshotDiffKind::Removed);
+        assert_eq!(r[1].left.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn fused_change() {
+        // Single-line rewrite fuses to Changed.
+        let r = compute_line_diff("foo\n", "bar\n");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].kind, SnapshotDiffKind::Changed);
+        assert_eq!(r[0].left.as_deref(), Some("foo"));
+        assert_eq!(r[0].right.as_deref(), Some("bar"));
+    }
+}
+
+/// Fuzzy-rank `entries` against `query`. Returns indices into
+/// the original Vec, ordered by score (descending). Scoring:
+///   3 — title starts with query (case-insensitive)
+///   2 — title contains query as a substring
+///   1 — slug path contains query as a substring
+///   0 — excluded
+/// Empty query keeps the original ordering and returns all
+/// indices (the picker treats this as "no filter applied").
+fn fuzzy_filter_entries(
+    entries: &[ScriptPickerEntry],
+    query: &str,
+) -> Vec<usize> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return (0..entries.len()).collect();
+    }
+    let mut scored: Vec<(i32, usize)> = Vec::new();
+    for (i, e) in entries.iter().enumerate() {
+        let tl = e.title.to_lowercase();
+        let sl = e.slug_path.to_lowercase();
+        let score = if tl.starts_with(&q) {
+            3
+        } else if tl.contains(&q) {
+            2
+        } else if sl.contains(&q) {
+            1
+        } else {
+            0
+        };
+        if score > 0 {
+            scored.push((score, i));
+        }
+    }
+    // Stable sort by descending score preserves the original
+    // (slug-path-sorted) order within each tier.
+    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.into_iter().map(|(_, i)| i).collect()
+}
+
+/// Render an active-time count in shorthand:
+///   <60s   → "0m"
+///   <60m   → "Nm"
+///   else   → "Hh Mm" (zero-padded minutes)
+/// Used by the status-bar widget + Ctrl+V G modal.
+fn format_active_duration(seconds: i64) -> String {
+    let s = seconds.max(0);
+    if s < 60 {
+        return "0m".to_string();
+    }
+    let minutes = s / 60;
+    if minutes < 60 {
+        return format!("{minutes}m");
+    }
+    let h = minutes / 60;
+    let m = minutes % 60;
+    format!("{h}h {m:02}m")
+}
+
+#[cfg(test)]
+mod tests_active_duration {
+    use super::format_active_duration;
+
+    #[test]
+    fn under_a_minute_is_zero() {
+        assert_eq!(format_active_duration(0), "0m");
+        assert_eq!(format_active_duration(45), "0m");
+    }
+
+    #[test]
+    fn minutes_only() {
+        assert_eq!(format_active_duration(60), "1m");
+        assert_eq!(format_active_duration(3540), "59m");
+    }
+
+    #[test]
+    fn hours_with_minutes() {
+        assert_eq!(format_active_duration(3600), "1h 00m");
+        assert_eq!(format_active_duration(3660), "1h 01m");
+        assert_eq!(format_active_duration(7325), "2h 02m");
+    }
+}
+
+fn format_progress_gauge(current: i64, target: i64) -> (String, i64, Style) {
+    if target <= 0 {
+        return ("[░░░░]".into(), 0, Style::default());
+    }
+    let pct = (current.max(0) * 100 / target).clamp(0, 999);
+    // 4 cells, eighths-resolution per cell would be cleaner but
+    // overkill — full / medium / light glyphs are enough.
+    let full_cells = (pct / 25).min(4) as usize;
+    let remainder = (pct % 25) as usize;
+    let mut gauge = String::with_capacity(6);
+    gauge.push('[');
+    for _ in 0..full_cells {
+        gauge.push('█');
+    }
+    if full_cells < 4 {
+        if remainder >= 12 {
+            gauge.push('▒');
+        } else if remainder > 0 {
+            gauge.push('░');
+        } else {
+            gauge.push('░');
+        }
+        for _ in (full_cells + 1)..4 {
+            gauge.push('░');
+        }
+    }
+    gauge.push(']');
+    let style = if pct >= 100 {
+        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+    } else if pct >= 75 {
+        Style::default().fg(Color::LightGreen)
+    } else if pct >= 50 {
+        Style::default().fg(Color::Yellow)
+    } else if pct >= 25 {
+        Style::default().fg(Color::LightRed)
+    } else {
+        Style::default()
+            .fg(Color::Red)
+            .add_modifier(Modifier::DIM)
+    };
+    (gauge, pct, style)
+}
+
+#[cfg(test)]
+mod tests_gauge {
+    use super::*;
+
+    #[test]
+    fn gauge_zero() {
+        let (g, p, _) = format_progress_gauge(0, 100);
+        assert_eq!(p, 0);
+        assert_eq!(g, "[░░░░]");
+    }
+
+    #[test]
+    fn gauge_partial() {
+        let (_, p, _) = format_progress_gauge(60, 100);
+        assert_eq!(p, 60);
+    }
+
+    #[test]
+    fn gauge_full() {
+        let (g, p, _) = format_progress_gauge(100, 100);
+        assert_eq!(p, 100);
+        assert_eq!(g, "[████]");
+    }
+
+    #[test]
+    fn gauge_over() {
+        let (g, p, _) = format_progress_gauge(250, 100);
+        assert_eq!(p, 250);
+        assert_eq!(g, "[████]");
+    }
 }
 
 /// Try to derive a usable title from a paragraph body. Skips Typst heading
