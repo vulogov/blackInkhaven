@@ -185,13 +185,23 @@ typst = "0.14"
 # typst-pdf — PDF emitter. Pairs with `typst::compile::<PagedDocument>()`
 # to produce the same `.pdf` bytes the external CLI would.
 typst-pdf = "0.14"
-# typst-kit — convenience kit for tools that embed Typst. We use
-# only the `fonts` feature: a fontdb-backed system-font searcher
-# that produces the `FontBook` + `Font` slots `World::book / font`
-# need. Skip `embed-fonts` (would bundle ~10 MB of Computer
-# Modern) and `downloads` (network-fetching `@preview/<pkg>` —
-# defer that until a user actually needs it).
-typst-kit = { version = "0.14", default-features = false, features = ["fonts"] }
+# typst-kit — convenience kit for tools that embed Typst. We enable:
+# * `fonts` — fontdb-backed system-font searcher.
+# * `embed-fonts` — bundle Computer Modern + Linux Libertine so
+#   manuscripts work on hosts without system fonts (gated at
+#   runtime by `typst_compile.bundle_fonts`; default on but
+#   skippable). Adds ~10 MB.
+# * `downloads` — `ureq`-based (no tokio) HTTP for `@preview/<pkg>`
+#   resolution. Adds ~1 MB of TLS + http parsing.
+# * `package` — package cache + `prepare_package` that gives us
+#   on-disk paths for resolved imports. Gated at runtime by
+#   `typst_compile.packages_enabled`; default on.
+typst-kit = { version = "0.14", default-features = false, features = [
+  "fonts",
+  "embed-fonts",
+  "downloads",
+  "packages",
+] }
 
 [build-dependencies]
 # Compiles the in-tree Typst tree-sitter grammar (`src/grammar/`)

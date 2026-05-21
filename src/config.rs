@@ -420,6 +420,40 @@ pub struct TypstCompileConfig {
     /// on every keystroke (cheap on small buffers; can stutter on
     /// chapter-sized pastes).
     pub diagnostics_idle_seconds: u64,
+    /// 1.2.5+: when `engine = "inprocess"`, upgrade the idle /
+    /// save diagnostic check from `typst-syntax` (parse only) to
+    /// a full `typst::compile` against the open paragraph in
+    /// isolation. Surfaces semantic errors (undefined functions,
+    /// type errors, missing fonts) the parser can't catch. Costs
+    /// 10–200 ms per check. **False positives are expected** when
+    /// the paragraph references book-level definitions from the
+    /// assembled preamble — turn off if your manuscript uses
+    /// custom `#show` rules. Has no effect when
+    /// `engine = "external"`.
+    pub semantic_diagnostics: bool,
+    /// 1.2.5+: ship Computer Modern and Linux Libertine inside
+    /// the inkhaven binary so the in-process engine can lay out
+    /// even on hosts without system fonts. Adds ~10 MB; turn off
+    /// if you're confident every host inkhaven runs on has the
+    /// fonts your manuscript needs. No effect when
+    /// `engine = "external"`.
+    pub bundle_fonts: bool,
+    /// 1.2.5+: also search the host's system fonts via fontdb.
+    /// On by default — most users want both their installed
+    /// fonts AND the embedded fallback set. Turn off for
+    /// reproducible builds where the only allowed fonts are the
+    /// embedded ones. No effect when `engine = "external"`.
+    pub use_system_fonts: bool,
+    /// 1.2.5+: when the in-process engine sees `@preview/<pkg>`
+    /// (or any non-local package id), use `typst-kit`'s
+    /// `PackageStorage` to fetch and unpack it from
+    /// packages.typst.org. Cached on disk in the platform's
+    /// standard cache directory (`~/Library/Caches/typst/packages`
+    /// on macOS, `~/.cache/typst/packages` on Linux,
+    /// `%LOCALAPPDATA%\typst\packages` on Windows). Turn off to
+    /// fail-fast on package imports — useful for hermetic
+    /// builds. No effect when `engine = "external"`.
+    pub packages_enabled: bool,
 }
 
 impl Default for TypstCompileConfig {
@@ -429,6 +463,10 @@ impl Default for TypstCompileConfig {
             engine: "external".to_owned(),
             diagnostics: true,
             diagnostics_idle_seconds: 2,
+            semantic_diagnostics: false,
+            bundle_fonts: true,
+            use_system_fonts: true,
+            packages_enabled: true,
         }
     }
 }
