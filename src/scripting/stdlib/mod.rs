@@ -11,6 +11,7 @@
 pub mod helpers;
 mod ink;
 pub mod io;
+mod keymap;
 
 use anyhow::Result;
 use rust_multistackvm::multistackvm::VM;
@@ -19,9 +20,11 @@ use rust_multistackvm::multistackvm::VM;
 /// once from `init_adam()` after `Bund::new()` has loaded bundcore's
 /// own stdlib. Order matters: we register `io` *after* `ink` so the
 /// buffered print/println overrides win over bundcore's stdout
-/// versions.
+/// versions. `keymap` lands last because it's the most powerful and
+/// the policy sandbox blocks it by default.
 pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     ink::register(vm)?;
     io::register(vm)?;
+    keymap::register(vm)?;
     Ok(())
 }
