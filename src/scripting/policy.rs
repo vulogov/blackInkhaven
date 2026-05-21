@@ -179,6 +179,12 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.pane.close", category::EDITOR_READ),
     ("ink.pane.clear", category::EDITOR_READ),
     ("ink.pane.line", category::EDITOR_READ),
+
+    // ── editor_read (Bund input modal — UI prompt, hook-driven) ──
+    // ink.input only opens a modal; the typed string flows back
+    // through `hooks::fire(name, …)` which honours its own
+    // policy gate when the hook itself calls write words.
+    ("ink.input", category::EDITOR_READ),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All

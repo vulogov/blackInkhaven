@@ -89,6 +89,10 @@ pub fn register(vm: &mut VM) -> Result<()> {
     vm.register_inline("ink.pane.line".to_string(), ink_pane_line)
         .map_err(|e| anyhow!("register ink.pane.line: {e}"))?;
 
+    // ── Bund input modal ──────────────────────────────────────
+    vm.register_inline("ink.input".to_string(), ink_input)
+        .map_err(|e| anyhow!("register ink.input: {e}"))?;
+
     Ok(())
 }
 
@@ -488,5 +492,30 @@ fn do_ink_pane_line(vm: &mut VM) -> Result<&mut VM> {
     let text = value_to_string(pull(vm, tag)?, "text", tag)?;
     let routed = with_app(tag, |app| Ok(app.append_to_bund_pane(&text, true)))?;
     push(vm, Value::from_bool(routed));
+    Ok(vm)
+}
+
+// ── ink.input ────────────────────────────────────────────────────────
+// Stack: ( prompt hook -- )
+// Open the BundInput modal showing `prompt`. When the user
+// presses Enter, the typed string is pushed onto Adam's
+// workbench and the lambda named `hook` is invoked. Esc closes
+// the modal without firing. Hook-driven rather than synchronous
+// because a blocking modal would freeze autosave + inference
+// polling for as long as the user takes to type.
+
+fn ink_input(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_input(vm).map_err(to_bund_err)
+}
+
+fn do_ink_input(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.input";
+    require_depth(vm, 2, tag)?;
+    let hook = value_to_string(pull(vm, tag)?, "hook", tag)?;
+    let prompt = value_to_string(pull(vm, tag)?, "prompt", tag)?;
+    with_app(tag, |app| {
+        app.open_bund_input(&prompt, &hook);
+        Ok(())
+    })?;
     Ok(vm)
 }
