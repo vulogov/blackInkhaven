@@ -2437,7 +2437,7 @@ impl App {
             // pane. Generic suffix (· H help · Esc cancel) is shared.
             self.status = match self.focus {
                 Focus::Tree | Focus::SearchBar => {
-                    "META · C/S/P add · D delete · T cycle-type · U/J ↑/↓ reorder · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel"
+                    "META · C/S/P add · D delete · M morph-type · U/J ↑/↓ reorder · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel"
                         .into()
                 }
                 Focus::Editor => {
@@ -5110,11 +5110,13 @@ impl App {
                 self.open_delete_modal();
                 true
             }
-            // T cycles the cursor row's leaf type
+            // M morphs the cursor row's leaf type
             // (Paragraph(typst) → Paragraph(hjson) → Script(bund)).
             // Only valid on text leaves; branches / images get a
-            // status-bar refusal.
-            KeyCode::Char('T') | KeyCode::Char('t') => {
+            // status-bar refusal. (T was already retitle in the
+            // editor meta table; M is the next unclaimed letter
+            // — "mode" / "morph" — and is free in every pane.)
+            KeyCode::Char('M') | KeyCode::Char('m') => {
                 self.cycle_leaf_type();
                 true
             }
