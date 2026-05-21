@@ -154,6 +154,10 @@ pub enum Action {
     BundNewScript,
     #[serde(rename = "bund.open_eval_modal")]
     BundOpenEvalModal,
+    /// Ctrl+Z ? — open the script picker. Lists scripts in the
+    /// cursor's branch; `A` toggles to the `Scripts` system book.
+    #[serde(rename = "bund.open_script_picker")]
+    BundOpenScriptPicker,
 
     /// Explicit "this chord does nothing" — overlay entries can
     /// set `action: "none"` to disable a default chord.
@@ -217,6 +221,7 @@ impl Action {
             Action::BundRunBuffer => "run buffer".into(),
             Action::BundNewScript => "new script".into(),
             Action::BundOpenEvalModal => "eval".into(),
+            Action::BundOpenScriptPicker => "pick script".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) => format!("λ {name}"),
@@ -318,6 +323,7 @@ impl KeyBindings {
                 entry("r", Action::BundRunBuffer, Scope::Any),
                 entry("n", Action::BundNewScript, Scope::Any),
                 entry("e", Action::BundOpenEvalModal, Scope::Any),
+                entry("?", Action::BundOpenScriptPicker, Scope::Any),
             ],
         }
     }

@@ -171,6 +171,14 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.typst.assemble", category::STORE_WRITE),
     ("ink.typst.build", category::STORE_WRITE),
     ("ink.typst.take", category::STORE_WRITE),
+
+    // ── editor_read (Bund output pane is non-destructive UI) ──
+    // Pane open/close/clear/line only mutate transient modal
+    // state, recoverable with Esc, never touch the project.
+    ("ink.pane.show", category::EDITOR_READ),
+    ("ink.pane.close", category::EDITOR_READ),
+    ("ink.pane.clear", category::EDITOR_READ),
+    ("ink.pane.line", category::EDITOR_READ),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
