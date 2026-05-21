@@ -7,31 +7,49 @@ backup pipeline — so the entire writing workflow lives inside one binary,
 without leaving the terminal.
 
 Your manuscript is organised as a hierarchy of `.typ` files
-(Book → Chapter → Subchapter → Paragraph), with first-class **image**
-leaves alongside paragraphs. Inkhaven stores metadata in a local DuckDB
-database, indexes every paragraph for full-text and semantic search,
-keeps versioned snapshots, and streams answers from your chosen LLM
-provider — six are bundled (**Gemini**, **Claude**, **OpenAI**,
-**DeepSeek**, **Grok**, **Ollama**) and any model
-[genai](https://github.com/jeremychone/rust-genai) routes is one
-HJSON line away.
+(Book → Chapter → Subchapter → Paragraph), with first-class
+**image** (`.png` / `.jpg` / …), **HJSON data** (`.hjson`), and
+**Bund script** (`.bund`) leaves alongside paragraphs. Inkhaven
+stores metadata in a local DuckDB database, indexes every text
+node for full-text and semantic search, keeps versioned
+snapshots, embeds the [Bund](Documentation/Bund/README.md)
+scripting language for hooks + custom rules, and streams answers
+from your chosen LLM provider — six are bundled (**Gemini**,
+**Claude**, **OpenAI**, **DeepSeek**, **Grok**, **Ollama**) and any
+model [genai](https://github.com/jeremychone/rust-genai) routes is
+one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.1
+## Latest release · 1.2.1
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.1.md`](Documentation/RELEASE_NOTES/1.1.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.1.md`](Documentation/RELEASE_NOTES/1.2.1.md)
 
 Headlines:
-- First-class **images** in the project tree with a ratatui-image preview.
-- **Book assembly → typst compile → PDF** pipeline (`Ctrl+B A` / `B` / `O`).
-- HJSON-driven `settings.typ` — change paper, fonts, margins, line spacing in config; the rest is synthesised on every build.
-- Six bundled LLM providers, live-switchable via `Ctrl+B L`.
-- **AI full-screen layout** (`Ctrl+B K`) with persistent chat history, chat search, and a turn-selection mode that pipes Assistant replies into the editor.
-- **Document status workflow** — cycle `None → Napkin → First → … → Ready` with `Ctrl+B R`; filter the project by status with `Ctrl+B 1..7`.
-- **Typewriter mode** (`Ctrl+B W`) hides every pane but the editor.
-- **`inkhaven import-typst-help`** seeds the Help book with a curated typst reference so F1 RAG answers typst questions.
-- HJSON as a first-class node type with syntax highlighting.
+- **bdslib + tree-sitter-typst absorbed in-tree.** All path-deps gone;
+  `cargo publish` works. 998 → 635 transitive crates in `Cargo.lock`.
+- **Bund scripting embedded** as inkhaven's user-customisation surface.
+  Six read-only `ink.*` stdlib words let scripts walk the project; five
+  hook points (`hook.on_save`, `hook.on_create`, `hook.on_rename`,
+  `hook.on_snapshot`, `hook.on_delete`) fire after every store mutation.
+- **First-class `.bund` Script nodes** in the tree, auto-loaded into the
+  Adam VM at project open. New **Scripts** system book (9th — between
+  Typst and Help). `Ctrl+Z N` creates one; `Ctrl+Z R` runs the open
+  buffer; `Ctrl+Z E` pops a one-shot eval modal.
+- **Data-driven keymap.** ~40 chord-action mappings moved into a runtime
+  table. Both [HJSON `keys.bindings`](Documentation/KEYS_REASSIGNMENT.md)
+  and the **`ink.key.*`** Bund stdlib (sandbox-gated) can rewrite chords.
+  Status-bar hints auto-update from the live table.
+- **`Ctrl+B M` cycle-type** — flip a leaf's flavour:
+  `Paragraph(typst) → Paragraph(hjson) → Script(bund)`. Renames the file
+  on disk and stamps metadata in one atomic step.
+- **Sandbox policy** for scripts — `fs_write` / `net` / `shell` /
+  `code_eval` / `keymap` denied out of the box, opt in per category.
+- **Tree glyphs** per leaf kind: `¶` typst · `❴` hjson · `λ` script · `▣` image.
+- **Bund syntax highlighter** with comment / string / number / keyword colours.
+- **Background sync**: dirty-flag + DuckDB CHECKPOINT, default cadence 60s → 600s. Idle editors produce zero disk traffic.
+- New: [Bund tutorial](Documentation/Bund/BUND_TUTORIAL.md) and
+  [keys reassignment guide](Documentation/KEYS_REASSIGNMENT.md).
 
 Every prior release lives under [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
 
@@ -54,12 +72,15 @@ Every prior release lives under [`Documentation/RELEASE_NOTES/`](Documentation/R
 - **Multilingual.** Snowball stemmers and multilingual embeddings make
   Russian, German, French, Spanish, Italian and others first-class. The
   shipped defaults cover English and Russian.
-- **Help, characters, places, artefacts — built in.** Eight system
-  books are seeded on every project: `Notes`, `Research`, `Prompts`,
-  `Places`, `Characters`, `Artefacts`, `Typst`, `Help`. Mentions of
-  names from these books light up in the editor (cyan / amber / peach /
-  underline). `Ctrl+B P` / `C` / `Y` / `G` query each book via RAG.
-  `F1` answers questions about Inkhaven itself by RAG over `Help`.
+- **Help, characters, places, artefacts, scripts — built in.** Nine
+  system books are seeded on every project: `Notes`, `Research`,
+  `Prompts`, `Places`, `Characters`, `Artefacts`, `Typst`, `Scripts`,
+  `Help`. Mentions of names from the lexicon books light up in the
+  editor (cyan / amber / peach / underline). `Ctrl+B P` / `C` / `Y` /
+  `G` query each via RAG. `F1` answers questions about Inkhaven itself
+  by RAG over `Help`. `Scripts` (added in 1.2) holds `.bund` source
+  files auto-loaded into the embedded Bund scripting VM at project
+  open — see [`Documentation/Bund/`](Documentation/Bund/README.md).
 - **First-class images.** Drop PNG / JPG / WebP / SVG into the tree;
   Book assembly emits the right `wrap_image_*` calls and ships the
   bytes into the typst tree. `Ctrl+B P` inside `#image("…")` opens a
