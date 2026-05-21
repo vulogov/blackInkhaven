@@ -13169,9 +13169,9 @@ fn format_entry_line(e: &quickref::Entry, col_w: usize) -> Line<'static> {
     }
     let key_field = 14;
     // Pad/truncate the key to a fixed width so descriptions align.
-    let key_padded = pad_or_trim(e.key, key_field);
+    let key_padded = pad_or_trim(&e.key, key_field);
     let desc_max = col_w.saturating_sub(key_field + 2);
-    let desc = truncate_to_chars(e.desc, desc_max);
+    let desc = truncate_to_chars(&e.desc, desc_max);
     let line = format!(" {} {}", key_padded, desc);
     Line::from(vec![
         Span::styled(
