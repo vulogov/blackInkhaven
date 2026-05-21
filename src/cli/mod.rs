@@ -1,6 +1,7 @@
 pub mod add;
 pub mod ai;
 pub mod backup;
+pub mod bund;
 pub mod delete;
 pub mod export;
 pub mod import_help;
@@ -91,9 +92,9 @@ pub enum Command {
         limit: usize,
     },
 
-    /// Re-index all `.typ` files from disk into bdslib.
+    /// Re-index all `.typ` files from disk into the document store.
     Reindex {
-        /// Remove bdslib records whose file is missing on disk.
+        /// Remove store records whose file is missing on disk.
         #[arg(long)]
         prune: bool,
         /// Register every orphan .typ file under the deepest hierarchy
@@ -158,6 +159,15 @@ pub enum Command {
         to: PathBuf,
     },
 
+    /// Evaluate a Bund expression against the Adam VM and print the
+    /// top of the workbench. Phase-0 smoke command — does not open
+    /// the project store. Use this to verify the scripting layer
+    /// works on your install and to experiment with Bund syntax.
+    Bund {
+        /// The Bund script to run, e.g. `"40 2 + ."`.
+        code: String,
+    },
+
     /// Launch the TUI editor (default if no subcommand is given).
     Tui,
 }
@@ -168,6 +178,10 @@ pub enum CliNodeKind {
     Chapter,
     Subchapter,
     Paragraph,
+    /// Bund script — a `.bund` file `bund.eval`'d into Adam at
+    /// project open. Default home is the `Scripts` system book,
+    /// but Scripts can also live inside any user Book.
+    Script,
 }
 
 impl From<CliNodeKind> for NodeKind {
@@ -177,6 +191,7 @@ impl From<CliNodeKind> for NodeKind {
             CliNodeKind::Chapter => NodeKind::Chapter,
             CliNodeKind::Subchapter => NodeKind::Subchapter,
             CliNodeKind::Paragraph => NodeKind::Paragraph,
+            CliNodeKind::Script => NodeKind::Script,
         }
     }
 }
@@ -238,6 +253,7 @@ impl Cli {
             Command::Restore { archive, to } => {
                 restore::run(&archive, &to).map_err(Into::into)
             }
+            Command::Bund { code } => bund::run(&code, &project),
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
         }
     }

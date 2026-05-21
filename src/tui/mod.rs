@@ -1,10 +1,12 @@
 mod app;
+mod bund_highlight;
 mod file_picker;
 mod focus;
 mod highlight;
 mod hjson_highlight;
 mod input;
-mod keymap;
+pub(crate) mod keybind;
+pub(crate) mod keymap;
 mod lexicon;
 mod markdown;
 mod quickref;

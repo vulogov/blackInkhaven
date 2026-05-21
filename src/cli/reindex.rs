@@ -27,7 +27,10 @@ pub fn run(project: &Path, prune: bool, adopt: bool) -> Result<()> {
     let mut known_paths: HashSet<PathBuf> = HashSet::new();
 
     for node in h.iter() {
-        if node.kind != NodeKind::Paragraph {
+        // Reindex sees text-leaf kinds: Paragraph (.typ / .hjson)
+        // and Script (.bund). Images are binary and have no
+        // useful "did the disk drift?" semantic at this layer.
+        if !matches!(node.kind, NodeKind::Paragraph | NodeKind::Script) {
             continue;
         }
         let Some(rel) = node.file.as_ref() else {
@@ -79,7 +82,7 @@ pub fn run(project: &Path, prune: bool, adopt: bool) -> Result<()> {
         orphans.len()
     );
     if prune {
-        eprintln!("  pruned {pruned} missing record(s) from bdslib");
+        eprintln!("  pruned {pruned} missing record(s) from the store");
     } else if !missing_ids.is_empty() {
         eprintln!("  (re-run with --prune to remove records for missing files)");
     }

@@ -35,6 +35,12 @@ pub struct Config {
     pub typst_layout: TypstLayoutConfig,
     #[serde(default)]
     pub images: ImagesConfig,
+    /// Bund scripting sandbox policy. Defaults deny destructive
+    /// categories (fs_write, net, shell, code_eval); writers opt
+    /// in by listing the categories or words they want to allow.
+    /// See `src/scripting/policy.rs`.
+    #[serde(default)]
+    pub scripting: crate::scripting::policy::Policy,
     /// Primary writing language of the project. Drives:
     /// * Snowball stemmers for the editor's Places/Characters highlight
     ///   overlay (overrides `editor.stemming.languages` when non-empty).
@@ -53,15 +59,18 @@ pub struct Config {
     /// project root; absolute paths are used verbatim.
     #[serde(default = "default_artefacts_directory")]
     pub artefacts_directory: String,
-    /// Seconds between background calls to `Store::sync()` (flushes HNSW
-    /// index + DuckDB checkpoint). 0 disables the background sync; explicit
-    /// sync-on-save still fires.
+    /// Seconds between background calls to `Store::sync()`, which
+    /// flushes the HNSW vector index to disk. Acts as a safety net —
+    /// every explicit mutation in `src/store/` already calls
+    /// `sync()` on its own. The tick is cheap when the index is
+    /// clean (dirty-flag short-circuit), so the default cadence is
+    /// generous. `0` disables the background task entirely.
     #[serde(default = "default_sync_interval")]
     pub sync_interval_seconds: u64,
 }
 
 fn default_sync_interval() -> u64 {
-    60
+    600
 }
 
 fn default_prompts_path() -> PathBuf {
@@ -98,6 +107,7 @@ impl Default for Config {
             typst_fonts: TypstFontsConfig::default(),
             typst_layout: TypstLayoutConfig::default(),
             images: ImagesConfig::default(),
+            scripting: crate::scripting::policy::Policy::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
             artefacts_directory: default_artefacts_directory(),
@@ -686,6 +696,7 @@ pub struct ThemeConfig {
     pub tree_subchapter_fg: String,
     pub tree_paragraph_fg: String,
     pub tree_image_fg: String,
+    pub tree_script_fg: String,
 
     // Editor pane header — the trailing `L{row} C{col}` cursor read-out
     // gets this colour so it's distinguishable from the title.
@@ -753,6 +764,7 @@ impl Default for ThemeConfig {
             tree_subchapter_fg: "#94e2d5".into(), // teal — subchapter
             tree_paragraph_fg: "#cdd6f4".into(),  // base text — keep prose calm
             tree_image_fg: "#fab387".into(),       // peach — media accent
+            tree_script_fg: "#cba6f7".into(),      // mauve — code accent
 
             editor_position_fg: "#89dceb".into(), // sky — cursor read-out
             ai_scope_fg: "#fab387".into(),        // peach — F9 scope chip
@@ -1001,6 +1013,34 @@ pub struct KeyBindings {
     /// D delete, ↑/↓ reorder, Esc cancel). Replaces the old `Ctrl+Shift+*`
     /// chords which many terminals and multiplexers re-encode unhelpfully.
     pub meta_prefix: String,
+    /// Bund meta-prefix chord. Parallel to `meta_prefix` but for
+    /// scripting actions (R run buffer, E eval, N new script).
+    /// Defaults to Ctrl+Z since tui-textarea's undo is bound to
+    /// Ctrl+U in this codebase. Set to an empty string to disable
+    /// the Bund chord entirely.
+    pub bund_prefix: String,
+    /// User overlay for chord-action bindings under the meta- and
+    /// bund-prefixes. Each entry is `{ chord, action, scope? }`.
+    /// The `chord` string uses shorthand `"<prefix> <suffix>"`
+    /// (e.g. `"Ctrl+b y"` rebinds Ctrl+B Y). `action` is the
+    /// dotted form (`"tree.morph_type"`, `"bund.run_buffer"`,
+    /// `"none"` to disable). `scope` is one of
+    /// `"any"` / `"editor"` / `"tree"` / `"ai"` and defaults to
+    /// `"any"`. Hard-blocked chords (Ctrl+Q, meta_prefix,
+    /// bund_prefix) are rejected with a clear error.
+    #[serde(default)]
+    pub bindings: Vec<BindingOverride>,
+}
+
+/// Single entry inside `keys.bindings`. Parsed at startup into a
+/// `keybind::BindingEntry` and applied on top of
+/// `KeyBindings::defaults()`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BindingOverride {
+    pub chord: String,
+    pub action: String,
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 impl Default for KeyBindings {
@@ -1014,6 +1054,8 @@ impl Default for KeyBindings {
             page_up: "PageUp".into(),
             page_down: "PageDown".into(),
             meta_prefix: "Ctrl+b".into(),
+            bund_prefix: "Ctrl+z".into(),
+            bindings: Vec::new(),
         }
     }
 }

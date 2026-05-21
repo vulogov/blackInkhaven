@@ -9,6 +9,50 @@ pub struct KeyChord {
 }
 
 impl KeyChord {
+    /// Format the chord in the same `Ctrl+key` / `Shift+F1` /
+    /// `PageUp` shape the parser accepts. Used by `ink.key.list`
+    /// and the auto-generated status-bar hints so the user can
+    /// copy-paste an output chord back into HJSON unchanged.
+    pub fn to_display_string(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if self.modifiers.contains(KeyModifiers::CONTROL) {
+            parts.push("Ctrl".into());
+        }
+        if self.modifiers.contains(KeyModifiers::ALT) {
+            parts.push("Alt".into());
+        }
+        if self.modifiers.contains(KeyModifiers::SHIFT) {
+            parts.push("Shift".into());
+        }
+        if self.modifiers.contains(KeyModifiers::SUPER) {
+            parts.push("Super".into());
+        }
+        let key = match self.code {
+            KeyCode::Char(' ') => "Space".to_string(),
+            KeyCode::Char(c) => c.to_string(),
+            KeyCode::Tab => "Tab".to_string(),
+            KeyCode::BackTab => "Tab".to_string(),
+            KeyCode::Enter => "Enter".to_string(),
+            KeyCode::Esc => "Esc".to_string(),
+            KeyCode::Backspace => "Backspace".to_string(),
+            KeyCode::Delete => "Delete".to_string(),
+            KeyCode::Insert => "Insert".to_string(),
+            KeyCode::Home => "Home".to_string(),
+            KeyCode::End => "End".to_string(),
+            KeyCode::PageUp => "PageUp".to_string(),
+            KeyCode::PageDown => "PageDown".to_string(),
+            KeyCode::Up => "Up".to_string(),
+            KeyCode::Down => "Down".to_string(),
+            KeyCode::Left => "Left".to_string(),
+            KeyCode::Right => "Right".to_string(),
+            KeyCode::F(n) => format!("F{n}"),
+            KeyCode::Null => "Null".to_string(),
+            other => format!("{other:?}"),
+        };
+        parts.push(key);
+        parts.join("+")
+    }
+
     pub fn parse(s: &str) -> Result<Self, String> {
         let mut mods = KeyModifiers::empty();
         let mut code: Option<KeyCode> = None;
@@ -101,7 +145,10 @@ fn parse_code(name: &str) -> Result<KeyCode, String> {
         "down" => KeyCode::Down,
         "left" => KeyCode::Left,
         "right" => KeyCode::Right,
-        s if s.starts_with('f') && s.len() <= 3 => {
+        // `fN` where N is 1..24. Length bound 2..=3 excludes the
+        // bare letter "f" (which is a normal Char chord) but
+        // includes "f1" through "f24".
+        s if s.starts_with('f') && s.len() >= 2 && s.len() <= 3 => {
             let n: u8 = s[1..]
                 .parse()
                 .map_err(|_| format!("bad function key `{name}`"))?;

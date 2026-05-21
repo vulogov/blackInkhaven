@@ -1,12 +1,12 @@
 [package]
 name = "inkhaven"
-version = "1.1.0"
+version = "1.2.1"
 edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
 rust-version = "1.85"
-license = "Apache-2.0"
-description = "Inkhaven — TUI literary work editor for Typst books, backed by bdslib"
+license = "Apache-2.0 AND MIT"
+description = "Inkhaven — TUI literary work editor for Typst books"
 authors = ["Vladimir Ulogov <vulogov@gmail.com>"]
 repository = "https://github.com/vulogov/blackInkhaven"
 homepage = "https://github.com/vulogov/blackInkhaven"
@@ -21,12 +21,6 @@ categories = ["command-line-utilities", "text-editors", "text-processing"]
 #   * `cargo binstall inkhaven` (prebuilts; see [package.metadata.binstall])
 #   * Direct download from https://github.com/vulogov/blackInkhaven/releases
 #
-# crates.io publishing is intentionally disabled — see `publish = false`
-# below. If you ever want to flip to crates.io, bdslib and
-# tree-sitter-typst would need to be published first (see git history
-# for the path-dep arrangement that almost-works).
-publish = false
-
 # `cargo-binstall` metadata: tells `cargo binstall inkhaven` where to
 # fetch a prebuilt for the current host triple. The asset filenames
 # below must match what `.github/workflows/release.yml` uploads.
@@ -48,11 +42,17 @@ name = "inkhaven"
 path = "src/main.rs"
 
 [dependencies]
-# Storage / search. Vendored at `vendor/bdslib/` (cloned from
-# github.com/vulogov/bdslib) so the source tree is self-contained and
-# `cargo install --git` works in one shot without resolving against
-# crates.io.
-bdslib = { path = "vendor/bdslib" }
+# Storage / search. Inkhaven owns its own slim storage layer at
+# `src/storage/` — DuckDB-backed metadata + blob stores, an HNSW vector
+# index via `vecstore`, and a fastembed wrapper for multilingual
+# embeddings. This module replaces what used to be a dependency on
+# `bdslib` (vendored at vendor/bdslib/), shedding ~300+ transitive
+# crates that inkhaven never reached (Tantivy, augurs, axum, …).
+duckdb = { version = "1", features = ["bundled", "r2d2"] }
+fastembed = "5"
+vecstore = "1"
+r2d2 = "0.8"
+parking_lot = "0.12"
 
 # CLI
 clap = { version = "4", features = ["derive", "wrap_help"] }
@@ -62,7 +62,7 @@ serde-hjson = "1.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Async runtime (required by bdslib + genai)
+# Async runtime (required by genai)
 tokio = { version = "1", features = [
   "macros",
   "rt-multi-thread",
@@ -84,17 +84,27 @@ tui-textarea = { version = "0.7", default-features = false, features = [
   "search",
 ] }
 
-# Syntax highlighting. Pinned to 0.20 because uben0/tree-sitter-typst's
-# Cargo.toml is locked at `tree-sitter ~0.20.10` and the Language type is
-# ABI-incompatible across major versions. Bump when the grammar moves.
+# Syntax highlighting. Pinned to 0.20 because the in-tree Typst grammar
+# under `src/grammar/` is generated against tree-sitter 0.20's parser
+# ABI, and the `Language` type is ABI-incompatible across major
+# versions. Bump alongside any grammar refresh.
 tree-sitter = "0.20"
 tree-sitter-highlight = "0.20"
-# Vendored at `vendor/tree-sitter-typst/` (cloned from
-# github.com/uben0/tree-sitter-typst). Same rationale as bdslib above.
-tree-sitter-typst = { path = "vendor/tree-sitter-typst" }
 
 # AI clients (one crate covers Gemini, DeepSeek, OpenAI, Anthropic, …)
 genai = "=0.6.0-beta.20"
+
+# Bund scripting language (Vladimir's own VM stack). Exact-pinned to
+# the versions inkhaven was built against — bump in lockstep when
+# refreshing the scripting surface. See `src/scripting/`.
+bundcore = "=0.7.0"
+bund_language_parser = "=0.14.0"
+rust_multistackvm = "=0.38.0"
+rust_dynamic = "=0.49.0"
+# bundcore / rust_multistackvm use easy_error for their function-pointer
+# `Result<_, Error>` signatures; we need a direct dep to construct that
+# error type at the FFI boundary in `scripting::stdlib::ink`.
+easy-error = "1"
 
 # Misc
 anyhow = "1"
@@ -142,6 +152,11 @@ image = { version = "0.25", default-features = false, features = [
   "webp",
 ] }
 
+[build-dependencies]
+# Compiles the in-tree Typst tree-sitter grammar (`src/grammar/`)
+# during `cargo build`. See `build.rs`.
+cc = "1"
+
 [dev-dependencies]
 tempfile = "3"
 
@@ -150,10 +165,8 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 
-# Exclude the vendored crates from any ambient workspace discovery — the
-# parent repository contains them only as source for our path deps, not
-# as workspace members. Without this, Cargo would try to build / lint
-# them on every `cargo` invocation.
+# Single-crate workspace. Kept explicit so any future vendored-source
+# experiments under `vendor/` don't accidentally become workspace
+# members. The grammar itself lives in-tree at `src/grammar/`.
 [workspace]
 members = ["."]
-exclude = ["vendor/bdslib", "vendor/tree-sitter-typst"]

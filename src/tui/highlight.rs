@@ -558,7 +558,7 @@ impl TypstMode {
 pub fn typst_mode_at(source: &str, byte_offset: usize) -> TypstMode {
     let mut parser = tree_sitter::Parser::new();
     if parser
-        .set_language(tree_sitter_typst::language())
+        .set_language(crate::grammar::language())
         .is_err()
     {
         return TypstMode::Markup;
@@ -610,7 +610,7 @@ impl TypstHighlighter {
     pub fn new() -> Result<Self, String> {
         let highlights = include_str!("../../assets/typst/highlights.scm");
         let mut config =
-            HighlightConfiguration::new(tree_sitter_typst::language(), highlights, "", "")
+            HighlightConfiguration::new(crate::grammar::language(), highlights, "", "")
                 .map_err(|e| format!("tree-sitter-typst highlights query: {e}"))?;
         config.configure(HIGHLIGHT_NAMES);
         Ok(Self {

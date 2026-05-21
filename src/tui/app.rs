@@ -222,10 +222,25 @@ pub fn run(project: &Path) -> Result<()> {
     let cfg_for_exit = cfg.clone();
     let layout_for_exit = layout.clone();
 
+    // Scripting layer (policy + active store) was armed inside
+    // Store::open via scripting::configure. Force eager Adam
+    // construction here so the bootstrap script runs and hook
+    // lambdas are registered before the first store mutation
+    // can fire a hook.
+    if let Err(e) = crate::scripting::init_adam() {
+        tracing::warn!("scripting init failed: {e}");
+    }
+
     let mut app = App::new(layout, cfg, store)?;
     app.restore_session();
 
     let result = app.run(&mut terminal);
+
+    // Explicit final flush — HNSW save + DuckDB CHECKPOINT — while the
+    // App still holds the Store. The pool's Drop impl would checkpoint
+    // implicitly, but doing it explicitly here lets us log any error
+    // and guarantees the auto-backup below sees a fully-drained WAL.
+    app.shutdown_flush();
 
     // Drop the App (and its Store handle) BEFORE running the auto-backup so
     // duckdb/HNSW checkpoint state is flushed to disk and the zip captures
@@ -642,12 +657,21 @@ struct Keymap {
     page_up: KeyChord,
     page_down: KeyChord,
     meta_prefix: KeyChord,
+    /// Bund-meta prefix. `None` when the config sets
+    /// `keys.bund_prefix = ""` to disable the chord (some users
+    /// reserve Ctrl+Z for their terminal multiplexer).
+    bund_prefix: Option<KeyChord>,
 }
 
 impl Keymap {
     fn from_config(cfg: &Config) -> InkResult<Self> {
         let parse = |label: &str, s: &str| -> InkResult<KeyChord> {
             KeyChord::parse(s).map_err(|e| Error::Config(format!("keys.{label}: {e}")))
+        };
+        let bund_prefix = if cfg.keys.bund_prefix.trim().is_empty() {
+            None
+        } else {
+            Some(parse("bund_prefix", &cfg.keys.bund_prefix)?)
         };
         Ok(Self {
             next_pane: parse("next_pane", &cfg.keys.next_pane)?,
@@ -658,6 +682,7 @@ impl Keymap {
             page_up: parse("page_up", &cfg.keys.page_up)?,
             page_down: parse("page_down", &cfg.keys.page_down)?,
             meta_prefix: parse("meta_prefix", &cfg.keys.meta_prefix)?,
+            bund_prefix,
         })
     }
 }
@@ -1511,6 +1536,12 @@ enum Modal {
         kind: NodeKind,
         input: TextInput,
     },
+    /// Ctrl+Z E — one-shot Bund eval. The user types an
+    /// expression; Enter runs it against Adam and pops the
+    /// result onto the status bar. Esc cancels.
+    BundEval {
+        input: TextInput,
+    },
     FilePicker(FilePicker),
     /// Ctrl+H quick reference. Pane-aware: content is fetched from
     /// `quickref::entries_for(focus_when_opened)`.
@@ -1633,6 +1664,10 @@ struct App {
     /// True after the user pressed the meta-prefix chord (default Ctrl+B).
     /// The next key is interpreted as an action selector and clears this.
     meta_pending: bool,
+    /// True after the user pressed the Bund-meta prefix (default
+    /// Ctrl+Z). The next key dispatches into `handle_bund_action`
+    /// (R run, E eval, N new script).
+    bund_pending: bool,
     modal: Modal,
 
     focus: Focus,
@@ -1901,6 +1936,24 @@ struct SplitView {
 impl App {
     fn new(layout: ProjectLayout, cfg: Config, store: Store) -> Result<Self> {
         let keymap = Keymap::from_config(&cfg).map_err(anyhow::Error::from)?;
+        // Build the chord-action table from the user's HJSON
+        // overlay. Defaults first, then `keys.bindings` rewrites.
+        // Install into the process-wide slot so `ink.key.*` Bund
+        // stdlib words can mutate the same source of truth the
+        // App reads from on every chord dispatch.
+        let overrides: Vec<(String, String, Option<String>)> = cfg
+            .keys
+            .bindings
+            .iter()
+            .map(|b| (b.chord.clone(), b.action.clone(), b.scope.clone()))
+            .collect();
+        let keys = super::keybind::KeyBindings::from_overrides(
+            keymap.meta_prefix,
+            keymap.bund_prefix,
+            &overrides,
+        )
+        .map_err(|e| Error::Config(format!("keys.bindings: {e}")))?;
+        super::keybind::install(keys);
         let hierarchy = Hierarchy::load(&store).map_err(anyhow::Error::from)?;
         let lexicon = build_lexicon(&hierarchy, &cfg);
         let collapsed_nodes: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
@@ -1910,9 +1963,12 @@ impl App {
             .map(|(n, d)| (n.id, d))
             .collect();
 
-        // Background sync: every `sync_interval_seconds` call store.sync().
-        // Store is Send+Sync and cheap to clone (Arc inside), so we share it
-        // with the task. 0 disables.
+        // Background sync: every `sync_interval_seconds` flush the HNSW
+        // index (cheap no-op when clean) and force a DuckDB CHECKPOINT
+        // against `metadata.db` + `blobs.db` (cheap when WAL is empty).
+        // Both ops short-circuit when there's no real work, so the tick
+        // can be generous (default 600s). Store is Send+Sync and cheap to
+        // clone (Arc inside). 0 disables.
         if cfg.sync_interval_seconds > 0 {
             let store_for_sync = store.clone();
             let interval_secs = cfg.sync_interval_seconds;
@@ -1925,6 +1981,9 @@ impl App {
                     ticker.tick().await;
                     if let Err(e) = store_for_sync.sync() {
                         tracing::warn!("background sync failed: {e}");
+                    }
+                    if let Err(e) = store_for_sync.checkpoint() {
+                        tracing::warn!("background checkpoint failed: {e}");
                     }
                 }
             });
@@ -1972,6 +2031,7 @@ impl App {
             modal: Modal::None,
             collapsed_nodes,
             meta_pending: false,
+            bund_pending: false,
             focus: Focus::Tree,
             tree_cursor: 0,
             tree_scroll: 0,
@@ -2015,6 +2075,21 @@ impl App {
             chat_search: None,
             chat_selection: None,
         })
+    }
+
+    /// Final HNSW save + DuckDB CHECKPOINT before the App (and its
+    /// `Store` handle, and therefore the duckdb connection pool) are
+    /// dropped. Called from the exit sequence in `run(&Path)` so the
+    /// `.db.wal` files are drained while we can still surface errors
+    /// — the pool's own Drop impl would checkpoint implicitly, but
+    /// silently.
+    fn shutdown_flush(&self) {
+        if let Err(e) = self.store.sync() {
+            tracing::warn!("shutdown sync failed: {e}");
+        }
+        if let Err(e) = self.store.checkpoint() {
+            tracing::warn!("shutdown checkpoint failed: {e}");
+        }
     }
 
     fn run<B: ratatui::backend::Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
@@ -2348,6 +2423,23 @@ impl App {
             return Ok(false);
         }
 
+        // Bund-meta dispatch (Ctrl+Z by default). Mirrors the
+        // meta-prefix machinery below — same state-machine shape,
+        // different action table. Intercept BEFORE tui-textarea
+        // sees the key so its default Ctrl+Z=undo binding stays
+        // dormant.
+        if self.bund_pending {
+            self.handle_bund_action(key);
+            return Ok(false);
+        }
+        if let Some(bund_prefix) = self.keymap.bund_prefix {
+            if bund_prefix.matches(&key) {
+                self.bund_pending = true;
+                self.status = super::keybind::read().bund_hint(self.focus);
+                return Ok(false);
+            }
+        }
+
         // Meta-prefix dispatch. If we're already inside meta mode, the next
         // key is the action selector. Otherwise check whether THIS key is
         // the meta prefix and enter the mode.
@@ -2360,19 +2452,10 @@ impl App {
             // The meta action table is pane-specific (see dispatch_meta_*),
             // so the hint shown in the status bar should match the focused
             // pane. Generic suffix (· H help · Esc cancel) is shared.
-            self.status = match self.focus {
-                Focus::Tree | Focus::SearchBar => {
-                    "META · C/S/P add · D delete · U/J ↑/↓ reorder · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel"
-                        .into()
-                }
-                Focus::Editor => {
-                    "META · S save · N snapshot · R status · F func · T retitle · P place/pic · C character · G notes · Y artefacts · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel"
-                        .into()
-                }
-                Focus::Ai | Focus::AiPrompt => {
-                    "META · C clear chat · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel".into()
-                }
-            };
+            // Build the meta-hint from the live binding table so
+            // user overlays (HJSON + ink.key.*) show up in the
+            // status bar automatically.
+            self.status = super::keybind::read().meta_hint(self.focus);
             return Ok(false);
         }
 
@@ -4770,227 +4853,288 @@ impl App {
             self.status = "meta cancelled".into();
             return;
         }
-
-        // V is a global action: version / author / credits floating
-        // pane. Handled before pane dispatch so every pane gets the same
-        // chord without having to repeat it in three places.
-        if matches!(key.code, KeyCode::Char('V') | KeyCode::Char('v')) {
-            self.open_credits();
-            return;
-        }
-        // I is the global "current book info" panel — paths + stats +
-        // PDF status for the book the cursor (or the open paragraph) is
-        // inside. Same pane-agnostic dispatch as V.
-        if matches!(key.code, KeyCode::Char('I') | KeyCode::Char('i')) {
-            self.open_book_info();
-            return;
-        }
-        // L is the global "switch LLM provider" picker — pick a
-        // different `default` from `llm.providers`, save it back to
-        // inkhaven.hjson in place.
-        if matches!(key.code, KeyCode::Char('L') | KeyCode::Char('l')) {
-            self.open_llm_picker();
-            return;
-        }
-        // E toggles typewriter sound effects (Enter / focus-out) and
-        // persists the choice to inkhaven.hjson in place.
-        if matches!(key.code, KeyCode::Char('E') | KeyCode::Char('e')) {
-            self.toggle_sound();
-            return;
-        }
-        // A starts Book assembly — generates a typst-compilable tree
-        // for the current user book under <artefacts>/<book-slug>/.
-        if matches!(key.code, KeyCode::Char('A') | KeyCode::Char('a')) {
-            self.schedule_assembly();
-            return;
-        }
-        // Digit chords 1..7 → status-filter modal. The user picks a
-        // workflow stage and we list every paragraph in the project
-        // tagged with that status.
-        if let KeyCode::Char(c) = key.code {
-            if let Some(target) = digit_to_status(c) {
-                self.open_status_filter(target);
-                return;
+        let resolved = super::keybind::read().resolve_meta_sub(&key, self.focus);
+        match resolved {
+            Some(super::keybind::Action::None) => {
+                self.status = "meta: chord disabled by config".into();
             }
-        }
-        // B runs Book assembly + `typst compile`. On error, opens a
-        // fresh AI chat tuned to diagnose the typst stderr.
-        if matches!(key.code, KeyCode::Char('B') | KeyCode::Char('b')) {
-            self.schedule_build();
-            return;
-        }
-        // O = "take the book": build, then copy the resulting PDF into
-        // the launch cwd with a timestamped filename.
-        if matches!(key.code, KeyCode::Char('O') | KeyCode::Char('o')) {
-            self.schedule_take();
-            return;
-        }
-        // W toggles full-screen typewriter mode — hides every pane
-        // except the editor (and modals when they're open). Same
-        // chord returns to the normal layout.
-        if matches!(key.code, KeyCode::Char('W') | KeyCode::Char('w')) {
-            self.toggle_typewriter_mode();
-            return;
-        }
-        // K toggles full-screen AI mode — left half AI pane, right
-        // half scrolling chat history, bottom AI prompt. Same chord
-        // returns to the normal layout.
-        if matches!(key.code, KeyCode::Char('K') | KeyCode::Char('k')) {
-            self.toggle_ai_fullscreen();
-            return;
-        }
-
-        let consumed = match self.focus {
-            Focus::Tree | Focus::SearchBar => self.dispatch_meta_tree(key),
-            Focus::Editor => self.dispatch_meta_editor(key),
-            Focus::Ai | Focus::AiPrompt => self.dispatch_meta_ai(key),
-        };
-        if !consumed {
-            self.status = format!(
-                "meta {}: unknown action — use Ctrl+B again to retry",
-                self.focus.label()
-            );
+            Some(action) => self.run_action(action),
+            None => {
+                self.status = format!(
+                    "meta {}: unknown action — use Ctrl+B again to retry",
+                    self.focus.label()
+                );
+            }
         }
     }
 
-    fn dispatch_meta_tree(&mut self, key: KeyEvent) -> bool {
-        match key.code {
-            // Note: `B` is now the global "build the book" chord (see
-            // `handle_meta_action`). Plain `B` in the tree pane still
-            // adds a book — see `handle_tree_key`.
-            KeyCode::Char('C') | KeyCode::Char('c') => {
-                self.open_add_modal(NodeKind::Chapter);
-                true
+    /// Dispatch the Bund-meta chord (Ctrl+Z by default). Three
+    /// actions in the v1 chord table:
+    ///
+    ///   R — run the buffer (eval the open Script's body against Adam)
+    ///   N — new script (Add modal under the Scripts system book)
+    ///   E — eval one expression (modal prompt, like F1)
+    fn handle_bund_action(&mut self, key: KeyEvent) {
+        self.bund_pending = false;
+        if matches!(key.code, KeyCode::Esc) {
+            self.status = "bund cancelled".into();
+            return;
+        }
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        if !plain {
+            self.status = "bund cancelled".into();
+            return;
+        }
+        let resolved = super::keybind::read().resolve_bund_sub(&key, self.focus);
+        match resolved {
+            Some(super::keybind::Action::None) => {
+                self.status = "bund: chord disabled by config".into();
             }
-            KeyCode::Char('S') | KeyCode::Char('s') => {
-                self.open_add_modal(NodeKind::Subchapter);
-                true
+            Some(action) => self.run_action(action),
+            None => {
+                self.status =
+                    "bund: unknown action — R run · N new · E eval · Esc cancel".into();
             }
-            KeyCode::Char('P') | KeyCode::Char('p') => {
-                self.open_add_modal(NodeKind::Paragraph);
-                true
-            }
-            KeyCode::Char('D') | KeyCode::Char('d') => {
-                self.open_delete_modal();
-                true
-            }
-            KeyCode::Up => {
-                self.move_current(MoveDir::Up);
-                true
-            }
-            KeyCode::Down => {
-                self.move_current(MoveDir::Down);
-                true
-            }
-            // H: pane-aware Quick reference overlay.
-            KeyCode::Char('H') | KeyCode::Char('h') => {
-                self.open_quickref();
-                true
-            }
-            _ => false,
         }
     }
 
-    fn dispatch_meta_editor(&mut self, key: KeyEvent) -> bool {
-        match key.code {
-            // S: save (alternative when Ctrl+S is eaten by the terminal).
-            KeyCode::Char('S') | KeyCode::Char('s') => {
+    /// Central dispatcher for every chord-action. Stage 1 of the
+    /// rebindable-keys roadmap (`Documentation/RELEASE_NOTES/…`):
+    /// the table at `self.keys` resolves `KeyEvent` → `Action`,
+    /// and this switch is the single point where each variant
+    /// hits its concrete handler. Adding a new action means a
+    /// new variant in `keybind::Action`, a new arm here, and an
+    /// entry in `KeyBindings::defaults()`.
+    fn run_action(&mut self, action: super::keybind::Action) {
+        use super::keybind::Action as A;
+        match action {
+            // ── Tree pane ─────────────────────────────────────
+            A::AddBook => self.open_add_modal(NodeKind::Book),
+            A::AddChapter => self.open_add_modal(NodeKind::Chapter),
+            A::AddSubchapter => self.open_add_modal(NodeKind::Subchapter),
+            A::AddParagraph => self.open_add_modal(NodeKind::Paragraph),
+            A::DeleteNode => self.open_delete_modal(),
+            A::MorphType => self.cycle_leaf_type(),
+            A::ReorderUp => self.move_current(MoveDir::Up),
+            A::ReorderDown => self.move_current(MoveDir::Down),
+
+            // ── Editor pane ───────────────────────────────────
+            A::Save => {
                 if self.opened.is_some() {
                     let _ = self.save_current();
                 } else {
                     self.status = "no paragraph open".into();
                 }
-                true
             }
-            // N: new snapshot (== F5).
-            KeyCode::Char('N') | KeyCode::Char('n') => {
-                self.create_snapshot_of_current();
-                true
-            }
-            // H: pane-aware Quick reference overlay.
-            KeyCode::Char('H') | KeyCode::Char('h') => {
-                self.open_quickref();
-                true
-            }
-            // R: cycle the open paragraph's `status` workflow tag —
-            // None → Napkin → First → Second → Third → Final → Ready → None.
-            // F6 still opens the snapshot history (the previous meaning
-            // of Ctrl+B R); the chord is reclaimed here because writers
-            // touch their draft status far more often than they browse
-            // snapshot history.
-            KeyCode::Char('R') | KeyCode::Char('r') => {
-                self.cycle_paragraph_status();
-                true
-            }
-            // L was a duplicate of F3 (load file). Reclaimed as the
-            // global "switch LLM provider" chord — F3 still loads files
-            // in the editor pane.
-            // F: Typst function picker (== a baked-in autocomplete
-            // for `#funcname(`). F4 still toggles split-edit.
-            KeyCode::Char('F') | KeyCode::Char('f') => {
-                self.open_function_picker();
-                true
-            }
-            // T: re-derive the paragraph's display title from its first
-            // sentence (same logic that fires on save for placeholder-
-            // named paragraphs, but explicit so the user can re-run it
-            // after editing the lead).
-            KeyCode::Char('T') | KeyCode::Char('t') => {
-                self.rename_paragraph_to_first_sentence();
-                true
-            }
-            // P: context-sensitive. When the cursor sits inside a
-            // `#image("…")` call, open the image-picker that lists
-            // sibling Image nodes; otherwise dispatch to the Places
-            // RAG flow.
-            KeyCode::Char('P') | KeyCode::Char('p') => {
-                if self.try_open_image_picker() {
-                    true
-                } else {
+            A::CreateSnapshot => self.create_snapshot_of_current(),
+            A::CycleStatus => self.cycle_paragraph_status(),
+            A::OpenFunctionPicker => self.open_function_picker(),
+            A::RenameToFirstSentence => self.rename_paragraph_to_first_sentence(),
+            A::LookupPlacesOrImage => {
+                if !self.try_open_image_picker() {
                     self.start_lexicon_inference(LexiconKind::Places);
-                    true
                 }
             }
-            // C: character-RAG inference. Same as P but against the
-            // Characters book.
-            KeyCode::Char('C') | KeyCode::Char('c') => {
-                self.start_lexicon_inference(LexiconKind::Characters);
-                true
+            A::LookupCharacters => self.start_lexicon_inference(LexiconKind::Characters),
+            A::LookupNotes => self.start_lexicon_inference(LexiconKind::Notes),
+            A::LookupArtefacts => self.start_lexicon_inference(LexiconKind::Artefacts),
+            A::OpenQuickref => self.open_quickref(),
+
+            // ── Global ────────────────────────────────────────
+            A::OpenCredits => self.open_credits(),
+            A::OpenBookInfo => self.open_book_info(),
+            A::OpenLlmPicker => self.open_llm_picker(),
+            A::ToggleSound => self.toggle_sound(),
+            A::ScheduleAssemble => self.schedule_assembly(),
+            A::ScheduleBuild => self.schedule_build(),
+            A::ScheduleTake => self.schedule_take(),
+            A::ToggleTypewriter => self.toggle_typewriter_mode(),
+            A::ToggleAiFullscreen => self.toggle_ai_fullscreen(),
+            A::StatusFilterReady => self.open_status_filter("Ready"),
+            A::StatusFilterFinal => self.open_status_filter("Final"),
+            A::StatusFilterThird => self.open_status_filter("Third"),
+            A::StatusFilterSecond => self.open_status_filter("Second"),
+            A::StatusFilterFirst => self.open_status_filter("First"),
+            A::StatusFilterNapkin => self.open_status_filter("Napkin"),
+            A::StatusFilterNone => self.open_status_filter("None"),
+
+            // ── AI pane ───────────────────────────────────────
+            A::ClearChat => self.clear_chat_history(),
+
+            // ── Bund prefix ───────────────────────────────────
+            A::BundRunBuffer => self.bund_run_buffer(),
+            A::BundNewScript => self.bund_new_script(),
+            A::BundOpenEvalModal => self.bund_open_eval_modal(),
+
+            // Runtime-bound Bund lambda. Dispatch through the
+            // hooks machinery so the recursion-cap + policy-deny
+            // semantics already in place apply uniformly. No args
+            // pushed; the lambda body sees an empty workbench.
+            A::BundLambda(name) => {
+                crate::scripting::hooks::fire(name.as_ref(), Vec::new());
             }
-            // G: notes-RAG inference. Notes don't have a clean
-            // single-letter mnemonic (N is taken by snapshot), so
-            // we picked `G` for "Glossary / Get notes".
-            KeyCode::Char('G') | KeyCode::Char('g') => {
-                self.start_lexicon_inference(LexiconKind::Notes);
-                true
-            }
-            // Y: artefacts-RAG inference. `A` is taken globally by
-            // Book Assembly; `Y` echoes the yellow editor highlight.
-            KeyCode::Char('Y') | KeyCode::Char('y') => {
-                self.start_lexicon_inference(LexiconKind::Artefacts);
-                true
-            }
-            _ => false,
+
+            // Explicit "do nothing" — should never reach here
+            // because the dispatcher catches it first, but harmless.
+            A::None => {}
         }
     }
 
-    fn dispatch_meta_ai(&mut self, key: KeyEvent) -> bool {
-        match key.code {
-            // C: clear the current inference + chat history (same as F9).
-            // Cancels streaming, discards the finished result, and drops the
-            // accumulated turns so the next prompt starts a fresh chat.
-            KeyCode::Char('C') | KeyCode::Char('c') => {
-                self.clear_chat_history();
-                true
+    /// Ctrl+B T — cycle the selected leaf node's flavour through
+    /// `Paragraph(typst) → Paragraph(hjson) → Script(bund)` and
+    /// back. Target picked from:
+    ///   * the open buffer when the focus is on the editor, or
+    ///   * the tree cursor otherwise.
+    /// Closes + reopens the buffer (if open on the converted node)
+    /// so the new highlighter + content_type take effect immediately.
+    fn cycle_leaf_type(&mut self) {
+        // Pick the node to convert. From the Editor pane: prefer
+        // the open buffer; fall back to the tree cursor when the
+        // editor pane has nothing open (so M still does the
+        // right thing if the user pressed it from a blank editor).
+        // From any other pane: always tree cursor.
+        let cursor_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
+        let target_id: Option<Uuid> = match self.focus {
+            Focus::Editor => self.opened.as_ref().map(|d| d.id).or(cursor_id),
+            _ => cursor_id,
+        };
+        let Some(node_id) = target_id else {
+            self.status = "type-cycle: nothing selected".into();
+            return;
+        };
+        let Some(node) = self.hierarchy.get(node_id).cloned() else {
+            self.status = "type-cycle: node missing from hierarchy".into();
+            return;
+        };
+        let (new_kind, new_ct, label) = match (node.kind, node.content_type.as_deref()) {
+            (NodeKind::Paragraph, None | Some("typst")) => {
+                (NodeKind::Paragraph, Some("hjson"), "hjson")
             }
-            // H: pane-aware Quick reference overlay.
-            KeyCode::Char('H') | KeyCode::Char('h') => {
-                self.open_quickref();
-                true
+            (NodeKind::Paragraph, Some("hjson")) => {
+                (NodeKind::Script, Some("bund"), "bund")
             }
-            _ => false,
+            (NodeKind::Script, _) => (NodeKind::Paragraph, None, "typst"),
+            (k, ct) => {
+                self.status = format!(
+                    "type-cycle: {} ({ct:?}) is not a text leaf — only paragraphs / scripts cycle",
+                    k.as_str()
+                );
+                return;
+            }
+        };
+
+        // Snapshot whether the buffer is open on this node + the
+        // focus we should be on when we return. `load_paragraph`
+        // unconditionally focuses Editor at the end, so if the
+        // user invoked the cycle from the Tree pane we'd steal
+        // their focus otherwise.
+        let buffer_was_open = self.opened.as_ref().is_some_and(|d| d.id == node_id);
+        let saved_focus = self.focus;
+        if buffer_was_open {
+            self.opened = None;
+        }
+
+        match self
+            .store
+            .convert_leaf(&self.hierarchy, node_id, new_kind, new_ct)
+        {
+            Ok(converted) => {
+                self.status =
+                    format!("type-cycle: `{}` is now {label}", converted.title);
+                self.reload_hierarchy();
+                if buffer_was_open {
+                    let _ = self.load_paragraph(&converted);
+                    // `load_paragraph` focuses the editor; restore
+                    // the pane the user was actually in.
+                    if saved_focus != Focus::Editor {
+                        self.change_focus(saved_focus);
+                    }
+                }
+            }
+            Err(e) => {
+                self.status = format!("type-cycle failed: {e}");
+            }
         }
     }
+
+    /// Ctrl+Z R — eval the currently-open Script's body against Adam.
+    /// No-ops with a status message when no Script is open.
+    fn bund_run_buffer(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "bund: no buffer open — Ctrl+Z R needs an open .bund".into();
+            return;
+        };
+        let Some(node) = self.hierarchy.get(doc.id) else {
+            self.status = "bund: open buffer's node is missing from hierarchy".into();
+            return;
+        };
+        if node.kind != NodeKind::Script {
+            self.status = format!(
+                "bund: open buffer is a {}, not a script",
+                node.kind.as_str()
+            );
+            return;
+        }
+        let body = doc.textarea.lines().join("\n");
+        match crate::scripting::eval(&body) {
+            Ok(out) => {
+                self.status = format_eval_output(&out, Some(&node.title));
+            }
+            Err(e) => {
+                self.status = format!("bund: eval failed — {e:#}");
+            }
+        }
+    }
+
+    /// Ctrl+Z N — open the Add modal pre-targeted at the Scripts
+    /// system book. Falls back to the standard add path if the
+    /// Scripts book hasn't been seeded for some reason.
+    fn bund_new_script(&mut self) {
+        if let Some(scripts_id) = self.system_book_id(crate::store::SYSTEM_TAG_SCRIPTS) {
+            // Same shape as open_add_modal_inner for End, but with
+            // the parent forced to the Scripts book rather than
+            // derived from cursor position.
+            let parent_label = if let Some(scripts) = self.hierarchy.get(scripts_id) {
+                self.hierarchy.slug_path(scripts)
+            } else {
+                "scripts".to_string()
+            };
+            self.modal = Modal::Adding {
+                kind: NodeKind::Script,
+                parent_id: Some(scripts_id),
+                parent_label,
+                input: TextInput::new(),
+                position: InsertPosition::End,
+            };
+            self.status = "bund: new script under Scripts — type a title, Enter to create".into();
+        } else {
+            // Fall back to the default cursor-based parent picker —
+            // user-added Books can also host scripts.
+            self.open_add_modal(NodeKind::Script);
+        }
+    }
+
+    /// Ctrl+Z E — open a modal asking for a one-shot expression.
+    /// On Enter, eval against Adam and surface the result (or
+    /// error) in the status bar. Reuses the BundEval modal variant.
+    fn bund_open_eval_modal(&mut self) {
+        self.modal = Modal::BundEval {
+            input: TextInput::new(),
+        };
+        self.status = "bund eval: type an expression, Enter to run, Esc to cancel".into();
+    }
+
+    // dispatch_meta_tree was absorbed into keybind::KeyBindings —
+    // the meta_sub table now carries every tree-pane chord via
+    // Scope::Tree entries, and resolution flows through
+    // handle_meta_action → resolve_meta_sub → run_action.
+
+    // dispatch_meta_editor + dispatch_meta_ai were absorbed into
+    // keybind::KeyBindings — every chord they handled now lives in
+    // the meta_sub table under Scope::Editor / Scope::Ai. See
+    // run_action for the action→handler dispatch.
 
     fn open_quickref(&mut self) {
         self.modal = Modal::QuickRef {
@@ -7883,7 +8027,7 @@ impl App {
                     None
                 }
             }
-            Some(NodeKind::Paragraph) | Some(NodeKind::Image) => {
+            Some(NodeKind::Paragraph) | Some(NodeKind::Image) | Some(NodeKind::Script) => {
                 return Err(Error::Store(
                     "can't import under a leaf — move cursor to a branch first".into(),
                 ));
@@ -8291,6 +8435,7 @@ impl App {
         let is_status_filter = matches!(self.modal, Modal::StatusFilter { .. });
         let is_help_query = matches!(self.modal, Modal::HelpQuery { .. });
         let is_chat_search_prompt = matches!(self.modal, Modal::ChatSearchPrompt { .. });
+        let is_bund_eval = matches!(self.modal, Modal::BundEval { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -8334,6 +8479,31 @@ impl App {
                 return Ok(false);
             }
             if let Modal::HelpQuery { input } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
+            return Ok(false);
+        }
+
+        if is_bund_eval {
+            // Enter runs the expression against Adam; result goes to
+            // the status bar. Anything else feeds the input box.
+            if matches!(key.code, KeyCode::Enter) {
+                let expr = match &self.modal {
+                    Modal::BundEval { input } => input.as_str().to_string(),
+                    _ => String::new(),
+                };
+                self.modal = Modal::None;
+                match crate::scripting::eval(&expr) {
+                    Ok(out) => {
+                        self.status = format_eval_output(&out, None);
+                    }
+                    Err(e) => {
+                        self.status = format!("bund: eval failed — {e:#}");
+                    }
+                }
+                return Ok(false);
+            }
+            if let Modal::BundEval { input } = &mut self.modal {
                 handle_text_input_key(input, key);
             }
             return Ok(false);
@@ -8742,11 +8912,16 @@ impl App {
         };
 
         match node.kind {
-            NodeKind::Paragraph => self.load_paragraph(&node)?,
+            // Scripts are text leaves like Paragraphs — same load
+            // path, same editor surface. Real Bund syntax
+            // highlighting is a follow-up; today they render as
+            // plain text (which is still legible because bundcore's
+            // syntax is sparse: words + braces + strings).
+            NodeKind::Paragraph | NodeKind::Script => self.load_paragraph(&node)?,
             NodeKind::Image => self.show_image_info(&node),
             _ => {
                 self.status = format!(
-                    "`{}` is a {} (Enter opens paragraphs / images)",
+                    "`{}` is a {} (Enter opens paragraphs / images / scripts)",
                     node.title,
                     node.kind.as_str()
                 );
@@ -8899,7 +9074,16 @@ impl App {
             search: None,
             read_only,
             correction_baseline: None,
-            content_type: node.content_type.clone(),
+            // Script nodes default to the "bund" content_type even
+            // if the persisted metadata is missing it — covers
+            // scripts created before content_type stamping landed.
+            content_type: node
+                .content_type
+                .clone()
+                .or_else(|| match node.kind {
+                    NodeKind::Script => Some("bund".to_string()),
+                    _ => None,
+                }),
         });
         self.change_focus(Focus::Editor);
         self.status = format!("opened {}", abs.display());
@@ -8949,11 +9133,11 @@ impl App {
             .store
             .update_paragraph_content(&mut node, body.as_bytes())
         {
-            self.status = format!("bdslib update failed: {e}");
+            self.status = format!("store update failed: {e}");
             return Ok(());
         }
         if let Err(e) = self.store.sync() {
-            self.status = format!("bdslib sync failed: {e}");
+            self.status = format!("store sync failed: {e}");
             return Ok(());
         }
 
@@ -9484,6 +9668,28 @@ impl App {
                 ];
                 (" Help — F1 ".to_string(), Color::Cyan, body)
             }
+            Modal::BundEval { input } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Bund — evaluate one expression against Adam:",
+                        Style::default()
+                            .fg(self.theme.tree_script_fg)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter runs · Esc cancels · result lands on the status bar",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Bund — Ctrl+Z E ".to_string(),
+                    self.theme.tree_script_fg,
+                    body,
+                )
+            }
             Modal::ChatSearchPrompt { input } => {
                 let body = vec![
                     Line::from(""),
@@ -9633,7 +9839,7 @@ impl App {
                     )),
                     Line::from(""),
                     Line::from(Span::styled(
-                        " Removes files from disk AND records from bdslib.",
+                        " Removes files from disk AND records from the store.",
                         Style::default().add_modifier(Modifier::DIM),
                     )),
                     Line::from(Span::styled(
@@ -9910,10 +10116,21 @@ impl App {
                 "►"
             } else {
                 match node.kind {
-                    NodeKind::Paragraph => "¶ ",
+                    // Paragraphs split by content_type: HJSON data
+                    // nodes get curly-brace glyph, plain typst keeps
+                    // the pilcrow.
+                    NodeKind::Paragraph => match node.content_type.as_deref() {
+                        Some("hjson") => "❴ ",
+                        _ => "¶ ",
+                    },
                     NodeKind::Image => "▣ ",
-                    // For branches, use ▾ (expanded) / ▸ (collapsed) glyphs
-                    // so the expand/collapse state is visible at a glance.
+                    // Bund scripts: lambda glyph signals "executable
+                    // code, not prose". Paired with the mauve row
+                    // colour from tree_script_fg.
+                    NodeKind::Script => "λ ",
+                    // For branches, use ▾ (expanded) / ▸ (collapsed)
+                    // glyphs so the expand/collapse state is visible
+                    // at a glance.
                     _ => {
                         if is_collapsed {
                             "▸ "
@@ -9932,6 +10149,7 @@ impl App {
                 NodeKind::Subchapter => self.theme.tree_subchapter_fg,
                 NodeKind::Paragraph => self.theme.tree_paragraph_fg,
                 NodeKind::Image => self.theme.tree_image_fg,
+                NodeKind::Script => self.theme.tree_script_fg,
             };
             let mut row_style = Style::default().fg(kind_fg);
             if matches!(node.kind, NodeKind::Book | NodeKind::Chapter) {
@@ -10009,6 +10227,7 @@ impl App {
                     .add_modifier(Modifier::BOLD);
                 let lang_tag = match d.content_type.as_deref() {
                     Some("hjson") => " [hjson]",
+                    Some("bund") => " [bund]",
                     _ => "",
                 };
                 // Status badge: hidden when None to keep the header
@@ -11279,6 +11498,7 @@ pub fn highlight_for_content(
 ) -> Vec<Vec<super::highlight::StyledRun>> {
     match content_type {
         Some("hjson") => super::hjson_highlight::highlight_hjson_lines(source, theme),
+        Some("bund") => super::bund_highlight::highlight_bund_lines(source, theme),
         _ => highlighter.highlight_lines(source, theme),
     }
 }
@@ -11310,6 +11530,12 @@ pub fn byte_offset_for_cursor(source: &str, row: usize, col: usize) -> usize {
 /// Map digit chars '1'..'7' to a status label. Empty for any other
 /// char. 1 is the most-advanced status so the typical writer query —
 /// "what's actually ready to ship?" — is the lowest-effort chord.
+/// Map a digit chord (`1`..`7`) to its workflow-status string.
+/// Once used inline by the meta dispatcher; the dispatcher now
+/// resolves to `StatusFilter*` actions via the binding table, so
+/// this stays only as a unit-test helper for the digit→status
+/// mapping itself.
+#[cfg(test)]
 pub fn digit_to_status(c: char) -> Option<&'static str> {
     match c {
         '1' => Some("Ready"),
@@ -11670,6 +11896,10 @@ fn compute_book_stats(
                 }
             }
             NodeKind::Image => stats.images += 1,
+            // Bund scripts aren't book content; they don't add to
+            // word / sentence counts. Tracking them in their own
+            // stats slot is a follow-up.
+            NodeKind::Script => {}
         }
     }
     stats
@@ -12197,6 +12427,29 @@ fn build_lexicon(hierarchy: &Hierarchy, cfg: &Config) -> super::lexicon::Lexicon
 /// Standard text-input key dispatch: typing, navigation, deletion. Shared
 /// helper so new modals don't have to re-implement the pattern that older
 /// modals (Add, Rename, FindReplace) inline.
+/// One-line status-bar summary of a `bund eval` result. Surfaces
+/// captured stdout (from print / println) and the top-of-stack
+/// value in a stable order. `context` is an optional preamble —
+/// passed when the eval came from a named buffer ("ran `script-
+/// name`").
+fn format_eval_output(out: &crate::scripting::EvalOutput, context: Option<&str>) -> String {
+    let stdout = out.stdout.trim_end().to_string();
+    let top_str = out
+        .top
+        .as_ref()
+        .map(crate::scripting::format_value);
+    let preamble = match context {
+        Some(name) => format!("bund `{name}`"),
+        None => "bund".to_string(),
+    };
+    match (stdout.is_empty(), top_str) {
+        (true, Some(v)) => format!("{preamble} → {v}"),
+        (false, Some(v)) => format!("{preamble} → {v}  ·  stdout: {stdout}"),
+        (false, None) => format!("{preamble} stdout: {stdout}"),
+        (true, None) => format!("{preamble}: (no result)"),
+    }
+}
+
 fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) {
     use KeyCode::*;
     match key.code {
@@ -12364,7 +12617,9 @@ Rules:
 /// scroll through. When you add a new direct dep in Cargo.toml, add it
 /// here too.
 const CREDITS_COMPONENTS: &[(&str, &str, &str)] = &[
-    ("bdslib",                "Apache-2.0",      "DuckDB + Tantivy + fastembed + HNSW document store (V. Ulogov)"),
+    ("duckdb",                "MIT",             "embedded SQL engine — metadata + blob stores"),
+    ("vecstore",              "MIT",             "HNSW vector index — semantic search"),
+    ("fastembed",             "Apache-2.0",      "multilingual ONNX text embeddings"),
     ("ratatui",               "MIT",             "TUI rendering framework"),
     ("tui-textarea",          "MIT",             "multi-line text widget (state model)"),
     ("crossterm",             "MIT",             "cross-platform terminal control"),
