@@ -220,6 +220,12 @@ pub enum Action {
     /// paragraph's `linked_paragraphs`.
     #[serde(rename = "view.add_link")]
     ViewAddLink,
+    /// Ctrl+V I — reverse of `view.add_link`. Tree pane picker;
+    /// Enter on a paragraph adds the OPEN paragraph to THAT
+    /// paragraph's outgoing links (creates an incoming link
+    /// for current).
+    #[serde(rename = "view.add_incoming_link")]
+    ViewAddIncomingLink,
     /// Ctrl+V L — open the linked-paragraphs floating modal
     /// (`D` removes a link).
     #[serde(rename = "view.list_links")]
@@ -321,6 +327,7 @@ impl Action {
             Action::ViewOpenProgress => "progress".into(),
             Action::ViewOpenParagraphTarget => "para target".into(),
             Action::ViewAddLink => "add link".into(),
+            Action::ViewAddIncomingLink => "add ← link".into(),
             Action::ViewListLinks => "list links".into(),
             Action::ViewListBacklinks => "backlinks".into(),
             Action::ViewToggleBookmark => "bookmark".into(),
@@ -463,6 +470,8 @@ impl Action {
                 "Set or clear the open paragraph's word-count goal. Saves that cross the target auto-promote status one ladder step.".into(),
             Action::ViewAddLink =>
                 "Add a linked paragraph — tree pane switches to `select paragraph to link` mode; Enter links, Esc cancels. Stored as metadata, never embedded in typst source.".into(),
+            Action::ViewAddIncomingLink =>
+                "Add an incoming link — tree pane picker; Enter on a paragraph adds the OPEN paragraph to THAT paragraph's outgoing links (reverse of Ctrl+V A).".into(),
             Action::ViewListLinks =>
                 "Open the linked-paragraphs modal — list outgoing wiki-links for the open paragraph; press D on a row to remove.".into(),
             Action::ViewListBacklinks =>
@@ -602,6 +611,7 @@ impl KeyBindings {
                 entry("g", Action::ViewOpenProgress, Scope::Any),
                 entry("t", Action::ViewOpenParagraphTarget, Scope::Any),
                 entry("a", Action::ViewAddLink, Scope::Any),
+                entry("i", Action::ViewAddIncomingLink, Scope::Any),
                 entry("l", Action::ViewListLinks, Scope::Any),
                 entry("k", Action::ViewListBacklinks, Scope::Any),
                 entry("b", Action::ViewToggleBookmark, Scope::Any),
