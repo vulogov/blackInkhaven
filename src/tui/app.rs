@@ -14348,18 +14348,59 @@ impl App {
         }
     }
 
-    /// Mutate one theme colour at runtime. `field` is the
-    /// theme struct's field name (`tree_paragraph_fg`,
-    /// `syntax_keyword`, etc.); `hex` is `#rrggbb` or a named
-    /// colour. Volatile — not persisted to HJSON; user re-runs
-    /// the script on next launch (or sets the colour in HJSON
-    /// for permanent change).
+    /// Mutate one theme colour at runtime AND persist the new
+    /// value to `inkhaven.hjson` so the change survives restart.
+    /// `field` is the theme struct's field name
+    /// (`tree_paragraph_fg`, `syntax_keyword`, etc.); `hex` is
+    /// `#rrggbb` or a named colour.
+    ///
+    /// In-memory update happens first; if HJSON write-back fails
+    /// (missing `theme:` block, disk error, etc.) the runtime
+    /// colour stays applied for the rest of this session — the
+    /// caller logs the persistence error but doesn't roll back.
+    /// That's deliberate: a hook running mid-session shouldn't
+    /// have its visual feedback yanked because the project's
+    /// HJSON happens to be locked.
     pub(crate) fn ink_theme_set(
         &mut self,
         field: &str,
         hex: &str,
     ) -> Result<(), String> {
-        self.theme.set_by_name(field, hex)
+        self.theme.set_by_name(field, hex)?;
+        // Persist back to inkhaven.hjson. Failure here is logged
+        // at WARN; the in-memory mutation already succeeded.
+        let config_path = self.layout.config_path();
+        let raw = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    target: "inkhaven::theme",
+                    "theme persist: read {}: {e}",
+                    config_path.display(),
+                );
+                return Ok(());
+            }
+        };
+        // HJSON colour literal is a double-quoted string.
+        let value_lit = format!("\"{}\"", hex);
+        match set_key_in_hjson_block(&raw, "theme", field, &value_lit) {
+            Ok(updated) => {
+                if let Err(e) = std::fs::write(&config_path, &updated) {
+                    tracing::warn!(
+                        target: "inkhaven::theme",
+                        "theme persist: write {}: {e}",
+                        config_path.display(),
+                    );
+                }
+            }
+            Err(reason) => {
+                tracing::warn!(
+                    target: "inkhaven::theme",
+                    "theme persist: rewrite `{field}` in `theme` block: {reason}",
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Open the BundInput modal. The user's typed string lands
