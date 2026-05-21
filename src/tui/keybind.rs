@@ -159,6 +159,30 @@ pub enum Action {
     #[serde(rename = "bund.open_script_picker")]
     BundOpenScriptPicker,
 
+    // ── View prefix (1.2.4+, default Ctrl+V) ──────────────────
+    /// Ctrl+V 1 (Editor) — write the open paragraph's live buffer
+    /// as markdown to cwd.
+    #[serde(rename = "view.export_markdown_buffer")]
+    ViewExportMarkdownBuffer,
+    /// Ctrl+V 2 (Editor) — write the containing subchapter's
+    /// subtree as markdown to cwd.
+    #[serde(rename = "view.export_markdown_subchapter")]
+    ViewExportMarkdownSubchapter,
+    /// Ctrl+V 1 (Tree) — write the tree-cursor's node + descendants
+    /// as markdown to cwd.
+    #[serde(rename = "view.export_markdown_subtree")]
+    ViewExportMarkdownSubtree,
+    /// Ctrl+V S — toggle similar-paragraph mode (vector-similarity
+    /// picker, side-by-side editor).
+    #[serde(rename = "view.toggle_similar_mode")]
+    ViewToggleSimilarMode,
+    /// Ctrl+V G — open the writing-progress modal.
+    #[serde(rename = "view.open_progress")]
+    ViewOpenProgress,
+    /// Ctrl+V T — open the per-paragraph target-words input modal.
+    #[serde(rename = "view.open_paragraph_target")]
+    ViewOpenParagraphTarget,
+
     /// Explicit "this chord does nothing" — overlay entries can
     /// set `action: "none"` to disable a default chord.
     #[serde(rename = "none")]
@@ -222,6 +246,13 @@ impl Action {
             Action::BundNewScript => "new script".into(),
             Action::BundOpenEvalModal => "eval".into(),
             Action::BundOpenScriptPicker => "pick script".into(),
+
+            Action::ViewExportMarkdownBuffer => "md buffer".into(),
+            Action::ViewExportMarkdownSubchapter => "md subchap".into(),
+            Action::ViewExportMarkdownSubtree => "md subtree".into(),
+            Action::ViewToggleSimilarMode => "similar".into(),
+            Action::ViewOpenProgress => "progress".into(),
+            Action::ViewOpenParagraphTarget => "para target".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) => format!("λ {name}"),
@@ -322,6 +353,20 @@ impl Action {
             Action::BundOpenScriptPicker =>
                 "Open the script picker — list scripts in the current branch (A toggles to Scripts book), Enter runs.".into(),
 
+            // ── View prefix ────────────────────────────────────
+            Action::ViewExportMarkdownBuffer =>
+                "Export the open paragraph's live buffer (including unsaved edits) as markdown to the launch cwd.".into(),
+            Action::ViewExportMarkdownSubchapter =>
+                "Export the containing subchapter's subtree as markdown to the launch cwd.".into(),
+            Action::ViewExportMarkdownSubtree =>
+                "Export the tree-cursor's node and all descendants as markdown to the launch cwd.".into(),
+            Action::ViewToggleSimilarMode =>
+                "Toggle similar-paragraph mode — vector-similarity picker; selecting a hit opens a second editor side-by-side. Re-press to save both and exit.".into(),
+            Action::ViewOpenProgress =>
+                "Open the writing-progress modal (today / streak / per-book pace / 30-day sparkline / status-ladder counts).".into(),
+            Action::ViewOpenParagraphTarget =>
+                "Set or clear the open paragraph's word-count goal. Saves that cross the target auto-promote status one ladder step.".into(),
+
             Action::None => String::new(),
             Action::BundLambda(name) =>
                 format!("User-bound Bund lambda `{name}` (registered via ink.key.bind_lambda)."),
@@ -350,8 +395,13 @@ pub struct KeyBindings {
     /// Same for the Bund sub-chord table (default `Ctrl+Z`).
     /// `None` when the user disabled it via empty config.
     pub bund_prefix: Option<KeyChord>,
+    /// View-prefix chord (1.2.4+, default `Ctrl+V`). Gates the
+    /// markdown-export / similar-mode / progress / paragraph-target
+    /// sub-chords. `None` disables the layer entirely.
+    pub view_prefix: Option<KeyChord>,
     pub meta_sub: Vec<BindingEntry>,
     pub bund_sub: Vec<BindingEntry>,
+    pub view_sub: Vec<BindingEntry>,
 }
 
 impl Default for KeyBindings {
@@ -369,6 +419,7 @@ impl KeyBindings {
         Self {
             meta_prefix: KeyChord::parse("Ctrl+b").expect("default meta_prefix"),
             bund_prefix: Some(KeyChord::parse("Ctrl+z").expect("default bund_prefix")),
+            view_prefix: Some(KeyChord::parse("Ctrl+v").expect("default view_prefix")),
             meta_sub: vec![
                 // ── Tree pane ─────────────────────────────────
                 entry("c", Action::AddChapter, Scope::Tree),
@@ -425,6 +476,20 @@ impl KeyBindings {
                 entry("e", Action::BundOpenEvalModal, Scope::Any),
                 entry("?", Action::BundOpenScriptPicker, Scope::Any),
             ],
+            view_sub: vec![
+                // Editor / AI-prompt: 1 = buffer markdown, 2 =
+                // containing-subchapter subtree markdown.
+                entry("1", Action::ViewExportMarkdownBuffer, Scope::Editor),
+                entry("2", Action::ViewExportMarkdownSubchapter, Scope::Editor),
+                entry("1", Action::ViewExportMarkdownBuffer, Scope::Ai),
+                entry("2", Action::ViewExportMarkdownSubchapter, Scope::Ai),
+                // Tree: 1 = subtree markdown.
+                entry("1", Action::ViewExportMarkdownSubtree, Scope::Tree),
+                // Global suffixes.
+                entry("s", Action::ViewToggleSimilarMode, Scope::Any),
+                entry("g", Action::ViewOpenProgress, Scope::Any),
+                entry("t", Action::ViewOpenParagraphTarget, Scope::Any),
+            ],
         }
     }
 
@@ -440,38 +505,53 @@ impl KeyBindings {
         resolve_in(&self.bund_sub, ev, focus)
     }
 
+    /// Same as `resolve_meta_sub` for chords after the view_prefix
+    /// (1.2.4+, default Ctrl+V).
+    pub fn resolve_view_sub(&self, ev: &KeyEvent, focus: Focus) -> Option<Action> {
+        resolve_in(&self.view_sub, ev, focus)
+    }
+
     /// Apply a list of `(layer, entry)` overlay pairs on top of
     /// the existing table. Each new entry replaces any existing
     /// `(chord, scope)` match in the same layer and gets
     /// prepended so it wins resolution against the defaults.
     pub fn apply_overlay(&mut self, overlay: Vec<(Layer, BindingEntry)>) {
         for (layer, new) in overlay {
-            let table = match layer {
-                Layer::MetaSub => &mut self.meta_sub,
-                Layer::BundSub => &mut self.bund_sub,
-            };
+            let table = self.layer_table_mut(layer);
             table.retain(|b| !(b.chord == new.chord && b.scope == new.scope));
             table.insert(0, new);
         }
     }
 
+    fn layer_table_mut(&mut self, layer: Layer) -> &mut Vec<BindingEntry> {
+        match layer {
+            Layer::MetaSub => &mut self.meta_sub,
+            Layer::BundSub => &mut self.bund_sub,
+            Layer::ViewSub => &mut self.view_sub,
+        }
+    }
+
     /// Build a `KeyBindings` from `defaults()` overlaid with the
     /// parsed HJSON `keys.bindings` entries. Caller supplies the
-    /// already-parsed meta + bund prefixes so the overlay parser
-    /// can route `"Ctrl+b m"` → meta_sub table by prefix match.
+    /// already-parsed meta + bund + view prefixes so the overlay
+    /// parser can route `"Ctrl+b m"` → meta_sub table by prefix
+    /// match.
     pub fn from_overrides(
         meta_prefix: KeyChord,
         bund_prefix: Option<KeyChord>,
+        view_prefix: Option<KeyChord>,
         overrides: &[(String, String, Option<String>)],
     ) -> Result<Self, String> {
         let mut bindings = Self::defaults();
         bindings.meta_prefix = meta_prefix;
         bindings.bund_prefix = bund_prefix;
+        bindings.view_prefix = view_prefix;
         let mut overlay: Vec<(Layer, BindingEntry)> = Vec::new();
         for (chord_str, action_str, scope_str) in overrides {
             let entry = parse_overlay(
                 meta_prefix,
                 bund_prefix.unwrap_or_else(disabled_chord_placeholder),
+                view_prefix.unwrap_or_else(disabled_chord_placeholder),
                 chord_str,
                 action_str,
                 scope_str,
@@ -487,10 +567,7 @@ impl KeyBindings {
     /// semantics as the HJSON overlay: a new entry shadows any
     /// existing one with matching key.
     pub fn add(&mut self, layer: Layer, entry: BindingEntry) {
-        let table = match layer {
-            Layer::MetaSub => &mut self.meta_sub,
-            Layer::BundSub => &mut self.bund_sub,
-        };
+        let table = self.layer_table_mut(layer);
         table.retain(|b| !(b.chord == entry.chord && b.scope == entry.scope));
         table.insert(0, entry);
     }
@@ -498,10 +575,7 @@ impl KeyBindings {
     /// Remove every entry whose `(chord, scope)` matches. Returns
     /// the number of entries removed (zero when nothing matched).
     pub fn remove(&mut self, layer: Layer, chord: &KeyChord, scope: Scope) -> usize {
-        let table = match layer {
-            Layer::MetaSub => &mut self.meta_sub,
-            Layer::BundSub => &mut self.bund_sub,
-        };
+        let table = self.layer_table_mut(layer);
         let before = table.len();
         table.retain(|b| !(b.chord == *chord && b.scope == scope));
         before - table.len()
@@ -530,12 +604,17 @@ impl KeyBindings {
             Layer::MetaSub
         } else if Some(prefix) == self.bund_prefix {
             Layer::BundSub
+        } else if Some(prefix) == self.view_prefix {
+            Layer::ViewSub
         } else {
             return Err(format!(
-                "chord `{s}`: prefix `{prefix_str}` is not meta_prefix or bund_prefix"
+                "chord `{s}`: prefix `{prefix_str}` is not meta_prefix / bund_prefix / view_prefix"
             ));
         };
-        if suffix == self.meta_prefix || Some(suffix) == self.bund_prefix {
+        if suffix == self.meta_prefix
+            || Some(suffix) == self.bund_prefix
+            || Some(suffix) == self.view_prefix
+        {
             return Err(format!(
                 "chord `{s}`: suffix collides with a prefix chord"
             ));
@@ -557,6 +636,11 @@ impl KeyBindings {
     /// Same for the bund-prefix chord.
     pub fn bund_hint(&self, focus: Focus) -> String {
         self.hint_for(&self.bund_sub, "BUND", focus)
+    }
+
+    /// Same for the view-prefix chord (1.2.4+, default Ctrl+V).
+    pub fn view_hint(&self, focus: Focus) -> String {
+        self.hint_for(&self.view_sub, "VIEW", focus)
     }
 
     fn hint_for(&self, table: &[BindingEntry], prefix: &str, focus: Focus) -> String {
@@ -602,11 +686,15 @@ fn disabled_chord_placeholder() -> KeyChord {
 pub enum Layer {
     MetaSub,
     BundSub,
+    /// 1.2.4+: Ctrl+V family — markdown export / similar mode /
+    /// progress / paragraph target.
+    ViewSub,
 }
 
 fn parse_overlay(
     meta_prefix: KeyChord,
     bund_prefix: KeyChord,
+    view_prefix: KeyChord,
     chord: &str,
     action: &str,
     scope: &Option<String>,
@@ -618,7 +706,7 @@ fn parse_overlay(
         [single] => {
             return Err(format!(
                 "binding chord `{single}`: top-level (no-prefix) rebinding isn't supported \
-                 in Stage 1 — use `<meta_prefix> <key>` or `<bund_prefix> <key>`"
+                 in Stage 1 — use `<meta_prefix> <key>`, `<bund_prefix> <key>`, or `<view_prefix> <key>`"
             ));
         }
         [prefix, suffix] => (*prefix, *suffix),
@@ -636,15 +724,17 @@ fn parse_overlay(
         Layer::MetaSub
     } else if prefix == bund_prefix {
         Layer::BundSub
+    } else if prefix == view_prefix {
+        Layer::ViewSub
     } else {
         return Err(format!(
-            "binding chord `{chord}`: prefix `{prefix_str}` is not meta_prefix or bund_prefix"
+            "binding chord `{chord}`: prefix `{prefix_str}` is not meta_prefix / bund_prefix / view_prefix"
         ));
     };
     // Reject rebinding the prefixes themselves and the hard-quit
     // chord — those are configured via top-level `keys.*` slots,
     // not the bindings overlay.
-    if suffix == meta_prefix || suffix == bund_prefix {
+    if suffix == meta_prefix || suffix == bund_prefix || suffix == view_prefix {
         return Err(format!(
             "binding chord `{chord}`: suffix collides with a prefix chord"
         ));

@@ -80,6 +80,9 @@ pub fn entries_for(focus: Focus) -> Vec<Entry> {
     out.push(blank());
     out.push(header("─── Bund chords (live keymap) ───"));
     out.extend(live_chord_entries(keybind::Layer::BundSub, focus));
+    out.push(blank());
+    out.push(header("─── View chords (live keymap) ───"));
+    out.extend(live_chord_entries(keybind::Layer::ViewSub, focus));
     out
 }
 
@@ -210,6 +213,7 @@ fn live_chord_entries(layer: keybind::Layer, focus: Focus) -> Vec<Entry> {
     let table: &Vec<BindingEntry> = match layer {
         keybind::Layer::MetaSub => &bindings.meta_sub,
         keybind::Layer::BundSub => &bindings.bund_sub,
+        keybind::Layer::ViewSub => &bindings.view_sub,
     };
     let prefix = match layer {
         keybind::Layer::MetaSub => bindings.meta_prefix.to_display_string(),
@@ -217,6 +221,10 @@ fn live_chord_entries(layer: keybind::Layer, focus: Focus) -> Vec<Entry> {
             .bund_prefix
             .map(|c| c.to_display_string())
             .unwrap_or_else(|| "(bund prefix disabled)".to_string()),
+        keybind::Layer::ViewSub => bindings
+            .view_prefix
+            .map(|c| c.to_display_string())
+            .unwrap_or_else(|| "(view prefix disabled)".to_string()),
     };
     let mut out: Vec<Entry> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();

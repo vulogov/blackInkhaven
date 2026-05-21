@@ -81,6 +81,10 @@ pub struct Config {
     pub sync_interval_seconds: u64,
 }
 
+fn default_view_prefix() -> String {
+    "Ctrl+v".into()
+}
+
 fn default_sync_interval() -> u64 {
     600
 }
@@ -1033,6 +1037,13 @@ pub struct KeyBindings {
     /// Ctrl+U in this codebase. Set to an empty string to disable
     /// the Bund chord entirely.
     pub bund_prefix: String,
+    /// View meta-prefix chord (1.2.4+). Parallel to meta_prefix +
+    /// bund_prefix but for markdown export / similar mode /
+    /// progress / paragraph target. Defaults to Ctrl+V. Empty
+    /// string disables the layer (a terminal that wants Ctrl+V
+    /// for "verbatim next" can opt out).
+    #[serde(default = "default_view_prefix")]
+    pub view_prefix: String,
     /// User overlay for chord-action bindings under the meta- and
     /// bund-prefixes. Each entry is `{ chord, action, scope? }`.
     /// The `chord` string uses shorthand `"<prefix> <suffix>"`
@@ -1069,6 +1080,7 @@ impl Default for KeyBindings {
             page_down: "PageDown".into(),
             meta_prefix: "Ctrl+b".into(),
             bund_prefix: "Ctrl+z".into(),
+            view_prefix: default_view_prefix(),
             bindings: Vec::new(),
         }
     }
