@@ -882,6 +882,17 @@ enum MoveDir {
     Down,
 }
 
+/// Direction of a link-pick flow (Ctrl+V A vs Ctrl+V I).
+/// `Outgoing` adds the picked target to the open paragraph's
+/// outgoing links; `Incoming` adds the open paragraph to the
+/// picked target's outgoing links (== an incoming link for
+/// current).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinkPickDirection {
+    Outgoing,
+    Incoming,
+}
+
 #[derive(Default)]
 struct ImportCounts {
     /// Any branch created during import: chapter, subchapter, or book.
@@ -2072,7 +2083,15 @@ pub(crate) struct App {
     /// tree pane shows a custom title and `Enter` on a paragraph
     /// links it to the owning UUID stashed here. Esc / tree-focus
     /// loss exits the mode and restores normal Enter semantics.
-    link_pick_for: Option<Uuid>,
+    ///
+    /// Direction:
+    /// * `Outgoing` — the Ctrl+V A flow. Open paragraph
+    ///   `linked_paragraphs` gains the tree-picked target.
+    /// * `Incoming` — the Ctrl+V I flow. The tree-picked
+    ///   paragraph's `linked_paragraphs` gains the open one
+    ///   (i.e. creates a link FROM the picked paragraph TO
+    ///   current).
+    link_pick_for: Option<(Uuid, LinkPickDirection)>,
     /// Multi-select set in the tree pane (1.2.4+). Toggled by
     /// `Space` on a row; when non-empty, `Ctrl+B R` (cycle
     /// status) and `Ctrl+V T` (set target) operate on every
@@ -3439,6 +3458,24 @@ impl App {
             }
             KeyCode::Char('X') | KeyCode::Char('x') if plain => {
                 self.collapse_all_branches();
+            }
+
+            // 1.2.4+: tree T cycles the type of the cursor row
+            // (or every marked paragraph, when multi-select is
+            // active). Same ladder as Ctrl+B M:
+            // Paragraph(typst) → Paragraph(hjson) → Script(bund).
+            KeyCode::Char('T') | KeyCode::Char('t') if plain => {
+                if !self.tree_marked.is_empty() {
+                    self.cycle_leaf_type_bulk();
+                } else {
+                    self.cycle_leaf_type();
+                }
+            }
+            // 1.2.4+: tree O cycles paragraph status. Mirrors
+            // Ctrl+B R; honours multi-select for bulk status
+            // transitions.
+            KeyCode::Char('O') | KeyCode::Char('o') if plain => {
+                self.cycle_paragraph_status();
             }
 
             _ if self.keymap.page_up.matches(&key) => self.move_cursor(-10),
@@ -5658,36 +5695,52 @@ impl App {
     /// changes.
     /// Resolve the tree-cursor row to a paragraph and link it to
     /// the link-pick owner. Always exits pick mode (success or
-    /// failure) and returns focus to the editor.
+    /// failure) and returns focus to the editor. Direction is
+    /// stashed in `link_pick_for.1`:
+    /// * `Outgoing` (Ctrl+V A) — `add_link(owner, picked)`
+    /// * `Incoming` (Ctrl+V I) — `add_link(picked, owner)`
     fn commit_link_pick(&mut self) {
-        let Some(owner) = self.link_pick_for else { return };
-        let target = self
+        let Some((owner, direction)) = self.link_pick_for else { return };
+        let picked = self
             .rows
             .get(self.tree_cursor)
             .map(|(id, _)| *id);
-        // Exit pick mode first so any status-message we set below
-        // reflects the post-action state.
         self.link_pick_for = None;
-        let Some(target) = target else {
+        let Some(picked) = picked else {
             self.status = "link cancelled: no tree row selected".into();
             self.change_focus(Focus::Editor);
             return;
         };
-        let target_kind = self.hierarchy.get(target).map(|n| n.kind);
-        if !matches!(target_kind, Some(NodeKind::Paragraph)) {
+        let picked_kind = self.hierarchy.get(picked).map(|n| n.kind);
+        if !matches!(picked_kind, Some(NodeKind::Paragraph)) {
             self.status =
                 "link cancelled: target is not a paragraph".into();
             self.change_focus(Focus::Editor);
             return;
         }
-        match self.add_paragraph_link(owner, target) {
+        // Outgoing: owner → picked.  Incoming: picked → owner.
+        let (from, to) = match direction {
+            LinkPickDirection::Outgoing => (owner, picked),
+            LinkPickDirection::Incoming => (picked, owner),
+        };
+        match self.add_paragraph_link(from, to) {
             Ok(()) => {
                 let title = self
                     .hierarchy
-                    .get(target)
+                    .get(to)
                     .map(|n| n.title.clone())
                     .unwrap_or_else(|| "?".into());
-                self.status = format!("linked → `{title}`");
+                self.status = match direction {
+                    LinkPickDirection::Outgoing => format!("linked → `{title}`"),
+                    LinkPickDirection::Incoming => {
+                        let from_title = self
+                            .hierarchy
+                            .get(from)
+                            .map(|n| n.title.clone())
+                            .unwrap_or_else(|| "?".into());
+                        format!("linked `{from_title}` → current")
+                    }
+                };
             }
             Err(e) => {
                 self.status = format!("link: {e}");
@@ -5707,10 +5760,25 @@ impl App {
             self.status = "view A: no paragraph open".into();
             return;
         };
-        self.link_pick_for = Some(doc.id);
+        self.link_pick_for = Some((doc.id, LinkPickDirection::Outgoing));
         self.change_focus(Focus::Tree);
         self.status =
             "link: select paragraph to link · Enter confirms · Esc cancels".into();
+    }
+
+    /// Reverse-direction picker (1.2.4+, Ctrl+V I). The
+    /// tree-picked paragraph's outgoing links gains the open
+    /// paragraph — same circular guard.
+    fn enter_incoming_link_pick_mode(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "view I: no paragraph open".into();
+            return;
+        };
+        self.link_pick_for = Some((doc.id, LinkPickDirection::Incoming));
+        self.change_focus(Focus::Tree);
+        self.status =
+            "incoming link: select paragraph that will link to current · Enter confirms · Esc cancels"
+                .into();
     }
 
     /// Open the linked-paragraphs modal for the open paragraph.
@@ -6486,6 +6554,7 @@ impl App {
             A::ViewOpenProgress => self.open_progress_modal(),
             A::ViewOpenParagraphTarget => self.open_paragraph_target_modal(),
             A::ViewAddLink => self.enter_link_pick_mode(),
+            A::ViewAddIncomingLink => self.enter_incoming_link_pick_mode(),
             A::ViewListLinks => self.open_link_picker_modal(),
             A::ViewListBacklinks => self.open_backlink_picker_modal(),
             A::ViewToggleBookmark => self.toggle_bookmark(),
@@ -6529,6 +6598,79 @@ impl App {
     ///   * the tree cursor otherwise.
     /// Closes + reopens the buffer (if open on the converted node)
     /// so the new highlighter + content_type take effect immediately.
+    /// 1.2.4+: multi-select-aware bulk type cycle. When
+    /// `tree_marked` is non-empty, runs `cycle_leaf_type_single`
+    /// over every marked id and reports the aggregate.
+    fn cycle_leaf_type_bulk(&mut self) {
+        if self.tree_marked.is_empty() {
+            return;
+        }
+        let ids: Vec<Uuid> = self.tree_marked.iter().copied().collect();
+        let mut ok = 0usize;
+        let mut fail = 0usize;
+        // If the open buffer is in the set, close it first —
+        // its rel_path will change as part of the conversion,
+        // so reopening from the fresh hierarchy is safer than
+        // trying to keep the live doc in sync mid-loop.
+        let reopen_id = self
+            .opened
+            .as_ref()
+            .map(|d| d.id)
+            .filter(|id| self.tree_marked.contains(id));
+        if reopen_id.is_some() {
+            self.opened = None;
+        }
+        for id in &ids {
+            if self.cycle_leaf_type_single(*id).is_ok() {
+                ok += 1;
+            } else {
+                fail += 1;
+            }
+        }
+        self.reload_hierarchy();
+        // Reopen if needed.
+        if let Some(id) = reopen_id {
+            if let Some(node) = self.hierarchy.get(id).cloned() {
+                if matches!(node.kind, NodeKind::Paragraph) {
+                    let _ = self.load_paragraph(&node);
+                }
+            }
+        }
+        self.status = if fail == 0 {
+            format!("type cycled on {ok} paragraph(s)")
+        } else {
+            format!("type cycled on {ok} · {fail} failed")
+        };
+    }
+
+    /// Single-node type cycle used by both the cursor-row chord
+    /// and the multi-select wrapper. No buffer-reopen logic —
+    /// callers are responsible for that.
+    fn cycle_leaf_type_single(
+        &mut self,
+        node_id: Uuid,
+    ) -> std::result::Result<(), String> {
+        let node = self
+            .hierarchy
+            .get(node_id)
+            .cloned()
+            .ok_or_else(|| format!("node {node_id} not in hierarchy"))?;
+        let (new_kind, new_ct, _label) = match (node.kind, node.content_type.as_deref()) {
+            (NodeKind::Paragraph, None | Some("typst")) => {
+                (NodeKind::Paragraph, Some("hjson"), "hjson")
+            }
+            (NodeKind::Paragraph, Some("hjson")) => {
+                (NodeKind::Script, Some("bund"), "bund")
+            }
+            (NodeKind::Script, _) => (NodeKind::Paragraph, None, "typst"),
+            _ => return Err("not a text leaf".into()),
+        };
+        self.store
+            .convert_leaf(&self.hierarchy, node_id, new_kind, new_ct)
+            .map_err(|e| format!("convert: {e}"))?;
+        Ok(())
+    }
+
     fn cycle_leaf_type(&mut self) {
         // Pick the node to convert. From the Editor pane: prefer
         // the open buffer; fall back to the tree cursor when the
@@ -8288,15 +8430,29 @@ impl App {
             };
             return;
         }
-        let Some(doc) = self.opened.as_ref() else {
-            self.status = "no paragraph open".into();
-            return;
+        // 1.2.4+: when invoked without an open paragraph (e.g.
+        // from the tree pane via `O`), fall back to the
+        // cursor's row. Lets tree O cycle status without
+        // first having to open the paragraph.
+        let id = match self.opened.as_ref().map(|d| d.id) {
+            Some(id) => id,
+            None => match self.rows.get(self.tree_cursor) {
+                Some((id, _)) => *id,
+                None => {
+                    self.status = "no paragraph selected".into();
+                    return;
+                }
+            },
         };
-        let id = doc.id;
         let Some(node) = self.hierarchy.get(id).cloned() else {
-            self.status = "couldn't find the open paragraph in the hierarchy".into();
+            self.status = "couldn't find the target paragraph in the hierarchy".into();
             return;
         };
+        if node.kind != NodeKind::Paragraph {
+            self.status =
+                format!("status cycle: `{}` is not a paragraph", node.title);
+            return;
+        }
         let next = next_status(node.status.as_deref());
         let mut updated = node.clone();
         updated.status = if next == "None" {
@@ -14381,10 +14537,15 @@ impl App {
     }
 
     fn draw_tree(&self, f: &mut ratatui::Frame, area: Rect) {
-        let tree_title: String = if self.link_pick_for.is_some() {
-            " Tree · select paragraph to link · Esc cancels ".into()
-        } else {
-            "Tree".into()
+        let tree_title: String = match self.link_pick_for {
+            Some((_, LinkPickDirection::Outgoing)) => {
+                " Tree · select paragraph to link · Esc cancels ".into()
+            }
+            Some((_, LinkPickDirection::Incoming)) => {
+                " Tree · select paragraph that will link to current · Esc cancels "
+                    .into()
+            }
+            None => "Tree".into(),
         };
         let block = self.pane_block(&tree_title, Focus::Tree);
         let inner = block.inner(area);
