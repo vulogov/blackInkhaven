@@ -70,6 +70,17 @@ pub fn register(vm: &mut VM) -> Result<()> {
     // ── Editor (Phase C) ──────────────────────────────────────
     vm.register_inline("ink.editor.replace".to_string(), ink_editor_replace)
         .map_err(|e| anyhow!("register ink.editor.replace: {e}"))?;
+    // 1.2.4+: multi-occurrence replace.
+    vm.register_inline("ink.editor.replace_all".to_string(), ink_editor_replace_all)
+        .map_err(|e| anyhow!("register ink.editor.replace_all: {e}"))?;
+    // 1.2.4+: open the Nth semantic-search hit in the editor.
+    vm.register_inline("ink.search.load".to_string(), ink_search_load)
+        .map_err(|e| anyhow!("register ink.search.load: {e}"))?;
+    // 1.2.4+: AI poll + blocking-send.
+    vm.register_inline("ink.ai.poll".to_string(), ink_ai_poll)
+        .map_err(|e| anyhow!("register ink.ai.poll: {e}"))?;
+    vm.register_inline("ink.ai.send_blocking".to_string(), ink_ai_send_blocking)
+        .map_err(|e| anyhow!("register ink.ai.send_blocking: {e}"))?;
 
     // ── Typst ─────────────────────────────────────────────────
     vm.register_inline("ink.typst.assemble".to_string(), ink_typst_assemble)
@@ -517,5 +528,106 @@ fn do_ink_input(vm: &mut VM) -> Result<&mut VM> {
         app.open_bund_input(&prompt, &hook);
         Ok(())
     })?;
+    Ok(vm)
+}
+
+// ── ink.editor.replace_all ─────────────────────────────────────────
+// Stack: ( find replace -- replaced_count_int )
+// Replaces EVERY occurrence in the open paragraph's buffer.
+// Empty `find` returns 0 (defends against accidental infinite
+// growth when `replace` contains `find`).
+
+fn ink_editor_replace_all(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_editor_replace_all(vm).map_err(to_bund_err)
+}
+
+fn do_ink_editor_replace_all(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.editor.replace_all";
+    require_depth(vm, 2, tag)?;
+    let replace = value_to_string(pull(vm, tag)?, "replace", tag)?;
+    let find = value_to_string(pull(vm, tag)?, "find", tag)?;
+    let n = with_app(tag, |app| {
+        app.ink_editor_replace_all(&find, &replace)
+            .map_err(|e| anyhow!("{tag}: {e}"))
+    })?;
+    push(vm, Value::from_int(n));
+    Ok(vm)
+}
+
+// ── ink.search.load ────────────────────────────────────────────────
+// Stack: ( query index -- loaded_bool )
+// Runs a semantic search for `query`, opens the (index)-th hit in
+// the editor. Returns false when the search came back empty or
+// `index` is out of bounds.
+
+fn ink_search_load(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_search_load(vm).map_err(to_bund_err)
+}
+
+fn do_ink_search_load(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.search.load";
+    require_depth(vm, 2, tag)?;
+    let index_i = value_to_i64(pull(vm, tag)?, "index", tag)?;
+    let query = value_to_string(pull(vm, tag)?, "query", tag)?;
+    let index = if index_i < 0 { 0 } else { index_i as usize };
+    let loaded = with_app(tag, |app| {
+        app.ink_search_load(&query, index)
+            .map_err(|e| anyhow!("{tag}: {e}"))
+    })?;
+    push(vm, Value::from_bool(loaded));
+    Ok(vm)
+}
+
+// ── ink.ai.poll ────────────────────────────────────────────────────
+// Stack: ( -- hash )
+// Returns a hash describing the current inference:
+//   { status, response, elapsed_ms }
+// status ∈ "none" / "streaming" / "done" / "error: <msg>".
+// elapsed_ms is i64 from inference start (0 when no inference).
+// `response` is the accumulated text so far — grows during
+// streaming, stable after Done.
+
+fn ink_ai_poll(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_ai_poll(vm).map_err(to_bund_err)
+}
+
+fn do_ink_ai_poll(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.ai.poll";
+    let (status, response, elapsed) = with_app(tag, |app| Ok(app.ink_ai_poll()))?;
+    let mut h: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    h.insert("status".into(), Value::from_string(status));
+    h.insert("response".into(), Value::from_string(response));
+    h.insert("elapsed_ms".into(), Value::from_int(elapsed));
+    push(vm, Value::from_dict(h));
+    Ok(vm)
+}
+
+// ── ink.ai.send_blocking ───────────────────────────────────────────
+// Stack: ( prompt timeout_ms -- response | NODATA )
+// Spawns an inference (same code path as `ink.ai.send`) and then
+// busy-polls until it terminates or `timeout_ms` ms elapse. The
+// TUI does not redraw while the wait runs — that's the trade-off
+// when picking the blocking variant. On timeout, NODATA is
+// returned but the inference itself keeps streaming and can be
+// read later via `ink.ai.poll`.
+
+fn ink_ai_send_blocking(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_ai_send_blocking(vm).map_err(to_bund_err)
+}
+
+fn do_ink_ai_send_blocking(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.ai.send_blocking";
+    require_depth(vm, 2, tag)?;
+    let timeout_ms = value_to_i64(pull(vm, tag)?, "timeout_ms", tag)?;
+    let prompt = value_to_string(pull(vm, tag)?, "prompt", tag)?;
+    let result = with_app(tag, |app| {
+        app.ink_ai_send_blocking(&prompt, timeout_ms)
+            .map_err(|e| anyhow!("{tag}: {e}"))
+    })?;
+    let value = match result {
+        Some(s) => Value::from_string(s),
+        None => Value::nodata(),
+    };
+    push(vm, value);
     Ok(vm)
 }

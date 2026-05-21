@@ -14308,6 +14308,135 @@ impl App {
     /// Bund scripts that want the response read
     /// `ink.ai.history` later (e.g. in a hook firing on a
     /// subsequent action).
+    /// Multi-occurrence find/replace on the open buffer. Returns
+    /// the number of replacements made. Empty `find` returns 0
+    /// (defends against an infinite loop with `replace.contains(find)`).
+    pub(crate) fn ink_editor_replace_all(
+        &mut self,
+        find: &str,
+        replace: &str,
+    ) -> std::result::Result<i64, String> {
+        if find.is_empty() {
+            return Ok(0);
+        }
+        let doc = self
+            .opened
+            .as_mut()
+            .ok_or_else(|| "no paragraph open".to_string())?;
+        if doc.read_only {
+            return Err("paragraph is read-only".into());
+        }
+        // Pull the body, do all replacements at once with String::replace,
+        // then re-load the textarea. Avoids cursor-tracking complexity of
+        // doing N find/replace passes through tui-textarea.
+        let old_body = doc.textarea.lines().join("\n");
+        let new_body = old_body.replace(find, replace);
+        if new_body == old_body {
+            return Ok(0);
+        }
+        // Count occurrences by counting non-overlapping matches in the
+        // original body — same semantics as String::replace.
+        let count = old_body.matches(find).count() as i64;
+        let lines = body_to_lines(&new_body);
+        let mut ta = TextArea::new(lines);
+        ta.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
+        ta.set_line_number_style(Style::default().fg(Color::DarkGray));
+        doc.textarea = ta;
+        doc.dirty = true;
+        doc.last_activity = std::time::Instant::now();
+        Ok(count)
+    }
+
+    /// Open the `index`-th semantic-search hit for `query`.
+    /// Returns true when a paragraph was loaded, false when the
+    /// search came back empty or `index` is out of bounds.
+    pub(crate) fn ink_search_load(
+        &mut self,
+        query: &str,
+        index: usize,
+    ) -> std::result::Result<bool, String> {
+        if query.trim().is_empty() {
+            return Err("empty query".into());
+        }
+        let raw = self
+            .store
+            .search_text(query, (index + 1).max(8))
+            .map_err(|e| format!("search: {e}"))?;
+        let hits: Vec<crate::tui::search_results::SearchHit> = raw
+            .iter()
+            .filter_map(crate::tui::search_results::SearchHit::parse)
+            .collect();
+        let Some(hit) = hits.get(index) else {
+            return Ok(false);
+        };
+        let Some(node) = self.hierarchy.get(hit.id).cloned() else {
+            return Ok(false);
+        };
+        if node.kind != crate::store::node::NodeKind::Paragraph {
+            return Err(format!("hit `{}` is not a paragraph", node.title));
+        }
+        self.load_paragraph(&node)
+            .map_err(|e| format!("load_paragraph: {e:#}"))?;
+        Ok(true)
+    }
+
+    /// Snapshot the current AI inference state for `ink.ai.poll`.
+    /// Returns `(status, response, elapsed_ms)`; status is one of
+    /// `"none"` / `"streaming"` / `"done"` / `"error:<msg>"`.
+    /// `response` accumulates as the stream arrives.
+    pub(crate) fn ink_ai_poll(&self) -> (String, String, i64) {
+        let Some(inf) = self.inference.as_ref() else {
+            return ("none".into(), String::new(), 0);
+        };
+        let status = match &inf.status {
+            InferenceStatus::Streaming => "streaming".to_string(),
+            InferenceStatus::Done => "done".to_string(),
+            InferenceStatus::Error(e) => format!("error: {e}"),
+        };
+        let elapsed = inf.started_at.elapsed().as_millis() as i64;
+        (status, inf.response.clone(), elapsed)
+    }
+
+    /// Spawn an inference (same as `ink.ai.send`) and then poll
+    /// until it terminates or `timeout_ms` elapses. The TUI does
+    /// not redraw while the loop runs — that's the user's
+    /// trade-off when picking the blocking variant. Returns the
+    /// accumulated response, or `None` if the wait timed out (the
+    /// inference itself keeps streaming in the background and
+    /// can be read with `ink.ai.poll`).
+    pub(crate) fn ink_ai_send_blocking(
+        &mut self,
+        prompt: &str,
+        timeout_ms: i64,
+    ) -> std::result::Result<Option<String>, String> {
+        self.ink_ai_send(prompt)?;
+        let timeout = std::time::Duration::from_millis(timeout_ms.max(0) as u64);
+        let started = std::time::Instant::now();
+        loop {
+            // Pull whatever's accumulated in the stream channel.
+            self.pump_inference();
+            if let Some(inf) = self.inference.as_ref() {
+                match &inf.status {
+                    InferenceStatus::Done => {
+                        return Ok(Some(inf.response.clone()));
+                    }
+                    InferenceStatus::Error(e) => {
+                        return Err(format!("inference error: {e}"));
+                    }
+                    InferenceStatus::Streaming => {}
+                }
+            } else {
+                // No inference state — shouldn't happen since we
+                // just spawned one, but stay safe.
+                return Ok(None);
+            }
+            if started.elapsed() >= timeout {
+                return Ok(None);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
     pub(crate) fn ink_ai_send(&mut self, prompt: &str) -> Result<(), String> {
         if prompt.trim().is_empty() {
             return Err("empty prompt".into());
