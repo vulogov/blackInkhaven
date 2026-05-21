@@ -663,6 +663,10 @@ struct Keymap {
     /// `keys.bund_prefix = ""` to disable the chord (some users
     /// reserve Ctrl+Z for their terminal multiplexer).
     bund_prefix: Option<KeyChord>,
+    /// View-meta prefix (1.2.4+, default `Ctrl+V`). `None`
+    /// disables the layer (some terminals bind Ctrl+V to "verbatim
+    /// next" and the user might want it back).
+    view_prefix: Option<KeyChord>,
 }
 
 impl Keymap {
@@ -675,6 +679,11 @@ impl Keymap {
         } else {
             Some(parse("bund_prefix", &cfg.keys.bund_prefix)?)
         };
+        let view_prefix = if cfg.keys.view_prefix.trim().is_empty() {
+            None
+        } else {
+            Some(parse("view_prefix", &cfg.keys.view_prefix)?)
+        };
         Ok(Self {
             next_pane: parse("next_pane", &cfg.keys.next_pane)?,
             prev_pane: parse("prev_pane", &cfg.keys.prev_pane)?,
@@ -685,8 +694,19 @@ impl Keymap {
             page_down: parse("page_down", &cfg.keys.page_down)?,
             meta_prefix: parse("meta_prefix", &cfg.keys.meta_prefix)?,
             bund_prefix,
+            view_prefix,
         })
     }
+}
+
+/// Which scope the Ctrl+V markdown export targets. Used by
+/// `view_export_markdown` to route through the existing
+/// per-scope helpers from one binding-table arm.
+#[derive(Debug, Clone, Copy)]
+enum ViewMdScope {
+    Buffer,
+    Subchapter,
+    Subtree,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2111,6 +2131,7 @@ impl App {
         let keys = super::keybind::KeyBindings::from_overrides(
             keymap.meta_prefix,
             keymap.bund_prefix,
+            keymap.view_prefix,
             &overrides,
         )
         .map_err(|e| Error::Config(format!("keys.bindings: {e}")))?;
@@ -2752,24 +2773,21 @@ impl App {
             return Ok(false);
         }
 
-        // View-prefix dispatch (Ctrl+V): markdown export to cwd.
-        // Captures the next keystroke. Currently 1.2.3 — chord
-        // table is hardcoded (not in keybind::KeyBindings); when
-        // there's appetite for rebinding it gets promoted to the
-        // binding table like meta/bund have been.
+        // View-prefix dispatch (Ctrl+V by default, 1.2.4+).
+        // Captures the next keystroke. Resolution goes through
+        // the binding table now (Layer::ViewSub), so HJSON
+        // `keys.bindings` + `ink.key.*` can rebind every chord
+        // under the prefix.
         if self.view_pending {
             self.handle_view_action(key);
             return Ok(false);
         }
-        if matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'))
-            && key.modifiers.contains(KeyModifiers::CONTROL)
-            && !key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
-        {
-            self.view_pending = true;
-            self.status =
-                "view: 1 = buffer · 2 = subchapter (tree: 1 = subtree) · Esc cancel"
-                    .into();
-            return Ok(false);
+        if let Some(view_prefix) = self.keymap.view_prefix {
+            if view_prefix.matches(&key) {
+                self.view_pending = true;
+                self.status = super::keybind::read().view_hint(self.focus);
+                return Ok(false);
+            }
         }
 
         // Bund-meta dispatch (Ctrl+Z by default). Mirrors the
@@ -5272,50 +5290,47 @@ impl App {
     /// and write to the launch cwd with a `<title>-<stamp>.md`
     /// filename. Errors land on the status bar; nothing else
     /// changes.
+    /// Dispatch one of the three Ctrl+V markdown-export scopes
+    /// through the existing per-scope helpers, then surface
+    /// success / failure on the status bar. The keybind-table
+    /// arms in `run_action` call this; saves a per-action
+    /// boilerplate.
+    fn view_export_markdown(&mut self, scope: ViewMdScope) {
+        let outcome = match scope {
+            ViewMdScope::Buffer => self.export_markdown_buffer(),
+            ViewMdScope::Subchapter => self.export_markdown_subchapter(),
+            ViewMdScope::Subtree => self.export_markdown_tree_subtree(),
+        };
+        self.status = match outcome {
+            Ok(path) => format!("view: wrote {}", path.display()),
+            Err(e) => format!("view: {e}"),
+        };
+    }
+
     fn handle_view_action(&mut self, key: KeyEvent) {
         self.view_pending = false;
         if matches!(key.code, KeyCode::Esc) {
             self.status = "view cancelled".into();
             return;
         }
-        // `S` / `s` toggles "similar paragraphs" mode.
-        // The chord is global (works in any pane) because the
-        // current paragraph is whatever's loaded in `self.opened`,
-        // independent of where focus happens to be.
-        if matches!(key.code, KeyCode::Char('S') | KeyCode::Char('s')) {
-            self.toggle_similar_paragraph_mode();
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        if !plain {
+            self.status = "view cancelled".into();
             return;
         }
-        // `G` / `g` opens the writing-progress modal.
-        if matches!(key.code, KeyCode::Char('G') | KeyCode::Char('g')) {
-            self.open_progress_modal();
-            return;
+        let resolved = super::keybind::read().resolve_view_sub(&key, self.focus);
+        match resolved {
+            Some(super::keybind::Action::None) => {
+                self.status = "view: chord disabled by config".into();
+            }
+            Some(action) => self.run_action(action),
+            None => {
+                self.status =
+                    "view: unknown chord — 1/2 export · S similar · G progress · T target · Esc".into();
+            }
         }
-        // `T` / `t` sets the per-paragraph word-count goal for
-        // the open paragraph. Empty / `0` clears.
-        if matches!(key.code, KeyCode::Char('T') | KeyCode::Char('t')) {
-            self.open_paragraph_target_modal();
-            return;
-        }
-        let outcome = match (self.focus, key.code) {
-            (Focus::Editor | Focus::AiPrompt, KeyCode::Char('1')) => {
-                self.export_markdown_buffer()
-            }
-            (Focus::Editor | Focus::AiPrompt, KeyCode::Char('2')) => {
-                self.export_markdown_subchapter()
-            }
-            (Focus::Tree | Focus::SearchBar, KeyCode::Char('1')) => {
-                self.export_markdown_tree_subtree()
-            }
-            _ => {
-                self.status = "view: unknown chord (Editor: 1/2/S · Tree: 1/S)".into();
-                return;
-            }
-        };
-        self.status = match outcome {
-            Ok(path) => format!("view: wrote {}", path.display()),
-            Err(e) => format!("view: {e}"),
-        };
     }
 
     /// Entry point for the Ctrl+V S chord. Behaviour depends on
@@ -5668,6 +5683,14 @@ impl App {
             A::BundNewScript => self.bund_new_script(),
             A::BundOpenEvalModal => self.bund_open_eval_modal(),
             A::BundOpenScriptPicker => self.bund_open_script_picker(),
+
+            // ── View prefix ───────────────────────────────────
+            A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
+            A::ViewExportMarkdownSubchapter => self.view_export_markdown(ViewMdScope::Subchapter),
+            A::ViewExportMarkdownSubtree => self.view_export_markdown(ViewMdScope::Subtree),
+            A::ViewToggleSimilarMode => self.toggle_similar_paragraph_mode(),
+            A::ViewOpenProgress => self.open_progress_modal(),
+            A::ViewOpenParagraphTarget => self.open_paragraph_target_modal(),
 
             // Runtime-bound Bund lambda. Dispatch through the
             // hooks machinery so the recursion-cap + policy-deny
