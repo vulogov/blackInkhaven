@@ -233,6 +233,7 @@ pub fn run(project: &Path) -> Result<()> {
 
     let mut app = App::new(layout, cfg, store)?;
     app.restore_session();
+    app.install_progress();
 
     let result = app.run(&mut terminal);
 
@@ -241,6 +242,7 @@ pub fn run(project: &Path) -> Result<()> {
     // implicitly, but doing it explicitly here lets us log any error
     // and guarantees the auto-backup below sees a fully-drained WAL.
     app.shutdown_flush();
+    crate::progress::uninstall();
 
     // Drop the App (and its Store handle) BEFORE running the auto-backup so
     // duckdb/HNSW checkpoint state is flushed to disk and the zip captures
@@ -1603,6 +1605,12 @@ enum Modal {
         cursor: usize,
         scroll: usize,
     },
+    /// Ctrl+V G — writing-progress overview. Renders the cached
+    /// snapshot (today/streak/per-book/status ladder) plus a
+    /// 30-day sparkline. Read-only; refresh on open.
+    Progress {
+        scroll: usize,
+    },
     /// Ctrl+V S — pick a paragraph similar to the current buffer.
     /// Result list comes from the vector index seeded with the
     /// current paragraph's text; entries always exclude the
@@ -1768,6 +1776,11 @@ pub(crate) struct App {
     /// `secondary_in_left_pane` flag tells the renderer which
     /// physical pane currently holds `opened`.
     secondary: Option<OpenedDoc>,
+    /// Cached writing-progress snapshot, refreshed on every save +
+    /// on project open. Status-bar widget reads from this cache so
+    /// per-frame redraws don't trigger a hierarchy walk. `None`
+    /// means "progress disabled / not yet computed".
+    progress_cache: Option<crate::progress::ProgressSnapshot>,
     /// In similar-paragraph mode, which pane has keyboard focus.
     /// `false` (default) → left pane = `self.opened` is the
     /// keyboard target. `true` → right pane = `self.secondary`
@@ -2146,6 +2159,7 @@ impl App {
             opened: None,
             secondary: None,
             secondary_focused: false,
+            progress_cache: None,
             status: String::from(
                 "Tab=panes · Enter=open · Ctrl+S=save · Ctrl+B then B/C/S/P add · D delete · ↑/↓ reorder · Ctrl+Q quit",
             ),
@@ -2184,6 +2198,90 @@ impl App {
             chat_search: None,
             chat_selection: None,
         })
+    }
+
+    /// Open the progress store under the project root and seed
+    /// today's baselines. Called from `run` after `App::new` and
+    /// before the event loop spins up. Failures are logged + the
+    /// store stays uninstalled — progress tracking degrades to
+    /// "(disabled)" rather than aborting startup.
+    pub(crate) fn install_progress(&mut self) {
+        if let Err(e) = crate::progress::install(&self.layout.root) {
+            tracing::warn!(target: "inkhaven::progress", "install: {e:#}");
+            return;
+        }
+        // Snapshot today's per-book + project-wide totals so
+        // `today_words` has a stable reference point. Idempotent
+        // per (day, book) — subsequent calls in the same UTC day
+        // are silent no-ops.
+        let (per_book, project_total) = self.compute_word_totals_now();
+        crate::progress::capture_today_baselines(&per_book, project_total);
+        self.refresh_progress_cache();
+    }
+
+    /// Rebuild `self.progress_cache` from the current hierarchy +
+    /// progress store. Cheap enough to call per save (one hierarchy
+    /// walk + a handful of small DuckDB selects). The status bar
+    /// always reads from the cache so it doesn't pay the cost on
+    /// every redraw.
+    pub(crate) fn refresh_progress_cache(&mut self) {
+        let (per_book_vec, project_total) = self.compute_word_totals_now();
+        let mut per_book: std::collections::HashMap<Uuid, i64> =
+            std::collections::HashMap::new();
+        let mut book_titles: std::collections::HashMap<Uuid, String> =
+            std::collections::HashMap::new();
+        let mut book_slugs: std::collections::HashMap<Uuid, String> =
+            std::collections::HashMap::new();
+        for (id, total) in per_book_vec {
+            per_book.insert(id, total);
+            if let Some(node) = self.hierarchy.get(id) {
+                book_titles.insert(id, node.title.clone());
+                book_slugs.insert(id, node.slug.clone());
+            }
+        }
+        let live = crate::progress::LiveTotals {
+            per_book,
+            project_total,
+            book_titles,
+            book_slugs,
+        };
+        let snap = crate::progress::snapshot(&self.cfg.goals, &live);
+        self.progress_cache = Some(snap);
+    }
+
+    /// Walk the hierarchy and compute current per-book + project
+    /// word totals. Touches the filesystem (reads paragraph
+    /// bodies) — okay to call once at startup; called from the
+    /// progress modal too where the cost amortises across an
+    /// interactive open.
+    pub(crate) fn compute_word_totals_now(
+        &self,
+    ) -> (Vec<(Uuid, i64)>, i64) {
+        use crate::progress::word_count::count_words;
+        let mut per_book: std::collections::HashMap<Uuid, i64> =
+            std::collections::HashMap::new();
+        for (node, _) in self.hierarchy.flatten() {
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            // Skip protected (system / Help) books — they're not
+            // user manuscript content.
+            let in_user_book = self
+                .hierarchy
+                .ancestors(node)
+                .into_iter()
+                .find(|a| a.kind == NodeKind::Book)
+                .filter(|b| b.system_tag.is_none());
+            let Some(book) = in_user_book else { continue };
+            let Some(rel) = node.file.as_ref() else { continue };
+            let abs = self.layout.root.join(rel);
+            let body = std::fs::read_to_string(&abs).unwrap_or_default();
+            let n = count_words(&body);
+            *per_book.entry(book.id).or_insert(0) += n;
+        }
+        let project_total: i64 = per_book.values().sum();
+        let per_book_vec: Vec<(Uuid, i64)> = per_book.into_iter().collect();
+        (per_book_vec, project_total)
     }
 
     /// Final HNSW save + DuckDB CHECKPOINT before the App (and its
@@ -5079,6 +5177,11 @@ impl App {
             self.toggle_similar_paragraph_mode();
             return;
         }
+        // `G` / `g` opens the writing-progress modal.
+        if matches!(key.code, KeyCode::Char('G') | KeyCode::Char('g')) {
+            self.open_progress_modal();
+            return;
+        }
         let outcome = match (self.focus, key.code) {
             (Focus::Editor | Focus::AiPrompt, KeyCode::Char('1')) => {
                 self.export_markdown_buffer()
@@ -5251,6 +5354,8 @@ impl App {
     ) -> std::result::Result<(), String> {
         let abs = self.layout.root.join(&doc.rel_path);
         let body = doc.textarea.lines().join("\n");
+        let prev_words =
+            crate::progress::count_words(&doc.saved_lines.join("\n"));
         std::fs::write(&abs, body.as_bytes())
             .map_err(|e| format!("write {}: {e}", abs.display()))?;
         // Refresh the store so subsequent searches see the new
@@ -5267,6 +5372,10 @@ impl App {
             .map_err(|e| format!("store update: {e}"))?;
         doc.dirty = false;
         doc.saved_lines = doc.textarea.lines().to_vec();
+        let new_words = crate::progress::count_words(&body);
+        let book_id = self.book_of_node(doc.id);
+        crate::progress::record_save(doc.id, book_id, prev_words, new_words);
+        self.refresh_progress_cache();
         Ok(())
     }
 
@@ -7179,6 +7288,15 @@ impl App {
         }
         // Refresh hierarchy so the status reads back next frame.
         self.reload_hierarchy();
+        // Progress event log — feeds the status-ladder bar in
+        // Ctrl+V G and the "promoted-to-Final this week" counts.
+        let from_label = display_status(node.status.as_deref()).to_ascii_lowercase();
+        let to_label = next.to_ascii_lowercase();
+        let total_words = node.word_count.max(0) as i64;
+        let book_id = self.book_of_node(id);
+        crate::progress::record_status_change(
+            id, book_id, &from_label, &to_label, total_words,
+        );
         self.status = format!("status: `{}` → `{}`", display_status(node.status.as_deref()), next);
     }
 
@@ -9141,6 +9259,7 @@ impl App {
         let is_script_picker = matches!(self.modal, Modal::ScriptPicker { .. });
         let is_bund_input = matches!(self.modal, Modal::BundInput { .. });
         let is_similar_picker = matches!(self.modal, Modal::SimilarPicker { .. });
+        let is_progress = matches!(self.modal, Modal::Progress { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -9226,6 +9345,11 @@ impl App {
 
         if is_similar_picker {
             self.similar_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_progress {
+            self.progress_modal_handle_key(key);
             return Ok(false);
         }
 
@@ -9847,6 +9971,9 @@ impl App {
             return Ok(());
         }
         let body = doc.textarea.lines().join("\n");
+        // Capture pre-save word count before we overwrite anything
+        // — used by the progress event log to compute word_delta.
+        let prev_words = crate::progress::count_words(&doc.saved_lines.join("\n"));
         let abs = self.layout.root.join(&doc.rel_path);
 
         // Filesystem write first; if that fails, abort before touching the store.
@@ -9904,8 +10031,31 @@ impl App {
         } else {
             self.status = format!("saved {} ({} words, re-embedded)", abs.display(), words);
         }
+        // Progress event log. The book this paragraph belongs
+        // to feeds per-book aggregates; project-wide events drop
+        // book_id = None for the same record.
+        let new_words = crate::progress::count_words(&body);
+        let book_id = self.book_of_node(node.id);
+        crate::progress::record_save(node.id, book_id, prev_words, new_words);
         self.reload_hierarchy();
+        self.refresh_progress_cache();
         Ok(())
+    }
+
+    /// Resolve the user book a paragraph belongs to. Returns
+    /// `None` for system-book content (Help / Scripts / Typst /
+    /// …) which doesn't count toward writing goals.
+    pub(crate) fn book_of_node(&self, id: Uuid) -> Option<Uuid> {
+        let node = self.hierarchy.get(id)?;
+        let book = self
+            .hierarchy
+            .ancestors(node)
+            .into_iter()
+            .find(|a| a.kind == NodeKind::Book)?;
+        if book.system_tag.is_some() {
+            return None;
+        }
+        Some(book.id)
     }
 
     /// Re-read the hierarchy from bdslib and rebuild the flattened tree-row
@@ -10913,6 +11063,235 @@ impl App {
         );
     }
 
+    /// Open the writing-progress modal. Forces a cache refresh
+    /// so the user always sees fresh numbers (the per-redraw
+    /// path stays cheap by reading the cache).
+    fn open_progress_modal(&mut self) {
+        self.refresh_progress_cache();
+        self.modal = Modal::Progress { scroll: 0 };
+        self.status = "progress: ↑↓ scroll · Esc close · r refresh".into();
+    }
+
+    fn progress_modal_handle_key(&mut self, key: KeyEvent) {
+        let Modal::Progress { scroll } = &mut self.modal else {
+            return;
+        };
+        match key.code {
+            KeyCode::Up => *scroll = scroll.saturating_sub(1),
+            KeyCode::Down => *scroll += 1,
+            KeyCode::PageUp => *scroll = scroll.saturating_sub(8),
+            KeyCode::PageDown => *scroll += 8,
+            KeyCode::Home => *scroll = 0,
+            KeyCode::End => *scroll += 100, // clamped by renderer
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                self.refresh_progress_cache();
+                self.status = "progress: refreshed".into();
+            }
+            _ => {}
+        }
+    }
+
+    fn draw_progress_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let scroll = match &self.modal {
+            Modal::Progress { scroll } => *scroll,
+            _ => return,
+        };
+        let snap = match self.progress_cache.as_ref() {
+            Some(s) => s.clone(),
+            None => {
+                self.refresh_progress_cache();
+                self.progress_cache.clone().unwrap_or_else(|| {
+                    crate::progress::ProgressSnapshot::empty()
+                })
+            }
+        };
+
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(20);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = " Writing progress ".to_string();
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Two-column body: text on left (2/3), 30-day sparkline
+        // + bar chart on right (1/3). Footer row.
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        let split = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(60),
+                Constraint::Percentage(40),
+            ])
+            .split(body_rect);
+        let text_rect = split[0];
+        let chart_rect = split[1];
+
+        // ── Text panel ────────────────────────────────────────
+        let mut lines: Vec<Line> = Vec::new();
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let dim = Style::default().add_modifier(Modifier::DIM);
+
+        // Today + streak
+        lines.push(Line::from(Span::styled(" Today", bold)));
+        let today_line = match snap.project.daily_goal {
+            Some(goal) => {
+                let pct = if goal > 0 {
+                    (snap.project.today_words.max(0) * 100 / goal).clamp(0, 999)
+                } else {
+                    0
+                };
+                format!(
+                    "   words: {}/{} ({}%)",
+                    snap.project.today_words, goal, pct
+                )
+            }
+            None => format!("   words: {} (no daily goal set)", snap.project.today_words),
+        };
+        lines.push(Line::from(today_line));
+        lines.push(Line::from(format!(
+            "   streak: {}d (grace {}/{} per week)",
+            snap.streak.days, snap.streak.grace_used, snap.streak.grace_per_week
+        )));
+        lines.push(Line::from(""));
+
+        // Per-book breakdown
+        lines.push(Line::from(Span::styled(" Books", bold)));
+        if snap.books.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "   (no user books)",
+                dim,
+            )));
+        }
+        for b in &snap.books {
+            let header = match (b.target_words, b.required_pace, b.days_to_deadline) {
+                (Some(t), Some(p), Some(dd)) => format!(
+                    "   {}: {}w · target {}w · pace {}w/d · {} day(s)",
+                    b.label, b.total_words, t, p, dd
+                ),
+                (Some(t), _, _) => {
+                    format!("   {}: {}w · target {}w", b.label, b.total_words, t)
+                }
+                _ => format!("   {}: {}w", b.label, b.total_words),
+            };
+            lines.push(Line::from(header));
+            lines.push(Line::from(Span::styled(
+                format!("      today: {}w", b.today_words),
+                dim,
+            )));
+        }
+        lines.push(Line::from(""));
+
+        // Status ladder
+        lines.push(Line::from(Span::styled(
+            " Status ladder · last 7 days",
+            bold,
+        )));
+        if snap.status.recent.is_empty() && snap.status.goals.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "   (no status promotions recorded yet)",
+                dim,
+            )));
+        } else {
+            // Display each goal alongside its recent count.
+            let mut by_status: std::collections::HashMap<String, i64> =
+                std::collections::HashMap::new();
+            for (s, n) in &snap.status.recent {
+                by_status.insert(s.clone(), *n);
+            }
+            let mut shown: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for (s, goal) in &snap.status.goals {
+                let n = by_status.get(s).copied().unwrap_or(0);
+                lines.push(Line::from(format!(
+                    "   → {}: {}/{} this week",
+                    s, n, goal
+                )));
+                shown.insert(s.clone());
+            }
+            for (s, n) in &snap.status.recent {
+                if shown.contains(s) {
+                    continue;
+                }
+                lines.push(Line::from(format!("   → {}: {}", s, n)));
+            }
+        }
+
+        // Apply scroll. The renderer truncates after the visible
+        // height; out-of-range scroll is clamped here so End +
+        // PageDown saturate at "show the bottom".
+        let total = lines.len();
+        let body_h = text_rect.height as usize;
+        let max_scroll = total.saturating_sub(body_h.max(1));
+        let scroll = scroll.min(max_scroll);
+        let visible: Vec<Line> = lines.into_iter().skip(scroll).take(body_h).collect();
+        f.render_widget(Paragraph::new(visible), text_rect);
+
+        // ── Chart panel ────────────────────────────────────────
+        // 30-day daily-words bar chart (ratatui's built-in
+        // BarChart — Apache-2.0-compatible).
+        let data: Vec<u64> = snap
+            .sparkline
+            .iter()
+            .map(|n| (*n).max(0) as u64)
+            .collect();
+        let chart_inner = chart_rect;
+        if !data.is_empty() && chart_inner.height > 4 {
+            let sparkline = ratatui::widgets::Sparkline::default()
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" 30d words/day "),
+                )
+                .data(&data)
+                .style(Style::default().fg(self.theme.tree_script_fg));
+            f.render_widget(sparkline, chart_inner);
+        } else {
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    " (not enough history)",
+                    dim,
+                )))
+                .block(Block::default().borders(Borders::ALL).title(" 30d ")),
+                chart_inner,
+            );
+        }
+
+        // ── Footer ─────────────────────────────────────────────
+        let hint = " ↑↓ / PgUp/PgDn scroll · r refresh · Esc close ";
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(hint, dim))),
+            footer_rect,
+        );
+    }
+
     fn draw_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
         // The file picker needs a much larger panel than the fixed
         // 80-wide / 8-high box used for confirms — give it its own renderer.
@@ -10964,6 +11343,10 @@ impl App {
             self.draw_similar_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::Progress { .. }) {
+            self.draw_progress_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -10986,6 +11369,7 @@ impl App {
             Modal::BundPane { .. } => unreachable!("bund pane handled above"),
             Modal::ScriptPicker { .. } => unreachable!("script picker handled above"),
             Modal::SimilarPicker { .. } => unreachable!("similar picker handled above"),
+            Modal::Progress { .. } => unreachable!("progress modal handled above"),
             Modal::HelpQuery { input } => {
                 let body = vec![
                     Line::from(""),
@@ -12781,7 +13165,63 @@ impl App {
         ));
         spans.push(Span::raw("  "));
         spans.push(Span::raw(self.status.clone()));
+
+        // Right-aligned progress widget — drawn on its own
+        // Paragraph with right alignment so it can't be pushed
+        // off-screen by a long status message; the left part
+        // truncates if the terminal is narrow.
+        let progress_text = self.progress_widget_text();
+        if !progress_text.is_empty() {
+            let right = Paragraph::new(Line::from(Span::styled(
+                progress_text,
+                Style::default().add_modifier(Modifier::DIM),
+            )))
+            .alignment(ratatui::layout::Alignment::Right);
+            f.render_widget(right, area);
+        }
         f.render_widget(Paragraph::new(Line::from(spans)), area);
+    }
+
+    /// One-line writing-progress summary for the right edge of
+    /// the status bar. Empty when progress tracking is disabled
+    /// (no store installed or no goals configured).
+    fn progress_widget_text(&self) -> String {
+        let Some(snap) = self.progress_cache.as_ref() else {
+            return String::new();
+        };
+        let mut parts: Vec<String> = Vec::new();
+        let today = snap.project.today_words;
+        match snap.project.daily_goal {
+            Some(goal) => parts.push(format!("today {today}/{goal}w")),
+            None => parts.push(format!("today {today}w")),
+        }
+        if snap.streak.days > 0 {
+            parts.push(format!("streak {}d", snap.streak.days));
+        }
+        // Surface the focused book's pace if a deadline is set.
+        if let Some(book) = snap.books.iter().find(|b| {
+            self.opened
+                .as_ref()
+                .and_then(|d| self.book_of_node(d.id))
+                .map_or(false, |bid| {
+                    // Compare by title since BookProgress doesn't
+                    // carry the uuid; book labels are unique
+                    // within a project.
+                    self.hierarchy
+                        .get(bid)
+                        .map_or(false, |n| n.title == b.label)
+                })
+        }) {
+            if let (Some(target), Some(pace)) =
+                (book.target_words, book.required_pace)
+            {
+                parts.push(format!(
+                    "{} {}/{}w (pace {}w/d)",
+                    book.label, book.total_words, target, pace
+                ));
+            }
+        }
+        format!("{} ", parts.join(" · "))
     }
 
     fn draw_search_overlay(&self, f: &mut ratatui::Frame, area: Rect) {

@@ -6,6 +6,7 @@ mod config;
 mod error;
 mod export;
 mod grammar;
+mod progress;
 mod project;
 mod scripting;
 mod storage;

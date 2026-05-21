@@ -200,6 +200,38 @@
     extra_formats: []
   }
 
+  // Writing-progress goals — fuels the status-bar widget (today
+  // / streak / per-book pace) and the Ctrl+V G modal (sparkline,
+  // status-ladder bar, deadline forecasting). All fields are
+  // optional; commenting them out / leaving zero / leaving empty
+  // disables that particular goal but still records events so
+  // the modal has history to show.
+  //
+  // - daily_words: project-wide target. The status-bar shows
+  //   `today N/M words` when set.
+  // - streak_grace_per_week: missed days forgiven inside a
+  //   rolling 7-day window before the streak breaks. 0 = strict,
+  //   1 = one rest day allowed per week.
+  // - books: per-book targets keyed by book SLUG (matches the
+  //   second `[..]` field in `inkhaven list`). `target_words` +
+  //   `deadline` (ISO date YYYY-MM-DD) drives the required-pace
+  //   line in the modal.
+  // - status_ladder: trailing-7-days promotion targets keyed by
+  //   status name lowercased (ready / final / third / second /
+  //   first / napkin). Modal shows `→ ready: N/M this week`.
+  goals: {
+    daily_words: 0
+    streak_grace_per_week: 1
+    books: {
+      // story: { target_words: 80000, deadline: "2026-12-31" }
+    }
+    status_ladder: {
+      // ready:  1
+      // final:  3
+      // third:  5
+    }
+  }
+
   // Typewriter-style sound effects. Two events emit a synthesised
   // click: pressing Enter in the editor ("end of line, hit Enter") and
   // the editor pane losing focus ("remove page from machine"). The
