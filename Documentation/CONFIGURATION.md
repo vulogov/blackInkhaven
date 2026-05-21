@@ -23,6 +23,8 @@ into your file.
 - [`keys`](#keys)
 - [`backup`](#backup)
 - [`prompts_file` and `language`](#prompts_file-and-language)
+- [`output`](#output)
+- [`goals`](#goals)
 - [`sync_interval_seconds`](#sync_interval_seconds)
 - [Migration and forward compatibility](#migration-and-forward-compatibility)
 
@@ -438,6 +440,72 @@ editor: {
   stemming: { languages: ["english", "russian"] }
 }
 ```
+
+## `output`
+
+Multi-format export hookup for `Ctrl+B O` ("take the book"). Each
+format in `extra_formats` is generated alongside the PDF using the
+same combined `.typ` source the PDF compile sees.
+
+```hjson
+output: {
+  // Case-insensitive: "markdown", "tex", "epub" supported in 1.2.3.
+  // Unknown entries log a WARN and are skipped. Per-format errors
+  // land on the status bar but never abort the take — the PDF is
+  // already on disk before extras run.
+  extra_formats: ["markdown", "tex"]
+}
+```
+
+| Field            | Type           | Default | Description |
+| ---------------- | -------------- | ------- | ----------- |
+| `extra_formats`  | `["str", …]`   | `[]`    | Additional formats produced alongside the PDF on every `Ctrl+B O`. Files land next to the PDF with the same stem (`story-YYYYDDMM-HHMM.md`, …). Empty list = PDF-only, same as 1.2.2. |
+
+The CLI `inkhaven export <fmt>` ignores this list — it picks one
+format explicitly. See tutorial
+[`15-multi-format-export.md`](Tutorials/15-multi-format-export.md).
+
+## `goals`
+
+Writing-progress goals — fuels the status-bar widget (today /
+streak / per-book pace) and the Ctrl+V G progress modal
+(sparkline, status-ladder bar, deadline forecasting). All fields
+are optional; commenting them out / zero / empty disables that
+particular goal but still records events so the modal has
+history to show.
+
+```hjson
+goals: {
+  daily_words: 1500
+  streak_grace_per_week: 1
+  books: {
+    story: { target_words: 80000, deadline: "2026-12-31" }
+  }
+  status_ladder: {
+    ready: 1
+    final: 3
+  }
+}
+```
+
+| Field                    | Type            | Default | Description |
+| ------------------------ | --------------- | ------- | ----------- |
+| `daily_words`            | int             | `0`     | Project-wide daily target. Status-bar shows `today N/M words` when non-zero. |
+| `streak_grace_per_week`  | int             | `0`     | Missed days forgiven inside a rolling 7-day window before the streak breaks. `0` = strict, `1` = one rest day allowed per week. |
+| `books`                  | map<slug, BookGoal> | `{}` | Per-book targets, keyed by **book slug** (matches `Node.slug`, case-insensitive). |
+| `books.<slug>.target_words` | int          | `0`     | Total words the book should reach. `0` hides the per-book pace line. |
+| `books.<slug>.deadline`  | str (`YYYY-MM-DD`) | `""` | Date by which `target_words` should be hit. Empty disables deadline pacing. Past-due deadlines collapse to "remaining gap, all at once". |
+| `status_ladder`          | map<status, int> | `{}` | Trailing-7-days promotion targets keyed by status name **lowercased** (`ready`, `final`, `third`, `second`, `first`, `napkin`). Modal shows `→ ready: N/M this week`. |
+
+**Today's words** = current total − today's morning baseline.
+The baseline is captured per UTC day on project open (idempotent
+per day). System books (Help / Scripts / Typst / Prompts / Places
+/ Characters / Notes / Artefacts / Research) are excluded from
+every aggregate — only user-book manuscript words count.
+
+See tutorial [`17-writing-goals.md`](Tutorials/17-writing-goals.md)
+for the full workflow including streak grace examples and pace
+forecasting.
 
 ## `sync_interval_seconds`
 
