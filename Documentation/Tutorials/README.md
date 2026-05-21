@@ -28,6 +28,11 @@ covers.
 | 16 | [`16-similar-paragraphs.md`](16-similar-paragraphs.md) | Ctrl+V S — vector-similarity picker + side-by-side editor with the AI pane replaced by a second editor. |
 | 17 | [`17-writing-goals.md`](17-writing-goals.md) | Writing-progress tracking, the `goals:` HJSON stanza, daily-words vs morning-baseline, streak with grace, per-book deadlines, the Ctrl+V G modal. |
 | 18 | [`18-bund-pane-and-script-picker.md`](18-bund-pane-and-script-picker.md) | The floating Bund output pane (`ink.pane.*`), the Ctrl+Z ? script picker, the `ink.input` prompt modal. |
+| 19 | [`19-wiki-links.md`](19-wiki-links.md) | Metadata-only outgoing / incoming wiki-links, Ctrl+V A / I / L / K chords, AI-inference integration, status-bar count. |
+| 20 | [`20-snapshot-diff.md`](20-snapshot-diff.md) | F6 V snapshot diff (snapshot vs current), pre-restore safety snapshot on Enter, recovery flow. |
+| 21 | [`21-navigation.md`](21-navigation.md) | Ctrl+V P fuzzy paragraph picker, Ctrl+V B / M bookmarks, AI prompt Up-arrow history, slash-command prefix ranking. |
+| 22 | [`22-tree-multiselect.md`](22-tree-multiselect.md) | Tree-pane mark set (Space), T cycles type, O cycles status — both work on single OR multi-selection. |
+| 23 | [`23-scrivener-import.md`](23-scrivener-import.md) | `inkhaven import-scrivener` — single-binary `.scriv` ingest with RTF→Typst conversion, dry-run, mapping rules. |
 
 ## Scripting + chord customisation
 
@@ -58,6 +63,9 @@ because they cross-cut every other topic:
   overlay.
 - Press `F1` for the help-manual query pane (once you have populated
   the Help book — `inkhaven import-help` ingests a directory).
+- Print the [`cheat sheet`](../INKHAVEN_CHEAT_SHEET.typ) (`typst
+  compile Documentation/INKHAVEN_CHEAT_SHEET.typ`) — two-column A4
+  with every chord, hook, and CLI subcommand.
 - See the canonical reference: [`../KEYBINDING.md`](../KEYBINDING.md).
 - For database / backup / recovery questions:
   [`../MAINTENANCE.md`](../MAINTENANCE.md).
