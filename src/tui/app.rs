@@ -2435,8 +2435,7 @@ impl App {
         if let Some(bund_prefix) = self.keymap.bund_prefix {
             if bund_prefix.matches(&key) {
                 self.bund_pending = true;
-                self.status =
-                    "BUND · R run buffer · E eval expression · N new script · Esc cancel".into();
+                self.status = super::keybind::read().bund_hint(self.focus);
                 return Ok(false);
             }
         }
@@ -2453,19 +2452,10 @@ impl App {
             // The meta action table is pane-specific (see dispatch_meta_*),
             // so the hint shown in the status bar should match the focused
             // pane. Generic suffix (· H help · Esc cancel) is shared.
-            self.status = match self.focus {
-                Focus::Tree | Focus::SearchBar => {
-                    "META · C/S/P add · D delete · M morph-type · U/J ↑/↓ reorder · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel"
-                        .into()
-                }
-                Focus::Editor => {
-                    "META · S save · N snapshot · R status · F func · T retitle · M morph-type · P place/pic · C character · G notes · Y artefacts · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel"
-                        .into()
-                }
-                Focus::Ai | Focus::AiPrompt => {
-                    "META · C clear chat · H help · V credits · I info · L LLM · E sound · A assemble · B build · O take · W typewriter · K AI-full · Esc cancel".into()
-                }
-            };
+            // Build the meta-hint from the live binding table so
+            // user overlays (HJSON + ink.key.*) show up in the
+            // status bar automatically.
+            self.status = super::keybind::read().meta_hint(self.focus);
             return Ok(false);
         }
 

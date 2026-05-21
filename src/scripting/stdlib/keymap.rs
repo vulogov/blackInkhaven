@@ -204,9 +204,7 @@ fn push_entries(out: &mut Vec<Value>, table: &[BindingEntry], layer: &str) {
 }
 
 fn chord_to_string(c: &crate::tui::keymap::KeyChord) -> String {
-    // Quick-and-dirty: rely on Debug for now. A pretty printer
-    // would round-trip via the parser, which is a follow-up.
-    format!("{c:?}")
+    c.to_display_string()
 }
 
 fn action_to_string(a: &Action) -> String {
