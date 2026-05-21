@@ -11670,13 +11670,14 @@ impl App {
 
     fn link_picker_handle_key(&mut self, key: KeyEvent) {
         // Collect intent; close over the modal's mutable state.
-        let (owner, target_to_remove) = {
+        let (owner, target_to_remove, target_to_open) = {
             let Modal::LinkPicker { owner, entries, cursor, scroll } = &mut self.modal else {
                 return;
             };
             let total = entries.len();
             let page: usize = 12;
             let mut target_to_remove: Option<Uuid> = None;
+            let mut target_to_open: Option<Uuid> = None;
             match key.code {
                 KeyCode::Up => {
                     if *cursor > 0 {
@@ -11699,6 +11700,15 @@ impl App {
                         target_to_remove = Some(e.id);
                     }
                 }
+                // 1.2.4+: Enter opens the linked paragraph in the
+                // editor (autosaving the current buffer first via
+                // `open_search_result` → `load_paragraph` →
+                // `save_current`). Tree cursor follows. Modal closes.
+                KeyCode::Enter => {
+                    if let Some(e) = entries.get(*cursor) {
+                        target_to_open = Some(e.id);
+                    }
+                }
                 _ => {}
             }
             // Keep cursor visible.
@@ -11707,8 +11717,21 @@ impl App {
             } else if *cursor >= *scroll + page {
                 *scroll = *cursor + 1 - page;
             }
-            (*owner, target_to_remove)
+            (*owner, target_to_remove, target_to_open)
         };
+
+        if let Some(target) = target_to_open {
+            // Close the modal first so any status message the
+            // load flow sets isn't immediately overwritten by a
+            // modal-redraw cycle.
+            self.modal = Modal::None;
+            // `open_search_result` does exactly what we want:
+            // moves the tree cursor onto the target row, then
+            // loads the paragraph (which autosaves the previous
+            // buffer if it was dirty).
+            self.open_search_result(target);
+            return;
+        }
 
         if let Some(target) = target_to_remove {
             match self.remove_paragraph_link(owner, target) {
@@ -11807,7 +11830,7 @@ impl App {
             " (empty) · Esc close ".to_string()
         } else {
             format!(
-                " ↑↓ select · D removes · Esc closes    ({}/{}) ",
+                " ↑↓ select · Enter opens · D removes · Esc closes    ({}/{}) ",
                 cursor + 1,
                 entries.len()
             )
