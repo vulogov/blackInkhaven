@@ -227,6 +227,106 @@ impl Action {
             Action::BundLambda(name) => format!("λ {name}"),
         }
     }
+
+    /// Long, user-friendly description used by Ctrl+B H (the
+    /// quick-reference panel). Where `label()` is squeezed into
+    /// the status-bar hint and is therefore terse to the point of
+    /// cryptic, this is a full sentence aimed at someone reading
+    /// the panel for the first time. Returns `""` for `None` and
+    /// a generic "user-bound Bund lambda" line for `BundLambda`.
+    pub fn description(&self) -> String {
+        match self {
+            // ── Tree ──────────────────────────────────────────
+            Action::AddBook => "Add a new top-level Book to the project.".into(),
+            Action::AddChapter => "Add a Chapter under the current branch.".into(),
+            Action::AddSubchapter =>
+                "Add a Subchapter under the current chapter / subchapter.".into(),
+            Action::AddParagraph =>
+                "Add a Paragraph leaf under the current branch (typst content).".into(),
+            Action::DeleteNode =>
+                "Delete the node under the tree cursor (asks for confirmation).".into(),
+            Action::MorphType =>
+                "Cycle the selected leaf's flavour: Paragraph(typst) → Paragraph(hjson) → Script(bund).".into(),
+            Action::ReorderUp =>
+                "Move the current node up among its siblings.".into(),
+            Action::ReorderDown =>
+                "Move the current node down among its siblings.".into(),
+
+            // ── Editor / save / snapshots ─────────────────────
+            Action::Save =>
+                "Save the open paragraph to disk (autosave also fires on idle).".into(),
+            Action::CreateSnapshot =>
+                "Snapshot the open paragraph (history kept under F6 picker).".into(),
+            Action::CycleStatus =>
+                "Cycle the open paragraph's status: None → Napkin → First → Second → Third → Final → Ready.".into(),
+            Action::OpenFunctionPicker =>
+                "Open the Typst function picker — type to filter, Enter inserts #name(…).".into(),
+            Action::RenameToFirstSentence =>
+                "Rename the open paragraph using its first sentence as the new title.".into(),
+            Action::LookupPlacesOrImage =>
+                "Inside #image(\"…\"): pick a sibling image. Otherwise run a Places RAG over the selection.".into(),
+            Action::LookupCharacters =>
+                "Character RAG — selection is queried against the Characters book, answer streams in AI pane.".into(),
+            Action::LookupNotes =>
+                "Notes RAG — selection is queried against the Notes book, answer streams in AI pane.".into(),
+            Action::LookupArtefacts =>
+                "Artefacts RAG — selection is queried against the Artefacts book, answer streams in AI pane.".into(),
+            Action::OpenQuickref =>
+                "Open this Quick reference panel (live keymap + static cheatsheet).".into(),
+
+            // ── Global / panels ───────────────────────────────
+            Action::OpenCredits =>
+                "Show inkhaven version, author, and bundled-component credits.".into(),
+            Action::OpenBookInfo =>
+                "Open the current book's info panel: paths, stats, PDF status.".into(),
+            Action::OpenLlmPicker =>
+                "Switch the active LLM provider — choice is persisted to inkhaven.hjson.".into(),
+            Action::ToggleSound =>
+                "Toggle typewriter SFX (Enter / focus-out clicks). Choice is persisted to inkhaven.hjson.".into(),
+            Action::ScheduleAssemble =>
+                "Book assembly — emit a typst-compilable tree under the artefacts dir.".into(),
+            Action::ScheduleBuild =>
+                "Build the book — assemble + run `typst compile` (PDF lands in artefacts dir).".into(),
+            Action::ScheduleTake =>
+                "Take the book — build then copy the PDF (and any configured extras) into the launch cwd.".into(),
+            Action::ToggleTypewriter =>
+                "Toggle full-screen typewriter mode — hides every other pane for focused writing.".into(),
+            Action::ToggleAiFullscreen =>
+                "Toggle full-screen AI mode — AI pane | chat history + AI prompt.".into(),
+            Action::StatusFilterReady =>
+                "Filter the tree to paragraphs marked Ready under the cursor.".into(),
+            Action::StatusFilterFinal =>
+                "Filter the tree to paragraphs marked Final under the cursor.".into(),
+            Action::StatusFilterThird =>
+                "Filter the tree to paragraphs marked Third under the cursor.".into(),
+            Action::StatusFilterSecond =>
+                "Filter the tree to paragraphs marked Second under the cursor.".into(),
+            Action::StatusFilterFirst =>
+                "Filter the tree to paragraphs marked First under the cursor.".into(),
+            Action::StatusFilterNapkin =>
+                "Filter the tree to paragraphs marked Napkin under the cursor.".into(),
+            Action::StatusFilterNone =>
+                "Filter the tree to paragraphs with no status under the cursor.".into(),
+
+            // ── AI ────────────────────────────────────────────
+            Action::ClearChat =>
+                "Clear the chat history and any in-flight inference for a fresh AI session.".into(),
+
+            // ── Bund prefix ───────────────────────────────────
+            Action::BundRunBuffer =>
+                "Evaluate the currently-open .bund script against Adam (Bund VM).".into(),
+            Action::BundNewScript =>
+                "Add a new Bund script under the Scripts system book.".into(),
+            Action::BundOpenEvalModal =>
+                "Open the one-shot Bund eval modal — type an expression, see its result in the status bar.".into(),
+            Action::BundOpenScriptPicker =>
+                "Open the script picker — list scripts in the current branch (A toggles to Scripts book), Enter runs.".into(),
+
+            Action::None => String::new(),
+            Action::BundLambda(name) =>
+                format!("User-bound Bund lambda `{name}` (registered via ink.key.bind_lambda)."),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

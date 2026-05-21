@@ -237,8 +237,13 @@ fn live_chord_entries(layer: keybind::Layer, focus: Focus) -> Vec<Entry> {
         if !seen.insert(label.clone()) {
             continue;
         }
+        // Quick-help uses the long, user-friendly description.
+        // The short `label()` is reserved for the status-bar
+        // hint where horizontal space is at a premium.
         let chord = format!("{} {}", prefix, be.chord.to_display_string());
-        out.push(entry(chord, label));
+        let desc = be.action.description();
+        let desc = if desc.is_empty() { label } else { desc };
+        out.push(entry(chord, desc));
     }
     if out.is_empty() {
         out.push(entry("—", "no chords active in this pane"));
