@@ -7632,11 +7632,16 @@ impl App {
         let id = doc.id;
         match self.store.rename_node(&self.hierarchy, id, &new_title) {
             Ok(()) => {
+                self.reload_hierarchy();
                 if let Some(d) = self.opened.as_mut() {
                     d.title = new_title.clone();
+                    if let Some(node) = self.hierarchy.get(id) {
+                        if let Some(rel) = node.file.as_ref() {
+                            d.rel_path = rel.clone();
+                        }
+                    }
                 }
                 self.status = format!("renamed paragraph to `{new_title}`");
-                self.reload_hierarchy();
             }
             Err(e) => {
                 self.status = format!("rename failed: {e}");
@@ -9049,15 +9054,23 @@ impl App {
         }
         match self.store.rename_node(&self.hierarchy, node_id, &new_title) {
             Ok(()) => {
-                // Refresh editor's title if the renamed node is the open one.
+                self.reload_hierarchy();
+                // Refresh editor's title + on-disk rel_path if the
+                // renamed node is the open one. 1.2.4+: paragraphs
+                // rename their file on disk, so the open doc's
+                // rel_path needs to track the new slug.
                 if let Some(doc) = self.opened.as_mut() {
                     if doc.id == node_id {
                         doc.title = new_title.clone();
+                        if let Some(node) = self.hierarchy.get(node_id) {
+                            if let Some(rel) = node.file.as_ref() {
+                                doc.rel_path = rel.clone();
+                            }
+                        }
                     }
                 }
                 self.modal = Modal::None;
                 self.status = format!("renamed to `{new_title}`");
-                self.reload_hierarchy();
             }
             Err(e) => {
                 self.status = format!("rename failed: {e}");
@@ -10024,11 +10037,45 @@ impl App {
         // If this paragraph still has the placeholder title, derive a real one
         // from the body's first sentence and stamp it onto the node — that
         // becomes the displayed name in the tree pane.
+        //
+        // 1.2.4+: when we auto-derive a title here, route through
+        // `rename_node` so the on-disk filename + slug track the
+        // new title. The body has already been written to the
+        // OLD path above; `rename_node` will `fs::rename` it to
+        // the new path, so the bytes follow the new name.
         let title_was_placeholder = node.title == PARAGRAPH_PLACEHOLDER_TITLE;
         if title_was_placeholder {
             if let Some(derived) = extract_first_sentence(&body) {
-                node.title = derived.clone();
-                doc.title = derived;
+                if let Err(e) =
+                    self.store.rename_node(&self.hierarchy, node.id, &derived)
+                {
+                    tracing::warn!(
+                        target: "inkhaven::save",
+                        "auto-rename to first sentence failed: {e:#}",
+                    );
+                } else {
+                    // Reload so the local `node` + the open doc
+                    // reflect the new slug + file path. If the
+                    // hierarchy reload itself fails, leave the
+                    // existing one in place — the rename is
+                    // already on disk, just no in-memory refresh.
+                    if let Ok(h) =
+                        crate::store::hierarchy::Hierarchy::load(&self.store)
+                    {
+                        self.hierarchy = h;
+                    }
+                    if let Some(refreshed) = self.hierarchy.get(node.id).cloned() {
+                        // Sync `doc` (the outstanding &mut borrow
+                        // taken at the top of save_current_inner)
+                        // so its title + rel_path match the new
+                        // on-disk layout.
+                        doc.title = refreshed.title.clone();
+                        if let Some(rel) = refreshed.file.as_ref() {
+                            doc.rel_path = rel.clone();
+                        }
+                        node = refreshed;
+                    }
+                }
             }
         }
 
@@ -12459,11 +12506,12 @@ impl App {
     }
 
     /// Compute the editor-pane goal footer text from the open
-    /// doc + its node metadata. Returns `(gauge_label, words,
+    /// doc + its node metadata. Returns `(breadcrumb, words,
     /// target)` when a goal is set, otherwise `None`. The
-    /// gauge_label is the slug-path "story/01-arrival/scene-one"
-    /// printed alongside the percentage so the writer can
-    /// confirm at a glance which paragraph the gauge is for.
+    /// breadcrumb is the human-readable title chain
+    /// ("My book › Chapter one › The morning") rather than the
+    /// slug path — slugs are stale after a rename until we
+    /// re-derive them, and users think in titles anyway.
     fn editor_goal_footer_text(&self) -> Option<(String, i64, i64)> {
         let doc = self.opened.as_ref()?;
         let node = self.hierarchy.get(doc.id)?;
@@ -12473,8 +12521,8 @@ impl App {
         // event will record.
         let body = doc.textarea.lines().join("\n");
         let words = crate::progress::count_words(&body);
-        let slug_path = self.hierarchy.slug_path(node);
-        Some((slug_path, words, target))
+        let breadcrumb = self.title_breadcrumb(node.id);
+        Some((breadcrumb, words, target))
     }
 
     /// Render the lower (read-only) pane of split-edit mode. No cursor,
