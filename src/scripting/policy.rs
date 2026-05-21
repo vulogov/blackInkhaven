@@ -165,6 +165,17 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
 
     // ── editor_write (Phase C addition) ───────────────────────
     ("ink.editor.replace", category::EDITOR_WRITE),
+    // 1.2.4+: replace_all has the same category — both rewrite
+    // the open buffer.
+    ("ink.editor.replace_all", category::EDITOR_WRITE),
+    // 1.2.4+: search.load opens an existing paragraph in the
+    // editor — no project mutation, behaves like a read.
+    ("ink.search.load", category::EDITOR_READ),
+    // 1.2.4+: AI poll is a read of in-flight inference state;
+    // send_blocking spawns one, so it shares ai_write with the
+    // existing send.
+    ("ink.ai.poll", category::AI_READ),
+    ("ink.ai.send_blocking", category::AI_WRITE),
 
     // ── theme_write (default-denied) ──────────────────────────
     ("ink.theme.set", category::THEME_WRITE),
