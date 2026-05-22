@@ -1138,6 +1138,21 @@ impl Store {
             }
         }
         self.sync()?;
+        // 1.2.6+ — scrub wiki-link references to the deleted
+        // nodes. Without this, every other paragraph's
+        // `linked_paragraphs: Vec<Uuid>` keeps the dead UUIDs
+        // and the Ctrl+V L picker silently filters them at view
+        // time. Walk the post-delete hierarchy, prune, persist
+        // any node that changed. Errors are logged but don't
+        // abort the delete itself.
+        let deleted: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+        let scrubbed = self.scrub_linked_paragraphs(&deleted);
+        if scrubbed > 0 {
+            tracing::info!(
+                target: "inkhaven::delete",
+                "delete_subtree: scrubbed wiki-links from {scrubbed} other paragraph(s)",
+            );
+        }
         // Fire hook.on_delete ( uuid -- ) once per deleted id, in
         // the same order the store walks them. Best-effort: hook
         // failures are logged inside `hooks::fire`, never abort.
@@ -1145,6 +1160,50 @@ impl Store {
             fire_hook("hook.on_delete", vec![bund_string(&id.to_string())]);
         }
         Ok(())
+    }
+
+    /// Walk every remaining node and remove any UUID in
+    /// `deleted` from its `linked_paragraphs` field. Returns the
+    /// number of nodes touched. Used by `delete_subtree` (1.2.6+)
+    /// to keep wiki-link metadata in sync with reality.
+    fn scrub_linked_paragraphs(
+        &self,
+        deleted: &std::collections::HashSet<Uuid>,
+    ) -> usize {
+        // Re-load hierarchy after the delete so we walk what's
+        // actually still on disk + in the store.
+        let hierarchy = match crate::store::hierarchy::Hierarchy::load(self) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::warn!(
+                    target: "inkhaven::delete",
+                    "scrub: hierarchy reload failed: {e}",
+                );
+                return 0;
+            }
+        };
+        let mut touched = 0usize;
+        for (n, _) in hierarchy.flatten() {
+            if n.linked_paragraphs.is_empty() {
+                continue;
+            }
+            if !n.linked_paragraphs.iter().any(|id| deleted.contains(id)) {
+                continue;
+            }
+            let mut updated = n.clone();
+            updated.linked_paragraphs.retain(|id| !deleted.contains(id));
+            updated.modified_at = chrono::Utc::now();
+            if let Err(e) = self.inner.update_metadata(updated.id, updated.to_json()) {
+                tracing::warn!(
+                    target: "inkhaven::delete",
+                    uuid = %updated.id,
+                    "scrub: update_metadata failed: {e}",
+                );
+                continue;
+            }
+            touched += 1;
+        }
+        touched
     }
 
     /// Convert a text-leaf node between its three flavours:
