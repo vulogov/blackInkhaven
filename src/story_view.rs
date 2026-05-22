@@ -39,18 +39,38 @@ use crate::store::Store;
 // ── Layout constants ──────────────────────────────────────────
 
 /// Distance between successive radial rings, in SVG user units.
-const RING_SPACING: f64 = 220.0;
-/// Maximum half-width of a node shape — used both as the
-/// drawn-width heuristic and as the boundary-stop distance when
-/// truncating edge endpoints.
-const NODE_HALF_W: f64 = 70.0;
-/// Maximum half-height. Most shapes are wider than tall; this
-/// gates label vertical-centering.
-const NODE_HALF_H: f64 = 22.0;
-/// Margin around the laid-out graph before SVG viewBox is
-/// computed. Big enough to cover label overflow on the outer
+/// The placer also bumps this against the largest node radius
+/// it laid out so two rings can't crash into each other.
+const RING_SPACING_BASE: f64 = 240.0;
+/// Maximum margin around the laid-out graph before SVG viewBox
+/// is computed. Big enough to cover label overflow on the outer
 /// ring nodes.
-const SVG_MARGIN: f64 = 100.0;
+const SVG_MARGIN: f64 = 120.0;
+
+/// Approximate glyph-cell width at the 12 px sans-serif used
+/// for labels. resvg doesn't expose font metrics to user code
+/// at SVG-build time, so we estimate width = char-count ×
+/// `CHAR_WIDTH`. Conservative: a 7 px-per-char assumption keeps
+/// labels comfortably inside their boxes on every font I tested
+/// (Helvetica / Arial / Liberation Sans / DejaVu Sans).
+const CHAR_WIDTH: f64 = 7.2;
+/// Vertical spacing between wrapped label lines, in SVG user
+/// units. Matches `1.2em` for the 12 px text style.
+const LINE_HEIGHT: f64 = 14.4;
+/// Inner padding around the multi-line label inside a node's
+/// bounding box. (`X` is left+right, `Y` is top+bottom.)
+const PADDING_X: f64 = 18.0;
+const PADDING_Y: f64 = 10.0;
+/// Hard floor for the node bounding box — even a one-letter
+/// label gets at least this much room so the shape doesn't
+/// shrink into an unreadable dot.
+const MIN_HALF_W: f64 = 36.0;
+const MIN_HALF_H: f64 = 18.0;
+/// Wrapping ceiling. Lines longer than this get wrapped on a
+/// word boundary; titles taller than `MAX_LINES` get truncated
+/// with `…`.
+const WRAP_LINE_CHARS: usize = 22;
+const MAX_LINES: usize = 4;
 
 // ── Public API ────────────────────────────────────────────────
 
@@ -109,13 +129,22 @@ enum EdgeStyle {
 
 struct GraphNode {
     id: Uuid,
-    label: String,
+    /// Already-wrapped label lines (no SVG escaping yet — that
+    /// happens at emit time so we can wrap on character count,
+    /// not encoded length).
+    label_lines: Vec<String>,
     shape: ShapeKind,
     fill: &'static str,
     /// Position in laid-out SVG user-space (before the
     /// margin translation that `render_svg` applies).
     x: f64,
     y: f64,
+    /// Half-extent of the shape's axis-aligned bounding box.
+    /// Per-node so shapes can grow to fit their wrapped label.
+    /// Edge truncation uses these to nudge the segment endpoints
+    /// out of the node's interior.
+    half_w: f64,
+    half_h: f64,
 }
 
 struct GraphEdge {
@@ -167,21 +196,10 @@ fn build_graph(store: &Store, hierarchy: &Hierarchy, book: &Node) -> Graph {
     count_leaves(book.id, &structural_children, &mut leaves);
     let max_depth = max_depth_of(book.id, &structural_children);
 
-    // Place structural nodes via twopi.
-    let mut positions: HashMap<Uuid, (f64, f64)> = HashMap::new();
-    place_radial(
-        book.id,
-        0.0,
-        TAU,
-        0,
-        &structural_children,
-        &leaves,
-        &mut positions,
-    );
-
     // Lexicon nodes — every paragraph-kind node under
     // Characters / Places / Artefacts system books. Only
-    // ones actually mentioned land on the graph.
+    // ones actually mentioned land on the graph (filtering
+    // happens further down once we have body scans).
     let lexicon: Vec<&Node> = all
         .iter()
         .filter(|(n, _)| {
@@ -194,6 +212,45 @@ fn build_graph(store: &Store, hierarchy: &Hierarchy, book: &Node) -> Graph {
         })
         .map(|(n, _)| *n)
         .collect();
+
+    // ── Pre-size every candidate node ─────────────────────────
+    // Wrap labels first so ring spacing can be tightened or
+    // loosened against the widest box. Stored once and reused
+    // when building the final GraphNode list further down.
+    let mut sized: HashMap<Uuid, (Vec<String>, f64, f64)> = HashMap::new();
+    for (n, _) in &all {
+        if in_book.contains(&n.id) {
+            let lines = wrap_label(&n.title);
+            let (hw, hh) = size_for_label(&lines);
+            sized.insert(n.id, (lines, hw, hh));
+        }
+    }
+    for lex in &lexicon {
+        let lines = wrap_label(&lex.title);
+        let (hw, hh) = size_for_label(&lines);
+        sized.insert(lex.id, (lines, hw, hh));
+    }
+    // Effective ring spacing — at least the base, but bumped to
+    // cover the widest measured node plus a buffer so two rings
+    // can never overlap.
+    let max_half_w = sized
+        .values()
+        .map(|(_, hw, _)| *hw)
+        .fold(0.0_f64, f64::max);
+    let ring_spacing = RING_SPACING_BASE.max(2.0 * max_half_w + 60.0);
+
+    // Place structural nodes via twopi.
+    let mut positions: HashMap<Uuid, (f64, f64)> = HashMap::new();
+    place_radial(
+        book.id,
+        0.0,
+        TAU,
+        0,
+        &structural_children,
+        &leaves,
+        ring_spacing,
+        &mut positions,
+    );
 
     // Paragraph bodies — for lexicon-mention scanning. Skip
     // non-paragraph kinds + non-typst content types.
@@ -244,7 +301,7 @@ fn build_graph(store: &Store, hierarchy: &Hierarchy, book: &Node) -> Graph {
     // angle from origin. Multiple lexicon nodes that resolve
     // to the same angle nudge by a small offset so they don't
     // overlap.
-    let lex_ring = (max_depth as f64 + 1.0) * RING_SPACING;
+    let lex_ring = (max_depth as f64 + 1.0) * ring_spacing;
     let mut angle_collisions: HashMap<i32, usize> = HashMap::new();
     for lex in &lexicon {
         let Some(targets) = lex_targets.get(&lex.id) else {
@@ -280,17 +337,26 @@ fn build_graph(store: &Store, hierarchy: &Hierarchy, book: &Node) -> Graph {
             continue;
         };
         let (shape, fill) = shape_for(n);
-        let label = sanitize_label(&n.title);
+        let (label_lines, half_w, half_h) = sized
+            .get(&n.id)
+            .cloned()
+            .unwrap_or_else(|| {
+                let lines = wrap_label(&n.title);
+                let (hw, hh) = size_for_label(&lines);
+                (lines, hw, hh)
+            });
         nodes.push(GraphNode {
             id: n.id,
-            label,
+            label_lines,
             shape,
             fill,
             x,
             y,
+            half_w,
+            half_h,
         });
         node_lookup.insert(n.id);
-        max_extent = max_extent.max(x.abs()).max(y.abs());
+        max_extent = max_extent.max(x.abs() + half_w).max(y.abs() + half_h);
     }
     for lex in &lexicon {
         if !lex_targets.contains_key(&lex.id) {
@@ -300,16 +366,26 @@ fn build_graph(store: &Store, hierarchy: &Hierarchy, book: &Node) -> Graph {
             continue;
         };
         let (shape, fill) = lexicon_shape_for(lex, hierarchy);
+        let (label_lines, half_w, half_h) = sized
+            .get(&lex.id)
+            .cloned()
+            .unwrap_or_else(|| {
+                let lines = wrap_label(&lex.title);
+                let (hw, hh) = size_for_label(&lines);
+                (lines, hw, hh)
+            });
         nodes.push(GraphNode {
             id: lex.id,
-            label: sanitize_label(&lex.title),
+            label_lines,
             shape,
             fill,
             x,
             y,
+            half_w,
+            half_h,
         });
         node_lookup.insert(lex.id);
-        max_extent = max_extent.max(x.abs()).max(y.abs());
+        max_extent = max_extent.max(x.abs() + half_w).max(y.abs() + half_h);
     }
 
     // Build the edge list.
@@ -400,7 +476,8 @@ fn max_depth_of(root: Uuid, children: &HashMap<Uuid, Vec<Uuid>>) -> usize {
 /// Twopi-style radial placement. Each subtree gets a wedge of
 /// the parent's angular range proportional to its leaf count.
 /// The root lands at the origin (depth 0); depth-1 nodes ring
-/// the origin at radius `RING_SPACING`; etc.
+/// the origin at radius `ring_spacing`; each successive depth
+/// adds another `ring_spacing` of radius.
 fn place_radial(
     node: Uuid,
     theta_start: f64,
@@ -408,10 +485,11 @@ fn place_radial(
     depth: usize,
     children: &HashMap<Uuid, Vec<Uuid>>,
     leaves: &HashMap<Uuid, usize>,
+    ring_spacing: f64,
     out: &mut HashMap<Uuid, (f64, f64)>,
 ) {
     let theta_mid = (theta_start + theta_end) / 2.0;
-    let radius = depth as f64 * RING_SPACING;
+    let radius = depth as f64 * ring_spacing;
     let (x, y) = if depth == 0 {
         (0.0, 0.0)
     } else {
@@ -432,7 +510,16 @@ fn place_radial(
     for k in kids {
         let kl = *leaves.get(&k).unwrap_or(&1) as f64;
         let wedge = span * kl / total_leaves as f64;
-        place_radial(k, cursor, cursor + wedge, depth + 1, children, leaves, out);
+        place_radial(
+            k,
+            cursor,
+            cursor + wedge,
+            depth + 1,
+            children,
+            leaves,
+            ring_spacing,
+            out,
+        );
         cursor += wedge;
     }
 }
@@ -500,18 +587,91 @@ fn collect_subtree_ids(hierarchy: &Hierarchy, root_id: Uuid) -> HashSet<Uuid> {
     out
 }
 
-/// Escape a label for SVG `<text>` and clamp long titles.
-fn sanitize_label(s: &str) -> String {
-    let mut t: String = s
-        .replace('&', "&amp;")
+/// Word-wrap a raw title string into 1..=`MAX_LINES` lines of at
+/// most `WRAP_LINE_CHARS` chars each (after whitespace
+/// normalisation). Words longer than the line ceiling get broken
+/// hard at the boundary; overflow past `MAX_LINES` collapses
+/// into a single `…`-suffixed last line. No SVG escaping here
+/// — that happens at emit time so the wrap math operates on
+/// real character counts, not encoded length.
+fn wrap_label(raw: &str) -> Vec<String> {
+    let normalised: String = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalised.is_empty() {
+        return vec!["(untitled)".to_string()];
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in normalised.split(' ') {
+        // Word longer than the cap — hard-break it.
+        let mut remaining = word.to_string();
+        while remaining.chars().count() > WRAP_LINE_CHARS {
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+            }
+            let head: String = remaining.chars().take(WRAP_LINE_CHARS).collect();
+            let tail: String = remaining.chars().skip(WRAP_LINE_CHARS).collect();
+            lines.push(head);
+            remaining = tail;
+        }
+        if remaining.is_empty() {
+            continue;
+        }
+        let candidate_len = if current.is_empty() {
+            remaining.chars().count()
+        } else {
+            current.chars().count() + 1 + remaining.chars().count()
+        };
+        if candidate_len > WRAP_LINE_CHARS && !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
+            current = remaining;
+        } else if current.is_empty() {
+            current = remaining;
+        } else {
+            current.push(' ');
+            current.push_str(&remaining);
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.len() > MAX_LINES {
+        // Collapse the tail into the last visible line +
+        // ellipsis. Prefer trimming the last kept line over
+        // breaking mid-word.
+        lines.truncate(MAX_LINES);
+        if let Some(last) = lines.last_mut() {
+            let max_with_ellipsis = WRAP_LINE_CHARS.saturating_sub(1);
+            if last.chars().count() > max_with_ellipsis {
+                *last = last.chars().take(max_with_ellipsis).collect::<String>();
+            }
+            last.push('…');
+        }
+    }
+    lines
+}
+
+/// Given the wrapped label, compute the node's half-width and
+/// half-height. Bounded by the minimums above so even short
+/// names get a comfortably-readable box.
+fn size_for_label(label_lines: &[String]) -> (f64, f64) {
+    let widest_chars = label_lines
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(1);
+    let text_w = widest_chars as f64 * CHAR_WIDTH;
+    let text_h = label_lines.len() as f64 * LINE_HEIGHT;
+    let half_w = ((text_w + PADDING_X) * 0.5).max(MIN_HALF_W);
+    let half_h = ((text_h + PADDING_Y) * 0.5).max(MIN_HALF_H);
+    (half_w, half_h)
+}
+
+/// XML-escape a single label line for `<tspan>` text content.
+fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
-        .replace('\n', " ");
-    if t.chars().count() > 28 {
-        t = t.chars().take(26).collect::<String>() + "…";
-    }
-    t
 }
 
 // ── SVG rendering ─────────────────────────────────────────────
@@ -524,10 +684,13 @@ fn render_svg(g: &Graph) -> String {
     let cx = dim;
     let cy = dim;
 
-    let position_of: HashMap<Uuid, (f64, f64)> = g
+    // Per-node lookup: centre + half-extents. Edges use these
+    // to truncate their endpoints back to the node boundary,
+    // and rendering uses the centre to place shape + label.
+    let node_box: HashMap<Uuid, (f64, f64, f64, f64)> = g
         .nodes
         .iter()
-        .map(|n| (n.id, (n.x + cx, n.y + cy)))
+        .map(|n| (n.id, (n.x + cx, n.y + cy, n.half_w, n.half_h)))
         .collect();
 
     let mut s = String::new();
@@ -554,12 +717,14 @@ fn render_svg(g: &Graph) -> String {
 
     // Edges first so node fills cover them.
     for e in &g.edges {
-        let (Some(&(ax, ay)), Some(&(bx, by))) =
-            (position_of.get(&e.from), position_of.get(&e.to))
+        let (Some(&(ax, ay, ahw, ahh)), Some(&(bx, by, bhw, bhh))) =
+            (node_box.get(&e.from), node_box.get(&e.to))
         else {
             continue;
         };
-        let (x1, y1, x2, y2) = truncate_segment(ax, ay, bx, by);
+        let ar = (ahw * ahw + ahh * ahh).sqrt() * 0.85;
+        let br = (bhw * bhw + bhh * bhh).sqrt() * 0.85;
+        let (x1, y1, x2, y2) = truncate_segment(ax, ay, bx, by, ar, br);
         let (stroke, dash, marker) = match e.style {
             EdgeStyle::Structural => ("#555555", "", "url(#ah-grey)"),
             EdgeStyle::WikiLink => ("#7755aa", "6,4", "url(#ah-purple)"),
@@ -573,17 +738,26 @@ fn render_svg(g: &Graph) -> String {
     // Nodes on top.
     for n in &g.nodes {
         let (px, py) = (n.x + cx, n.y + cy);
-        let shape_svg = shape_svg(n.shape, px, py, n.fill);
+        let shape_svg = shape_svg(n.shape, px, py, n.half_w, n.half_h, n.fill);
         s.push_str(&shape_svg);
-        // Label centred on (px, py + 4) — `+4` because SVG y is
-        // baseline-ish in default style; baseline-vertical
-        // alignment varies across renderers, this nudge looks
-        // right with resvg's text metrics.
+        // Multi-line label centred vertically on `(px, py)`. The
+        // first tspan sits one half-block above centre; each
+        // subsequent line steps down by LINE_HEIGHT (1.2em at
+        // 12 px). resvg honours `dominant-baseline="middle"` on
+        // tspans so the visual centre lines up with `py`.
+        let line_count = n.label_lines.len() as f64;
+        let first_dy = -(line_count - 1.0) * 0.5 * LINE_HEIGHT;
         s.push_str(&format!(
-            "<text x=\"{px:.1}\" y=\"{ly:.1}\" text-anchor=\"middle\" dominant-baseline=\"middle\">{label}</text>\n",
-            ly = py,
-            label = n.label,
+            "<text x=\"{px:.1}\" y=\"{py:.1}\" text-anchor=\"middle\" dominant-baseline=\"middle\">"
         ));
+        for (i, line) in n.label_lines.iter().enumerate() {
+            let dy = if i == 0 { first_dy } else { LINE_HEIGHT };
+            s.push_str(&format!(
+                "<tspan x=\"{px:.1}\" dy=\"{dy:.1}\">{label}</tspan>",
+                label = escape_xml(line),
+            ));
+        }
+        s.push_str("</text>\n");
     }
 
     s.push_str("</svg>\n");
@@ -592,28 +766,35 @@ fn render_svg(g: &Graph) -> String {
 
 /// Push the line endpoints back so the visible segment starts
 /// at each node's circumscribing-circle boundary, not at the
-/// center. Approximation — exact shape-boundary clipping isn't
-/// worth the complexity at this scale.
-fn truncate_segment(ax: f64, ay: f64, bx: f64, by: f64) -> (f64, f64, f64, f64) {
+/// centre. Per-node radii (`ar`, `br`) account for the
+/// label-driven size variance — long-titled nodes are bigger
+/// and need a wider inset.
+fn truncate_segment(
+    ax: f64,
+    ay: f64,
+    bx: f64,
+    by: f64,
+    ar: f64,
+    br: f64,
+) -> (f64, f64, f64, f64) {
     let dx = bx - ax;
     let dy = by - ay;
     let len = (dx * dx + dy * dy).sqrt();
-    if len < 2.0 * NODE_HALF_W {
-        // Nodes overlap — return the raw segment.
+    if len < ar + br {
+        // Nodes overlap — return the raw segment so something
+        // visible still renders.
         return (ax, ay, bx, by);
     }
     let nx = dx / len;
     let ny = dy / len;
-    let r = NODE_HALF_W * 0.9; // small inset
-    (ax + nx * r, ay + ny * r, bx - nx * r, by - ny * r)
+    (ax + nx * ar, ay + ny * ar, bx - nx * br, by - ny * br)
 }
 
-/// Emit the SVG element for one shape, centred on `(x, y)`.
-fn shape_svg(shape: ShapeKind, x: f64, y: f64, fill: &str) -> String {
+/// Emit the SVG element for one shape, centred on `(x, y)`,
+/// sized to `(half_w, half_h)`.
+fn shape_svg(shape: ShapeKind, x: f64, y: f64, w: f64, h: f64, fill: &str) -> String {
     let stroke = "#444444";
     let sw = "1.2";
-    let w = NODE_HALF_W;
-    let h = NODE_HALF_H;
     match shape {
         ShapeKind::Box => format!(
             "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"4\" ry=\"4\" fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"{sw}\"/>\n",
@@ -770,15 +951,49 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sanitize_label_escapes_and_clamps() {
-        let out = sanitize_label("a < b & c > d");
+    fn escape_xml_handles_metas() {
+        let out = escape_xml("a < b & c > d \"e\"");
         assert!(out.contains("&lt;"));
         assert!(out.contains("&amp;"));
         assert!(out.contains("&gt;"));
-        let long = "x".repeat(100);
-        let out = sanitize_label(&long);
-        assert!(out.chars().count() <= 28);
-        assert!(out.ends_with('…'));
+        assert!(out.contains("&quot;"));
+    }
+
+    #[test]
+    fn wrap_short_label_stays_one_line() {
+        let lines = wrap_label("The storm");
+        assert_eq!(lines, vec!["The storm".to_string()]);
+    }
+
+    #[test]
+    fn wrap_long_label_breaks_on_words() {
+        let lines = wrap_label("Chapter three: the bell tower at dawn");
+        assert!(lines.len() >= 2, "expected wrap, got {lines:?}");
+        for line in &lines {
+            assert!(
+                line.chars().count() <= WRAP_LINE_CHARS,
+                "line over cap: {line:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_extra_long_falls_back_to_ellipsis() {
+        let lines = wrap_label(&"word ".repeat(60));
+        assert!(lines.len() <= MAX_LINES);
+        assert!(lines.last().unwrap().ends_with('…'));
+    }
+
+    #[test]
+    fn size_grows_with_label() {
+        let small = size_for_label(&vec!["x".to_string()]);
+        let big = size_for_label(&vec![
+            "Long line one".into(),
+            "Long line two".into(),
+            "Long line three".into(),
+        ]);
+        assert!(big.0 >= small.0, "wider label should not shrink");
+        assert!(big.1 > small.1, "more lines should be taller");
     }
 
     #[test]
@@ -791,7 +1006,8 @@ mod tests {
         let mut leaves = HashMap::new();
         count_leaves(root, &children, &mut leaves);
         let mut positions = HashMap::new();
-        place_radial(root, 0.0, TAU, 0, &children, &leaves, &mut positions);
+        let ring = 220.0;
+        place_radial(root, 0.0, TAU, 0, &children, &leaves, ring, &mut positions);
         let &(rx, ry) = positions.get(&root).unwrap();
         assert!(rx.abs() < 1e-9 && ry.abs() < 1e-9);
         // Children should be on ring 1.
@@ -799,63 +1015,69 @@ mod tests {
         let &(bx, by) = positions.get(&b).unwrap();
         let ar = (ax * ax + ay * ay).sqrt();
         let br = (bx * bx + by * by).sqrt();
-        assert!((ar - RING_SPACING).abs() < 1e-6);
-        assert!((br - RING_SPACING).abs() < 1e-6);
+        assert!((ar - ring).abs() < 1e-6);
+        assert!((br - ring).abs() < 1e-6);
     }
 
-    /// `#[ignore]` smoke — exercises the full radial+SVG+resvg
-    /// path on a hand-built mini-graph. Requires system fonts
-    /// to render labels (the same env constraint other story-
-    /// view smokes have).
+    /// `#[ignore]` smoke — exercises the full SVG-build + resvg
+    /// path on a hand-built mini-graph including a multi-line
+    /// label. Requires system fonts.
     #[test]
     #[ignore]
     fn end_to_end_render_smoke() {
-        let svg = render_svg(&Graph {
+        let mk = |id: u128, x: f64, y: f64, lines: &[&str], shape, fill| {
+            let label_lines: Vec<String> =
+                lines.iter().map(|s| s.to_string()).collect();
+            let (half_w, half_h) = size_for_label(&label_lines);
+            GraphNode {
+                id: Uuid::from_u128(id),
+                label_lines,
+                shape,
+                fill,
+                x,
+                y,
+                half_w,
+                half_h,
+            }
+        };
+        let ring = 220.0;
+        let graph = Graph {
             nodes: vec![
-                GraphNode {
-                    id: Uuid::nil(),
-                    label: "Root".into(),
-                    shape: ShapeKind::Folder,
-                    fill: "#fff7e6",
-                    x: 0.0,
-                    y: 0.0,
-                },
-                GraphNode {
-                    id: Uuid::from_u128(1),
-                    label: "Child A".into(),
-                    shape: ShapeKind::Box,
-                    fill: "#e6f4ff",
-                    x: RING_SPACING,
-                    y: 0.0,
-                },
-                GraphNode {
-                    id: Uuid::from_u128(2),
-                    label: "Child B".into(),
-                    shape: ShapeKind::Ellipse,
-                    fill: "#ffffff",
-                    x: 0.0,
-                    y: RING_SPACING,
-                },
+                mk(0, 0.0, 0.0, &["Root book"], ShapeKind::Folder, "#fff7e6"),
+                mk(
+                    1,
+                    ring,
+                    0.0,
+                    &["Chapter three:", "bell tower"],
+                    ShapeKind::Box,
+                    "#e6f4ff",
+                ),
+                mk(2, 0.0, ring, &["A"], ShapeKind::Ellipse, "#ffffff"),
             ],
             edges: vec![
                 GraphEdge {
-                    from: Uuid::nil(),
+                    from: Uuid::from_u128(0),
                     to: Uuid::from_u128(1),
                     style: EdgeStyle::Structural,
                 },
                 GraphEdge {
-                    from: Uuid::nil(),
+                    from: Uuid::from_u128(0),
                     to: Uuid::from_u128(2),
                     style: EdgeStyle::WikiLink,
                 },
             ],
-            extent: RING_SPACING,
-        });
+            extent: ring + 80.0,
+        };
+        let svg = render_svg(&graph);
         let render = svg_to_png(&svg).expect("rasterise");
         assert!(render.width > 0 && render.height > 0);
         assert_eq!(
             &render.png_bytes[..8],
             &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
         );
+        // Multi-line text should show up as ≥2 tspans in the SVG
+        // (regression-guard the wrapping path).
+        let tspan_count = svg.matches("<tspan").count();
+        assert!(tspan_count >= 2, "expected >=2 tspans, got {tspan_count}");
     }
 }
