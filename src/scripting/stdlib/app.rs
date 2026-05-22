@@ -39,6 +39,20 @@ pub fn register(vm: &mut VM) -> Result<()> {
     // ── Editor write ──────────────────────────────────────────
     vm.register_inline("ink.editor.goto".to_string(), ink_editor_goto)
         .map_err(|e| anyhow!("register ink.editor.goto: {e}"))?;
+    // 1.2.6+ — 1-based alias of `ink.editor.goto`. Matches the
+    // (line, col) convention used by typst diagnostics + the
+    // status bar — scripts wiring diagnostic-driven cursor
+    // moves don't need to remember to subtract 1.
+    vm.register_inline("ink.editor.set_cursor".to_string(), ink_editor_set_cursor)
+        .map_err(|e| anyhow!("register ink.editor.set_cursor: {e}"))?;
+
+    // 1.2.6+ — `ink.story.render` ( book-name path -- ).
+    // Builds the same twopi story-view PNG `Ctrl+V W` produces
+    // and writes it to `path`. Useful for scripted CI runs that
+    // want to snapshot the book graph as the manuscript
+    // evolves. Policy: fs_write (default-denied).
+    vm.register_inline("ink.story.render".to_string(), ink_story_render)
+        .map_err(|e| anyhow!("register ink.story.render: {e}"))?;
     vm.register_inline("ink.editor.insert".to_string(), ink_editor_insert)
         .map_err(|e| anyhow!("register ink.editor.insert: {e}"))?;
     vm.register_inline("ink.editor.scroll".to_string(), ink_editor_scroll)
@@ -201,6 +215,63 @@ fn do_ink_editor_goto(vm: &mut VM) -> Result<&mut VM> {
     with_app(tag, |app| {
         app.ink_editor_goto(row, col)
             .map_err(|e| anyhow!("{tag}: {e}"))
+    })?;
+    Ok(vm)
+}
+
+// ── ink.editor.set_cursor (1.2.6+) ──────────────────────────────────
+// Stack: ( row col -- ), both 1-based to match typst diagnostic
+// line/col values. `0` is clamped to row 1 / col 1.
+
+fn ink_editor_set_cursor(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_editor_set_cursor(vm).map_err(to_bund_err)
+}
+
+fn do_ink_editor_set_cursor(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.editor.set_cursor";
+    require_depth(vm, 2, tag)?;
+    let col = value_to_i64(pull(vm, tag)?, "col", tag)?.max(1) as usize;
+    let row = value_to_i64(pull(vm, tag)?, "row", tag)?.max(1) as usize;
+    with_app(tag, |app| {
+        app.ink_editor_goto(row - 1, col - 1)
+            .map_err(|e| anyhow!("{tag}: {e}"))
+    })?;
+    Ok(vm)
+}
+
+// ── ink.story.render (1.2.6+) ────────────────────────────────────────
+// Stack: ( book-name path -- ). Renders the twopi story view
+// for the named user book to `path`. Matches `--book-name` from
+// `inkhaven export` (case-insensitive title or slug). On
+// success, leaves nothing on the stack; on failure (no such
+// book, render error, write error) leaves a clear error.
+
+fn ink_story_render(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_story_render(vm).map_err(to_bund_err)
+}
+
+fn do_ink_story_render(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.story.render";
+    require_depth(vm, 2, tag)?;
+    let path_str = value_to_string(pull(vm, tag)?, "path", tag)?;
+    let book_name = value_to_string(pull(vm, tag)?, "book-name", tag)?;
+    if book_name.trim().is_empty() {
+        return Err(anyhow!("{tag}: empty book-name"));
+    }
+    with_app(tag, |app| {
+        // Expand `~/` like the other fs writers in inkhaven.
+        let dest: std::path::PathBuf =
+            if let Some(rest) = path_str.strip_prefix("~/") {
+                match std::env::var_os("HOME") {
+                    Some(home) => std::path::PathBuf::from(home).join(rest),
+                    None => std::path::PathBuf::from(&path_str),
+                }
+            } else {
+                std::path::PathBuf::from(&path_str)
+            };
+        app.ink_story_render_to_path(&book_name, &dest)
+            .map_err(|e| anyhow!("{tag}: {e}"))?;
+        Ok(())
     })?;
     Ok(vm)
 }

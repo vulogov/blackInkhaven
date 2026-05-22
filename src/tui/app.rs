@@ -2545,6 +2545,13 @@ struct OpenedDoc {
     /// Wall-clock of the last typst-syntax recheck. Throttles the
     /// idle re-check against `typst_compile.diagnostics_idle_seconds`.
     typst_diagnostics_checked_at: std::time::Instant,
+    /// 1.2.6+ — snapshot of the last diagnostic state we fired
+    /// `hook.on_diagnostic` for: `(count, first-message)`. Used
+    /// to debounce the hook so it only re-fires on actual state
+    /// transitions (clean → errored, count change, top-message
+    /// change). `None` means we've never fired or the doc is
+    /// freshly opened.
+    typst_diag_last_fired: Option<(usize, String)>,
 }
 
 struct SplitView {
@@ -13199,6 +13206,7 @@ impl App {
                 }),
             typst_diagnostics: Vec::new(),
             typst_diagnostics_checked_at: std::time::Instant::now(),
+            typst_diag_last_fired: None,
         });
         self.refresh_typst_diagnostics_for_opened();
         self.change_focus(Focus::Editor);
@@ -13395,6 +13403,35 @@ impl App {
             // status because errors-on-save are exactly what the
             // user needs to see next.
             self.status = first.summary();
+        }
+
+        // 1.2.6+ — fire `hook.on_diagnostic` when the diagnostic
+        // state changes. Snapshot is `(count, first-message)`;
+        // we re-fire on clean→errored, count change, or top-
+        // message change. Avoids spamming hooks on every idle
+        // tick when nothing actually moved.
+        let snapshot = (
+            doc.typst_diagnostics.len(),
+            doc.typst_diagnostics
+                .first()
+                .map(|d| d.message.clone())
+                .unwrap_or_default(),
+        );
+        let changed = doc.typst_diag_last_fired.as_ref() != Some(&snapshot);
+        if changed {
+            doc.typst_diag_last_fired = Some(snapshot.clone());
+            let paragraph_id = doc.id;
+            // hook.on_diagnostic ( uuid count first-message -- )
+            crate::scripting::hooks::fire(
+                "hook.on_diagnostic",
+                vec![
+                    rust_dynamic::value::Value::from_string(
+                        paragraph_id.to_string(),
+                    ),
+                    rust_dynamic::value::Value::from_int(snapshot.0 as i64),
+                    rust_dynamic::value::Value::from_string(snapshot.1.clone()),
+                ],
+            );
         }
     }
 
@@ -15391,6 +15428,7 @@ impl App {
             content_type: node.content_type.clone(),
             typst_diagnostics: Vec::new(),
             typst_diagnostics_checked_at: std::time::Instant::now(),
+            typst_diag_last_fired: None,
         });
         self.secondary_focused = false;
         self.status = format!(
@@ -17373,16 +17411,39 @@ impl App {
         let lineno_style = Style::default().fg(theme.line_number_fg);
         let current_bg = theme.current_line_bg;
 
+        // 1.2.6+ — set of editor lines (1-based) that carry a
+        // typst diagnostic. Used to paint a red `●` in the
+        // trailing-space slot of the line-number gutter.
+        let diag_lines: std::collections::HashSet<usize> = opened
+            .typst_diagnostics
+            .iter()
+            .map(|d| d.line)
+            .collect();
+
         let mut visible_lines: Vec<Line> = Vec::with_capacity(h);
         let row_end = (opened.scroll_row + h).min(highlighted.len());
         for row in opened.scroll_row..row_end {
             let is_current = row == cur_row;
-            let lineno_text = format!("{:>chars$} ", row + 1, chars = lineno_chars);
+            // Split the gutter into digits + 1-char marker slot
+            // (which is normally a space). When this row has a
+            // diagnostic, the slot turns into a bold red `●`.
+            let lineno_text = format!("{:>chars$}", row + 1, chars = lineno_chars);
+            let has_diag = diag_lines.contains(&(row + 1));
             let mut lineno_span_style = lineno_style;
             if is_current {
                 lineno_span_style = lineno_span_style
                     .bg(current_bg)
                     .add_modifier(Modifier::BOLD);
+            }
+            let marker_text = if has_diag { "●" } else { " " };
+            let mut marker_style = Style::default();
+            if has_diag {
+                marker_style = marker_style
+                    .fg(Color::Red)
+                    .add_modifier(Modifier::BOLD);
+            }
+            if is_current {
+                marker_style = marker_style.bg(current_bg);
             }
 
             let added_flags = added_per_row.get(row).map(Vec::as_slice);
@@ -17417,7 +17478,10 @@ impl App {
             }
 
             let text_chars: usize = text_spans.iter().map(|s| s.content.chars().count()).sum();
-            let mut spans = vec![Span::styled(lineno_text, lineno_span_style)];
+            let mut spans = vec![
+                Span::styled(lineno_text, lineno_span_style),
+                Span::styled(marker_text.to_string(), marker_style),
+            ];
             spans.extend(text_spans);
             if is_current && text_chars < w {
                 spans.push(Span::styled(
@@ -17534,6 +17598,14 @@ impl App {
         let lineno_style = Style::default().fg(theme.line_number_fg);
         let current_bg = theme.current_line_bg;
 
+        // 1.2.6+ — diagnostic marker set, same shape as the
+        // unwrapped renderer.
+        let diag_lines: std::collections::HashSet<usize> = opened
+            .typst_diagnostics
+            .iter()
+            .map(|d| d.line)
+            .collect();
+
         let mut lines: Vec<Line> = Vec::with_capacity(h);
         let row_end = (opened.scroll_row + h).min(visual.len());
         for (i, v) in visual[opened.scroll_row..row_end].iter().enumerate() {
@@ -17542,15 +17614,32 @@ impl App {
 
             // Line number only on the first visual row of each source row.
             let lineno_text = if v.src_col_start == 0 {
-                format!("{:>chars$} ", v.src_row + 1, chars = lineno_chars)
+                format!("{:>chars$}", v.src_row + 1, chars = lineno_chars)
             } else {
-                format!("{:>chars$} ", "", chars = lineno_chars)
+                format!("{:>chars$}", "", chars = lineno_chars)
             };
             let mut lineno_span_style = lineno_style;
             if is_current {
                 lineno_span_style = lineno_span_style
                     .bg(current_bg)
                     .add_modifier(Modifier::BOLD);
+            }
+            // 1.2.6+ — diagnostic marker slot. Mirrors the
+            // unwrapped renderer above. Only paint the marker
+            // on the first visual row of the source line (so a
+            // wrapped line shows the dot once, not on every
+            // visual continuation).
+            let has_diag =
+                v.src_col_start == 0 && diag_lines.contains(&(v.src_row + 1));
+            let marker_text = if has_diag { "●" } else { " " };
+            let mut marker_style = Style::default();
+            if has_diag {
+                marker_style = marker_style
+                    .fg(Color::Red)
+                    .add_modifier(Modifier::BOLD);
+            }
+            if is_current {
+                marker_style = marker_style.bg(current_bg);
             }
 
             let added_flags = added_per_row.get(v.src_row).map(Vec::as_slice);
@@ -17583,7 +17672,10 @@ impl App {
             }
 
             let text_chars: usize = text_spans.iter().map(|s| s.content.chars().count()).sum();
-            let mut spans = vec![Span::styled(lineno_text, lineno_span_style)];
+            let mut spans = vec![
+                Span::styled(lineno_text, lineno_span_style),
+                Span::styled(marker_text.to_string(), marker_style),
+            ];
             spans.extend(text_spans);
             if is_current && text_chars < w {
                 spans.push(Span::styled(
@@ -18398,6 +18490,44 @@ impl App {
 
     pub(crate) fn ink_editor_cursor(&self) -> Option<(usize, usize)> {
         self.opened.as_ref().map(|d| d.textarea.cursor())
+    }
+
+    /// 1.2.6+ — render the story view for the named user book
+    /// and write the PNG to `dest`. Same plumbing as
+    /// `crate::story_view::build_story_png` (Ctrl+V W), but
+    /// driven from the Bund stdlib (`ink.story.render`). Returns
+    /// a human-readable error string when the book name doesn't
+    /// resolve, the render fails, or the write fails.
+    pub(crate) fn ink_story_render_to_path(
+        &self,
+        book_name: &str,
+        dest: &std::path::Path,
+    ) -> Result<(), String> {
+        let needle = book_name.trim().to_ascii_lowercase();
+        let book = self
+            .hierarchy
+            .flatten()
+            .into_iter()
+            .find_map(|(n, _)| {
+                if n.kind == NodeKind::Book
+                    && n.system_tag.is_none()
+                    && (n.title.to_ascii_lowercase() == needle
+                        || n.slug.to_ascii_lowercase() == needle)
+                {
+                    Some(n.clone())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                format!("no user book matches `{book_name}`")
+            })?;
+        let render =
+            crate::story_view::build_story_png(&self.store, &self.hierarchy, book.id)
+                .map_err(|e| format!("render: {e}"))?;
+        std::fs::write(dest, &render.png_bytes)
+            .map_err(|e| format!("write {}: {e}", dest.display()))?;
+        Ok(())
     }
 
     pub(crate) fn ink_editor_goto(&mut self, row: usize, col: usize) -> Result<(), String> {

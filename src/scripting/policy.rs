@@ -149,6 +149,11 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
 
     // ── editor_write (default-denied) ─────────────────────────
     ("ink.editor.goto", category::EDITOR_WRITE),
+    ("ink.editor.set_cursor", category::EDITOR_WRITE),
+    // 1.2.6+ — `ink.story.render` writes a PNG file, so it lives
+    // under `fs_write` (default-denied). The user opts in with
+    // `enabled_categories: ["fs_write"]` in their HJSON.
+    ("ink.story.render", category::FS_WRITE),
     ("ink.editor.insert", category::EDITOR_WRITE),
     ("ink.editor.scroll", category::EDITOR_WRITE),
     ("ink.editor.delete_line", category::EDITOR_WRITE),
