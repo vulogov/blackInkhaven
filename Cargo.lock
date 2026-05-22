@@ -3313,7 +3313,6 @@ dependencies = [
  "humantime",
  "humantime-serde",
  "image 0.25.10",
- "layout-rs",
  "parking_lot",
  "pulldown-cmark",
  "quick-xml 0.36.2",
@@ -3651,12 +3650,6 @@ dependencies = [
  "polycool",
  "smallvec",
 ]
-
-[[package]]
-name = "layout-rs"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b8b38bc67665e362eb770c6b6ae88b48d040d94a0a10c4904c37bc79d263b95"
 
 [[package]]
 name = "lazy_static"
