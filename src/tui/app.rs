@@ -161,6 +161,23 @@ fn draw_splash(f: &mut ratatui::Frame, project_display: &str, spinner: char, ela
     f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
 }
 
+/// 1.2.5+ — `logo.png` from the repo root embedded directly in
+/// the binary via `include_bytes!`. Decoded lazily the first
+/// time the credits modal opens so the cost is paid once per
+/// session, not every Ctrl+B V press. The PNG's size on disk
+/// is the binary-size delta; keep the source PNG appropriately
+/// sized (~1–2 MB is a sensible upper bound).
+static EMBEDDED_LOGO: &[u8] = include_bytes!("../../logo.png");
+
+static DECODED_LOGO: std::sync::OnceLock<Option<image::DynamicImage>> =
+    std::sync::OnceLock::new();
+
+fn embedded_logo_image() -> Option<&'static image::DynamicImage> {
+    DECODED_LOGO
+        .get_or_init(|| image::load_from_memory(EMBEDDED_LOGO).ok())
+        .as_ref()
+}
+
 /// 1.2.4+: project-pulse splash shown right after project open.
 /// Renders for up to `STARTUP_SPLASH_SECS` seconds or until a key
 /// press; the key press is consumed so it doesn't leak into the
@@ -1963,8 +1980,16 @@ enum Modal {
     /// Ctrl+B V — version, author, and credits panel. Scrollable.
     /// Content is rendered fresh each frame so it picks up the current
     /// `CARGO_PKG_VERSION` / `CARGO_PKG_AUTHORS` env vars.
+    ///
+    /// 1.2.5+: optional `logo` `StatefulProtocol` rendered as a
+    /// banner above the text — populated from the embedded
+    /// `logo.png` when the host terminal supports ratatui-image
+    /// (kitty / iterm2 / sixel / unicode half-blocks). `None`
+    /// when image-preview is disabled or the terminal can't
+    /// negotiate a graphics protocol.
     Credits {
         scroll: usize,
+        logo: Option<ratatui_image::protocol::StatefulProtocol>,
     },
     /// Ctrl+B I — current-book info panel: backup / artefacts paths,
     /// structural counts (chapters / subchapters / paragraphs /
@@ -7354,7 +7379,18 @@ impl App {
     }
 
     fn open_credits(&mut self) {
-        self.modal = Modal::Credits { scroll: 0 };
+        // 1.2.5+: build a fresh ratatui-image protocol over the
+        // embedded `logo.png` so the credits modal can banner it
+        // at the top. The image picker is None on terminals
+        // without graphics support; we fall through with no logo
+        // and the modal still renders fine.
+        let logo = self
+            .image_picker
+            .as_ref()
+            .and_then(|picker| {
+                embedded_logo_image().map(|img| picker.new_resize_protocol(img.clone()))
+            });
+        self.modal = Modal::Credits { scroll: 0, logo };
         self.status = "Credits · ↑↓/PgUp/PgDn scroll · Esc close".into();
     }
 
@@ -9714,7 +9750,7 @@ impl App {
     /// but we don't need a hard upper bound here; clamping happens at
     /// render time so out-of-range scroll just shows a blank tail.
     fn credits_handle_key(&mut self, key: KeyEvent) -> bool {
-        let Modal::Credits { scroll } = &mut self.modal else {
+        let Modal::Credits { scroll, .. } = &mut self.modal else {
             return false;
         };
         match key.code {
@@ -12601,10 +12637,19 @@ impl App {
     /// list is a hand-curated static (kept here so it stays in sync with
     /// what Cargo.toml actually depends on — automating from Cargo.lock
     /// would dump 200+ transitive crates that no user wants to read).
-    fn draw_credits_modal(&self, f: &mut ratatui::Frame, area: Rect, scroll: usize) {
+    fn draw_credits_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
         let engine_summary = crate::typst_compile::engine_summary(&self.cfg);
         let lines = build_credits_lines(&self.theme, &engine_summary);
         let total = lines.len();
+
+        // Pull scroll + logo out of the modal up front. Logo is
+        // taken via `&mut` so the StatefulImage widget can update
+        // its protocol state during render.
+        let Modal::Credits { scroll, logo } = &mut self.modal else {
+            return;
+        };
+        let scroll_value = *scroll;
+        let logo_present = logo.is_some();
 
         let width = area.width.saturating_sub(8).max(60);
         let height = area.height.saturating_sub(4).max(12);
@@ -12633,32 +12678,57 @@ impl App {
         let inner = block.inner(rect);
         f.render_widget(block, rect);
 
-        // 1 row reserved for the bottom hint line.
-        let body_h = inner.height.saturating_sub(1) as usize;
-        let body_rect = Rect {
+        // Layout: optional logo banner (top), scrollable text body
+        // (middle), one-row hint (bottom). When the logo is
+        // present, give it the smaller of 1/3 of the inner height
+        // or 12 rows — enough for the image to read without
+        // crowding out the text.
+        let footer_h: u16 = 1;
+        let logo_h: u16 = if logo_present {
+            (inner.height / 3).min(12).max(4).min(inner.height.saturating_sub(footer_h + 4))
+        } else {
+            0
+        };
+        let body_h_rows = inner.height.saturating_sub(logo_h + footer_h);
+
+        let logo_rect = Rect {
             x: inner.x,
             y: inner.y,
             width: inner.width,
-            height: inner.height.saturating_sub(1),
+            height: logo_h,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y + logo_h,
+            width: inner.width,
+            height: body_h_rows,
         };
         let footer_rect = Rect {
             x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
+            y: inner.y + logo_h + body_h_rows,
             width: inner.width,
-            height: 1,
+            height: footer_h,
         };
 
+        if let Some(proto) = logo.as_mut() {
+            if logo_h > 0 {
+                let widget = ratatui_image::StatefulImage::new();
+                f.render_stateful_widget(widget, logo_rect, proto);
+            }
+        }
+
+        let body_h = body_rect.height as usize;
         let max_scroll = total.saturating_sub(body_h);
-        let scroll = scroll.min(max_scroll);
-        let end = (scroll + body_h).min(total);
-        let visible: Vec<Line<'_>> = lines[scroll..end].to_vec();
+        let scroll_value = scroll_value.min(max_scroll);
+        let end = (scroll_value + body_h).min(total);
+        let visible: Vec<Line<'_>> = lines[scroll_value..end].to_vec();
         f.render_widget(Paragraph::new(visible), body_rect);
 
         let at_end = end >= total;
         let more_hint = if at_end { " " } else { " · more below" };
         let hint = format!(
             " ↑↓ / PgUp/PgDn / Home/End scroll · Esc close{more_hint}    (showing {}–{} of {total}) ",
-            scroll + 1,
+            scroll_value + 1,
             end
         );
         f.render_widget(
@@ -14671,8 +14741,8 @@ impl App {
             self.draw_quickref_modal(f, area, *focus, *scroll);
             return;
         }
-        if let Modal::Credits { scroll } = &self.modal {
-            self.draw_credits_modal(f, area, *scroll);
+        if matches!(self.modal, Modal::Credits { .. }) {
+            self.draw_credits_modal(f, area);
             return;
         }
         if let Modal::BookInfo { scroll } = &self.modal {
