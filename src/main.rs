@@ -11,6 +11,7 @@ mod project;
 mod scripting;
 mod scrivener;
 mod storage;
+mod story_view;
 mod store;
 mod tui;
 mod typst_check;

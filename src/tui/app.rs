@@ -2096,6 +2096,27 @@ enum Modal {
         all_results: Vec<ScriptPickerEntry>,
         cursor: usize,
     },
+    /// Ctrl+V W (1.2.5+) — story view: floating PNG of the
+    /// current book's DOT graph, rendered via `layout-rs` +
+    /// `resvg`. `proto` drives the ratatui-image widget;
+    /// `png_bytes` is kept around so `S` can dump it to disk
+    /// without re-running the layout.
+    StoryView {
+        book_title: String,
+        width: u32,
+        height: u32,
+        png_bytes: Vec<u8>,
+        proto: ratatui_image::protocol::StatefulProtocol,
+    },
+    /// `S` from `StoryView` — save-as picker for the rendered
+    /// PNG. Same shape as `SaveRenderedPng`; Esc restores the
+    /// `StoryView` modal via `return_to`.
+    SaveStoryPng {
+        input: TextInput,
+        png_bytes: Vec<u8>,
+        book_title: String,
+        return_to: Box<Modal>,
+    },
     /// `S` (current page) or `A` (all pages) from
     /// `RenderedPreview` — save-as path picker for the full-DPI
     /// PNG(s). Enter writes the file(s); Esc restores the
@@ -6061,6 +6082,152 @@ impl App {
     /// pop a floating preview modal on top of the editor. Saves
     /// the current buffer first so the rendered preview matches
     /// the on-disk source the user just edited.
+    /// Ctrl+V W (1.2.5+) — story view. Build the DOT graph for
+    /// the current user book, lay it out, rasterise, and float
+    /// the PNG on top of the editor. Saves the open paragraph
+    /// first so any pending mentions get scanned.
+    fn open_story_view(&mut self) {
+        // Pick the same "current book" the assemble/build/take
+        // path uses. Refuses if the cursor isn't inside a user
+        // book.
+        let Some(book_id) = self.resolve_current_user_book("Story view") else {
+            return;
+        };
+        // Save first so mention-scanning sees the latest body.
+        if let Some(doc) = self.opened.as_ref() {
+            if doc.dirty {
+                let _ = self.save_current();
+            }
+        }
+        let Some(picker) = self.image_picker.as_ref() else {
+            self.status =
+                "story view: terminal can't display images (set `images.preview_enabled: true` or use a kitty / iterm2 / sixel-capable terminal)".into();
+            return;
+        };
+        let book_title = self
+            .hierarchy
+            .get(book_id)
+            .map(|n| n.title.clone())
+            .unwrap_or_else(|| "(unknown book)".into());
+        self.status = format!(
+            "story view: building graph for `{book_title}`…"
+        );
+        match crate::story_view::build_story_png(
+            &self.store,
+            &self.hierarchy,
+            book_id,
+        ) {
+            Ok(rendered) => {
+                let proto = picker.new_resize_protocol(rendered.image);
+                self.modal = Modal::StoryView {
+                    book_title: book_title.clone(),
+                    width: rendered.width,
+                    height: rendered.height,
+                    png_bytes: rendered.png_bytes,
+                    proto,
+                };
+                self.status = format!(
+                    "story view `{book_title}` · {}×{} · S saves PNG · Esc closes",
+                    rendered.width, rendered.height,
+                );
+            }
+            Err(err) => {
+                let first = err
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("render failed");
+                self.status = format!("story view: {first}");
+            }
+        }
+    }
+
+    /// `S` inside `Modal::StoryView` — pop the save-as picker
+    /// for the rendered PNG. Default path:
+    /// `<book-slug>-story-YYYYDDMM-HHMM.png` in cwd.
+    fn open_save_story_png_picker(&mut self) {
+        let (png_bytes, book_title) = match &self.modal {
+            Modal::StoryView {
+                png_bytes,
+                book_title,
+                ..
+            } => (png_bytes.clone(), book_title.clone()),
+            _ => return,
+        };
+        let default_dest = match self.default_story_png_dest(&book_title) {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!("save story PNG: {e}");
+                return;
+            }
+        };
+        let mut input = TextInput::new();
+        for c in default_dest.to_string_lossy().chars() {
+            input.insert_char(c);
+        }
+        let return_to = Box::new(std::mem::replace(&mut self.modal, Modal::None));
+        self.modal = Modal::SaveStoryPng {
+            input,
+            png_bytes,
+            book_title: book_title.clone(),
+            return_to,
+        };
+        self.status =
+            "save story PNG: edit path or Enter to save · Esc returns to preview".into();
+    }
+
+    fn default_story_png_dest(
+        &self,
+        book_title: &str,
+    ) -> std::result::Result<std::path::PathBuf, String> {
+        let cwd = std::env::current_dir().map_err(|e| format!("cwd: {e}"))?;
+        let stamp = chrono::Local::now().format("%Y%d%m-%H%M");
+        let stem = slug::slugify(book_title);
+        let safe_stem =
+            if stem.is_empty() { "story".to_string() } else { stem };
+        Ok(cwd.join(format!("{safe_stem}-story-{stamp}.png")))
+    }
+
+    /// Write the already-rendered PNG bytes to disk. No re-render
+    /// — the layout is deterministic and the same bytes the
+    /// preview displays are what land on disk.
+    fn commit_save_story_png(
+        &mut self,
+        png_bytes: &[u8],
+        raw: &str,
+        book_title: &str,
+    ) {
+        let path_str = raw.trim();
+        let path = if path_str.is_empty() {
+            match self.default_story_png_dest(book_title) {
+                Ok(p) => p,
+                Err(e) => {
+                    self.status = format!("save story PNG: {e}");
+                    return;
+                }
+            }
+        } else if let Some(rest) = path_str.strip_prefix("~/") {
+            match std::env::var_os("HOME") {
+                Some(home) => std::path::PathBuf::from(home).join(rest),
+                None => std::path::PathBuf::from(path_str),
+            }
+        } else {
+            std::path::PathBuf::from(path_str)
+        };
+        match std::fs::write(&path, png_bytes) {
+            Ok(()) => {
+                self.status = format!(
+                    "save story PNG: wrote {} ({} bytes)",
+                    path.display(),
+                    png_bytes.len(),
+                );
+            }
+            Err(e) => {
+                self.status =
+                    format!("save story PNG: write {}: {e}", path.display());
+            }
+        }
+    }
+
     fn open_rendered_paragraph_preview(&mut self) {
         let Some(doc) = self.opened.as_ref() else {
             self.status =
@@ -6704,6 +6871,10 @@ impl App {
                 let ok = self.add_tags_to_node(*id, &tags);
                 self.reload_hierarchy();
                 self.modal = Modal::None;
+                // Return focus to the editor — the user came from
+                // there via Ctrl+B ] and almost certainly wants
+                // to keep typing after the tag dust settles.
+                self.change_focus(Focus::Editor);
                 self.status = if ok {
                     format!(
                         "tagged `{title}` with {} tag(s): {}",
@@ -6726,6 +6897,10 @@ impl App {
                 }
                 self.reload_hierarchy();
                 self.modal = Modal::None;
+                // Stay in the tree pane — the user opened this
+                // from the tree via `g`; bouncing them to the
+                // editor would surprise them mid-multi-tag pass.
+                self.change_focus(Focus::Tree);
                 self.status = if failed == 0 {
                     format!(
                         "tagged {touched} paragraph(s) with {} tag(s): {}",
@@ -7671,6 +7846,7 @@ impl App {
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
             A::ViewRenderParagraph => self.open_rendered_paragraph_preview(),
             A::ViewNextDiagnostic => self.jump_to_next_diagnostic(),
+            A::ViewStoryGraph => self.open_story_view(),
 
             // ── Top-level F-keys (1.2.4+ migration) ───────────
             A::HelpQuery => self.open_help_query_modal(),
@@ -9289,6 +9465,114 @@ impl App {
             Line::from(""),
             Line::from(Span::styled(
                 format!(" Path: {}", input.render_with_cursor(cursor)),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Enter saves · Esc cancels · ~/ expands to home".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            )),
+        ];
+        f.render_widget(Paragraph::new(body), inner);
+    }
+
+    /// Ctrl+V W floating preview. Same plumbing as the paragraph
+    /// render preview, but single-page (no navigation) — DOT
+    /// layout produces one canvas.
+    fn draw_story_view_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::StoryView {
+            book_title,
+            width,
+            height,
+            proto,
+            ..
+        } = &mut self.modal
+        else {
+            return;
+        };
+
+        let render_w = area.width.saturating_sub(4).max(40);
+        let render_h = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(render_w)) / 2;
+        let y = area.y + (area.height.saturating_sub(render_h)) / 2;
+        let rect = Rect { x, y, width: render_w, height: render_h };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let title_line = format!(" 🕸 Story · {book_title}  ·  {width}×{height} ");
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title_line)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1);
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: body_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: 1,
+        };
+
+        let widget = ratatui_image::StatefulImage::new();
+        f.render_stateful_widget(widget, body_rect, proto);
+
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  Esc closes  ·  S saves PNG  ·  resize terminal to re-fit ".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    /// `S` inside the story-view modal — small save-as picker
+    /// for the rendered PNG.
+    fn draw_save_story_png_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::SaveStoryPng { input, book_title, .. } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).clamp(40, 96);
+        let height: u16 = 7;
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Save story PNG · {book_title} "))
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                format!(" Path: {}", input.render_with_cursor('│')),
                 Style::default().add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
@@ -11922,6 +12206,13 @@ impl App {
                 self.status = "save PNG: cancelled · preview restored".into();
                 return Ok(false);
             }
+            // Story-view save picker — mirror SaveRenderedPng.
+            if let Modal::SaveStoryPng { return_to, .. } = &mut self.modal {
+                let prev = std::mem::replace(return_to.as_mut(), Modal::None);
+                self.modal = prev;
+                self.status = "save story PNG: cancelled · preview restored".into();
+                return Ok(false);
+            }
             // 1.2.5+ tag-add and tag-delete sub-modals — Esc
             // returns to the TagPicker that opened them.
             if let Modal::TagAddPrompt { return_to, .. } = &mut self.modal {
@@ -11974,6 +12265,8 @@ impl App {
         let is_tag_add_prompt = matches!(self.modal, Modal::TagAddPrompt { .. });
         let is_tag_delete_confirm = matches!(self.modal, Modal::TagDeleteConfirm { .. });
         let is_tag_search_results = matches!(self.modal, Modal::TagSearchResults { .. });
+        let is_story_view = matches!(self.modal, Modal::StoryView { .. });
+        let is_save_story_png = matches!(self.modal, Modal::SaveStoryPng { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -12220,6 +12513,33 @@ impl App {
                     self.open_save_rendered_png_picker(true);
                 }
                 _ => {}
+            }
+            return Ok(false);
+        }
+
+        if is_story_view {
+            if matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S')) {
+                self.open_save_story_png_picker();
+            }
+            return Ok(false);
+        }
+        if is_save_story_png {
+            if matches!(key.code, KeyCode::Enter) {
+                let taken = std::mem::replace(&mut self.modal, Modal::None);
+                if let Modal::SaveStoryPng {
+                    input,
+                    png_bytes,
+                    book_title,
+                    return_to: _,
+                } = taken
+                {
+                    let raw = input.as_str().to_string();
+                    self.commit_save_story_png(&png_bytes, &raw, &book_title);
+                }
+                return Ok(false);
+            }
+            if let Modal::SaveStoryPng { input, .. } = &mut self.modal {
+                handle_text_input_key(input, key);
             }
             return Ok(false);
         }
@@ -15816,6 +16136,14 @@ impl App {
             self.draw_save_rendered_png_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::StoryView { .. }) {
+            self.draw_story_view_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::SaveStoryPng { .. }) {
+            self.draw_save_story_png_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::TagPicker { .. }) {
             self.draw_tag_picker_modal(f, area);
             return;
@@ -15861,6 +16189,10 @@ impl App {
                 unreachable!("tag picker handled above"),
             Modal::TagSearchResults { .. } =>
                 unreachable!("tag search results handled above"),
+            Modal::StoryView { .. } =>
+                unreachable!("story view handled above"),
+            Modal::SaveStoryPng { .. } =>
+                unreachable!("save story png handled above"),
             Modal::TagAddPrompt { input, .. } => {
                 let body = vec![
                     Line::from(""),
