@@ -87,6 +87,30 @@ Around that one switch:
 - **Embedded logo in credits pane.** `include_bytes!`
   embeds `logo.png` in the binary; `Ctrl+B V` banners it
   above the version + dependency list.
+- **Project-wide node tagging.** Three entry points,
+  one tag namespace stored as `Node.tags: Vec<String>`:
+  `Ctrl+B ]` opens the floating tag picker for the open
+  paragraph (Space multi-selects, `T` applies, `A` adds
+  a new tag, `D` deletes a tag project-wide with a blast-
+  radius confirm); `Ctrl+B }` opens the same picker in
+  search mode — Enter on a tag lists every paragraph that
+  carries it, with a typeable filter, and Enter on a hit
+  opens it; **`g`** in the tree pane runs the picker
+  against the marked set (or the cursor row), bulk-tagging
+  a whole selection in one go. Editor `T` returns focus
+  to the editor; tree `g` stays in the tree.
+- **Story view — Ctrl+V W.** Twopi-style radial graph of
+  the current book: book at the centre, each structural
+  depth on a concentric ring with sibling wedges sized by
+  subtree leaf count. Different SVG shape per node kind
+  (folder / box / octagon / ellipse / note / parallelogram /
+  chevron / egg / diamond / hexagon); long titles wrap to
+  multiple lines and node boxes scale to fit. Solid grey
+  edges for the structural skeleton, dashed purple for
+  `linked_paragraphs` wiki-links, dashed green from
+  Characters / Places / Artefacts to the paragraphs that
+  mention them. Rasterised via `resvg` + `tiny-skia`,
+  displayed via ratatui-image. `S` saves the PNG.
 - New tutorial: [Typst in-process](Documentation/Tutorials/24-typst-in-process.md)
   — engine switch, fonts, packages, diagnostics, render
   preview, doctor.
