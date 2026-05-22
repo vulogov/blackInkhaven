@@ -58,6 +58,8 @@ These chords work from any focus except where noted. Chords marked
 | `F9`                 | **Cycle the AI scope** through `None → Selection → Paragraph → Subchapter → Chapter → Book → None`. The next prompt sent from the AI prompt bar prepends the matching context (selection text / open paragraph / enclosing branch contents) then **auto-resets to `None`**. Mode is shown in the AI prompt title (`AI prompt · scope: Paragraph`) and the status bar. Works from every pane. | no |
 | `F10`                | **Toggle inference mode** between `Local` and `Full`. `Local` instructs the model to use only the supplied context (and prior chat turns); `Full` lets it augment with general knowledge. Both modes are shown in the AI pane title (`AI — gemini · done · infer=Full · scope=Paragraph`). Help inference (F1 / `Help! …`) is **pinned to Local** regardless of this toggle so the help-manual answer never invents features. Works from every pane. | no |
 | `Ctrl+B C`           | Clear the AI chat history + currently displayed inference. (F9's old behaviour; F9 now drives the scope cycle.) | no |
+| `Ctrl+B ]`           | (1.2.5) **Tag the open paragraph** — open the floating tag picker scoped to the editor buffer. Inside the picker: `↑↓` select, `Space` multi-selects, `T` applies selected tags (or the cursor tag if none selected), `A` adds a new tag (prompt), `D` deletes a tag project-wide (y/n confirm), `Enter` applies, `Esc` closes. | no |
+| `Ctrl+B }`           | (1.2.5) **Search by tag** — open the floating tag picker in read-only mode. `Enter` on a tag lists every paragraph that carries it with a typeable filter input; `Enter` on a paragraph row opens it in the editor. `A` / `D` still work (tag management is project-wide). | no |
 
 ### 1.1 Meta mode (Ctrl+B prefix)
 
@@ -209,6 +211,7 @@ confirmation.
 | `Space`   | (1.2.4) **Mark / unmark** the cursor row for multi-select. Status bar shows `marked N`. `Esc` clears all marks. |
 | `T` / `t` | (1.2.4) **Cycle node type** (`paragraph → json → script`). No marks: cursor row only (folders skipped). With marks: every marked leaf. |
 | `O` / `o` | (1.2.4) **Cycle status** one rung up the ladder (`napkin → first → … → ready → napkin`). No marks: cursor row. With marks: every marked paragraph. |
+| `G` / `g` | (1.2.5) **Tag the marked set** — open the floating tag picker scoped to every marked paragraph (or just the cursor row when no marks). Same modal as `Ctrl+B ]`; T applies the selected tag set across every target at once. |
 
 Empty paragraph titles are allowed for `+` and `P` — the first sentence of the body becomes the title on next save.
 

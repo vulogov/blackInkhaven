@@ -1813,6 +1813,23 @@ struct RenderedPageProto {
     height: u32,
 }
 
+/// Which set of nodes the Ctrl+B ] / g tag picker applies tags
+/// to when the user hits T. `Search` is the read-only mode
+/// triggered by Ctrl+B }; T is a no-op there and Enter opens
+/// the tag-search results instead.
+#[derive(Debug, Clone)]
+enum TagPickerTarget {
+    /// Editor pane: the open paragraph (carries its title for
+    /// the modal's status hint).
+    EditorParagraph { id: Uuid, title: String },
+    /// Tree pane: the marked set (or the cursor row when marks
+    /// are empty) — every paragraph-kind node in the list.
+    TreeSelection(Vec<Uuid>),
+    /// Search-by-tag: T / Space have no effect; Enter on a tag
+    /// opens the TagSearchResults modal.
+    Search,
+}
+
 /// Save-mode for the SaveRenderedPng picker. Drives whether one
 /// page or every page lands on disk.
 #[derive(Debug, Clone)]
@@ -2041,6 +2058,43 @@ enum Modal {
         settings: crate::typst_world::WorldSettings,
         pages: Vec<RenderedPageProto>,
         current_page: usize,
+    },
+    /// Ctrl+B ] (editor), `g` (tree), or Ctrl+B } (search) —
+    /// 1.2.5+ project-wide tag picker. Shows every tag in use
+    /// across the project; keys depend on `target` (see
+    /// `TagPickerTarget`).
+    TagPicker {
+        target: TagPickerTarget,
+        all_tags: Vec<String>,
+        cursor: usize,
+        /// Multi-select state — only meaningful in `EditorParagraph`
+        /// and `TreeSelection` modes. Stored as a `BTreeSet` for
+        /// deterministic glyph rendering in the modal.
+        selected: std::collections::BTreeSet<String>,
+    },
+    /// `A` from `TagPicker` — prompt for a new tag name. Enter
+    /// adds the tag to the project-wide set AND keeps the
+    /// underlying picker's selection state via `return_to`.
+    TagAddPrompt {
+        input: TextInput,
+        return_to: Box<Modal>,
+    },
+    /// `D` from `TagPicker` — confirm + execute project-wide tag
+    /// deletion. Removes the tag from every node that carries it.
+    /// `affected` reports how many nodes will be touched.
+    TagDeleteConfirm {
+        tag: String,
+        affected: usize,
+        return_to: Box<Modal>,
+    },
+    /// Enter from `TagPicker` in `Search` mode — show every
+    /// paragraph that carries the chosen tag, with a typeable
+    /// filter input that narrows the list.
+    TagSearchResults {
+        tag: String,
+        filter: TextInput,
+        all_results: Vec<ScriptPickerEntry>,
+        cursor: usize,
     },
     /// `S` (current page) or `A` (all pages) from
     /// `RenderedPreview` — save-as path picker for the full-DPI
@@ -3612,6 +3666,13 @@ impl App {
             // transitions.
             KeyCode::Char('O') | KeyCode::Char('o') if plain => {
                 self.cycle_paragraph_status();
+            }
+            // 1.2.5+: tree g opens the tag picker for the
+            // marked set (or the cursor row when no marks).
+            // Same modal as Ctrl+B ], but applies the picked
+            // tags across every selected paragraph at once.
+            KeyCode::Char('G') | KeyCode::Char('g') if plain => {
+                self.open_tag_picker_for_tree_selection();
             }
 
             _ if self.keymap.page_up.matches(&key) => self.move_cursor(-10),
@@ -6168,6 +6229,611 @@ impl App {
         out
     }
 
+    // ── Tag picker (1.2.5+) ────────────────────────────────────
+
+    /// Every distinct tag in the project, sorted lexicographically
+    /// (case-sensitive dedup). System-book contents are included
+    /// in the union so the tag namespace is project-wide.
+    fn collect_all_tags(&self) -> Vec<String> {
+        let mut tags = std::collections::BTreeSet::<String>::new();
+        for (n, _) in self.hierarchy.flatten() {
+            for t in &n.tags {
+                let t = t.trim();
+                if !t.is_empty() {
+                    tags.insert(t.to_owned());
+                }
+            }
+        }
+        tags.into_iter().collect()
+    }
+
+    /// Paragraphs tagged with `tag` (case-sensitive match). Sorted
+    /// by title to match the bookmark picker's ordering.
+    fn collect_paragraphs_with_tag(&self, tag: &str) -> Vec<ScriptPickerEntry> {
+        let mut out: Vec<ScriptPickerEntry> = Vec::new();
+        for (n, _) in self.hierarchy.flatten() {
+            if n.kind != NodeKind::Paragraph {
+                continue;
+            }
+            if !n.tags.iter().any(|t| t == tag) {
+                continue;
+            }
+            out.push(ScriptPickerEntry {
+                id: n.id,
+                title: n.title.clone(),
+                slug_path: self.hierarchy.slug_path(n),
+            });
+        }
+        out.sort_by(|a, b| a.title.cmp(&b.title));
+        out
+    }
+
+    /// Union `incoming` into `node_id`'s `tags` (dedup case-
+    /// sensitively, preserve existing order), persist via
+    /// `update_metadata`. Returns true on a successful save.
+    fn add_tags_to_node(&mut self, node_id: Uuid, incoming: &[String]) -> bool {
+        let Some(node) = self.hierarchy.get(node_id).cloned() else {
+            return false;
+        };
+        let mut updated = node.clone();
+        let existing: std::collections::HashSet<&str> =
+            updated.tags.iter().map(|s| s.as_str()).collect();
+        let mut additions: Vec<String> = Vec::new();
+        for t in incoming {
+            let t = t.trim();
+            if t.is_empty() {
+                continue;
+            }
+            if !existing.contains(t)
+                && !additions.iter().any(|a: &String| a.as_str() == t)
+            {
+                additions.push(t.to_owned());
+            }
+        }
+        if additions.is_empty() {
+            return true;
+        }
+        updated.tags.extend(additions);
+        updated.modified_at = chrono::Utc::now();
+        match self.store.raw().update_metadata(node_id, updated.to_json()) {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::warn!(target: "inkhaven::tags",
+                    "update_metadata({node_id}) failed: {e}");
+                false
+            }
+        }
+    }
+
+    /// Remove `tag` from every node that carries it. Returns the
+    /// count of nodes touched (so the picker can report how many
+    /// were affected). Persists each via `update_metadata`.
+    fn delete_tag_project_wide(&mut self, tag: &str) -> usize {
+        let targets: Vec<Uuid> = self
+            .hierarchy
+            .flatten()
+            .into_iter()
+            .filter_map(|(n, _)| {
+                if n.tags.iter().any(|t| t == tag) {
+                    Some(n.id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut touched = 0usize;
+        for id in &targets {
+            let Some(node) = self.hierarchy.get(*id).cloned() else {
+                continue;
+            };
+            let mut updated = node.clone();
+            updated.tags.retain(|t| t != tag);
+            updated.modified_at = chrono::Utc::now();
+            if let Err(e) = self.store.raw().update_metadata(*id, updated.to_json()) {
+                tracing::warn!(target: "inkhaven::tags",
+                    "update_metadata({id}) on delete failed: {e}");
+                continue;
+            }
+            touched += 1;
+        }
+        touched
+    }
+
+    /// Helper — number of nodes a tag delete would affect. Used
+    /// by the delete-confirm modal so the user sees the blast
+    /// radius before pressing y.
+    fn count_nodes_with_tag(&self, tag: &str) -> usize {
+        self.hierarchy
+            .flatten()
+            .into_iter()
+            .filter(|(n, _)| n.tags.iter().any(|t| t == tag))
+            .count()
+    }
+
+    /// Ctrl+B ] (editor) — open the tag picker for the currently
+    /// open paragraph.
+    fn open_tag_picker_for_editor(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status =
+                "tag ¶: no paragraph open (Ctrl+B ] needs an editor buffer)".into();
+            return;
+        };
+        let target = TagPickerTarget::EditorParagraph {
+            id: doc.id,
+            title: doc.title.clone(),
+        };
+        self.open_tag_picker_modal(target);
+    }
+
+    /// `g` (tree pane) — open the tag picker over the tree's
+    /// marked set, falling back to the cursor row when no marks
+    /// exist. Only paragraph-kind nodes go in; non-paragraphs
+    /// are skipped with a status hint when nothing applies.
+    fn open_tag_picker_for_tree_selection(&mut self) {
+        let marked: Vec<Uuid> = self.tree_marked.iter().copied().collect();
+        let candidates: Vec<Uuid> = if !marked.is_empty() {
+            marked
+        } else if let Some(&(id, _)) = self.rows.get(self.tree_cursor) {
+            vec![id]
+        } else {
+            Vec::new()
+        };
+        let paragraphs: Vec<Uuid> = candidates
+            .into_iter()
+            .filter(|id| {
+                self.hierarchy
+                    .get(*id)
+                    .map(|n| n.kind == NodeKind::Paragraph)
+                    .unwrap_or(false)
+            })
+            .collect();
+        if paragraphs.is_empty() {
+            self.status =
+                "tag g: select at least one paragraph (Space marks rows in the tree pane)".into();
+            return;
+        }
+        let target = TagPickerTarget::TreeSelection(paragraphs);
+        self.open_tag_picker_modal(target);
+    }
+
+    /// Ctrl+B } — open the tag picker in search mode.
+    fn open_tag_search_picker(&mut self) {
+        self.open_tag_picker_modal(TagPickerTarget::Search);
+    }
+
+    /// Shared open-the-picker plumbing.
+    fn open_tag_picker_modal(&mut self, target: TagPickerTarget) {
+        let all_tags = self.collect_all_tags();
+        // Don't block — an empty tag namespace is the normal
+        // starting state; the user adds via `A`.
+        let status = match (&target, all_tags.is_empty()) {
+            (TagPickerTarget::EditorParagraph { title, .. }, true) => format!(
+                "tag ¶ `{title}`: no tags yet — press A to add the first one"
+            ),
+            (TagPickerTarget::EditorParagraph { title, .. }, false) => format!(
+                "tag ¶ `{title}`: Space selects · T applies · A adds · D deletes · Esc closes"
+            ),
+            (TagPickerTarget::TreeSelection(ids), true) => format!(
+                "tag g ({} paragraph(s)): no tags yet — press A to add the first one",
+                ids.len()
+            ),
+            (TagPickerTarget::TreeSelection(ids), false) => format!(
+                "tag g ({} paragraph(s)): Space selects · T applies · A adds · D deletes · Esc closes",
+                ids.len()
+            ),
+            (TagPickerTarget::Search, true) => {
+                "tag search: no tags yet · A adds · Esc closes".into()
+            }
+            (TagPickerTarget::Search, false) => {
+                "tag search: ↑↓ select · Enter opens results · A adds · D deletes · Esc closes".into()
+            }
+        };
+        self.status = status;
+        self.modal = Modal::TagPicker {
+            target,
+            all_tags,
+            cursor: 0,
+            selected: std::collections::BTreeSet::new(),
+        };
+    }
+
+    fn tag_picker_handle_key(&mut self, key: KeyEvent) {
+        let total = match &self.modal {
+            Modal::TagPicker { all_tags, .. } => all_tags.len(),
+            _ => return,
+        };
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') if key.modifiers.is_empty() => {
+                if let Modal::TagPicker { cursor, .. } = &mut self.modal {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') if key.modifiers.is_empty() => {
+                if let Modal::TagPicker { cursor, .. } = &mut self.modal {
+                    if total > 0 && *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+            }
+            KeyCode::Home => {
+                if let Modal::TagPicker { cursor, .. } = &mut self.modal {
+                    *cursor = 0;
+                }
+            }
+            KeyCode::End => {
+                if let Modal::TagPicker { cursor, .. } = &mut self.modal {
+                    *cursor = total.saturating_sub(1);
+                }
+            }
+            KeyCode::Char(' ') => {
+                // Multi-select toggle — no-op in Search mode.
+                if let Modal::TagPicker {
+                    target,
+                    all_tags,
+                    cursor,
+                    selected,
+                    ..
+                } = &mut self.modal
+                {
+                    if matches!(target, TagPickerTarget::Search) {
+                        return;
+                    }
+                    if let Some(tag) = all_tags.get(*cursor).cloned() {
+                        if selected.contains(&tag) {
+                            selected.remove(&tag);
+                        } else {
+                            selected.insert(tag);
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.open_tag_add_prompt();
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
+                self.open_tag_delete_confirm();
+            }
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                self.commit_tags_to_target();
+            }
+            KeyCode::Enter => {
+                // Different meaning by mode:
+                //   Search       — open results for the cursor tag
+                //   Editor/Tree  — quality-of-life: same as T
+                let in_search = matches!(
+                    self.modal,
+                    Modal::TagPicker {
+                        target: TagPickerTarget::Search,
+                        ..
+                    }
+                );
+                if in_search {
+                    self.open_tag_search_results_for_cursor();
+                } else {
+                    self.commit_tags_to_target();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// `A` — pop a small text-input modal for a new tag name.
+    /// On Enter we *don't* immediately apply the tag — we just
+    /// add it to the project-wide list (by tagging the current
+    /// target with it if there is one) and return to the picker.
+    fn open_tag_add_prompt(&mut self) {
+        // Stash the current picker as return_to.
+        let taken = std::mem::replace(&mut self.modal, Modal::None);
+        if !matches!(taken, Modal::TagPicker { .. }) {
+            // Shouldn't happen but restore and bail safely.
+            self.modal = taken;
+            return;
+        }
+        self.modal = Modal::TagAddPrompt {
+            input: TextInput::new(),
+            return_to: Box::new(taken),
+        };
+        self.status =
+            "new tag: type a name, Enter adds it · Esc cancels".into();
+    }
+
+    fn tag_add_prompt_handle_key(&mut self, key: KeyEvent) {
+        // Esc is handled at the top of handle_modal_key. Here we
+        // only act on Enter (commit) and forward everything else
+        // to the input box.
+        if matches!(key.code, KeyCode::Enter) {
+            let taken = std::mem::replace(&mut self.modal, Modal::None);
+            if let Modal::TagAddPrompt { input, return_to } = taken {
+                let name = input.as_str().trim().to_string();
+                let mut picker = *return_to;
+                if name.is_empty() {
+                    self.status = "tag add: empty name — try again".into();
+                    self.modal = picker;
+                    return;
+                }
+                // Bring the picker back so we can mutate its state
+                // before re-displaying.
+                if let Modal::TagPicker {
+                    target,
+                    all_tags,
+                    cursor,
+                    selected,
+                    ..
+                } = &mut picker
+                {
+                    let already_known =
+                        all_tags.iter().any(|t| t == &name);
+                    if !already_known {
+                        all_tags.push(name.clone());
+                        all_tags.sort();
+                    }
+                    // Land the cursor on the newly added tag.
+                    if let Some(idx) =
+                        all_tags.iter().position(|t| t == &name)
+                    {
+                        *cursor = idx;
+                    }
+                    // Auto-select for convenience in apply-modes
+                    // — the user almost certainly wants to T it
+                    // onto the target. No-op in Search mode.
+                    if !matches!(target, TagPickerTarget::Search) {
+                        selected.insert(name.clone());
+                    }
+                }
+                self.modal = picker;
+                self.status = format!("tag added: `{name}` · selected");
+            }
+            return;
+        }
+        if let Modal::TagAddPrompt { input, .. } = &mut self.modal {
+            handle_text_input_key(input, key);
+        }
+    }
+
+    /// `D` — confirm + execute project-wide deletion of the tag
+    /// under the cursor. Pops a tiny y/n confirm modal so the
+    /// user sees the blast radius first.
+    fn open_tag_delete_confirm(&mut self) {
+        let (tag, affected) = match &self.modal {
+            Modal::TagPicker {
+                all_tags, cursor, ..
+            } => {
+                let Some(t) = all_tags.get(*cursor).cloned() else {
+                    self.status = "tag delete: no tag selected".into();
+                    return;
+                };
+                let n = self.count_nodes_with_tag(&t);
+                (t, n)
+            }
+            _ => return,
+        };
+        let taken = std::mem::replace(&mut self.modal, Modal::None);
+        self.modal = Modal::TagDeleteConfirm {
+            tag: tag.clone(),
+            affected,
+            return_to: Box::new(taken),
+        };
+        self.status = format!(
+            "delete tag `{tag}`? affects {affected} paragraph(s) · y / n"
+        );
+    }
+
+    fn tag_delete_confirm_handle_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                let taken = std::mem::replace(&mut self.modal, Modal::None);
+                if let Modal::TagDeleteConfirm {
+                    tag, return_to, ..
+                } = taken
+                {
+                    let removed = self.delete_tag_project_wide(&tag);
+                    self.reload_hierarchy();
+                    // Rebuild the picker's all_tags + drop the
+                    // deleted entry from its selection.
+                    let mut picker = *return_to;
+                    let fresh_tags = self.collect_all_tags();
+                    if let Modal::TagPicker {
+                        all_tags,
+                        cursor,
+                        selected,
+                        ..
+                    } = &mut picker
+                    {
+                        *all_tags = fresh_tags;
+                        if *cursor >= all_tags.len().max(1) {
+                            *cursor = all_tags.len().saturating_sub(1);
+                        }
+                        selected.remove(&tag);
+                    }
+                    self.modal = picker;
+                    self.status = format!(
+                        "tag deleted: `{tag}` · removed from {removed} paragraph(s)"
+                    );
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                let taken = std::mem::replace(&mut self.modal, Modal::None);
+                if let Modal::TagDeleteConfirm { return_to, .. } = taken {
+                    self.modal = *return_to;
+                    self.status = "tag delete: cancelled".into();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// `T` (or Enter in apply-modes) — apply the selected tag
+    /// set (or just the cursor's tag, if nothing is selected) to
+    /// the target paragraph(s). On success, close the modal and
+    /// return focus to the originating pane.
+    fn commit_tags_to_target(&mut self) {
+        let (target, mut tags): (TagPickerTarget, Vec<String>) =
+            match &self.modal {
+                Modal::TagPicker {
+                    target,
+                    selected,
+                    all_tags,
+                    cursor,
+                    ..
+                } => {
+                    let chosen: Vec<String> = if selected.is_empty() {
+                        all_tags
+                            .get(*cursor)
+                            .cloned()
+                            .into_iter()
+                            .collect()
+                    } else {
+                        selected.iter().cloned().collect()
+                    };
+                    (target.clone(), chosen)
+                }
+                _ => return,
+            };
+        if matches!(target, TagPickerTarget::Search) {
+            return;
+        }
+        if tags.is_empty() {
+            self.status = "tag T: nothing to apply (no selection, no cursor)".into();
+            return;
+        }
+        tags.sort();
+        match &target {
+            TagPickerTarget::EditorParagraph { id, title } => {
+                let ok = self.add_tags_to_node(*id, &tags);
+                self.reload_hierarchy();
+                self.modal = Modal::None;
+                self.status = if ok {
+                    format!(
+                        "tagged `{title}` with {} tag(s): {}",
+                        tags.len(),
+                        tags.join(", ")
+                    )
+                } else {
+                    format!("tag T: persist failed for `{title}`")
+                };
+            }
+            TagPickerTarget::TreeSelection(ids) => {
+                let mut touched = 0usize;
+                let mut failed = 0usize;
+                for id in ids {
+                    if self.add_tags_to_node(*id, &tags) {
+                        touched += 1;
+                    } else {
+                        failed += 1;
+                    }
+                }
+                self.reload_hierarchy();
+                self.modal = Modal::None;
+                self.status = if failed == 0 {
+                    format!(
+                        "tagged {touched} paragraph(s) with {} tag(s): {}",
+                        tags.len(),
+                        tags.join(", ")
+                    )
+                } else {
+                    format!(
+                        "tagged {touched}/{} paragraph(s) — {failed} persist failure(s)",
+                        ids.len(),
+                    )
+                };
+            }
+            TagPickerTarget::Search => {}
+        }
+    }
+
+    /// Search mode — Enter on a tag row → open `TagSearchResults`.
+    fn open_tag_search_results_for_cursor(&mut self) {
+        let tag = match &self.modal {
+            Modal::TagPicker {
+                all_tags, cursor, ..
+            } => match all_tags.get(*cursor).cloned() {
+                Some(t) => t,
+                None => {
+                    self.status = "tag search: no tag at cursor".into();
+                    return;
+                }
+            },
+            _ => return,
+        };
+        let results = self.collect_paragraphs_with_tag(&tag);
+        if results.is_empty() {
+            self.status = format!("tag search: no paragraphs tagged `{tag}`");
+            return;
+        }
+        let count = results.len();
+        self.modal = Modal::TagSearchResults {
+            tag: tag.clone(),
+            filter: TextInput::new(),
+            all_results: results,
+            cursor: 0,
+        };
+        self.status = format!(
+            "tag `{tag}`: {count} paragraph(s) · type to filter · Enter opens · Esc closes"
+        );
+    }
+
+    fn tag_search_results_handle_key(&mut self, key: KeyEvent) {
+        let filtered_len = match &self.modal {
+            Modal::TagSearchResults {
+                all_results, filter, ..
+            } => filter_tag_results(all_results, filter.as_str()).len(),
+            _ => return,
+        };
+        match key.code {
+            KeyCode::Up => {
+                if let Modal::TagSearchResults { cursor, .. } = &mut self.modal {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::TagSearchResults { cursor, .. } = &mut self.modal {
+                    if filtered_len > 0 && *cursor + 1 < filtered_len {
+                        *cursor += 1;
+                    }
+                }
+            }
+            KeyCode::Home => {
+                if let Modal::TagSearchResults { cursor, .. } = &mut self.modal {
+                    *cursor = 0;
+                }
+            }
+            KeyCode::End => {
+                if let Modal::TagSearchResults { cursor, .. } = &mut self.modal {
+                    *cursor = filtered_len.saturating_sub(1);
+                }
+            }
+            KeyCode::Enter => {
+                let chosen = match &self.modal {
+                    Modal::TagSearchResults {
+                        all_results,
+                        filter,
+                        cursor,
+                        ..
+                    } => filter_tag_results(all_results, filter.as_str())
+                        .get(*cursor)
+                        .cloned(),
+                    _ => None,
+                };
+                if let Some(entry) = chosen {
+                    self.modal = Modal::None;
+                    let _ = self.open_search_result(entry.id);
+                }
+            }
+            _ => {
+                if let Modal::TagSearchResults { filter, cursor, .. } = &mut self.modal {
+                    handle_text_input_key(filter, key);
+                    // Reset cursor on filter change so we don't
+                    // sit past the filtered list's end.
+                    *cursor = 0;
+                }
+            }
+        }
+    }
+
     /// Open the backlinks modal for the open paragraph.
     fn open_backlink_picker_modal(&mut self) {
         let Some(doc) = self.opened.as_ref() else {
@@ -6975,6 +7641,10 @@ impl App {
             A::StatusFilterFirst => self.open_status_filter("First"),
             A::StatusFilterNapkin => self.open_status_filter("Napkin"),
             A::StatusFilterNone => self.open_status_filter("None"),
+
+            // ── Tagging (1.2.5+) ──────────────────────────────
+            A::TagParagraph => self.open_tag_picker_for_editor(),
+            A::TagSearch => self.open_tag_search_picker(),
 
             // ── AI pane ───────────────────────────────────────
             A::ClearChat => self.clear_chat_history(),
@@ -11252,6 +11922,20 @@ impl App {
                 self.status = "save PNG: cancelled · preview restored".into();
                 return Ok(false);
             }
+            // 1.2.5+ tag-add and tag-delete sub-modals — Esc
+            // returns to the TagPicker that opened them.
+            if let Modal::TagAddPrompt { return_to, .. } = &mut self.modal {
+                let prev = std::mem::replace(return_to.as_mut(), Modal::None);
+                self.modal = prev;
+                self.status = "tag add: cancelled".into();
+                return Ok(false);
+            }
+            if let Modal::TagDeleteConfirm { return_to, .. } = &mut self.modal {
+                let prev = std::mem::replace(return_to.as_mut(), Modal::None);
+                self.modal = prev;
+                self.status = "tag delete: cancelled".into();
+                return Ok(false);
+            }
             self.modal = Modal::None;
             return Ok(false);
         }
@@ -11286,6 +11970,10 @@ impl App {
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
         let is_rendered_preview = matches!(self.modal, Modal::RenderedPreview { .. });
         let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
+        let is_tag_picker = matches!(self.modal, Modal::TagPicker { .. });
+        let is_tag_add_prompt = matches!(self.modal, Modal::TagAddPrompt { .. });
+        let is_tag_delete_confirm = matches!(self.modal, Modal::TagDeleteConfirm { .. });
+        let is_tag_search_results = matches!(self.modal, Modal::TagSearchResults { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -11533,6 +12221,23 @@ impl App {
                 }
                 _ => {}
             }
+            return Ok(false);
+        }
+
+        if is_tag_picker {
+            self.tag_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_tag_add_prompt {
+            self.tag_add_prompt_handle_key(key);
+            return Ok(false);
+        }
+        if is_tag_delete_confirm {
+            self.tag_delete_confirm_handle_key(key);
+            return Ok(false);
+        }
+        if is_tag_search_results {
+            self.tag_search_results_handle_key(key);
             return Ok(false);
         }
 
@@ -13679,6 +14384,238 @@ impl App {
         );
     }
 
+    /// Ctrl+B ] / `g` / Ctrl+B } — floating tag-picker pane.
+    /// Each row shows `[ ] tag-name` or `[x] tag-name` (Search
+    /// mode hides the brackets — selection has no meaning).
+    fn draw_tag_picker_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::TagPicker {
+            target,
+            all_tags,
+            cursor,
+            selected,
+        } = &self.modal
+        else {
+            return;
+        };
+        let in_search = matches!(target, TagPickerTarget::Search);
+        let total = all_tags.len();
+
+        let width = area.width.saturating_sub(8).max(50);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = match target {
+            TagPickerTarget::EditorParagraph { title, .. } => {
+                format!(" Tags · `{title}` · {total} project tag(s) ")
+            }
+            TagPickerTarget::TreeSelection(ids) => {
+                format!(" Tags · {} paragraph(s) selected · {total} project tag(s) ", ids.len())
+            }
+            TagPickerTarget::Search => {
+                format!(" Tags · search · {total} project tag(s) ")
+            }
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+
+        let visible_scroll = if *cursor >= body_h {
+            cursor - body_h + 1
+        } else {
+            0
+        };
+        let lines: Vec<Line<'_>> = if all_tags.is_empty() {
+            vec![Line::from(Span::styled(
+                "  (no tags yet — press A to add the first one)".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            ))]
+        } else {
+            all_tags
+                .iter()
+                .enumerate()
+                .skip(visible_scroll)
+                .take(body_h)
+                .map(|(i, tag)| {
+                    let marker = if in_search {
+                        "  ".to_string()
+                    } else if selected.contains(tag) {
+                        " [x] ".to_string()
+                    } else {
+                        " [ ] ".to_string()
+                    };
+                    let line = Line::from(vec![
+                        Span::raw(marker),
+                        Span::raw(tag.clone()),
+                    ]);
+                    if i == *cursor {
+                        line.style(Style::default().add_modifier(Modifier::REVERSED))
+                    } else {
+                        line
+                    }
+                })
+                .collect()
+        };
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = if in_search {
+            " ↑↓ select · Enter opens results · A adds · D deletes · Esc closes "
+        } else {
+            " ↑↓ select · Space marks · T applies · A adds · D deletes · Esc closes "
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint.to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    /// Enter from `TagPicker` in Search mode → list of paragraphs
+    /// tagged with the chosen tag, with a typeable filter input.
+    fn draw_tag_search_results_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::TagSearchResults {
+            tag,
+            filter,
+            all_results,
+            cursor,
+        } = &self.modal
+        else {
+            return;
+        };
+        let matches = filter_tag_results(all_results, filter.as_str());
+
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(14);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(
+            " Tag `{tag}` · {} match{} of {} ",
+            matches.len(),
+            if matches.len() == 1 { "" } else { "es" },
+            all_results.len()
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let input_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 1,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y + 1,
+            width: inner.width,
+            height: inner.height.saturating_sub(2),
+        };
+
+        f.render_widget(
+            Paragraph::new(Line::from(format!(
+                " › Filter: {}",
+                filter.render_with_cursor('│')
+            ))),
+            input_rect,
+        );
+
+        let body_h = body_rect.height as usize;
+        let visible_scroll = if *cursor >= body_h {
+            cursor - body_h + 1
+        } else {
+            0
+        };
+        let lines: Vec<Line<'_>> = matches
+            .iter()
+            .enumerate()
+            .skip(visible_scroll)
+            .take(body_h)
+            .map(|(i, e)| {
+                let spans = vec![
+                    Span::raw(format!(" {}", e.title)),
+                    Span::styled(
+                        format!("    {}", e.slug_path),
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                ];
+                let line = Line::from(spans);
+                if i == *cursor {
+                    line.style(Style::default().add_modifier(Modifier::REVERSED))
+                } else {
+                    line
+                }
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ select · Enter opens · type to filter · Esc closes ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     fn bookmark_picker_handle_key(&mut self, key: KeyEvent) {
         let (id_to_unbookmark, id_to_open) = {
             let Modal::BookmarkPicker { entries, cursor, scroll } = &mut self.modal else {
@@ -14879,6 +15816,14 @@ impl App {
             self.draw_save_rendered_png_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::TagPicker { .. }) {
+            self.draw_tag_picker_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::TagSearchResults { .. }) {
+            self.draw_tag_search_results_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -14912,6 +15857,57 @@ impl App {
                 unreachable!("rendered preview handled above"),
             Modal::SaveRenderedPng { .. } =>
                 unreachable!("save rendered png handled above"),
+            Modal::TagPicker { .. } =>
+                unreachable!("tag picker handled above"),
+            Modal::TagSearchResults { .. } =>
+                unreachable!("tag search results handled above"),
+            Modal::TagAddPrompt { input, .. } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " New tag name:",
+                        Style::default()
+                            .fg(self.theme.tree_script_fg)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter adds + auto-selects · Esc cancels",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Add tag — Ctrl+B ] then A ".to_string(),
+                    self.theme.tree_script_fg,
+                    body,
+                )
+            }
+            Modal::TagDeleteConfirm { tag, affected, .. } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(" Delete tag `{tag}` project-wide?"),
+                        Style::default()
+                            .fg(Color::Red)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(Span::styled(
+                        format!("   Will be removed from {affected} paragraph(s)."),
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  y / Enter confirm · n / Esc cancel",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Delete tag — y / n ".to_string(),
+                    Color::Red,
+                    body,
+                )
+            }
             Modal::ParagraphTarget { input } => {
                 let body = vec![
                     Line::from(""),
@@ -17691,6 +18687,29 @@ mod tests_diff {
 ///   0 — excluded
 /// Empty query keeps the original ordering and returns all
 /// indices (the picker treats this as "no filter applied").
+/// 1.2.5+ — case-insensitive substring filter over a list of
+/// `ScriptPickerEntry`s. Used by the tag-search results modal;
+/// kept simple (no scoring) because the result set already
+/// belongs to one chosen tag, and the user just wants to narrow
+/// further by title / slug fragment.
+fn filter_tag_results(
+    entries: &[ScriptPickerEntry],
+    query: &str,
+) -> Vec<ScriptPickerEntry> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return entries.to_vec();
+    }
+    entries
+        .iter()
+        .filter(|e| {
+            e.title.to_lowercase().contains(&q)
+                || e.slug_path.to_lowercase().contains(&q)
+        })
+        .cloned()
+        .collect()
+}
+
 fn fuzzy_filter_entries(
     entries: &[ScriptPickerEntry],
     query: &str,

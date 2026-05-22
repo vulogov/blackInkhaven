@@ -89,6 +89,8 @@ A one-page reference. For workflows see
   row([E],   [Toggle typewriter SFX]),
   row([1..7],[Status-filter modal]),
   row([↑ / ↓], [Reorder cursor row]),
+  row([\]],   [(1.2.5) Tag picker for open ¶ (Space/T/A/D)]),
+  row([\}],   [(1.2.5) Search-by-tag picker]),
 )
 
 == View — Ctrl+V prefix (1.2.4–1.2.5)
@@ -156,6 +158,7 @@ A one-page reference. For workflows see
   row([Space], [(1.2.4) Mark / unmark for multi-select]),
   row([T],     [(1.2.4) Cycle type (single / bulk)]),
   row([O],     [(1.2.4) Cycle status (single / bulk)]),
+  row([G],     [(1.2.5) Tag selection — opens tag picker]),
   row([Esc],   [Clear marks · focus search]),
 )
 

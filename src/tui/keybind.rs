@@ -143,6 +143,17 @@ pub enum Action {
     #[serde(rename = "global.status_filter_none")]
     StatusFilterNone,
 
+    /// Ctrl+B ] (1.2.5+) — open the tag picker for the currently
+    /// open paragraph. Inside: A adds a new tag, D deletes a tag
+    /// project-wide, Space selects, T applies selected tags.
+    #[serde(rename = "global.tag_paragraph")]
+    TagParagraph,
+    /// Ctrl+B } (1.2.5+) — open the search-by-tag picker. Enter
+    /// on a tag lists paragraphs that carry it, with a filter
+    /// input; Enter on a paragraph opens it in the editor.
+    #[serde(rename = "global.tag_search")]
+    TagSearch,
+
     // ── AI pane ───────────────────────────────────────────────
     #[serde(rename = "ai.clear_chat")]
     ClearChat,
@@ -314,6 +325,9 @@ impl Action {
             Action::StatusFilterNapkin => "Napkin".into(),
             Action::StatusFilterNone => "None".into(),
 
+            Action::TagParagraph => "tag ¶".into(),
+            Action::TagSearch => "tag search".into(),
+
             Action::ClearChat => "clear chat".into(),
 
             Action::BundRunBuffer => "run buffer".into(),
@@ -432,6 +446,11 @@ impl Action {
                 "Filter the tree to paragraphs marked Napkin under the cursor.".into(),
             Action::StatusFilterNone =>
                 "Filter the tree to paragraphs with no status under the cursor.".into(),
+
+            Action::TagParagraph =>
+                "Open the tag picker scoped to the open paragraph: Space selects, T applies selected tags, A adds a new tag (prompt), D deletes a tag project-wide.".into(),
+            Action::TagSearch =>
+                "Open the search-by-tag picker. Enter on a tag lists paragraphs that carry it (with a filter input); Enter on a paragraph opens it in the editor.".into(),
 
             // ── AI ────────────────────────────────────────────
             Action::ClearChat =>
@@ -608,6 +627,10 @@ impl KeyBindings {
                 entry("5", Action::StatusFilterFirst, Scope::Any),
                 entry("6", Action::StatusFilterNapkin, Scope::Any),
                 entry("7", Action::StatusFilterNone, Scope::Any),
+                // Tag picker (1.2.5+). `]` opens the per-paragraph
+                // tag picker; `}` opens the search-by-tag picker.
+                entry("]", Action::TagParagraph, Scope::Any),
+                entry("}", Action::TagSearch, Scope::Any),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),
