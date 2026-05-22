@@ -25,6 +25,7 @@
 //! around the call for visible feedback while it runs.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock};
 
 use layout::backends::svg::SVGWriter;
 use layout::gv::{DotParser, GraphBuilder};
@@ -34,6 +35,32 @@ use uuid::Uuid;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::{Node, NodeKind};
 use crate::store::Store;
+
+/// Process-wide `usvg::fontdb::Database` shared across every
+/// story-view render. Loading system fonts is a one-shot
+/// startup cost (~50–500 ms on a typical desktop); cache it so
+/// repeated `Ctrl+V W` presses don't re-scan the disk.
+///
+/// The serif / sans-serif / cursive / fantasy / monospace
+/// fallback families are set to the names usvg / resvg's
+/// upstream CLI uses, so on any reasonable system at least one
+/// font resolves for layout-rs's default `Times, serif` CSS.
+static STORY_FONTDB: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
+
+fn story_fontdb() -> Arc<usvg::fontdb::Database> {
+    STORY_FONTDB
+        .get_or_init(|| {
+            let mut db = usvg::fontdb::Database::new();
+            db.load_system_fonts();
+            db.set_serif_family("Times New Roman");
+            db.set_sans_serif_family("Arial");
+            db.set_cursive_family("Comic Sans MS");
+            db.set_fantasy_family("Impact");
+            db.set_monospace_family("Courier New");
+            Arc::new(db)
+        })
+        .clone()
+}
 
 /// Final output of the story-view pipeline.
 pub struct StoryRender {
@@ -335,8 +362,13 @@ fn dot_to_png(
     vg.do_it(false, false, false, &mut svg);
     let svg_string = svg.finalize();
 
-    // Phase 4: parse SVG → usvg::Tree.
-    let opts = usvg::Options::default();
+    // Phase 4: parse SVG → usvg::Tree. The fontdb is required
+    // so layout-rs's text labels (`Times, serif`) actually
+    // rasterise; without it text renders as invisible glyphs.
+    let opts = usvg::Options {
+        fontdb: story_fontdb(),
+        ..usvg::Options::default()
+    };
     let tree = usvg::Tree::from_str(&svg_string, &opts)
         .map_err(|e| format!("svg parse: {e}"))?;
     let int_size = tree.size().to_int_size();
@@ -395,5 +427,35 @@ mod tests {
         let (w, h, png, _img) = dot_to_png(dot).expect("render");
         assert!(w > 0 && h > 0);
         assert_eq!(&png[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    }
+
+    /// `#[ignore]` debug — dump the SVG layout-rs produces for
+    /// a labelled graph so we can verify text actually lands
+    /// on the canvas.
+    #[test]
+    #[ignore]
+    fn dump_svg_with_labels() {
+        use layout::backends::svg::SVGWriter;
+        use layout::gv::{DotParser, GraphBuilder};
+
+        let dot = r#"digraph {
+            a [shape=box, label="The storm"];
+            b [shape=ellipse, label="Bell tower"];
+            c [shape=octagon, label="Three weeks"];
+            a -> b;
+            b -> c;
+        }"#;
+        let mut parser = DotParser::new(dot);
+        let graph = parser.process().expect("parse");
+        let mut builder = GraphBuilder::new();
+        builder.visit_graph(&graph);
+        let mut vg = builder.get();
+        let mut svg = SVGWriter::new();
+        vg.do_it(false, false, false, &mut svg);
+        let s = svg.finalize();
+        eprintln!("--- SVG dump start ---\n{s}\n--- SVG dump end ---");
+        // Sanity — at least one of the labels must appear in the SVG text.
+        assert!(s.contains("storm") || s.contains("Bell") || s.contains("Three"),
+            "no label text found in SVG");
     }
 }
