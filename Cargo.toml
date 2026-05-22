@@ -190,6 +190,15 @@ typst-pdf = "0.14"
 # compile's first page into the editor preview pane (via
 # ratatui-image) and to write a full-DPI PNG on `S`.
 typst-render = "0.14"
+# layout-rs — pure-Rust DOT layout engine. Used by the Ctrl+V W
+# "story view" feature to lay out the book/chapter/paragraph
+# graph and emit SVG.
+layout-rs = "0.1"
+# resvg — rasterise the SVG layout-rs produces into a PNG bitmap.
+# `usvg` parses, `resvg::render` rasterises against the tiny-skia
+# Pixmap we then encode to PNG. tiny-skia is already pulled in
+# transitively via typst-render so no extra direct dep needed.
+resvg = "0.47"
 # typst-kit — convenience kit for tools that embed Typst. We enable:
 # * `fonts` — fontdb-backed system-font searcher.
 # * `embed-fonts` — bundle Computer Modern + Linux Libertine so

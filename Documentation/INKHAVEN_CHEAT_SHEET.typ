@@ -107,6 +107,7 @@ A one-page reference. For workflows see
   row([P],   [Fuzzy paragraph picker]),
   row([R],   [(1.2.5) Render paragraph → floating PNG preview]),
   row([N],   [(1.2.5) Next typst diagnostic (jump cursor)]),
+  row([W],   [(1.2.5) Story view — DOT graph PNG of current book]),
   row([Esc], [Cancel chord]),
 )
 
