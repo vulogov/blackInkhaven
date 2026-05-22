@@ -155,6 +155,8 @@ is what you type, not what the table key is.
 | `global.status_filter_first` | `Ctrl+B 5` | … `First` |
 | `global.status_filter_napkin` | `Ctrl+B 6` | … `Napkin` |
 | `global.status_filter_none` | `Ctrl+B 7` | … (no status) |
+| `global.tag_paragraph` | `Ctrl+B ]` | (1.2.5) Open the project-wide tag picker scoped to the open paragraph — Space selects, T applies, A adds, D deletes (project-wide). |
+| `global.tag_search` | `Ctrl+B }` | (1.2.5) Open the tag picker in search mode — Enter on a tag lists paragraphs that carry it; Enter on a paragraph opens it. |
 
 ### AI pane
 
@@ -190,6 +192,9 @@ Layer name: `view_sub`. Rebind via HJSON or `ink.key.bind_view_sub`.
 | `view.toggle_bookmark` | `Ctrl+V B` | Toggle bookmark on open paragraph |
 | `view.list_bookmarks` | `Ctrl+V M` | Open the bookmark picker |
 | `view.fuzzy_paragraph_picker` | `Ctrl+V P` | Open the fuzzy paragraph picker |
+| `view.render_paragraph` | `Ctrl+V R` | (1.2.5) Save the open paragraph, render via `typst-render`, float a PNG preview (S = save full-DPI PNG, Esc = close) |
+| `view.next_diagnostic` | `Ctrl+V N` | (1.2.5) Jump editor cursor to the next typst diagnostic in the buffer (parse or semantic). Wraps at the end. |
+| `view.story_graph` | `Ctrl+V W` | (1.2.5) Story view — twopi radial graph of the current book (hierarchy + wiki-links + lexicon mentions), rasterised via `resvg`. S saves the PNG. |
 
 ### Top-level keys (1.2.4+)
 

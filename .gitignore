@@ -35,3 +35,13 @@ target
 # Filename pattern is `<book-slug>-YYYYDDMM-HHMM.pdf`; these are
 # generated outputs, never source.
 *.pdf
+
+# Rendered paragraph PNGs dropped by Ctrl+V R into the launch cwd
+# (1.2.5+). Filenames are `<paragraph-slug>-YYYYDDMM-HHMM.png`
+# (S = save current page) or
+# `<paragraph-slug>-YYYYDDMM-HHMM-page-NNN.png` (A = save every
+# page). The pattern matches the exact timestamp suffix rather
+# than `*.png` so manuscript image assets (cover.png, figure.png,
+# screen.png, etc.) stay tracked.
+*-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9].png
+*-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]-page-*.png

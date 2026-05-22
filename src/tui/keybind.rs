@@ -143,6 +143,17 @@ pub enum Action {
     #[serde(rename = "global.status_filter_none")]
     StatusFilterNone,
 
+    /// Ctrl+B ] (1.2.5+) — open the tag picker for the currently
+    /// open paragraph. Inside: A adds a new tag, D deletes a tag
+    /// project-wide, Space selects, T applies selected tags.
+    #[serde(rename = "global.tag_paragraph")]
+    TagParagraph,
+    /// Ctrl+B } (1.2.5+) — open the search-by-tag picker. Enter
+    /// on a tag lists paragraphs that carry it, with a filter
+    /// input; Enter on a paragraph opens it in the editor.
+    #[serde(rename = "global.tag_search")]
+    TagSearch,
+
     // ── AI pane ───────────────────────────────────────────────
     #[serde(rename = "ai.clear_chat")]
     ClearChat,
@@ -244,6 +255,25 @@ pub enum Action {
     /// Ctrl+V P — fuzzy paragraph picker (1.2.4+).
     #[serde(rename = "view.fuzzy_paragraph_picker")]
     ViewFuzzyParagraphPicker,
+    /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
+    /// via typst-render and float a PNG preview on top of the
+    /// editor. `Esc` closes, `S` opens a save-as picker for the
+    /// full-DPI PNG.
+    #[serde(rename = "view.render_paragraph")]
+    ViewRenderParagraph,
+    /// Ctrl+V N (1.2.5+) — jump the editor cursor to the next
+    /// typst diagnostic in the open buffer (parse or semantic).
+    /// Wraps at the end. No-op when the diagnostic cache is
+    /// empty.
+    #[serde(rename = "view.next_diagnostic")]
+    ViewNextDiagnostic,
+    /// Ctrl+V W (1.2.5+) — story view: render the current
+    /// book's hierarchy + wiki-links + lexicon mentions as a
+    /// DOT graph, lay it out via `layout-rs`, rasterise via
+    /// `resvg`, float the PNG on top of the editor. `S` saves
+    /// the rendered PNG; `Esc` closes.
+    #[serde(rename = "view.story_graph")]
+    ViewStoryGraph,
 
     /// Explicit "this chord does nothing" — overlay entries can
     /// set `action: "none"` to disable a default chord.
@@ -302,6 +332,9 @@ impl Action {
             Action::StatusFilterNapkin => "Napkin".into(),
             Action::StatusFilterNone => "None".into(),
 
+            Action::TagParagraph => "tag ¶".into(),
+            Action::TagSearch => "tag search".into(),
+
             Action::ClearChat => "clear chat".into(),
 
             Action::BundRunBuffer => "run buffer".into(),
@@ -333,6 +366,9 @@ impl Action {
             Action::ViewToggleBookmark => "bookmark".into(),
             Action::ViewListBookmarks => "bookmarks".into(),
             Action::ViewFuzzyParagraphPicker => "find ¶".into(),
+            Action::ViewRenderParagraph => "render ¶".into(),
+            Action::ViewNextDiagnostic => "next diag".into(),
+            Action::ViewStoryGraph => "story view".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) => format!("λ {name}"),
@@ -419,6 +455,11 @@ impl Action {
             Action::StatusFilterNone =>
                 "Filter the tree to paragraphs with no status under the cursor.".into(),
 
+            Action::TagParagraph =>
+                "Open the tag picker scoped to the open paragraph: Space selects, T applies selected tags, A adds a new tag (prompt), D deletes a tag project-wide.".into(),
+            Action::TagSearch =>
+                "Open the search-by-tag picker. Enter on a tag lists paragraphs that carry it (with a filter input); Enter on a paragraph opens it in the editor.".into(),
+
             // ── AI ────────────────────────────────────────────
             Action::ClearChat =>
                 "Clear the chat history and any in-flight inference for a fresh AI session.".into(),
@@ -482,6 +523,12 @@ impl Action {
                 "Open the bookmark picker — every bookmarked paragraph in the project. Enter opens; D removes the bookmark.".into(),
             Action::ViewFuzzyParagraphPicker =>
                 "Fuzzy paragraph picker — type any substring of the title or slug path, Enter opens the highlighted hit.".into(),
+            Action::ViewRenderParagraph =>
+                "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
+            Action::ViewNextDiagnostic =>
+                "Jump the editor cursor to the next typst diagnostic (parse or semantic) in the open buffer. Wraps around at the end; no-op when there are no diagnostics.".into(),
+            Action::ViewStoryGraph =>
+                "Build a DOT graph of the current user book (chapters / subchapters / paragraphs + wiki-links + Characters/Places/Artefacts mentions), lay it out with layout-rs, rasterise with resvg, and float the PNG on top of the editor. S saves the PNG to cwd; Esc closes.".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) =>
@@ -590,6 +637,10 @@ impl KeyBindings {
                 entry("5", Action::StatusFilterFirst, Scope::Any),
                 entry("6", Action::StatusFilterNapkin, Scope::Any),
                 entry("7", Action::StatusFilterNone, Scope::Any),
+                // Tag picker (1.2.5+). `]` opens the per-paragraph
+                // tag picker; `}` opens the search-by-tag picker.
+                entry("]", Action::TagParagraph, Scope::Any),
+                entry("}", Action::TagSearch, Scope::Any),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),
@@ -617,6 +668,9 @@ impl KeyBindings {
                 entry("b", Action::ViewToggleBookmark, Scope::Any),
                 entry("m", Action::ViewListBookmarks, Scope::Any),
                 entry("p", Action::ViewFuzzyParagraphPicker, Scope::Any),
+                entry("r", Action::ViewRenderParagraph, Scope::Any),
+                entry("n", Action::ViewNextDiagnostic, Scope::Any),
+                entry("w", Action::ViewStoryGraph, Scope::Any),
             ],
             top_level: vec![
                 // F1 anywhere: Help-book RAG modal.

@@ -13,6 +13,7 @@ pub mod mv;
 pub mod reindex;
 pub mod restore;
 pub mod search;
+pub mod doctor;
 pub mod stats;
 
 use std::path::PathBuf;
@@ -223,6 +224,14 @@ pub enum Command {
         book_name: Option<String>,
     },
 
+    /// Print a health report for the inkhaven install (1.2.5+).
+    /// Three sections: binary (version + typst engine + font
+    /// counts + package cache), project (when run inside an
+    /// initialised project: hierarchy shape + word counts), and
+    /// notes (actionable warnings like "typst not on PATH"). No
+    /// questions asked, pipe-friendly plain-text output.
+    Doctor,
+
     /// Launch the TUI editor (default if no subcommand is given).
     Tui,
 }
@@ -347,6 +356,7 @@ impl Cli {
             Command::Stats { book_name } => {
                 stats::run(&project, book_name.as_deref()).map_err(Into::into)
             }
+            Command::Doctor => doctor::run(&project).map_err(Into::into),
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
         }
     }

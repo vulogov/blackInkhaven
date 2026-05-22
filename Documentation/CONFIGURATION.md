@@ -23,6 +23,7 @@ into your file.
 - [`keys`](#keys)
 - [`backup`](#backup)
 - [`prompts_file` and `language`](#prompts_file-and-language)
+- [`typst_compile`](#typst_compile)
 - [`output`](#output)
 - [`goals`](#goals)
 - [`sync_interval_seconds`](#sync_interval_seconds)
@@ -447,6 +448,80 @@ editor: {
   stemming: { languages: ["english", "russian"] }
 }
 ```
+
+## `typst_compile`
+
+Controls `Ctrl+B B` / `Ctrl+B O` ("compile / take the book") and the
+typst-as-library knobs introduced in 1.2.5. Both engines ship in
+every 1.2.5+ build; the user picks at runtime via the `engine`
+field below.
+
+```hjson
+typst_compile: {
+  engine:                   "external"   // "external" | "inprocess"
+  diagnostics:              true         // typst-syntax parse errors on idle/save
+  diagnostics_idle_seconds: 2            // debounce for the idle recheck
+  semantic_diagnostics:     false        // upgrade idle check to full typst::compile
+  bundle_fonts:             true         // ship CM + Linux Libertine in the binary
+  use_system_fonts:         true         // also search system fonts
+  packages_enabled:         true         // fetch @preview/<pkg> from packages.typst.org
+  error_system_prompt:      ""           // override the AI compile-error prompt
+}
+```
+
+| Field                       | Type   | Default      | Description |
+| --------------------------- | ------ | ------------ | ----------- |
+| `engine`                    | string | `"external"` | Picks the compiler driving `Ctrl+B B` / `Ctrl+B O`. `external` (default) shells out to the host's `typst` binary on PATH — exact 1.2.4 behaviour. `inprocess` runs `typst::compile + typst-pdf` inside the inkhaven process: no shell-out, no `typst` install required, structured diagnostics with span info. Compile happens on a worker thread so the TUI spinner stays animated. Both engines write the PDF to the same path. |
+| `diagnostics`               | bool   | `true`       | When true, run `typst-syntax` against the open paragraph on save and on idle (`diagnostics_idle_seconds`). Parse errors land on the status bar as `typst: line L:C — <message>`. Pure parser — no eval / layout / render, no font setup, no package resolution. Bund and HJSON content types are skipped automatically. Set `false` to suppress entirely. |
+| `diagnostics_idle_seconds`  | int    | `2`          | Minimum seconds of editor idle before the typst recheck runs. `0` is allowed (every tick); large values approach "only on save". Piggy-backs on the same idle clock as `editor.autosave_seconds`. |
+| `semantic_diagnostics`      | bool   | `false`      | When **true** AND `engine = "inprocess"`, run a full `typst::compile` against the open paragraph in isolation after the parser passes cleanly. Catches semantic errors (undefined functions, type errors, font-not-found) the parser can't see. **False positives are expected** when the paragraph references book-level definitions — the isolated compile doesn't see the assembled preamble. Costs ~20–200 ms per check on warm caches. Has no effect with `engine = "external"`. |
+| `bundle_fonts`              | bool   | `true`       | 1.2.5+. Ship Computer Modern and Linux Libertine inside the inkhaven binary so the in-process engine can lay out even on hosts without system fonts. Adds ~10 MB. Set `false` if every host inkhaven runs on already has the fonts your manuscript needs. No effect when `engine = "external"`. |
+| `use_system_fonts`          | bool   | `true`       | 1.2.5+. Also search the host's system fonts via fontdb. Combined with `bundle_fonts: true` (the default), you get both. Turn off for reproducible builds where the only allowed fonts are the embedded ones. No effect when `engine = "external"`. |
+| `packages_enabled`          | bool   | `true`       | 1.2.5+. When the in-process engine sees `@preview/<pkg>` (or any non-local package id), fetch and unpack it from `packages.typst.org` via `typst-kit`'s package storage. Cached on disk in the platform's standard cache dir (`~/Library/Caches/typst/packages` on macOS, `~/.cache/typst/packages` on Linux, `%LOCALAPPDATA%\typst\packages` on Windows). Set `false` to fail-fast on package imports — useful for hermetic / offline builds. No effect when `engine = "external"`. |
+| `error_system_prompt`       | string | `""`         | Override the AI system prompt used when `typst compile` returns non-zero. Empty falls back to the baked-in default. |
+
+The diagnostics path is entirely additive — turning it off
+restores the exact 1.2.4 behaviour. `engine: "inprocess"` is the
+single switch that lights up the in-process compiler; nothing
+else needs to change. At TUI startup an `info!` line records
+which engine is active so you can confirm the setting took
+effect.
+
+**`inprocess` properties in 1.2.5:**
+
+- `@preview/<pkg>` imports work out of the box via the package
+  downloader. First fetch of a package is online; subsequent
+  uses hit the on-disk cache. Set `packages_enabled: false` to
+  fail-fast on package imports (hermetic builds).
+- Fonts are bundled (Computer Modern + Linux Libertine) AND the
+  host's system fonts are searched. Either source can be
+  disabled independently via `bundle_fonts` /
+  `use_system_fonts`.
+- The PDF bytes match what `typst compile` of the same version
+  produces; if you mix `external` and `inprocess` across runs,
+  pin the host's `typst` binary to the same release (`0.14.x`
+  for 1.2.5) so the output stays byte-identical.
+
+**TUI integration (1.2.5+):**
+
+- **Splash + interrupt** — Ctrl+B B / Ctrl+B O paint a centered
+  splash with the spinner, the book title, the active engine
+  (e.g. `internal · fonts: bundled + system · @preview: on`
+  *or* `external · /usr/local/bin/typst`), elapsed seconds, and
+  a footer hint. **Esc** in the splash cancels the compile:
+  external engine receives SIGTERM, in-process worker is
+  abandoned (it keeps running until typst finishes naturally;
+  the foreground unblocks immediately).
+- **Autosave before A/B/O** — Ctrl+B A (assemble), Ctrl+B B
+  (build), and Ctrl+B O (take) all flush the primary editor
+  (and the secondary editor in similar-paragraph mode) to disk
+  before the assembler walks `.typ` files. No more "I just
+  pressed Ctrl+B B and the build used yesterday's saved
+  version".
+- **Engine visibility** — Ctrl+B V (credits / version pane)
+  carries a `Typst engine` line with the same summary the
+  splash uses; the engine identity is also logged at INFO at
+  TUI startup so the choice shows up in `inkhaven.log`.
 
 ## `output`
 

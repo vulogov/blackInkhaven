@@ -89,9 +89,11 @@ A one-page reference. For workflows see
   row([E],   [Toggle typewriter SFX]),
   row([1..7],[Status-filter modal]),
   row([↑ / ↓], [Reorder cursor row]),
+  row([\]],   [(1.2.5) Tag picker for open ¶ (Space/T/A/D)]),
+  row([\}],   [(1.2.5) Search-by-tag picker]),
 )
 
-== View — Ctrl+V prefix (1.2.4)
+== View — Ctrl+V prefix (1.2.4–1.2.5)
 
 #kv-table(
   row([1 / 2], [Md export: buffer / subchapter (save-as)]),
@@ -103,7 +105,21 @@ A one-page reference. For workflows see
   row([L / K], [List outgoing / backlinks]),
   row([B / M], [Toggle bookmark / open picker]),
   row([P],   [Fuzzy paragraph picker]),
+  row([R],   [(1.2.5) Render paragraph → floating PNG preview]),
+  row([N],   [(1.2.5) Next typst diagnostic (jump cursor)]),
+  row([W],   [(1.2.5) Story view — DOT graph PNG of current book]),
   row([Esc], [Cancel chord]),
+)
+
+== Render preview (Ctrl+V R, 1.2.5)
+
+#kv-table(
+  row([← / →], [Previous / next page]),
+  row([↑ / ↓], [Same as ← / →]),
+  row([Home / End], [First / last page]),
+  row([S],     [Save *current* page · full-DPI PNG via picker]),
+  row([A],     [Save *all* pages · `<base>-page-NNN.png` per page]),
+  row([Esc],   [Close back to editor]),
 )
 
 == Bund — Ctrl+Z prefix
@@ -143,6 +159,7 @@ A one-page reference. For workflows see
   row([Space], [(1.2.4) Mark / unmark for multi-select]),
   row([T],     [(1.2.4) Cycle type (single / bulk)]),
   row([O],     [(1.2.4) Cycle status (single / bulk)]),
+  row([G],     [(1.2.5) Tag selection — opens tag picker]),
   row([Esc],   [Clear marks · focus search]),
 )
 
@@ -207,6 +224,7 @@ A one-page reference. For workflows see
   row([import-typst-help],           [Bundle Typst reference]),
   row([import-scrivener PATH.scriv], [(1.2.4) Scrivener importer]),
   row([stats --book-name "Tides"], [(1.2.4) Per-¶ stats table]),
+  row([doctor],                      [(1.2.5) Health report: engine + fonts + cache + project]),
   row([ai "prompt"],                 [One-shot inference]),
   row([bund "40 2 + ."],             [Bund REPL one-shot]),
 )
@@ -236,6 +254,14 @@ scripting: {
   enabled_categories: ["keymap"]
   // 1.2.4 adds fs_read (default-allowed),
   //           fs_write (default-DENIED)
+}
+typst_compile: {                    // 1.2.5
+  engine:               "external"  // | "inprocess"
+  diagnostics:          true        // typst-syntax on idle/save
+  semantic_diagnostics: false       // full typst::compile (opt-in)
+  bundle_fonts:         true        // CM + Linux Libertine
+  use_system_fonts:     true        // also fontdb-search system
+  packages_enabled:     true        // fetch @preview/<pkg>
 }
 ```
 

@@ -641,6 +641,7 @@ mod tests {
             target_hit_at_status: None,
             linked_paragraphs: Vec::new(),
             bookmark: false,
+            tags: Vec::new(),
         }
     }
 

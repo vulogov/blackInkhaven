@@ -1,6 +1,6 @@
 [package]
 name = "inkhaven"
-version = "1.2.4"
+version = "1.2.5"
 edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
@@ -169,6 +169,51 @@ image = { version = "0.25", default-features = false, features = [
   "jpeg",
   "gif",
   "webp",
+] }
+# typst-syntax — Phase 1 of the typst-as-library plan (1.2.5+). Pulls
+# in the Typst parser only (no eval, no layout, no render, no fonts).
+# Used by `src/typst_check.rs` to surface parse errors at the source
+# line/col while the user edits.
+typst-syntax = "0.14"
+# typst — full compiler umbrella for the in-process engine
+# (Phase 2+3+4 combined). Activated at runtime by
+# `typst_compile.engine = "inprocess"` in HJSON; the default
+# `external` engine still shells out to the host's `typst` binary.
+# Bringing it in unconditionally so the HJSON switch is a pure
+# runtime decision — no rebuild required to flip engines.
+typst = "0.14"
+# typst-pdf — PDF emitter. Pairs with `typst::compile::<PagedDocument>()`
+# to produce the same `.pdf` bytes the external CLI would.
+typst-pdf = "0.14"
+# typst-render — rasterise a compiled `Frame` to a PNG bitmap. Used
+# by the Ctrl+V R "render paragraph" feature to paint the in-process
+# compile's first page into the editor preview pane (via
+# ratatui-image) and to write a full-DPI PNG on `S`.
+typst-render = "0.14"
+# resvg — rasterise hand-built SVG into a PNG bitmap. Used by
+# the Ctrl+V W "story view" path: `src/story_view.rs` computes a
+# twopi-style radial layout in pure Rust and emits SVG
+# directly, then `usvg::Tree::from_str` parses it and
+# `resvg::render` rasterises against the tiny-skia Pixmap we
+# encode to PNG. tiny-skia is pulled in transitively via
+# typst-render, so no extra direct dep needed.
+resvg = "0.47"
+# typst-kit — convenience kit for tools that embed Typst. We enable:
+# * `fonts` — fontdb-backed system-font searcher.
+# * `embed-fonts` — bundle Computer Modern + Linux Libertine so
+#   manuscripts work on hosts without system fonts (gated at
+#   runtime by `typst_compile.bundle_fonts`; default on but
+#   skippable). Adds ~10 MB.
+# * `downloads` — `ureq`-based (no tokio) HTTP for `@preview/<pkg>`
+#   resolution. Adds ~1 MB of TLS + http parsing.
+# * `package` — package cache + `prepare_package` that gives us
+#   on-disk paths for resolved imports. Gated at runtime by
+#   `typst_compile.packages_enabled`; default on.
+typst-kit = { version = "0.14", default-features = false, features = [
+  "fonts",
+  "embed-fonts",
+  "downloads",
+  "packages",
 ] }
 
 [build-dependencies]
