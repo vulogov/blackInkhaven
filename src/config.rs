@@ -383,22 +383,90 @@ impl TypstTemplatesConfig {
     }
 }
 
-/// Behaviour of the `typst compile` step driven by Ctrl+B B / Ctrl+B O.
-/// Today only the AI error-analysis prompt is configurable, but the
-/// stanza is its own struct so new knobs (timeouts, custom typst path,
-/// extra args) can land without breaking serde compatibility.
+/// Behaviour of the `typst compile` step driven by Ctrl+B B / Ctrl+B O,
+/// plus the typst-as-library knobs added in 1.2.5. The stanza is its
+/// own struct so new knobs (timeouts, custom typst path, extra args)
+/// can land without breaking serde compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TypstCompileConfig {
     /// System prompt fed to the AI when `typst compile` returns
     /// non-zero. Empty → falls back to the baked-in default.
     pub error_system_prompt: String,
+    /// Which engine drives Ctrl+B B / Ctrl+B O (the user-visible
+    /// "Take the book → PDF" path).
+    ///
+    /// * `"external"` (default) — spawn the host's `typst` binary as
+    ///   a child process. Pure shell-out, smallest binary footprint,
+    ///   output exactly matches what the user gets typing
+    ///   `typst compile` themselves.
+    /// * `"inprocess"` — run the in-process typst compiler. Not yet
+    ///   wired up in 1.2.5; the value is accepted today so HJSON
+    ///   configs written now survive when the engine lands. Falls
+    ///   back to `external` at runtime when the in-process engine
+    ///   isn't compiled in.
+    ///
+    /// See the typst-as-library Phase plan in `Documentation/`.
+    pub engine: String,
+    /// Run `typst-syntax` against the open buffer on idle / save
+    /// and surface parse errors in the status bar (1.2.5+). Pure
+    /// parser — no eval, layout, render, fonts, or package
+    /// resolution. Adds no shell-out and is independent of which
+    /// `engine` is selected for PDF builds.
+    pub diagnostics: bool,
+    /// Minimum seconds of editor idle time before a diagnostics
+    /// re-check runs. Same units as `editor.autosave_seconds` and
+    /// piggy-backs on the same idle clock — set to `0` to check
+    /// on every keystroke (cheap on small buffers; can stutter on
+    /// chapter-sized pastes).
+    pub diagnostics_idle_seconds: u64,
+    /// 1.2.5+: when `engine = "inprocess"`, upgrade the idle /
+    /// save diagnostic check from `typst-syntax` (parse only) to
+    /// a full `typst::compile` against the open paragraph in
+    /// isolation. Surfaces semantic errors (undefined functions,
+    /// type errors, missing fonts) the parser can't catch. Costs
+    /// 10–200 ms per check. **False positives are expected** when
+    /// the paragraph references book-level definitions from the
+    /// assembled preamble — turn off if your manuscript uses
+    /// custom `#show` rules. Has no effect when
+    /// `engine = "external"`.
+    pub semantic_diagnostics: bool,
+    /// 1.2.5+: ship Computer Modern and Linux Libertine inside
+    /// the inkhaven binary so the in-process engine can lay out
+    /// even on hosts without system fonts. Adds ~10 MB; turn off
+    /// if you're confident every host inkhaven runs on has the
+    /// fonts your manuscript needs. No effect when
+    /// `engine = "external"`.
+    pub bundle_fonts: bool,
+    /// 1.2.5+: also search the host's system fonts via fontdb.
+    /// On by default — most users want both their installed
+    /// fonts AND the embedded fallback set. Turn off for
+    /// reproducible builds where the only allowed fonts are the
+    /// embedded ones. No effect when `engine = "external"`.
+    pub use_system_fonts: bool,
+    /// 1.2.5+: when the in-process engine sees `@preview/<pkg>`
+    /// (or any non-local package id), use `typst-kit`'s
+    /// `PackageStorage` to fetch and unpack it from
+    /// packages.typst.org. Cached on disk in the platform's
+    /// standard cache directory (`~/Library/Caches/typst/packages`
+    /// on macOS, `~/.cache/typst/packages` on Linux,
+    /// `%LOCALAPPDATA%\typst\packages` on Windows). Turn off to
+    /// fail-fast on package imports — useful for hermetic
+    /// builds. No effect when `engine = "external"`.
+    pub packages_enabled: bool,
 }
 
 impl Default for TypstCompileConfig {
     fn default() -> Self {
         Self {
             error_system_prompt: String::new(),
+            engine: "external".to_owned(),
+            diagnostics: true,
+            diagnostics_idle_seconds: 2,
+            semantic_diagnostics: false,
+            bundle_fonts: true,
+            use_system_fonts: true,
+            packages_enabled: true,
         }
     }
 }
@@ -410,6 +478,16 @@ impl TypstCompileConfig {
         } else {
             self.error_system_prompt.clone()
         }
+    }
+
+    /// True when the user has asked for the in-process engine. The
+    /// in-process compiler stack (typst + typst-pdf + typst-kit
+    /// fonts) is always linked in 1.2.5+; the user opts in by
+    /// setting `typst_compile.engine = "inprocess"` in
+    /// `inkhaven.hjson`. Anything else falls back to the external
+    /// `typst` binary on PATH.
+    pub fn use_inprocess_engine(&self) -> bool {
+        self.engine.eq_ignore_ascii_case("inprocess")
     }
 }
 

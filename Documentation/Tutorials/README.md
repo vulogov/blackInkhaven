@@ -33,6 +33,7 @@ covers.
 | 21 | [`21-navigation.md`](21-navigation.md) | Ctrl+V P fuzzy paragraph picker, Ctrl+V B / M bookmarks, AI prompt Up-arrow history, slash-command prefix ranking. |
 | 22 | [`22-tree-multiselect.md`](22-tree-multiselect.md) | Tree-pane mark set (Space), T cycles type, O cycles status — both work on single OR multi-selection. |
 | 23 | [`23-scrivener-import.md`](23-scrivener-import.md) | `inkhaven import-scrivener` — single-binary `.scriv` ingest with RTF→Typst conversion, dry-run, mapping rules. |
+| 24 | [`24-typst-in-process.md`](24-typst-in-process.md) | `typst_compile.engine = "inprocess"` — bundled compiler + fonts + `@preview` packages, parse + semantic diagnostics, Ctrl+V R render preview, Ctrl+V N diagnostic navigation, `inkhaven doctor`. |
 
 ## Scripting + chord customisation
 

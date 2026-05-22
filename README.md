@@ -21,70 +21,99 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.4
+## Latest release · 1.2.5
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.4.md`](Documentation/RELEASE_NOTES/1.2.4.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.5.md`](Documentation/RELEASE_NOTES/1.2.5.md)
 
-Headlines:
-- **Wiki-links + backlinks** — typed references between paragraphs
-  stored as **metadata**, never embedded in the Typst source.
-  Four chords: `Ctrl+V A` (add outgoing), `Ctrl+V I` (add
-  incoming), `Ctrl+V L` (outgoing picker), `Ctrl+V K`
-  (backlinks picker). Self-link, duplicate, and cycle guards.
-  When the AI scope is Paragraph (F9), linked paragraphs are
-  appended to the prompt context wrapped in delimited blocks.
-- **Snapshot diff + safety net.** In the F6 picker, **`V`** opens
-  a side-by-side line diff of the snapshot vs the live buffer
-  (Myers via the `similar` crate, with fused Changed rows).
-  **`Enter`** restores — but first takes a pre-restore safety
-  snapshot of the live buffer, so undoing an unwanted restore
-  is one more F6+Enter away.
-- **Navigation pack.** `Ctrl+V P` fuzzy paragraph picker (three-
-  tier prefix ranking), `Ctrl+V B` / `Ctrl+V M` bookmarks,
-  AI-prompt **`Up`-arrow history** (capped at 500), prefix-
-  ranked slash-command picker.
-- **Per-paragraph word-count goals.** `Ctrl+V T` sets a target;
-  saves crossing it can auto-promote status one rung
-  (`goals.auto_promote_on_target`). The editor footer renders a
-  title-breadcrumb gauge.
-- **Active-time tracking.** `writing_events` adds a `LAG`-window
-  aggregate that sums save→save gaps capped at 5 minutes — AFK
-  breaks don't count. Status-bar shows `45m / 60m`.
-- **`inkhaven export --status=<floor>`.** Ship only paragraphs at
-  or above a ladder rung (`napkin` / `first` / … / `ready`).
-- **Scrivener import.** `inkhaven import-scrivener PATH.scriv`
-  walks the binder via `quick-xml`, converts every Text
-  document's RTF body to Typst (`**bold**` / `_italic_` / escapes)
-  via `rtf-parser-tt`, materialises Draft → Book / Folder →
-  Chapter / Text → Paragraph. Pure Rust — no Scrivener install,
-  no `pandoc`, no `textutil`. `--dry-run`, `--draft-as-book`,
-  `--skip-research`.
-- **Tree multi-select.** `Space` marks / unmarks; **`T`** cycles
-  node type, **`O`** cycles status — both work on single OR
-  multi-selection. `Del` and `Ctrl+B I` also read the mark set.
-- **Bund stdlib gaps closed.** `ink.editor.replace_all`,
-  `ink.search.load`, `ink.ai.send_blocking`, `ink.ai.poll`,
-  `ink.fs.read` (allowed), `ink.fs.write` (**default-denied**).
-  Five new hook points: `hook.on_goal_hit`,
-  `hook.on_streak_break`, `hook.on_status_promoted`,
-  `hook.on_assemble`, `hook.on_take`.
-- **`Ctrl+V` is a first-class meta key.** All view sub-chords
-  are rebindable via HJSON `keys.bindings.view_sub` and
-  `ink.key.bind_view_sub`. F-keys migrated into the bindings
-  table — `keys.bindings.f7 = "view.add_link"` works.
-- **Theme persistence to HJSON, save-as picker for Ctrl+V
-  markdown, secondary-editor autosave, paragraph file rename
-  follows title rename, `inkhaven stats` CLI, 7-second startup
-  splash, Windows CI re-enabled** via vcpkg.
-- **Printable cheat sheet** —
-  [`Documentation/INKHAVEN_CHEAT_SHEET.typ`](Documentation/INKHAVEN_CHEAT_SHEET.typ),
-  two-column A4. `typst compile` it and pin the PDF next to
-  your terminal.
-- New tutorials: [Wiki-links](Documentation/Tutorials/19-wiki-links.md),
-  [Snapshot diff](Documentation/Tutorials/20-snapshot-diff.md),
-  [Navigation pack](Documentation/Tutorials/21-navigation.md),
-  [Tree multi-select](Documentation/Tutorials/22-tree-multiselect.md),
-  [Scrivener import](Documentation/Tutorials/23-scrivener-import.md).
+The headline is one HJSON line:
+
+```hjson
+typst_compile: { engine: "inprocess" }
+```
+
+Flip it and Inkhaven stops shelling out to the host's `typst`
+binary for builds. The full compiler — `typst` + `typst-pdf` +
+`typst-kit` (fonts + `@preview` packages) — is linked into
+every 1.2.5 binary and runs inside the inkhaven process. The
+external CLI stays the default; the switch is a runtime
+decision.
+
+Around that one switch:
+
+- **In-process compile engine.** `typst::compile +
+  typst-pdf` runs on a worker thread; the foreground TUI keeps
+  the spinner animated. Bundled Computer Modern + Linux
+  Libertine fonts ship in the binary; system fonts are also
+  searched. `@preview/<pkg>` imports fetch + cache via
+  `typst-kit`. Hermetic mode (no system fonts, no package
+  fetch) lives behind two HJSON booleans.
+- **Parse diagnostics on save / idle.** `typst-syntax` re-
+  parses the open paragraph on every save and every
+  `diagnostics_idle_seconds` of editor idle. First parse
+  error lands on the status bar with `line L:C — <message>`.
+  Engine-independent — works in both `external` and
+  `inprocess`.
+- **Semantic diagnostics (opt-in).** When
+  `semantic_diagnostics: true` AND `engine = "inprocess"`,
+  a full compile runs after parse passes. Surfaces unknown
+  functions, type errors, missing fonts. False positives
+  expected for paragraphs that depend on book-level
+  definitions — leave off for preamble-heavy manuscripts.
+- **Ctrl+V N — diagnostic navigation.** Jump the editor
+  cursor to the next typst diagnostic (parse or semantic).
+  Wraps. Status bar reports `diag 2/5 line 12:5 —
+  <message>`.
+- **Ctrl+V R — render paragraph preview.** Saves the buffer,
+  rasterises every page in-process via `typst-render`, floats
+  the PNG on top of the editor. `← / →` navigate pages,
+  `S` saves the current page at full DPI, `A` saves every
+  page as `<base>-page-NNN.png`. Esc closes back to the
+  editor (cancelling the save picker preserves navigation
+  state).
+- **TUI-friendly compiles.** Compile splash shows the active
+  engine line (`internal · fonts: bundled + system · @preview:
+  on` or `external · /usr/local/bin/typst`). **Esc** cancels
+  in-flight compiles — external sends SIGTERM, in-process
+  abandons the worker (it finishes in the background).
+  Ctrl+B A / B / O now autosave the primary editor (and the
+  secondary editor in similar-paragraph mode) before walking
+  `.typ` files.
+- **`inkhaven doctor`.** New CLI — prints a health report
+  with engine summary, typst path, font + package counts,
+  cache size, and (when run inside an initialised project)
+  hierarchy shape + word counts. Notes section calls out
+  actionable warnings like `typst NOT on PATH`. Pipe-
+  friendly.
+- **Embedded logo in credits pane.** `include_bytes!`
+  embeds `logo.png` in the binary; `Ctrl+B V` banners it
+  above the version + dependency list.
+- **Project-wide node tagging.** Three entry points,
+  one tag namespace stored as `Node.tags: Vec<String>`:
+  `Ctrl+B ]` opens the floating tag picker for the open
+  paragraph (Space multi-selects, `T` applies, `A` adds
+  a new tag, `D` deletes a tag project-wide with a blast-
+  radius confirm); `Ctrl+B }` opens the same picker in
+  search mode — Enter on a tag lists every paragraph that
+  carries it, with a typeable filter, and Enter on a hit
+  opens it; **`g`** in the tree pane runs the picker
+  against the marked set (or the cursor row), bulk-tagging
+  a whole selection in one go. Editor `T` returns focus
+  to the editor; tree `g` stays in the tree.
+- **Story view — Ctrl+V W.** Twopi-style radial graph of
+  the current book: book at the centre, each structural
+  depth on a concentric ring with sibling wedges sized by
+  subtree leaf count. Different SVG shape per node kind
+  (folder / box / octagon / ellipse / note / parallelogram /
+  chevron / egg / diamond / hexagon); long titles wrap to
+  multiple lines and node boxes scale to fit. Solid grey
+  edges for the structural skeleton, dashed purple for
+  `linked_paragraphs` wiki-links, dashed green from
+  Characters / Places / Artefacts to the paragraphs that
+  mention them. Rasterised via `resvg` + `tiny-skia`,
+  displayed via ratatui-image. `S` saves the PNG.
+- New tutorial: [Typst in-process](Documentation/Tutorials/24-typst-in-process.md)
+  — engine switch, fonts, packages, diagnostics, render
+  preview, doctor.
 
 Every prior release lives under [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
 

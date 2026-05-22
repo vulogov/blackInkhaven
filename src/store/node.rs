@@ -169,6 +169,14 @@ pub struct Node {
     /// paragraph in the project.
     #[serde(default)]
     pub bookmark: bool,
+
+    /// User-defined tags (1.2.5+). Free-form strings; case is
+    /// preserved on save but the picker dedups case-sensitively.
+    /// `Ctrl+B ]` (editor) or `g` (tree) add/remove tags;
+    /// `Ctrl+B }` searches by tag. Project-wide tag deletion
+    /// removes the tag from every node that carries it.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 impl Node {
@@ -197,6 +205,7 @@ impl Node {
                 .map(|u| u.to_string())
                 .collect::<Vec<_>>(),
             "bookmark":             self.bookmark,
+            "tags":                 self.tags,
         })
     }
 
@@ -345,6 +354,16 @@ impl Node {
                 .get("bookmark")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
+            tags: obj
+                .get("tags")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .filter(|s| !s.trim().is_empty())
+                        .collect::<Vec<String>>()
+                })
+                .unwrap_or_default(),
         })
     }
 

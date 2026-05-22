@@ -161,6 +161,23 @@ fn draw_splash(f: &mut ratatui::Frame, project_display: &str, spinner: char, ela
     f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
 }
 
+/// 1.2.5+ — `logo.png` from the repo root embedded directly in
+/// the binary via `include_bytes!`. Decoded lazily the first
+/// time the credits modal opens so the cost is paid once per
+/// session, not every Ctrl+B V press. The PNG's size on disk
+/// is the binary-size delta; keep the source PNG appropriately
+/// sized (~1–2 MB is a sensible upper bound).
+static EMBEDDED_LOGO: &[u8] = include_bytes!("../../logo.png");
+
+static DECODED_LOGO: std::sync::OnceLock<Option<image::DynamicImage>> =
+    std::sync::OnceLock::new();
+
+fn embedded_logo_image() -> Option<&'static image::DynamicImage> {
+    DECODED_LOGO
+        .get_or_init(|| image::load_from_memory(EMBEDDED_LOGO).ok())
+        .as_ref()
+}
+
 /// 1.2.4+: project-pulse splash shown right after project open.
 /// Renders for up to `STARTUP_SPLASH_SECS` seconds or until a key
 /// press; the key press is consumed so it doesn't leak into the
@@ -325,6 +342,19 @@ pub fn run(project: &Path) -> Result<()> {
     layout.require_initialized().map_err(anyhow::Error::from)?;
 
     let cfg = Config::load(&layout.config_path()).map_err(anyhow::Error::from)?;
+
+    // 1.2.5+: log the typst engine at startup so users can confirm
+    // their HJSON setting took effect. Both engines are always
+    // available — the in-process compiler ships in every 1.2.5
+    // build — but the default stays `external` to match prior
+    // behaviour exactly. The same one-liner also lands on the
+    // status bar after first paint, and persistently in the
+    // Ctrl+B V credits pane.
+    let engine_summary = crate::typst_compile::engine_summary(&cfg);
+    tracing::info!(
+        target: "inkhaven::typst",
+        "typst engine: {engine_summary}",
+    );
 
     // Install the panic hook BEFORE we touch the terminal so a panic during
     // DB load (or anywhere later) still restores the screen.
@@ -684,12 +714,13 @@ fn draw_assembly_splash(
 fn draw_typst_compile_splash(
     f: &mut ratatui::Frame,
     book_display: &str,
+    engine_label: &str,
     elapsed_secs: u64,
     spinner: char,
 ) {
     let area = f.area();
     let width = area.width.saturating_sub(8).clamp(50, 100);
-    let height: u16 = 9;
+    let height: u16 = 11;
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + (area.height.saturating_sub(height)) / 2;
     let rect = Rect { x, y, width, height };
@@ -719,8 +750,16 @@ fn draw_typst_compile_splash(
             Style::default().add_modifier(Modifier::DIM),
         )),
         Line::from(Span::styled(
+            format!("  Engine:  {engine_label}"),
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(Span::styled(
             format!("  Elapsed: {elapsed_secs}s"),
             Style::default().add_modifier(Modifier::DIM),
+        )),
+        Line::from(Span::styled(
+            "  Press Esc to cancel.",
+            Style::default().fg(Color::Gray),
         )),
     ];
     f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
@@ -1765,6 +1804,46 @@ pub(crate) enum SnapshotDiffKind {
     Changed,
 }
 
+/// One page of a rendered paragraph kept in the preview modal —
+/// just enough state for ratatui-image to repaint it and for the
+/// title bar to show "page N/M · width×height".
+struct RenderedPageProto {
+    proto: ratatui_image::protocol::StatefulProtocol,
+    width: u32,
+    height: u32,
+}
+
+/// Which set of nodes the Ctrl+B ] / g tag picker applies tags
+/// to when the user hits T. `Search` is the read-only mode
+/// triggered by Ctrl+B }; T is a no-op there and Enter opens
+/// the tag-search results instead.
+#[derive(Debug, Clone)]
+enum TagPickerTarget {
+    /// Editor pane: the open paragraph (carries its title for
+    /// the modal's status hint).
+    EditorParagraph { id: Uuid, title: String },
+    /// Tree pane: the marked set (or the cursor row when marks
+    /// are empty) — every paragraph-kind node in the list.
+    TreeSelection(Vec<Uuid>),
+    /// Search-by-tag: T / Space have no effect; Enter on a tag
+    /// opens the TagSearchResults modal.
+    Search,
+}
+
+/// Save-mode for the SaveRenderedPng picker. Drives whether one
+/// page or every page lands on disk.
+#[derive(Debug, Clone)]
+enum PagesToSave {
+    /// Single page at the given 0-based index. File path is the
+    /// user's input verbatim.
+    Single(usize),
+    /// Every page. The user's input is the *base* path
+    /// (`/path/to/render` or `/path/to/render.png`); inkhaven
+    /// inserts `-page-NNN` before the `.png` extension and
+    /// writes one file per page.
+    All,
+}
+
 enum Modal {
     None,
     Adding {
@@ -1918,8 +1997,16 @@ enum Modal {
     /// Ctrl+B V — version, author, and credits panel. Scrollable.
     /// Content is rendered fresh each frame so it picks up the current
     /// `CARGO_PKG_VERSION` / `CARGO_PKG_AUTHORS` env vars.
+    ///
+    /// 1.2.5+: optional `logo` `StatefulProtocol` rendered as a
+    /// banner above the text — populated from the embedded
+    /// `logo.png` when the host terminal supports ratatui-image
+    /// (kitty / iterm2 / sixel / unicode half-blocks). `None`
+    /// when image-preview is disabled or the terminal can't
+    /// negotiate a graphics protocol.
     Credits {
         scroll: usize,
+        logo: Option<ratatui_image::protocol::StatefulProtocol>,
     },
     /// Ctrl+B I — current-book info panel: backup / artefacts paths,
     /// structural counts (chapters / subchapters / paragraphs /
@@ -1958,6 +2045,93 @@ enum Modal {
         fs_rel: String,
         size_bytes: u64,
         proto: ratatui_image::protocol::StatefulProtocol,
+    },
+    /// Ctrl+V R (1.2.5+) — float a rasterised PNG of the open
+    /// paragraph on top of the editor. `pages` holds one
+    /// ratatui-image protocol per page of the compiled
+    /// document; `current_page` selects which one renders.
+    /// `body` + `settings` are captured so an `S` or `A`
+    /// keypress can re-render at high DPI without re-prompting.
+    RenderedPreview {
+        title: String,
+        body: String,
+        settings: crate::typst_world::WorldSettings,
+        pages: Vec<RenderedPageProto>,
+        current_page: usize,
+    },
+    /// Ctrl+B ] (editor), `g` (tree), or Ctrl+B } (search) —
+    /// 1.2.5+ project-wide tag picker. Shows every tag in use
+    /// across the project; keys depend on `target` (see
+    /// `TagPickerTarget`).
+    TagPicker {
+        target: TagPickerTarget,
+        all_tags: Vec<String>,
+        cursor: usize,
+        /// Multi-select state — only meaningful in `EditorParagraph`
+        /// and `TreeSelection` modes. Stored as a `BTreeSet` for
+        /// deterministic glyph rendering in the modal.
+        selected: std::collections::BTreeSet<String>,
+    },
+    /// `A` from `TagPicker` — prompt for a new tag name. Enter
+    /// adds the tag to the project-wide set AND keeps the
+    /// underlying picker's selection state via `return_to`.
+    TagAddPrompt {
+        input: TextInput,
+        return_to: Box<Modal>,
+    },
+    /// `D` from `TagPicker` — confirm + execute project-wide tag
+    /// deletion. Removes the tag from every node that carries it.
+    /// `affected` reports how many nodes will be touched.
+    TagDeleteConfirm {
+        tag: String,
+        affected: usize,
+        return_to: Box<Modal>,
+    },
+    /// Enter from `TagPicker` in `Search` mode — show every
+    /// paragraph that carries the chosen tag, with a typeable
+    /// filter input that narrows the list.
+    TagSearchResults {
+        tag: String,
+        filter: TextInput,
+        all_results: Vec<ScriptPickerEntry>,
+        cursor: usize,
+    },
+    /// Ctrl+V W (1.2.5+) — story view: floating PNG of the
+    /// current book's DOT graph, rendered via `layout-rs` +
+    /// `resvg`. `proto` drives the ratatui-image widget;
+    /// `png_bytes` is kept around so `S` can dump it to disk
+    /// without re-running the layout.
+    StoryView {
+        book_title: String,
+        width: u32,
+        height: u32,
+        png_bytes: Vec<u8>,
+        proto: ratatui_image::protocol::StatefulProtocol,
+    },
+    /// `S` from `StoryView` — save-as picker for the rendered
+    /// PNG. Same shape as `SaveRenderedPng`; Esc restores the
+    /// `StoryView` modal via `return_to`.
+    SaveStoryPng {
+        input: TextInput,
+        png_bytes: Vec<u8>,
+        book_title: String,
+        return_to: Box<Modal>,
+    },
+    /// `S` (current page) or `A` (all pages) from
+    /// `RenderedPreview` — save-as path picker for the full-DPI
+    /// PNG(s). Enter writes the file(s); Esc restores the
+    /// underlying `RenderedPreview` so navigation state survives
+    /// a cancelled save.
+    SaveRenderedPng {
+        input: TextInput,
+        body: String,
+        settings: crate::typst_world::WorldSettings,
+        title: String,
+        pages: PagesToSave,
+        /// Stash of the underlying preview modal so Esc returns
+        /// to it. Same `return_to: Box<Modal>` pattern the
+        /// snapshot-diff picker uses.
+        return_to: Box<Modal>,
     },
     /// Ctrl+B F (editor pane) — Typst function picker. The filter
     /// input narrows the baked-in list as the user types; Enter
@@ -2361,6 +2535,16 @@ struct OpenedDoc {
     /// (implicit "accept the corrections") or when the user opens a
     /// different paragraph.
     correction_baseline: Option<Vec<String>>,
+    /// Cached typst parse-time diagnostics (1.2.5+). Recomputed on
+    /// save and on idle when `typst_compile.diagnostics` is on and
+    /// the buffer's content type is `None` (default = typst) or
+    /// `Some("typst")`. Empty when the buffer parses cleanly OR
+    /// when diagnostics are disabled in HJSON. See
+    /// `crate::typst_check`.
+    typst_diagnostics: Vec<crate::typst_check::TypstDiagnostic>,
+    /// Wall-clock of the last typst-syntax recheck. Throttles the
+    /// idle re-check against `typst_compile.diagnostics_idle_seconds`.
+    typst_diagnostics_checked_at: std::time::Instant,
 }
 
 struct SplitView {
@@ -2790,6 +2974,33 @@ impl App {
                     );
                 }
                 self.secondary = Some(doc);
+            }
+        }
+
+        // 1.2.5+: idle typst-syntax recheck. Independent of save
+        // — runs whenever the user has paused for
+        // `typst_compile.diagnostics_idle_seconds` and the buffer
+        // has moved on since the last check. Save itself already
+        // calls `refresh_typst_diagnostics_for_opened`, so this
+        // covers the "I'm staring at the buffer wondering why
+        // typst errored" case where no save has fired yet.
+        if self.cfg.typst_compile.diagnostics {
+            let idle = self.cfg.typst_compile.diagnostics_idle_seconds;
+            let due = match self.opened.as_ref() {
+                Some(doc) => {
+                    let idle_ok =
+                        doc.last_activity.elapsed().as_secs() >= idle;
+                    let stale = doc
+                        .typst_diagnostics_checked_at
+                        .elapsed()
+                        .as_secs()
+                        >= idle.max(1);
+                    idle_ok && stale && doc.dirty
+                }
+                None => false,
+            };
+            if due {
+                self.refresh_typst_diagnostics_for_opened();
             }
         }
     }
@@ -3476,6 +3687,13 @@ impl App {
             // transitions.
             KeyCode::Char('O') | KeyCode::Char('o') if plain => {
                 self.cycle_paragraph_status();
+            }
+            // 1.2.5+: tree g opens the tag picker for the
+            // marked set (or the cursor row when no marks).
+            // Same modal as Ctrl+B ], but applies the picked
+            // tags across every selected paragraph at once.
+            KeyCode::Char('G') | KeyCode::Char('g') if plain => {
+                self.open_tag_picker_for_tree_selection();
             }
 
             _ if self.keymap.page_up.matches(&key) => self.move_cursor(-10),
@@ -5860,6 +6078,261 @@ impl App {
     /// Open the fuzzy paragraph picker. Pre-builds the full
     /// paragraph list (title + slug-path) so subsequent
     /// keystrokes only filter, never re-walk the hierarchy.
+    /// Ctrl+V R (1.2.5+) — render the open paragraph in-process,
+    /// pop a floating preview modal on top of the editor. Saves
+    /// the current buffer first so the rendered preview matches
+    /// the on-disk source the user just edited.
+    /// Ctrl+V W (1.2.5+) — story view. Build the DOT graph for
+    /// the current user book, lay it out, rasterise, and float
+    /// the PNG on top of the editor. Saves the open paragraph
+    /// first so any pending mentions get scanned.
+    fn open_story_view(&mut self) {
+        // Pick the same "current book" the assemble/build/take
+        // path uses. Refuses if the cursor isn't inside a user
+        // book.
+        let Some(book_id) = self.resolve_current_user_book("Story view") else {
+            return;
+        };
+        // Save first so mention-scanning sees the latest body.
+        if let Some(doc) = self.opened.as_ref() {
+            if doc.dirty {
+                let _ = self.save_current();
+            }
+        }
+        let Some(picker) = self.image_picker.as_ref() else {
+            self.status =
+                "story view: terminal can't display images (set `images.preview_enabled: true` or use a kitty / iterm2 / sixel-capable terminal)".into();
+            return;
+        };
+        let book_title = self
+            .hierarchy
+            .get(book_id)
+            .map(|n| n.title.clone())
+            .unwrap_or_else(|| "(unknown book)".into());
+        self.status = format!(
+            "story view: building graph for `{book_title}`…"
+        );
+        match crate::story_view::build_story_png(
+            &self.store,
+            &self.hierarchy,
+            book_id,
+        ) {
+            Ok(rendered) => {
+                let proto = picker.new_resize_protocol(rendered.image);
+                self.modal = Modal::StoryView {
+                    book_title: book_title.clone(),
+                    width: rendered.width,
+                    height: rendered.height,
+                    png_bytes: rendered.png_bytes,
+                    proto,
+                };
+                self.status = format!(
+                    "story view `{book_title}` · {}×{} · S saves PNG · Esc closes",
+                    rendered.width, rendered.height,
+                );
+            }
+            Err(err) => {
+                let first = err
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("render failed");
+                self.status = format!("story view: {first}");
+            }
+        }
+    }
+
+    /// `S` inside `Modal::StoryView` — pop the save-as picker
+    /// for the rendered PNG. Default path:
+    /// `<book-slug>-story-YYYYDDMM-HHMM.png` in cwd.
+    fn open_save_story_png_picker(&mut self) {
+        let (png_bytes, book_title) = match &self.modal {
+            Modal::StoryView {
+                png_bytes,
+                book_title,
+                ..
+            } => (png_bytes.clone(), book_title.clone()),
+            _ => return,
+        };
+        let default_dest = match self.default_story_png_dest(&book_title) {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!("save story PNG: {e}");
+                return;
+            }
+        };
+        let mut input = TextInput::new();
+        for c in default_dest.to_string_lossy().chars() {
+            input.insert_char(c);
+        }
+        let return_to = Box::new(std::mem::replace(&mut self.modal, Modal::None));
+        self.modal = Modal::SaveStoryPng {
+            input,
+            png_bytes,
+            book_title: book_title.clone(),
+            return_to,
+        };
+        self.status =
+            "save story PNG: edit path or Enter to save · Esc returns to preview".into();
+    }
+
+    fn default_story_png_dest(
+        &self,
+        book_title: &str,
+    ) -> std::result::Result<std::path::PathBuf, String> {
+        let cwd = std::env::current_dir().map_err(|e| format!("cwd: {e}"))?;
+        let stamp = chrono::Local::now().format("%Y%d%m-%H%M");
+        let stem = slug::slugify(book_title);
+        let safe_stem =
+            if stem.is_empty() { "story".to_string() } else { stem };
+        Ok(cwd.join(format!("{safe_stem}-story-{stamp}.png")))
+    }
+
+    /// Write the already-rendered PNG bytes to disk. No re-render
+    /// — the layout is deterministic and the same bytes the
+    /// preview displays are what land on disk.
+    fn commit_save_story_png(
+        &mut self,
+        png_bytes: &[u8],
+        raw: &str,
+        book_title: &str,
+    ) {
+        let path_str = raw.trim();
+        let path = if path_str.is_empty() {
+            match self.default_story_png_dest(book_title) {
+                Ok(p) => p,
+                Err(e) => {
+                    self.status = format!("save story PNG: {e}");
+                    return;
+                }
+            }
+        } else if let Some(rest) = path_str.strip_prefix("~/") {
+            match std::env::var_os("HOME") {
+                Some(home) => std::path::PathBuf::from(home).join(rest),
+                None => std::path::PathBuf::from(path_str),
+            }
+        } else {
+            std::path::PathBuf::from(path_str)
+        };
+        match std::fs::write(&path, png_bytes) {
+            Ok(()) => {
+                self.status = format!(
+                    "save story PNG: wrote {} ({} bytes)",
+                    path.display(),
+                    png_bytes.len(),
+                );
+            }
+            Err(e) => {
+                self.status =
+                    format!("save story PNG: write {}: {e}", path.display());
+            }
+        }
+    }
+
+    fn open_rendered_paragraph_preview(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status =
+                "render ¶: no paragraph open in the editor".into();
+            return;
+        };
+        // Skip Bund / HJSON / images — only typst sources render
+        // through the typst pipeline.
+        let is_typst = matches!(
+            doc.content_type.as_deref(),
+            None | Some("") | Some("typst"),
+        );
+        if !is_typst {
+            self.status = format!(
+                "render ¶: `{}` is not a typst source — Ctrl+V R only renders .typ buffers",
+                doc.title,
+            );
+            return;
+        }
+        // Capture the title before we save (save may renumber /
+        // re-derive the title from the first sentence).
+        let title_before = doc.title.clone();
+        // Save first — the spec says "Save current buffer" before
+        // render. If save fails, abort the render (we shouldn't
+        // render bytes that aren't on disk).
+        if doc.dirty {
+            if let Err(e) = self.save_current() {
+                self.status =
+                    format!("render ¶: autosave failed: {e}");
+                return;
+            }
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "render ¶: editor closed during save".into();
+            return;
+        };
+        let body = doc.textarea.lines().join("\n");
+        let title = doc.title.clone();
+        if body.trim().is_empty() {
+            self.status =
+                "render ¶: buffer is empty — nothing to render".into();
+            return;
+        }
+        let _ = title_before;
+        // Image picker (ratatui-image) is required to display the
+        // PNG. Without it (terminals without graphics support and
+        // `images.preview_enabled = false`) fall back to status
+        // bar with a hint.
+        let Some(picker) = self.image_picker.as_ref() else {
+            self.status =
+                "render ¶: terminal can't display images (set `images.preview_enabled: true` or use a kitty / iterm2 / sixel-capable terminal)".into();
+            return;
+        };
+        let settings = crate::typst_world::WorldSettings::from_cfg(
+            &self.cfg.typst_compile,
+        );
+        // Preview DPI: 2.0 ppt = ~144 dpi. Good for screen,
+        // doesn't blow up memory on long paragraphs. Renders
+        // every page up front so Left/Right inside the modal is
+        // a pure protocol swap (no re-compile).
+        match crate::typst_paragraph_render::render_all(
+            &body,
+            settings.clone(),
+            2.0,
+        ) {
+            Ok(rendered) => {
+                let total = rendered.len();
+                let first_w = rendered[0].width;
+                let first_h = rendered[0].height;
+                let pages: Vec<RenderedPageProto> = rendered
+                    .into_iter()
+                    .map(|r| RenderedPageProto {
+                        proto: picker.new_resize_protocol(r.image),
+                        width: r.width,
+                        height: r.height,
+                    })
+                    .collect();
+                self.modal = Modal::RenderedPreview {
+                    title: title.clone(),
+                    body,
+                    settings,
+                    pages,
+                    current_page: 0,
+                };
+                let pages_note = if total > 1 {
+                    format!(" · page 1/{}  · ←/→ navigate", total)
+                } else {
+                    String::new()
+                };
+                self.status = format!(
+                    "render ¶ `{}` · {}×{}{}  ·  Esc closes · S saves current · A saves all",
+                    title, first_w, first_h, pages_note,
+                );
+            }
+            Err(err) => {
+                let first_line = err
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("compile failed");
+                self.status =
+                    format!("render ¶: {first_line}");
+            }
+        }
+    }
+
     fn open_fuzzy_paragraph_picker(&mut self) {
         let entries = self.collect_all_paragraph_entries();
         if entries.is_empty() {
@@ -5921,6 +6394,619 @@ impl App {
         }
         out.sort_by(|a, b| a.title.cmp(&b.title));
         out
+    }
+
+    // ── Tag picker (1.2.5+) ────────────────────────────────────
+
+    /// Every distinct tag in the project, sorted lexicographically
+    /// (case-sensitive dedup). System-book contents are included
+    /// in the union so the tag namespace is project-wide.
+    fn collect_all_tags(&self) -> Vec<String> {
+        let mut tags = std::collections::BTreeSet::<String>::new();
+        for (n, _) in self.hierarchy.flatten() {
+            for t in &n.tags {
+                let t = t.trim();
+                if !t.is_empty() {
+                    tags.insert(t.to_owned());
+                }
+            }
+        }
+        tags.into_iter().collect()
+    }
+
+    /// Paragraphs tagged with `tag` (case-sensitive match). Sorted
+    /// by title to match the bookmark picker's ordering.
+    fn collect_paragraphs_with_tag(&self, tag: &str) -> Vec<ScriptPickerEntry> {
+        let mut out: Vec<ScriptPickerEntry> = Vec::new();
+        for (n, _) in self.hierarchy.flatten() {
+            if n.kind != NodeKind::Paragraph {
+                continue;
+            }
+            if !n.tags.iter().any(|t| t == tag) {
+                continue;
+            }
+            out.push(ScriptPickerEntry {
+                id: n.id,
+                title: n.title.clone(),
+                slug_path: self.hierarchy.slug_path(n),
+            });
+        }
+        out.sort_by(|a, b| a.title.cmp(&b.title));
+        out
+    }
+
+    /// Union `incoming` into `node_id`'s `tags` (dedup case-
+    /// sensitively, preserve existing order), persist via
+    /// `update_metadata`. Returns true on a successful save.
+    fn add_tags_to_node(&mut self, node_id: Uuid, incoming: &[String]) -> bool {
+        let Some(node) = self.hierarchy.get(node_id).cloned() else {
+            return false;
+        };
+        let mut updated = node.clone();
+        let existing: std::collections::HashSet<&str> =
+            updated.tags.iter().map(|s| s.as_str()).collect();
+        let mut additions: Vec<String> = Vec::new();
+        for t in incoming {
+            let t = t.trim();
+            if t.is_empty() {
+                continue;
+            }
+            if !existing.contains(t)
+                && !additions.iter().any(|a: &String| a.as_str() == t)
+            {
+                additions.push(t.to_owned());
+            }
+        }
+        if additions.is_empty() {
+            return true;
+        }
+        updated.tags.extend(additions);
+        updated.modified_at = chrono::Utc::now();
+        match self.store.raw().update_metadata(node_id, updated.to_json()) {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::warn!(target: "inkhaven::tags",
+                    "update_metadata({node_id}) failed: {e}");
+                false
+            }
+        }
+    }
+
+    /// Remove `tag` from every node that carries it. Returns the
+    /// count of nodes touched (so the picker can report how many
+    /// were affected). Persists each via `update_metadata`.
+    fn delete_tag_project_wide(&mut self, tag: &str) -> usize {
+        let targets: Vec<Uuid> = self
+            .hierarchy
+            .flatten()
+            .into_iter()
+            .filter_map(|(n, _)| {
+                if n.tags.iter().any(|t| t == tag) {
+                    Some(n.id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut touched = 0usize;
+        for id in &targets {
+            let Some(node) = self.hierarchy.get(*id).cloned() else {
+                continue;
+            };
+            let mut updated = node.clone();
+            updated.tags.retain(|t| t != tag);
+            updated.modified_at = chrono::Utc::now();
+            if let Err(e) = self.store.raw().update_metadata(*id, updated.to_json()) {
+                tracing::warn!(target: "inkhaven::tags",
+                    "update_metadata({id}) on delete failed: {e}");
+                continue;
+            }
+            touched += 1;
+        }
+        touched
+    }
+
+    /// Helper — number of nodes a tag delete would affect. Used
+    /// by the delete-confirm modal so the user sees the blast
+    /// radius before pressing y.
+    fn count_nodes_with_tag(&self, tag: &str) -> usize {
+        self.hierarchy
+            .flatten()
+            .into_iter()
+            .filter(|(n, _)| n.tags.iter().any(|t| t == tag))
+            .count()
+    }
+
+    /// Ctrl+B ] (editor) — open the tag picker for the currently
+    /// open paragraph.
+    fn open_tag_picker_for_editor(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status =
+                "tag ¶: no paragraph open (Ctrl+B ] needs an editor buffer)".into();
+            return;
+        };
+        let target = TagPickerTarget::EditorParagraph {
+            id: doc.id,
+            title: doc.title.clone(),
+        };
+        self.open_tag_picker_modal(target);
+    }
+
+    /// `g` (tree pane) — open the tag picker over the tree's
+    /// marked set, falling back to the cursor row when no marks
+    /// exist. Only paragraph-kind nodes go in; non-paragraphs
+    /// are skipped with a status hint when nothing applies.
+    fn open_tag_picker_for_tree_selection(&mut self) {
+        let marked: Vec<Uuid> = self.tree_marked.iter().copied().collect();
+        let candidates: Vec<Uuid> = if !marked.is_empty() {
+            marked
+        } else if let Some(&(id, _)) = self.rows.get(self.tree_cursor) {
+            vec![id]
+        } else {
+            Vec::new()
+        };
+        let paragraphs: Vec<Uuid> = candidates
+            .into_iter()
+            .filter(|id| {
+                self.hierarchy
+                    .get(*id)
+                    .map(|n| n.kind == NodeKind::Paragraph)
+                    .unwrap_or(false)
+            })
+            .collect();
+        if paragraphs.is_empty() {
+            self.status =
+                "tag g: select at least one paragraph (Space marks rows in the tree pane)".into();
+            return;
+        }
+        let target = TagPickerTarget::TreeSelection(paragraphs);
+        self.open_tag_picker_modal(target);
+    }
+
+    /// Ctrl+B } — open the tag picker in search mode.
+    fn open_tag_search_picker(&mut self) {
+        self.open_tag_picker_modal(TagPickerTarget::Search);
+    }
+
+    /// Shared open-the-picker plumbing.
+    fn open_tag_picker_modal(&mut self, target: TagPickerTarget) {
+        let all_tags = self.collect_all_tags();
+        // Don't block — an empty tag namespace is the normal
+        // starting state; the user adds via `A`.
+        let status = match (&target, all_tags.is_empty()) {
+            (TagPickerTarget::EditorParagraph { title, .. }, true) => format!(
+                "tag ¶ `{title}`: no tags yet — press A to add the first one"
+            ),
+            (TagPickerTarget::EditorParagraph { title, .. }, false) => format!(
+                "tag ¶ `{title}`: Space selects · T applies · A adds · D deletes · Esc closes"
+            ),
+            (TagPickerTarget::TreeSelection(ids), true) => format!(
+                "tag g ({} paragraph(s)): no tags yet — press A to add the first one",
+                ids.len()
+            ),
+            (TagPickerTarget::TreeSelection(ids), false) => format!(
+                "tag g ({} paragraph(s)): Space selects · T applies · A adds · D deletes · Esc closes",
+                ids.len()
+            ),
+            (TagPickerTarget::Search, true) => {
+                "tag search: no tags yet · A adds · Esc closes".into()
+            }
+            (TagPickerTarget::Search, false) => {
+                "tag search: ↑↓ select · Enter opens results · A adds · D deletes · Esc closes".into()
+            }
+        };
+        self.status = status;
+        self.modal = Modal::TagPicker {
+            target,
+            all_tags,
+            cursor: 0,
+            selected: std::collections::BTreeSet::new(),
+        };
+    }
+
+    fn tag_picker_handle_key(&mut self, key: KeyEvent) {
+        let total = match &self.modal {
+            Modal::TagPicker { all_tags, .. } => all_tags.len(),
+            _ => return,
+        };
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') if key.modifiers.is_empty() => {
+                if let Modal::TagPicker { cursor, .. } = &mut self.modal {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') if key.modifiers.is_empty() => {
+                if let Modal::TagPicker { cursor, .. } = &mut self.modal {
+                    if total > 0 && *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+            }
+            KeyCode::Home => {
+                if let Modal::TagPicker { cursor, .. } = &mut self.modal {
+                    *cursor = 0;
+                }
+            }
+            KeyCode::End => {
+                if let Modal::TagPicker { cursor, .. } = &mut self.modal {
+                    *cursor = total.saturating_sub(1);
+                }
+            }
+            KeyCode::Char(' ') => {
+                // Multi-select toggle — no-op in Search mode.
+                if let Modal::TagPicker {
+                    target,
+                    all_tags,
+                    cursor,
+                    selected,
+                    ..
+                } = &mut self.modal
+                {
+                    if matches!(target, TagPickerTarget::Search) {
+                        return;
+                    }
+                    if let Some(tag) = all_tags.get(*cursor).cloned() {
+                        if selected.contains(&tag) {
+                            selected.remove(&tag);
+                        } else {
+                            selected.insert(tag);
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.open_tag_add_prompt();
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
+                self.open_tag_delete_confirm();
+            }
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                self.commit_tags_to_target();
+            }
+            KeyCode::Enter => {
+                // Different meaning by mode:
+                //   Search       — open results for the cursor tag
+                //   Editor/Tree  — quality-of-life: same as T
+                let in_search = matches!(
+                    self.modal,
+                    Modal::TagPicker {
+                        target: TagPickerTarget::Search,
+                        ..
+                    }
+                );
+                if in_search {
+                    self.open_tag_search_results_for_cursor();
+                } else {
+                    self.commit_tags_to_target();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// `A` — pop a small text-input modal for a new tag name.
+    /// On Enter we *don't* immediately apply the tag — we just
+    /// add it to the project-wide list (by tagging the current
+    /// target with it if there is one) and return to the picker.
+    fn open_tag_add_prompt(&mut self) {
+        // Stash the current picker as return_to.
+        let taken = std::mem::replace(&mut self.modal, Modal::None);
+        if !matches!(taken, Modal::TagPicker { .. }) {
+            // Shouldn't happen but restore and bail safely.
+            self.modal = taken;
+            return;
+        }
+        self.modal = Modal::TagAddPrompt {
+            input: TextInput::new(),
+            return_to: Box::new(taken),
+        };
+        self.status =
+            "new tag: type a name, Enter adds it · Esc cancels".into();
+    }
+
+    fn tag_add_prompt_handle_key(&mut self, key: KeyEvent) {
+        // Esc is handled at the top of handle_modal_key. Here we
+        // only act on Enter (commit) and forward everything else
+        // to the input box.
+        if matches!(key.code, KeyCode::Enter) {
+            let taken = std::mem::replace(&mut self.modal, Modal::None);
+            if let Modal::TagAddPrompt { input, return_to } = taken {
+                let name = input.as_str().trim().to_string();
+                let mut picker = *return_to;
+                if name.is_empty() {
+                    self.status = "tag add: empty name — try again".into();
+                    self.modal = picker;
+                    return;
+                }
+                // Bring the picker back so we can mutate its state
+                // before re-displaying.
+                if let Modal::TagPicker {
+                    target,
+                    all_tags,
+                    cursor,
+                    selected,
+                    ..
+                } = &mut picker
+                {
+                    let already_known =
+                        all_tags.iter().any(|t| t == &name);
+                    if !already_known {
+                        all_tags.push(name.clone());
+                        all_tags.sort();
+                    }
+                    // Land the cursor on the newly added tag.
+                    if let Some(idx) =
+                        all_tags.iter().position(|t| t == &name)
+                    {
+                        *cursor = idx;
+                    }
+                    // Auto-select for convenience in apply-modes
+                    // — the user almost certainly wants to T it
+                    // onto the target. No-op in Search mode.
+                    if !matches!(target, TagPickerTarget::Search) {
+                        selected.insert(name.clone());
+                    }
+                }
+                self.modal = picker;
+                self.status = format!("tag added: `{name}` · selected");
+            }
+            return;
+        }
+        if let Modal::TagAddPrompt { input, .. } = &mut self.modal {
+            handle_text_input_key(input, key);
+        }
+    }
+
+    /// `D` — confirm + execute project-wide deletion of the tag
+    /// under the cursor. Pops a tiny y/n confirm modal so the
+    /// user sees the blast radius first.
+    fn open_tag_delete_confirm(&mut self) {
+        let (tag, affected) = match &self.modal {
+            Modal::TagPicker {
+                all_tags, cursor, ..
+            } => {
+                let Some(t) = all_tags.get(*cursor).cloned() else {
+                    self.status = "tag delete: no tag selected".into();
+                    return;
+                };
+                let n = self.count_nodes_with_tag(&t);
+                (t, n)
+            }
+            _ => return,
+        };
+        let taken = std::mem::replace(&mut self.modal, Modal::None);
+        self.modal = Modal::TagDeleteConfirm {
+            tag: tag.clone(),
+            affected,
+            return_to: Box::new(taken),
+        };
+        self.status = format!(
+            "delete tag `{tag}`? affects {affected} paragraph(s) · y / n"
+        );
+    }
+
+    fn tag_delete_confirm_handle_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                let taken = std::mem::replace(&mut self.modal, Modal::None);
+                if let Modal::TagDeleteConfirm {
+                    tag, return_to, ..
+                } = taken
+                {
+                    let removed = self.delete_tag_project_wide(&tag);
+                    self.reload_hierarchy();
+                    // Rebuild the picker's all_tags + drop the
+                    // deleted entry from its selection.
+                    let mut picker = *return_to;
+                    let fresh_tags = self.collect_all_tags();
+                    if let Modal::TagPicker {
+                        all_tags,
+                        cursor,
+                        selected,
+                        ..
+                    } = &mut picker
+                    {
+                        *all_tags = fresh_tags;
+                        if *cursor >= all_tags.len().max(1) {
+                            *cursor = all_tags.len().saturating_sub(1);
+                        }
+                        selected.remove(&tag);
+                    }
+                    self.modal = picker;
+                    self.status = format!(
+                        "tag deleted: `{tag}` · removed from {removed} paragraph(s)"
+                    );
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                let taken = std::mem::replace(&mut self.modal, Modal::None);
+                if let Modal::TagDeleteConfirm { return_to, .. } = taken {
+                    self.modal = *return_to;
+                    self.status = "tag delete: cancelled".into();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// `T` (or Enter in apply-modes) — apply the selected tag
+    /// set (or just the cursor's tag, if nothing is selected) to
+    /// the target paragraph(s). On success, close the modal and
+    /// return focus to the originating pane.
+    fn commit_tags_to_target(&mut self) {
+        let (target, mut tags): (TagPickerTarget, Vec<String>) =
+            match &self.modal {
+                Modal::TagPicker {
+                    target,
+                    selected,
+                    all_tags,
+                    cursor,
+                    ..
+                } => {
+                    let chosen: Vec<String> = if selected.is_empty() {
+                        all_tags
+                            .get(*cursor)
+                            .cloned()
+                            .into_iter()
+                            .collect()
+                    } else {
+                        selected.iter().cloned().collect()
+                    };
+                    (target.clone(), chosen)
+                }
+                _ => return,
+            };
+        if matches!(target, TagPickerTarget::Search) {
+            return;
+        }
+        if tags.is_empty() {
+            self.status = "tag T: nothing to apply (no selection, no cursor)".into();
+            return;
+        }
+        tags.sort();
+        match &target {
+            TagPickerTarget::EditorParagraph { id, title } => {
+                let ok = self.add_tags_to_node(*id, &tags);
+                self.reload_hierarchy();
+                self.modal = Modal::None;
+                // Return focus to the editor — the user came from
+                // there via Ctrl+B ] and almost certainly wants
+                // to keep typing after the tag dust settles.
+                self.change_focus(Focus::Editor);
+                self.status = if ok {
+                    format!(
+                        "tagged `{title}` with {} tag(s): {}",
+                        tags.len(),
+                        tags.join(", ")
+                    )
+                } else {
+                    format!("tag T: persist failed for `{title}`")
+                };
+            }
+            TagPickerTarget::TreeSelection(ids) => {
+                let mut touched = 0usize;
+                let mut failed = 0usize;
+                for id in ids {
+                    if self.add_tags_to_node(*id, &tags) {
+                        touched += 1;
+                    } else {
+                        failed += 1;
+                    }
+                }
+                self.reload_hierarchy();
+                self.modal = Modal::None;
+                // Stay in the tree pane — the user opened this
+                // from the tree via `g`; bouncing them to the
+                // editor would surprise them mid-multi-tag pass.
+                self.change_focus(Focus::Tree);
+                self.status = if failed == 0 {
+                    format!(
+                        "tagged {touched} paragraph(s) with {} tag(s): {}",
+                        tags.len(),
+                        tags.join(", ")
+                    )
+                } else {
+                    format!(
+                        "tagged {touched}/{} paragraph(s) — {failed} persist failure(s)",
+                        ids.len(),
+                    )
+                };
+            }
+            TagPickerTarget::Search => {}
+        }
+    }
+
+    /// Search mode — Enter on a tag row → open `TagSearchResults`.
+    fn open_tag_search_results_for_cursor(&mut self) {
+        let tag = match &self.modal {
+            Modal::TagPicker {
+                all_tags, cursor, ..
+            } => match all_tags.get(*cursor).cloned() {
+                Some(t) => t,
+                None => {
+                    self.status = "tag search: no tag at cursor".into();
+                    return;
+                }
+            },
+            _ => return,
+        };
+        let results = self.collect_paragraphs_with_tag(&tag);
+        if results.is_empty() {
+            self.status = format!("tag search: no paragraphs tagged `{tag}`");
+            return;
+        }
+        let count = results.len();
+        self.modal = Modal::TagSearchResults {
+            tag: tag.clone(),
+            filter: TextInput::new(),
+            all_results: results,
+            cursor: 0,
+        };
+        self.status = format!(
+            "tag `{tag}`: {count} paragraph(s) · type to filter · Enter opens · Esc closes"
+        );
+    }
+
+    fn tag_search_results_handle_key(&mut self, key: KeyEvent) {
+        let filtered_len = match &self.modal {
+            Modal::TagSearchResults {
+                all_results, filter, ..
+            } => filter_tag_results(all_results, filter.as_str()).len(),
+            _ => return,
+        };
+        match key.code {
+            KeyCode::Up => {
+                if let Modal::TagSearchResults { cursor, .. } = &mut self.modal {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::TagSearchResults { cursor, .. } = &mut self.modal {
+                    if filtered_len > 0 && *cursor + 1 < filtered_len {
+                        *cursor += 1;
+                    }
+                }
+            }
+            KeyCode::Home => {
+                if let Modal::TagSearchResults { cursor, .. } = &mut self.modal {
+                    *cursor = 0;
+                }
+            }
+            KeyCode::End => {
+                if let Modal::TagSearchResults { cursor, .. } = &mut self.modal {
+                    *cursor = filtered_len.saturating_sub(1);
+                }
+            }
+            KeyCode::Enter => {
+                let chosen = match &self.modal {
+                    Modal::TagSearchResults {
+                        all_results,
+                        filter,
+                        cursor,
+                        ..
+                    } => filter_tag_results(all_results, filter.as_str())
+                        .get(*cursor)
+                        .cloned(),
+                    _ => None,
+                };
+                if let Some(entry) = chosen {
+                    self.modal = Modal::None;
+                    let _ = self.open_search_result(entry.id);
+                }
+            }
+            _ => {
+                if let Modal::TagSearchResults { filter, cursor, .. } = &mut self.modal {
+                    handle_text_input_key(filter, key);
+                    // Reset cursor on filter change so we don't
+                    // sit past the filtered list's end.
+                    *cursor = 0;
+                }
+            }
+        }
     }
 
     /// Open the backlinks modal for the open paragraph.
@@ -6451,6 +7537,200 @@ impl App {
         Ok(cwd.join(format!("{safe_stem}-{stamp}.md")))
     }
 
+    /// 1.2.5+ — default destination for `S` on Modal::RenderedPreview.
+    /// Mirrors the markdown dest shape but with `.png` extension.
+    fn default_rendered_png_dest(
+        &self,
+        title: &str,
+    ) -> std::result::Result<std::path::PathBuf, String> {
+        let cwd = std::env::current_dir().map_err(|e| format!("cwd: {e}"))?;
+        let stamp = chrono::Local::now().format("%Y%d%m-%H%M");
+        let stem = slug::slugify(title);
+        let safe_stem = if stem.is_empty() { "render".to_string() } else { stem };
+        Ok(cwd.join(format!("{safe_stem}-{stamp}.png")))
+    }
+
+    /// `S` (single) or `A` (all) inside Modal::RenderedPreview —
+    /// pop the save-as picker with a sensible default path
+    /// pre-filled. `all = true` stamps a multi-page-aware default
+    /// (still a single base path; we append `-page-NNN` per page
+    /// at write time). The picker stashes the underlying preview
+    /// modal in `return_to` so Esc preserves navigation state.
+    fn open_save_rendered_png_picker(&mut self, all: bool) {
+        let (body, settings, title, current_page) = match &self.modal {
+            Modal::RenderedPreview {
+                body,
+                settings,
+                title,
+                current_page,
+                ..
+            } => (
+                body.clone(),
+                settings.clone(),
+                title.clone(),
+                *current_page,
+            ),
+            _ => return,
+        };
+        let default_dest = match self.default_rendered_png_dest(&title) {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!("save PNG as: {e}");
+                return;
+            }
+        };
+        let mut input = TextInput::new();
+        for c in default_dest.to_string_lossy().chars() {
+            input.insert_char(c);
+        }
+        // Move the current modal into the picker's return_to
+        // stash — std::mem::replace avoids cloning the protos.
+        let return_to = Box::new(std::mem::replace(&mut self.modal, Modal::None));
+        let pages = if all {
+            PagesToSave::All
+        } else {
+            PagesToSave::Single(current_page)
+        };
+        let mode_label = match &pages {
+            PagesToSave::Single(idx) => format!("page {}", idx + 1),
+            PagesToSave::All => "all pages".to_string(),
+        };
+        self.modal = Modal::SaveRenderedPng {
+            input,
+            body,
+            settings,
+            title,
+            pages,
+            return_to,
+        };
+        self.status = format!(
+            "save PNG as ({mode_label}): edit path or hit Enter · Esc returns to preview",
+        );
+    }
+
+    /// Re-render the paragraph at full DPI (4.0 px/pt) and write
+    /// to the picked path. Status-bar reports outcome. For
+    /// `PagesToSave::All` we strip a trailing `.png` from the
+    /// user's input (if present) and append `-page-NNN.png` per
+    /// page; for `Single(idx)` the input is used verbatim.
+    fn commit_save_rendered_png(
+        &mut self,
+        body: &str,
+        settings: &crate::typst_world::WorldSettings,
+        raw: &str,
+        title: &str,
+        pages: PagesToSave,
+    ) {
+        let path_str = raw.trim();
+        let base_path = if path_str.is_empty() {
+            match self.default_rendered_png_dest(title) {
+                Ok(p) => p,
+                Err(e) => {
+                    self.status = format!("save PNG: {e}");
+                    return;
+                }
+            }
+        } else if let Some(rest) = path_str.strip_prefix("~/") {
+            match std::env::var_os("HOME") {
+                Some(home) => std::path::PathBuf::from(home).join(rest),
+                None => std::path::PathBuf::from(path_str),
+            }
+        } else {
+            std::path::PathBuf::from(path_str)
+        };
+        // 4.0 px/pt ≈ 288 dpi. Print-quality without going
+        // wild on memory for chapter-sized paragraphs.
+        match pages {
+            PagesToSave::Single(idx) => match crate::typst_paragraph_render::render_page(
+                body,
+                settings.clone(),
+                4.0,
+                idx,
+            ) {
+                Ok(rendered) => match std::fs::write(&base_path, &rendered.png_bytes) {
+                    Ok(()) => {
+                        self.status = format!(
+                            "save PNG: wrote {} (page {} · {}×{} · {} bytes)",
+                            base_path.display(),
+                            idx + 1,
+                            rendered.width,
+                            rendered.height,
+                            rendered.png_bytes.len(),
+                        );
+                    }
+                    Err(e) => {
+                        self.status =
+                            format!("save PNG: write {}: {e}", base_path.display());
+                    }
+                },
+                Err(e) => {
+                    let first =
+                        e.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+                    self.status =
+                        format!("save PNG: re-render failed: {first}");
+                }
+            },
+            PagesToSave::All => {
+                // Strip a trailing .png so `myrender.png` and
+                // `myrender` both become `myrender-page-001.png` etc.
+                let stem = base_path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "render".to_string());
+                let parent = base_path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+                match crate::typst_paragraph_render::render_all(
+                    body,
+                    settings.clone(),
+                    4.0,
+                ) {
+                    Ok(rendered_pages) => {
+                        let total = rendered_pages.len();
+                        let pad = total.to_string().len().max(3);
+                        let mut written: Vec<String> = Vec::with_capacity(total);
+                        for (i, page) in rendered_pages.iter().enumerate() {
+                            let fname =
+                                format!("{stem}-page-{:0pad$}.png", i + 1, pad = pad);
+                            let dest = parent.join(&fname);
+                            if let Err(e) = std::fs::write(&dest, &page.png_bytes) {
+                                self.status = format!(
+                                    "save PNG: write {} failed: {e} (wrote {} of {})",
+                                    dest.display(),
+                                    written.len(),
+                                    total,
+                                );
+                                return;
+                            }
+                            written.push(fname);
+                        }
+                        let in_dir = if parent.as_os_str().is_empty() {
+                            "(cwd)".to_string()
+                        } else {
+                            parent.display().to_string()
+                        };
+                        self.status = format!(
+                            "save PNG: wrote {} pages to {} ({})",
+                            total,
+                            in_dir,
+                            // Show first..last filename for context
+                            // — full list would blow the status bar.
+                            if total == 1 {
+                                written[0].clone()
+                            } else {
+                                format!("{}…{}", written[0], written[total - 1])
+                            },
+                        );
+                    }
+                    Err(e) => {
+                        let first =
+                            e.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+                        self.status =
+                            format!("save PNG (all): re-render failed: {first}");
+                    }
+                }
+            }
+        }
+    }
+
     fn handle_bund_action(&mut self, key: KeyEvent) {
         self.bund_pending = false;
         if matches!(key.code, KeyCode::Esc) {
@@ -6537,6 +7817,10 @@ impl App {
             A::StatusFilterNapkin => self.open_status_filter("Napkin"),
             A::StatusFilterNone => self.open_status_filter("None"),
 
+            // ── Tagging (1.2.5+) ──────────────────────────────
+            A::TagParagraph => self.open_tag_picker_for_editor(),
+            A::TagSearch => self.open_tag_search_picker(),
+
             // ── AI pane ───────────────────────────────────────
             A::ClearChat => self.clear_chat_history(),
 
@@ -6560,6 +7844,9 @@ impl App {
             A::ViewToggleBookmark => self.toggle_bookmark(),
             A::ViewListBookmarks => self.open_bookmark_picker_modal(),
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
+            A::ViewRenderParagraph => self.open_rendered_paragraph_preview(),
+            A::ViewNextDiagnostic => self.jump_to_next_diagnostic(),
+            A::ViewStoryGraph => self.open_story_view(),
 
             // ── Top-level F-keys (1.2.4+ migration) ───────────
             A::HelpQuery => self.open_help_query_modal(),
@@ -6939,7 +8226,18 @@ impl App {
     }
 
     fn open_credits(&mut self) {
-        self.modal = Modal::Credits { scroll: 0 };
+        // 1.2.5+: build a fresh ratatui-image protocol over the
+        // embedded `logo.png` so the credits modal can banner it
+        // at the top. The image picker is None on terminals
+        // without graphics support; we fall through with no logo
+        // and the modal still renders fine.
+        let logo = self
+            .image_picker
+            .as_ref()
+            .and_then(|picker| {
+                embedded_logo_image().map(|img| picker.new_resize_protocol(img.clone()))
+            });
+        self.modal = Modal::Credits { scroll: 0, logo };
         self.status = "Credits · ↑↓/PgUp/PgDn scroll · Esc close".into();
     }
 
@@ -8042,6 +9340,248 @@ impl App {
             ))),
             footer_rect,
         );
+    }
+
+    /// Ctrl+V R floating preview. Same plumbing as the image-
+    /// preview modal — ratatui-image's StatefulImage widget
+    /// repaints on every frame so a terminal resize Just Works.
+    /// Multi-page documents: ← / → cycle between page protos.
+    fn draw_rendered_preview_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::RenderedPreview {
+            title,
+            pages,
+            current_page,
+            ..
+        } = &mut self.modal
+        else {
+            return;
+        };
+        let total = pages.len();
+        let idx = (*current_page).min(total.saturating_sub(1));
+        let page = match pages.get_mut(idx) {
+            Some(p) => p,
+            None => return,
+        };
+        let preview_width = page.width;
+        let preview_height = page.height;
+
+        let width = area.width.saturating_sub(4).max(40);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let pages_note = if total > 1 {
+            format!(" · page {}/{}", idx + 1, total)
+        } else {
+            String::new()
+        };
+        let title_line = format!(
+            " 🖨 {title}  ·  {preview_width}×{preview_height}{pages_note} "
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title_line)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1);
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: body_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: 1,
+        };
+
+        let widget = ratatui_image::StatefulImage::new();
+        f.render_stateful_widget(widget, body_rect, &mut page.proto);
+
+        let hint = if total > 1 {
+            "  ← / → navigate  ·  S saves current  ·  A saves all  ·  Esc closes ".to_string()
+        } else {
+            "  Esc closes  ·  S saves full-DPI PNG  ·  A saves all (same here) ".to_string()
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    /// Save-as picker triggered by `S` in the rendered preview.
+    /// Same dimensions / style as the markdown save-as picker so
+    /// the UX is consistent.
+    fn draw_save_rendered_png_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::SaveRenderedPng { input, title, .. } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).clamp(40, 96);
+        let height: u16 = 7;
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Save rendered PNG · {title} "))
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let cursor = '│';
+        let body = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                format!(" Path: {}", input.render_with_cursor(cursor)),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Enter saves · Esc cancels · ~/ expands to home".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            )),
+        ];
+        f.render_widget(Paragraph::new(body), inner);
+    }
+
+    /// Ctrl+V W floating preview. Same plumbing as the paragraph
+    /// render preview, but single-page (no navigation) — DOT
+    /// layout produces one canvas.
+    fn draw_story_view_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::StoryView {
+            book_title,
+            width,
+            height,
+            proto,
+            ..
+        } = &mut self.modal
+        else {
+            return;
+        };
+
+        let render_w = area.width.saturating_sub(4).max(40);
+        let render_h = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(render_w)) / 2;
+        let y = area.y + (area.height.saturating_sub(render_h)) / 2;
+        let rect = Rect { x, y, width: render_w, height: render_h };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let title_line = format!(" 🕸 Story · {book_title}  ·  {width}×{height} ");
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title_line)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1);
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: body_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: 1,
+        };
+
+        let widget = ratatui_image::StatefulImage::new();
+        f.render_stateful_widget(widget, body_rect, proto);
+
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  Esc closes  ·  S saves PNG  ·  resize terminal to re-fit ".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    /// `S` inside the story-view modal — small save-as picker
+    /// for the rendered PNG.
+    fn draw_save_story_png_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::SaveStoryPng { input, book_title, .. } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).clamp(40, 96);
+        let height: u16 = 7;
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Save story PNG · {book_title} "))
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                format!(" Path: {}", input.render_with_cursor('│')),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Enter saves · Esc cancels · ~/ expands to home".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            )),
+        ];
+        f.render_widget(Paragraph::new(body), inner);
     }
 
     fn cycle_ai_mode(&mut self) {
@@ -9165,7 +10705,7 @@ impl App {
     /// but we don't need a hard upper bound here; clamping happens at
     /// render time so out-of-range scroll just shows a blank tail.
     fn credits_handle_key(&mut self, key: KeyEvent) -> bool {
-        let Modal::Credits { scroll } = &mut self.modal else {
+        let Modal::Credits { scroll, .. } = &mut self.modal else {
             return false;
         };
         match key.code {
@@ -9513,6 +11053,12 @@ impl App {
     /// it's a user book, then stash the uuid so the main loop drives
     /// the assembly with the splash.
     fn schedule_assembly(&mut self) {
+        // 1.2.5+: assembly walks the on-disk .typ files. If the
+        // user has unsaved edits in the editor (primary or
+        // secondary), assemble would see stale bytes. Save first
+        // so what the user sees in the editor is what hits the
+        // assembler.
+        self.save_all_before_build_step("Book assembly");
         let hierarchy = match Hierarchy::load(&self.store) {
             Ok(h) => h,
             Err(e) => {
@@ -9622,6 +11168,9 @@ impl App {
     /// Ctrl+B B — schedule a Book "build": assembly + `typst compile`.
     /// On error the build path opens a fresh AI chat for analysis.
     fn schedule_build(&mut self) {
+        // 1.2.5+: flush unsaved edits before assemble fires (see
+        // schedule_assembly for the rationale).
+        self.save_all_before_build_step("Book build");
         let Some(book_id) = self.resolve_current_user_book("Book build") else {
             return;
         };
@@ -9632,11 +11181,49 @@ impl App {
     /// Ctrl+B O — schedule a Book "take": build, then copy the PDF
     /// into the launch cwd with a timestamped filename.
     fn schedule_take(&mut self) {
+        // 1.2.5+: flush unsaved edits before assemble fires (see
+        // schedule_assembly for the rationale).
+        self.save_all_before_build_step("Take the book");
         let Some(book_id) = self.resolve_current_user_book("Take the book") else {
             return;
         };
         self.pending_take = Some(book_id);
         self.status = "Take the book: assembling + compiling + copying…".into();
+    }
+
+    /// 1.2.5+: shared autosave step for Ctrl+B A / B / O. Saves
+    /// the primary editor and, when similar-paragraph mode has
+    /// a secondary editor open, that one too. Errors are logged
+    /// at WARN and stamped on the status bar but never abort
+    /// the build — the user can react to a save failure by
+    /// dismissing the splash on Esc, which still happens. The
+    /// helper is a no-op when neither buffer is dirty.
+    fn save_all_before_build_step(&mut self, ctx: &str) {
+        if let Some(doc) = self.opened.as_ref() {
+            if doc.dirty {
+                if let Err(e) = self.save_current() {
+                    tracing::warn!(
+                        target: "inkhaven::build",
+                        "{ctx}: primary autosave failed: {e}",
+                    );
+                    self.status = format!("{ctx}: autosave failed: {e}");
+                }
+            }
+        }
+        // Mirror the autosave loop's `Option::take()` dance so we
+        // can call `save_doc(&mut self, &mut OpenedDoc)` without
+        // an aliasing borrow.
+        if let Some(mut doc) = self.secondary.take() {
+            if doc.dirty {
+                if let Err(e) = self.save_doc(&mut doc) {
+                    tracing::warn!(
+                        target: "inkhaven::build",
+                        "{ctx}: secondary autosave failed: {e}",
+                    );
+                }
+            }
+            self.secondary = Some(doc);
+        }
     }
 
     /// Common preflight for Ctrl+B A / B / O. Returns the uuid of the
@@ -9782,26 +11369,43 @@ impl App {
         book_display: &str,
         root_typ: &Path,
     ) -> Option<crate::typst_compile::CompileOutcome> {
-        let (child, pdf_path) = match crate::typst_compile::spawn(root_typ) {
-            Ok(pair) => pair,
+        let mut handle = match crate::typst_compile::spawn_with_config(&self.cfg, root_typ) {
+            Ok(h) => h,
             Err(e) => {
                 self.status = format!("typst compile: {e}");
                 return None;
             }
         };
-        // Animate the splash while the child runs. ~80ms per frame
-        // keeps the spinner readable without burning CPU.
+        // Animate the splash while the compile runs (external child
+        // or in-process worker thread — same loop, same UX).
+        // ~80ms per frame keeps the spinner readable without
+        // burning CPU. The same loop also polls for Esc so a stuck
+        // compile can be interrupted by the user.
+        let engine_label = crate::typst_compile::engine_summary(&self.cfg);
         let started = std::time::Instant::now();
         let mut spin_idx: usize = 0;
-        let mut child = child;
+        let mut cancelled = false;
         loop {
             let elapsed = started.elapsed().as_secs();
             let spinner = TYPST_COMPILE_SPINNER[spin_idx % TYPST_COMPILE_SPINNER.len()];
             let _ = terminal.draw(|f| {
-                draw_typst_compile_splash(f, book_display, elapsed, spinner)
+                draw_typst_compile_splash(f, book_display, &engine_label, elapsed, spinner)
             });
             spin_idx = spin_idx.wrapping_add(1);
-            match child.try_wait() {
+            // Poll for input WITHOUT consuming non-Esc keys — we
+            // re-emit nothing here; any user typing during the
+            // compile is just dropped (the alternate-screen
+            // splash is modal). Esc → cancel.
+            if let Ok(true) = crossterm::event::poll(std::time::Duration::from_millis(0)) {
+                if let Ok(crossterm::event::Event::Key(k)) = crossterm::event::read() {
+                    if matches!(k.code, crossterm::event::KeyCode::Esc) {
+                        handle.kill();
+                        cancelled = true;
+                        break;
+                    }
+                }
+            }
+            match handle.try_wait() {
                 Ok(Some(_)) => break,
                 Ok(None) => {
                     std::thread::sleep(std::time::Duration::from_millis(80));
@@ -9812,8 +11416,19 @@ impl App {
                 }
             }
         }
-        match crate::typst_compile::finish(child, pdf_path) {
-            Ok(o) => Some(o),
+        match crate::typst_compile::finish(handle) {
+            Ok(o) => {
+                if cancelled {
+                    // Promote the outcome's failure state into a
+                    // user-visible "cancelled" message rather than
+                    // running the AI error-analysis path.
+                    self.status = format!(
+                        "typst compile cancelled — partial output (if any) discarded · engine: {engine_label}",
+                    );
+                    return None;
+                }
+                Some(o)
+            }
             Err(e) => {
                 self.status = format!("typst compile: {e}");
                 None
@@ -10581,6 +12196,37 @@ impl App {
                 self.status = "diff closed".into();
                 return Ok(false);
             }
+            // 1.2.5+ SaveRenderedPng follows the same pattern —
+            // restore the underlying RenderedPreview so the user
+            // doesn't lose their navigation state when they
+            // cancel a save.
+            if let Modal::SaveRenderedPng { return_to, .. } = &mut self.modal {
+                let prev = std::mem::replace(return_to.as_mut(), Modal::None);
+                self.modal = prev;
+                self.status = "save PNG: cancelled · preview restored".into();
+                return Ok(false);
+            }
+            // Story-view save picker — mirror SaveRenderedPng.
+            if let Modal::SaveStoryPng { return_to, .. } = &mut self.modal {
+                let prev = std::mem::replace(return_to.as_mut(), Modal::None);
+                self.modal = prev;
+                self.status = "save story PNG: cancelled · preview restored".into();
+                return Ok(false);
+            }
+            // 1.2.5+ tag-add and tag-delete sub-modals — Esc
+            // returns to the TagPicker that opened them.
+            if let Modal::TagAddPrompt { return_to, .. } = &mut self.modal {
+                let prev = std::mem::replace(return_to.as_mut(), Modal::None);
+                self.modal = prev;
+                self.status = "tag add: cancelled".into();
+                return Ok(false);
+            }
+            if let Modal::TagDeleteConfirm { return_to, .. } = &mut self.modal {
+                let prev = std::mem::replace(return_to.as_mut(), Modal::None);
+                self.modal = prev;
+                self.status = "tag delete: cancelled".into();
+                return Ok(false);
+            }
             self.modal = Modal::None;
             return Ok(false);
         }
@@ -10613,6 +12259,14 @@ impl App {
         let is_backlink_picker = matches!(self.modal, Modal::BacklinkPicker { .. });
         let is_bookmark_picker = matches!(self.modal, Modal::BookmarkPicker { .. });
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
+        let is_rendered_preview = matches!(self.modal, Modal::RenderedPreview { .. });
+        let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
+        let is_tag_picker = matches!(self.modal, Modal::TagPicker { .. });
+        let is_tag_add_prompt = matches!(self.modal, Modal::TagAddPrompt { .. });
+        let is_tag_delete_confirm = matches!(self.modal, Modal::TagDeleteConfirm { .. });
+        let is_tag_search_results = matches!(self.modal, Modal::TagSearchResults { .. });
+        let is_story_view = matches!(self.modal, Modal::StoryView { .. });
+        let is_save_story_png = matches!(self.modal, Modal::SaveStoryPng { .. });
 
         if is_quickref {
             self.quickref_handle_key(key);
@@ -10780,6 +12434,155 @@ impl App {
                 return Ok(false);
             }
             if let Modal::SaveMarkdown { input, .. } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
+            return Ok(false);
+        }
+
+        if is_rendered_preview {
+            // Esc is intercepted by the global modal-close
+            // handler at the top of this function. Local keys:
+            //   ← / →  — navigate pages
+            //   S / s — save current page (open picker, mode Single)
+            //   A / a — save every page (open picker, mode All)
+            //   anything else — swallowed so the editor doesn't see it
+            match key.code {
+                KeyCode::Left | KeyCode::Up => {
+                    if let Modal::RenderedPreview {
+                        pages,
+                        current_page,
+                        ..
+                    } = &mut self.modal
+                    {
+                        if *current_page > 0 {
+                            *current_page -= 1;
+                            let total = pages.len();
+                            let p = &pages[*current_page];
+                            self.status = format!(
+                                "render ¶ · page {}/{}  · {}×{}",
+                                *current_page + 1,
+                                total,
+                                p.width,
+                                p.height,
+                            );
+                        }
+                    }
+                }
+                KeyCode::Right | KeyCode::Down => {
+                    if let Modal::RenderedPreview {
+                        pages,
+                        current_page,
+                        ..
+                    } = &mut self.modal
+                    {
+                        if *current_page + 1 < pages.len() {
+                            *current_page += 1;
+                            let total = pages.len();
+                            let p = &pages[*current_page];
+                            self.status = format!(
+                                "render ¶ · page {}/{}  · {}×{}",
+                                *current_page + 1,
+                                total,
+                                p.width,
+                                p.height,
+                            );
+                        }
+                    }
+                }
+                KeyCode::Home => {
+                    if let Modal::RenderedPreview { current_page, .. } =
+                        &mut self.modal
+                    {
+                        *current_page = 0;
+                    }
+                }
+                KeyCode::End => {
+                    if let Modal::RenderedPreview {
+                        pages,
+                        current_page,
+                        ..
+                    } = &mut self.modal
+                    {
+                        *current_page = pages.len().saturating_sub(1);
+                    }
+                }
+                KeyCode::Char('s') | KeyCode::Char('S') => {
+                    self.open_save_rendered_png_picker(false);
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    self.open_save_rendered_png_picker(true);
+                }
+                _ => {}
+            }
+            return Ok(false);
+        }
+
+        if is_story_view {
+            if matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S')) {
+                self.open_save_story_png_picker();
+            }
+            return Ok(false);
+        }
+        if is_save_story_png {
+            if matches!(key.code, KeyCode::Enter) {
+                let taken = std::mem::replace(&mut self.modal, Modal::None);
+                if let Modal::SaveStoryPng {
+                    input,
+                    png_bytes,
+                    book_title,
+                    return_to: _,
+                } = taken
+                {
+                    let raw = input.as_str().to_string();
+                    self.commit_save_story_png(&png_bytes, &raw, &book_title);
+                }
+                return Ok(false);
+            }
+            if let Modal::SaveStoryPng { input, .. } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
+            return Ok(false);
+        }
+
+        if is_tag_picker {
+            self.tag_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_tag_add_prompt {
+            self.tag_add_prompt_handle_key(key);
+            return Ok(false);
+        }
+        if is_tag_delete_confirm {
+            self.tag_delete_confirm_handle_key(key);
+            return Ok(false);
+        }
+        if is_tag_search_results {
+            self.tag_search_results_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_save_rendered_png {
+            // Esc → restore the preview, handled at the top of
+            // this function via the `return_to` stash pattern.
+            if matches!(key.code, KeyCode::Enter) {
+                let taken = std::mem::replace(&mut self.modal, Modal::None);
+                if let Modal::SaveRenderedPng {
+                    input,
+                    body,
+                    settings,
+                    title,
+                    pages,
+                    return_to: _,
+                } = taken
+                {
+                    let raw = input.as_str().to_string();
+                    self.commit_save_rendered_png(
+                        &body, &settings, &raw, &title, pages,
+                    );
+                }
+                return Ok(false);
+            }
+            if let Modal::SaveRenderedPng { input, .. } = &mut self.modal {
                 handle_text_input_key(input, key);
             }
             return Ok(false);
@@ -11394,7 +13197,10 @@ impl App {
                     NodeKind::Script => Some("bund".to_string()),
                     _ => None,
                 }),
+            typst_diagnostics: Vec::new(),
+            typst_diagnostics_checked_at: std::time::Instant::now(),
         });
+        self.refresh_typst_diagnostics_for_opened();
         self.change_focus(Focus::Editor);
         self.status = format!("opened {}", abs.display());
         Ok(())
@@ -11520,7 +13326,141 @@ impl App {
         self.maybe_auto_promote_on_target(node.id, new_words);
         self.reload_hierarchy();
         self.refresh_progress_cache();
+        // 1.2.5+: refresh typst-syntax diagnostics on save. Pulls
+        // the most-recently-saved body straight from the editor's
+        // mutable doc so the next render reflects errors the user
+        // just introduced (or fixed).
+        self.refresh_typst_diagnostics_for_opened();
         Ok(())
+    }
+
+    /// 1.2.5+: re-parse the open paragraph with `typst-syntax` and
+    /// cache the resulting diagnostics on `OpenedDoc`. Honors the
+    /// `typst_compile.diagnostics` HJSON flag and the buffer's
+    /// `content_type` — only typst sources are checked (Bund /
+    /// HJSON / others skip out cleanly). Status bar surfaces the
+    /// first error so the user sees the line number at a glance;
+    /// the rest stay cached on the doc for any future "next error"
+    /// chord.
+    fn refresh_typst_diagnostics_for_opened(&mut self) {
+        if !self.cfg.typst_compile.diagnostics {
+            return;
+        }
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        // Anything not typst-shaped — Bund scripts, HJSON data
+        // nodes, images — should never be fed to the typst
+        // parser; just clear stale diagnostics and bail.
+        let is_typst = match doc.content_type.as_deref() {
+            None | Some("") | Some("typst") => true,
+            _ => false,
+        };
+        if !is_typst {
+            doc.typst_diagnostics.clear();
+            doc.typst_diagnostics_checked_at = std::time::Instant::now();
+            return;
+        }
+        let body = doc.textarea.lines().join("\n");
+        // Phase 1 baseline: parse-only diagnostics via `typst-syntax`.
+        // Cheap, always available, no engine dependency.
+        let mut diags = crate::typst_check::check(&body);
+        // 1.2.5+: when the user has the in-process engine on AND
+        // opted into semantic diagnostics, run a full
+        // `typst::compile` against the paragraph in isolation and
+        // surface semantic errors the parser can't catch
+        // (unknown functions, type errors, etc.). We APPEND to
+        // the parse diagnostics rather than replace — a
+        // syntactically-broken buffer often produces a flurry of
+        // confusing semantic errors and the parse error is the
+        // root cause to surface first.
+        if self.cfg.typst_compile.semantic_diagnostics
+            && self.cfg.typst_compile.use_inprocess_engine()
+            && diags.is_empty()
+        {
+            let settings = crate::typst_world::WorldSettings::from_cfg(
+                &self.cfg.typst_compile,
+            );
+            let semantic =
+                crate::typst_inprocess::check_semantic(&body, settings);
+            diags.extend(semantic);
+        }
+        doc.typst_diagnostics = diags;
+        doc.typst_diagnostics_checked_at = std::time::Instant::now();
+        if let Some(first) = doc.typst_diagnostics.first() {
+            // Don't blow away a more-recent status (a save's own
+            // "wrote N bytes" message etc.) — only stamp the
+            // diagnostics line if we have errors to show. The
+            // save-path caller is OK with this being the final
+            // status because errors-on-save are exactly what the
+            // user needs to see next.
+            self.status = first.summary();
+        }
+    }
+
+    /// Ctrl+V N (1.2.5+) — move the editor cursor to the next
+    /// typst diagnostic in the open buffer. Wraps around at the
+    /// end. Refreshes the diagnostics cache up-front so the user
+    /// always navigates against the current buffer state, even
+    /// if they haven't paused long enough for the idle recheck
+    /// to fire.
+    fn jump_to_next_diagnostic(&mut self) {
+        if self.opened.is_none() {
+            self.status = "next diag: no paragraph open".into();
+            return;
+        }
+        // Force a fresh recheck — keeps the navigation honest
+        // when the user has been typing fast.
+        self.refresh_typst_diagnostics_for_opened();
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        if doc.typst_diagnostics.is_empty() {
+            self.status = "next diag: no typst diagnostics in this buffer".into();
+            return;
+        }
+        // Cursor in tui-textarea is (row, col), both 0-based.
+        // TypstDiagnostic.line/col are 1-based; normalise for
+        // comparison.
+        let (cur_row, cur_col) = doc.textarea.cursor();
+        let cur1 = (cur_row + 1, cur_col + 1);
+        // Find the first diagnostic strictly past the cursor.
+        // Ties on the same line go to the higher column.
+        let mut sorted_idxs: Vec<usize> = (0..doc.typst_diagnostics.len()).collect();
+        sorted_idxs.sort_by_key(|&i| {
+            let d = &doc.typst_diagnostics[i];
+            (d.line, d.col)
+        });
+        let next = sorted_idxs.iter().copied().find(|&i| {
+            let d = &doc.typst_diagnostics[i];
+            (d.line, d.col) > cur1
+        });
+        let chosen = match next {
+            Some(i) => i,
+            None => {
+                // Wrap to the first.
+                sorted_idxs[0]
+            }
+        };
+        let target = doc.typst_diagnostics[chosen].clone();
+        let row = target.line.saturating_sub(1) as u16;
+        let col = target.col.saturating_sub(1) as u16;
+        doc.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(row, col));
+        let total = doc.typst_diagnostics.len();
+        let wrapped_note = if next.is_none() && total > 1 {
+            " (wrapped)"
+        } else {
+            ""
+        };
+        self.status = format!(
+            "diag {}/{}{wrapped_note}  line {}:{}  — {}",
+            sorted_idxs.iter().position(|&i| i == chosen).unwrap_or(0) + 1,
+            total,
+            target.line,
+            target.col,
+            target.message,
+        );
     }
 
     /// Promote the paragraph one ladder step if (a) the project
@@ -11788,9 +13728,19 @@ impl App {
     /// list is a hand-curated static (kept here so it stays in sync with
     /// what Cargo.toml actually depends on — automating from Cargo.lock
     /// would dump 200+ transitive crates that no user wants to read).
-    fn draw_credits_modal(&self, f: &mut ratatui::Frame, area: Rect, scroll: usize) {
-        let lines = build_credits_lines(&self.theme);
+    fn draw_credits_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let engine_summary = crate::typst_compile::engine_summary(&self.cfg);
+        let lines = build_credits_lines(&self.theme, &engine_summary);
         let total = lines.len();
+
+        // Pull scroll + logo out of the modal up front. Logo is
+        // taken via `&mut` so the StatefulImage widget can update
+        // its protocol state during render.
+        let Modal::Credits { scroll, logo } = &mut self.modal else {
+            return;
+        };
+        let scroll_value = *scroll;
+        let logo_present = logo.is_some();
 
         let width = area.width.saturating_sub(8).max(60);
         let height = area.height.saturating_sub(4).max(12);
@@ -11819,32 +13769,57 @@ impl App {
         let inner = block.inner(rect);
         f.render_widget(block, rect);
 
-        // 1 row reserved for the bottom hint line.
-        let body_h = inner.height.saturating_sub(1) as usize;
-        let body_rect = Rect {
+        // Layout: optional logo banner (top), scrollable text body
+        // (middle), one-row hint (bottom). When the logo is
+        // present, give it the smaller of 1/3 of the inner height
+        // or 12 rows — enough for the image to read without
+        // crowding out the text.
+        let footer_h: u16 = 1;
+        let logo_h: u16 = if logo_present {
+            (inner.height / 3).min(12).max(4).min(inner.height.saturating_sub(footer_h + 4))
+        } else {
+            0
+        };
+        let body_h_rows = inner.height.saturating_sub(logo_h + footer_h);
+
+        let logo_rect = Rect {
             x: inner.x,
             y: inner.y,
             width: inner.width,
-            height: inner.height.saturating_sub(1),
+            height: logo_h,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y + logo_h,
+            width: inner.width,
+            height: body_h_rows,
         };
         let footer_rect = Rect {
             x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
+            y: inner.y + logo_h + body_h_rows,
             width: inner.width,
-            height: 1,
+            height: footer_h,
         };
 
+        if let Some(proto) = logo.as_mut() {
+            if logo_h > 0 {
+                let widget = ratatui_image::StatefulImage::new();
+                f.render_stateful_widget(widget, logo_rect, proto);
+            }
+        }
+
+        let body_h = body_rect.height as usize;
         let max_scroll = total.saturating_sub(body_h);
-        let scroll = scroll.min(max_scroll);
-        let end = (scroll + body_h).min(total);
-        let visible: Vec<Line<'_>> = lines[scroll..end].to_vec();
+        let scroll_value = scroll_value.min(max_scroll);
+        let end = (scroll_value + body_h).min(total);
+        let visible: Vec<Line<'_>> = lines[scroll_value..end].to_vec();
         f.render_widget(Paragraph::new(visible), body_rect);
 
         let at_end = end >= total;
         let more_hint = if at_end { " " } else { " · more below" };
         let hint = format!(
             " ↑↓ / PgUp/PgDn / Home/End scroll · Esc close{more_hint}    (showing {}–{} of {total}) ",
-            scroll + 1,
+            scroll_value + 1,
             end
         );
         f.render_widget(
@@ -12729,6 +14704,238 @@ impl App {
         );
     }
 
+    /// Ctrl+B ] / `g` / Ctrl+B } — floating tag-picker pane.
+    /// Each row shows `[ ] tag-name` or `[x] tag-name` (Search
+    /// mode hides the brackets — selection has no meaning).
+    fn draw_tag_picker_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::TagPicker {
+            target,
+            all_tags,
+            cursor,
+            selected,
+        } = &self.modal
+        else {
+            return;
+        };
+        let in_search = matches!(target, TagPickerTarget::Search);
+        let total = all_tags.len();
+
+        let width = area.width.saturating_sub(8).max(50);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = match target {
+            TagPickerTarget::EditorParagraph { title, .. } => {
+                format!(" Tags · `{title}` · {total} project tag(s) ")
+            }
+            TagPickerTarget::TreeSelection(ids) => {
+                format!(" Tags · {} paragraph(s) selected · {total} project tag(s) ", ids.len())
+            }
+            TagPickerTarget::Search => {
+                format!(" Tags · search · {total} project tag(s) ")
+            }
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+
+        let visible_scroll = if *cursor >= body_h {
+            cursor - body_h + 1
+        } else {
+            0
+        };
+        let lines: Vec<Line<'_>> = if all_tags.is_empty() {
+            vec![Line::from(Span::styled(
+                "  (no tags yet — press A to add the first one)".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            ))]
+        } else {
+            all_tags
+                .iter()
+                .enumerate()
+                .skip(visible_scroll)
+                .take(body_h)
+                .map(|(i, tag)| {
+                    let marker = if in_search {
+                        "  ".to_string()
+                    } else if selected.contains(tag) {
+                        " [x] ".to_string()
+                    } else {
+                        " [ ] ".to_string()
+                    };
+                    let line = Line::from(vec![
+                        Span::raw(marker),
+                        Span::raw(tag.clone()),
+                    ]);
+                    if i == *cursor {
+                        line.style(Style::default().add_modifier(Modifier::REVERSED))
+                    } else {
+                        line
+                    }
+                })
+                .collect()
+        };
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = if in_search {
+            " ↑↓ select · Enter opens results · A adds · D deletes · Esc closes "
+        } else {
+            " ↑↓ select · Space marks · T applies · A adds · D deletes · Esc closes "
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint.to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    /// Enter from `TagPicker` in Search mode → list of paragraphs
+    /// tagged with the chosen tag, with a typeable filter input.
+    fn draw_tag_search_results_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::TagSearchResults {
+            tag,
+            filter,
+            all_results,
+            cursor,
+        } = &self.modal
+        else {
+            return;
+        };
+        let matches = filter_tag_results(all_results, filter.as_str());
+
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(14);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(
+            " Tag `{tag}` · {} match{} of {} ",
+            matches.len(),
+            if matches.len() == 1 { "" } else { "es" },
+            all_results.len()
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let input_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 1,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y + 1,
+            width: inner.width,
+            height: inner.height.saturating_sub(2),
+        };
+
+        f.render_widget(
+            Paragraph::new(Line::from(format!(
+                " › Filter: {}",
+                filter.render_with_cursor('│')
+            ))),
+            input_rect,
+        );
+
+        let body_h = body_rect.height as usize;
+        let visible_scroll = if *cursor >= body_h {
+            cursor - body_h + 1
+        } else {
+            0
+        };
+        let lines: Vec<Line<'_>> = matches
+            .iter()
+            .enumerate()
+            .skip(visible_scroll)
+            .take(body_h)
+            .map(|(i, e)| {
+                let spans = vec![
+                    Span::raw(format!(" {}", e.title)),
+                    Span::styled(
+                        format!("    {}", e.slug_path),
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                ];
+                let line = Line::from(spans);
+                if i == *cursor {
+                    line.style(Style::default().add_modifier(Modifier::REVERSED))
+                } else {
+                    line
+                }
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ select · Enter opens · type to filter · Esc closes ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     fn bookmark_picker_handle_key(&mut self, key: KeyEvent) {
         let (id_to_unbookmark, id_to_open) = {
             let Modal::BookmarkPicker { entries, cursor, scroll } = &mut self.modal else {
@@ -13182,6 +15389,8 @@ impl App {
             read_only,
             correction_baseline: None,
             content_type: node.content_type.clone(),
+            typst_diagnostics: Vec::new(),
+            typst_diagnostics_checked_at: std::time::Instant::now(),
         });
         self.secondary_focused = false;
         self.status = format!(
@@ -13855,8 +16064,8 @@ impl App {
             self.draw_quickref_modal(f, area, *focus, *scroll);
             return;
         }
-        if let Modal::Credits { scroll } = &self.modal {
-            self.draw_credits_modal(f, area, *scroll);
+        if matches!(self.modal, Modal::Credits { .. }) {
+            self.draw_credits_modal(f, area);
             return;
         }
         if let Modal::BookInfo { scroll } = &self.modal {
@@ -13919,6 +16128,30 @@ impl App {
             self.draw_fuzzy_paragraph_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::RenderedPreview { .. }) {
+            self.draw_rendered_preview_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::SaveRenderedPng { .. }) {
+            self.draw_save_rendered_png_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::StoryView { .. }) {
+            self.draw_story_view_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::SaveStoryPng { .. }) {
+            self.draw_save_story_png_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::TagPicker { .. }) {
+            self.draw_tag_picker_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::TagSearchResults { .. }) {
+            self.draw_tag_search_results_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;
@@ -13948,6 +16181,65 @@ impl App {
             Modal::BookmarkPicker { .. } => unreachable!("bookmark picker handled above"),
             Modal::FuzzyParagraphPicker { .. } =>
                 unreachable!("fuzzy paragraph picker handled above"),
+            Modal::RenderedPreview { .. } =>
+                unreachable!("rendered preview handled above"),
+            Modal::SaveRenderedPng { .. } =>
+                unreachable!("save rendered png handled above"),
+            Modal::TagPicker { .. } =>
+                unreachable!("tag picker handled above"),
+            Modal::TagSearchResults { .. } =>
+                unreachable!("tag search results handled above"),
+            Modal::StoryView { .. } =>
+                unreachable!("story view handled above"),
+            Modal::SaveStoryPng { .. } =>
+                unreachable!("save story png handled above"),
+            Modal::TagAddPrompt { input, .. } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " New tag name:",
+                        Style::default()
+                            .fg(self.theme.tree_script_fg)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter adds + auto-selects · Esc cancels",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Add tag — Ctrl+B ] then A ".to_string(),
+                    self.theme.tree_script_fg,
+                    body,
+                )
+            }
+            Modal::TagDeleteConfirm { tag, affected, .. } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(" Delete tag `{tag}` project-wide?"),
+                        Style::default()
+                            .fg(Color::Red)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(Span::styled(
+                        format!("   Will be removed from {affected} paragraph(s)."),
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  y / Enter confirm · n / Esc cancel",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Delete tag — y / n ".to_string(),
+                    Color::Red,
+                    body,
+                )
+            }
             Modal::ParagraphTarget { input } => {
                 let body = vec![
                     Line::from(""),
@@ -16727,6 +19019,29 @@ mod tests_diff {
 ///   0 — excluded
 /// Empty query keeps the original ordering and returns all
 /// indices (the picker treats this as "no filter applied").
+/// 1.2.5+ — case-insensitive substring filter over a list of
+/// `ScriptPickerEntry`s. Used by the tag-search results modal;
+/// kept simple (no scoring) because the result set already
+/// belongs to one chosen tag, and the user just wants to narrow
+/// further by title / slug fragment.
+fn filter_tag_results(
+    entries: &[ScriptPickerEntry],
+    query: &str,
+) -> Vec<ScriptPickerEntry> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return entries.to_vec();
+    }
+    entries
+        .iter()
+        .filter(|e| {
+            e.title.to_lowercase().contains(&q)
+                || e.slug_path.to_lowercase().contains(&q)
+        })
+        .cloned()
+        .collect()
+}
+
 fn fuzzy_filter_entries(
     entries: &[ScriptPickerEntry],
     query: &str,
@@ -18061,7 +20376,10 @@ const CREDITS_COMPONENTS: &[(&str, &str, &str)] = &[
 /// modal-border colour, descriptions in dim. Each crate row is wrapped
 /// to fit a reasonable terminal width; very long descriptions naturally
 /// truncate at the right edge of the modal.
-fn build_credits_lines(theme: &super::theme::Theme) -> Vec<Line<'static>> {
+fn build_credits_lines(
+    theme: &super::theme::Theme,
+    engine_summary: &str,
+) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     let bold_accent = Style::default()
@@ -18078,6 +20396,15 @@ fn build_credits_lines(theme: &super::theme::Theme) -> Vec<Line<'static>> {
         format!("  {}", env!("CARGO_PKG_DESCRIPTION")),
         dim,
     )));
+    lines.push(Line::from(""));
+
+    // 1.2.5+: surface the active Typst engine so users can confirm
+    // their HJSON setting took effect without going to the logs.
+    lines.push(Line::from(vec![Span::styled(
+        "  Typst engine".to_string(),
+        bold_accent,
+    )]));
+    lines.push(Line::from(format!("    {engine_summary}")));
     lines.push(Line::from(""));
 
     lines.push(Line::from(vec![Span::styled(
