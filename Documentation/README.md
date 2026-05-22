@@ -74,11 +74,13 @@ don't need them all up front.
 | [`Tutorials/21-navigation.md`](Tutorials/21-navigation.md) | Ctrl+V P fuzzy picker, Ctrl+V B/M bookmarks, AI Up-arrow history, slash-command ranking. |
 | [`Tutorials/22-tree-multiselect.md`](Tutorials/22-tree-multiselect.md) | Tree-pane Space mark set, T cycles type, O cycles status — bulk on demand. |
 | [`Tutorials/23-scrivener-import.md`](Tutorials/23-scrivener-import.md) | `inkhaven import-scrivener` — single-binary `.scriv` ingest with RTF→Typst. |
+| [`Tutorials/24-typst-in-process.md`](Tutorials/24-typst-in-process.md) | `typst_compile.engine = "inprocess"` — bundled compiler + fonts + `@preview` packages, diagnostics (parse + semantic), Ctrl+V R render preview + page nav + save-all, Ctrl+V N diagnostic navigation, `inkhaven doctor`. |
 
 ## Release notes
 
 | Version | Notes |
 | ------- | ----- |
+| **1.2.5** | [`RELEASE_NOTES/1.2.5.md`](RELEASE_NOTES/1.2.5.md) — **Typst goes in-process**: `typst_compile.engine = "inprocess"` runs `typst::compile + typst-pdf` inside inkhaven (bundled fonts, `@preview` packages). Parse + opt-in semantic diagnostics. `Ctrl+V R` render-paragraph preview with ←/→ page navigation, S saves current, A saves all. `Ctrl+V N` next-diagnostic. Esc cancels in-flight compiles; autosave before Ctrl+B A/B/O. New `inkhaven doctor` CLI. Embedded logo banners the credits pane. |
 | **1.2.4** | [`RELEASE_NOTES/1.2.4.md`](RELEASE_NOTES/1.2.4.md) — wiki-links + backlinks (Ctrl+V A/I/L/K), per-paragraph word-count goals + auto-promote, active-time tracking, per-book bar chart, snapshot diff (F6 V) + safety snapshot, save-as picker, F-keys in keybind table, theme persistence to HJSON, Bund stdlib expansion (`ink.fs.*`, `ink.editor.replace_all`, `ink.search.load`, `ink.ai.poll`, `ink.ai.send_blocking`), Ctrl+V P fuzzy picker, Ctrl+V B/M bookmarks, AI prompt history, tree multi-select with T / O chords, `inkhaven stats`, startup splash, Scrivener importer, Windows CI re-enabled. |
 | **1.2.3** | [`RELEASE_NOTES/1.2.3.md`](RELEASE_NOTES/1.2.3.md) — multi-format export (markdown / TeX / EPUB) + `--book-name`, writing-progress subsystem (Ctrl+V G), similar-paragraph mode (Ctrl+V S), Bund output pane + Ctrl+Z ? script picker + `ink.input`, dynamic Quick Help. |
 | **1.2.1** | [`RELEASE_NOTES/1.2.1.md`](RELEASE_NOTES/1.2.1.md) — bdslib + tree-sitter-typst absorbed in-tree (crates.io-publishable), Bund scripting (`ink.*` stdlib, 5 hook points, `.bund` Script nodes, Scripts system book), data-driven keymap with HJSON + Bund rebinding, `Ctrl+B M` cycle-type, `Ctrl+Z` Bund prefix. |

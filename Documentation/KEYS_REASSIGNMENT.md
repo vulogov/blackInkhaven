@@ -191,6 +191,7 @@ Layer name: `view_sub`. Rebind via HJSON or `ink.key.bind_view_sub`.
 | `view.list_bookmarks` | `Ctrl+V M` | Open the bookmark picker |
 | `view.fuzzy_paragraph_picker` | `Ctrl+V P` | Open the fuzzy paragraph picker |
 | `view.render_paragraph` | `Ctrl+V R` | (1.2.5) Save the open paragraph, render via `typst-render`, float a PNG preview (S = save full-DPI PNG, Esc = close) |
+| `view.next_diagnostic` | `Ctrl+V N` | (1.2.5) Jump editor cursor to the next typst diagnostic in the buffer (parse or semantic). Wraps at the end. |
 
 ### Top-level keys (1.2.4+)
 

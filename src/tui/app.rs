@@ -7000,6 +7000,7 @@ impl App {
             A::ViewListBookmarks => self.open_bookmark_picker_modal(),
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
             A::ViewRenderParagraph => self.open_rendered_paragraph_preview(),
+            A::ViewNextDiagnostic => self.jump_to_next_diagnostic(),
 
             // ── Top-level F-keys (1.2.4+ migration) ───────────
             A::HelpQuery => self.open_help_query_modal(),
@@ -12370,6 +12371,71 @@ impl App {
             // user needs to see next.
             self.status = first.summary();
         }
+    }
+
+    /// Ctrl+V N (1.2.5+) — move the editor cursor to the next
+    /// typst diagnostic in the open buffer. Wraps around at the
+    /// end. Refreshes the diagnostics cache up-front so the user
+    /// always navigates against the current buffer state, even
+    /// if they haven't paused long enough for the idle recheck
+    /// to fire.
+    fn jump_to_next_diagnostic(&mut self) {
+        if self.opened.is_none() {
+            self.status = "next diag: no paragraph open".into();
+            return;
+        }
+        // Force a fresh recheck — keeps the navigation honest
+        // when the user has been typing fast.
+        self.refresh_typst_diagnostics_for_opened();
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        if doc.typst_diagnostics.is_empty() {
+            self.status = "next diag: no typst diagnostics in this buffer".into();
+            return;
+        }
+        // Cursor in tui-textarea is (row, col), both 0-based.
+        // TypstDiagnostic.line/col are 1-based; normalise for
+        // comparison.
+        let (cur_row, cur_col) = doc.textarea.cursor();
+        let cur1 = (cur_row + 1, cur_col + 1);
+        // Find the first diagnostic strictly past the cursor.
+        // Ties on the same line go to the higher column.
+        let mut sorted_idxs: Vec<usize> = (0..doc.typst_diagnostics.len()).collect();
+        sorted_idxs.sort_by_key(|&i| {
+            let d = &doc.typst_diagnostics[i];
+            (d.line, d.col)
+        });
+        let next = sorted_idxs.iter().copied().find(|&i| {
+            let d = &doc.typst_diagnostics[i];
+            (d.line, d.col) > cur1
+        });
+        let chosen = match next {
+            Some(i) => i,
+            None => {
+                // Wrap to the first.
+                sorted_idxs[0]
+            }
+        };
+        let target = doc.typst_diagnostics[chosen].clone();
+        let row = target.line.saturating_sub(1) as u16;
+        let col = target.col.saturating_sub(1) as u16;
+        doc.textarea
+            .move_cursor(tui_textarea::CursorMove::Jump(row, col));
+        let total = doc.typst_diagnostics.len();
+        let wrapped_note = if next.is_none() && total > 1 {
+            " (wrapped)"
+        } else {
+            ""
+        };
+        self.status = format!(
+            "diag {}/{}{wrapped_note}  line {}:{}  — {}",
+            sorted_idxs.iter().position(|&i| i == chosen).unwrap_or(0) + 1,
+            total,
+            target.line,
+            target.col,
+            target.message,
+        );
     }
 
     /// Promote the paragraph one ladder step if (a) the project
