@@ -250,6 +250,12 @@ pub enum Action {
     /// full-DPI PNG.
     #[serde(rename = "view.render_paragraph")]
     ViewRenderParagraph,
+    /// Ctrl+V N (1.2.5+) — jump the editor cursor to the next
+    /// typst diagnostic in the open buffer (parse or semantic).
+    /// Wraps at the end. No-op when the diagnostic cache is
+    /// empty.
+    #[serde(rename = "view.next_diagnostic")]
+    ViewNextDiagnostic,
 
     /// Explicit "this chord does nothing" — overlay entries can
     /// set `action: "none"` to disable a default chord.
@@ -340,6 +346,7 @@ impl Action {
             Action::ViewListBookmarks => "bookmarks".into(),
             Action::ViewFuzzyParagraphPicker => "find ¶".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
+            Action::ViewNextDiagnostic => "next diag".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) => format!("λ {name}"),
@@ -491,6 +498,8 @@ impl Action {
                 "Fuzzy paragraph picker — type any substring of the title or slug path, Enter opens the highlighted hit.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
+            Action::ViewNextDiagnostic =>
+                "Jump the editor cursor to the next typst diagnostic (parse or semantic) in the open buffer. Wraps around at the end; no-op when there are no diagnostics.".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) =>
@@ -627,6 +636,7 @@ impl KeyBindings {
                 entry("m", Action::ViewListBookmarks, Scope::Any),
                 entry("p", Action::ViewFuzzyParagraphPicker, Scope::Any),
                 entry("r", Action::ViewRenderParagraph, Scope::Any),
+                entry("n", Action::ViewNextDiagnostic, Scope::Any),
             ],
             top_level: vec![
                 // F1 anywhere: Help-book RAG modal.

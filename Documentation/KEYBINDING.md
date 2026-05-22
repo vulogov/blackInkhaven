@@ -139,6 +139,7 @@ full workflows.
 | `M` / `m`              | any                      | Open the **bookmark picker** (1.2.4). Enter opens; D removes the bookmark. |
 | `P` / `p`              | any                      | **Fuzzy paragraph picker** (1.2.4) — type-to-filter modal over every user-book paragraph. Three-tier ranking (title-starts > title-contains > slug-contains). |
 | `R` / `r`              | any (needs open paragraph) | (1.2.5) **Render paragraph** — save the buffer, compile it in-process via `typst-render`, float a PNG preview on top of the editor. Inside the preview: `←` / `→` navigate pages (multi-page documents), `Home` / `End` jump to first / last; `Esc` closes; `S` opens a save-as picker for the **current page** at full DPI (288 dpi); `A` opens the picker for **all pages** at full DPI (writes `<base>-page-NNN.png` per page). Cancelling the save picker restores the preview with navigation state intact. |
+| `N` / `n`              | any (needs open paragraph) | (1.2.5) **Next typst diagnostic** — move the editor cursor to the next parse or semantic diagnostic in the buffer. Wraps at the end. Refreshes the diagnostic cache up-front so navigation reflects the current buffer state, not the last save. Status bar reports `diag N/M  line L:C  — <message>`. |
 | `Esc`                  | any                      | Cancel the chord without acting.                                       |
 
 While in similar-paragraph mode, `Tab` inside the editor toggles
