@@ -1,6 +1,7 @@
 pub mod add;
 pub mod ai;
 pub mod backup;
+pub mod build;
 pub mod bund;
 pub mod delete;
 pub mod export;
@@ -247,6 +248,27 @@ pub enum Command {
     #[command(subcommand)]
     Event(EventCommand),
 
+    /// 1.2.6+ — run the same flow as the TUI's Ctrl+B B
+    /// without launching the TUI. Assembles the named user
+    /// book into the artefacts directory and (with
+    /// `--compile`) runs `typst compile` on the produced root
+    /// `.typ`. Pipe-friendly progress on stderr; only the
+    /// final PDF path lands on stdout. Useful for CI, batch
+    /// builds, and end-to-end verification of the
+    /// HJSON-driven `settings.typ`.
+    Build {
+        /// User-book name (case-insensitive title or slug).
+        /// Optional when the project has exactly one user
+        /// book; required otherwise.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Also invoke `typst compile` on the assembled root
+        /// `.typ`. Without it the command stops after
+        /// writing the artefacts tree.
+        #[arg(long)]
+        compile: bool,
+    },
+
     /// Launch the TUI editor (default if no subcommand is given).
     Tui,
 }
@@ -423,6 +445,9 @@ impl Cli {
                 stats::run(&project, book_name.as_deref()).map_err(Into::into)
             }
             Command::Doctor => doctor::run(&project).map_err(Into::into),
+            Command::Build { book_name, compile } => {
+                build::run(&project, book_name.as_deref(), compile).map_err(Into::into)
+            }
             Command::Event(cmd) => event::run(&project, cmd).map_err(Into::into),
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
         }
