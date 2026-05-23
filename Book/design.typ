@@ -361,6 +361,23 @@
   ]
   pagebreak()
 
+  // ── Dedication ──────────────────────────────────────
+  // Right-hand (recto) page, alone, centered both axes,
+  // light serif italic. No page number, no header. The
+  // text floats in white space — convention for dedication
+  // pages in printed books.
+  set page(margin: book_page.margin, numbering: none, header: none)
+  align(center + horizon)[
+    #text(
+      font: body_family,
+      style: "italic",
+      size: 16pt,
+      fill: ink_gray,
+      "… to my wife. With love.",
+    )
+  ]
+  pagebreak()
+
   // ── Table of Contents ──────────────────────────────
   text(font: sans_family, size: 22pt, weight: "bold", fill: ink_black, "Contents")
   v(8mm)
