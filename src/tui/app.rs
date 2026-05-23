@@ -2096,6 +2096,13 @@ enum Modal {
         all_results: Vec<ScriptPickerEntry>,
         cursor: usize,
     },
+    /// F8 (1.2.6+) — floating typst-diagnostics list for the
+    /// open paragraph. Pure UI: reads from `opened.typst_diagnostics`
+    /// on every frame, no copy held. Enter on a row moves the
+    /// editor cursor to the diagnostic's line/col.
+    DiagnosticsList {
+        cursor: usize,
+    },
     /// Ctrl+V W (1.2.5+) — story view: floating PNG of the
     /// current book's DOT graph, rendered via `layout-rs` +
     /// `resvg`. `proto` drives the ratatui-image widget;
@@ -5101,6 +5108,42 @@ impl App {
     /// paragraph body with the leading `= Title` heading stripped, ready to
     /// be passed through `render_template`. Returns None if no such
     /// paragraph exists or its body can't be loaded.
+    /// 1.2.6+ — unified prompt resolver used by F7 / F11 / F12.
+    /// Precedence (highest first):
+    ///
+    ///   1. Paragraph in the Prompts system book whose slug or
+    ///      title matches `name` (case-insensitive) — wins
+    ///      regardless of any `.example` siblings.
+    ///   2. Same-named paragraph with the literal display
+    ///      title (`name.replace('-', ' ')`).
+    ///   3. Entry in `prompts.hjson` named `name`.
+    ///   4. The supplied embedded fallback.
+    ///
+    /// `inkhaven init` seeds `<name>.example` paragraphs into
+    /// the Prompts book for each embedded default so the user
+    /// can review/tune and remove the `.example` suffix to
+    /// take effect.
+    fn resolve_prompt_template(
+        &self,
+        name: &str,
+        fallback: impl FnOnce() -> String,
+    ) -> String {
+        let display = name.replace('-', " ");
+        if let Some(t) = self.lookup_book_prompt_template(name) {
+            return t;
+        }
+        if let Some(t) = self.lookup_book_prompt_template(&display) {
+            return t;
+        }
+        if let Some(p) = self.prompts.find(name) {
+            return p.template.clone();
+        }
+        if let Some(p) = self.prompts.find(&display) {
+            return p.template.clone();
+        }
+        fallback()
+    }
+
     fn lookup_book_prompt_template(&self, name: &str) -> Option<String> {
         let book_id = self.system_book_id(crate::store::SYSTEM_TAG_PROMPTS)?;
         let lower = name.to_lowercase();
@@ -7870,6 +7913,9 @@ impl App {
             A::GrammarCheck => self.start_grammar_check(),
             A::CycleAiMode => self.cycle_ai_mode(),
             A::ToggleInferenceMode => self.toggle_inference_mode(),
+            A::DiagnosticsList => self.open_diagnostics_list(),
+            A::ExplainDiagnostic => self.start_explain_diagnostic(),
+            A::Critique => self.start_critique(),
 
             // Runtime-bound Bund lambda. Dispatch through the
             // hooks machinery so the recursion-cap + policy-deny
@@ -12268,6 +12314,7 @@ impl App {
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
         let is_rendered_preview = matches!(self.modal, Modal::RenderedPreview { .. });
         let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
+        let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
         let is_tag_picker = matches!(self.modal, Modal::TagPicker { .. });
         let is_tag_add_prompt = matches!(self.modal, Modal::TagAddPrompt { .. });
         let is_tag_delete_confirm = matches!(self.modal, Modal::TagDeleteConfirm { .. });
@@ -12551,6 +12598,10 @@ impl App {
             return Ok(false);
         }
 
+        if is_diagnostics_list {
+            self.diagnostics_list_handle_key(key);
+            return Ok(false);
+        }
         if is_tag_picker {
             self.tag_picker_handle_key(key);
             return Ok(false);
@@ -13433,6 +13484,349 @@ impl App {
                 ],
             );
         }
+    }
+
+    /// F8 (1.2.6+) — open the typst-diagnostics list modal.
+    /// Refreshes the diagnostic cache up-front so the modal
+    /// reflects the live buffer, not the last save.
+    fn open_diagnostics_list(&mut self) {
+        if self.opened.is_none() {
+            self.status = "F8 diagnostics: no paragraph open".into();
+            return;
+        }
+        self.refresh_typst_diagnostics_for_opened();
+        let count = self
+            .opened
+            .as_ref()
+            .map(|d| d.typst_diagnostics.len())
+            .unwrap_or(0);
+        if count == 0 {
+            self.status = "F8 diagnostics: no typst diagnostics in this buffer".into();
+            return;
+        }
+        self.modal = Modal::DiagnosticsList { cursor: 0 };
+        self.status = format!(
+            "diagnostics ({count}) · ↑↓ select · Enter jumps · Esc closes"
+        );
+    }
+
+    fn diagnostics_list_handle_key(&mut self, key: KeyEvent) {
+        let total = self
+            .opened
+            .as_ref()
+            .map(|d| d.typst_diagnostics.len())
+            .unwrap_or(0);
+        if total == 0 {
+            return;
+        }
+        match key.code {
+            KeyCode::Up => {
+                if let Modal::DiagnosticsList { cursor } = &mut self.modal {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::DiagnosticsList { cursor } = &mut self.modal {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+            }
+            KeyCode::Home => {
+                if let Modal::DiagnosticsList { cursor } = &mut self.modal {
+                    *cursor = 0;
+                }
+            }
+            KeyCode::End => {
+                if let Modal::DiagnosticsList { cursor } = &mut self.modal {
+                    *cursor = total.saturating_sub(1);
+                }
+            }
+            KeyCode::Enter => {
+                let Modal::DiagnosticsList { cursor } = self.modal else {
+                    return;
+                };
+                let Some(diag) = self
+                    .opened
+                    .as_ref()
+                    .and_then(|d| d.typst_diagnostics.get(cursor).cloned())
+                else {
+                    return;
+                };
+                self.modal = Modal::None;
+                if let Some(doc) = self.opened.as_mut() {
+                    let row = diag.line.saturating_sub(1) as u16;
+                    let col = diag.col.saturating_sub(1) as u16;
+                    doc.textarea
+                        .move_cursor(tui_textarea::CursorMove::Jump(row, col));
+                }
+                self.change_focus(Focus::Editor);
+                self.status = format!(
+                    "diag · line {}:{} — {}",
+                    diag.line, diag.col, diag.message
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn draw_diagnostics_list_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::DiagnosticsList { cursor } = &self.modal else {
+            return;
+        };
+        let diags: Vec<crate::typst_check::TypstDiagnostic> = self
+            .opened
+            .as_ref()
+            .map(|d| d.typst_diagnostics.clone())
+            .unwrap_or_default();
+        let total = diags.len();
+
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Typst diagnostics ({total}) "))
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+
+        let scroll = if *cursor >= body_h {
+            cursor - body_h + 1
+        } else {
+            0
+        };
+        let lines: Vec<Line<'_>> = diags
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(body_h)
+            .map(|(i, d)| {
+                let head = format!(" line {:>4}:{:<3} ", d.line, d.col);
+                let line = Line::from(vec![
+                    Span::styled(
+                        head,
+                        Style::default()
+                            .fg(Color::Red)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(d.message.clone()),
+                ]);
+                if i == *cursor {
+                    line.style(Style::default().add_modifier(Modifier::REVERSED))
+                } else {
+                    line
+                }
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ select · Enter jumps cursor · Esc closes ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    /// F11 (1.2.6+) — send the typst diagnostic at the cursor
+    /// (or the closest one) to the AI pane with the
+    /// configured explain-or-fix prompt. Surrounds the
+    /// diagnostic with ±5 context lines so the model sees the
+    /// problem and what's around it without the whole file.
+    fn start_explain_diagnostic(&mut self) {
+        // Force a refresh so we explain the live state, not the
+        // cached one.
+        self.refresh_typst_diagnostics_for_opened();
+        let (diag, body, title) = match self.opened.as_ref() {
+            Some(doc) => {
+                if doc.typst_diagnostics.is_empty() {
+                    self.status =
+                        "F11 explain: no typst diagnostics in this buffer".into();
+                    return;
+                }
+                let (cur_row, _) = doc.textarea.cursor();
+                let cur1 = cur_row + 1;
+                // Pick the diagnostic closest to the cursor row.
+                let picked = doc
+                    .typst_diagnostics
+                    .iter()
+                    .min_by_key(|d| {
+                        ((d.line as i64) - (cur1 as i64)).abs()
+                    })
+                    .cloned();
+                let Some(d) = picked else {
+                    self.status =
+                        "F11 explain: no diagnostic to anchor on".into();
+                    return;
+                };
+                let body = doc.textarea.lines().join("\n");
+                (d, body, doc.title.clone())
+            }
+            None => {
+                self.status = "F11 explain: no paragraph open".into();
+                return;
+            }
+        };
+
+        // ±5 lines of context around the diagnostic.
+        let lines: Vec<&str> = body.lines().collect();
+        let lo = diag.line.saturating_sub(6); // 0-based
+        let hi = (diag.line + 4).min(lines.len()); // exclusive
+        let mut context = String::new();
+        for (idx_zero, line) in lines.iter().enumerate().take(hi).skip(lo) {
+            let lineno = idx_zero + 1;
+            let mark = if lineno == diag.line { ">> " } else { "   " };
+            context.push_str(&format!("{mark}{lineno:>4}  {line}\n"));
+        }
+
+        let template = self.resolve_prompt_template("explain-diagnostic", || {
+            explain_diagnostic_default_prompt().to_string()
+        });
+        let rendered = self.render_template(&template);
+        let prompt_text = format!(
+            "{rendered}\n\n── Diagnostic ──\nline {line}:{col} — {msg}\n── end ──\n\n── Context (paragraph: {title}) ──\n{context}── end context ──",
+            line = diag.line,
+            col = diag.col,
+            msg = diag.message,
+        );
+
+        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("F11 explain: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            None,
+            Vec::new(),
+            prompt_text,
+        );
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        self.change_focus(Focus::Ai);
+        self.status = format!(
+            "Explaining typst diagnostic at line {}:{} via {provider}…",
+            diag.line, diag.col,
+        );
+    }
+
+    /// F12 (1.2.6+) — AI critique of the open paragraph. Mode-
+    /// aware: when split-edit (F4) is active, sends the
+    /// "evaluate-changes" prompt with both the snapshot and
+    /// the live buffer; otherwise sends the "critique-edit"
+    /// prompt with just the live buffer. Both prompt names
+    /// resolve via the standard Prompts-book → prompts.hjson
+    /// → embedded precedence.
+    fn start_critique(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "F12 critique: no paragraph open".into();
+            return;
+        };
+        let body = doc.textarea.lines().join("\n");
+        if body.trim().is_empty() {
+            self.status = "F12 critique: paragraph is empty".into();
+            return;
+        }
+        let title = doc.title.clone();
+        let split_baseline = doc
+            .split
+            .as_ref()
+            .map(|s| s.snapshot_lines.join("\n"));
+
+        let (prompt_name, embedded): (&str, fn() -> &'static str) =
+            if split_baseline.is_some() {
+                ("critique-changes", || critique_changes_default_prompt())
+            } else {
+                ("critique-edit", || critique_edit_default_prompt())
+            };
+        let template = self
+            .resolve_prompt_template(prompt_name, || embedded().to_string());
+        let rendered = self.render_template(&template);
+
+        let prompt_text = match split_baseline.as_ref() {
+            Some(baseline) => format!(
+                "{rendered}\n\n── Before (snapshot) ──\n{baseline}\n── end before ──\n\n── After (current buffer of `{title}`) ──\n{body}\n── end after ──",
+            ),
+            None => format!(
+                "{rendered}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──",
+            ),
+        };
+
+        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("F12 critique: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            None,
+            Vec::new(),
+            prompt_text,
+        );
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        self.change_focus(Focus::Ai);
+        self.status = format!(
+            "F12 critique (`{prompt_name}`): streaming from {provider}…",
+        );
     }
 
     /// Ctrl+V N (1.2.5+) — move the editor cursor to the next
@@ -16178,6 +16572,10 @@ impl App {
             self.draw_story_view_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::DiagnosticsList { .. }) {
+            self.draw_diagnostics_list_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SaveStoryPng { .. }) {
             self.draw_save_story_png_modal(f, area);
             return;
@@ -16229,6 +16627,8 @@ impl App {
                 unreachable!("tag search results handled above"),
             Modal::StoryView { .. } =>
                 unreachable!("story view handled above"),
+            Modal::DiagnosticsList { .. } =>
+                unreachable!("diagnostics list handled above"),
             Modal::SaveStoryPng { .. } =>
                 unreachable!("save story png handled above"),
             Modal::TagAddPrompt { input, .. } => {
@@ -20415,7 +20815,7 @@ const CORRECTED_END: &str = "<<<END>>>";
 /// Fallback prompt body for F7 grammar check when no user-defined
 /// `Grammar check` prompt exists in the Prompts book or `prompts.hjson`.
 /// The configured `language` from the HJSON drives the grammar rules.
-fn grammar_check_default_prompt(language: &str) -> String {
+pub(crate) fn grammar_check_default_prompt(language: &str) -> String {
     let lang = if language.trim().is_empty() {
         "English"
     } else {
@@ -20428,6 +20828,35 @@ that's grammatically incorrect according to standard {lang} grammar. \
 Typst markup may be present — preserve it verbatim in any corrected \
 output. After listing issues, give the fully corrected paragraph."
     )
+}
+
+/// 1.2.6+ — embedded fallback for F11 explain-diagnostic.
+pub(crate) fn explain_diagnostic_default_prompt() -> &'static str {
+    "A Typst compiler diagnostic is shown below with the surrounding source. \
+Explain in plain English what the diagnostic means, why it likely fired in \
+this context, and the most plausible one-line fix. If the diagnostic is a \
+false positive — e.g. the paragraph references a function defined in the \
+book's preamble that isn't visible to this isolated compile — say so and \
+move on. Keep the answer tight and actionable."
+}
+
+/// 1.2.6+ — embedded fallback for F12 critique in editor mode.
+pub(crate) fn critique_edit_default_prompt() -> &'static str {
+    "Read the paragraph below as a draft. Point out the weakest two or three \
+elements: vague verbs, abstract nouns where the concrete would land harder, \
+sentences that lose the reader, rhythm that flattens, claims that wobble, \
+imagery that doesn't earn its place. Be specific — quote the exact phrase \
+and propose a tighter alternative. Do NOT rewrite the whole paragraph; \
+critique it. Be honest, not destructive."
+}
+
+/// 1.2.6+ — embedded fallback for F12 critique in split-edit mode.
+pub(crate) fn critique_changes_default_prompt() -> &'static str {
+    "Two versions of the same paragraph are shown below: a `Before` snapshot \
+and the current `After` buffer. Identify what the revision changed (added / \
+removed / reordered), and evaluate whether each change is an improvement, a \
+regression, or neutral. Quote the specific phrases that moved. End with one \
+suggestion for what the next revision pass should focus on."
 }
 
 /// System prompt for the F1 / "Help!" RAG flow. We force the model to

@@ -202,6 +202,23 @@ pub enum Action {
     /// F10 anywhere — toggle inference mode (Local ↔ Full).
     #[serde(rename = "ai.toggle_inference_mode")]
     ToggleInferenceMode,
+    /// F8 (1.2.6+) — open the floating typst-diagnostics list
+    /// modal. Lists every parse / semantic diagnostic in the
+    /// open paragraph with line:col + message; Enter jumps the
+    /// editor cursor.
+    #[serde(rename = "editor.diagnostics_list")]
+    DiagnosticsList,
+    /// F11 (1.2.6+) — send the typst diagnostic at the cursor
+    /// (or nearest one, with surrounding context) to the AI
+    /// pane with an explain-or-fix prompt.
+    #[serde(rename = "editor.explain_diagnostic")]
+    ExplainDiagnostic,
+    /// F12 (1.2.6+) — AI critique of the open paragraph. In the
+    /// editor: "what's weak" prompt. In split-edit (F4) mode:
+    /// "evaluate changes" prompt. Prompt resolution: Prompts
+    /// book paragraph → prompts.hjson entry → embedded default.
+    #[serde(rename = "editor.critique")]
+    Critique,
 
     // ── View prefix (1.2.4+, default Ctrl+V) ──────────────────
     /// Ctrl+V 1 (Editor) — write the open paragraph's live buffer
@@ -350,6 +367,9 @@ impl Action {
             Action::AcceptSplitSnapshot => "accept snap".into(),
             Action::OpenSnapshotPicker => "snapshots".into(),
             Action::GrammarCheck => "grammar".into(),
+            Action::DiagnosticsList => "diags".into(),
+            Action::ExplainDiagnostic => "explain diag".into(),
+            Action::Critique => "critique".into(),
             Action::CycleAiMode => "AI mode".into(),
             Action::ToggleInferenceMode => "infer mode".into(),
 
@@ -491,6 +511,12 @@ impl Action {
                 "Open the snapshot picker for the current paragraph (↑↓ navigate · Enter loads · V diff · D delete).".into(),
             Action::GrammarCheck =>
                 "Grammar-check the open paragraph — runs the configured F7 prompt against the AI, applies via `g` in the AI pane.".into(),
+            Action::DiagnosticsList =>
+                "Open the floating typst-diagnostics list. Enter on a row jumps the editor cursor to that diagnostic.".into(),
+            Action::ExplainDiagnostic =>
+                "Send the typst diagnostic at the cursor (with surrounding context lines) to the AI pane with the configured explain-or-fix prompt.".into(),
+            Action::Critique =>
+                "AI critique of the open paragraph. In edit mode: 'what's weak' prompt. In split-edit mode: 'evaluate changes' prompt. Prompt resolution: Prompts book > prompts.hjson > embedded default.".into(),
             Action::CycleAiMode =>
                 "Cycle AI scope: None → Selection → Paragraph → Subchapter → Chapter → Book → None.".into(),
             Action::ToggleInferenceMode =>
@@ -694,9 +720,15 @@ impl KeyBindings {
                 entry("F6", Action::OpenSnapshotPicker, Scope::Editor),
                 // F7 — grammar check.
                 entry("F7", Action::GrammarCheck, Scope::Editor),
+                // F8 (1.2.6+) — typst diagnostics list modal.
+                entry("F8", Action::DiagnosticsList, Scope::Editor),
                 // F9 / F10 — global AI mode + inference toggle.
                 entry("F9", Action::CycleAiMode, Scope::Any),
                 entry("F10", Action::ToggleInferenceMode, Scope::Any),
+                // F11 (1.2.6+) — AI explain the diagnostic at the cursor.
+                entry("F11", Action::ExplainDiagnostic, Scope::Editor),
+                // F12 (1.2.6+) — AI critique (mode-aware).
+                entry("F12", Action::Critique, Scope::Editor),
             ],
         }
     }

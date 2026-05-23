@@ -62,7 +62,23 @@ pub fn run(path: &Path, force: bool) -> Result<()> {
 
     // Open the document store. This creates `metadata.db` + `vecstore/`.
     // First-run embedding-model download (if needed) happens here.
-    let _store = Store::open(layout.clone(), &cfg)?;
+    let store = Store::open(layout.clone(), &cfg)?;
+
+    // 1.2.6+ — seed the Prompts book with `<name>.example`
+    // paragraphs carrying every embedded default prompt
+    // inkhaven knows about (F7 grammar-check, F11 explain-
+    // diagnostic, F12 critique-edit + critique-changes). The
+    // user reviews / tunes the body, then renames to drop the
+    // `.example` suffix to take effect — without that suffix,
+    // inkhaven keeps using the built-in default.
+    if let Err(e) = seed_prompt_examples(&cfg, &store) {
+        // Non-fatal — the user can `inkhaven add ¶` these
+        // later if seeding hiccups for any reason.
+        tracing::warn!(
+            target: "inkhaven::init",
+            "could not seed Prompts.book examples: {e}",
+        );
+    }
 
     eprintln!("Initialized inkhaven project at {}", layout.root.display());
     eprintln!("  config:    {}", layout.config_path().display());
@@ -70,6 +86,114 @@ pub fn run(path: &Path, force: bool) -> Result<()> {
     eprintln!("  store db:  {}", layout.metadata_db_path().display());
     eprintln!("  vecstore:  {}", layout.vecstore_path().display());
     eprintln!("  books:     {}", layout.books_path().display());
+    Ok(())
+}
+
+/// 1.2.6+ — seed every embedded prompt as a `<name>.example`
+/// paragraph in the Prompts system book. The paragraph body is
+/// the embedded fallback prompt verbatim, preceded by a short
+/// `// ` Typst-comment intro that explains the lookup rule. The
+/// user reviews, tunes, then renames the paragraph to drop the
+/// `.example` suffix — at that point the resolver picks it up
+/// and the F-key uses the user's prompt instead of the
+/// embedded default.
+fn seed_prompt_examples(cfg: &Config, store: &Store) -> Result<()> {
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::{
+        InsertPosition, NodeKind, SYSTEM_TAG_PROMPTS,
+    };
+
+    let lang = if cfg.language.trim().is_empty() {
+        "English".to_owned()
+    } else {
+        cfg.language.trim().to_owned()
+    };
+
+    // (paragraph_title, body) tuples. Title carries the `.example`
+    // suffix so it's clearly inert until the user renames.
+    let seeds: [(&str, String); 4] = [
+        (
+            "grammar-check.example",
+            format!(
+                "// F7 — grammar check the open paragraph.\n\
+                 // Rename this paragraph to `grammar-check` (drop `.example`)\n\
+                 // to take effect; until then inkhaven uses the built-in default.\n\n\
+                 {}\n",
+                crate::tui::app::grammar_check_default_prompt(&lang),
+            ),
+        ),
+        (
+            "explain-diagnostic.example",
+            format!(
+                "// F11 — AI-explain the typst diagnostic at the cursor.\n\
+                 // Rename to `explain-diagnostic` to take effect.\n\n\
+                 {}\n",
+                crate::tui::app::explain_diagnostic_default_prompt(),
+            ),
+        ),
+        (
+            "critique-edit.example",
+            format!(
+                "// F12 (editor mode) — what's weak about the open paragraph.\n\
+                 // Rename to `critique-edit` to take effect.\n\n\
+                 {}\n",
+                crate::tui::app::critique_edit_default_prompt(),
+            ),
+        ),
+        (
+            "critique-changes.example",
+            format!(
+                "// F12 (split-edit mode) — evaluate the changes from the snapshot.\n\
+                 // Rename to `critique-changes` to take effect.\n\n\
+                 {}\n",
+                crate::tui::app::critique_changes_default_prompt(),
+            ),
+        ),
+    ];
+
+    let hierarchy = Hierarchy::load(store)?;
+    // Find the Prompts system book.
+    let prompts_book = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(SYSTEM_TAG_PROMPTS)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Store("Prompts system book missing after Store::open".into())
+        })?;
+
+    for (title, body) in &seeds {
+        // Reload hierarchy each pass so subsequent lookups see
+        // freshly-added siblings (mirrors the typst-skeleton
+        // seeding pattern in store/mod.rs).
+        let h = Hierarchy::load(store)?;
+        let already = h.iter().any(|n| {
+            n.kind == NodeKind::Paragraph
+                && n.parent_id == Some(prompts_book.id)
+                && n.title.eq_ignore_ascii_case(title)
+        });
+        if already {
+            continue;
+        }
+        let mut created = store.create_node(
+            cfg,
+            &h,
+            NodeKind::Paragraph,
+            title,
+            Some(&prompts_book),
+            None,
+            InsertPosition::End,
+        )?;
+        // Overwrite the auto-`= Title\n\n` skeleton with the
+        // embedded prompt.
+        if let Some(rel) = &created.file {
+            let abs = store.project_root().join(rel);
+            std::fs::write(&abs, body.as_bytes()).map_err(Error::Io)?;
+            store.update_paragraph_content(&mut created, body.as_bytes())?;
+        }
+    }
     Ok(())
 }
 
