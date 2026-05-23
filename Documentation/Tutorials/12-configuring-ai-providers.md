@@ -195,6 +195,45 @@ the configured `typst_compile.error_system_prompt` — the model
 gets enough context about inkhaven's file layout to diagnose the
 problem from scratch.
 
+## Privacy posture
+
+Inkhaven does **not** provide inherent privacy when one of
+the five cloud providers (Gemini, Claude, OpenAI, DeepSeek,
+Grok) is configured. Every prompt + every RAG-attached
+paragraph travels to that provider's servers under their
+terms of service. They may log, train on, or otherwise
+retain what you send. The chord interface
+(`F9` / `F10` / `Ctrl+B L` / `Ctrl+B C`) gives you scope
+and mode control, but it doesn't change that something
+left your machine the moment you pressed the chord.
+
+For **increased privacy**, set
+`llm.default_provider: "ollama"` and run a local Ollama
+instance. Every inkhaven AI feature (F7 grammar, F12
+critique, Ctrl+F12 explain, F1 Help RAG, timeline
+critique, chat, per-paragraph memory) then runs locally.
+Inkhaven's other AI-adjacent subsystems are already
+on-device:
+
+- RAG embedding (fastembed → ONNX runtime, no network)
+- Semantic search (HNSW vector store, no network)
+- Snapshot diff, lexicon stemming (pure Rust, no network)
+
+Ollama closes the loop on the LLM itself.
+
+```hjson
+llm: {
+  default_provider: "ollama"
+  ollama: { model: "qwen2.5:7b" }
+}
+```
+
+You can still keep the other providers configured —
+`Ctrl+B L` switches per-session — but the default
+provider decides where unattended AI chords (idle hooks
+firing critiques, auto-suggest-event, etc.) send their
+prompts.
+
 ## Next steps
 
 - [`13-ai-full-screen-mode.md`](13-ai-full-screen-mode.md) — the

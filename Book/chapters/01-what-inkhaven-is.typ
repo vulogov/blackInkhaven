@@ -4,42 +4,52 @@
   title: "What Inkhaven is")
 
 #dropcap("I")nkhaven is a single binary that, when you run it
-in a project directory, paints a four-pane terminal user
-interface and lets you write a book. Behind the panes sits
-a small database that stores every paragraph as a node in
-a tree, every snapshot, every wiki-link, every tag — and an
-indexer that makes the manuscript searchable both
+in a project directory, paints a terminal user interface
+laid out as three panes in the middle, with a search input
+at the top and an AI prompt input at the bottom. Behind the
+panes sits a small database that stores every paragraph as a
+node in a tree, every snapshot, every wiki-link, every tag —
+and an indexer that makes the manuscript searchable both
 semantically (by meaning) and by exact text.
 
 That's the whole shape. Everything else this book teaches
 you is a way of moving through that tree, sending parts of
 it to a language model, or rendering it to Typst.
 
-#section("The four panes")
+#section("The layout")
 
 #figure_slot(
   id: "tui-overview",
-  caption: "The four-pane layout: Tree (left), Editor (centre), AI (right). Search bar runs along the bottom; status line under that.",
+  caption: "The layout: search input along the top; three panes in the middle — Tree (left), Editor (centre), AI (right); AI prompt input along the bottom; status line beneath. Modal pickers temporarily replace one or more of the centre panes.",
   height: 70mm,
 )
 
-The #strong[Tree pane] (left) shows the manuscript as a folder
-hierarchy. Books contain chapters; chapters contain
+The #strong[Search input] (top) is dual-mode: type a query,
+hit Enter, and the result list overlays the tree pane.
+
+The #strong[Tree pane] (centre-left) shows the manuscript as
+a folder hierarchy. Books contain chapters; chapters contain
 subchapters or paragraphs; paragraphs contain prose.
 
 The #strong[Editor pane] (centre) holds the open paragraph.
 This is where you type. Saves go to disk and the database
 together; nothing waits in unsaved buffers when you Ctrl+S.
 
-The #strong[AI pane] (right) holds the conversation with the
-language model. By default it's a chat history; in
+The #strong[AI pane] (centre-right) holds the conversation
+with the language model. By default it's a chat history; in
 full-screen mode (`Ctrl+B K`) it grows to fill the screen
 when you want to think aloud with the model for a stretch.
 
-The #strong[Search bar] (bottom) is dual-mode: type a query,
-hit Enter, and the result list overlays the tree pane.
+The #strong[AI prompt input] (bottom) is where you type
+prompts to send to the language model. `Ctrl+I` focuses it
+from any pane.
 
-#section("Local first")
+Modal pickers (`Ctrl+V P` fuzzy finder, `Ctrl+B ]` tag
+picker, `F6` snapshot picker, the swim-lane timeline view,
+the AI diff modal, …) temporarily replace one or more
+panes; Esc returns to the previous layout.
+
+#section("Local first — with one caveat")
 
 Every byte you write lives in one folder. The database is
 DuckDB; the prose is Typst markup; the vectors live next to
@@ -52,6 +62,22 @@ Inkhaven does not phone home, does not require an account,
 does not require an internet connection unless you ask
 the AI pane for help. The first time you run it, no
 analytics, no telemetry, no welcome video. Just a TUI.
+
+#callout(label: "Privacy when using AI")[
+  Inkhaven does *not* provide inherent privacy when you
+  use one of the external LLM providers (Gemini, Claude,
+  OpenAI, DeepSeek, Grok). Every prompt + RAG-attached
+  paragraph travels to that provider's servers under their
+  terms of service. They may log, train on, or otherwise
+  retain what you send.
+
+  For *increased privacy*, set
+  `llm.default_provider: "ollama"` and run a local Ollama
+  instance. Every other inkhaven subsystem (RAG embedding,
+  semantic search, snapshot diff, vector store) is already
+  on-device — Ollama closes the last loop and keeps every
+  byte on your machine. See Chapter 18 for setup.
+]
 
 #section("Typst as the typesetter")
 

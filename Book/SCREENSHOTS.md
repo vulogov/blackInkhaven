@@ -39,7 +39,7 @@ Each table column:
 
 | id | state | caption |
 |----|-------|---------|
-| `tui-overview` | Default 4-pane layout with a small book loaded, a paragraph open in the editor, AI pane showing one chat turn. | The four-pane layout: Tree (left), Editor (centre), AI (right). Search bar runs along the bottom; status line under that. |
+| `tui-overview` | Default layout with a small book loaded, a paragraph open in the editor, AI pane showing one chat turn. The full TUI must be visible: search input at the top, three centre panes (Tree · Editor · AI), AI prompt input at the bottom, status line beneath. | The layout: search input along the top; three panes in the middle — Tree (left), Editor (centre), AI (right); AI prompt input along the bottom; status line beneath. Modal pickers temporarily replace one or more of the centre panes. |
 
 ### Chapter 2 — Installation and your first book
 

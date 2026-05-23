@@ -3,15 +3,16 @@
 #chapter(number: 19, part: "Part VI — Working with AI",
   title: "The AI pane")
 
-#dropcap("T")he AI pane is the right column of the four-pane
-layout. It holds a chat history, an inference status, a
-prompt input at the bottom, and a set of chords that apply
-the AI's last response to the editor.
+#dropcap("T")he AI pane is the right column of the three
+centre panes. It holds the chat history and the inference
+status; the prompt input sits at the bottom of the screen
+(`Ctrl+I` focuses it). A set of chords applies the AI's
+last response to the editor.
 
 #section("Two layouts")
 
 #chord_table((
-  chord_row("Default (4-pane)", "AI pane is the right column."),
+  chord_row("Default (3-pane centre)", "AI pane is the right column of the three centre panes."),
   chord_row("Ctrl+B K (full-screen)", "AI pane fills the screen. Editor + tree hidden; the entire space is conversation."),
 ))
 

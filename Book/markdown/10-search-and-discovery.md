@@ -4,7 +4,7 @@ Every paragraph you save gets embedded into a vector store. The result: inkhaven
 
 ## The search bar
 
-`Ctrl+/` focuses the search bar at the bottom of the screen. Type, Enter. Results overlay the tree pane.
+`Ctrl+/` focuses the search input at the top of the screen. Type, Enter. Results overlay the tree pane.
 
 ![figure: search-results](images/search-results.png) — Search results overlay. Semantic similarity scores on the left, exact-text match icon on the right. Arrows + Enter open.
 

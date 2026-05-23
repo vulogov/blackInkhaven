@@ -62,7 +62,7 @@ switch away, undo no longer reaches back. Snapshots
 #chord_table((
   chord_row("Ctrl+F", "In-buffer find. Type, Enter, n / N walk hits."),
   chord_row("Ctrl+H", "In-buffer find-and-replace. Y/n/a per hit."),
-  chord_row("Ctrl+/", "Focus the project-wide search bar at the bottom of the screen."),
+  chord_row("Ctrl+/", "Focus the project-wide search input at the top of the screen."),
 ))
 
 Project-wide search (`Ctrl+/`) is a different beast — covered

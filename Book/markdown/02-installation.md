@@ -36,7 +36,7 @@ cd ~/Documents/MyBook
 inkhaven
 ```
 
-The four-pane layout paints. Tree is empty (no user books yet, just the system ones).
+The TUI paints — search input at the top, three panes in the middle (Tree · Editor · AI), AI prompt input at the bottom. Tree is empty (no user books yet, just the system ones).
 
 ## Add your first book
 

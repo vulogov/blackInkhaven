@@ -48,7 +48,7 @@ The undo stack lives in the editor widget, not the database. Closing the paragra
 |-------|--------------|
 | Ctrl+F | In-buffer find. Type, Enter, n / N walk hits. |
 | Ctrl+H | In-buffer find-and-replace. Y/n/a per hit. |
-| Ctrl+/ | Focus the project-wide search bar at the bottom of the screen. |
+| Ctrl+/ | Focus the project-wide search input at the top of the screen. |
 
 Project-wide search (`Ctrl+/`) is a different beast — covered in Chapter 10 with semantic + full-text strategies.
 

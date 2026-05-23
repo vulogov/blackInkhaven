@@ -196,6 +196,12 @@ Every prior release lives under [`Documentation/RELEASE_NOTES/`](Documentation/R
   **scope** (selection / paragraph / subchapter / chapter / book), the
   **mode** (Local-only RAG vs. Full general knowledge), and the
   **destination** (replace, insert, top, bottom, copy, grammar-apply).
+  Inkhaven does NOT provide inherent privacy when external providers
+  (Gemini / Claude / OpenAI / DeepSeek / Grok) are used — prompts
+  travel to their servers under their terms. For privacy, set
+  `llm.default_provider: "ollama"` and run a local model; every other
+  inkhaven subsystem (RAG embedding, semantic search, snapshot diff)
+  is already on-device.
 - **Multilingual.** Snowball stemmers and multilingual embeddings make
   Russian, German, French, Spanish, Italian and others first-class. The
   shipped defaults cover English and Russian.

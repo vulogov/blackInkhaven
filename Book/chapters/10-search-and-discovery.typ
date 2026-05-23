@@ -10,7 +10,7 @@ remember the words; you can search for the idea.
 
 #section("The search bar")
 
-`Ctrl+/` focuses the search bar at the bottom of the screen.
+`Ctrl+/` focuses the search input at the top of the screen.
 Type, Enter. Results overlay the tree pane.
 
 #figure_slot(

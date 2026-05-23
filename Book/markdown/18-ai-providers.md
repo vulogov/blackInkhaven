@@ -76,7 +76,24 @@ The default mode for cloud providers is Full + Paragraph scope — substantial b
 
 If you're using a cloud provider heavily, set `ai.per_paragraph_memory_max_turns` to something modest (default 10 → consider 4-6) so paragraph-scoped chats don't grow unbounded.
 
-> **If you want totally local:** Set `llm.default_provider: "ollama"` + run any local model. Nothing leaves your machine. Inkhaven's RAG pipelines, embedding, and search are all already local; the LLM is the last network call to silence.
+## Privacy
+
+This deserves its own section. The five cloud providers (Gemini, Claude, OpenAI, DeepSeek, Grok) are not private. Every prompt you send + every RAG-attached paragraph travels to the provider's servers. They handle that data under their terms of service — which usually means they may log it, train future models on it, retain it under regulatory holds, or all three. The same applies to F1 Help RAG, F7 grammar check, F12 critique, Ctrl+F12 explain, and the timeline health critique — every one of these chords sends content to the configured provider.
+
+Inkhaven gives you the controls — `F9` (scope), `F10` (Local vs Full inference mode), `Ctrl+B L` (provider switch), `Ctrl+B C` (clear chat history) — but the controls don't change the fact that something left your machine the moment you pressed the chord.
+
+> **For increased privacy: Ollama.** Set `llm.default_provider: "ollama"` and run a local Ollama instance (Linux / macOS: install via `brew install ollama` or the official Linux script; Windows: `winget install Ollama.Ollama`). Pull a model with `ollama pull qwen2.5:7b` (or any other model). At that point *every* inkhaven AI feature — F7 / F12 / Ctrl+F12 / F1 / timeline critique / chat / per-paragraph memory / suggest-event — runs on your machine. Nothing leaves the host except prose you've explicitly sent.
+>
+> Inkhaven's other AI-adjacent subsystems are already on-device by design:
+>
+> - RAG embedding (fastembed → ONNX runtime, no network)
+> - Semantic search (HNSW vector store, no network)
+> - Snapshot diff (pure Rust, no network)
+> - Spell/lex highlighting (Snowball, no network)
+>
+> Ollama closes the loop on the LLM itself.
+
+If you write entirely without AI, inkhaven works fully without a provider configured. Every non-AI feature in the book stands on its own. The chords just land helpful hints when there's no provider behind them.
 
 ## Configuring per-provider
 
@@ -97,4 +114,4 @@ The full reference is in Appendix B + `Documentation/CONFIGURATION.md`.
 - API keys live in environment variables; HJSON only names the model + default provider.
 - `Ctrl+B L` switches provider live (per session).
 - `F10` toggles Local vs Full inference mode; `F9` cycles RAG scope.
-- Ollama for fully-local; cloud providers for heavier critique.
+- Five cloud providers offer no inherent privacy. For privacy, use Ollama — every other inkhaven subsystem is already on-device.
