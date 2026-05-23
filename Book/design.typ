@@ -63,8 +63,20 @@
 // Chapter opening. Use once at the top of each chapter:
 //   #chapter(number: 3, part: "Part I — Foundations",
 //     title: "The Project Tree")
+//
+// Emits a hidden `heading(level: 1, ...)` first so the
+// outline() in the front matter + the PDF bookmarks pick
+// up the chapter title. The visible chapter display is
+// then hand-laid below (number + title + rule).
 #let chapter(number: 0, part: "", title: "") = {
   pagebreak(weak: true, to: "odd")
+  hide(heading(
+    level: 1,
+    numbering: none,
+    outlined: true,
+    bookmarked: true,
+    [#str(number) — #title],
+  ))
   v(2cm)
   align(left)[
     #if part != "" {
@@ -102,6 +114,13 @@
 // letter instead of a number.
 #let appendix(letter: "A", title: "") = {
   pagebreak(weak: true, to: "odd")
+  hide(heading(
+    level: 1,
+    numbering: none,
+    outlined: true,
+    bookmarked: true,
+    [Appendix #letter — #title],
+  ))
   v(2cm)
   align(left)[
     #text(
@@ -133,8 +152,11 @@
   v(1cm)
 }
 
-// Section heading inside a chapter.
+// Section heading inside a chapter. Emits a hidden
+// `heading(level: 2)` for outline depth-2 entries; the
+// visible heading is then drawn below in custom sans.
 #let section(title) = {
+  hide(heading(level: 2, numbering: none, outlined: true, title))
   v(8mm)
   text(font: sans_family, size: 14pt, weight: "bold", fill: ink_black, title)
   v(1mm)
@@ -308,24 +330,17 @@
   // Top-of-chapter pages have no header.
   // (Handled via the `to: "odd"` pagebreak in `chapter`.)
 
-  // ── Title page ─────────────────────────────────────
-  set page(margin: (top: 4cm, bottom: 2.5cm, x: 2.5cm), numbering: none, header: none)
-  align(center + horizon)[
-    #text(font: sans_family, size: 10pt, fill: ink_gray, tracking: 4pt, upper("The"))
-    #v(-6mm)
-    #text(font: body_family, size: 56pt, weight: "regular", fill: ink_black, "Book of")
-    #v(-12mm)
-    #text(font: body_family, size: 96pt, weight: "bold", fill: ink_accent, "Inkhaven")
-    #v(6mm)
-    #text(font: body_family, style: "italic", size: 16pt, fill: ink_gray, book_subtitle)
-    #v(3cm)
-    #text(font: sans_family, size: 10pt, fill: ink_black, book_authors.at(0))
-    #v(2mm)
-    #text(font: sans_family, size: 9pt, fill: ink_gray, book_authors.at(1))
-    #v(5cm)
-    #text(font: sans_family, size: 9pt, fill: ink_gray,
-      "Version " + book_version + "  ·  " + book_year)
-  ]
+  // ── Cover page ─────────────────────────────────────
+  // Full-bleed image cover. The PNG is generated from
+  // `images/book-cover-art.typ` (see Book/README.md).
+  // Recompile with:
+  //   typst compile --format png --ppi 300 \
+  //     Book/images/book-cover-art.typ \
+  //     Book/images/book-cover-art.png
+  // The image is sized to fill the page; the cover's
+  // own internal frame + margins handle visual padding.
+  set page(margin: 0pt, numbering: none, header: none)
+  image("images/book-cover-art.png", width: 100%, height: 100%, fit: "cover")
   pagebreak()
 
   // ── Copyright / colophon ────────────────────────────
