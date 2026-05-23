@@ -286,8 +286,17 @@
   // free-form override (anything HJSON doesn't yet expose).
   //
   // typst_page → #set page(...)
-  // typst_fonts → #set text(...) + #set raw(font: ...)
+  // typst_fonts → #set text(...) + #show raw: set text(font: ...)
+  //               (typst 0.11+ — `raw` itself has no `font:` parameter)
   // typst_layout → #set par(...) and optional #set heading(numbering)
+  //
+  // Font defaults are typst's own bundled fonts so a fresh
+  // project compiles cleanly on a vanilla host with no extra
+  // font installs. Override below to taste — the synthesised
+  // header always pairs your pick with the bundled font as a
+  // fallback array, so a missing primary font on the host
+  // still produces a PDF (just with a `warning: unknown font
+  // family` from typst).
   typst_page: {
     paper: "us-letter"
     margin_top: "2.5cm"
@@ -298,9 +307,9 @@
     columns: 1
   }
   typst_fonts: {
-    body: "EB Garamond"
+    body: "Linux Libertine"
     body_size: "11pt"
-    monospace: "JetBrains Mono"
+    monospace: "DejaVu Sans Mono"
     language: "en"
   }
   typst_layout: {
