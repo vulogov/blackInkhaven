@@ -191,6 +191,58 @@ pub struct Node {
     /// entries in the JSON metadata blob (see `AiMemoryTurn`).
     #[serde(default)]
     pub ai_memory: Vec<AiMemoryTurn>,
+
+    /// 1.2.7+ — when set, this paragraph is also a story
+    /// event. Carries start/end ticks (integers from the
+    /// project's calendar epoch), a precision hint for fuzzy
+    /// dates, plus links to characters / places. The
+    /// paragraph body stays free-form prose; the event
+    /// metadata sits alongside, never embedded in body
+    /// markup. Lives under a book's Timeline chapter (see
+    /// `Store::ensure_timeline_chapter`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event: Option<EventData>,
+}
+
+/// 1.2.7+ — story-timeline metadata attached to a paragraph
+/// that doubles as an event marker. None means "not an event"
+/// (the default for every regular paragraph).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct EventData {
+    /// Tick at which the event starts. `i64` so prequels
+    /// (negative values) work directly.
+    pub start_ticks: i64,
+    /// Tick at which the event ends. None = instant event;
+    /// Some(end) = duration `[start, end)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_ticks: Option<i64>,
+    /// Coarsest unit the start_ticks is "real" at — drives
+    /// fuzz windows for AI critique and display truncation.
+    #[serde(default)]
+    pub precision: crate::timeline::Precision,
+    /// Character UUIDs (entries under the Characters system
+    /// book) linked to this event.
+    #[serde(default)]
+    pub characters: Vec<uuid::Uuid>,
+    /// Place UUIDs (entries under the Places system book)
+    /// linked to this event.
+    #[serde(default)]
+    pub places: Vec<uuid::Uuid>,
+    /// Story track / POV / parallel storyline label. None
+    /// resolves to `cfg.timeline.default_track` at display
+    /// time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track: Option<String>,
+}
+
+impl EventData {
+    /// True when this event has no outbound links of any
+    /// kind. The Timeline UI marks such events as `orphan`.
+    pub fn is_orphan(&self, linked_paragraphs: &[uuid::Uuid]) -> bool {
+        linked_paragraphs.is_empty()
+            && self.characters.is_empty()
+            && self.places.is_empty()
+    }
 }
 
 /// 1.2.6+ — one turn in `Node.ai_memory`. `role` is either
@@ -230,6 +282,7 @@ impl Node {
             "bookmark":             self.bookmark,
             "tags":                 self.tags,
             "ai_memory":            self.ai_memory,
+            "event":                self.event,
         })
     }
 
@@ -392,6 +445,10 @@ impl Node {
                 .get("ai_memory")
                 .and_then(|v| serde_json::from_value::<Vec<AiMemoryTurn>>(v.clone()).ok())
                 .unwrap_or_default(),
+            event: obj
+                .get("event")
+                .filter(|v| !v.is_null())
+                .and_then(|v| serde_json::from_value::<EventData>(v.clone()).ok()),
         })
     }
 

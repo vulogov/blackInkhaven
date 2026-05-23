@@ -13,6 +13,7 @@ mod scrivener;
 mod storage;
 mod story_view;
 mod store;
+mod timeline;
 mod tui;
 mod typst_check;
 mod typst_compile;

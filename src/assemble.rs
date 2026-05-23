@@ -643,6 +643,7 @@ mod tests {
             bookmark: false,
             tags: Vec::new(),
             ai_memory: Vec::new(),
+            event: None,
         }
     }
 
