@@ -14893,6 +14893,13 @@ impl App {
             .update_metadata(node.id, node.to_json())
             .map_err(|e| format!("update_metadata: {e}"))?;
         self.store.sync().map_err(|e| format!("sync: {e}"))?;
+        // 1.2.7+ — same hook the CLI / Bund paths fire.
+        crate::scripting::hooks::fire(
+            "hook.on_event_added",
+            vec![rust_dynamic::value::Value::from_string(
+                node.id.to_string(),
+            )],
+        );
         self.reload_hierarchy();
         Ok(())
     }
