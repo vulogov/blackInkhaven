@@ -1163,10 +1163,23 @@ fn select_apply_text(
 }
 
 /// Extract only the corrected-paragraph text from a grammar-check
-/// response. Tries in order: marker block (preferred), last fenced code
-/// block, then everything after a "Corrected …" line. Returns `None` if
-/// none of those patterns match so callers can refuse rather than paste
-/// commentary by mistake.
+/// response. Tries in order:
+///
+///   1. Canonical `<<<CORRECTED>>>` / `<<<END>>>` marker block
+///      (what the system prompt instructs).
+///   2. Relaxed bracket pair — any two-or-more `<` followed by
+///      optional word characters followed by two-or-more `>`
+///      appearing at least twice. Models routinely compress
+///      the canonical markers down to `<<>>` / `<<END>>` /
+///      `<<<corrected>>>`, even when the prompt is explicit;
+///      this catches every variant we've observed in deepseek,
+///      gemini, and gpt-4o-mini drift.
+///   3. Last fenced code block — common when the model
+///      ignores markers entirely.
+///   4. Everything after a "Corrected …" line.
+///
+/// Returns `None` if none of those patterns match so callers
+/// can refuse rather than paste commentary by mistake.
 fn extract_corrected_text(response: &str) -> Option<String> {
     if let Some(begin) = response.find(CORRECTED_BEGIN) {
         let after = &response[begin + CORRECTED_BEGIN.len()..];
@@ -1175,6 +1188,28 @@ fn extract_corrected_text(response: &str) -> Option<String> {
             let cleaned = inner.trim_matches(|c: char| c == '\n' || c == '\r' || c == ' ');
             if !cleaned.is_empty() {
                 return Some(cleaned.to_string());
+            }
+        }
+    }
+    // Relaxed-bracket pass: look for any `<<…>>` token
+    // pattern (two-or-more `<`, optional word chars,
+    // two-or-more `>`). If we find at least two, the content
+    // between the first and the last is the correction. The
+    // word-char gate keeps casual `<<` arrows from triggering;
+    // requiring the same shape on both sides keeps prose
+    // ASCII-art out.
+    if let Ok(re) = regex::Regex::new(r"<<+[A-Za-z_]*>>+") {
+        let positions: Vec<_> = re.find_iter(response).collect();
+        if positions.len() >= 2 {
+            let first = &positions[0];
+            let last = &positions[positions.len() - 1];
+            if last.start() > first.end() {
+                let inner = &response[first.end()..last.start()];
+                let cleaned = inner
+                    .trim_matches(|c: char| c == '\n' || c == '\r' || c == ' ');
+                if !cleaned.is_empty() {
+                    return Some(cleaned.to_string());
+                }
             }
         }
     }
@@ -1243,6 +1278,41 @@ mod corrected_tests {
     fn returns_none_on_empty_or_unmatched() {
         assert!(extract_corrected_text("").is_none());
         assert!(extract_corrected_text("Just commentary, no markers.").is_none());
+    }
+
+    /// 1.2.6+ — models routinely compress the canonical
+    /// markers. We've observed `<<>>` (deepseek), `<<END>>`,
+    /// and `<<<corrected>>>` (lowercase). All should land on
+    /// the relaxed-bracket pass.
+
+    #[test]
+    fn relaxed_empty_brackets_deepseek_drift() {
+        // Exact shape from a deepseek grammar-check reply.
+        let r = "\
+2 grammar issues, otherwise clean
+
++ \"lile\" → \"little\"
++ \"playes\" → \"plays\"
++ \"tha\" → \"the\"
+
+<<>> The little boy plays the fiddle. <<>>
+";
+        let got = extract_corrected_text(r).unwrap();
+        assert_eq!(got, "The little boy plays the fiddle.");
+    }
+
+    #[test]
+    fn relaxed_double_bracket_with_label() {
+        let r = "Summary.\n\n<<CORRECTED>>\n= H\nBody.\n<<END>>\n";
+        let got = extract_corrected_text(r).unwrap();
+        assert_eq!(got, "= H\nBody.");
+    }
+
+    #[test]
+    fn relaxed_lowercase_canonical() {
+        let r = "Summary.\n<<<corrected>>>\nBody.\n<<<end>>>\n";
+        let got = extract_corrected_text(r).unwrap();
+        assert_eq!(got, "Body.");
     }
 
     // 1.2.6+ — `select_apply_text` should auto-prefer a
@@ -21870,14 +21940,18 @@ issue, otherwise clean\").
 correction.
 3. Finally, emit the fully corrected paragraph between the literal markers \
 shown below — nothing else may appear inside the markers, and the markers \
-themselves must appear on their own lines:
+themselves must appear on their own lines, byte-for-byte:
 
 <<<CORRECTED>>>
 (the corrected paragraph, with every Typst markup token preserved)
 <<<END>>>
 
-Do not place commentary inside the markers. The editor pipeline will lift \
-the text between the markers and overwrite the paragraph buffer with it.";
+The markers are LITERAL. Do not abbreviate them to `<<>>`, `<<END>>`, \
+`<<<corrected>>>`, or any other variant — the editor pipeline accepts \
+those shapes as a fallback but the canonical form above keeps round-trip \
+testing reliable. Do not place commentary inside the markers. The editor \
+pipeline will lift the text between the markers and overwrite the \
+paragraph buffer with it.";
 
 /// Markers the grammar-check system prompt instructs the model to wrap
 /// the corrected paragraph in. Kept as named constants so the parser and
