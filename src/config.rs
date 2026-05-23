@@ -1295,9 +1295,10 @@ pub struct OutputConfig {
     pub extra_formats: Vec<String>,
 }
 
-/// 1.2.6+ — AI-pane behaviour. Currently just per-paragraph
-/// memory; future knobs (e.g. ai-pane default scope, max chat
-/// history depth) will land here.
+/// 1.2.6+ — AI-pane behaviour. Currently per-paragraph memory
+/// + the `.example` prompt-seeding switch; future knobs (e.g.
+/// ai-pane default scope, max chat history depth) will land
+/// here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AiConfig {
@@ -1311,6 +1312,17 @@ pub struct AiConfig {
     /// paragraph. Oldest turns evict first. `0` is treated as
     /// "disabled" regardless of `per_paragraph_memory`.
     pub per_paragraph_memory_max_turns: usize,
+    /// 1.2.6+ — auto-populate the `Prompts` system book with
+    /// `<name>.example` paragraphs carrying inkhaven's
+    /// embedded default prompts (F7 grammar-check, F11
+    /// explain-diagnostic, F12 critique-edit + critique-
+    /// changes). Runs both at `inkhaven init` and on every
+    /// TUI open. Idempotent — existing paragraphs with the
+    /// same title are never touched, so only gaps get filled.
+    /// Set `false` to disable the seeding entirely (you'll
+    /// keep the F-keys but the Prompts book stays as you left
+    /// it).
+    pub reseed_prompt_examples: bool,
 }
 
 impl Default for AiConfig {
@@ -1318,6 +1330,7 @@ impl Default for AiConfig {
         Self {
             per_paragraph_memory: false,
             per_paragraph_memory_max_turns: 10,
+            reseed_prompt_examples: true,
         }
     }
 }
