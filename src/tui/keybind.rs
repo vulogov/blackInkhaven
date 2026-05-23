@@ -301,6 +301,13 @@ pub enum Action {
     /// book view.
     #[serde(rename = "view.story_graph_paragraph")]
     ViewStoryGraphParagraph,
+    /// Ctrl+V e (1.2.7+) — open the timeline event picker.
+    /// Lists every event in the project chronologically;
+    /// the user can filter by track, jump to events, or
+    /// close with Esc. Requires `timeline.enabled: true` in
+    /// HJSON.
+    #[serde(rename = "view.event_picker")]
+    ViewEventPicker,
 
     /// Explicit "this chord does nothing" — overlay entries can
     /// set `action: "none"` to disable a default chord.
@@ -400,6 +407,7 @@ impl Action {
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
             Action::ViewStoryGraphParagraph => "story view (¶)".into(),
+            Action::ViewEventPicker => "events".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) => format!("λ {name}"),
@@ -568,6 +576,8 @@ impl Action {
                 "Story view of the current user book — book at the centre, every chapter / subchapter / paragraph + wiki-links + lexicon mentions on concentric rings. Float a PNG on top of the editor; S saves, Esc closes.".into(),
             Action::ViewStoryGraphParagraph =>
                 "Paragraph mini story view — the open paragraph at the centre, its wiki-link neighbours (one hop out + one hop in) on the first ring, and any Characters / Places / Artefacts it mentions on the outer ring. Same render + save flow as the book view.".into(),
+            Action::ViewEventPicker =>
+                "Open the timeline event picker (1.2.7+). Lists every event in the project sorted by start time; Enter jumps to the event paragraph. Requires `timeline.enabled: true` in HJSON.".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) =>
@@ -714,6 +724,8 @@ impl KeyBindings {
                 // Shift+W opens the full book story view.
                 entry("w", Action::ViewStoryGraphParagraph, Scope::Any),
                 entry("Shift+W", Action::ViewStoryGraph, Scope::Any),
+                // 1.2.7+ — timeline event picker.
+                entry("e", Action::ViewEventPicker, Scope::Any),
             ],
             top_level: vec![
                 // F1 anywhere: Help-book RAG modal.

@@ -2389,6 +2389,15 @@ enum Modal {
     DiagnosticsList {
         cursor: usize,
     },
+    /// Ctrl+V e (1.2.7+) — vertical event picker. `entries`
+    /// is a chronological snapshot built at open-time
+    /// (`open_event_picker`); the picker doesn't refresh
+    /// while open. Enter jumps to the event paragraph.
+    EventPicker {
+        entries: Vec<EventPickerEntry>,
+        cursor: usize,
+        track_filter: Option<String>,
+    },
     /// 1.2.6+ — side-by-side diff review before a buffer-
     /// replacing AI apply lands. Built by `apply_inference`
     /// when `ai.diff_review_on_apply = true` (default) and
@@ -2814,6 +2823,59 @@ struct StatusFilterEntry {
     id: Uuid,
     title: String,
     breadcrumb: String,
+}
+
+/// 1.2.7+ — one entry in the Ctrl+V e event picker.
+/// Snapshot built at open time so navigation is pure UI work
+/// (no hierarchy reload per keystroke).
+#[derive(Debug, Clone)]
+pub(crate) struct EventPickerEntry {
+    pub id: Uuid,
+    pub title: String,
+    pub start_ticks: i64,
+    pub start_str: String,
+    pub glyph: String,
+    pub track: Option<String>,
+    pub is_orphan: bool,
+}
+
+/// Filter helper: returns refs to the entries whose `track`
+/// equals `filter` (case-insensitive). `None` filter passes
+/// everything through.
+pub(crate) fn visible_event_entries<'a>(
+    entries: &'a [EventPickerEntry],
+    filter: Option<&str>,
+) -> Vec<&'a EventPickerEntry> {
+    match filter {
+        Some(t) => entries
+            .iter()
+            .filter(|e| {
+                e.track
+                    .as_deref()
+                    .map(|track| track.eq_ignore_ascii_case(t))
+                    .unwrap_or(false)
+            })
+            .collect(),
+        None => entries.iter().collect(),
+    }
+}
+
+/// Pick the next track in a cycle: `None` → tracks[0] →
+/// tracks[1] → … → `None`. Stable / wrap-aware.
+pub(crate) fn cycle_track(current: Option<&str>, tracks: &[String]) -> Option<String> {
+    if tracks.is_empty() {
+        return None;
+    }
+    match current {
+        None => Some(tracks[0].clone()),
+        Some(cur) => {
+            let idx = tracks.iter().position(|t| t == cur);
+            match idx {
+                Some(i) if i + 1 < tracks.len() => Some(tracks[i + 1].clone()),
+                _ => None,
+            }
+        }
+    }
 }
 
 struct OpenedDoc {
@@ -8689,6 +8751,7 @@ impl App {
             A::ViewNextDiagnostic => self.jump_to_next_diagnostic(),
             A::ViewStoryGraph => self.open_story_view(),
             A::ViewStoryGraphParagraph => self.open_story_view_paragraph(),
+            A::ViewEventPicker => self.open_event_picker(),
 
             // ── Top-level F-keys (1.2.4+ migration) ───────────
             A::HelpQuery => self.open_help_query_modal(),
@@ -13115,6 +13178,7 @@ impl App {
         let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
         let is_ai_diff_review = matches!(self.modal, Modal::AiDiffReview { .. });
+        let is_event_picker = matches!(self.modal, Modal::EventPicker { .. });
         let is_snapshot_annotation = matches!(self.modal, Modal::SnapshotAnnotation { .. });
         let is_tag_picker = matches!(self.modal, Modal::TagPicker { .. });
         let is_tag_add_prompt = matches!(self.modal, Modal::TagAddPrompt { .. });
@@ -13419,6 +13483,10 @@ impl App {
         }
         if is_ai_diff_review {
             self.ai_diff_review_handle_key(key);
+            return Ok(false);
+        }
+        if is_event_picker {
+            self.event_picker_handle_key(key);
             return Ok(false);
         }
         if is_snapshot_annotation {
@@ -14337,6 +14405,272 @@ impl App {
     /// F8 (1.2.6+) — open the typst-diagnostics list modal.
     /// Refreshes the diagnostic cache up-front so the modal
     /// reflects the live buffer, not the last save.
+    /// 1.2.7+ — open the paragraph with `id` in the editor;
+    /// also moves the tree cursor onto it so the visible
+    /// state is consistent with the action that triggered.
+    fn open_paragraph_by_uuid(&mut self, id: Uuid) -> std::result::Result<(), String> {
+        let node = self
+            .hierarchy
+            .get(id)
+            .cloned()
+            .ok_or_else(|| format!("node {id} missing from hierarchy"))?;
+        if node.kind != NodeKind::Paragraph {
+            return Err(format!("{} is not a Paragraph", node.title));
+        }
+        if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == id) {
+            self.tree_cursor = i;
+        }
+        self.load_paragraph(&node).map_err(|e| e.to_string())?;
+        self.change_focus(Focus::Editor);
+        Ok(())
+    }
+
+    /// Ctrl+V e (1.2.7+) — gather every event in the project
+    /// and pop the picker. Bails early when timeline is
+    /// disabled in HJSON so users see a precise hint instead
+    /// of an empty picker.
+    fn open_event_picker(&mut self) {
+        if !self.cfg.timeline.enabled {
+            self.status =
+                "event picker: timeline.enabled is false in HJSON — enable it to use Ctrl+V e".into();
+            return;
+        }
+        let calendar = crate::timeline::Calendar::from_config(
+            self.cfg.timeline.calendar.clone(),
+        );
+        let mut entries: Vec<EventPickerEntry> = self
+            .hierarchy
+            .flatten()
+            .into_iter()
+            .filter_map(|(n, _)| {
+                let ev = n.event.as_ref()?;
+                let start_str = calendar.format(
+                    crate::timeline::TimelinePoint::from_ticks(ev.start_ticks),
+                    ev.precision,
+                );
+                let glyph = if ev.end_ticks.is_some() {
+                    "─"
+                } else if n.tags.iter().any(|t| t.eq_ignore_ascii_case("orphan")) {
+                    "◌"
+                } else {
+                    "●"
+                };
+                Some(EventPickerEntry {
+                    id: n.id,
+                    title: n.title.clone(),
+                    start_ticks: ev.start_ticks,
+                    start_str,
+                    glyph: glyph.to_owned(),
+                    track: ev.track.clone(),
+                    is_orphan: n.tags.iter().any(|t| t.eq_ignore_ascii_case("orphan")),
+                })
+            })
+            .collect();
+        if entries.is_empty() {
+            self.status =
+                "event picker: no events yet — `inkhaven event add …` from the CLI".into();
+            return;
+        }
+        entries.sort_by_key(|e| e.start_ticks);
+        let total = entries.len();
+        self.modal = Modal::EventPicker {
+            entries,
+            cursor: 0,
+            track_filter: None,
+        };
+        self.status = format!(
+            "events ({total}) · ↑↓ select · Enter opens · t cycles tracks · Esc closes"
+        );
+    }
+
+    fn event_picker_handle_key(&mut self, key: KeyEvent) {
+        let total = match &self.modal {
+            Modal::EventPicker { entries, track_filter, .. } => {
+                visible_event_entries(entries, track_filter.as_deref()).len()
+            }
+            _ => 0,
+        };
+        match key.code {
+            KeyCode::Up => {
+                if let Modal::EventPicker { cursor, .. } = &mut self.modal {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::EventPicker { cursor, .. } = &mut self.modal {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+            }
+            KeyCode::Home => {
+                if let Modal::EventPicker { cursor, .. } = &mut self.modal {
+                    *cursor = 0;
+                }
+            }
+            KeyCode::End => {
+                if let Modal::EventPicker { cursor, .. } = &mut self.modal {
+                    *cursor = total.saturating_sub(1);
+                }
+            }
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                // Cycle through tracks: None → first → … → None.
+                let next: Option<String> = match &self.modal {
+                    Modal::EventPicker { entries, track_filter, .. } => {
+                        let mut tracks: Vec<String> = entries
+                            .iter()
+                            .filter_map(|e| e.track.clone())
+                            .collect();
+                        tracks.sort();
+                        tracks.dedup();
+                        cycle_track(track_filter.as_deref(), &tracks)
+                    }
+                    _ => None,
+                };
+                if let Modal::EventPicker {
+                    track_filter,
+                    cursor,
+                    ..
+                } = &mut self.modal
+                {
+                    *track_filter = next.clone();
+                    *cursor = 0;
+                    self.status = match next {
+                        Some(t) => format!("event picker · track filter: `{t}`"),
+                        None => "event picker · track filter: all".into(),
+                    };
+                }
+            }
+            KeyCode::Enter => {
+                let Modal::EventPicker {
+                    entries,
+                    cursor,
+                    track_filter,
+                } = &self.modal
+                else {
+                    return;
+                };
+                let visible = visible_event_entries(entries, track_filter.as_deref());
+                let Some(entry) = visible.get(*cursor).copied() else {
+                    return;
+                };
+                let id = entry.id;
+                let title = entry.title.clone();
+                self.modal = Modal::None;
+                if let Err(e) = self.open_paragraph_by_uuid(id) {
+                    self.status = format!("event picker: couldn't open `{title}`: {e}");
+                } else {
+                    self.status = format!("opened event `{title}`");
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn draw_event_picker_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::EventPicker {
+            entries,
+            cursor,
+            track_filter,
+        } = &self.modal
+        else {
+            return;
+        };
+        let visible = visible_event_entries(entries, track_filter.as_deref());
+        let total = visible.len();
+
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(14);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let title = match track_filter {
+            Some(t) => format!(" Events ({total}) · track: {t} "),
+            None => format!(" Events ({total}) · all tracks "),
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+
+        let scroll = if *cursor >= body_h {
+            cursor - body_h + 1
+        } else {
+            0
+        };
+        let lines: Vec<Line<'_>> = visible
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(body_h)
+            .map(|(i, e)| {
+                let track = e.track.as_deref().unwrap_or("—");
+                let head = format!(
+                    " {start:>14} {glyph}  ",
+                    start = e.start_str,
+                    glyph = e.glyph,
+                );
+                let title_style = if e.is_orphan {
+                    Style::default().add_modifier(Modifier::DIM)
+                } else {
+                    Style::default()
+                };
+                let trail = format!("  ({track})");
+                let line = Line::from(vec![
+                    Span::styled(head, Style::default().fg(Color::Cyan)),
+                    Span::styled(e.title.clone(), title_style),
+                    Span::styled(trail, Style::default().add_modifier(Modifier::DIM)),
+                ]);
+                if i == *cursor {
+                    line.style(Style::default().add_modifier(Modifier::REVERSED))
+                } else {
+                    line
+                }
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ select · Enter opens · t cycles tracks · Esc closes ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     fn open_diagnostics_list(&mut self) {
         if self.opened.is_none() {
             self.status = "F8 diagnostics: no paragraph open".into();
@@ -17725,6 +18059,10 @@ impl App {
             self.draw_ai_diff_review_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::EventPicker { .. }) {
+            self.draw_event_picker_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SaveStoryPng { .. }) {
             self.draw_save_story_png_modal(f, area);
             return;
@@ -17780,6 +18118,8 @@ impl App {
                 unreachable!("diagnostics list handled above"),
             Modal::AiDiffReview { .. } =>
                 unreachable!("ai diff review handled above"),
+            Modal::EventPicker { .. } =>
+                unreachable!("event picker handled above"),
             Modal::SnapshotAnnotation { input, parent_title, .. } => {
                 let body_lines = vec![
                     Line::from(""),
@@ -20749,6 +21089,61 @@ fn compute_line_diff(left: &str, right: &str) -> Vec<SnapshotDiffRow> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod event_picker_helpers {
+    use super::*;
+
+    fn entry(title: &str, ticks: i64, track: Option<&str>) -> EventPickerEntry {
+        EventPickerEntry {
+            id: Uuid::nil(),
+            title: title.into(),
+            start_ticks: ticks,
+            start_str: format!("{ticks}"),
+            glyph: "●".into(),
+            track: track.map(str::to_owned),
+            is_orphan: false,
+        }
+    }
+
+    #[test]
+    fn filter_none_passes_all() {
+        let es = vec![
+            entry("A", 0, Some("main")),
+            entry("B", 1, Some("flashback")),
+        ];
+        assert_eq!(visible_event_entries(&es, None).len(), 2);
+    }
+
+    #[test]
+    fn filter_track_case_insensitive() {
+        let es = vec![
+            entry("A", 0, Some("main")),
+            entry("B", 1, Some("flashback")),
+            entry("C", 2, None),
+        ];
+        let hits = visible_event_entries(&es, Some("MAIN"));
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].title, "A");
+    }
+
+    #[test]
+    fn cycle_through_tracks_then_back_to_none() {
+        let tracks = vec!["flashback".to_string(), "main".to_string()];
+        assert_eq!(cycle_track(None, &tracks).as_deref(), Some("flashback"));
+        assert_eq!(
+            cycle_track(Some("flashback"), &tracks).as_deref(),
+            Some("main")
+        );
+        assert_eq!(cycle_track(Some("main"), &tracks), None);
+    }
+
+    #[test]
+    fn cycle_empty_tracks_returns_none() {
+        assert_eq!(cycle_track(None, &[]), None);
+        assert_eq!(cycle_track(Some("anything"), &[]), None);
+    }
 }
 
 #[cfg(test)]
