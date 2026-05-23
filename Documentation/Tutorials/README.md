@@ -34,6 +34,13 @@ covers.
 | 22 | [`22-tree-multiselect.md`](22-tree-multiselect.md) | Tree-pane mark set (Space), T cycles type, O cycles status — both work on single OR multi-selection. |
 | 23 | [`23-scrivener-import.md`](23-scrivener-import.md) | `inkhaven import-scrivener` — single-binary `.scriv` ingest with RTF→Typst conversion, dry-run, mapping rules. |
 | 24 | [`24-typst-in-process.md`](24-typst-in-process.md) | `typst_compile.engine = "inprocess"` — bundled compiler + fonts + `@preview` packages, parse + semantic diagnostics, Ctrl+V R render preview, Ctrl+V N diagnostic navigation, `inkhaven doctor`. |
+| 25 | [`25-tag-workflows.md`](25-tag-workflows.md) | Project-wide tags — `Ctrl+B ]` picker, `Ctrl+B }` search, R rename, `inkhaven export --tag`, tree pips, `ink.tag.*` Bund, Scrivener keyword import. |
+| 26 | [`26-story-view.md`](26-story-view.md) | `Ctrl+V Shift+W` book view + `Ctrl+V w` paragraph mini view — radial graph of hierarchy / wiki-links / lexicon mentions; `S` saves PNG; `ink.story.render` Bund word. |
+| 27 | [`27-diagnostics.md`](27-diagnostics.md) | Typst diagnostics surface — gutter `●` markers, `F8` list modal, `Ctrl+V N` next-diagnostic, `Ctrl+F12` AI explain, `hook.on_diagnostic`, `ink.editor.set_cursor`. |
+| 28 | [`28-ai-critique-and-memory.md`](28-ai-critique-and-memory.md) | `F12` mode-aware critique, opt-in per-paragraph AI memory, diff-review modal on apply (`a`/`r`/`e`), smart marker extraction for grammar replies. |
+| 29 | [`29-snapshot-annotations.md`](29-snapshot-annotations.md) | `F5` annotation prompt; `F6` picker rendering with `✎` indent; when to label which snapshots. |
+| 30 | [`30-render-preview.md`](30-render-preview.md) | `Ctrl+V R` render preview with `+/-` live zoom (1.2.6+); `S` saves current page, `A` saves all. |
+| 31 | [`31-story-timeline.md`](31-story-timeline.md) | The full timeline feature (1.2.7+) — calendars, CLI `event add/list/show`, `Ctrl+V e` picker, `Ctrl+V t` swim lanes with scope nav, AI health critique (y/Y/Ctrl+Y), `ink.event.*` Bund + hooks. |
 
 ## Scripting + chord customisation
 
