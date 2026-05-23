@@ -132,6 +132,15 @@ pub enum Command {
         /// of status (including paragraphs with no status set).
         #[arg(long)]
         status: Option<String>,
+        /// Tag filter (1.2.6+) — keep only paragraphs that carry
+        /// this tag (case-insensitive). Combines with `--status`:
+        /// a paragraph must pass both predicates to be exported.
+        /// Useful with the project-wide tagging surface
+        /// (Ctrl+B ] / Ctrl+B }): tag a subset of paragraphs
+        /// `draft`, then `inkhaven export pdf --tag draft` to
+        /// ship just that slice.
+        #[arg(long)]
+        tag: Option<String>,
     },
 
     /// Run a one-shot AI inference from the command line.
@@ -318,12 +327,14 @@ impl Cli {
                 output,
                 book_name,
                 status,
+                tag,
             } => export::run(
                 &project,
                 format,
                 output.as_deref(),
                 book_name.as_deref(),
                 status.as_deref(),
+                tag.as_deref(),
             )
             .map_err(Into::into),
             Command::Ai { prompt, provider } => {

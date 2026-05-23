@@ -2104,6 +2104,17 @@ enum Modal {
         affected: usize,
         return_to: Box<Modal>,
     },
+    /// `R` from `TagPicker` (1.2.6+) — project-wide rename of
+    /// the cursor tag. Empty input cancels; Enter rewrites
+    /// every node carrying `old_tag` to use the new name.
+    /// Merges into an existing tag if the new name already
+    /// exists in the project.
+    TagRenamePrompt {
+        input: TextInput,
+        old_tag: String,
+        affected: usize,
+        return_to: Box<Modal>,
+    },
     /// Enter from `TagPicker` in `Search` mode — show every
     /// paragraph that carries the chosen tag, with a typeable
     /// filter input that narrows the list.
@@ -6959,6 +6970,9 @@ impl App {
             KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
                 self.open_tag_delete_confirm();
             }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                self.open_tag_rename_prompt();
+            }
             KeyCode::Char('t') | KeyCode::Char('T') => {
                 self.commit_tags_to_target();
             }
@@ -7054,6 +7068,147 @@ impl App {
         if let Modal::TagAddPrompt { input, .. } = &mut self.modal {
             handle_text_input_key(input, key);
         }
+    }
+
+    /// `R` (1.2.6+) — open a project-wide rename prompt for
+    /// the cursor tag.
+    fn open_tag_rename_prompt(&mut self) {
+        let (old_tag, affected) = match &self.modal {
+            Modal::TagPicker { all_tags, cursor, .. } => {
+                let Some(t) = all_tags.get(*cursor).cloned() else {
+                    self.status = "tag rename: no tag at cursor".into();
+                    return;
+                };
+                let n = self.count_nodes_with_tag(&t);
+                (t, n)
+            }
+            _ => return,
+        };
+        let mut input = TextInput::new();
+        for c in old_tag.chars() {
+            input.insert_char(c);
+        }
+        let taken = std::mem::replace(&mut self.modal, Modal::None);
+        self.modal = Modal::TagRenamePrompt {
+            input,
+            old_tag: old_tag.clone(),
+            affected,
+            return_to: Box::new(taken),
+        };
+        self.status = format!(
+            "tag rename `{old_tag}` ({affected} paragraph{plur}): edit + Enter · Esc cancels",
+            plur = if affected == 1 { "" } else { "s" },
+        );
+    }
+
+    fn tag_rename_prompt_handle_key(&mut self, key: KeyEvent) {
+        if matches!(key.code, KeyCode::Enter) {
+            let taken = std::mem::replace(&mut self.modal, Modal::None);
+            if let Modal::TagRenamePrompt {
+                input,
+                old_tag,
+                affected: _,
+                return_to,
+            } = taken
+            {
+                let new_name = input.as_str().trim().to_string();
+                let mut picker = *return_to;
+                if new_name.is_empty() || new_name == old_tag {
+                    self.modal = picker;
+                    self.status = if new_name.is_empty() {
+                        "tag rename: empty name — cancelled".into()
+                    } else {
+                        "tag rename: same name — no-op".into()
+                    };
+                    return;
+                }
+                let touched =
+                    self.rename_tag_project_wide(&old_tag, &new_name);
+                self.reload_hierarchy();
+                let fresh = self.collect_all_tags();
+                if let Modal::TagPicker {
+                    all_tags,
+                    cursor,
+                    selected,
+                    ..
+                } = &mut picker
+                {
+                    *all_tags = fresh;
+                    // Land the cursor on the renamed tag's new
+                    // position if present.
+                    if let Some(idx) =
+                        all_tags.iter().position(|t| t == &new_name)
+                    {
+                        *cursor = idx;
+                    } else if *cursor >= all_tags.len().max(1) {
+                        *cursor = all_tags.len().saturating_sub(1);
+                    }
+                    // Update the selection set in case the old
+                    // name was selected: swap to the new name.
+                    if selected.remove(&old_tag) {
+                        selected.insert(new_name.clone());
+                    }
+                }
+                self.modal = picker;
+                self.status = format!(
+                    "tag renamed: `{old_tag}` → `{new_name}` · touched {touched} paragraph(s)"
+                );
+            }
+            return;
+        }
+        if let Modal::TagRenamePrompt { input, .. } = &mut self.modal {
+            handle_text_input_key(input, key);
+        }
+    }
+
+    /// Walk every node carrying `old_tag` and replace it with
+    /// `new_tag`. If `new_tag` is already present on the node,
+    /// the result dedupes (effectively merging the two tags
+    /// into one). Returns the count of nodes touched.
+    fn rename_tag_project_wide(&mut self, old_tag: &str, new_tag: &str) -> usize {
+        let targets: Vec<Uuid> = self
+            .hierarchy
+            .flatten()
+            .into_iter()
+            .filter_map(|(n, _)| {
+                if n.tags.iter().any(|t| t == old_tag) {
+                    Some(n.id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut touched = 0usize;
+        for id in &targets {
+            let Some(node) = self.hierarchy.get(*id).cloned() else {
+                continue;
+            };
+            let mut updated = node.clone();
+            // Replace + dedup: build a fresh Vec preserving
+            // order, skip the old name, append the new name if
+            // it isn't already present.
+            let mut fresh: Vec<String> = Vec::with_capacity(updated.tags.len());
+            let mut new_appended = false;
+            for t in updated.tags.iter() {
+                if t == old_tag {
+                    if !new_appended && !fresh.iter().any(|x| x == new_tag) {
+                        fresh.push(new_tag.to_owned());
+                        new_appended = true;
+                    }
+                } else if !fresh.iter().any(|x| x == t) {
+                    fresh.push(t.clone());
+                }
+            }
+            updated.tags = fresh;
+            updated.modified_at = chrono::Utc::now();
+            if let Err(e) = self.store.raw().update_metadata(*id, updated.to_json()) {
+                tracing::warn!(target: "inkhaven::tags",
+                    "update_metadata({id}) on rename failed: {e}");
+                continue;
+            }
+            touched += 1;
+        }
+        touched
     }
 
     /// `D` — confirm + execute project-wide deletion of the tag
@@ -12528,6 +12683,13 @@ impl App {
                 self.status = "tag delete: cancelled".into();
                 return Ok(false);
             }
+            // 1.2.6+ tag-rename prompt — same return_to pattern.
+            if let Modal::TagRenamePrompt { return_to, .. } = &mut self.modal {
+                let prev = std::mem::replace(return_to.as_mut(), Modal::None);
+                self.modal = prev;
+                self.status = "tag rename: cancelled".into();
+                return Ok(false);
+            }
             self.modal = Modal::None;
             return Ok(false);
         }
@@ -12567,6 +12729,7 @@ impl App {
         let is_tag_picker = matches!(self.modal, Modal::TagPicker { .. });
         let is_tag_add_prompt = matches!(self.modal, Modal::TagAddPrompt { .. });
         let is_tag_delete_confirm = matches!(self.modal, Modal::TagDeleteConfirm { .. });
+        let is_tag_rename_prompt = matches!(self.modal, Modal::TagRenamePrompt { .. });
         let is_tag_search_results = matches!(self.modal, Modal::TagSearchResults { .. });
         let is_story_view = matches!(self.modal, Modal::StoryView { .. });
         let is_save_story_png = matches!(self.modal, Modal::SaveStoryPng { .. });
@@ -12886,6 +13049,10 @@ impl App {
         }
         if is_tag_delete_confirm {
             self.tag_delete_confirm_handle_key(key);
+            return Ok(false);
+        }
+        if is_tag_rename_prompt {
+            self.tag_rename_prompt_handle_key(key);
             return Ok(false);
         }
         if is_tag_search_results {
@@ -15521,7 +15688,7 @@ impl App {
         let hint = if in_search {
             " ↑↓ select · Enter opens results · A adds · D deletes · Esc closes "
         } else {
-            " ↑↓ select · Space marks · T applies · A adds · D deletes · Esc closes "
+            " ↑↓ select · Space marks · T applies · A adds · R renames · D deletes · Esc closes "
         };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
@@ -16977,6 +17144,33 @@ impl App {
                     body,
                 )
             }
+            Modal::TagRenamePrompt {
+                input,
+                old_tag,
+                affected,
+                ..
+            } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(" Rename tag `{old_tag}` ({affected} paragraph(s)):"),
+                        Style::default()
+                            .fg(self.theme.tree_script_fg)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter commits (merges if name exists) · Esc cancels",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Rename tag — R ".to_string(),
+                    self.theme.tree_script_fg,
+                    body,
+                )
+            }
             Modal::ParagraphTarget { input } => {
                 let body = vec![
                     Line::from(""),
@@ -17761,6 +17955,36 @@ impl App {
                     };
                     spans.push(Span::raw(" "));
                     spans.push(Span::styled(pip.to_string(), style));
+                }
+            }
+            // 1.2.6+ — first two tags as compact `#tag` chips
+            // after the progress pip. Keeps the row tight: at
+            // most ~20 chars (`#worldbuild #lighthous +N`) for
+            // a heavily-tagged paragraph; truncates each name
+            // to 10 chars + ellipsis. The "+N" suffix surfaces
+            // additional-tag count when more than two exist
+            // (so the user knows to open Ctrl+B ] for the rest).
+            if matches!(node.kind, NodeKind::Paragraph)
+                && !node.tags.is_empty()
+            {
+                let pip_style = Style::default()
+                    .fg(self.theme.tree_script_fg)
+                    .add_modifier(Modifier::DIM);
+                for tag in node.tags.iter().take(2) {
+                    let short: String = if tag.chars().count() > 10 {
+                        let truncated: String = tag.chars().take(9).collect();
+                        format!("{truncated}…")
+                    } else {
+                        tag.clone()
+                    };
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(format!("#{short}"), pip_style));
+                }
+                if node.tags.len() > 2 {
+                    spans.push(Span::styled(
+                        format!(" +{}", node.tags.len() - 2),
+                        pip_style,
+                    ));
                 }
             }
             lines.push(Line::from(spans));
