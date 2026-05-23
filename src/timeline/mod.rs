@@ -23,6 +23,7 @@
 //! scope navigation land in Phase 2; AI critique in Phase 3.
 
 pub mod calendar;
+pub mod critique;
 pub mod presets;
 
 pub use calendar::{Calendar, ParseError, TimelinePoint};

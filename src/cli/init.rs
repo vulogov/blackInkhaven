@@ -114,7 +114,7 @@ pub(crate) fn seed_prompt_examples(cfg: &Config, store: &Store) -> Result<()> {
 
     // (paragraph_title, body) tuples. Title carries the `.example`
     // suffix so it's clearly inert until the user renames.
-    let seeds: [(&str, String); 4] = [
+    let seeds: [(&str, String); 5] = [
         (
             "grammar-check.example",
             format!(
@@ -128,7 +128,7 @@ pub(crate) fn seed_prompt_examples(cfg: &Config, store: &Store) -> Result<()> {
         (
             "explain-diagnostic.example",
             format!(
-                "// F11 — AI-explain the typst diagnostic at the cursor.\n\
+                "// Ctrl+F12 — AI-explain the typst diagnostic at the cursor.\n\
                  // Rename to `explain-diagnostic` to take effect.\n\n\
                  {}\n",
                 crate::tui::app::explain_diagnostic_default_prompt(),
@@ -150,6 +150,16 @@ pub(crate) fn seed_prompt_examples(cfg: &Config, store: &Store) -> Result<()> {
                  // Rename to `critique-changes` to take effect.\n\n\
                  {}\n",
                 crate::tui::app::critique_changes_default_prompt(),
+            ),
+        ),
+        (
+            "timeline-health.example",
+            format!(
+                "// 1.2.7+ — Ctrl+V t · y/Y/Ctrl+Y · timeline\n\
+                 // consistency audit. Rename to `timeline-health`\n\
+                 // to take effect.\n\n\
+                 {}\n",
+                crate::tui::app::timeline_health_default_prompt(),
             ),
         ),
     ];
