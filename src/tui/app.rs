@@ -2103,6 +2103,17 @@ enum Modal {
     DiagnosticsList {
         cursor: usize,
     },
+    /// F5 (1.2.6+) — annotation prompt that pops before a new
+    /// snapshot is committed. `body` is captured at open time
+    /// so the user can keep typing in the editor without
+    /// affecting what gets snapshotted. Enter commits with the
+    /// typed annotation (empty allowed); Esc cancels.
+    SnapshotAnnotation {
+        input: TextInput,
+        parent_id: Uuid,
+        parent_title: String,
+        body: Vec<u8>,
+    },
     /// Ctrl+V W (1.2.5+) — story view: floating PNG of the
     /// current book's DOT graph, rendered via `layout-rs` +
     /// `resvg`. `proto` drives the ratatui-image widget;
@@ -5885,23 +5896,61 @@ impl App {
             self.status = "no paragraph open".into();
             return;
         };
-        let body = doc.textarea.lines().join("\n");
+        let body = doc.textarea.lines().join("\n").into_bytes();
         let id = doc.id;
         let Some(node) = self.hierarchy.get(id).cloned() else {
             self.status = "node missing from hierarchy".into();
             return;
         };
-        match self.store.create_snapshot(&node, body.as_bytes()) {
+        // 1.2.6+ — pop an annotation prompt so the user can
+        // jot a one-line note ("first complete draft", "before
+        // the lighthouse rewrite"). Enter on empty input still
+        // commits — keeps the F5 → Enter flow as fast as the
+        // old one-keystroke path. Esc cancels.
+        self.modal = Modal::SnapshotAnnotation {
+            input: TextInput::new(),
+            parent_id: id,
+            parent_title: node.title,
+            body,
+        };
+        self.status =
+            "snapshot annotation: type a note (or Enter for no note) · Esc cancels".into();
+    }
+
+    /// Commit step for `Modal::SnapshotAnnotation` — invoked by
+    /// the modal's Enter handler. Calls
+    /// `Store::create_snapshot_annotated`, stamps the result on
+    /// the status bar, and closes the modal.
+    fn commit_snapshot_annotation(
+        &mut self,
+        parent_id: Uuid,
+        parent_title: &str,
+        body: &[u8],
+        annotation: &str,
+    ) {
+        let Some(node) = self.hierarchy.get(parent_id).cloned() else {
+            self.status = "snapshot: paragraph vanished".into();
+            return;
+        };
+        match self
+            .store
+            .create_snapshot_annotated(&node, body, annotation)
+        {
             Ok(snap_id) => {
                 let n_snaps = self
                     .store
-                    .list_snapshots(id)
+                    .list_snapshots(parent_id)
                     .map(|v| v.len())
                     .unwrap_or(0);
+                let note = if annotation.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!(" · `{annotation}`")
+                };
                 self.status = format!(
-                    "snapshot {} created ({} total) — F6 to view",
+                    "snapshot {} of `{parent_title}` created ({} total){note} — F6 to view",
                     snap_id.simple(),
-                    n_snaps
+                    n_snaps,
                 );
             }
             Err(e) => {
@@ -6187,6 +6236,58 @@ impl App {
                     .find(|l| !l.trim().is_empty())
                     .unwrap_or("render failed");
                 self.status = format!("story view: {first}");
+            }
+        }
+    }
+
+    /// Ctrl+V w (1.2.6+) — paragraph mini story view. Same
+    /// pipeline as `open_story_view`, but for the open
+    /// paragraph instead of the current book. Routes to
+    /// `Modal::StoryView` so the save / Esc UX is identical.
+    fn open_story_view_paragraph(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status =
+                "story view (¶): no paragraph open".into();
+            return;
+        };
+        if doc.dirty {
+            let _ = self.save_current();
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            return;
+        };
+        let paragraph_id = doc.id;
+        let paragraph_title = doc.title.clone();
+        let Some(picker) = self.image_picker.as_ref() else {
+            self.status =
+                "story view (¶): terminal can't display images".into();
+            return;
+        };
+        match crate::story_view::build_story_png_for_paragraph(
+            &self.store,
+            &self.hierarchy,
+            paragraph_id,
+        ) {
+            Ok(rendered) => {
+                let proto = picker.new_resize_protocol(rendered.image);
+                self.modal = Modal::StoryView {
+                    book_title: paragraph_title.clone(),
+                    width: rendered.width,
+                    height: rendered.height,
+                    png_bytes: rendered.png_bytes,
+                    proto,
+                };
+                self.status = format!(
+                    "story view (¶) `{paragraph_title}` · {}×{} · S saves PNG · Esc closes",
+                    rendered.width, rendered.height,
+                );
+            }
+            Err(err) => {
+                let first = err
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("render failed");
+                self.status = format!("story view (¶): {first}");
             }
         }
     }
@@ -7897,6 +7998,7 @@ impl App {
             A::ViewRenderParagraph => self.open_rendered_paragraph_preview(),
             A::ViewNextDiagnostic => self.jump_to_next_diagnostic(),
             A::ViewStoryGraph => self.open_story_view(),
+            A::ViewStoryGraphParagraph => self.open_story_view_paragraph(),
 
             // ── Top-level F-keys (1.2.4+ migration) ───────────
             A::HelpQuery => self.open_help_query_modal(),
@@ -12315,6 +12417,7 @@ impl App {
         let is_rendered_preview = matches!(self.modal, Modal::RenderedPreview { .. });
         let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
+        let is_snapshot_annotation = matches!(self.modal, Modal::SnapshotAnnotation { .. });
         let is_tag_picker = matches!(self.modal, Modal::TagPicker { .. });
         let is_tag_add_prompt = matches!(self.modal, Modal::TagAddPrompt { .. });
         let is_tag_delete_confirm = matches!(self.modal, Modal::TagDeleteConfirm { .. });
@@ -12600,6 +12703,31 @@ impl App {
 
         if is_diagnostics_list {
             self.diagnostics_list_handle_key(key);
+            return Ok(false);
+        }
+        if is_snapshot_annotation {
+            if matches!(key.code, KeyCode::Enter) {
+                let taken = std::mem::replace(&mut self.modal, Modal::None);
+                if let Modal::SnapshotAnnotation {
+                    input,
+                    parent_id,
+                    parent_title,
+                    body,
+                } = taken
+                {
+                    let annotation = input.as_str().to_string();
+                    self.commit_snapshot_annotation(
+                        parent_id,
+                        &parent_title,
+                        &body,
+                        annotation.trim(),
+                    );
+                }
+                return Ok(false);
+            }
+            if let Modal::SnapshotAnnotation { input, .. } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
             return Ok(false);
         }
         if is_tag_picker {
@@ -16629,6 +16757,28 @@ impl App {
                 unreachable!("story view handled above"),
             Modal::DiagnosticsList { .. } =>
                 unreachable!("diagnostics list handled above"),
+            Modal::SnapshotAnnotation { input, parent_title, .. } => {
+                let body_lines = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(" Snapshot `{parent_title}` — annotation:"),
+                        Style::default()
+                            .fg(self.theme.tree_script_fg)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter commits (empty = no note) · Esc cancels",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Snapshot annotation — F5 ".to_string(),
+                    self.theme.tree_script_fg,
+                    body_lines,
+                )
+            }
             Modal::SaveStoryPng { .. } =>
                 unreachable!("save story png handled above"),
             Modal::TagAddPrompt { input, .. } => {
@@ -16977,14 +17127,14 @@ impl App {
                         .created_at
                         .with_timezone(&chrono::Local)
                         .format("%Y-%m-%d %H:%M:%S %z");
+                    let preview = if snap.preview.is_empty() {
+                        "(no body yet)"
+                    } else {
+                        snap.preview.as_str()
+                    };
                     let head = format!(
                         " {ts}   {}w   {}",
-                        snap.word_count,
-                        if snap.preview.is_empty() {
-                            "(no body yet)"
-                        } else {
-                            snap.preview.as_str()
-                        }
+                        snap.word_count, preview,
                     );
                     let style = if selected {
                         Style::default()
@@ -16994,6 +17144,25 @@ impl App {
                         Style::default()
                     };
                     body.push(Line::from(Span::styled(head, style)));
+                    // 1.2.6+ — render the user's annotation on a
+                    // second indented line when present. Italics +
+                    // cyan keeps it visually distinct from the
+                    // preview while staying readable.
+                    if !snap.annotation.trim().is_empty() {
+                        let annot_style = if selected {
+                            Style::default()
+                                .add_modifier(Modifier::REVERSED | Modifier::ITALIC)
+                                .fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                                .add_modifier(Modifier::ITALIC)
+                                .fg(Color::Cyan)
+                        };
+                        body.push(Line::from(Span::styled(
+                            format!("       ✎ {}", snap.annotation),
+                            annot_style,
+                        )));
+                    }
                 }
                 body.push(Line::from(""));
                 body.push(Line::from(Span::styled(
