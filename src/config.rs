@@ -161,6 +161,18 @@ pub struct BackupConfig {
     /// `"24h"`, `"30m"` are all accepted. Empty string or `"0s"` disables.
     #[serde(with = "humantime_serde")]
     pub max_age: std::time::Duration,
+    /// 1.2.6+: when a backup finishes — either the manual Ctrl+B B
+    /// chord or the exit-hook auto-backup — hold the splash on
+    /// screen with a "Press any key to continue…" prompt so the
+    /// user can read the result before the TUI dismisses it.
+    /// Default true. Set false to keep the auto-dismiss behaviour
+    /// from 1.2.5 and earlier.
+    #[serde(default = "default_backup_wait_for_key")]
+    pub wait_for_key_after_backup: bool,
+}
+
+fn default_backup_wait_for_key() -> bool {
+    true
 }
 
 impl Default for BackupConfig {
@@ -177,6 +189,7 @@ impl Default for BackupConfig {
             // weekly snapshot pairs sensibly with the per-paragraph
             // snapshots the editor already supports.
             max_age: std::time::Duration::from_secs(7 * 24 * 3600),
+            wait_for_key_after_backup: default_backup_wait_for_key(),
         }
     }
 }

@@ -93,6 +93,7 @@ A two-page reference. For workflows see
   row([I],   [Book info]),
   row([V],   [Credits / version (with embedded logo)]),
   row([A / B / O], [Assemble / Build (PDF) / Take (extra formats)]),
+  row([Shift+B], [(1.2.6) Backup the project now (zip archive)]),
   row([W / K], [Typewriter mode / AI full-screen]),
   row([E],   [Toggle typewriter SFX]),
   row([1..7],[Status-filter modal]),
