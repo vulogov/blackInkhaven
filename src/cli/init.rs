@@ -97,7 +97,7 @@ pub fn run(path: &Path, force: bool) -> Result<()> {
 /// `.example` suffix — at that point the resolver picks it up
 /// and the F-key uses the user's prompt instead of the
 /// embedded default.
-fn seed_prompt_examples(cfg: &Config, store: &Store) -> Result<()> {
+pub(crate) fn seed_prompt_examples(cfg: &Config, store: &Store) -> Result<()> {
     use crate::store::hierarchy::Hierarchy;
     use crate::store::{
         InsertPosition, NodeKind, SYSTEM_TAG_PROMPTS,
