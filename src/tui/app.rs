@@ -728,12 +728,22 @@ fn draw_assembly_splash(
 /// "Please wait" body plus an animated spinner the caller advances
 /// each frame so the user can tell the TUI is still alive while the
 /// child process churns.
+///
+/// `done` selects the variant:
+/// * `None` — compile is still running; header reads
+///   "Please wait while PDF is generated…" and footer "Press Esc to cancel."
+/// * `Some(true)` — compile succeeded; header reads "Build complete." and
+///   footer "Press any key to continue…" (toggle:
+///   `typst_compile.wait_for_key_after_compile`).
+/// * `Some(false)` — compile failed; header reads "Build failed." and the
+///   footer prompts the same way before the AI error-analysis chat opens.
 fn draw_typst_compile_splash(
     f: &mut ratatui::Frame,
     book_display: &str,
     engine_label: &str,
     elapsed_secs: u64,
     spinner: char,
+    done: Option<bool>,
 ) {
     let area = f.area();
     let width = area.width.saturating_sub(8).clamp(50, 100);
@@ -742,23 +752,40 @@ fn draw_typst_compile_splash(
     let y = area.y + (area.height.saturating_sub(height)) / 2;
     let rect = Rect { x, y, width, height };
     f.render_widget(ratatui::widgets::Clear, rect);
+    let (title, border_fg) = match done {
+        None => (" Inkhaven · typst compile ", Color::Cyan),
+        Some(true) => (" Inkhaven · typst compile · done ", Color::Green),
+        Some(false) => (" Inkhaven · typst compile · failed ", Color::Red),
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Inkhaven · typst compile ")
+        .title(title)
         .border_style(
             Style::default()
-                .fg(Color::Cyan)
+                .fg(border_fg)
                 .add_modifier(Modifier::BOLD),
         );
     let inner = block.inner(rect);
     f.render_widget(block, rect);
 
+    let (header_text, header_fg) = match done {
+        None => (
+            format!("  {spinner}  Please wait while PDF is generated…"),
+            Color::Yellow,
+        ),
+        Some(true) => ("  ✓  Build complete.".to_owned(), Color::Green),
+        Some(false) => ("  ✗  Build failed.".to_owned(), Color::Red),
+    };
+    let footer_text = match done {
+        None => "  Press Esc to cancel.",
+        Some(_) => "  Press any key to continue…",
+    };
     let body = vec![
         Line::from(""),
         Line::from(Span::styled(
-            format!("  {spinner}  Please wait while PDF is generated…"),
+            header_text,
             Style::default()
-                .fg(Color::Yellow)
+                .fg(header_fg)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -775,7 +802,7 @@ fn draw_typst_compile_splash(
             Style::default().add_modifier(Modifier::DIM),
         )),
         Line::from(Span::styled(
-            "  Press Esc to cancel.",
+            footer_text,
             Style::default().fg(Color::Gray),
         )),
     ];
@@ -12397,7 +12424,14 @@ impl App {
             let elapsed = started.elapsed().as_secs();
             let spinner = TYPST_COMPILE_SPINNER[spin_idx % TYPST_COMPILE_SPINNER.len()];
             let _ = terminal.draw(|f| {
-                draw_typst_compile_splash(f, book_display, &engine_label, elapsed, spinner)
+                draw_typst_compile_splash(
+                    f,
+                    book_display,
+                    &engine_label,
+                    elapsed,
+                    spinner,
+                    None,
+                )
             });
             spin_idx = spin_idx.wrapping_add(1);
             // Poll for input WITHOUT consuming non-Esc keys — we
@@ -12424,7 +12458,7 @@ impl App {
                 }
             }
         }
-        match crate::typst_compile::finish(handle) {
+        let outcome = match crate::typst_compile::finish(handle) {
             Ok(o) => {
                 if cancelled {
                     // Promote the outcome's failure state into a
@@ -12435,13 +12469,60 @@ impl App {
                     );
                     return None;
                 }
-                Some(o)
+                o
             }
             Err(e) => {
                 self.status = format!("typst compile: {e}");
-                None
+                return None;
+            }
+        };
+
+        // 1.2.6+: hold the splash on screen with a "Press any key to
+        // continue…" prompt so the user can read the result line
+        // before the editor regains the screen. Toggle:
+        // `typst_compile.wait_for_key_after_compile` (default true).
+        // Cancelled compiles already returned above and skip this.
+        if self.cfg.typst_compile.wait_for_key_after_compile {
+            let final_elapsed = started.elapsed().as_secs();
+            let final_spinner =
+                TYPST_COMPILE_SPINNER[spin_idx % TYPST_COMPILE_SPINNER.len()];
+            let done = Some(outcome.success);
+            let _ = terminal.draw(|f| {
+                draw_typst_compile_splash(
+                    f,
+                    book_display,
+                    &engine_label,
+                    final_elapsed,
+                    final_spinner,
+                    done,
+                )
+            });
+            // Block on a single key event. Drain any non-key events
+            // (mouse, resize) so a stray scroll wheel doesn't sneak
+            // through and dismiss the splash. Resize triggers a
+            // redraw and keeps waiting.
+            loop {
+                match crossterm::event::read() {
+                    Ok(crossterm::event::Event::Key(_)) => break,
+                    Ok(crossterm::event::Event::Resize(_, _)) => {
+                        let _ = terminal.draw(|f| {
+                            draw_typst_compile_splash(
+                                f,
+                                book_display,
+                                &engine_label,
+                                final_elapsed,
+                                final_spinner,
+                                done,
+                            )
+                        });
+                    }
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
             }
         }
+
+        Some(outcome)
     }
 
     /// Write each format in `cfg.output.extra_formats` alongside

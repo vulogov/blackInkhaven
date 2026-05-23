@@ -467,6 +467,18 @@ pub struct TypstCompileConfig {
     /// fail-fast on package imports — useful for hermetic
     /// builds. No effect when `engine = "external"`.
     pub packages_enabled: bool,
+    /// 1.2.6+: when the typst compile splash (Ctrl+B B / Ctrl+B O)
+    /// finishes, hold the splash on screen with a
+    /// "Press any key to continue…" prompt instead of jumping
+    /// straight back to the editor. Lets the user read the
+    /// "Build OK / failed" line before the splash disappears.
+    /// Cancelled compiles (Esc) skip the wait. Default true.
+    #[serde(default = "default_wait_for_key_after_compile")]
+    pub wait_for_key_after_compile: bool,
+}
+
+fn default_wait_for_key_after_compile() -> bool {
+    true
 }
 
 impl Default for TypstCompileConfig {
@@ -480,6 +492,7 @@ impl Default for TypstCompileConfig {
             bundle_fonts: true,
             use_system_fonts: true,
             packages_enabled: true,
+            wait_for_key_after_compile: default_wait_for_key_after_compile(),
         }
     }
 }
