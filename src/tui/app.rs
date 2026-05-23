@@ -2407,6 +2407,17 @@ enum Modal {
     TimelineView {
         state: TimelineViewState,
     },
+    /// `n` from `TimelineView` — title prompt for a new
+    /// event at the cursor's tick. Enter commits to the
+    /// store via the same path as `inkhaven event add`; Esc
+    /// returns to the underlying TimelineView modal.
+    TimelineNewEventPrompt {
+        input: TextInput,
+        book_id: Uuid,
+        cursor_ticks: i64,
+        track: Option<String>,
+        return_to: Box<Modal>,
+    },
     /// 1.2.6+ — side-by-side diff review before a buffer-
     /// replacing AI apply lands. Built by `apply_inference`
     /// when `ai.diff_review_on_apply = true` (default) and
@@ -2905,6 +2916,25 @@ pub(crate) struct TimelineViewState {
     pub cursor_ticks: i64,
     /// Cross-book project overlay. Phase-2 batch 3.
     pub project_overlay: bool,
+    /// 1.2.7+ — inline descent picker overlay. None when not
+    /// open; `Some` when `d`/`D` is pressed and the user is
+    /// choosing which child scope to enter.
+    pub descent: Option<TimelineDescentState>,
+}
+
+/// State for the inline descent picker shown over the swim
+/// lanes when the user presses `d`.
+#[derive(Debug, Clone)]
+pub(crate) struct TimelineDescentState {
+    pub choices: Vec<TimelineDescentChoice>,
+    pub cursor: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TimelineDescentChoice {
+    pub id: Uuid,
+    pub title: String,
+    pub event_count: usize,
 }
 
 /// Snapshot of one event for the swim-lane view. Cached at
@@ -13208,6 +13238,13 @@ impl App {
                 self.status = "tag rename: cancelled".into();
                 return Ok(false);
             }
+            // 1.2.7+ — timeline new-event prompt.
+            if let Modal::TimelineNewEventPrompt { return_to, .. } = &mut self.modal {
+                let prev = std::mem::replace(return_to.as_mut(), Modal::None);
+                self.modal = prev;
+                self.status = "new event: cancelled".into();
+                return Ok(false);
+            }
             self.modal = Modal::None;
             return Ok(false);
         }
@@ -13246,6 +13283,7 @@ impl App {
         let is_ai_diff_review = matches!(self.modal, Modal::AiDiffReview { .. });
         let is_event_picker = matches!(self.modal, Modal::EventPicker { .. });
         let is_timeline_view = matches!(self.modal, Modal::TimelineView { .. });
+        let is_timeline_new_event = matches!(self.modal, Modal::TimelineNewEventPrompt { .. });
         let is_snapshot_annotation = matches!(self.modal, Modal::SnapshotAnnotation { .. });
         let is_tag_picker = matches!(self.modal, Modal::TagPicker { .. });
         let is_tag_add_prompt = matches!(self.modal, Modal::TagAddPrompt { .. });
@@ -13558,6 +13596,10 @@ impl App {
         }
         if is_timeline_view {
             self.timeline_view_handle_key(key);
+            return Ok(false);
+        }
+        if is_timeline_new_event {
+            self.timeline_new_event_prompt_handle_key(key);
             return Ok(false);
         }
         if is_snapshot_annotation {
@@ -14497,6 +14539,11 @@ impl App {
     }
 
     fn timeline_view_handle_key(&mut self, key: KeyEvent) {
+        // Descent picker captures keys when active.
+        if self.timeline_descent_active() {
+            self.timeline_descent_handle_key(key);
+            return;
+        }
         match key.code {
             // Scroll: ← / → shift the viewport by 1/6 of its
             // span (a "page-step" feels right at the default
@@ -14517,20 +14564,537 @@ impl App {
             // Cursor at center / Home / End — quick recenters.
             KeyCode::Home => self.timeline_jump_home(),
             KeyCode::End => self.timeline_jump_end(),
-            // Scope nav stubs (Batch 3).
-            KeyCode::Char('u') | KeyCode::Char('U')
-            | KeyCode::Char('d') | KeyCode::Char('D')
-            | KeyCode::Char('b') | KeyCode::Char('B')
-            | KeyCode::Char('p') | KeyCode::Char('P') => {
-                self.status =
-                    "timeline view: scope nav lands in P2 batch 3".into();
-            }
-            // Interaction stubs (Batch 4).
-            KeyCode::Tab | KeyCode::Enter | KeyCode::Char('n') => {
-                self.status =
-                    "timeline view: Tab/Enter/n land in P2 batch 4".into();
+            // Descent-picker key dispatch routes here first.
+            // When descent.is_some(), Up/Down/Enter/Esc are
+            // captured by the picker. Otherwise they fall
+            // through to the swim-lane handler above. We
+            // re-handle a few above; this block catches what
+            // the descent picker needs and the scope-nav chords.
+            KeyCode::Char('u') | KeyCode::Char('U') => self.timeline_up_scope(),
+            KeyCode::Char('d') | KeyCode::Char('D') => self.timeline_open_descent(),
+            KeyCode::Char('b') | KeyCode::Char('B') => self.timeline_jump_book_scope(),
+            KeyCode::Char('p') | KeyCode::Char('P') => self.timeline_toggle_project(),
+            KeyCode::Tab => self.timeline_cycle_track(),
+            KeyCode::Enter => self.timeline_open_event_under_cursor(),
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                self.timeline_open_new_event_prompt()
             }
             _ => {}
+        }
+    }
+
+    /// Cycle `track_highlight` through the tracks that
+    /// appear in the current event snapshot. None → first
+    /// track → next → … → None.
+    fn timeline_cycle_track(&mut self) {
+        let Modal::TimelineView { state } = &mut self.modal else { return; };
+        let default_track = self.cfg.timeline.default_track.clone();
+        let mut tracks: Vec<String> = state
+            .events
+            .iter()
+            .filter(|e| !e.is_orphan)
+            .map(|e| e.track.clone().unwrap_or_else(|| default_track.clone()))
+            .collect();
+        tracks.sort();
+        tracks.dedup();
+        let next = cycle_track(state.track_highlight.as_deref(), &tracks);
+        state.track_highlight = next.clone();
+        self.status = match next {
+            Some(t) => format!("timeline · track highlight: `{t}`"),
+            None => "timeline · track highlight cleared".into(),
+        };
+    }
+
+    /// Find the event closest to `cursor_ticks` (preferring
+    /// the highlighted track) and load its paragraph.
+    fn timeline_open_event_under_cursor(&mut self) {
+        let Modal::TimelineView { state } = &self.modal else { return; };
+        let cursor = state.cursor_ticks;
+        let highlight = state.track_highlight.clone();
+        let mut best: Option<(Uuid, i64)> = None;
+        for ev in &state.events {
+            // Track filter is a preference, not a hard
+            // requirement — if no on-track event is close,
+            // we still pick the absolute nearest.
+            let on_highlight = match (&highlight, &ev.track) {
+                (Some(h), Some(t)) => h == t,
+                (Some(_), None) => false,
+                (None, _) => true,
+            };
+            let distance = (ev.start_ticks - cursor).abs();
+            let weight = if on_highlight { distance } else { distance + 1_000_000 };
+            match best {
+                None => best = Some((ev.id, weight)),
+                Some((_, w)) if weight < w => best = Some((ev.id, weight)),
+                _ => {}
+            }
+        }
+        let Some((id, _)) = best else {
+            self.status = "timeline · no events to open".into();
+            return;
+        };
+        // Close the modal first, then load.
+        self.modal = Modal::None;
+        if let Err(e) = self.open_paragraph_by_uuid(id) {
+            self.status = format!("timeline · couldn't open event: {e}");
+        }
+    }
+
+    fn timeline_new_event_prompt_handle_key(&mut self, key: KeyEvent) {
+        if matches!(key.code, KeyCode::Enter) {
+            let taken = std::mem::replace(&mut self.modal, Modal::None);
+            if let Modal::TimelineNewEventPrompt {
+                input,
+                book_id,
+                cursor_ticks,
+                track,
+                return_to,
+            } = taken
+            {
+                let title = input.as_str().trim().to_string();
+                let mut underlying = *return_to;
+                if title.is_empty() {
+                    self.modal = underlying;
+                    self.status = "new event: empty title — cancelled".into();
+                    return;
+                }
+                // Create the event via the same path the CLI
+                // uses. Errors surface in the status bar and
+                // the timeline view re-opens with whatever
+                // state survived.
+                match self.create_event_at_cursor(book_id, &title, cursor_ticks, track.as_deref()) {
+                    Ok(()) => {
+                        // Refresh the timeline state's events.
+                        if let Modal::TimelineView { state } = &mut underlying {
+                            // Rebuild the snapshot in-place.
+                            let book_id = state.book_id;
+                            let project = state.project_overlay;
+                            let scope_id = state.scope_id;
+                            let all = self.collect_book_events(book_id, project);
+                            let filtered: Vec<TimelineEvent> = if scope_id == book_id || project {
+                                all
+                            } else {
+                                let subtree: std::collections::HashSet<Uuid> = self
+                                    .hierarchy
+                                    .collect_subtree(scope_id)
+                                    .into_iter()
+                                    .collect();
+                                all.into_iter()
+                                    .filter(|ev| {
+                                        subtree.contains(&ev.id)
+                                            || ev
+                                                .linked_paragraphs
+                                                .iter()
+                                                .any(|p| subtree.contains(p))
+                                    })
+                                    .collect()
+                            };
+                            if let Modal::TimelineView { state } = &mut underlying {
+                                state.events = filtered;
+                                // Land the cursor on the new event.
+                                state.cursor_ticks = cursor_ticks;
+                            }
+                        }
+                        self.modal = underlying;
+                        self.status = format!("event `{title}` added at cursor");
+                    }
+                    Err(e) => {
+                        self.modal = underlying;
+                        self.status = format!("new event: {e}");
+                    }
+                }
+            }
+            return;
+        }
+        if let Modal::TimelineNewEventPrompt { input, .. } = &mut self.modal {
+            handle_text_input_key(input, key);
+        }
+    }
+
+    /// Create an event paragraph under the book's Timeline
+    /// chapter from the swim-lane "n" path. Returns the new
+    /// node id; status messaging is the caller's job.
+    fn create_event_at_cursor(
+        &mut self,
+        book_id: Uuid,
+        title: &str,
+        cursor_ticks: i64,
+        track: Option<&str>,
+    ) -> std::result::Result<(), String> {
+        let timeline_chapter_id = self
+            .store
+            .ensure_timeline_chapter(&self.cfg, book_id)
+            .map_err(|e| format!("{e}"))?;
+        self.reload_hierarchy();
+        let timeline_chapter = self
+            .hierarchy
+            .get(timeline_chapter_id)
+            .cloned()
+            .ok_or_else(|| "Timeline chapter vanished after creation".to_string())?;
+        let mut node = self
+            .store
+            .create_node(
+                &self.cfg,
+                &self.hierarchy,
+                NodeKind::Paragraph,
+                title,
+                Some(&timeline_chapter),
+                None,
+                InsertPosition::End,
+            )
+            .map_err(|e| format!("create_node: {e}"))?;
+        node.event = Some(crate::store::node::EventData {
+            start_ticks: cursor_ticks,
+            end_ticks: None,
+            precision: crate::timeline::Precision::Day,
+            characters: Vec::new(),
+            places: Vec::new(),
+            track: track.map(str::to_owned),
+        });
+        crate::store::reconcile_event_orphan_tag(&mut node);
+        node.modified_at = chrono::Utc::now();
+        self.store
+            .raw()
+            .update_metadata(node.id, node.to_json())
+            .map_err(|e| format!("update_metadata: {e}"))?;
+        self.store.sync().map_err(|e| format!("sync: {e}"))?;
+        self.reload_hierarchy();
+        Ok(())
+    }
+
+    /// `n` — pop a small one-line input for the new event's
+    /// title; on Enter the event is created at
+    /// `cursor_ticks` with the current track highlight (or
+    /// the default track).
+    fn timeline_open_new_event_prompt(&mut self) {
+        let Modal::TimelineView { state } = &self.modal else { return; };
+        let cursor = state.cursor_ticks;
+        let calendar = crate::timeline::Calendar::from_config(
+            self.cfg.timeline.calendar.clone(),
+        );
+        let formatted = calendar.format(
+            crate::timeline::TimelinePoint::from_ticks(cursor),
+            crate::timeline::Precision::Day,
+        );
+        let track = state.track_highlight.clone();
+        let book_id = state.book_id;
+        // Stash the timeline state in a closure-callable
+        // place via a NewEventPrompt sub-modal — return_to
+        // pattern mirrors TagAddPrompt.
+        let return_to = std::mem::replace(&mut self.modal, Modal::None);
+        self.modal = Modal::TimelineNewEventPrompt {
+            input: TextInput::new(),
+            book_id,
+            cursor_ticks: cursor,
+            track,
+            return_to: Box::new(return_to),
+        };
+        self.status = format!(
+            "new event @ {formatted}: type title, Enter commits, Esc cancels"
+        );
+    }
+
+    // ── 1.2.7+ scope navigation ──────────────────────────
+
+    fn timeline_descent_active(&self) -> bool {
+        matches!(
+            &self.modal,
+            Modal::TimelineView { state } if state.descent.is_some()
+        )
+    }
+
+    fn timeline_up_scope(&mut self) {
+        let (project, scope_id) = match &self.modal {
+            Modal::TimelineView { state } => (state.project_overlay, state.scope_id),
+            _ => return,
+        };
+        if project {
+            self.status =
+                "timeline · already at project scope (Ctrl+P to toggle off)".into();
+            return;
+        }
+        let Some(parent_id) =
+            self.hierarchy.get(scope_id).and_then(|n| n.parent_id)
+        else {
+            self.status =
+                "timeline · at book root (Ctrl+P widens to project)".into();
+            return;
+        };
+        // Walk up until we hit a Chapter / Subchapter / Book.
+        let mut cur = parent_id;
+        let mut target: Option<Uuid> = None;
+        loop {
+            let Some(n) = self.hierarchy.get(cur) else { break };
+            if matches!(n.kind, NodeKind::Book | NodeKind::Chapter | NodeKind::Subchapter) {
+                target = Some(cur);
+                break;
+            }
+            match n.parent_id {
+                Some(p) => cur = p,
+                None => break,
+            }
+        }
+        let Some(new_scope) = target else {
+            self.status = "timeline · no parent scope to climb to".into();
+            return;
+        };
+        if let Modal::TimelineView { state } = &mut self.modal {
+            state.nav_history.push(state.scope_id);
+            state.scope_id = new_scope;
+        }
+        self.timeline_refresh_after_scope_change();
+        let crumb = match &self.modal {
+            Modal::TimelineView { state } => self.timeline_scope_crumb(state),
+            _ => String::new(),
+        };
+        self.status = format!("timeline · up-scope · {crumb}");
+    }
+
+    fn timeline_open_descent(&mut self) {
+        // Extract everything we need from the modal first to
+        // avoid holding a &mut self.modal while we touch
+        // self.hierarchy.
+        let (project, scope_id, book_id, events_total, event_links): (
+            bool,
+            Uuid,
+            Uuid,
+            usize,
+            std::collections::HashSet<Uuid>,
+        ) = match &self.modal {
+            Modal::TimelineView { state } => (
+                state.project_overlay,
+                state.scope_id,
+                state.book_id,
+                state.events.len(),
+                state
+                    .events
+                    .iter()
+                    .flat_map(|e| e.linked_paragraphs.iter().copied())
+                    .collect(),
+            ),
+            _ => return,
+        };
+        if project {
+            self.status =
+                "timeline · descent disabled in project overlay (Ctrl+P off to drill in)"
+                    .into();
+            return;
+        }
+        let children = self.hierarchy.children_of(Some(scope_id));
+        let mut choices: Vec<TimelineDescentChoice> = children
+            .into_iter()
+            .filter(|n| matches!(n.kind, NodeKind::Chapter | NodeKind::Subchapter))
+            .map(|n| {
+                let descendants = self.hierarchy.collect_subtree(n.id);
+                let mut count = 0usize;
+                for d in &descendants {
+                    if event_links.contains(d) {
+                        count += 1;
+                    }
+                    if let Some(node) = self.hierarchy.get(*d) {
+                        if node.event.is_some() {
+                            count += 1;
+                        }
+                    }
+                }
+                TimelineDescentChoice {
+                    id: n.id,
+                    title: n.title.clone(),
+                    event_count: count,
+                }
+            })
+            .collect();
+        if let Some(timeline_chapter) = self.hierarchy.iter().find(|n| {
+            n.parent_id == Some(book_id)
+                && n.system_tag.as_deref()
+                    == Some(crate::store::SYSTEM_TAG_BOOK_TIMELINE)
+        }) {
+            if scope_id == book_id
+                && !choices.iter().any(|c| c.id == timeline_chapter.id)
+            {
+                choices.push(TimelineDescentChoice {
+                    id: timeline_chapter.id,
+                    title: format!("{} (system)", timeline_chapter.title),
+                    event_count: events_total,
+                });
+            }
+        }
+        if choices.is_empty() {
+            self.status = "timeline · no sub-scopes here".into();
+            return;
+        }
+        if let Modal::TimelineView { state } = &mut self.modal {
+            state.descent = Some(TimelineDescentState { choices, cursor: 0 });
+        }
+        self.status =
+            "timeline · descend into … · ↑↓ select · Enter · Esc cancel".into();
+    }
+
+    fn timeline_descent_handle_key(&mut self, key: KeyEvent) {
+        let chosen: Option<TimelineDescentChoice> = match key.code {
+            KeyCode::Up => {
+                if let Modal::TimelineView { state } = &mut self.modal {
+                    if let Some(d) = state.descent.as_mut() {
+                        if d.cursor > 0 {
+                            d.cursor -= 1;
+                        }
+                    }
+                }
+                return;
+            }
+            KeyCode::Down => {
+                if let Modal::TimelineView { state } = &mut self.modal {
+                    if let Some(d) = state.descent.as_mut() {
+                        if d.cursor + 1 < d.choices.len() {
+                            d.cursor += 1;
+                        }
+                    }
+                }
+                return;
+            }
+            KeyCode::Home => {
+                if let Modal::TimelineView { state } = &mut self.modal {
+                    if let Some(d) = state.descent.as_mut() {
+                        d.cursor = 0;
+                    }
+                }
+                return;
+            }
+            KeyCode::End => {
+                if let Modal::TimelineView { state } = &mut self.modal {
+                    if let Some(d) = state.descent.as_mut() {
+                        d.cursor = d.choices.len().saturating_sub(1);
+                    }
+                }
+                return;
+            }
+            KeyCode::Esc => {
+                if let Modal::TimelineView { state } = &mut self.modal {
+                    state.descent = None;
+                }
+                self.status = "timeline · descent cancelled".into();
+                return;
+            }
+            KeyCode::Enter => {
+                if let Modal::TimelineView { state } = &mut self.modal {
+                    let pick = state
+                        .descent
+                        .as_ref()
+                        .and_then(|d| d.choices.get(d.cursor).cloned());
+                    state.descent = None;
+                    pick
+                } else {
+                    None
+                }
+            }
+            _ => return,
+        };
+        let Some(choice) = chosen else { return };
+        if let Modal::TimelineView { state } = &mut self.modal {
+            state.nav_history.push(state.scope_id);
+            state.scope_id = choice.id;
+        }
+        self.timeline_refresh_after_scope_change();
+        let crumb = match &self.modal {
+            Modal::TimelineView { state } => self.timeline_scope_crumb(state),
+            _ => String::new(),
+        };
+        self.status = format!(
+            "timeline · descended into `{}` · {crumb}",
+            choice.title
+        );
+    }
+
+    fn timeline_jump_book_scope(&mut self) {
+        let (scope_eq_book, project) = match &self.modal {
+            Modal::TimelineView { state } => {
+                (state.scope_id == state.book_id, state.project_overlay)
+            }
+            _ => return,
+        };
+        if scope_eq_book && !project {
+            self.status = "timeline · already at book scope".into();
+            return;
+        }
+        if let Modal::TimelineView { state } = &mut self.modal {
+            state.nav_history.push(state.scope_id);
+            state.scope_id = state.book_id;
+            state.project_overlay = false;
+        }
+        self.timeline_refresh_after_scope_change();
+        let crumb = match &self.modal {
+            Modal::TimelineView { state } => self.timeline_scope_crumb(state),
+            _ => String::new(),
+        };
+        self.status = format!("timeline · book scope · {crumb}");
+    }
+
+    fn timeline_toggle_project(&mut self) {
+        let user_book_count = self
+            .hierarchy
+            .children_of(None)
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
+            .count();
+        if user_book_count < 2 {
+            self.status =
+                "timeline · only one user book; project overlay needs ≥2".into();
+            return;
+        }
+        let new_overlay = match &self.modal {
+            Modal::TimelineView { state } => !state.project_overlay,
+            _ => return,
+        };
+        if let Modal::TimelineView { state } = &mut self.modal {
+            if new_overlay {
+                state.nav_history.push(state.scope_id);
+            }
+            state.project_overlay = new_overlay;
+        }
+        self.timeline_refresh_after_scope_change();
+        self.status = if new_overlay {
+            "timeline · project overlay ON · tracks prefixed with book slug · Ctrl+P toggles".into()
+        } else {
+            "timeline · project overlay OFF · book scope".into()
+        };
+    }
+
+    /// Rebuild the event snapshot after any scope or project-
+    /// overlay change. Keeps cursor / scroll positions
+    /// reasonable.
+    fn timeline_refresh_after_scope_change(&mut self) {
+        let (book_id, scope_id, project) = match &self.modal {
+            Modal::TimelineView { state } => {
+                (state.book_id, state.scope_id, state.project_overlay)
+            }
+            _ => return,
+        };
+        let all = self.collect_book_events(book_id, project);
+        let filtered: Vec<TimelineEvent> = if scope_id == book_id || project {
+            all
+        } else {
+            let subtree: std::collections::HashSet<Uuid> = self
+                .hierarchy
+                .collect_subtree(scope_id)
+                .into_iter()
+                .collect();
+            all.into_iter()
+                .filter(|ev| {
+                    if subtree.contains(&ev.id) {
+                        return true;
+                    }
+                    ev.linked_paragraphs.iter().any(|p| subtree.contains(p))
+                })
+                .collect()
+        };
+        if let Modal::TimelineView { state } = &mut self.modal {
+            state.events = filtered;
+            if let Some(first) = state.events.first() {
+                if !state.events.iter().any(|e| e.start_ticks == state.cursor_ticks) {
+                    state.cursor_ticks = first.start_ticks;
+                    state.scroll_ticks = first.start_ticks.saturating_sub(20);
+                }
+            }
         }
     }
 
@@ -14842,6 +15406,66 @@ impl App {
             ))),
             footer_rect,
         );
+
+        // 1.2.7+ — descent picker overlay. Renders above
+        // the swim lanes when active.
+        if let Some(descent) = state.descent.as_ref() {
+            let dw = (modal_w / 2).max(40).min(modal_w - 4);
+            let dh = (descent.choices.len() as u16 + 4).min(modal_h - 4);
+            let dx = rect.x + (modal_w - dw) / 2;
+            let dy = rect.y + (modal_h - dh) / 2;
+            let drect = Rect { x: dx, y: dy, width: dw, height: dh };
+            f.render_widget(ratatui::widgets::Clear, drect);
+            let dblock = Block::default()
+                .borders(Borders::ALL)
+                .title(" Descend into … ")
+                .border_style(
+                    Style::default()
+                        .fg(self.theme.modal_border)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .style(
+                    Style::default()
+                        .bg(self.theme.modal_bg)
+                        .fg(self.theme.modal_fg),
+                );
+            let dinner = dblock.inner(drect);
+            f.render_widget(dblock, drect);
+            let dim_style = Style::default().add_modifier(Modifier::DIM);
+            let mut dlines: Vec<Line<'_>> = Vec::new();
+            dlines.push(Line::from(""));
+            for (i, choice) in descent.choices.iter().enumerate() {
+                let glyph = if choice.event_count == 0 {
+                    "◌"
+                } else {
+                    "●"
+                };
+                let main = format!(
+                    "  {arrow} {glyph}  {title}",
+                    arrow = if i == descent.cursor { "→" } else { " " },
+                    glyph = glyph,
+                    title = choice.title,
+                );
+                let trail = format!("   {} event(s)", choice.event_count);
+                let style = if i == descent.cursor {
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else if choice.event_count == 0 {
+                    dim_style
+                } else {
+                    Style::default()
+                };
+                dlines.push(Line::from(vec![
+                    Span::styled(main, style),
+                    Span::styled(trail, dim_style),
+                ]));
+            }
+            dlines.push(Line::from(""));
+            dlines.push(Line::from(Span::styled(
+                "  ↑↓ select · Enter descends · Esc returns to same scope",
+                dim_style,
+            )));
+            f.render_widget(Paragraph::new(dlines), dinner);
+        }
     }
 
     /// Ctrl+V t (1.2.7+) — open the swim-lane timeline view.
@@ -14881,6 +15505,7 @@ impl App {
             scroll_ticks,
             cursor_ticks,
             project_overlay: false,
+            descent: None,
         };
         let crumb = self.timeline_scope_crumb(&state);
         self.modal = Modal::TimelineView { state };
@@ -18731,6 +19356,41 @@ impl App {
                 unreachable!("event picker handled above"),
             Modal::TimelineView { .. } =>
                 unreachable!("timeline view handled above"),
+            Modal::TimelineNewEventPrompt {
+                input,
+                cursor_ticks,
+                track,
+                ..
+            } => {
+                let calendar = crate::timeline::Calendar::from_config(
+                    self.cfg.timeline.calendar.clone(),
+                );
+                let formatted = calendar.format(
+                    crate::timeline::TimelinePoint::from_ticks(*cursor_ticks),
+                    crate::timeline::Precision::Day,
+                );
+                let track_str = track.as_deref().unwrap_or("(default)");
+                let body_lines = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(" New event @ {formatted} · track: {track_str}"),
+                        Style::default()
+                            .fg(self.theme.tree_chapter_fg)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter commits · Esc cancels",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " New event — n ".to_string(),
+                    self.theme.tree_chapter_fg,
+                    body_lines,
+                )
+            }
             Modal::SnapshotAnnotation { input, parent_title, .. } => {
                 let body_lines = vec![
                     Line::from(""),
