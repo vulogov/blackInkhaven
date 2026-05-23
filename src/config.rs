@@ -1323,6 +1323,14 @@ pub struct AiConfig {
     /// keep the F-keys but the Prompts book stays as you left
     /// it).
     pub reseed_prompt_examples: bool,
+    /// 1.2.6+ — when true, applying an AI rewrite that
+    /// replaces the buffer (`r` and `g` chords in the AI
+    /// pane) first opens a side-by-side diff modal so the
+    /// user can accept / reject / accept-and-edit before any
+    /// bytes are written. Additive applies (`i` insert, `t`
+    /// prepend, `b` append) skip the review — they don't
+    /// destroy existing text. Default true.
+    pub diff_review_on_apply: bool,
 }
 
 impl Default for AiConfig {
@@ -1331,6 +1339,7 @@ impl Default for AiConfig {
             per_paragraph_memory: false,
             per_paragraph_memory_max_turns: 10,
             reseed_prompt_examples: true,
+            diff_review_on_apply: true,
         }
     }
 }

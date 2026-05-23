@@ -1030,7 +1030,7 @@ fn content_type_for(path: &std::path::Path) -> Option<String> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InferenceAction {
     Replace,
     Insert,
@@ -2139,6 +2139,18 @@ enum Modal {
     /// editor cursor to the diagnostic's line/col.
     DiagnosticsList {
         cursor: usize,
+    },
+    /// 1.2.6+ — side-by-side diff review before a buffer-
+    /// replacing AI apply lands. Built by `apply_inference`
+    /// when `ai.diff_review_on_apply = true` (default) and
+    /// the action is `Replace` or `ReplaceCorrected`. The
+    /// user reviews and presses `a` (accept) / `r` (reject)
+    /// / `e` (edit — accept and refocus the editor).
+    AiDiffReview {
+        before_lines: Vec<String>,
+        after_lines: Vec<String>,
+        action: InferenceAction,
+        scroll: usize,
     },
     /// F5 (1.2.6+) — annotation prompt that pops before a new
     /// snapshot is committed. `body` is captured at open time
@@ -4836,6 +4848,22 @@ impl App {
             self.status = "copied AI result to clipboard".into();
             return;
         }
+        // 1.2.6+ — diff review gate. Only intercepts the
+        // buffer-replacing actions (Replace / ReplaceCorrected);
+        // additive actions (Insert / Top / Bottom) fall
+        // through to the original direct path. The Modal::AiDiffReview
+        // dispatcher calls `apply_inference_direct` after
+        // the user accepts.
+        if self.cfg.ai.diff_review_on_apply
+            && matches!(action, InferenceAction::Replace | InferenceAction::ReplaceCorrected)
+        {
+            self.open_ai_diff_review(action, &raw);
+            return;
+        }
+        self.apply_inference_direct(action, raw);
+    }
+
+    fn apply_inference_direct(&mut self, action: InferenceAction, raw: String) {
         let Some(doc) = self.opened.as_mut() else {
             self.status = "no paragraph open — apply needs a focused paragraph".into();
             return;
@@ -12820,6 +12848,7 @@ impl App {
         let is_rendered_preview = matches!(self.modal, Modal::RenderedPreview { .. });
         let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
+        let is_ai_diff_review = matches!(self.modal, Modal::AiDiffReview { .. });
         let is_snapshot_annotation = matches!(self.modal, Modal::SnapshotAnnotation { .. });
         let is_tag_picker = matches!(self.modal, Modal::TagPicker { .. });
         let is_tag_add_prompt = matches!(self.modal, Modal::TagAddPrompt { .. });
@@ -13120,6 +13149,10 @@ impl App {
 
         if is_diagnostics_list {
             self.diagnostics_list_handle_key(key);
+            return Ok(false);
+        }
+        if is_ai_diff_review {
+            self.ai_diff_review_handle_key(key);
             return Ok(false);
         }
         if is_snapshot_annotation {
@@ -14378,6 +14411,301 @@ impl App {
         self.change_focus(Focus::Ai);
         self.status = format!(
             "F12 critique (`{prompt_name}`): streaming from {provider}…",
+        );
+    }
+
+    /// 1.2.6+ — open the AI diff-review modal. Captures the
+    /// current buffer as `before_lines` and the would-be
+    /// result of the named action as `after_lines`. The
+    /// modal renders both columns side-by-side; the dispatch
+    /// handler invokes `apply_inference_direct` if the user
+    /// accepts.
+    fn open_ai_diff_review(&mut self, action: InferenceAction, raw: &str) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status =
+                "no paragraph open — apply needs a focused paragraph".into();
+            return;
+        };
+        let before_lines: Vec<String> = doc.textarea.lines().to_vec();
+        // Compute what the buffer WOULD look like after this
+        // action so the diff is faithful. For Replace and
+        // ReplaceCorrected the after-state is the new text;
+        // anything else doesn't go through this path.
+        let after_text: String = match action {
+            InferenceAction::ReplaceCorrected => {
+                match extract_corrected_text(raw) {
+                    Some(s) => s,
+                    None => {
+                        self.status =
+                            "couldn't find corrected text in the response".into();
+                        return;
+                    }
+                }
+            }
+            InferenceAction::Replace => {
+                super::markdown::markdown_to_typst(raw)
+            }
+            _ => return,
+        };
+        let after_lines: Vec<String> = if after_text.is_empty() {
+            vec![String::new()]
+        } else {
+            after_text.split('\n').map(String::from).collect()
+        };
+        self.modal = Modal::AiDiffReview {
+            before_lines,
+            after_lines,
+            action,
+            scroll: 0,
+        };
+        self.status =
+            "AI diff review · a accept · r reject · e accept+edit · ↑↓ scroll".into();
+    }
+
+    fn ai_diff_review_handle_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up => {
+                if let Modal::AiDiffReview { scroll, .. } = &mut self.modal {
+                    if *scroll > 0 {
+                        *scroll -= 1;
+                    }
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::AiDiffReview {
+                    before_lines,
+                    after_lines,
+                    scroll,
+                    ..
+                } = &mut self.modal
+                {
+                    let max = before_lines.len().max(after_lines.len());
+                    if *scroll + 1 < max {
+                        *scroll += 1;
+                    }
+                }
+            }
+            KeyCode::PageUp => {
+                if let Modal::AiDiffReview { scroll, .. } = &mut self.modal {
+                    *scroll = scroll.saturating_sub(10);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Modal::AiDiffReview {
+                    before_lines,
+                    after_lines,
+                    scroll,
+                    ..
+                } = &mut self.modal
+                {
+                    let max = before_lines.len().max(after_lines.len());
+                    *scroll = (*scroll + 10).min(max.saturating_sub(1));
+                }
+            }
+            KeyCode::Home => {
+                if let Modal::AiDiffReview { scroll, .. } = &mut self.modal {
+                    *scroll = 0;
+                }
+            }
+            KeyCode::End => {
+                if let Modal::AiDiffReview {
+                    before_lines,
+                    after_lines,
+                    scroll,
+                    ..
+                } = &mut self.modal
+                {
+                    let max = before_lines.len().max(after_lines.len());
+                    *scroll = max.saturating_sub(1);
+                }
+            }
+            // Accept — commit via the original direct path.
+            KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Enter => {
+                let taken = std::mem::replace(&mut self.modal, Modal::None);
+                if let Modal::AiDiffReview { after_lines, action, .. } = taken {
+                    let after = after_lines.join("\n");
+                    self.apply_ai_diff_accepted(action, after, false);
+                }
+            }
+            // Accept + edit — same plus refocus the editor.
+            KeyCode::Char('e') | KeyCode::Char('E') => {
+                let taken = std::mem::replace(&mut self.modal, Modal::None);
+                if let Modal::AiDiffReview { after_lines, action, .. } = taken {
+                    let after = after_lines.join("\n");
+                    self.apply_ai_diff_accepted(action, after, true);
+                }
+            }
+            // Reject — close and leave the buffer alone.
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                self.modal = Modal::None;
+                self.status = "AI diff: rejected — buffer unchanged".into();
+            }
+            _ => {}
+        }
+    }
+
+    /// Commit step for `Modal::AiDiffReview`. `after_text` is
+    /// the buffer content the user accepted; `refocus_editor`
+    /// jumps focus back to the editor pane (used by the `e`
+    /// chord). Mirrors the in-place mutation that the
+    /// pre-1.2.6 direct path did.
+    fn apply_ai_diff_accepted(
+        &mut self,
+        action: InferenceAction,
+        after_text: String,
+        refocus_editor: bool,
+    ) {
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        let baseline = doc.textarea.lines().to_vec();
+        let lines: Vec<String> = if after_text.is_empty() {
+            vec![String::new()]
+        } else {
+            after_text.split('\n').map(String::from).collect()
+        };
+        let mut new_ta = TextArea::new(lines);
+        new_ta.set_cursor_line_style(
+            Style::default().add_modifier(Modifier::REVERSED),
+        );
+        new_ta.set_line_number_style(
+            Style::default().fg(self.theme.line_number_fg),
+        );
+        doc.textarea = new_ta;
+        // ReplaceCorrected reuses the grammar-change highlight;
+        // plain Replace doesn't (the user opted in to a full
+        // rewrite, not a copy-edit).
+        if matches!(action, InferenceAction::ReplaceCorrected) {
+            doc.correction_baseline = Some(baseline);
+        } else {
+            doc.correction_baseline = None;
+        }
+        doc.dirty = true;
+        doc.last_activity = std::time::Instant::now();
+        self.status = format!(
+            "AI diff: accepted ({}{})",
+            action.label(),
+            if refocus_editor { " · edit mode" } else { "" },
+        );
+        if refocus_editor {
+            self.change_focus(Focus::Editor);
+        }
+    }
+
+    /// Side-by-side renderer for `Modal::AiDiffReview`. Uses
+    /// `similar::TextDiff::from_lines` to mark inserted /
+    /// removed lines; the two columns are aligned so paired
+    /// changes land on the same screen row when possible.
+    fn draw_ai_diff_review_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::AiDiffReview {
+            before_lines,
+            after_lines,
+            scroll,
+            ..
+        } = &self.modal
+        else {
+            return;
+        };
+        let width = area.width.saturating_sub(4).max(80);
+        let height = area.height.saturating_sub(4).max(20);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" AI diff review — a accept · r reject · e accept+edit ")
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let footer_h: u16 = 1;
+        let body_h = inner.height.saturating_sub(footer_h) as usize;
+        let half = inner.width / 2;
+        let before_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: half,
+            height: inner.height.saturating_sub(footer_h),
+        };
+        let after_rect = Rect {
+            x: inner.x + half,
+            y: inner.y,
+            width: inner.width - half,
+            height: inner.height.saturating_sub(footer_h),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(footer_h),
+            width: inner.width,
+            height: footer_h,
+        };
+
+        let before_text = before_lines.join("\n");
+        let after_text = after_lines.join("\n");
+        let diff = similar::TextDiff::from_lines(&before_text, &after_text);
+        let mut left: Vec<Line> = Vec::new();
+        let mut right: Vec<Line> = Vec::new();
+        for change in diff.iter_all_changes() {
+            let raw = change.value().trim_end_matches('\n').to_string();
+            match change.tag() {
+                similar::ChangeTag::Equal => {
+                    let line = Line::from(format!("  {raw}"));
+                    left.push(line.clone());
+                    right.push(line);
+                }
+                similar::ChangeTag::Delete => {
+                    left.push(Line::from(Span::styled(
+                        format!("- {raw}"),
+                        Style::default()
+                            .fg(Color::Red)
+                            .add_modifier(Modifier::BOLD),
+                    )));
+                    right.push(Line::from(""));
+                }
+                similar::ChangeTag::Insert => {
+                    left.push(Line::from(""));
+                    right.push(Line::from(Span::styled(
+                        format!("+ {raw}"),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )));
+                }
+            }
+        }
+        let total = left.len();
+        let start = (*scroll).min(total.saturating_sub(1));
+        let take = body_h;
+        let left_view: Vec<Line> =
+            left.into_iter().skip(start).take(take).collect();
+        let right_view: Vec<Line> =
+            right.into_iter().skip(start).take(take).collect();
+        f.render_widget(Paragraph::new(left_view), before_rect);
+        f.render_widget(Paragraph::new(right_view), after_rect);
+
+        let footer = format!(
+            "  before (left) ─ after (right) · scroll {start}/{total} · ↑↓ PgUp PgDn Home End ",
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                footer,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
         );
     }
 
@@ -17128,6 +17456,10 @@ impl App {
             self.draw_diagnostics_list_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::AiDiffReview { .. }) {
+            self.draw_ai_diff_review_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SaveStoryPng { .. }) {
             self.draw_save_story_png_modal(f, area);
             return;
@@ -17181,6 +17513,8 @@ impl App {
                 unreachable!("story view handled above"),
             Modal::DiagnosticsList { .. } =>
                 unreachable!("diagnostics list handled above"),
+            Modal::AiDiffReview { .. } =>
+                unreachable!("ai diff review handled above"),
             Modal::SnapshotAnnotation { input, parent_title, .. } => {
                 let body_lines = vec![
                     Line::from(""),
