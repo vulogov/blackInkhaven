@@ -13936,11 +13936,14 @@ impl App {
         );
     }
 
-    /// F11 (1.2.6+) — send the typst diagnostic at the cursor
-    /// (or the closest one) to the AI pane with the
+    /// Ctrl+F12 (1.2.6+) — send the typst diagnostic at the
+    /// cursor (or the closest one) to the AI pane with the
     /// configured explain-or-fix prompt. Surrounds the
     /// diagnostic with ±5 context lines so the model sees the
     /// problem and what's around it without the whole file.
+    /// Used to live on bare F11; macOS grabs F11 (Mission
+    /// Control / Show Desktop) so the chord never made it
+    /// into the TUI.
     fn start_explain_diagnostic(&mut self) {
         // Force a refresh so we explain the live state, not the
         // cached one.
@@ -13949,7 +13952,7 @@ impl App {
             Some(doc) => {
                 if doc.typst_diagnostics.is_empty() {
                     self.status =
-                        "F11 explain: no typst diagnostics in this buffer".into();
+                        "Ctrl+F12 explain: no typst diagnostics in this buffer".into();
                     return;
                 }
                 let (cur_row, _) = doc.textarea.cursor();
@@ -13964,14 +13967,14 @@ impl App {
                     .cloned();
                 let Some(d) = picked else {
                     self.status =
-                        "F11 explain: no diagnostic to anchor on".into();
+                        "Ctrl+F12 explain: no diagnostic to anchor on".into();
                     return;
                 };
                 let body = doc.textarea.lines().join("\n");
                 (d, body, doc.title.clone())
             }
             None => {
-                self.status = "F11 explain: no paragraph open".into();
+                self.status = "Ctrl+F12 explain: no paragraph open".into();
                 return;
             }
         };
@@ -14001,7 +14004,7 @@ impl App {
         let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
             Ok(pair) => pair,
             Err(e) => {
-                self.status = format!("F11 explain: {e}");
+                self.status = format!("Ctrl+F12 explain: {e}");
                 return;
             }
         };
@@ -21145,7 +21148,7 @@ output. After listing issues, give the fully corrected paragraph."
     )
 }
 
-/// 1.2.6+ — embedded fallback for F11 explain-diagnostic.
+/// 1.2.6+ — embedded fallback for Ctrl+F12 explain-diagnostic.
 pub(crate) fn explain_diagnostic_default_prompt() -> &'static str {
     "A Typst compiler diagnostic is shown below with the surrounding source. \
 Explain in plain English what the diagnostic means, why it likely fired in \
