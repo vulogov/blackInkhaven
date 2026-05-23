@@ -101,6 +101,33 @@ pub fn build_story_png(
     svg_to_png(&svg)
 }
 
+/// 1.2.6+ — paragraph mini story view. Centred on `paragraph_id`,
+/// includes its outgoing `linked_paragraphs` (one hop), incoming
+/// links (every paragraph in the project that targets this one),
+/// and any Characters / Places / Artefacts whose title is
+/// mentioned in this paragraph's body. Edge styles + shapes are
+/// the same as the book view, so the visual vocabulary carries
+/// over.
+pub fn build_story_png_for_paragraph(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    paragraph_id: Uuid,
+) -> Result<StoryRender, String> {
+    let para = hierarchy
+        .get(paragraph_id)
+        .ok_or_else(|| format!("paragraph {paragraph_id} missing from hierarchy"))?
+        .clone();
+    if para.kind != NodeKind::Paragraph {
+        return Err(format!("`{}` is not a Paragraph node", para.title));
+    }
+    let graph = build_paragraph_graph(store, hierarchy, &para);
+    if graph.nodes.is_empty() {
+        return Err("graph is empty — nothing to render".into());
+    }
+    let svg = render_svg(&graph);
+    svg_to_png(&svg)
+}
+
 // ── Graph model ───────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,6 +189,257 @@ struct Graph {
 }
 
 // ── Build the graph ───────────────────────────────────────────
+
+/// 1.2.6+ — paragraph mini graph: the centre paragraph + its
+/// outgoing wiki-link targets + incoming wiki-link sources +
+/// lexicon nodes it mentions. Lays everything radially around
+/// the centre via twopi with two rings: hop-1 neighbours on
+/// the inner ring, lexicon nodes on the outer ring.
+fn build_paragraph_graph(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    centre: &Node,
+) -> Graph {
+    let all = hierarchy.flatten();
+
+    // ── Collect neighbours ────────────────────────────────────
+    let outgoing: Vec<&Node> = centre
+        .linked_paragraphs
+        .iter()
+        .filter_map(|id| all.iter().find_map(|(n, _)| (n.id == *id).then_some(*n)))
+        .collect();
+    let incoming: Vec<&Node> = all
+        .iter()
+        .filter_map(|(n, _)| {
+            if n.kind == NodeKind::Paragraph
+                && n.id != centre.id
+                && n.linked_paragraphs.contains(&centre.id)
+            {
+                Some(*n)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Read the centre's body for lexicon scanning.
+    let body_lower: String = centre
+        .file
+        .as_ref()
+        .and_then(|rel| std::fs::read(store.project_root().join(rel)).ok())
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .map(|t| t.to_lowercase())
+        .unwrap_or_default();
+
+    // Lexicon candidates mentioned in this paragraph.
+    let mut lexicon_mentioned: Vec<&Node> = Vec::new();
+    if !body_lower.is_empty() {
+        for (n, _) in &all {
+            if n.kind != NodeKind::Paragraph {
+                continue;
+            }
+            if !is_under_system_book(
+                hierarchy,
+                n,
+                &["characters", "places", "artefacts"],
+            ) {
+                continue;
+            }
+            let needle = n.title.trim().to_lowercase();
+            if needle.is_empty() {
+                continue;
+            }
+            if body_lower.contains(&needle) {
+                lexicon_mentioned.push(*n);
+            }
+        }
+    }
+
+    // ── Size every candidate ──────────────────────────────────
+    let mut sized: HashMap<Uuid, (Vec<String>, f64, f64)> = HashMap::new();
+    for n in std::iter::once(centre)
+        .chain(outgoing.iter().copied())
+        .chain(incoming.iter().copied())
+        .chain(lexicon_mentioned.iter().copied())
+    {
+        let lines = wrap_label(&n.title);
+        let (hw, hh) = size_for_label(&lines);
+        sized.entry(n.id).or_insert((lines, hw, hh));
+    }
+    let max_half_w = sized
+        .values()
+        .map(|(_, hw, _)| *hw)
+        .fold(0.0_f64, f64::max);
+    let ring_spacing = RING_SPACING_BASE.max(2.0 * max_half_w + 60.0);
+
+    // ── Position nodes ────────────────────────────────────────
+    let mut positions: HashMap<Uuid, (f64, f64)> = HashMap::new();
+    positions.insert(centre.id, (0.0, 0.0));
+
+    // First ring — outgoing and incoming neighbours together.
+    // Place outgoing on the right half, incoming on the left
+    // half so the direction is visually obvious (outgoing
+    // arrows flow rightward, incoming arrows flow inward from
+    // the left).
+    let inner_radius = ring_spacing;
+    let place_half = |list: &[&Node], theta_start: f64, theta_end: f64,
+                       out: &mut HashMap<Uuid, (f64, f64)>| {
+        if list.is_empty() {
+            return;
+        }
+        let span = theta_end - theta_start;
+        let step = span / list.len() as f64;
+        for (i, n) in list.iter().enumerate() {
+            let theta = theta_start + step * (i as f64 + 0.5);
+            out.insert(
+                n.id,
+                (inner_radius * theta.cos(), inner_radius * theta.sin()),
+            );
+        }
+    };
+    use std::f64::consts::{FRAC_PI_2, PI};
+    place_half(&outgoing, -FRAC_PI_2, FRAC_PI_2, &mut positions);
+    place_half(&incoming, FRAC_PI_2, FRAC_PI_2 + PI, &mut positions);
+
+    // Outer ring — lexicon nodes. Sweep them around the full
+    // circle; small bucket-nudge for collision-free angles
+    // (matches book-view behaviour).
+    let lex_radius = ring_spacing * 2.0;
+    let mut angle_collisions: HashMap<i32, usize> = HashMap::new();
+    for (i, n) in lexicon_mentioned.iter().enumerate() {
+        let base = TAU * (i as f64 / lexicon_mentioned.len().max(1) as f64);
+        let bucket = (base.to_degrees() / 5.0).round() as i32;
+        let count = angle_collisions.entry(bucket).or_insert(0);
+        let nudge = (*count as f64) * 8.0_f64.to_radians();
+        *count += 1;
+        let theta = base + nudge;
+        positions
+            .insert(n.id, (lex_radius * theta.cos(), lex_radius * theta.sin()));
+    }
+
+    // ── Assemble GraphNodes + edges ───────────────────────────
+    let mut graph_nodes: Vec<GraphNode> = Vec::new();
+    let mut max_extent: f64 = 0.0;
+    let mut node_lookup: std::collections::HashSet<Uuid> =
+        std::collections::HashSet::new();
+
+    let push_node = |n: &Node,
+                         shape: ShapeKind,
+                         fill: &'static str,
+                         positions: &HashMap<Uuid, (f64, f64)>,
+                         sized: &HashMap<Uuid, (Vec<String>, f64, f64)>,
+                         graph_nodes: &mut Vec<GraphNode>,
+                         node_lookup: &mut std::collections::HashSet<Uuid>,
+                         max_extent: &mut f64| {
+        let Some(&(x, y)) = positions.get(&n.id) else {
+            return;
+        };
+        let (label_lines, hw, hh) = sized
+            .get(&n.id)
+            .cloned()
+            .unwrap_or_else(|| (vec![n.title.clone()], MIN_HALF_W, MIN_HALF_H));
+        graph_nodes.push(GraphNode {
+            id: n.id,
+            label_lines,
+            shape,
+            fill,
+            x,
+            y,
+            half_w: hw,
+            half_h: hh,
+        });
+        node_lookup.insert(n.id);
+        *max_extent = max_extent.max(x.abs() + hw).max(y.abs() + hh);
+    };
+
+    {
+        let (s, f) = shape_for(centre);
+        push_node(
+            centre,
+            s,
+            f,
+            &positions,
+            &sized,
+            &mut graph_nodes,
+            &mut node_lookup,
+            &mut max_extent,
+        );
+    }
+    for n in &outgoing {
+        let (s, f) = shape_for(n);
+        push_node(
+            n,
+            s,
+            f,
+            &positions,
+            &sized,
+            &mut graph_nodes,
+            &mut node_lookup,
+            &mut max_extent,
+        );
+    }
+    for n in &incoming {
+        let (s, f) = shape_for(n);
+        push_node(
+            n,
+            s,
+            f,
+            &positions,
+            &sized,
+            &mut graph_nodes,
+            &mut node_lookup,
+            &mut max_extent,
+        );
+    }
+    for n in &lexicon_mentioned {
+        let (s, f) = lexicon_shape_for(n, hierarchy);
+        push_node(
+            n,
+            s,
+            f,
+            &positions,
+            &sized,
+            &mut graph_nodes,
+            &mut node_lookup,
+            &mut max_extent,
+        );
+    }
+
+    let mut edges: Vec<GraphEdge> = Vec::new();
+    for n in &outgoing {
+        if node_lookup.contains(&n.id) {
+            edges.push(GraphEdge {
+                from: centre.id,
+                to: n.id,
+                style: EdgeStyle::WikiLink,
+            });
+        }
+    }
+    for n in &incoming {
+        if node_lookup.contains(&n.id) {
+            edges.push(GraphEdge {
+                from: n.id,
+                to: centre.id,
+                style: EdgeStyle::WikiLink,
+            });
+        }
+    }
+    for n in &lexicon_mentioned {
+        if node_lookup.contains(&n.id) {
+            edges.push(GraphEdge {
+                from: n.id,
+                to: centre.id,
+                style: EdgeStyle::Lexicon,
+            });
+        }
+    }
+
+    Graph {
+        nodes: graph_nodes,
+        edges,
+        extent: max_extent,
+    }
+}
 
 fn build_graph(store: &Store, hierarchy: &Hierarchy, book: &Node) -> Graph {
     let all = hierarchy.flatten();

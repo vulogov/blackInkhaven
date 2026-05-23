@@ -284,13 +284,21 @@ pub enum Action {
     /// empty.
     #[serde(rename = "view.next_diagnostic")]
     ViewNextDiagnostic,
-    /// Ctrl+V W (1.2.5+) — story view: render the current
-    /// book's hierarchy + wiki-links + lexicon mentions as a
-    /// DOT graph, lay it out via `layout-rs`, rasterise via
-    /// `resvg`, float the PNG on top of the editor. `S` saves
-    /// the rendered PNG; `Esc` closes.
+    /// Ctrl+V Shift+W (1.2.5+) — story view of the current
+    /// book: book at the centre, every chapter / subchapter /
+    /// paragraph + wiki-links + lexicon mentions on
+    /// concentric rings. Rendered to PNG and floated on top
+    /// of the editor; `S` saves, `Esc` closes.
     #[serde(rename = "view.story_graph")]
     ViewStoryGraph,
+    /// Ctrl+V w (1.2.6+) — paragraph mini story view: the
+    /// open paragraph at the centre, its wiki-link neighbours
+    /// (one hop out + one hop in) on the first ring, and any
+    /// Characters / Places / Artefacts it mentions on the
+    /// outer ring. Same render pipeline + save flow as the
+    /// book view.
+    #[serde(rename = "view.story_graph_paragraph")]
+    ViewStoryGraphParagraph,
 
     /// Explicit "this chord does nothing" — overlay entries can
     /// set `action: "none"` to disable a default chord.
@@ -389,6 +397,7 @@ impl Action {
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
+            Action::ViewStoryGraphParagraph => "story view (¶)".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) => format!("λ {name}"),
@@ -554,7 +563,9 @@ impl Action {
             Action::ViewNextDiagnostic =>
                 "Jump the editor cursor to the next typst diagnostic (parse or semantic) in the open buffer. Wraps around at the end; no-op when there are no diagnostics.".into(),
             Action::ViewStoryGraph =>
-                "Build a DOT graph of the current user book (chapters / subchapters / paragraphs + wiki-links + Characters/Places/Artefacts mentions), lay it out with layout-rs, rasterise with resvg, and float the PNG on top of the editor. S saves the PNG to cwd; Esc closes.".into(),
+                "Story view of the current user book — book at the centre, every chapter / subchapter / paragraph + wiki-links + lexicon mentions on concentric rings. Float a PNG on top of the editor; S saves, Esc closes.".into(),
+            Action::ViewStoryGraphParagraph =>
+                "Paragraph mini story view — the open paragraph at the centre, its wiki-link neighbours (one hop out + one hop in) on the first ring, and any Characters / Places / Artefacts it mentions on the outer ring. Same render + save flow as the book view.".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) =>
@@ -696,7 +707,11 @@ impl KeyBindings {
                 entry("p", Action::ViewFuzzyParagraphPicker, Scope::Any),
                 entry("r", Action::ViewRenderParagraph, Scope::Any),
                 entry("n", Action::ViewNextDiagnostic, Scope::Any),
-                entry("w", Action::ViewStoryGraph, Scope::Any),
+                // 1.2.6+: case differentiates view scope. Plain
+                // `w` opens the paragraph mini story view;
+                // Shift+W opens the full book story view.
+                entry("w", Action::ViewStoryGraphParagraph, Scope::Any),
+                entry("Shift+W", Action::ViewStoryGraph, Scope::Any),
             ],
             top_level: vec![
                 // F1 anywhere: Help-book RAG modal.

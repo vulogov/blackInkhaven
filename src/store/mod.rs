@@ -72,6 +72,13 @@ pub struct Snapshot {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub word_count: u64,
     pub preview: String,
+    /// 1.2.6+ — user-supplied annotation captured at snapshot
+    /// time. Empty when the user pressed Enter on the prompt
+    /// without typing anything (or skipped the prompt entirely
+    /// via the legacy `create_snapshot` path). Surfaced by the
+    /// F6 snapshot picker so the user sees what each version
+    /// was *about*.
+    pub annotation: String,
 }
 
 /// Thin wrapper over bdslib's DocumentStorage with the project's chosen
@@ -958,6 +965,20 @@ impl Store {
     /// Snapshots are added via `add_document_no_embed` so they don't appear in
     /// vector search results — only the live paragraph version does.
     pub fn create_snapshot(&self, parent: &Node, content: &[u8]) -> Result<Uuid> {
+        self.create_snapshot_annotated(parent, content, "")
+    }
+
+    /// 1.2.6+ — `create_snapshot` plus a user-supplied
+    /// `annotation` ("first complete draft", "before the
+    /// lighthouse rewrite") stamped into the snapshot's
+    /// metadata. Empty annotation = same shape as the legacy
+    /// `create_snapshot` path.
+    pub fn create_snapshot_annotated(
+        &self,
+        parent: &Node,
+        content: &[u8],
+        annotation: &str,
+    ) -> Result<Uuid> {
         let preview = first_prose_line(content);
         let word_count = std::str::from_utf8(content)
             .map(|s| s.split_whitespace().count() as u64)
@@ -969,6 +990,7 @@ impl Store {
             "created_at": chrono::Utc::now().to_rfc3339(),
             "word_count": word_count,
             "preview": preview,
+            "annotation": annotation,
         });
         let id = self
             .inner
@@ -1017,12 +1039,18 @@ impl Store {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                let annotation = meta
+                    .get("annotation")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 Some(Snapshot {
                     id,
                     parent_id,
                     created_at,
                     word_count,
                     preview,
+                    annotation,
                 })
             })
             .collect();
