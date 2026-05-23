@@ -642,6 +642,7 @@ mod tests {
             linked_paragraphs: Vec::new(),
             bookmark: false,
             tags: Vec::new(),
+            ai_memory: Vec::new(),
         }
     }
 

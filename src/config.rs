@@ -47,6 +47,11 @@ pub struct Config {
     /// to show.
     #[serde(default)]
     pub goals: GoalsConfig,
+    /// 1.2.6+ — AI-pane behaviour knobs that aren't tied to a
+    /// specific provider (per-paragraph memory, future
+    /// turn-history overrides, etc).
+    #[serde(default)]
+    pub ai: AiConfig,
     /// Bund scripting sandbox policy. Defaults deny destructive
     /// categories (fs_write, net, shell, code_eval); writers opt
     /// in by listing the categories or words they want to allow.
@@ -125,6 +130,7 @@ impl Default for Config {
             images: ImagesConfig::default(),
             output: OutputConfig::default(),
             goals: GoalsConfig::default(),
+            ai: AiConfig::default(),
             scripting: crate::scripting::policy::Policy::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
@@ -1287,6 +1293,33 @@ pub struct BookGoal {
 #[serde(default)]
 pub struct OutputConfig {
     pub extra_formats: Vec<String>,
+}
+
+/// 1.2.6+ — AI-pane behaviour. Currently just per-paragraph
+/// memory; future knobs (e.g. ai-pane default scope, max chat
+/// history depth) will land here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AiConfig {
+    /// When true, AI prompts sent with scope=Paragraph stamp
+    /// both turns onto the open paragraph's `ai_memory`
+    /// metadata, and subsequent paragraph-scoped prompts
+    /// pre-pend that memory to the chat-history payload. The
+    /// project-wide visible chat history is untouched.
+    pub per_paragraph_memory: bool,
+    /// Maximum total turns (user + assistant) kept per
+    /// paragraph. Oldest turns evict first. `0` is treated as
+    /// "disabled" regardless of `per_paragraph_memory`.
+    pub per_paragraph_memory_max_turns: usize,
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            per_paragraph_memory: false,
+            per_paragraph_memory_max_turns: 10,
+        }
+    }
 }
 
 #[cfg(test)]
