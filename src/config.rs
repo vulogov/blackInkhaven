@@ -604,12 +604,44 @@ pub struct TypstFontsConfig {
 
 impl Default for TypstFontsConfig {
     fn default() -> Self {
+        // 1.2.6: defaults are typst's own bundled fonts so the
+        // shipped HJSON compiles cleanly on a vanilla host with
+        // no extra font installs. Override in HJSON to taste —
+        // see `synthesised_settings_typ_header` which always
+        // emits a fallback list ending in the bundled font, so
+        // a custom name that isn't installed still compiles.
         Self {
-            body: "EB Garamond".into(),
+            body: "Linux Libertine".into(),
             body_size: "11pt".into(),
-            monospace: "JetBrains Mono".into(),
+            monospace: "DejaVu Sans Mono".into(),
             language: "en".into(),
         }
+    }
+}
+
+/// Names that ship with typst's own embedded font set — used as
+/// the trailing fallback in `#set text(font: ...)` /
+/// `#set raw(font: ...)`. Listed bare so the unit tests can match
+/// them; consider these the "sure-way" fonts that are present
+/// even when the host has no system fonts at all.
+const BUNDLED_BODY_FONT: &str = "Linux Libertine";
+const BUNDLED_MONO_FONT: &str = "DejaVu Sans Mono";
+
+/// Build the Typst literal for a `font:` argument. When `primary`
+/// already matches the bundled fallback, emit the plain string
+/// form `"X"`; otherwise emit the array form `("X", "Y")` so a
+/// missing primary font falls back to the bundled one instead of
+/// erroring.
+fn font_literal(primary: &str, fallback: &str) -> String {
+    let primary = primary.trim();
+    if primary.eq_ignore_ascii_case(fallback) {
+        format!("\"{}\"", typst_escape(primary))
+    } else {
+        format!(
+            "(\"{}\", \"{}\")",
+            typst_escape(primary),
+            typst_escape(fallback)
+        )
     }
 }
 
@@ -685,10 +717,15 @@ impl Config {
         }
 
         // #set text(...)
+        // Body + monospace font args are emitted as a fallback list
+        // (user pick, bundled font) so a missing primary survives.
         let f = &self.typst_fonts;
         let mut text_args: Vec<String> = Vec::new();
         if !f.body.trim().is_empty() {
-            text_args.push(format!("font: \"{}\"", typst_escape(&f.body)));
+            text_args.push(format!(
+                "font: {}",
+                font_literal(&f.body, BUNDLED_BODY_FONT)
+            ));
         }
         if !f.body_size.trim().is_empty() {
             text_args.push(format!("size: {}", f.body_size));
@@ -703,8 +740,8 @@ impl Config {
         // body font.
         if !f.monospace.trim().is_empty() {
             out.push_str(&format!(
-                "#set raw(font: \"{}\")\n\n",
-                typst_escape(&f.monospace)
+                "#set raw(font: {})\n\n",
+                font_literal(&f.monospace, BUNDLED_MONO_FONT)
             ));
         }
 
@@ -1454,7 +1491,47 @@ mod settings_synth_tests {
         let mut cfg = Config::default();
         cfg.typst_fonts.body = "Bad\"Font".into();
         let s = cfg.synthesised_settings_typ_header();
-        assert!(s.contains("font: \"Bad\\\"Font\""), "got:\n{s}");
+        // 1.2.6: fonts are emitted as a fallback array, so the
+        // user-supplied value sits inside `font: ("…", "Linux
+        // Libertine")`. We only assert the escape itself landed.
+        assert!(s.contains("\"Bad\\\"Font\""), "got:\n{s}");
+    }
+
+    #[test]
+    fn synthesised_header_uses_font_fallback_array_for_custom_body() {
+        let mut cfg = Config::default();
+        cfg.typst_fonts.body = "EB Garamond".into();
+        let s = cfg.synthesised_settings_typ_header();
+        // Custom body font is paired with the bundled fallback so a
+        // missing host font won't fail the compile.
+        assert!(
+            s.contains("font: (\"EB Garamond\", \"Linux Libertine\")"),
+            "got:\n{s}"
+        );
+    }
+
+    #[test]
+    fn synthesised_header_uses_font_fallback_array_for_custom_mono() {
+        let mut cfg = Config::default();
+        cfg.typst_fonts.monospace = "JetBrains Mono".into();
+        let s = cfg.synthesised_settings_typ_header();
+        assert!(
+            s.contains("#set raw(font: (\"JetBrains Mono\", \"DejaVu Sans Mono\"))"),
+            "got:\n{s}"
+        );
+    }
+
+    #[test]
+    fn synthesised_header_dedupes_when_body_matches_bundled() {
+        let cfg = Config::default();
+        let s = cfg.synthesised_settings_typ_header();
+        // Default body IS the bundled fallback → bare string form,
+        // no duplicate entry.
+        assert!(s.contains("font: \"Linux Libertine\""), "got:\n{s}");
+        assert!(
+            !s.contains("(\"Linux Libertine\", \"Linux Libertine\")"),
+            "got:\n{s}"
+        );
     }
 
     #[test]
