@@ -2939,9 +2939,11 @@ pub(crate) struct TimelineDescentChoice {
 
 /// Snapshot of one event for the swim-lane view. Cached at
 /// open / scope-change time so each render frame is a
-/// straight columnar walk.
+/// straight columnar walk. Phase 3 widened this to carry
+/// `characters` / `places` so the AI critique payload
+/// builder doesn't need a second hierarchy walk.
 #[derive(Debug, Clone)]
-pub(crate) struct TimelineEvent {
+pub struct TimelineEvent {
     pub id: Uuid,
     pub title: String,
     pub start_ticks: i64,
@@ -2950,6 +2952,8 @@ pub(crate) struct TimelineEvent {
     pub track: Option<String>,
     pub is_orphan: bool,
     pub linked_paragraphs: Vec<Uuid>,
+    pub characters: Vec<Uuid>,
+    pub places: Vec<Uuid>,
     /// Optional book-slug prefix when the project overlay
     /// is on. Empty otherwise.
     pub book_prefix: String,
@@ -14579,6 +14583,21 @@ impl App {
             KeyCode::Char('n') | KeyCode::Char('N') => {
                 self.timeline_open_new_event_prompt()
             }
+            // 1.2.7+ Phase 3 — AI health critique.
+            //   y       — current scope, highlighted track only.
+            //   Y       — current scope, all tracks.
+            //   Ctrl+Y  — book scope, all tracks (widens regardless).
+            KeyCode::Char('y') | KeyCode::Char('Y')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.timeline_start_health_critique(true, true);
+            }
+            KeyCode::Char('Y') => {
+                self.timeline_start_health_critique(false, true);
+            }
+            KeyCode::Char('y') => {
+                self.timeline_start_health_critique(false, false);
+            }
             _ => {}
         }
     }
@@ -14709,6 +14728,122 @@ impl App {
         if let Modal::TimelineNewEventPrompt { input, .. } = &mut self.modal {
             handle_text_input_key(input, key);
         }
+    }
+
+    /// 1.2.7+ Phase 3 — kick off the timeline health
+    /// critique. `widen_to_book` ignores the current
+    /// sub-scope and uses the whole book's event set;
+    /// `widen_to_all_tracks` ignores `track_highlight`.
+    fn timeline_start_health_critique(
+        &mut self,
+        widen_to_book: bool,
+        widen_to_all_tracks: bool,
+    ) {
+        let (book_id, project, scope_id, track_highlight, scope_events) =
+            match &self.modal {
+                Modal::TimelineView { state } => (
+                    state.book_id,
+                    state.project_overlay,
+                    state.scope_id,
+                    state.track_highlight.clone(),
+                    state.events.clone(),
+                ),
+                _ => return,
+            };
+        // Build the event set for the critique. When
+        // widen_to_book is true we sidestep the scope filter
+        // and grab everything in the book (or project).
+        let critique_events: Vec<TimelineEvent> = if widen_to_book {
+            self.collect_book_events(book_id, project)
+        } else {
+            scope_events
+        };
+        if critique_events.is_empty() {
+            self.status =
+                "timeline critique: no events in this scope".into();
+            return;
+        }
+        let track_filter: Option<String> = if widen_to_all_tracks {
+            None
+        } else {
+            track_highlight.clone()
+        };
+        let crumb = if widen_to_book {
+            self.hierarchy
+                .get(book_id)
+                .map(|n| n.title.clone())
+                .unwrap_or_else(|| "(book)".into())
+        } else {
+            let snapshot = TimelineViewState {
+                book_id,
+                scope_id,
+                nav_history: Vec::new(),
+                events: Vec::new(),
+                track_highlight: None,
+                ticks_per_cell: 1.0,
+                scroll_ticks: 0,
+                cursor_ticks: 0,
+                project_overlay: project,
+                descent: None,
+            };
+            self.timeline_scope_crumb(&snapshot)
+        };
+        let calendar = crate::timeline::Calendar::from_config(
+            self.cfg.timeline.calendar.clone(),
+        );
+        let payload_body = crate::timeline::critique::build_health_payload(
+            &critique_events,
+            &calendar,
+            &self.hierarchy,
+            &crumb,
+            track_filter.as_deref(),
+            &self.cfg.timeline.default_track,
+        );
+        let template = self.resolve_prompt_template("timeline-health", || {
+            timeline_health_default_prompt().to_string()
+        });
+        let rendered = self.render_template(&template);
+        let prompt_text = format!("{rendered}\n\n{payload_body}");
+
+        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("timeline critique: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            None,
+            Vec::new(),
+            prompt_text,
+        );
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        // Close the modal so the AI pane is visible.
+        self.modal = Modal::None;
+        self.change_focus(Focus::Ai);
+        let scope_label = if widen_to_book {
+            "book"
+        } else if widen_to_all_tracks {
+            "scope · all tracks"
+        } else {
+            "scope · current track"
+        };
+        self.status = format!(
+            "timeline critique ({scope_label}) · {n} events → {provider}…",
+            n = critique_events.len(),
+        );
     }
 
     /// Create an event paragraph under the book's Timeline
@@ -15625,6 +15760,8 @@ impl App {
                 track: ev.track.clone(),
                 is_orphan: n.tags.iter().any(|t| t.eq_ignore_ascii_case("orphan")),
                 linked_paragraphs: n.linked_paragraphs.clone(),
+                characters: ev.characters.clone(),
+                places: ev.places.clone(),
                 book_prefix,
             });
         }
@@ -23789,6 +23926,18 @@ and the current `After` buffer. Identify what the revision changed (added / \
 removed / reordered), and evaluate whether each change is an improvement, a \
 regression, or neutral. Quote the specific phrases that moved. End with one \
 suggestion for what the next revision pass should focus on."
+}
+
+/// 1.2.7+ — embedded fallback for the timeline health
+/// check (y / Y / Ctrl+Y inside Ctrl+V t). The payload
+/// itself does the heavy lifting; this top text just sets
+/// the model's task tone.
+pub(crate) fn timeline_health_default_prompt() -> &'static str {
+    "You are reviewing the story timeline that follows for internal consistency. \
+Treat the events as facts about a single fictional world; do not invent missing \
+detail. Read the audit checklist at the bottom and respond to it — be specific, \
+quote event titles, and surface concrete fixes. If the timeline is internally \
+coherent, say so briefly rather than padding with caveats."
 }
 
 /// System prompt for the F1 / "Help!" RAG flow. We force the model to

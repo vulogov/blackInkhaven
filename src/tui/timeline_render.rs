@@ -189,6 +189,8 @@ mod tests {
             track: track.map(str::to_owned),
             is_orphan: false,
             linked_paragraphs: Vec::new(),
+            characters: Vec::new(),
+            places: Vec::new(),
             book_prefix: String::new(),
         }
     }

@@ -17,6 +17,15 @@ pub struct Hierarchy {
     order: Vec<Uuid>,
 }
 
+impl Default for Hierarchy {
+    fn default() -> Self {
+        Self {
+            by_id: HashMap::new(),
+            order: Vec::new(),
+        }
+    }
+}
+
 impl Hierarchy {
     pub fn load(store: &Store) -> Result<Self> {
         let raw = store
