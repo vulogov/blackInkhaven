@@ -17,6 +17,7 @@
 use anyhow::{anyhow, Context, Result};
 use quick_xml::events::Event;
 use quick_xml::Reader;
+use std::collections::HashMap;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -30,6 +31,12 @@ pub struct BinderItem {
     pub kind: String,
     pub title: String,
     pub children: Vec<BinderItem>,
+    /// 1.2.6+ — Scrivener keywords resolved against the
+    /// project-level `<Keywords>` registry plus any inline
+    /// `<Keywords>` text. Empty when this item has no
+    /// keywords. The importer copies these to `Node.tags` on
+    /// the corresponding inkhaven paragraph.
+    pub keywords: Vec<String>,
 }
 
 #[cfg(test)]
@@ -71,6 +78,22 @@ pub fn parse_project(scriv_root: &Path) -> Result<Vec<BinderItem>> {
 /// Pure parser over the .scrivx bytes. Exposed so tests can
 /// feed fixtures directly.
 pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
+    // Phase 1 — build a registry mapping keyword IDs to their
+    // human-readable titles. Modern Scrivener stores keywords
+    // at project level inside a `<Keywords>` block:
+    //
+    //   <Keywords>
+    //     <Keyword ID="2"><Title>worldbuilding</Title>...</Keyword>
+    //   </Keywords>
+    //
+    // and BinderItems reference them through
+    // `<MetaData><KeywordsRefs><KeywordRef ID="2"/></KeywordsRefs>`.
+    // Older / lighter exports use inline `<Keywords>foo;bar</Keywords>`
+    // inside each item's `<MetaData>` — that path is handled
+    // in phase 2.
+    let registry = parse_keyword_registry(bytes)?;
+
+    // Phase 2 — walk the binder tree.
     let mut reader = Reader::from_reader(bytes);
     reader.config_mut().trim_text(true);
 
@@ -82,6 +105,10 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
     let mut stack: Vec<PartialItem> = Vec::new();
     let mut result: Vec<BinderItem> = Vec::new();
     let mut current_text: Option<TextBuf> = None;
+    // Per-item state for the inline-keywords path. Set when we
+    // enter a BinderItem's MetaData/Keywords element, cleared
+    // on close.
+    let mut in_metadata: usize = 0;
     let mut buf: Vec<u8> = Vec::new();
 
     loop {
@@ -131,21 +158,76 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
                             kind,
                             title: String::new(),
                             children: Vec::new(),
+                            keywords: Vec::new(),
                         });
                     }
                     "Title" => {
                         current_text = Some(TextBuf::Title);
                     }
+                    "MetaData" => {
+                        in_metadata += 1;
+                    }
+                    // Resolve `<KeywordRef ID="N"/>` (and the
+                    // empty-element form handled by Event::Empty
+                    // below). Only meaningful when we're inside
+                    // a BinderItem AND inside its MetaData.
+                    "KeywordRef" if in_metadata > 0 && !stack.is_empty() => {
+                        if let Some(id) = extract_attr(&e, "ID") {
+                            if let Some(title) = registry.get(&id) {
+                                if let Some(top) = stack.last_mut() {
+                                    push_unique_keyword(&mut top.keywords, title);
+                                }
+                            }
+                        }
+                    }
+                    // Inline `<Keywords>...</Keywords>` form —
+                    // only treat it as data when we're inside a
+                    // BinderItem's MetaData. The top-level
+                    // registry `<Keywords>` block (which holds
+                    // `<Keyword>` children, NOT text) is
+                    // handled in phase 1 and skipped here.
+                    "Keywords" if in_metadata > 0 && !stack.is_empty() => {
+                        current_text = Some(TextBuf::InlineKeywords);
+                    }
                     _ => {}
                 }
             }
+            Event::Empty(e) => {
+                let name = std::str::from_utf8(e.name().as_ref())
+                    .unwrap_or("")
+                    .to_string();
+                if name == "KeywordRef" && in_metadata > 0 && !stack.is_empty() {
+                    if let Some(id) = extract_attr(&e, "ID") {
+                        if let Some(title) = registry.get(&id) {
+                            if let Some(top) = stack.last_mut() {
+                                push_unique_keyword(&mut top.keywords, title);
+                            }
+                        }
+                    }
+                }
+            }
             Event::Text(e) => {
-                if let Some(TextBuf::Title) = current_text {
-                    if let Some(top) = stack.last_mut() {
-                        let txt = e
-                            .unescape()
-                            .map_err(|err| anyhow!("title decode: {err}"))?;
-                        top.title.push_str(&txt);
+                if let Some(top) = stack.last_mut() {
+                    match current_text {
+                        Some(TextBuf::Title) => {
+                            let txt = e
+                                .unescape()
+                                .map_err(|err| anyhow!("title decode: {err}"))?;
+                            top.title.push_str(&txt);
+                        }
+                        Some(TextBuf::InlineKeywords) => {
+                            let txt = e
+                                .unescape()
+                                .map_err(|err| anyhow!("keywords decode: {err}"))?;
+                            for piece in txt.split(|c| c == ',' || c == ';' || c == '\n')
+                            {
+                                let trimmed = piece.trim();
+                                if !trimmed.is_empty() {
+                                    push_unique_keyword(&mut top.keywords, trimmed);
+                                }
+                            }
+                        }
+                        None => {}
                     }
                 }
             }
@@ -155,7 +237,17 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
                     .to_string();
                 match name.as_str() {
                     "Title" => {
-                        current_text = None;
+                        if matches!(current_text, Some(TextBuf::Title)) {
+                            current_text = None;
+                        }
+                    }
+                    "Keywords" => {
+                        if matches!(current_text, Some(TextBuf::InlineKeywords)) {
+                            current_text = None;
+                        }
+                    }
+                    "MetaData" => {
+                        in_metadata = in_metadata.saturating_sub(1);
                     }
                     "BinderItem" => {
                         if let Some(p) = stack.pop() {
@@ -164,6 +256,7 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
                                 kind: p.kind,
                                 title: p.title,
                                 children: p.children,
+                                keywords: p.keywords,
                             };
                             if let Some(parent) = stack.last_mut() {
                                 parent.children.push(item);
@@ -183,17 +276,117 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
     Ok(result)
 }
 
+/// Walk the bytes once to extract the project-level keyword
+/// registry: `<Keyword ID="N"><Title>name</Title></Keyword>`
+/// entries (anywhere in the document — typically under a
+/// top-level `<Keywords>` block in Scrivener 3.x).
+fn parse_keyword_registry(bytes: &[u8]) -> Result<HashMap<String, String>> {
+    let mut reader = Reader::from_reader(bytes);
+    reader.config_mut().trim_text(true);
+    let mut out: HashMap<String, String> = HashMap::new();
+    let mut current_id: Option<String> = None;
+    let mut in_keyword: usize = 0;
+    let mut in_keyword_title: bool = false;
+    let mut current_title = String::new();
+    let mut buf: Vec<u8> = Vec::new();
+
+    loop {
+        let event = reader
+            .read_event_into(&mut buf)
+            .with_context(|| ".scrivx keyword-registry parse error".to_string())?;
+        match event {
+            Event::Start(e) => {
+                let name = std::str::from_utf8(e.name().as_ref())
+                    .unwrap_or("")
+                    .to_string();
+                match name.as_str() {
+                    "Keyword" => {
+                        in_keyword += 1;
+                        current_id = extract_attr(&e, "ID");
+                        current_title.clear();
+                    }
+                    "Title" if in_keyword > 0 => {
+                        in_keyword_title = true;
+                    }
+                    _ => {}
+                }
+            }
+            Event::Text(e) => {
+                if in_keyword_title {
+                    let txt = e.unescape().map_err(|err| {
+                        anyhow!("keyword-title decode: {err}")
+                    })?;
+                    current_title.push_str(&txt);
+                }
+            }
+            Event::End(e) => {
+                let name = std::str::from_utf8(e.name().as_ref())
+                    .unwrap_or("")
+                    .to_string();
+                match name.as_str() {
+                    "Title" if in_keyword_title => {
+                        in_keyword_title = false;
+                    }
+                    "Keyword" => {
+                        if let Some(id) = current_id.take() {
+                            let title = current_title.trim();
+                            if !title.is_empty() {
+                                out.insert(id, title.to_owned());
+                            }
+                        }
+                        in_keyword = in_keyword.saturating_sub(1);
+                    }
+                    _ => {}
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(out)
+}
+
+fn extract_attr(e: &quick_xml::events::BytesStart, want: &str) -> Option<String> {
+    for attr in e.attributes().with_checks(false).flatten() {
+        let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+        if key == want {
+            let val = std::str::from_utf8(attr.value.as_ref())
+                .unwrap_or("")
+                .to_string();
+            return Some(val);
+        }
+    }
+    None
+}
+
+fn push_unique_keyword(into: &mut Vec<String>, candidate: &str) {
+    let trimmed = candidate.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if into.iter().any(|k| k == trimmed) {
+        return;
+    }
+    into.push(trimmed.to_owned());
+}
+
 #[derive(Debug)]
 struct PartialItem {
     uuid: Uuid,
     kind: String,
     title: String,
     children: Vec<BinderItem>,
+    keywords: Vec<String>,
 }
 
 #[derive(Debug)]
 enum TextBuf {
     Title,
+    /// 1.2.6+ — inside a BinderItem's `<MetaData><Keywords>`
+    /// inline text node (semicolon / comma / newline-separated
+    /// keyword list).
+    InlineKeywords,
 }
 
 /// Synthesise a deterministic UUID from a string. Used for
@@ -249,6 +442,90 @@ mod tests {
         let storm = &ch1.children[0];
         assert_eq!(storm.title, "The Storm");
         assert_eq!(storm.kind, "Text");
+    }
+
+    /// 1.2.6+ — Scrivener 3.x style: project-level
+    /// `<Keywords>` registry plus per-item
+    /// `<KeywordRef ID="N"/>` references. The parser should
+    /// resolve refs to titles and attach them to the right
+    /// BinderItem.
+    #[test]
+    fn keywords_via_registry_refs() {
+        let xml = br#"<ScrivenerProject>
+  <Keywords>
+    <Keyword ID="1"><Title>worldbuilding</Title></Keyword>
+    <Keyword ID="2"><Title>weather</Title></Keyword>
+    <Keyword ID="3"><Title>character</Title></Keyword>
+  </Keywords>
+  <Binder>
+    <BinderItem UUID="00000000-0000-0000-0000-000000000001" Type="DraftFolder">
+      <Title>Manuscript</Title>
+      <Children>
+        <BinderItem UUID="00000000-0000-0000-0000-000000000002" Type="Text">
+          <Title>The Storm</Title>
+          <MetaData>
+            <KeywordsRefs>
+              <KeywordRef ID="2"/>
+              <KeywordRef ID="1"/>
+            </KeywordsRefs>
+          </MetaData>
+        </BinderItem>
+      </Children>
+    </BinderItem>
+  </Binder>
+</ScrivenerProject>"#;
+        let items = parse_scrivx(xml).unwrap();
+        let storm = &items[0].children[0];
+        assert_eq!(storm.title, "The Storm");
+        // Order follows the order the refs appear in the source.
+        assert_eq!(storm.keywords, vec!["weather".to_owned(), "worldbuilding".to_owned()]);
+    }
+
+    /// 1.2.6+ — older / lighter exports use inline
+    /// `<MetaData><Keywords>foo, bar; baz</Keywords></MetaData>`.
+    /// Splitter handles commas, semicolons, and newlines;
+    /// trims whitespace; de-dupes.
+    #[test]
+    fn keywords_inline_split() {
+        let xml = br#"<ScrivenerProject><Binder>
+          <BinderItem UUID="00000000-0000-0000-0000-000000000001" Type="Text">
+            <Title>Scene</Title>
+            <MetaData>
+              <Keywords>storm, weather; storm
+character</Keywords>
+            </MetaData>
+          </BinderItem>
+        </Binder></ScrivenerProject>"#;
+        let items = parse_scrivx(xml).unwrap();
+        assert_eq!(items.len(), 1);
+        // `storm` appears twice in the source; de-duped to once.
+        assert_eq!(
+            items[0].keywords,
+            vec![
+                "storm".to_owned(),
+                "weather".to_owned(),
+                "character".to_owned(),
+            ],
+        );
+    }
+
+    /// Inline `<Keywords>` inside MetaData must not interfere
+    /// with the top-level registry block (which holds
+    /// `<Keyword>` children, not bare text).
+    #[test]
+    fn keywords_registry_does_not_double_count() {
+        let xml = br#"<ScrivenerProject>
+  <Keywords>
+    <Keyword ID="1"><Title>foo</Title></Keyword>
+  </Keywords>
+  <Binder>
+    <BinderItem UUID="00000000-0000-0000-0000-000000000002" Type="Text">
+      <Title>Bare</Title>
+    </BinderItem>
+  </Binder>
+</ScrivenerProject>"#;
+        let items = parse_scrivx(xml).unwrap();
+        assert!(items[0].keywords.is_empty());
     }
 
     #[test]
