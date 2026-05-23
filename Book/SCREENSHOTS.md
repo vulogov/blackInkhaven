@@ -191,6 +191,7 @@ Each table column:
 
 | id | state | caption |
 |----|-------|---------|
+| `author-portrait` | Portrait of Vladimir Ulogov for the "About the author" page. Headshot or three-quarter studio crop; PNG, 800×1000 or thereabouts, plain background or a soft environmental backdrop. Optional — the book compiles with the placeholder rectangle if no portrait is supplied. | Vladimir Ulogov. |
 | `book-cover-art` | Cover image of the book — provided. Generated from `Book/images/book-cover-art.typ` (`typst compile --format png --ppi 300 Book/images/book-cover-art.typ Book/images/book-cover-art.png`). 800×1200pt typst source rasterised to ~1.0 MB PNG at 300 ppi. Edit the .typ source to retune; rebuild to refresh. | The Book of Inkhaven — typeset cover. Warm cream paper, burnt-sienna ink. A stylized tree of words with paragraph-pilcrow leaves rooted at the editor cursor glyph; a quill in the lower-right margin; an ink drop in the lower-left. Author + version at the foot. |
 
 ## Workflow tips

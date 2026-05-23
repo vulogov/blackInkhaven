@@ -66,4 +66,7 @@
   include "chapters/appendix-a-keybinding.typ",
   include "chapters/appendix-b-configuration.typ",
   include "chapters/appendix-c-bund-stdlib.typ",
+
+  // Afterword
+  include "chapters/99-about-the-author.typ",
 ))
