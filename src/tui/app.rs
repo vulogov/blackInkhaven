@@ -1149,6 +1149,18 @@ fn select_apply_text(
     if let Some(extracted) = extract_corrected_text(raw) {
         return Ok((extracted, true));
     }
+    // Diagnostic log when no extractable block is found.
+    // Surfaces the first 200 chars of the response so a user
+    // who hits this can paste their `.inkhaven.log` and we
+    // see exactly which bracket shape the model emitted.
+    tracing::warn!(
+        target: "inkhaven::ai::apply",
+        force_extract = force_extract,
+        sample_len = raw.len(),
+        sample_head = %raw.chars().take(200).collect::<String>(),
+        "select_apply_text: no extractable corrected block — \
+         marker / Unicode-bracket / code-fence / heading passes all missed",
+    );
     if force_extract {
         return Err(
             "couldn't find a corrected block in the response \
@@ -1191,14 +1203,12 @@ fn extract_corrected_text(response: &str) -> Option<String> {
             }
         }
     }
-    // Relaxed-bracket pass: look for any `<<…>>` token
-    // pattern (two-or-more `<`, optional word chars,
-    // two-or-more `>`). If we find at least two, the content
-    // between the first and the last is the correction. The
-    // word-char gate keeps casual `<<` arrows from triggering;
-    // requiring the same shape on both sides keeps prose
-    // ASCII-art out.
-    if let Ok(re) = regex::Regex::new(r"<<+[A-Za-z_]*>>+") {
+    // Pass A — ASCII multi-char marker (`<<>>`, `<<END>>`,
+    // `<<<corrected>>>`, etc). Token shape: 2+ `<`, optional
+    // word chars, 2+ `>`. If we find at least two such tokens,
+    // content between the first and the last is the correction.
+    let ascii_re = regex::Regex::new(r"<<+[A-Za-z_]*>>+");
+    if let Ok(re) = ascii_re {
         let positions: Vec<_> = re.find_iter(response).collect();
         if positions.len() >= 2 {
             let first = &positions[0];
@@ -1211,6 +1221,69 @@ fn extract_corrected_text(response: &str) -> Option<String> {
                     return Some(cleaned.to_string());
                 }
             }
+        }
+    }
+    // Pass B — single-char Unicode bracket pairs. Several
+    // shapes show up depending on the model's tokenizer:
+    //
+    //   ≪≫        U+226A / U+226B (much-less / greater)
+    //   «»        U+00AB / U+00BB (single guillemets — render
+    //             in monospace fonts as a tight double-angle
+    //             glyph that visually mimics ASCII `<<>>`)
+    //   〈〉⟨⟩《》  CJK / mathematical angle brackets
+    //
+    // Try labeled first (`«CORRECTED»…«END»`), then unlabeled
+    // (`« body »`). Labeled must precede unlabeled because an
+    // unlabeled scan over a labeled response would grab
+    // `CORRECTED» body «END` (including the inner brackets).
+    let pairs: &[(char, char)] = &[
+        ('≪', '≫'),
+        ('«', '»'),
+        ('〈', '〉'),
+        ('⟨', '⟩'),
+        ('《', '》'),
+    ];
+    // Pass B.1 — labeled Unicode markers.
+    for &(l, r) in pairs {
+        let pat = format!(r"{}[A-Za-z_]+{}", regex::escape(&l.to_string()), regex::escape(&r.to_string()));
+        let Ok(re) = regex::Regex::new(&pat) else {
+            continue;
+        };
+        let positions: Vec<_> = re.find_iter(response).collect();
+        if positions.len() >= 2 {
+            let first = &positions[0];
+            let last = &positions[positions.len() - 1];
+            if last.start() > first.end() {
+                let inner = &response[first.end()..last.start()];
+                let cleaned = inner
+                    .trim_matches(|c: char| c == '\n' || c == '\r' || c == ' ');
+                if !cleaned.is_empty() {
+                    return Some(cleaned.to_string());
+                }
+            }
+        }
+    }
+    // Pass B.2 — unlabeled Unicode markers (`« body »`).
+    // First `l` and the LAST `r` after it, content between.
+    for &(l, r) in pairs {
+        let Some(first_left) = response.find(l) else {
+            continue;
+        };
+        let inner_search_start = first_left + l.len_utf8();
+        let Some(last_right_rel) =
+            response[inner_search_start..].rfind(r)
+        else {
+            continue;
+        };
+        let last_right = inner_search_start + last_right_rel;
+        if last_right <= first_left + l.len_utf8() {
+            continue;
+        }
+        let inner = &response[first_left + l.len_utf8()..last_right];
+        let cleaned = inner
+            .trim_matches(|c: char| c == '\n' || c == '\r' || c == ' ');
+        if !cleaned.is_empty() {
+            return Some(cleaned.to_string());
         }
     }
     if let Some(last_close) = response.rfind("```") {
@@ -1313,6 +1386,43 @@ mod corrected_tests {
         let r = "Summary.\n<<<corrected>>>\nBody.\n<<<end>>>\n";
         let got = extract_corrected_text(r).unwrap();
         assert_eq!(got, "Body.");
+    }
+
+    /// U+226A / U+226B "much less / greater than" — a single
+    /// Unicode char on each side that renders in monospace
+    /// fonts as a tight double-angle glyph. Observed when the
+    /// model's tokenizer collapses `<<` into a single
+    /// codepoint.
+    #[test]
+    fn relaxed_unicode_much_less_greater() {
+        let r = "Summary.\n\n≪ The corrected sentence. ≫\n";
+        let got = extract_corrected_text(r).unwrap();
+        assert_eq!(got, "The corrected sentence.");
+    }
+
+    /// U+00AB / U+00BB single guillemets. Same visual effect
+    /// as the much-less-than pair when the font renders them
+    /// compact.
+    #[test]
+    fn relaxed_unicode_guillemets() {
+        let r = "Summary.\n\n«CORRECTED» Body sentence. «END»\n";
+        let got = extract_corrected_text(r).unwrap();
+        assert_eq!(got, "Body sentence.");
+    }
+
+    /// Multi-line response from the screenshot — with a
+    /// numbered issue list, a Unicode arrow, and the deepseek
+    /// `<<>>` brackets at the end. End-to-end smoke.
+    #[test]
+    fn relaxed_full_screenshot_shape() {
+        let r = "1 grammar issue, 1 spelling issue, otherwise clean.\n\n\
+                 Issues:\n\
+                 1. \"litle\" should be \"little\"\n\
+                 2. \"playz\" should be \"plays\"\n\
+                 3. (Lowercase \"tha\" → \"the\".)\n\n\
+                 <<>> The little boy plays the fiddle. <<>>\n";
+        let got = extract_corrected_text(r).unwrap();
+        assert_eq!(got, "The little boy plays the fiddle.");
     }
 
     // 1.2.6+ — `select_apply_text` should auto-prefer a
