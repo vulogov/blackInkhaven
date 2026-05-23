@@ -60,6 +60,23 @@ pub fn register(vm: &mut VM) -> Result<()> {
     vm.register_inline("ink.paragraph.save".to_string(), ink_paragraph_save)
         .map_err(|e| anyhow!("register ink.paragraph.save: {e}"))?;
 
+    // ── Events (1.2.7+ — Phase 4 of the timeline feature).
+    //   Reads under store_read; writes under store_write.
+    vm.register_inline("ink.event.list".to_string(), ink_event_list)
+        .map_err(|e| anyhow!("register ink.event.list: {e}"))?;
+    vm.register_inline("ink.event.list_orphans".to_string(), ink_event_list_orphans)
+        .map_err(|e| anyhow!("register ink.event.list_orphans: {e}"))?;
+    vm.register_inline("ink.event.add".to_string(), ink_event_add)
+        .map_err(|e| anyhow!("register ink.event.add: {e}"))?;
+    vm.register_inline("ink.event.set_end".to_string(), ink_event_set_end)
+        .map_err(|e| anyhow!("register ink.event.set_end: {e}"))?;
+    vm.register_inline("ink.event.set_precision".to_string(), ink_event_set_precision)
+        .map_err(|e| anyhow!("register ink.event.set_precision: {e}"))?;
+    vm.register_inline("ink.event.set_track".to_string(), ink_event_set_track)
+        .map_err(|e| anyhow!("register ink.event.set_track: {e}"))?;
+    vm.register_inline("ink.event.link_paragraph".to_string(), ink_event_link_paragraph)
+        .map_err(|e| anyhow!("register ink.event.link_paragraph: {e}"))?;
+
     // ── Tags (1.2.6+) — read words under store_read,
     //   add/remove under store_write.
     vm.register_inline("ink.tag.list".to_string(), ink_tag_list)
@@ -961,5 +978,398 @@ fn do_ink_tag_remove(vm: &mut VM) -> Result<&mut VM> {
             .map_err(|e| anyhow!("{tag}: {e}"))?;
         store.sync().map_err(|e| anyhow!("{tag} sync: {e}"))?;
     }
+    Ok(vm)
+}
+
+// ── 1.2.7+ Events (Phase 4 of the timeline feature) ────────────
+
+fn require_timeline_enabled(tag: &str) -> Result<&'static crate::config::Config> {
+    let cfg = crate::scripting::active_config()
+        .ok_or_else(|| anyhow!("{tag}: no active Config"))?;
+    if !cfg.timeline.enabled {
+        return Err(anyhow!(
+            "{tag}: requires `timeline.enabled: true` in inkhaven.hjson"
+        ));
+    }
+    Ok(cfg)
+}
+
+fn calendar_for(tag: &str) -> Result<crate::timeline::Calendar> {
+    let cfg = require_timeline_enabled(tag)?;
+    Ok(crate::timeline::Calendar::from_config(
+        cfg.timeline.calendar.clone(),
+    ))
+}
+
+fn event_dict(node: &Node) -> Value {
+    let ev = match node.event.as_ref() {
+        Some(e) => e,
+        None => return Value::nodata(),
+    };
+    let mut h = HashMap::new();
+    h.insert("id".to_string(), Value::from_string(node.id.to_string()));
+    h.insert("title".to_string(), Value::from_string(node.title.clone()));
+    h.insert("slug".to_string(), Value::from_string(node.slug.clone()));
+    h.insert(
+        "path".to_string(),
+        Value::from_string({
+            let mut parts = node.path.clone();
+            parts.push(node.slug.clone());
+            parts.join("/")
+        }),
+    );
+    h.insert("start_ticks".to_string(), Value::from_int(ev.start_ticks));
+    h.insert(
+        "end_ticks".to_string(),
+        match ev.end_ticks {
+            Some(t) => Value::from_int(t),
+            None => Value::nodata(),
+        },
+    );
+    h.insert(
+        "precision".to_string(),
+        Value::from_string(ev.precision.as_str().to_string()),
+    );
+    h.insert(
+        "track".to_string(),
+        match &ev.track {
+            Some(t) => Value::from_string(t.clone()),
+            None => Value::nodata(),
+        },
+    );
+    h.insert(
+        "is_orphan".to_string(),
+        Value::from_bool(node.tags.iter().any(|t| t.eq_ignore_ascii_case("orphan"))),
+    );
+    h.insert(
+        "linked_paragraphs".to_string(),
+        Value::from_list(
+            node.linked_paragraphs
+                .iter()
+                .map(|u| Value::from_string(u.to_string()))
+                .collect(),
+        ),
+    );
+    h.insert(
+        "characters".to_string(),
+        Value::from_list(
+            ev.characters
+                .iter()
+                .map(|u| Value::from_string(u.to_string()))
+                .collect(),
+        ),
+    );
+    h.insert(
+        "places".to_string(),
+        Value::from_list(
+            ev.places
+                .iter()
+                .map(|u| Value::from_string(u.to_string()))
+                .collect(),
+        ),
+    );
+    Value::from_dict(h)
+}
+
+// ── ink.event.list ───────────────────────────────────────────────────
+// Stack: ( -- list )
+
+fn ink_event_list(vm: &mut VM) -> BundResult<'_> {
+    do_ink_event_list(vm).map_err(to_bund_err)
+}
+
+fn do_ink_event_list(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.event.list";
+    let _cfg = require_timeline_enabled(tag)?;
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let mut items: Vec<(i64, Value)> = hierarchy
+        .iter()
+        .filter_map(|n| {
+            n.event.as_ref().map(|ev| (ev.start_ticks, event_dict(n)))
+        })
+        .collect();
+    items.sort_by_key(|(start, _)| *start);
+    let list: Vec<Value> = items.into_iter().map(|(_, v)| v).collect();
+    push(vm, Value::from_list(list));
+    Ok(vm)
+}
+
+// ── ink.event.list_orphans ───────────────────────────────────────────
+// Stack: ( -- list )
+
+fn ink_event_list_orphans(vm: &mut VM) -> BundResult<'_> {
+    do_ink_event_list_orphans(vm).map_err(to_bund_err)
+}
+
+fn do_ink_event_list_orphans(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.event.list_orphans";
+    let _cfg = require_timeline_enabled(tag)?;
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let items: Vec<Value> = hierarchy
+        .iter()
+        .filter(|n| {
+            n.event.is_some()
+                && n.tags.iter().any(|t| t.eq_ignore_ascii_case("orphan"))
+        })
+        .map(event_dict)
+        .collect();
+    push(vm, Value::from_list(items));
+    Ok(vm)
+}
+
+// ── ink.event.add ────────────────────────────────────────────────────
+// Stack: ( book-name title spec -- uuid )
+//
+// Creates a new event paragraph under the named book's
+// Timeline chapter (creating the chapter lazily). `spec` is
+// a calendar-formatted start string parsed by Calendar::parse
+// — precision is inferred from its shape (year/month/day/etc).
+
+fn ink_event_add(vm: &mut VM) -> BundResult<'_> {
+    do_ink_event_add(vm).map_err(to_bund_err)
+}
+
+fn do_ink_event_add(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.event.add";
+    require_depth(vm, 3, tag)?;
+    let spec = value_to_string(pull(vm, tag)?, "spec", tag)?;
+    let title = value_to_string(pull(vm, tag)?, "title", tag)?;
+    let book_name = value_to_string(pull(vm, tag)?, "book-name", tag)?;
+    if title.trim().is_empty() {
+        return Err(anyhow!("{tag}: empty title"));
+    }
+    let cfg = require_timeline_enabled(tag)?;
+    let calendar = calendar_for(tag)?;
+    let (start, prec) = calendar
+        .parse(&spec)
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let needle = book_name.trim().to_ascii_lowercase();
+    let book = hierarchy
+        .children_of(None)
+        .into_iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.is_none()
+                && (n.title.to_ascii_lowercase() == needle
+                    || n.slug.to_ascii_lowercase() == needle)
+        })
+        .cloned()
+        .ok_or_else(|| anyhow!("{tag}: no user book matches `{book_name}`"))?;
+    let timeline_chapter_id = store
+        .ensure_timeline_chapter(cfg, book.id)
+        .map_err(|e| anyhow!("{tag}: ensure_timeline_chapter: {e}"))?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy reload: {e}"))?;
+    let chapter = hierarchy
+        .get(timeline_chapter_id)
+        .cloned()
+        .ok_or_else(|| anyhow!("{tag}: Timeline chapter vanished after creation"))?;
+    let mut node = store
+        .create_node(
+            cfg,
+            &hierarchy,
+            NodeKind::Paragraph,
+            &title,
+            Some(&chapter),
+            None,
+            InsertPosition::End,
+        )
+        .map_err(|e| anyhow!("{tag}: create_node: {e}"))?;
+    node.event = Some(crate::store::node::EventData {
+        start_ticks: start.ticks(),
+        end_ticks: None,
+        precision: prec,
+        characters: Vec::new(),
+        places: Vec::new(),
+        track: None,
+    });
+    crate::store::reconcile_event_orphan_tag(&mut node);
+    node.modified_at = chrono::Utc::now();
+    store
+        .raw()
+        .update_metadata(node.id, node.to_json())
+        .map_err(|e| anyhow!("{tag}: update_metadata: {e}"))?;
+    store.sync().map_err(|e| anyhow!("{tag} sync: {e}"))?;
+    let id_str = node.id.to_string();
+    // Fire the hook so script-side observers can react.
+    crate::scripting::hooks::fire(
+        "hook.on_event_added",
+        vec![Value::from_string(id_str.clone())],
+    );
+    push(vm, Value::from_string(id_str));
+    Ok(vm)
+}
+
+// ── ink.event.set_end ────────────────────────────────────────────────
+// Stack: ( uuid spec -- )
+// Sets the event's end-ticks from a calendar-formatted string,
+// or clears the duration when spec is "" / "none".
+
+fn ink_event_set_end(vm: &mut VM) -> BundResult<'_> {
+    do_ink_event_set_end(vm).map_err(to_bund_err)
+}
+
+fn do_ink_event_set_end(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.event.set_end";
+    require_depth(vm, 2, tag)?;
+    let spec = value_to_string(pull(vm, tag)?, "spec", tag)?;
+    let id = value_to_uuid(pull(vm, tag)?, tag)?;
+    let new_end: Option<i64> = if spec.trim().is_empty() || spec.eq_ignore_ascii_case("none") {
+        None
+    } else {
+        let calendar = calendar_for(tag)?;
+        let (p, _prec) = calendar
+            .parse(&spec)
+            .map_err(|e| anyhow!("{tag}: {e}"))?;
+        Some(p.ticks())
+    };
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let mut node = hierarchy
+        .get(id)
+        .cloned()
+        .ok_or_else(|| anyhow!("{tag}: node {id} missing"))?;
+    let Some(ev) = node.event.as_mut() else {
+        return Err(anyhow!("{tag}: node {id} is not an event"));
+    };
+    if let Some(end_t) = new_end {
+        if end_t < ev.start_ticks {
+            return Err(anyhow!(
+                "{tag}: end ({end_t}) < start ({}) — events can't run backwards",
+                ev.start_ticks
+            ));
+        }
+    }
+    ev.end_ticks = new_end;
+    node.modified_at = chrono::Utc::now();
+    store
+        .raw()
+        .update_metadata(node.id, node.to_json())
+        .map_err(|e| anyhow!("{tag}: update_metadata: {e}"))?;
+    store.sync().map_err(|e| anyhow!("{tag} sync: {e}"))?;
+    Ok(vm)
+}
+
+// ── ink.event.set_precision ──────────────────────────────────────────
+// Stack: ( uuid precision -- )
+
+fn ink_event_set_precision(vm: &mut VM) -> BundResult<'_> {
+    do_ink_event_set_precision(vm).map_err(to_bund_err)
+}
+
+fn do_ink_event_set_precision(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.event.set_precision";
+    require_depth(vm, 2, tag)?;
+    let prec_str = value_to_string(pull(vm, tag)?, "precision", tag)?;
+    let id = value_to_uuid(pull(vm, tag)?, tag)?;
+    let _cfg = require_timeline_enabled(tag)?;
+    let prec = crate::timeline::Precision::from_str(&prec_str).ok_or_else(|| {
+        anyhow!("{tag}: unknown precision `{prec_str}` (try day/month/year/season/hour/week/tick)")
+    })?;
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let mut node = hierarchy
+        .get(id)
+        .cloned()
+        .ok_or_else(|| anyhow!("{tag}: node {id} missing"))?;
+    let Some(ev) = node.event.as_mut() else {
+        return Err(anyhow!("{tag}: node {id} is not an event"));
+    };
+    ev.precision = prec;
+    node.modified_at = chrono::Utc::now();
+    store
+        .raw()
+        .update_metadata(node.id, node.to_json())
+        .map_err(|e| anyhow!("{tag}: update_metadata: {e}"))?;
+    store.sync().map_err(|e| anyhow!("{tag} sync: {e}"))?;
+    Ok(vm)
+}
+
+// ── ink.event.set_track ──────────────────────────────────────────────
+// Stack: ( uuid track -- )
+// Empty string clears the track.
+
+fn ink_event_set_track(vm: &mut VM) -> BundResult<'_> {
+    do_ink_event_set_track(vm).map_err(to_bund_err)
+}
+
+fn do_ink_event_set_track(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.event.set_track";
+    require_depth(vm, 2, tag)?;
+    let track = value_to_string(pull(vm, tag)?, "track", tag)?;
+    let id = value_to_uuid(pull(vm, tag)?, tag)?;
+    let _cfg = require_timeline_enabled(tag)?;
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let mut node = hierarchy
+        .get(id)
+        .cloned()
+        .ok_or_else(|| anyhow!("{tag}: node {id} missing"))?;
+    let Some(ev) = node.event.as_mut() else {
+        return Err(anyhow!("{tag}: node {id} is not an event"));
+    };
+    ev.track = if track.trim().is_empty() {
+        None
+    } else {
+        Some(track)
+    };
+    node.modified_at = chrono::Utc::now();
+    store
+        .raw()
+        .update_metadata(node.id, node.to_json())
+        .map_err(|e| anyhow!("{tag}: update_metadata: {e}"))?;
+    store.sync().map_err(|e| anyhow!("{tag} sync: {e}"))?;
+    Ok(vm)
+}
+
+// ── ink.event.link_paragraph ─────────────────────────────────────────
+// Stack: ( uuid paragraph-path -- )
+//
+// Adds the paragraph at `path` to the event's
+// linked_paragraphs (idempotent — no-op if already linked).
+// Reconciles the orphan tag afterwards.
+
+fn ink_event_link_paragraph(vm: &mut VM) -> BundResult<'_> {
+    do_ink_event_link_paragraph(vm).map_err(to_bund_err)
+}
+
+fn do_ink_event_link_paragraph(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.event.link_paragraph";
+    require_depth(vm, 2, tag)?;
+    let path = value_to_string(pull(vm, tag)?, "paragraph-path", tag)?;
+    let event_id = value_to_uuid(pull(vm, tag)?, tag)?;
+    let _cfg = require_timeline_enabled(tag)?;
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let para_id = super::helpers::resolve_path(&hierarchy, &path, tag)?
+        .ok_or_else(|| anyhow!("{tag}: empty path"))?;
+    {
+        let para = hierarchy
+            .get(para_id)
+            .ok_or_else(|| anyhow!("{tag}: paragraph at `{path}` missing"))?;
+        if para.kind != NodeKind::Paragraph {
+            return Err(anyhow!("{tag}: `{path}` is not a Paragraph"));
+        }
+    }
+    let mut node = hierarchy
+        .get(event_id)
+        .cloned()
+        .ok_or_else(|| anyhow!("{tag}: event {event_id} missing"))?;
+    if node.event.is_none() {
+        return Err(anyhow!("{tag}: node {event_id} is not an event"));
+    }
+    if !node.linked_paragraphs.contains(&para_id) {
+        node.linked_paragraphs.push(para_id);
+    }
+    crate::store::reconcile_event_orphan_tag(&mut node);
+    node.modified_at = chrono::Utc::now();
+    store
+        .raw()
+        .update_metadata(node.id, node.to_json())
+        .map_err(|e| anyhow!("{tag}: update_metadata: {e}"))?;
+    store.sync().map_err(|e| anyhow!("{tag} sync: {e}"))?;
     Ok(vm)
 }

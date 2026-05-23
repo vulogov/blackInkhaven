@@ -129,6 +129,16 @@ fn add(
         .map_err(|e| anyhow!("stamp event metadata: {e}"))?;
     store.sync()?;
 
+    // 1.2.7+ Phase 4 — fire `hook.on_event_added` so Bund
+    // scripts can react (timeline-aware indexing, automated
+    // critique, etc.).
+    crate::scripting::hooks::fire(
+        "hook.on_event_added",
+        vec![rust_dynamic::value::Value::from_string(
+            node.id.to_string(),
+        )],
+    );
+
     let end_label = end_point
         .map(|t| {
             format!(

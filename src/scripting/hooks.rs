@@ -89,6 +89,10 @@ pub fn fire(name: &str, args: Vec<Value>) {
     }
 
     DEPTH.with(|c| c.set(depth + 1));
+    // 1.2.7+ — drain anything in the print buffer BEFORE
+    // the hook eval so we can attribute output that arrived
+    // afterwards to this specific fire.
+    let _ = super::stdlib::io::drain_print_buffer();
     let outcome = super::with_adam(|bund| {
         if !bund.vm.lambdas.contains_key(name) {
             // No-op when the user hasn't installed this hook.
@@ -102,6 +106,20 @@ pub fn fire(name: &str, args: Vec<Value>) {
             .map_err(|e| anyhow::anyhow!("eval: {e}"))
     });
     DEPTH.with(|c| c.set(depth));
+    // Surface any print / println output the hook produced.
+    // CLI / TUI surfaces don't drain this buffer on their
+    // own; without this drain, hook stdout vanishes
+    // silently. We route through tracing::info so the
+    // output respects RUST_LOG (and in the TUI lands in
+    // .inkhaven.log; in the CLI it flushes to stderr).
+    let stdout = super::stdlib::io::drain_print_buffer();
+    if !stdout.is_empty() {
+        for line in stdout.lines() {
+            if !line.is_empty() {
+                tracing::info!(target: "inkhaven::hook::out", hook = name, "{line}");
+            }
+        }
+    }
 
     match outcome {
         Some(Ok(())) => {}

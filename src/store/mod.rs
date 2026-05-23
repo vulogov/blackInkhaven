@@ -1449,6 +1449,12 @@ fn bund_string(s: &str) -> rust_dynamic::value::Value {
 /// actual link state. Called by every mutation that touches
 /// an event (add, link change, scrub-on-delete). Idempotent;
 /// no-op when the node isn't an event.
+///
+/// Fires `hook.on_event_orphaned ( uuid -- )` on the
+/// transition `linked → orphan`. The opposite transition
+/// (orphan → linked) doesn't fire — link-add paths fire
+/// `hook.on_event_added` or a future
+/// `hook.on_event_linked`.
 pub(crate) fn reconcile_event_orphan_tag(node: &mut Node) {
     let Some(ev) = node.event.as_ref() else {
         return;
@@ -1456,7 +1462,13 @@ pub(crate) fn reconcile_event_orphan_tag(node: &mut Node) {
     let is_orphan = ev.is_orphan(&node.linked_paragraphs);
     let pos = node.tags.iter().position(|t| t.eq_ignore_ascii_case("orphan"));
     match (is_orphan, pos) {
-        (true, None) => node.tags.push("orphan".to_owned()),
+        (true, None) => {
+            node.tags.push("orphan".to_owned());
+            fire_hook(
+                "hook.on_event_orphaned",
+                vec![bund_string(&node.id.to_string())],
+            );
+        }
         (false, Some(i)) => {
             node.tags.remove(i);
         }
