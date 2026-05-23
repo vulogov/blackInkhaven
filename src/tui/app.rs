@@ -2398,6 +2398,15 @@ enum Modal {
         cursor: usize,
         track_filter: Option<String>,
     },
+    /// Ctrl+V t (1.2.7+) — swim-lane timeline view (Phase 2).
+    /// Scope-aware: opens at the current paragraph's nearest
+    /// Subchapter / Chapter / Book; up/down chords walk the
+    /// tree. The modal builds its event snapshot at open
+    /// time and rebuilds on scope changes — pure UI state
+    /// the rest of the lifecycle.
+    TimelineView {
+        state: TimelineViewState,
+    },
     /// 1.2.6+ — side-by-side diff review before a buffer-
     /// replacing AI apply lands. Built by `apply_inference`
     /// when `ai.diff_review_on_apply = true` (default) and
@@ -2858,6 +2867,62 @@ pub(crate) fn visible_event_entries<'a>(
             .collect(),
         None => entries.iter().collect(),
     }
+}
+
+/// 1.2.7+ — full state for `Modal::TimelineView`. Lives in
+/// the modal only; not persisted across open/close.
+#[derive(Debug, Clone)]
+pub(crate) struct TimelineViewState {
+    /// User book that anchors the visible events. Cross-book
+    /// project mode (Ctrl+P) widens this conceptually but
+    /// the field stays book-shaped for snapshot building.
+    pub book_id: Uuid,
+    /// Tree node the current view is scoped to. Events
+    /// visible iff one of their `linked_paragraphs` (or the
+    /// event itself, since events live in the Timeline
+    /// chapter) sits in this subtree.
+    pub scope_id: Uuid,
+    /// Stack of previous scopes for "Esc back" in the
+    /// descent picker. Phase-2 batch 3 wires this; Phase-2
+    /// batch 1 just initialises empty.
+    pub nav_history: Vec<Uuid>,
+    /// All events in the current book, ticks-sorted. Rebuilt
+    /// from the hierarchy whenever scope changes (cheap —
+    /// books rarely hold thousands of events).
+    pub events: Vec<TimelineEvent>,
+    /// Track row name to highlight (cursor row). `None`
+    /// means "first row". `Tab` cycles.
+    pub track_highlight: Option<String>,
+    /// Display scale — base units per cell. 1.0 means one
+    /// base unit (day, hour, etc.) per terminal cell. +/-
+    /// multiplies by 0.66 / 1.5; clamped to [0.05, 1000.0].
+    pub ticks_per_cell: f64,
+    /// Leftmost tick currently visible. ←/→ shifts this.
+    pub scroll_ticks: i64,
+    /// Cursor tick — where `n` would create an event.
+    /// Initially anchored to the median visible event so the
+    /// first frame isn't empty.
+    pub cursor_ticks: i64,
+    /// Cross-book project overlay. Phase-2 batch 3.
+    pub project_overlay: bool,
+}
+
+/// Snapshot of one event for the swim-lane view. Cached at
+/// open / scope-change time so each render frame is a
+/// straight columnar walk.
+#[derive(Debug, Clone)]
+pub(crate) struct TimelineEvent {
+    pub id: Uuid,
+    pub title: String,
+    pub start_ticks: i64,
+    pub end_ticks: Option<i64>,
+    pub precision: crate::timeline::Precision,
+    pub track: Option<String>,
+    pub is_orphan: bool,
+    pub linked_paragraphs: Vec<Uuid>,
+    /// Optional book-slug prefix when the project overlay
+    /// is on. Empty otherwise.
+    pub book_prefix: String,
 }
 
 /// Pick the next track in a cycle: `None` → tracks[0] →
@@ -8752,6 +8817,7 @@ impl App {
             A::ViewStoryGraph => self.open_story_view(),
             A::ViewStoryGraphParagraph => self.open_story_view_paragraph(),
             A::ViewEventPicker => self.open_event_picker(),
+            A::ViewTimeline => self.open_timeline_view(),
 
             // ── Top-level F-keys (1.2.4+ migration) ───────────
             A::HelpQuery => self.open_help_query_modal(),
@@ -13179,6 +13245,7 @@ impl App {
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
         let is_ai_diff_review = matches!(self.modal, Modal::AiDiffReview { .. });
         let is_event_picker = matches!(self.modal, Modal::EventPicker { .. });
+        let is_timeline_view = matches!(self.modal, Modal::TimelineView { .. });
         let is_snapshot_annotation = matches!(self.modal, Modal::SnapshotAnnotation { .. });
         let is_tag_picker = matches!(self.modal, Modal::TagPicker { .. });
         let is_tag_add_prompt = matches!(self.modal, Modal::TagAddPrompt { .. });
@@ -13487,6 +13554,10 @@ impl App {
         }
         if is_event_picker {
             self.event_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_timeline_view {
+            self.timeline_view_handle_key(key);
             return Ok(false);
         }
         if is_snapshot_annotation {
@@ -14423,6 +14494,540 @@ impl App {
         self.load_paragraph(&node).map_err(|e| e.to_string())?;
         self.change_focus(Focus::Editor);
         Ok(())
+    }
+
+    fn timeline_view_handle_key(&mut self, key: KeyEvent) {
+        match key.code {
+            // Scroll: ← / → shift the viewport by 1/6 of its
+            // span (a "page-step" feels right at the default
+            // ticks_per_cell). Shift+Left/Right page-jump
+            // (full viewport width).
+            KeyCode::Left => self.timeline_scroll(-1, false),
+            KeyCode::Right => self.timeline_scroll(1, false),
+            KeyCode::PageUp => self.timeline_scroll(-1, true),
+            KeyCode::PageDown => self.timeline_scroll(1, true),
+            // Zoom: + / =  zooms in (fewer ticks per cell),
+            // - / _  zooms out (more ticks per cell). Each
+            // press is a multiplicative step; keeps the
+            // cursor tick fixed so the user can drill into
+            // a specific event.
+            KeyCode::Char('+') | KeyCode::Char('=') => self.timeline_zoom(0.66),
+            KeyCode::Char('-') | KeyCode::Char('_') => self.timeline_zoom(1.5),
+            KeyCode::Char('0') => self.timeline_reset_zoom(),
+            // Cursor at center / Home / End — quick recenters.
+            KeyCode::Home => self.timeline_jump_home(),
+            KeyCode::End => self.timeline_jump_end(),
+            // Scope nav stubs (Batch 3).
+            KeyCode::Char('u') | KeyCode::Char('U')
+            | KeyCode::Char('d') | KeyCode::Char('D')
+            | KeyCode::Char('b') | KeyCode::Char('B')
+            | KeyCode::Char('p') | KeyCode::Char('P') => {
+                self.status =
+                    "timeline view: scope nav lands in P2 batch 3".into();
+            }
+            // Interaction stubs (Batch 4).
+            KeyCode::Tab | KeyCode::Enter | KeyCode::Char('n') => {
+                self.status =
+                    "timeline view: Tab/Enter/n land in P2 batch 4".into();
+            }
+            _ => {}
+        }
+    }
+
+    fn timeline_scroll(&mut self, dir: i64, page: bool) {
+        let Modal::TimelineView { state } = &mut self.modal else {
+            return;
+        };
+        // Determine inner pane width to scale page steps.
+        // We don't know the modal width here; approximate
+        // with a sensible page = 60 cells, step = 10 cells.
+        let cells = if page { 60.0 } else { 10.0 };
+        let delta_ticks = (cells * state.ticks_per_cell * dir as f64).round() as i64;
+        state.scroll_ticks = state.scroll_ticks.saturating_add(delta_ticks);
+        state.cursor_ticks = state.cursor_ticks.saturating_add(delta_ticks);
+    }
+
+    fn timeline_zoom(&mut self, factor: f64) {
+        let Modal::TimelineView { state } = &mut self.modal else {
+            return;
+        };
+        let new = (state.ticks_per_cell * factor).clamp(0.05, 1000.0);
+        if (new - state.ticks_per_cell).abs() < f64::EPSILON {
+            return;
+        }
+        // Keep the cursor's screen column stable through the
+        // zoom — recompute scroll_ticks so cursor_ticks lands
+        // at the same column count.
+        let approx_col = ((state.cursor_ticks - state.scroll_ticks) as f64
+            / state.ticks_per_cell)
+            .round();
+        let new_scroll =
+            state.cursor_ticks - (approx_col * new).round() as i64;
+        state.ticks_per_cell = new;
+        state.scroll_ticks = new_scroll;
+        self.status = format!(
+            "timeline view · zoom {z:.2}× ({ticks_per_cell:.3} ticks/cell)",
+            z = 1.0 / new,
+            ticks_per_cell = new,
+        );
+    }
+
+    fn timeline_reset_zoom(&mut self) {
+        let Modal::TimelineView { state } = &mut self.modal else {
+            return;
+        };
+        state.ticks_per_cell = 1.0;
+        state.scroll_ticks = state.cursor_ticks.saturating_sub(20);
+        self.status = "timeline view · zoom 1.00× (reset)".into();
+    }
+
+    fn timeline_jump_home(&mut self) {
+        let Modal::TimelineView { state } = &mut self.modal else {
+            return;
+        };
+        if let Some(first) = state.events.first() {
+            state.cursor_ticks = first.start_ticks;
+            state.scroll_ticks = first.start_ticks.saturating_sub(10);
+        }
+    }
+
+    fn timeline_jump_end(&mut self) {
+        let Modal::TimelineView { state } = &mut self.modal else {
+            return;
+        };
+        if let Some(last) = state.events.last() {
+            state.cursor_ticks = last.start_ticks;
+            state.scroll_ticks = last.start_ticks.saturating_sub(30);
+        }
+    }
+
+    fn draw_timeline_view_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::TimelineView { state } = &self.modal else {
+            return;
+        };
+        let modal_w = area.width.saturating_sub(4).max(80);
+        let modal_h = area.height.saturating_sub(2).max(14);
+        let x = area.x + (area.width.saturating_sub(modal_w)) / 2;
+        let y = area.y + (area.height.saturating_sub(modal_h)) / 2;
+        let rect = Rect { x, y, width: modal_w, height: modal_h };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let crumb = self.timeline_scope_crumb(state);
+        let title = format!(
+            " Timeline · {crumb} · {n} events · zoom {z:.2}× ",
+            n = state.events.len(),
+            z = 1.0 / state.ticks_per_cell,
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Layout columns:
+        //   [ label_w ][ swim_w ]
+        // label_w = max track-name width + padding (min 8,
+        // max 18); swim_w fills the rest.
+        let default_track = &self.cfg.timeline.default_track;
+        let raw_rows = crate::tui::timeline_render::layout_swim_lanes(
+            &state.events,
+            state.scroll_ticks,
+            state.ticks_per_cell,
+            inner.width.saturating_sub(10) as usize, // tentative
+            default_track,
+            self.cfg.timeline.display.show_orphans,
+        );
+        let label_w = raw_rows
+            .iter()
+            .map(|r| r.label.chars().count())
+            .max()
+            .unwrap_or(4)
+            .clamp(4, 16) as u16
+            + 2;
+        let swim_w = inner.width.saturating_sub(label_w);
+        // Recompute with the final swim_w (label widths might
+        // have changed how much room the lanes get).
+        let rows = crate::tui::timeline_render::layout_swim_lanes(
+            &state.events,
+            state.scroll_ticks,
+            state.ticks_per_cell,
+            swim_w as usize,
+            default_track,
+            self.cfg.timeline.display.show_orphans,
+        );
+
+        // Time axis (1 row).
+        let calendar =
+            crate::timeline::Calendar::from_config(self.cfg.timeline.calendar.clone());
+        let axis_labels = crate::tui::timeline_render::time_axis_labels(
+            state.scroll_ticks,
+            state.ticks_per_cell,
+            swim_w as usize,
+        );
+        let mut axis_chars: Vec<char> = vec![' '; swim_w as usize];
+        let mut label_strings: Vec<(usize, String)> = Vec::new();
+        for (col, tick) in &axis_labels {
+            if *col < swim_w as usize {
+                axis_chars[*col] = '│';
+                let label = calendar.format(
+                    crate::timeline::TimelinePoint::from_ticks(*tick),
+                    crate::timeline::Precision::Day,
+                );
+                label_strings.push((*col, label));
+            }
+        }
+        // Cursor column marker.
+        let cursor_col = (((state.cursor_ticks - state.scroll_ticks) as f64)
+            / state.ticks_per_cell)
+            .round() as isize;
+        if cursor_col >= 0 && (cursor_col as usize) < swim_w as usize {
+            // Draw a `▾` cursor on the axis tick row.
+            // Replace whatever was there.
+            axis_chars[cursor_col as usize] = '▾';
+        }
+        // Build axis line: a row of marker chars + a row
+        // beneath with label text staggered every N columns.
+        let axis_spans: Vec<Span<'_>> = vec![
+            Span::raw(" ".repeat(label_w as usize)),
+            Span::styled(
+                axis_chars.iter().collect::<String>(),
+                Style::default().fg(self.theme.tree_chapter_fg),
+            ),
+        ];
+        let mut label_row: String = " ".repeat(label_w as usize);
+        let mut label_chars: Vec<char> = vec![' '; swim_w as usize];
+        for (col, label) in &label_strings {
+            for (i, c) in label.chars().enumerate() {
+                let pos = col + i;
+                if pos < label_chars.len() {
+                    label_chars[pos] = c;
+                }
+            }
+        }
+        label_row.push_str(&label_chars.iter().collect::<String>());
+
+        // Footer hint.
+        let footer = " ←/→ scroll · +/- zoom · 0 reset · Home/End jump · u/d/b/p scope · Tab track · Enter open · Esc close ";
+
+        // Compose lines.
+        let mut all_lines: Vec<Line<'_>> = Vec::new();
+        all_lines.push(Line::from(axis_spans));
+        all_lines.push(Line::from(Span::styled(
+            label_row,
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+        all_lines.push(Line::from("".to_string()));
+        // Swim-lane rows.
+        let track_label_style = Style::default()
+            .fg(self.theme.tree_subchapter_fg)
+            .add_modifier(Modifier::BOLD);
+        let dim_style = Style::default().add_modifier(Modifier::DIM);
+        for row in &rows {
+            let mut spans: Vec<Span<'_>> = Vec::new();
+            let label_text = format!(
+                " {:<width$}",
+                truncate_label(&row.label, label_w as usize - 2),
+                width = label_w as usize - 2,
+            );
+            spans.push(Span::styled(
+                format!("{label_text} "),
+                if row.is_orphan_row {
+                    dim_style
+                } else {
+                    track_label_style
+                },
+            ));
+            // Each cell becomes one Span so we can give
+            // bars / dots / cursor different colours
+            // without flickering.
+            let mut buf: String = String::new();
+            let mut cur_style: Style =
+                Style::default().fg(self.theme.tree_paragraph_fg);
+            let flush =
+                |buf: &mut String, style: Style, spans: &mut Vec<Span<'_>>| {
+                    if !buf.is_empty() {
+                        spans.push(Span::styled(std::mem::take(buf), style));
+                    }
+                };
+            for (col, cell) in row.cells.iter().enumerate() {
+                let is_cursor =
+                    cursor_col >= 0 && col == cursor_col as usize;
+                let (glyph, style) = match cell {
+                    None => {
+                        let g = if is_cursor { '│' } else { ' ' };
+                        let s = if is_cursor {
+                            Style::default()
+                                .fg(self.theme.tree_chapter_fg)
+                                .add_modifier(Modifier::DIM)
+                        } else {
+                            Style::default()
+                        };
+                        (g, s)
+                    }
+                    Some(tc) => {
+                        let s = if tc.is_orphan {
+                            dim_style.fg(Color::Yellow)
+                        } else if tc.is_endpoint {
+                            Style::default()
+                                .fg(self.theme.tree_chapter_fg)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                                .fg(self.theme.tree_paragraph_fg)
+                        };
+                        (tc.glyph, s)
+                    }
+                };
+                if style != cur_style && !buf.is_empty() {
+                    flush(&mut buf, cur_style, &mut spans);
+                    cur_style = style;
+                } else if buf.is_empty() {
+                    cur_style = style;
+                }
+                buf.push(glyph);
+            }
+            flush(&mut buf, cur_style, &mut spans);
+            all_lines.push(Line::from(spans));
+        }
+        // Pad to fill the body height with empty lines.
+        let body_h = inner.height.saturating_sub(1);
+        while all_lines.len() < body_h as usize {
+            all_lines.push(Line::from(""));
+        }
+        // Cursor-tick readout row (last visible row, dim).
+        let cursor_tick_str = calendar.format(
+            crate::timeline::TimelinePoint::from_ticks(state.cursor_ticks),
+            crate::timeline::Precision::Day,
+        );
+        let stat_row = format!(
+            " ▾ cursor: {cursor_tick_str}   scroll: tick {scroll}   pps: {pps:.3}",
+            scroll = state.scroll_ticks,
+            pps = state.ticks_per_cell,
+        );
+        if let Some(last) = all_lines.last_mut() {
+            *last = Line::from(Span::styled(stat_row, dim_style));
+        }
+
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: body_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: 1,
+        };
+        f.render_widget(Paragraph::new(all_lines), body_rect);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                footer,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    /// Ctrl+V t (1.2.7+) — open the swim-lane timeline view.
+    /// Anchors to the current paragraph's nearest
+    /// Subchapter / Chapter / Book ancestor; falls back to
+    /// the tree cursor and finally to the first user book.
+    fn open_timeline_view(&mut self) {
+        if !self.cfg.timeline.enabled {
+            self.status =
+                "timeline view: timeline.enabled is false in HJSON — enable it to use Ctrl+V t".into();
+            return;
+        }
+        let Some(book_id) = self.resolve_anchor_book() else {
+            self.status =
+                "timeline view: no user books in this project".into();
+            return;
+        };
+        let scope_id = self.resolve_anchor_scope(book_id);
+        let events = self.collect_book_events(book_id, false);
+        if events.is_empty() {
+            self.status =
+                "timeline view: no events in this book yet — `inkhaven event add …` from the CLI"
+                    .into();
+            return;
+        }
+        // Anchor the cursor to the first event's start so the
+        // initial frame shows content even with a tiny zoom.
+        let cursor_ticks = events.first().map(|e| e.start_ticks).unwrap_or(0);
+        let scroll_ticks = cursor_ticks.saturating_sub(20);
+        let state = TimelineViewState {
+            book_id,
+            scope_id,
+            nav_history: Vec::new(),
+            events,
+            track_highlight: None,
+            ticks_per_cell: 1.0,
+            scroll_ticks,
+            cursor_ticks,
+            project_overlay: false,
+        };
+        let crumb = self.timeline_scope_crumb(&state);
+        self.modal = Modal::TimelineView { state };
+        self.status = format!(
+            "timeline {crumb} · ←/→ scroll · +/- zoom · u/d/b/p scope · Esc closes"
+        );
+    }
+
+    /// Walk up from the editor (or tree cursor) to find the
+    /// containing user Book. Returns its UUID. None when the
+    /// project has no user books at all.
+    fn resolve_anchor_book(&self) -> Option<Uuid> {
+        // Prefer the editor's open paragraph; fall back to
+        // tree cursor; fall back to first user book.
+        let candidate_id = self
+            .opened
+            .as_ref()
+            .map(|d| d.id)
+            .or_else(|| self.rows.get(self.tree_cursor).map(|(id, _)| *id))?;
+        let mut cur_id = candidate_id;
+        loop {
+            let Some(node) = self.hierarchy.get(cur_id) else {
+                break;
+            };
+            if node.kind == NodeKind::Book && node.system_tag.is_none() {
+                return Some(node.id);
+            }
+            match node.parent_id {
+                Some(p) => cur_id = p,
+                None => break,
+            }
+        }
+        // Fallback: any user book.
+        self.hierarchy
+            .children_of(None)
+            .into_iter()
+            .find(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
+            .map(|n| n.id)
+    }
+
+    /// Default scope = current paragraph's nearest Subchapter
+    /// (or Chapter, or the book itself). Walks the parent
+    /// chain; never returns a non-tree-cursor scope.
+    fn resolve_anchor_scope(&self, book_id: Uuid) -> Uuid {
+        let candidate = self
+            .opened
+            .as_ref()
+            .map(|d| d.id)
+            .or_else(|| self.rows.get(self.tree_cursor).map(|(id, _)| *id));
+        let Some(mut cur_id) = candidate else {
+            return book_id;
+        };
+        loop {
+            let Some(node) = self.hierarchy.get(cur_id) else {
+                return book_id;
+            };
+            match node.kind {
+                NodeKind::Subchapter | NodeKind::Chapter | NodeKind::Book => return node.id,
+                _ => {}
+            }
+            match node.parent_id {
+                Some(p) => cur_id = p,
+                None => return book_id,
+            }
+        }
+    }
+
+    /// Snapshot every event under `book_id` (or every user
+    /// book when `project = true`) into `TimelineEvent`s. The
+    /// returned list is sorted by start_ticks.
+    fn collect_book_events(&self, book_id: Uuid, project: bool) -> Vec<TimelineEvent> {
+        let book_slugs: std::collections::HashMap<Uuid, String> = self
+            .hierarchy
+            .children_of(None)
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
+            .map(|n| (n.id, n.slug.clone()))
+            .collect();
+        let target_books: Vec<Uuid> = if project {
+            book_slugs.keys().copied().collect()
+        } else {
+            vec![book_id]
+        };
+        let mut out: Vec<TimelineEvent> = Vec::new();
+        for (n, _) in self.hierarchy.flatten() {
+            let Some(ev) = n.event.as_ref() else { continue };
+            // Walk up to find the containing user book.
+            let mut cur = n.parent_id;
+            let mut book_for_node: Option<Uuid> = None;
+            while let Some(pid) = cur {
+                match self.hierarchy.get(pid) {
+                    Some(p) => {
+                        if p.kind == NodeKind::Book && p.system_tag.is_none() {
+                            book_for_node = Some(p.id);
+                            break;
+                        }
+                        cur = p.parent_id;
+                    }
+                    None => break,
+                }
+            }
+            let Some(book) = book_for_node else { continue };
+            if !target_books.contains(&book) {
+                continue;
+            }
+            let book_prefix = if project {
+                book_slugs.get(&book).cloned().unwrap_or_default()
+            } else {
+                String::new()
+            };
+            out.push(TimelineEvent {
+                id: n.id,
+                title: n.title.clone(),
+                start_ticks: ev.start_ticks,
+                end_ticks: ev.end_ticks,
+                precision: ev.precision,
+                track: ev.track.clone(),
+                is_orphan: n.tags.iter().any(|t| t.eq_ignore_ascii_case("orphan")),
+                linked_paragraphs: n.linked_paragraphs.clone(),
+                book_prefix,
+            });
+        }
+        out.sort_by_key(|e| e.start_ticks);
+        out
+    }
+
+    /// Human-readable breadcrumb for the scope crumb shown in
+    /// the modal header + status bar.
+    fn timeline_scope_crumb(&self, state: &TimelineViewState) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        let mut cur_id = state.scope_id;
+        loop {
+            let Some(node) = self.hierarchy.get(cur_id) else {
+                break;
+            };
+            parts.push(node.title.clone());
+            match node.parent_id {
+                Some(p) => cur_id = p,
+                None => break,
+            }
+        }
+        parts.reverse();
+        if parts.is_empty() {
+            "(scope?)".into()
+        } else {
+            parts.join(" ▸ ")
+        }
     }
 
     /// Ctrl+V e (1.2.7+) — gather every event in the project
@@ -18063,6 +18668,10 @@ impl App {
             self.draw_event_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::TimelineView { .. }) {
+            self.draw_timeline_view_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SaveStoryPng { .. }) {
             self.draw_save_story_png_modal(f, area);
             return;
@@ -18120,6 +18729,8 @@ impl App {
                 unreachable!("ai diff review handled above"),
             Modal::EventPicker { .. } =>
                 unreachable!("event picker handled above"),
+            Modal::TimelineView { .. } =>
+                unreachable!("timeline view handled above"),
             Modal::SnapshotAnnotation { input, parent_title, .. } => {
                 let body_lines = vec![
                     Line::from(""),
@@ -21003,6 +21614,19 @@ const PARAGRAPH_PLACEHOLDER_TITLE: &str = "Untitled paragraph";
 /// tree pane. Beyond that, the title is truncated with an ellipsis so the
 /// `Nw` word-count suffix stays visible on a single row.
 const TITLE_MAX_DISPLAY: usize = 60;
+
+/// 1.2.7+ — truncate a track label to `max_chars`, appending
+/// `…` when the value was actually shortened. Returns the
+/// original on short strings.
+fn truncate_label(label: &str, max_chars: usize) -> String {
+    if label.chars().count() <= max_chars {
+        return label.to_owned();
+    }
+    let take = max_chars.saturating_sub(1);
+    let mut s: String = label.chars().take(take).collect();
+    s.push('…');
+    s
+}
 
 fn truncate_title(title: &str, max_chars: usize) -> String {
     let chars: Vec<char> = title.chars().collect();

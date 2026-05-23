@@ -16,6 +16,7 @@ mod typst_funcs;
 mod search_replace;
 mod search_results;
 mod session;
+mod timeline_render;
 
 use std::path::Path;
 

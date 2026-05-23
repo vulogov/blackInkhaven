@@ -308,6 +308,15 @@ pub enum Action {
     /// HJSON.
     #[serde(rename = "view.event_picker")]
     ViewEventPicker,
+    /// Ctrl+V t (1.2.7+) — open the swim-lane timeline view
+    /// scoped to the current paragraph's nearest Subchapter
+    /// (or Chapter, or Book). Inside the modal:
+    ///   u/U up-scope · d/D down-scope · b/B book · p/P project
+    ///   ←/→ scroll · +/- zoom · Tab cycle track · Enter open
+    ///   y critique scope · Y all-tracks · Ctrl+Y book-wide
+    /// Requires `timeline.enabled: true` in HJSON.
+    #[serde(rename = "view.timeline")]
+    ViewTimeline,
 
     /// Explicit "this chord does nothing" — overlay entries can
     /// set `action: "none"` to disable a default chord.
@@ -408,6 +417,7 @@ impl Action {
             Action::ViewStoryGraph => "story view".into(),
             Action::ViewStoryGraphParagraph => "story view (¶)".into(),
             Action::ViewEventPicker => "events".into(),
+            Action::ViewTimeline => "timeline".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) => format!("λ {name}"),
@@ -578,6 +588,8 @@ impl Action {
                 "Paragraph mini story view — the open paragraph at the centre, its wiki-link neighbours (one hop out + one hop in) on the first ring, and any Characters / Places / Artefacts it mentions on the outer ring. Same render + save flow as the book view.".into(),
             Action::ViewEventPicker =>
                 "Open the timeline event picker (1.2.7+). Lists every event in the project sorted by start time; Enter jumps to the event paragraph. Requires `timeline.enabled: true` in HJSON.".into(),
+            Action::ViewTimeline =>
+                "Open the swim-lane timeline view (1.2.7+). Scope-aware: anchors to the current paragraph's nearest Subchapter / Chapter / Book by default. Inside: u/U up-scope, d/D down-scope picker, b/B book, p/P project; ←/→ scroll, +/- zoom, Tab cycle track, Enter open event. Requires `timeline.enabled: true`.".into(),
 
             Action::None => String::new(),
             Action::BundLambda(name) =>
@@ -726,6 +738,8 @@ impl KeyBindings {
                 entry("Shift+W", Action::ViewStoryGraph, Scope::Any),
                 // 1.2.7+ — timeline event picker.
                 entry("e", Action::ViewEventPicker, Scope::Any),
+                // 1.2.7+ — swim-lane timeline view.
+                entry("t", Action::ViewTimeline, Scope::Any),
             ],
             top_level: vec![
                 // F1 anywhere: Help-book RAG modal.
