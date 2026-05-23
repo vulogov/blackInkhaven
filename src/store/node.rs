@@ -177,6 +177,29 @@ pub struct Node {
     /// removes the tag from every node that carries it.
     #[serde(default)]
     pub tags: Vec<String>,
+
+    /// 1.2.6+ — per-paragraph AI memory: bounded rolling
+    /// buffer of recent `(user, assistant)` turns scoped to
+    /// this paragraph. Enabled by HJSON
+    /// `ai.per_paragraph_memory = true`; capped at
+    /// `ai.per_paragraph_memory_max_turns` (oldest evicted
+    /// first). Prepended to the chat-history payload when the
+    /// next AI prompt fires with scope=Paragraph and this
+    /// paragraph is open, giving the model continuity across
+    /// sessions without polluting the project-wide chat
+    /// history. Stored as alternating `user` / `assistant`
+    /// entries in the JSON metadata blob (see `AiMemoryTurn`).
+    #[serde(default)]
+    pub ai_memory: Vec<AiMemoryTurn>,
+}
+
+/// 1.2.6+ — one turn in `Node.ai_memory`. `role` is either
+/// `"user"` or `"assistant"`; `text` is the prompt or response
+/// verbatim.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct AiMemoryTurn {
+    pub role: String,
+    pub text: String,
 }
 
 impl Node {
@@ -206,6 +229,7 @@ impl Node {
                 .collect::<Vec<_>>(),
             "bookmark":             self.bookmark,
             "tags":                 self.tags,
+            "ai_memory":            self.ai_memory,
         })
     }
 
@@ -363,6 +387,10 @@ impl Node {
                         .filter(|s| !s.trim().is_empty())
                         .collect::<Vec<String>>()
                 })
+                .unwrap_or_default(),
+            ai_memory: obj
+                .get("ai_memory")
+                .and_then(|v| serde_json::from_value::<Vec<AiMemoryTurn>>(v.clone()).ok())
                 .unwrap_or_default(),
         })
     }

@@ -2352,6 +2352,14 @@ pub(crate) struct App {
     /// once the stream finishes. None during one-shot (Help) inferences.
     pending_chat_user_msg: Option<String>,
 
+    /// 1.2.6+ — paragraph UUID to stamp the next completed
+    /// inference's turns onto via `Node.ai_memory`. Set at
+    /// send-time when (a) `ai.per_paragraph_memory` is on,
+    /// (b) mode_used == Paragraph, and (c) a paragraph is
+    /// open. Consumed by `pump_inference` on stream
+    /// completion alongside `pending_chat_user_msg`.
+    pending_paragraph_memory_target: Option<Uuid>,
+
     /// RAG context block (e.g. a place/character lookup) that the next
     /// AI-prompt submission should prepend to the user's typed query.
     /// Used by the Ctrl+B P / Ctrl+B C editor flows when the AI prompt is
@@ -2709,6 +2717,7 @@ impl App {
             chat_history: Vec::new(),
             system_prompt_override: None,
             pending_chat_user_msg: None,
+            pending_paragraph_memory_target: None,
             pending_rag_prefix: None,
             layout_search: Rect::default(),
             layout_tree: Rect::default(),
@@ -3089,12 +3098,94 @@ impl App {
                 .unwrap_or_default();
             if let Some(user_msg) = self.pending_chat_user_msg.take() {
                 if !assistant_text.trim().is_empty() {
+                    // 1.2.6+ — stamp the turns onto the open
+                    // paragraph's `ai_memory` if a target was
+                    // captured at send time. Persisted via
+                    // update_metadata so the buffer survives
+                    // restart. Cap is enforced at write time:
+                    // oldest turns evict first when length
+                    // exceeds `per_paragraph_memory_max_turns`.
+                    if let Some(target_id) =
+                        self.pending_paragraph_memory_target.take()
+                    {
+                        self.record_paragraph_ai_memory(
+                            target_id,
+                            &user_msg,
+                            &assistant_text,
+                        );
+                    }
                     self.chat_history.push(ChatTurn::User(user_msg));
                     self.chat_history
                         .push(ChatTurn::Assistant(assistant_text));
                 }
+            } else {
+                // No pending user msg means a one-shot
+                // (Help / F7 / F11 / F12). Discard any stale
+                // memory target — those flows don't pollute
+                // per-paragraph memory.
+                self.pending_paragraph_memory_target = None;
             }
         }
+    }
+
+    /// 1.2.6+ — append a `(user, assistant)` pair to the open
+    /// paragraph's `Node.ai_memory`, persist via
+    /// `update_metadata`, and enforce the
+    /// `ai.per_paragraph_memory_max_turns` cap by trimming
+    /// oldest turns first. Per-paragraph AI memory is an
+    /// additive metadata write — failures are logged but never
+    /// abort the visible chat-history append above.
+    fn record_paragraph_ai_memory(
+        &mut self,
+        paragraph_id: Uuid,
+        user_msg: &str,
+        assistant_text: &str,
+    ) {
+        let cap = self.cfg.ai.per_paragraph_memory_max_turns;
+        if cap == 0 {
+            return;
+        }
+        let Some(node) = self.hierarchy.get(paragraph_id).cloned() else {
+            return;
+        };
+        let mut updated = node.clone();
+        updated
+            .ai_memory
+            .push(crate::store::node::AiMemoryTurn {
+                role: "user".to_string(),
+                text: user_msg.to_owned(),
+            });
+        updated
+            .ai_memory
+            .push(crate::store::node::AiMemoryTurn {
+                role: "assistant".to_string(),
+                text: assistant_text.to_owned(),
+            });
+        // Trim oldest turns until we're within the cap. The
+        // cap counts individual turns; trimming two at a time
+        // keeps the buffer pair-aligned.
+        while updated.ai_memory.len() > cap {
+            updated.ai_memory.remove(0);
+            if updated.ai_memory.len() > cap {
+                updated.ai_memory.remove(0);
+            }
+        }
+        updated.modified_at = chrono::Utc::now();
+        if let Err(e) = self
+            .store
+            .raw()
+            .update_metadata(paragraph_id, updated.to_json())
+        {
+            tracing::warn!(
+                target: "inkhaven::ai_memory",
+                uuid = %paragraph_id,
+                "record_paragraph_ai_memory: update_metadata failed: {e}",
+            );
+            return;
+        }
+        // Reload so the next prompt-send (which reads from
+        // `self.hierarchy`) sees the freshly-stamped turns.
+        self.reload_hierarchy();
     }
 
     // -------- key dispatch ------------------------------------------------
@@ -5295,7 +5386,45 @@ impl App {
 
         // Replay the accumulated chat history before this new user message
         // so the model has continuous context across turns.
-        let history = self.chat_history.clone();
+        let mut history = self.chat_history.clone();
+
+        // 1.2.6+ — per-paragraph AI memory. When this is a
+        // Paragraph-scoped prompt AND the feature is on AND
+        // there's an open paragraph, prepend the paragraph's
+        // stored memory turns to the chat history so the
+        // model sees the prior paragraph-specific context.
+        // Also stash the target id so `pump_inference` can
+        // stamp the new turns onto it after the stream
+        // completes.
+        let memory_target: Option<Uuid> = if self.cfg.ai.per_paragraph_memory
+            && self.cfg.ai.per_paragraph_memory_max_turns > 0
+            && mode_used == AiMode::Paragraph
+        {
+            self.opened.as_ref().map(|d| d.id)
+        } else {
+            None
+        };
+        if let Some(target_id) = memory_target {
+            if let Some(node) = self.hierarchy.get(target_id) {
+                let mut memory_history: Vec<ChatTurn> =
+                    Vec::with_capacity(node.ai_memory.len());
+                for turn in &node.ai_memory {
+                    match turn.role.as_str() {
+                        "user" => memory_history
+                            .push(ChatTurn::User(turn.text.clone())),
+                        "assistant" => memory_history
+                            .push(ChatTurn::Assistant(turn.text.clone())),
+                        _ => {}
+                    }
+                }
+                // Memory comes BEFORE the visible chat
+                // history — these are older turns from prior
+                // sessions, so they're the prologue.
+                memory_history.append(&mut history);
+                history = memory_history;
+            }
+        }
+        self.pending_paragraph_memory_target = memory_target;
         // System prompt depends on the inference mode. Local clamps the
         // model to supplied context only; Full lets it augment with
         // general knowledge while still treating context as ground truth.

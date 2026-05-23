@@ -600,6 +600,7 @@ impl Store {
             linked_paragraphs: Vec::new(),
             bookmark: false,
             tags: Vec::new(),
+            ai_memory: Vec::new(),
         };
 
         let rel_path = match parent {
