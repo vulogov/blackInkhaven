@@ -46,6 +46,11 @@ pub const SYSTEM_TAG_ARTEFACTS: &str = "artefacts";
 pub const SYSTEM_TAG_TYPST: &str = "typst";
 pub const SYSTEM_TAG_SCRIPTS: &str = "scripts";
 pub const SYSTEM_TAG_HELP: &str = "help";
+/// 1.2.7+ — system tag stamped onto the auto-created
+/// Timeline chapter inside each user book that has events.
+/// Lookups by tag find the chapter regardless of user
+/// renames (rename keeps the tag).
+pub const SYSTEM_TAG_BOOK_TIMELINE: &str = "book_timeline";
 
 /// Where a newly-created node lands among its parent's existing children.
 #[derive(Debug, Clone, Copy)]
@@ -169,6 +174,55 @@ impl Store {
     ///
     /// Called from both the TUI's `commit_add` (when creating a Book at
     /// root via the Tree pane) and the CLI's `add` subcommand.
+    /// 1.2.7+ — find (or lazily create) the `Timeline`
+    /// chapter inside `book_id`. Stamped with
+    /// `system_tag: "book_timeline"` so subsequent lookups
+    /// survive user renames. Returns the chapter's node id.
+    /// Idempotent: a second call is a hierarchy lookup with
+    /// no writes.
+    pub fn ensure_timeline_chapter(
+        &self,
+        cfg: &Config,
+        book_id: Uuid,
+    ) -> Result<Uuid> {
+        let hierarchy = crate::store::hierarchy::Hierarchy::load(self)?;
+        let book = hierarchy
+            .get(book_id)
+            .cloned()
+            .ok_or_else(|| Error::Store(format!(
+                "ensure_timeline_chapter: book {book_id} missing"
+            )))?;
+        if book.kind != NK::Book {
+            return Err(Error::Store(format!(
+                "ensure_timeline_chapter: `{}` is not a Book", book.title
+            )));
+        }
+        if let Some(existing) = hierarchy.iter().find(|n| {
+            n.parent_id == Some(book_id)
+                && n.system_tag.as_deref() == Some(SYSTEM_TAG_BOOK_TIMELINE)
+        }) {
+            return Ok(existing.id);
+        }
+        let mut created = self.create_node(
+            cfg,
+            &hierarchy,
+            NK::Chapter,
+            "Timeline",
+            Some(&book),
+            None,
+            InsertPosition::End,
+        )?;
+        created.system_tag = Some(SYSTEM_TAG_BOOK_TIMELINE.to_owned());
+        created.modified_at = chrono::Utc::now();
+        self.inner
+            .update_metadata(created.id, created.to_json())
+            .map_err(|e| Error::Store(format!(
+                "ensure_timeline_chapter: stamp system_tag: {e}"
+            )))?;
+        self.sync()?;
+        Ok(created.id)
+    }
+
     pub fn provision_user_book(
         &self,
         cfg: &Config,
@@ -1214,15 +1268,34 @@ impl Store {
         };
         let mut touched = 0usize;
         for (n, _) in hierarchy.flatten() {
-            if n.linked_paragraphs.is_empty() {
-                continue;
-            }
-            if !n.linked_paragraphs.iter().any(|id| deleted.contains(id)) {
+            // 1.2.7+ — also scrub event-side links (characters
+            // / places). Either source of dirt counts as
+            // "needs rewrite".
+            let para_hit = n
+                .linked_paragraphs
+                .iter()
+                .any(|id| deleted.contains(id));
+            let event_hit = n.event.as_ref().is_some_and(|e| {
+                e.characters.iter().any(|id| deleted.contains(id))
+                    || e.places.iter().any(|id| deleted.contains(id))
+            });
+            if !para_hit && !event_hit {
                 continue;
             }
             let mut updated = n.clone();
-            updated.linked_paragraphs.retain(|id| !deleted.contains(id));
+            if para_hit {
+                updated.linked_paragraphs.retain(|id| !deleted.contains(id));
+            }
+            if event_hit {
+                if let Some(ev) = updated.event.as_mut() {
+                    ev.characters.retain(|id| !deleted.contains(id));
+                    ev.places.retain(|id| !deleted.contains(id));
+                }
+            }
             updated.modified_at = chrono::Utc::now();
+            // Re-evaluate orphan state when this event lost
+            // its last cross-link.
+            reconcile_event_orphan_tag(&mut updated);
             if let Err(e) = self.inner.update_metadata(updated.id, updated.to_json()) {
                 tracing::warn!(
                     target: "inkhaven::delete",
@@ -1372,6 +1445,25 @@ fn bund_string(s: &str) -> rust_dynamic::value::Value {
     rust_dynamic::value::Value::from_string(s)
 }
 
+/// 1.2.7+ — keep the `orphan` tag in sync with the event's
+/// actual link state. Called by every mutation that touches
+/// an event (add, link change, scrub-on-delete). Idempotent;
+/// no-op when the node isn't an event.
+pub(crate) fn reconcile_event_orphan_tag(node: &mut Node) {
+    let Some(ev) = node.event.as_ref() else {
+        return;
+    };
+    let is_orphan = ev.is_orphan(&node.linked_paragraphs);
+    let pos = node.tags.iter().position(|t| t.eq_ignore_ascii_case("orphan"));
+    match (is_orphan, pos) {
+        (true, None) => node.tags.push("orphan".to_owned()),
+        (false, Some(i)) => {
+            node.tags.remove(i);
+        }
+        _ => {}
+    }
+}
+
 fn first_prose_line(content: &[u8]) -> String {
     let s = std::str::from_utf8(content).unwrap_or("");
     for line in s.lines() {
@@ -1469,4 +1561,84 @@ fn project_basename(project_root: &std::path::Path) -> String {
         .and_then(|s| s.to_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| "default".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::node::EventData;
+
+    fn make_event_node() -> Node {
+        Node {
+            id: Uuid::nil(),
+            kind: NK::Paragraph,
+            title: "Storm".into(),
+            slug: "storm".into(),
+            path: Vec::new(),
+            parent_id: None,
+            order: 0,
+            file: None,
+            word_count: 0,
+            modified_at: chrono::Utc::now(),
+            protected: false,
+            system_tag: None,
+            image_ext: None,
+            image_caption: None,
+            image_alt: None,
+            content_type: None,
+            status: None,
+            target_words: None,
+            target_hit_at_status: None,
+            linked_paragraphs: Vec::new(),
+            bookmark: false,
+            tags: Vec::new(),
+            ai_memory: Vec::new(),
+            event: Some(EventData {
+                start_ticks: 0,
+                end_ticks: None,
+                precision: crate::timeline::Precision::Day,
+                characters: Vec::new(),
+                places: Vec::new(),
+                track: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn orphan_tag_added_when_all_links_empty() {
+        let mut n = make_event_node();
+        reconcile_event_orphan_tag(&mut n);
+        assert!(n.tags.iter().any(|t| t == "orphan"));
+    }
+
+    #[test]
+    fn orphan_tag_removed_when_link_added() {
+        let mut n = make_event_node();
+        n.tags.push("orphan".into());
+        n.linked_paragraphs.push(Uuid::new_v4());
+        reconcile_event_orphan_tag(&mut n);
+        assert!(!n.tags.iter().any(|t| t == "orphan"));
+    }
+
+    #[test]
+    fn orphan_tag_noop_on_non_event_node() {
+        let mut n = make_event_node();
+        n.event = None;
+        // Even when tags include "orphan", non-event nodes
+        // are left alone.
+        n.tags.push("orphan".into());
+        reconcile_event_orphan_tag(&mut n);
+        assert!(n.tags.iter().any(|t| t == "orphan"));
+    }
+
+    #[test]
+    fn orphan_tag_kept_when_event_links_present_but_paragraphs_empty() {
+        // Either link kind keeps the event un-orphaned.
+        let mut n = make_event_node();
+        if let Some(ev) = n.event.as_mut() {
+            ev.characters.push(Uuid::new_v4());
+        }
+        reconcile_event_orphan_tag(&mut n);
+        assert!(!n.tags.iter().any(|t| t == "orphan"));
+    }
 }
