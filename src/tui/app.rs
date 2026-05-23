@@ -7438,6 +7438,39 @@ impl App {
     /// Union `incoming` into `node_id`'s `tags` (dedup case-
     /// sensitively, preserve existing order), persist via
     /// `update_metadata`. Returns true on a successful save.
+    /// 1.2.6+: set the node's `tags` to exactly `incoming` (a
+    /// set-replace, not a union). Used by single-paragraph picker
+    /// commits so unchecking a tag actually removes it. Returns
+    /// false on persist failure.
+    fn set_tags_on_node(&mut self, node_id: Uuid, incoming: &[String]) -> bool {
+        let Some(node) = self.hierarchy.get(node_id).cloned() else {
+            return false;
+        };
+        let mut updated = node;
+        let mut next: Vec<String> = incoming
+            .iter()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+            .collect();
+        next.sort();
+        next.dedup();
+        // Skip the write when nothing actually changed — saves the
+        // `modified_at` bump and a needless hierarchy reload.
+        if updated.tags == next {
+            return true;
+        }
+        updated.tags = next;
+        updated.modified_at = chrono::Utc::now();
+        match self.store.raw().update_metadata(node_id, updated.to_json()) {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::warn!(target: "inkhaven::tags",
+                    "update_metadata({node_id}) failed: {e}");
+                false
+            }
+        }
+    }
+
     fn add_tags_to_node(&mut self, node_id: Uuid, incoming: &[String]) -> bool {
         let Some(node) = self.hierarchy.get(node_id).cloned() else {
             return false;
@@ -7571,6 +7604,24 @@ impl App {
     /// Shared open-the-picker plumbing.
     fn open_tag_picker_modal(&mut self, target: TagPickerTarget) {
         let all_tags = self.collect_all_tags();
+        // 1.2.6+: pre-populate `selected` with the target's current
+        // tags so the `[x]/[ ]` markers reflect reality on open.
+        // Single-paragraph targets get a set-replace commit (an
+        // unchecked tag is removed); multi-paragraph stays additive
+        // and so opens empty.
+        let preselected: std::collections::BTreeSet<String> = match &target {
+            TagPickerTarget::EditorParagraph { id, .. } => self
+                .hierarchy
+                .get(*id)
+                .map(|n| n.tags.iter().cloned().collect())
+                .unwrap_or_default(),
+            TagPickerTarget::TreeSelection(ids) if ids.len() == 1 => self
+                .hierarchy
+                .get(ids[0])
+                .map(|n| n.tags.iter().cloned().collect())
+                .unwrap_or_default(),
+            _ => std::collections::BTreeSet::new(),
+        };
         // Don't block — an empty tag namespace is the normal
         // starting state; the user adds via `A`.
         let status = match (&target, all_tags.is_empty()) {
@@ -7600,7 +7651,7 @@ impl App {
             target,
             all_tags,
             cursor: 0,
-            selected: std::collections::BTreeSet::new(),
+            selected: preselected,
         };
     }
 
@@ -7980,56 +8031,74 @@ impl App {
     /// the target paragraph(s). On success, close the modal and
     /// return focus to the originating pane.
     fn commit_tags_to_target(&mut self) {
+        // 1.2.6+: the `[x]` set IS the intended state for the
+        // single-paragraph commit — unchecking a tag now removes
+        // it. The picker pre-populates `selected` with the target
+        // paragraph's existing tags on open, so the user only
+        // pays for what they changed. Multi-paragraph commits
+        // remain additive (a destructive bulk-clear is too easy
+        // to mis-fire from a multi-mark).
         let (target, mut tags): (TagPickerTarget, Vec<String>) =
             match &self.modal {
                 Modal::TagPicker {
-                    target,
-                    selected,
-                    all_tags,
-                    cursor,
-                    ..
-                } => {
-                    let chosen: Vec<String> = if selected.is_empty() {
-                        all_tags
-                            .get(*cursor)
-                            .cloned()
-                            .into_iter()
-                            .collect()
-                    } else {
-                        selected.iter().cloned().collect()
-                    };
-                    (target.clone(), chosen)
-                }
+                    target, selected, ..
+                } => (target.clone(), selected.iter().cloned().collect()),
                 _ => return,
             };
         if matches!(target, TagPickerTarget::Search) {
             return;
         }
-        if tags.is_empty() {
-            self.status = "tag T: nothing to apply (no selection, no cursor)".into();
-            return;
-        }
         tags.sort();
         match &target {
             TagPickerTarget::EditorParagraph { id, title } => {
-                let ok = self.add_tags_to_node(*id, &tags);
+                // Single paragraph → set-replace semantics. An empty
+                // `selected` set means "clear all tags from this
+                // paragraph" — the user explicitly chose nothing.
+                let ok = self.set_tags_on_node(*id, &tags);
                 self.reload_hierarchy();
                 self.modal = Modal::None;
-                // Return focus to the editor — the user came from
-                // there via Ctrl+B ] and almost certainly wants
-                // to keep typing after the tag dust settles.
                 self.change_focus(Focus::Editor);
-                self.status = if ok {
+                self.status = if !ok {
+                    format!("tag T: persist failed for `{title}`")
+                } else if tags.is_empty() {
+                    format!("cleared all tags from `{title}`")
+                } else {
                     format!(
-                        "tagged `{title}` with {} tag(s): {}",
-                        tags.len(),
+                        "set `{title}` tags to: {}",
                         tags.join(", ")
                     )
-                } else {
+                };
+            }
+            TagPickerTarget::TreeSelection(ids) if ids.len() == 1 => {
+                let id = ids[0];
+                let title = self
+                    .hierarchy
+                    .get(id)
+                    .map(|n| n.title.clone())
+                    .unwrap_or_else(|| "<unknown>".into());
+                let ok = self.set_tags_on_node(id, &tags);
+                self.reload_hierarchy();
+                self.modal = Modal::None;
+                self.change_focus(Focus::Tree);
+                self.status = if !ok {
                     format!("tag T: persist failed for `{title}`")
+                } else if tags.is_empty() {
+                    format!("cleared all tags from `{title}`")
+                } else {
+                    format!(
+                        "set `{title}` tags to: {}",
+                        tags.join(", ")
+                    )
                 };
             }
             TagPickerTarget::TreeSelection(ids) => {
+                // Multi-paragraph → ADD-only. Refuse the no-op
+                // (no selection) case loudly so we don't pretend
+                // to do something.
+                if tags.is_empty() {
+                    self.status = "tag T: nothing checked — Space to mark, then T to add".into();
+                    return;
+                }
                 let mut touched = 0usize;
                 let mut failed = 0usize;
                 for id in ids {
@@ -8041,13 +8110,10 @@ impl App {
                 }
                 self.reload_hierarchy();
                 self.modal = Modal::None;
-                // Stay in the tree pane — the user opened this
-                // from the tree via `g`; bouncing them to the
-                // editor would surprise them mid-multi-tag pass.
                 self.change_focus(Focus::Tree);
                 self.status = if failed == 0 {
                     format!(
-                        "tagged {touched} paragraph(s) with {} tag(s): {}",
+                        "added {} tag(s) to {touched} paragraph(s): {}",
                         tags.len(),
                         tags.join(", ")
                     )
