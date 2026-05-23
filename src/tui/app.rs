@@ -2075,6 +2075,15 @@ enum Modal {
         settings: crate::typst_world::WorldSettings,
         pages: Vec<RenderedPageProto>,
         current_page: usize,
+        /// 1.2.6+ — pixels-per-typst-point factor used for the
+        /// current page set. Initialised to 2.0 (≈ 144 dpi)
+        /// when the modal first opens; `+`/`=` boost by 0.5
+        /// (capped at 6.0), `-`/`_` reduce by 0.5 (floored at
+        /// 0.5). Each change re-runs `render_all` with the new
+        /// PPI and replaces `pages` in-place. Save flow (S /
+        /// A) keeps using its own default DPI — that's the
+        /// "publish" copy, not the screen preview.
+        ppi: f32,
     },
     /// Ctrl+B ] (editor), `g` (tree), or Ctrl+B } (search) —
     /// 1.2.5+ project-wide tag picker. Shows every tag in use
@@ -6619,6 +6628,7 @@ impl App {
                     settings,
                     pages,
                     current_page: 0,
+                    ppi: 2.0,
                 };
                 let pages_note = if total > 1 {
                     format!(" · page 1/{}  · ←/→ navigate", total)
@@ -6626,7 +6636,7 @@ impl App {
                     String::new()
                 };
                 self.status = format!(
-                    "render ¶ `{}` · {}×{}{}  ·  Esc closes · S saves current · A saves all",
+                    "render ¶ `{}` · {}×{}{}  ·  +/- zoom · Esc closes · S saves current · A saves all",
                     title, first_w, first_h, pages_note,
                 );
             }
@@ -7987,6 +7997,91 @@ impl App {
         let stem = slug::slugify(title);
         let safe_stem = if stem.is_empty() { "buffer".to_string() } else { stem };
         Ok(cwd.join(format!("{safe_stem}-{stamp}.md")))
+    }
+
+    /// 1.2.6+ — change the live preview zoom by `delta` (units
+    /// of PPI). Clamps to [0.5, 6.0]. Re-renders every page at
+    /// the new PPI; current_page is preserved so the user stays
+    /// on the page they were inspecting. Failures (typst
+    /// compile error after edit) leave the existing pages in
+    /// place + drop a status line.
+    fn zoom_rendered_preview(&mut self, delta: f32) {
+        let Modal::RenderedPreview {
+            body,
+            settings,
+            ppi,
+            current_page,
+            title,
+            ..
+        } = &self.modal
+        else {
+            return;
+        };
+        let body = body.clone();
+        let settings = settings.clone();
+        let cur_page = *current_page;
+        let title = title.clone();
+        let new_ppi = (*ppi + delta).clamp(0.5, 6.0);
+        if (new_ppi - *ppi).abs() < f32::EPSILON {
+            self.status = format!(
+                "render ¶: zoom at limit ({:.1}x)",
+                *ppi,
+            );
+            return;
+        }
+        let Some(picker) = self.image_picker.as_ref() else {
+            return;
+        };
+        match crate::typst_paragraph_render::render_all(
+            &body,
+            settings.clone(),
+            new_ppi,
+        ) {
+            Ok(rendered) => {
+                let pages: Vec<RenderedPageProto> = rendered
+                    .into_iter()
+                    .map(|r| RenderedPageProto {
+                        proto: picker.new_resize_protocol(r.image),
+                        width: r.width,
+                        height: r.height,
+                    })
+                    .collect();
+                if pages.is_empty() {
+                    self.status =
+                        "render ¶ zoom: empty render — keeping previous pages".into();
+                    return;
+                }
+                let new_cur = cur_page.min(pages.len() - 1);
+                let p = &pages[new_cur];
+                let stamp = format!(
+                    "render ¶ `{title}` · zoom {:.1}x · page {}/{} · {}×{}",
+                    new_ppi,
+                    new_cur + 1,
+                    pages.len(),
+                    p.width,
+                    p.height,
+                );
+                if let Modal::RenderedPreview {
+                    pages: dst_pages,
+                    current_page: dst_cur,
+                    ppi: dst_ppi,
+                    ..
+                } = &mut self.modal
+                {
+                    *dst_pages = pages;
+                    *dst_cur = new_cur;
+                    *dst_ppi = new_ppi;
+                }
+                self.status = stamp;
+            }
+            Err(e) => {
+                let first = e
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("zoom render failed");
+                self.status = format!("render ¶ zoom: {first}");
+            }
+        }
     }
 
     /// 1.2.5+ — default destination for `S` on Modal::RenderedPreview.
@@ -12977,6 +13072,19 @@ impl App {
                 }
                 KeyCode::Char('a') | KeyCode::Char('A') => {
                     self.open_save_rendered_png_picker(true);
+                }
+                // 1.2.6+ — +/- live preview zoom. `+` (or `=`,
+                // since most US keyboards put `+` over `=`)
+                // bumps PPI by 0.5; `-` reduces by 0.5. Range
+                // [0.5, 6.0]. Each change re-renders every
+                // page at the new factor so the modal can
+                // accommodate any paragraph length without
+                // re-opening.
+                KeyCode::Char('+') | KeyCode::Char('=') => {
+                    self.zoom_rendered_preview(0.5);
+                }
+                KeyCode::Char('-') | KeyCode::Char('_') => {
+                    self.zoom_rendered_preview(-0.5);
                 }
                 _ => {}
             }

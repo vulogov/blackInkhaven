@@ -118,6 +118,10 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.snapshot.list", category::STORE_READ),
     ("ink.path.to_uuid", category::STORE_READ),
     ("ink.paragraph.target", category::STORE_READ),
+    // 1.2.6+ tags — reads.
+    ("ink.tag.list", category::STORE_READ),
+    ("ink.tag.list_for", category::STORE_READ),
+    ("ink.tag.search", category::STORE_READ),
 
     // ── store_write (default-denied) ──────────────────────────
     // 1.2.3+: Bund scripts can mutate the project tree, status
@@ -132,6 +136,9 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.paragraph.set_status", category::STORE_WRITE),
     ("ink.paragraph.set_target", category::STORE_WRITE),
     ("ink.paragraph.save", category::STORE_WRITE),
+    // 1.2.6+ tag mutations.
+    ("ink.tag.add", category::STORE_WRITE),
+    ("ink.tag.remove", category::STORE_WRITE),
     ("ink.db.sync", category::STORE_WRITE),
     ("ink.db.checkpoint", category::STORE_WRITE),
     ("ink.db.reindex", category::STORE_WRITE),
