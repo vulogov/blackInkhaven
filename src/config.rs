@@ -736,11 +736,15 @@ impl Config {
         if !text_args.is_empty() {
             out.push_str(&format!("#set text({})\n\n", text_args.join(", ")));
         }
-        // Raw / code typeface — separate set so it doesn't clobber the
-        // body font.
+        // Raw / code typeface. Typst 0.11+ removed `font:` from the
+        // `raw` element, so the only correct way to retarget the
+        // monospace face is a `show raw: set text(font: …)` rule.
+        // We also style inline raw spans so backticks pick up the
+        // same font — `set text` inside a show-rule applies to both
+        // block and inline raw.
         if !f.monospace.trim().is_empty() {
             out.push_str(&format!(
-                "#set raw(font: {})\n\n",
+                "#show raw: set text(font: {})\n\n",
                 font_literal(&f.monospace, BUNDLED_MONO_FONT)
             ));
         }
@@ -1481,9 +1485,10 @@ mod settings_synth_tests {
         cfg.typst_fonts.body_size = String::new();
         cfg.typst_fonts.language = String::new();
         let s = cfg.synthesised_settings_typ_header();
-        // No #set text(...) but #set raw is independent.
+        // No #set text(...) but the monospace show-rule is
+        // independent — typst 0.11+ uses `show raw: set text(...)`.
         assert!(!s.contains("#set text("));
-        assert!(s.contains("#set raw(font:")); // monospace still set
+        assert!(s.contains("#show raw: set text(font:"));
     }
 
     #[test]
@@ -1516,9 +1521,20 @@ mod settings_synth_tests {
         cfg.typst_fonts.monospace = "JetBrains Mono".into();
         let s = cfg.synthesised_settings_typ_header();
         assert!(
-            s.contains("#set raw(font: (\"JetBrains Mono\", \"DejaVu Sans Mono\"))"),
+            s.contains(
+                "#show raw: set text(font: (\"JetBrains Mono\", \"DejaVu Sans Mono\"))"
+            ),
             "got:\n{s}"
         );
+    }
+
+    #[test]
+    fn synthesised_header_never_emits_invalid_set_raw_font() {
+        // Typst 0.11+ removed the `font:` parameter from `raw`.
+        // Guard against accidentally regressing to `#set raw(font: …)`.
+        let cfg = Config::default();
+        let s = cfg.synthesised_settings_typ_header();
+        assert!(!s.contains("#set raw(font:"), "got:\n{s}");
     }
 
     #[test]
