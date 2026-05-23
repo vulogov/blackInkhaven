@@ -20615,6 +20615,62 @@ impl App {
         f.render_widget(p, area);
     }
 
+    /// Approximate visual height (in terminal lines) of one tree
+    /// row at the given pane `width`. Used by the wrap-aware
+    /// scroll loop so a multi-line row at the bottom of the
+    /// viewport advances `tree_scroll` enough to keep the cursor
+    /// row visible. Approximate because counting char widths
+    /// without `unicode-width` undercounts CJK / wide glyphs —
+    /// good enough for the latin-script titles inkhaven targets.
+    fn tree_row_visual_height(&self, row_idx: usize, width: usize) -> usize {
+        let Some(&(id, depth)) = self.rows.get(row_idx) else {
+            return 1;
+        };
+        let Some(node) = self.hierarchy.get(id) else {
+            return 1;
+        };
+        if width == 0 {
+            return 1;
+        }
+        // Mirror the row layout in `draw_tree`:
+        //   indent      = 2 * depth
+        //   select_prefix = 2 when ANY paragraph is marked, else 0
+        //   marker      = 2 chars ("¶ ", "▾ ", "▸ ", "►", "λ ", "❴ ", "▣ ")
+        //   status      = 2 chars (letter + space)
+        //   title       = full chars
+        //   progress    = up to 2 chars ("  •")
+        //   tag pips    = up to 30 chars  (#tag #tag +N, each tag <= 11)
+        let indent = 2 * depth;
+        let select_prefix = if !self.tree_marked.is_empty() { 2 } else { 0 };
+        let marker = 2;
+        let status = 2;
+        let title_chars = node.title.chars().count();
+        let trailing = if matches!(node.kind, NodeKind::Paragraph) {
+            let progress = if node.target_words.is_some_and(|n| n > 0) {
+                2
+            } else {
+                0
+            };
+            let tags = if !node.tags.is_empty() {
+                let visible = node.tags.iter().take(2).map(|t| {
+                    let n = t.chars().count().min(10);
+                    n + 2 // "#" + tag + leading space
+                }).sum::<usize>();
+                let plus_n = if node.tags.len() > 2 { 4 } else { 0 };
+                visible + plus_n
+            } else {
+                0
+            };
+            progress + tags
+        } else {
+            0
+        };
+        let total = indent + select_prefix + marker + status + title_chars + trailing;
+        // ceil(total / width) with a floor of 1 so even an empty
+        // row counts as one visual line.
+        ((total + width - 1) / width).max(1)
+    }
+
     fn draw_tree(&self, f: &mut ratatui::Frame, area: Rect) {
         let tree_title: String = match self.link_pick_for {
             Some((_, LinkPickDirection::Outgoing)) => {
@@ -20638,17 +20694,43 @@ impl App {
         }
 
         let height = inner.height as usize;
+        let width = inner.width as usize;
         let mut scroll = self.tree_scroll;
         if self.tree_cursor < scroll {
             scroll = self.tree_cursor;
-        } else if self.tree_cursor >= scroll + height && height > 0 {
-            scroll = self.tree_cursor + 1 - height;
         }
+        // 1.2.6+: titles wrap rather than truncate, so a single
+        // logical row can occupy multiple visual lines. Find the
+        // smallest `scroll` such that the rows [scroll..=cursor]
+        // fit inside the pane's `height` visual lines. Greedy:
+        // walk forward from `scroll`, summing visual heights;
+        // advance `scroll` whenever the cumulative total
+        // overshoots.
+        if height > 0 && width > 0 {
+            let mut cumulative = 0usize;
+            let mut head = scroll;
+            for row_idx in scroll..=self.tree_cursor {
+                cumulative += self.tree_row_visual_height(row_idx, width);
+                while cumulative > height && head < self.tree_cursor {
+                    cumulative = cumulative.saturating_sub(
+                        self.tree_row_visual_height(head, width),
+                    );
+                    head += 1;
+                }
+                let _ = row_idx;
+            }
+            scroll = head;
+        }
+        // `take(...)` was a logical-row cap when the tree didn't
+        // wrap. With wrap on, render every row from `scroll`
+        // onward and let ratatui clip at the pane bottom — that
+        // way a partially-visible wrapped row still shows its
+        // first lines instead of being dropped entirely.
 
         let open_id: Option<Uuid> = self.opened.as_ref().map(|d| d.id);
 
         let mut lines: Vec<Line> = Vec::new();
-        for (i, (id, depth)) in self.rows.iter().enumerate().skip(scroll).take(height) {
+        for (i, (id, depth)) in self.rows.iter().enumerate().skip(scroll) {
             let Some(node) = self.hierarchy.get(*id) else {
                 continue;
             };
@@ -20710,10 +20792,14 @@ impl App {
                 row_style = row_style.add_modifier(Modifier::REVERSED);
             }
 
-            // Truncate very long titles (typical for paragraphs whose name
-            // was auto-derived from the first sentence) so they don't push
-            // the trailing status badge off the pane.
-            let display_title = truncate_title(&node.title, TITLE_MAX_DISPLAY);
+            // 1.2.6+: long titles wrap at the pane edge rather
+            // than truncate. The Paragraph render below has
+            // `Wrap { trim: false }`; the scroll loop accounts
+            // for the multi-line rows. (Previously truncated to
+            // TITLE_MAX_DISPLAY chars to keep the trailing pips
+            // visible; now pips ride on whichever wrapped line
+            // the title ends on.)
+            let display_title = node.title.as_str();
             // Build the prefix: indent + glyph + status-letter badge.
             // The badge is one char (or space) styled with the matching
             // workflow colour — gives every paragraph row a consistent
@@ -20827,7 +20913,11 @@ impl App {
             lines.push(Line::from(spans));
         }
 
-        let p = Paragraph::new(lines);
+        // 1.2.6+: wrap so long titles continue on the next
+        // visual line instead of being truncated. `trim: false`
+        // keeps the indent / prefix whitespace intact on each
+        // wrapped chunk.
+        let p = Paragraph::new(lines).wrap(Wrap { trim: false });
         f.render_widget(p, inner);
     }
 
@@ -22807,15 +22897,6 @@ fn truncate_label(label: &str, max_chars: usize) -> String {
     s
 }
 
-fn truncate_title(title: &str, max_chars: usize) -> String {
-    let chars: Vec<char> = title.chars().collect();
-    if chars.len() <= max_chars {
-        return title.to_string();
-    }
-    let mut out: String = chars.iter().take(max_chars - 1).collect();
-    out.push('…');
-    out
-}
 
 /// Render a 4-cell Unicode gauge + percent for a per-paragraph
 /// word-count goal. Each cell represents 25% of progress; the
