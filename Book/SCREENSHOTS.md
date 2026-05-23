@@ -191,7 +191,7 @@ Each table column:
 
 | id | state | caption |
 |----|-------|---------|
-| `book-cover-art` | Optional: an artistic cover image (a quill + Typst page, a screenshot of the tree with a magic glow, etc.) for the book's title page. PNG, 800×1200 minimum. | (Used as the title-page artwork if you opt in.) |
+| `book-cover-art` | Cover image of the book — provided. Generated from `Book/images/book-cover-art.typ` (`typst compile --format png --ppi 300 Book/images/book-cover-art.typ Book/images/book-cover-art.png`). 800×1200pt typst source rasterised to ~1.0 MB PNG at 300 ppi. Edit the .typ source to retune; rebuild to refresh. | The Book of Inkhaven — typeset cover. Warm cream paper, burnt-sienna ink. A stylized tree of words with paragraph-pilcrow leaves rooted at the editor cursor glyph; a quill in the lower-right margin; an ink drop in the lower-left. Author + version at the foot. |
 
 ## Workflow tips
 
