@@ -20,7 +20,9 @@ Inkhaven was built to make those hours stack up in the other direction. The tree
 
 ## A work of love
 
-Inkhaven is open source. It is published under the kind of licence that lets you read, fork, sell, and modify it, and it carries no analytics, no telemetry, no upsell. The binary will never phone home; the project will never have an "Enterprise" tier you have to escape from.
+Inkhaven is open source. The licence is permissive — you can read it, fork it, study it, modify it, and pass it on. Strictly speaking, the licence also lets you sell it. The author would, gently but firmly, disagree with you doing that. Inkhaven was not designed as a *for sale* project. It is a work of love made for the authors who can least afford to pay for software, and turning it into a commercial product would betray the reason it exists. So please — don't.
+
+It carries no analytics, no telemetry, no upsell. The binary will never phone home; the project will never have an "Enterprise" tier you have to escape from.
 
 This was a deliberate choice. There are excellent commercial editors for writing books. They cost money — which is fine for many writers, and a barrier for many more. Inkhaven exists for the second group: for the graduate student writing a dissertation on a battered laptop, for the novelist who shouldn't have to pick between rent and software, for the engineer drafting in the same terminal where they already write code, for anyone who would benefit from a tool that respects their work without asking for a credit-card number.
 
@@ -44,7 +46,6 @@ The book in your hands is part of that hope. Read it, disagree with it, fork it,
 | LinkedIn | /in/vladimirulogov — posts on observability, the occasional long-form essay. |
 | YouTube | @vulogov — talks and walkthroughs from the conference trail. |
 | X / Twitter | @vladimir_ulogov |
-| ResearchGate | Research profile under Vladimir Ulogov — older peer-reviewed work in adjacent fields. |
 
 *If you build something on top of Inkhaven, or if a chord trips you up and you can't find the answer in this book — open an issue on GitHub. The author reads them.*
 
