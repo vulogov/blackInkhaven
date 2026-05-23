@@ -1127,6 +1127,41 @@ impl InferenceAction {
     }
 }
 
+/// 1.2.6+ — pick the "thing to paste" for a Replace-style AI
+/// apply. For grammar-style outputs (`<<<CORRECTED>>> … <<<END>>>`
+/// markers, a trailing fenced code block, or a "Corrected …"
+/// section header), this returns only that block — the user
+/// doesn't want the commentary, summary, or diff explanation
+/// the model wrote around it. For everything else, it falls
+/// back to the full response (markdown→typst converted by the
+/// caller). Returns `(text, extracted)` so the caller can
+/// surface a "✂ extracted X of Y chars" hint in the status
+/// line.
+///
+/// `force_extract` (used by ReplaceCorrected / F7-apply) means
+/// "if I can't find a discrete block, treat that as an error";
+/// the caller should refuse to apply rather than paste prose
+/// commentary by mistake.
+fn select_apply_text(
+    raw: &str,
+    force_extract: bool,
+) -> Result<(String, bool), &'static str> {
+    if let Some(extracted) = extract_corrected_text(raw) {
+        return Ok((extracted, true));
+    }
+    if force_extract {
+        return Err(
+            "couldn't find a corrected block in the response \
+             (expected `<<<CORRECTED>>>` markers, a fenced code \
+             block, or a `Corrected:` heading)",
+        );
+    }
+    // Non-grammar Replace path: convert markdown→Typst on the
+    // whole response. The conversion is best-effort; passes
+    // through unrecognised markup verbatim.
+    Ok((super::markdown::markdown_to_typst(raw), false))
+}
+
 /// Extract only the corrected-paragraph text from a grammar-check
 /// response. Tries in order: marker block (preferred), last fenced code
 /// block, then everything after a "Corrected …" line. Returns `None` if
@@ -1208,6 +1243,40 @@ mod corrected_tests {
     fn returns_none_on_empty_or_unmatched() {
         assert!(extract_corrected_text("").is_none());
         assert!(extract_corrected_text("Just commentary, no markers.").is_none());
+    }
+
+    // 1.2.6+ — `select_apply_text` should auto-prefer a
+    // discrete corrected block over the surrounding chatter,
+    // regardless of which apply action triggered.
+
+    #[test]
+    fn select_extracts_marker_block_when_force_false() {
+        let r = "I found 2 issues.\n- foo\n- bar\n\n<<<CORRECTED>>>\n= H\nBody.\n<<<END>>>\n";
+        let (text, extracted) = select_apply_text(r, false).unwrap();
+        assert!(extracted);
+        assert_eq!(text, "= H\nBody.");
+    }
+
+    #[test]
+    fn select_extracts_code_fence_when_force_false() {
+        let r = "Here is the rewrite:\n\n```typst\n= H\nBody.\n```\nThoughts above.";
+        let (text, extracted) = select_apply_text(r, false).unwrap();
+        assert!(extracted);
+        assert_eq!(text, "= H\nBody.");
+    }
+
+    #[test]
+    fn select_falls_back_to_full_markdown_when_no_extractable_block() {
+        let r = "Some plain commentary without a discrete block.";
+        let (text, extracted) = select_apply_text(r, false).unwrap();
+        assert!(!extracted);
+        assert!(text.contains("commentary"));
+    }
+
+    #[test]
+    fn select_force_errors_on_unextractable() {
+        let r = "Just commentary, no markers anywhere.";
+        assert!(select_apply_text(r, true).is_err());
     }
 }
 
@@ -4919,10 +4988,26 @@ impl App {
             return;
         }
 
-        // Translate markdown to Typst for editor-bound applies; the AI tends
-        // to respond in markdown (`# Heading`, `**bold**`) but our buffer is
-        // Typst (`= Heading`, `*bold*`). Conversion is best-effort — anything
-        // unrecognised passes through verbatim.
+        // 1.2.6+ — Replace runs through `select_apply_text`
+        // so a grammar-style response with markers / fence /
+        // "Corrected" heading lands ONLY the discrete block,
+        // even when the user pressed `r` (which used to paste
+        // the whole reply, commentary included). Insert / Top /
+        // Bottom still take the full markdown→typst converted
+        // body because additive applies are usually meant to
+        // surface commentary too.
+        let replace_payload: Option<String> =
+            if matches!(action, InferenceAction::Replace) {
+                match select_apply_text(&raw, false) {
+                    Ok((s, _)) => Some(s),
+                    Err(msg) => {
+                        self.status = msg.into();
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
         let text = super::markdown::markdown_to_typst(&raw);
         match action {
             InferenceAction::Replace => {
@@ -4936,7 +5021,8 @@ impl App {
                     doc.textarea.move_cursor(CursorMove::Bottom);
                     doc.textarea.cut();
                 }
-                doc.textarea.set_yank_text(text);
+                doc.textarea
+                    .set_yank_text(replace_payload.unwrap_or_else(|| text.clone()));
                 doc.textarea.paste();
             }
             InferenceAction::Insert => {
@@ -14428,24 +14514,20 @@ impl App {
         };
         let before_lines: Vec<String> = doc.textarea.lines().to_vec();
         // Compute what the buffer WOULD look like after this
-        // action so the diff is faithful. For Replace and
-        // ReplaceCorrected the after-state is the new text;
-        // anything else doesn't go through this path.
-        let after_text: String = match action {
-            InferenceAction::ReplaceCorrected => {
-                match extract_corrected_text(raw) {
-                    Some(s) => s,
-                    None => {
-                        self.status =
-                            "couldn't find corrected text in the response".into();
-                        return;
-                    }
-                }
+        // action so the diff is faithful. Both Replace and
+        // ReplaceCorrected go through `select_apply_text` so
+        // a grammar-style response with markers / fence /
+        // "Corrected" heading lands ONLY the discrete block,
+        // never the surrounding commentary — even when the
+        // user pressed `r` (the looser chord).
+        let force = matches!(action, InferenceAction::ReplaceCorrected);
+        let raw_len = raw.len();
+        let (after_text, extracted) = match select_apply_text(raw, force) {
+            Ok(pair) => pair,
+            Err(msg) => {
+                self.status = msg.into();
+                return;
             }
-            InferenceAction::Replace => {
-                super::markdown::markdown_to_typst(raw)
-            }
-            _ => return,
         };
         let after_lines: Vec<String> = if after_text.is_empty() {
             vec![String::new()]
@@ -14458,8 +14540,15 @@ impl App {
             action,
             scroll: 0,
         };
-        self.status =
-            "AI diff review · a accept · r reject · e accept+edit · ↑↓ scroll".into();
+        self.status = if extracted {
+            format!(
+                "AI diff · ✂ extracted {}/{} chars · a accept · r reject · e accept+edit",
+                after_text.len(),
+                raw_len,
+            )
+        } else {
+            "AI diff · a accept · r reject · e accept+edit · ↑↓ scroll".into()
+        };
     }
 
     fn ai_diff_review_handle_key(&mut self, key: KeyEvent) {
