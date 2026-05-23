@@ -60,6 +60,19 @@ pub fn register(vm: &mut VM) -> Result<()> {
     vm.register_inline("ink.paragraph.save".to_string(), ink_paragraph_save)
         .map_err(|e| anyhow!("register ink.paragraph.save: {e}"))?;
 
+    // ── Tags (1.2.6+) — read words under store_read,
+    //   add/remove under store_write.
+    vm.register_inline("ink.tag.list".to_string(), ink_tag_list)
+        .map_err(|e| anyhow!("register ink.tag.list: {e}"))?;
+    vm.register_inline("ink.tag.list_for".to_string(), ink_tag_list_for)
+        .map_err(|e| anyhow!("register ink.tag.list_for: {e}"))?;
+    vm.register_inline("ink.tag.search".to_string(), ink_tag_search)
+        .map_err(|e| anyhow!("register ink.tag.search: {e}"))?;
+    vm.register_inline("ink.tag.add".to_string(), ink_tag_add)
+        .map_err(|e| anyhow!("register ink.tag.add: {e}"))?;
+    vm.register_inline("ink.tag.remove".to_string(), ink_tag_remove)
+        .map_err(|e| anyhow!("register ink.tag.remove: {e}"))?;
+
     // ── DB management (store_write) ───────────────────────────
     vm.register_inline("ink.db.sync".to_string(), ink_db_sync)
         .map_err(|e| anyhow!("register ink.db.sync: {e}"))?;
@@ -773,6 +786,180 @@ fn do_ink_paragraph_target(vm: &mut VM) -> Result<&mut VM> {
     match node.target_words {
         Some(n) => push(vm, Value::from_int(n as i64)),
         None => push(vm, Value::nodata()),
+    }
+    Ok(vm)
+}
+
+// ── 1.2.6+ Tags ──────────────────────────────────────────────────────
+
+// ── ink.tag.list ─────────────────────────────────────────────────────
+// Stack: ( -- list )
+// Pushes the de-duplicated sorted list of every tag in use across
+// the project. Case is preserved; first occurrence wins on case
+// collision.
+
+fn ink_tag_list(vm: &mut VM) -> BundResult<'_> {
+    do_ink_tag_list(vm).map_err(to_bund_err)
+}
+
+fn do_ink_tag_list(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.tag.list";
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let mut seen: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    for (n, _) in hierarchy.flatten() {
+        for t in &n.tags {
+            let key = t.to_ascii_lowercase();
+            seen.entry(key).or_insert_with(|| t.clone());
+        }
+    }
+    let items: Vec<Value> = seen
+        .into_values()
+        .map(Value::from_string)
+        .collect();
+    push(vm, Value::from_list(items));
+    Ok(vm)
+}
+
+// ── ink.tag.list_for ─────────────────────────────────────────────────
+// Stack: ( path -- list )
+// Returns the tag list of the node at `path`. Empty list when the
+// node has no tags; NODATA when the path doesn't resolve.
+
+fn ink_tag_list_for(vm: &mut VM) -> BundResult<'_> {
+    do_ink_tag_list_for(vm).map_err(to_bund_err)
+}
+
+fn do_ink_tag_list_for(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.tag.list_for";
+    require_depth(vm, 1, tag)?;
+    let path = value_to_string(pull(vm, tag)?, "path", tag)?;
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let Some(id) = resolve_path(&hierarchy, &path, tag)? else {
+        push(vm, Value::nodata());
+        return Ok(vm);
+    };
+    let Some(node) = hierarchy.get(id) else {
+        push(vm, Value::nodata());
+        return Ok(vm);
+    };
+    let items: Vec<Value> = node
+        .tags
+        .iter()
+        .map(|t| Value::from_string(t.clone()))
+        .collect();
+    push(vm, Value::from_list(items));
+    Ok(vm)
+}
+
+// ── ink.tag.search ───────────────────────────────────────────────────
+// Stack: ( tag -- list )
+// Returns the slug-path list of every paragraph carrying `tag`
+// (case-insensitive match).
+
+fn ink_tag_search(vm: &mut VM) -> BundResult<'_> {
+    do_ink_tag_search(vm).map_err(to_bund_err)
+}
+
+fn do_ink_tag_search(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.tag.search";
+    require_depth(vm, 1, tag)?;
+    let needle = value_to_string(pull(vm, tag)?, "tag", tag)?
+        .trim()
+        .to_ascii_lowercase();
+    if needle.is_empty() {
+        push(vm, Value::from_list(Vec::new()));
+        return Ok(vm);
+    }
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let mut hits: Vec<Value> = Vec::new();
+    for (n, _depth) in hierarchy.flatten() {
+        if !n.tags.iter().any(|t| t.to_ascii_lowercase() == needle) {
+            continue;
+        }
+        let mut parts = n.path.clone();
+        parts.push(n.slug.clone());
+        hits.push(Value::from_string(parts.join("/")));
+    }
+    push(vm, Value::from_list(hits));
+    Ok(vm)
+}
+
+// ── ink.tag.add ──────────────────────────────────────────────────────
+// Stack: ( path tag -- )
+// Adds `tag` to the node at `path` (no-op if already present).
+
+fn ink_tag_add(vm: &mut VM) -> BundResult<'_> {
+    do_ink_tag_add(vm).map_err(to_bund_err)
+}
+
+fn do_ink_tag_add(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.tag.add";
+    require_depth(vm, 2, tag)?;
+    let new_tag = value_to_string(pull(vm, tag)?, "tag", tag)?
+        .trim()
+        .to_owned();
+    let path = value_to_string(pull(vm, tag)?, "path", tag)?;
+    if new_tag.is_empty() {
+        return Err(anyhow!("{tag}: empty tag"));
+    }
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let node_id = resolve_path(&hierarchy, &path, tag)?
+        .ok_or_else(|| anyhow!("{tag}: empty path"))?;
+    let mut node = hierarchy
+        .get(node_id)
+        .cloned()
+        .ok_or_else(|| anyhow!("{tag}: node missing"))?;
+    if !node.tags.iter().any(|t| t == &new_tag) {
+        node.tags.push(new_tag);
+        node.modified_at = chrono::Utc::now();
+        store
+            .raw()
+            .update_metadata(node.id, node.to_json())
+            .map_err(|e| anyhow!("{tag}: {e}"))?;
+        store.sync().map_err(|e| anyhow!("{tag} sync: {e}"))?;
+    }
+    Ok(vm)
+}
+
+// ── ink.tag.remove ───────────────────────────────────────────────────
+// Stack: ( path tag -- )
+// Removes `tag` from the node at `path` (no-op if absent). Case-
+// sensitive match: must equal an existing entry to drop it.
+
+fn ink_tag_remove(vm: &mut VM) -> BundResult<'_> {
+    do_ink_tag_remove(vm).map_err(to_bund_err)
+}
+
+fn do_ink_tag_remove(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.tag.remove";
+    require_depth(vm, 2, tag)?;
+    let drop_tag = value_to_string(pull(vm, tag)?, "tag", tag)?;
+    let path = value_to_string(pull(vm, tag)?, "path", tag)?;
+    if drop_tag.trim().is_empty() {
+        return Err(anyhow!("{tag}: empty tag"));
+    }
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let node_id = resolve_path(&hierarchy, &path, tag)?
+        .ok_or_else(|| anyhow!("{tag}: empty path"))?;
+    let mut node = hierarchy
+        .get(node_id)
+        .cloned()
+        .ok_or_else(|| anyhow!("{tag}: node missing"))?;
+    let before = node.tags.len();
+    node.tags.retain(|t| t != &drop_tag);
+    if node.tags.len() != before {
+        node.modified_at = chrono::Utc::now();
+        store
+            .raw()
+            .update_metadata(node.id, node.to_json())
+            .map_err(|e| anyhow!("{tag}: {e}"))?;
+        store.sync().map_err(|e| anyhow!("{tag} sync: {e}"))?;
     }
     Ok(vm)
 }
