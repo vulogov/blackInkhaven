@@ -363,6 +363,7 @@ typst_compile: {
   bundle_fonts:         true        // CM + Linux Libertine
   use_system_fonts:     true
   packages_enabled:     true        // @preview/<pkg>
+  wait_for_key_after_compile: true  // (1.2.6) hold splash
 }
 
 // (1.2.6) AI behaviour

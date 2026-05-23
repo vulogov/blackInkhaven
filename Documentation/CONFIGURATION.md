@@ -465,6 +465,7 @@ typst_compile: {
   bundle_fonts:             true         // ship CM + Linux Libertine in the binary
   use_system_fonts:         true         // also search system fonts
   packages_enabled:         true         // fetch @preview/<pkg> from packages.typst.org
+  wait_for_key_after_compile: true       // hold splash after compile finishes
   error_system_prompt:      ""           // override the AI compile-error prompt
 }
 ```
@@ -478,6 +479,7 @@ typst_compile: {
 | `bundle_fonts`              | bool   | `true`       | 1.2.5+. Ship Computer Modern and Linux Libertine inside the inkhaven binary so the in-process engine can lay out even on hosts without system fonts. Adds ~10 MB. Set `false` if every host inkhaven runs on already has the fonts your manuscript needs. No effect when `engine = "external"`. |
 | `use_system_fonts`          | bool   | `true`       | 1.2.5+. Also search the host's system fonts via fontdb. Combined with `bundle_fonts: true` (the default), you get both. Turn off for reproducible builds where the only allowed fonts are the embedded ones. No effect when `engine = "external"`. |
 | `packages_enabled`          | bool   | `true`       | 1.2.5+. When the in-process engine sees `@preview/<pkg>` (or any non-local package id), fetch and unpack it from `packages.typst.org` via `typst-kit`'s package storage. Cached on disk in the platform's standard cache dir (`~/Library/Caches/typst/packages` on macOS, `~/.cache/typst/packages` on Linux, `%LOCALAPPDATA%\typst\packages` on Windows). Set `false` to fail-fast on package imports — useful for hermetic / offline builds. No effect when `engine = "external"`. |
+| `wait_for_key_after_compile` | bool   | `true`       | 1.2.6+. When the Ctrl+B B / Ctrl+B O typst-compile splash finishes, hold it on screen with a `Press any key to continue…` prompt so the user can read the "Build complete." / "Build failed." line before control returns to the editor. Cancelled compiles (Esc) skip the wait. Set `false` to auto-dismiss as in 1.2.5. |
 | `error_system_prompt`       | string | `""`         | Override the AI system prompt used when `typst compile` returns non-zero. Empty falls back to the baked-in default. |
 
 The diagnostics path is entirely additive — turning it off
