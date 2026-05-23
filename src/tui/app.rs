@@ -14722,12 +14722,12 @@ impl App {
         };
         self.status = if extracted {
             format!(
-                "AI diff · ✂ extracted {}/{} chars · a accept · r reject · e accept+edit",
+                "AI diff · ✂ extracted {}/{} chars · a accept · r reject",
                 after_text.len(),
                 raw_len,
             )
         } else {
-            "AI diff · a accept · r reject · e accept+edit · ↑↓ scroll".into()
+            "AI diff · a accept · r reject · ↑↓ scroll".into()
         };
     }
 
@@ -14788,16 +14788,16 @@ impl App {
                     *scroll = max.saturating_sub(1);
                 }
             }
-            // Accept — commit via the original direct path.
-            KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Enter => {
-                let taken = std::mem::replace(&mut self.modal, Modal::None);
-                if let Modal::AiDiffReview { after_lines, action, .. } = taken {
-                    let after = after_lines.join("\n");
-                    self.apply_ai_diff_accepted(action, after, false);
-                }
-            }
-            // Accept + edit — same plus refocus the editor.
-            KeyCode::Char('e') | KeyCode::Char('E') => {
+            // Accept — commit via the original direct path AND
+            // refocus the editor pane so the user lands on the
+            // freshly-edited buffer ready to type. (`e` is kept
+            // as an alias for muscle memory; both behave the
+            // same since 1.2.6 batch 7.)
+            KeyCode::Char('a')
+            | KeyCode::Char('A')
+            | KeyCode::Char('e')
+            | KeyCode::Char('E')
+            | KeyCode::Enter => {
                 let taken = std::mem::replace(&mut self.modal, Modal::None);
                 if let Modal::AiDiffReview { after_lines, action, .. } = taken {
                     let after = after_lines.join("\n");
@@ -14851,11 +14851,7 @@ impl App {
         }
         doc.dirty = true;
         doc.last_activity = std::time::Instant::now();
-        self.status = format!(
-            "AI diff: accepted ({}{})",
-            action.label(),
-            if refocus_editor { " · edit mode" } else { "" },
-        );
+        self.status = format!("AI diff: accepted ({})", action.label());
         if refocus_editor {
             self.change_focus(Focus::Editor);
         }
@@ -14887,7 +14883,7 @@ impl App {
         f.render_widget(ratatui::widgets::Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" AI diff review — a accept · r reject · e accept+edit ")
+            .title(" AI diff review — a accept · r reject ")
             .border_style(
                 Style::default()
                     .fg(self.theme.modal_border)
