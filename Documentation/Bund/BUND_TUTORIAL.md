@@ -306,3 +306,209 @@ still shows it; `println` shows it inline first.
 - [The bundcore docs](https://docs.rs/bundcore) — for the full
   vanilla stdlib (arithmetic, math, time, conversion). Most of it
   is auto-loaded into the Adam VM at startup.
+
+---
+
+## 1.2.6 + 1.2.7 — stdlib + hook additions
+
+The 1.2.6 cycle expanded the `ink.*` stdlib substantially.
+Three families landed:
+
+- `ink.tag.*` (1.2.6+) — project-wide tag metadata.
+- `ink.event.*` (1.2.7+) — story-timeline events.
+- `ink.story.render` (1.2.6+) — book-graph PNG writer.
+
+Plus one new editor word (`ink.editor.set_cursor`) and
+three new hooks (`hook.on_diagnostic`, `hook.on_event_added`,
+`hook.on_event_orphaned`).
+
+### `ink.tag.*` — project-wide tags
+
+```bund
+                          ink.tag.list          ( -- list )
+"intro/scene-1"           ink.tag.list_for      ( path -- list | NODATA )
+"draft"                   ink.tag.search        ( tag -- list-of-paths )
+"intro/scene-1" "draft"   ink.tag.add           ( path tag -- )
+"intro/scene-1" "draft"   ink.tag.remove        ( path tag -- )
+```
+
+Policy:
+
+- `list`, `list_for`, `search` → `store_read` (default
+  allowed).
+- `add`, `remove` → `store_write` (default denied — opt in
+  via `scripting.enabled_categories`).
+
+`ink.tag.list` returns the sorted, case-insensitively
+de-duplicated set of every tag in the project.
+
+`ink.tag.search` returns slug-paths (not UUIDs) so the
+result is portable to other `ink.*` words that accept
+paths.
+
+Example — auto-tag every paragraph in a chapter as
+`editing-pass-2`:
+
+```bund
+"intro" ink.node.children          // ( list )
+{
+  dup "kind" get
+  "Paragraph" =
+  {
+    "path" get
+    "editing-pass-2"
+    ink.tag.add
+  }
+  { drop } ifelse
+} each
+```
+
+### `ink.event.*` — story timeline (1.2.7+)
+
+Requires `timeline.enabled: true` in HJSON. Each word
+that needs the timeline checks at call time and errors
+clearly if disabled.
+
+```bund
+                              ink.event.list             ( -- list )
+                              ink.event.list_orphans     ( -- list )
+"Aerin Saga" "Storm" "1A.2.3" ink.event.add              ( book title spec -- uuid )
+event-id "1A.2.5"             ink.event.set_end          ( uuid spec -- )
+event-id "season"             ink.event.set_precision    ( uuid prec -- )
+event-id "main"               ink.event.set_track        ( uuid track -- )
+event-id "aerin-saga/ch4/scene" ink.event.link_paragraph
+                                                          ( uuid path -- )
+```
+
+Policy:
+
+- `list`, `list_orphans` → `store_read`.
+- `add`, `set_*`, `link_paragraph` → `store_write`.
+
+`ink.event.list` returns a list of hashes with `id`,
+`title`, `slug`, `path`, `start_ticks`, `end_ticks`
+(NODATA when instant), `precision`, `track` (NODATA
+when default), `is_orphan`, `linked_paragraphs`,
+`characters`, `places`.
+
+Calendar specs (`"1A.2.3"`, `"Sol 5"`, etc.) follow the
+project's `timeline.calendar` HJSON — see
+[CONFIGURATION.md](../CONFIGURATION.md).
+
+`set_precision` accepts `hour` / `day` / `week` / `month`
+/ `season` / `year`.
+
+`set_track ""` (empty string) clears the track back to
+the default.
+
+`set_end ""` or `set_end "none"` clears the duration
+back to an instant event.
+
+Example — create a paired event + link to an existing
+paragraph:
+
+```bund
+"Aerin Saga" "Marketplace scene" "1A.2.8" ink.event.add
+dup "aerin-saga/ch4/marketplace-scene" ink.event.link_paragraph
+```
+
+`dup` keeps the UUID on the stack so the link can use
+it without re-resolving.
+
+### `ink.story.render` — write the book graph to disk
+
+```bund
+"Aerin Saga" "~/Desktop/aerin-story.png" ink.story.render
+```
+
+Stack: `( book-name path -- )`. Case-insensitive book
+lookup against title + slug. `~/` expansion supported.
+Policy: `fs_write` (default-denied).
+
+Useful as a `hook.on_save` side effect that keeps a
+fresh graph available alongside the manuscript.
+
+### `ink.editor.set_cursor` (1.2.6+)
+
+```bund
+3 42 ink.editor.set_cursor      ( row col -- )    // 1-based
+```
+
+The existing `ink.editor.goto` is 0-based; the new
+`set_cursor` is 1-based to match typst's diagnostic
+line:col convention. Pairs naturally with
+`hook.on_diagnostic` for auto-jump scripts.
+
+Policy: `editor_write` (default allowed).
+
+### New hooks
+
+```bund
+"hook.on_diagnostic" {
+  // ( uuid count first-message -- )
+  swap drop swap drop                  // ( count )
+  dup 5 >
+  { "⚠ many diagnostics: " print println }
+  { drop } ifelse
+} register
+```
+
+Fires on diagnostic state changes only (clean → errored,
+count change, top-message change). Debounced — no fire
+on every idle tick.
+
+```bund
+"hook.on_event_added" {
+  // ( uuid -- )
+  dup ink.node.get "path" get          // ( uuid path )
+  "new-event" ink.tag.add               // ( uuid )
+  drop
+} register
+```
+
+Fires from every path that adds an event: CLI
+`event add`, the TUI `n` chord inside the swim-lane
+view, and the Bund word `ink.event.add` (the latter
+only when not inside an `eval` guard).
+
+```bund
+"hook.on_event_orphaned" {
+  // ( uuid -- )
+  drop
+  "orphan check needed" println
+} register
+```
+
+Fires on the `linked → orphan` transition.
+Automatically catches deletes via the delete-time scrub.
+
+### Hook stdout
+
+`hooks::fire` (1.2.6+) drains the Bund print buffer at
+the end of each hook fire and emits the output via
+`tracing::info!(target: "inkhaven::hook::out")`. So
+hook `println`s land in `.inkhaven.log` from the TUI
+and on stderr from the CLI. Pre-1.2.6, hook stdout
+vanished silently.
+
+### Policy categories (1.2.6 cycle additions)
+
+No new categories were added. The existing eleven
+(`store_read`, `store_write`, `fs_read`, `fs_write`,
+`net`, `shell`, `code_eval`, `keymap`, `ai_write`,
+`editor_write`, `theme_write`) carry every new word.
+
+The default deny list is unchanged: `fs_write`, `net`,
+`shell`, `code_eval`, `keymap`.
+
+A common opt-in for timeline + tag scripting:
+
+```hjson
+scripting: {
+  enabled_categories: ["store_write", "fs_write"]
+}
+```
+
+`store_write` enables `ink.tag.add/remove` and every
+`ink.event.*` writer. `fs_write` enables
+`ink.story.render` writing a PNG path.

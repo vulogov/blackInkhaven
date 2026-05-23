@@ -21,11 +21,74 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.5
+## Latest release · 1.2.6 — Tools for the working novelist
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.5.md`](Documentation/RELEASE_NOTES/1.2.5.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.6.md`](Documentation/RELEASE_NOTES/1.2.6.md)
 
-The headline is one HJSON line:
+1.2.6 is a wide-front release. Where 1.2.5 was one headline
+(in-process Typst), this one moves on six themes at once:
+**tagging as project-wide metadata**, **diagnostics with an
+editor surface**, **AI as a writing partner** (critique +
+memory + diff modal), **labelled snapshots**, a **paragraph-
+mini story view**, and a brand-new **story timeline** with
+calendar-aware events.
+
+Read it here:
+
+```hjson
+# Opt-in to the headline new feature.
+timeline: {
+  enabled: true
+  calendar: { preset: "gregorian" }    # or "sols" or "custom"
+}
+
+# Opt into the diff modal on AI rewrites (default already on).
+ai: {
+  per_paragraph_memory: true   # default false
+  diff_review_on_apply: true   # default true
+}
+```
+
+Headlines:
+
+- **Tagging stack.** `Ctrl+B ]` picker · `Ctrl+B }` project
+  search · `R` rename project-wide · `inkhaven export --tag`
+  filter · tree-pane `#tag` pips · five `ink.tag.*` Bund
+  words · Scrivener keyword import.
+- **Diagnostic UX.** Red `●` in the gutter for every line
+  with a parse / semantic error · F8 diagnostics list ·
+  `Ctrl+V N` / Shift+N navigate · **Ctrl+F12** AI explain
+  the diagnostic at cursor (was F11; macOS grabs F11).
+- **AI as a partner.** `F12` mode-aware critique
+  (`critique-edit` plain / `critique-changes` split-edit) ·
+  per-paragraph memory (`ai.per_paragraph_memory: true`) ·
+  side-by-side diff modal before any `r` / `g` apply ·
+  smart marker extraction across model dialects.
+- **Snapshot annotations.** `F5` pops a one-line prompt;
+  `F6` picker shows annotations as italic-cyan `✎` lines
+  beneath each row.
+- **Story view split.** `Ctrl+V w` (lowercase) for the
+  paragraph mini view; `Ctrl+V Shift+W` for the book.
+  New Bund word `ink.story.render` writes the graph to PNG
+  from a script.
+- **Render preview live zoom.** `+ / -` zoom in Ctrl+V R;
+  `0` resets; cursor column anchored.
+- **🌟 Story timeline.** Calendar-aware events (`gregorian`
+  / `sols` / `custom`), `inkhaven event add/list/show` CLI,
+  `Ctrl+V e` picker, `Ctrl+V t` swim-lane view with
+  scope navigation (`u` / `d` / `b` / `p`), AI health
+  critique (`y` / `Y` / `Ctrl+Y`), seven `ink.event.*` Bund
+  words + two new hooks (`hook.on_event_added` /
+  `hook.on_event_orphaned`). Opt-in via `timeline.enabled`.
+
+Around those: a new **Book of Inkhaven** at `Book/` —
+30 chapters + 3 appendices, designed for print, with a
+markdown mirror suitable for `inkhaven import-help`. Seven
+new tutorials (25 — 31) cover every theme above. The 1.2.5
+typst in-process work is still the foundation for the new
+diagnostic + render-zoom features.
+
+### Previous release · 1.2.5
 
 ```hjson
 typst_compile: { engine: "inprocess" }
@@ -34,7 +97,7 @@ typst_compile: { engine: "inprocess" }
 Flip it and Inkhaven stops shelling out to the host's `typst`
 binary for builds. The full compiler — `typst` + `typst-pdf` +
 `typst-kit` (fonts + `@preview` packages) — is linked into
-every 1.2.5 binary and runs inside the inkhaven process. The
+every 1.2.5+ binary and runs inside the inkhaven process. The
 external CLI stays the default; the switch is a runtime
 decision.
 
