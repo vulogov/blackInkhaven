@@ -2,6 +2,14 @@
 
 #pagebreak(weak: true, to: "odd")
 
+#hide(heading(
+  level: 1,
+  numbering: none,
+  outlined: true,
+  bookmarked: true,
+  "Prologue — Why this book exists",
+))
+
 #v(2cm)
 #align(left)[
   #text(font: sans_family, size: 9pt, tracking: 2pt, fill: ink_gray, upper("Prologue"))
