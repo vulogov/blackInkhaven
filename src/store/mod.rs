@@ -601,6 +601,7 @@ impl Store {
             bookmark: false,
             tags: Vec::new(),
             ai_memory: Vec::new(),
+            event: None,
         };
 
         let rel_path = match parent {

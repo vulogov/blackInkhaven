@@ -52,6 +52,12 @@ pub struct Config {
     /// turn-history overrides, etc).
     #[serde(default)]
     pub ai: AiConfig,
+    /// 1.2.7+ — story timeline configuration. Disabled by
+    /// default; set `timeline.enabled: true` plus a calendar
+    /// preset to turn on event tracking. See
+    /// `crate::timeline::calendar::CalendarConfig`.
+    #[serde(default)]
+    pub timeline: TimelineConfig,
     /// Bund scripting sandbox policy. Defaults deny destructive
     /// categories (fs_write, net, shell, code_eval); writers opt
     /// in by listing the categories or words they want to allow.
@@ -131,6 +137,7 @@ impl Default for Config {
             output: OutputConfig::default(),
             goals: GoalsConfig::default(),
             ai: AiConfig::default(),
+            timeline: TimelineConfig::default(),
             scripting: crate::scripting::policy::Policy::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
@@ -1293,6 +1300,49 @@ pub struct BookGoal {
 #[serde(default)]
 pub struct OutputConfig {
     pub extra_formats: Vec<String>,
+}
+
+/// 1.2.7+ — story timeline feature config. `enabled: false`
+/// (the default) hides every timeline chord, CLI subcommand,
+/// and Bund word. Once enabled, events become a first-class
+/// metadata layer over the existing paragraph tree (see
+/// `crate::timeline`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TimelineConfig {
+    pub enabled: bool,
+    pub default_track: String,
+    pub calendar: crate::timeline::calendar::CalendarConfig,
+    pub display: TimelineDisplayConfig,
+}
+
+impl Default for TimelineConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_track: "main".into(),
+            calendar: crate::timeline::calendar::CalendarConfig::default(),
+            display: TimelineDisplayConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TimelineDisplayConfig {
+    pub show_orphans: bool,
+    pub swim_lane_max_rows: u32,
+    pub default_zoom: f32,
+}
+
+impl Default for TimelineDisplayConfig {
+    fn default() -> Self {
+        Self {
+            show_orphans: true,
+            swim_lane_max_rows: 12,
+            default_zoom: 1.0,
+        }
+    }
 }
 
 /// 1.2.6+ — AI-pane behaviour. Currently per-paragraph memory

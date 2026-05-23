@@ -240,6 +240,7 @@ fn adopt_orphans(
             bookmark: false,
             tags: Vec::new(),
             ai_memory: Vec::new(),
+            event: None,
         };
 
         store.put_node(&mut node, &bytes)?;
