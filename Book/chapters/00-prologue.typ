@@ -80,8 +80,22 @@ Every AI surface is opt-in or scope-limited. Inkhaven never
 sends a paragraph to a remote provider without you pressing
 a chord. The full-screen AI mode (`Ctrl+B K`) and the
 per-paragraph memory (`ai.per_paragraph_memory`) are also
-opt-in. If you write entirely offline, the local-only
-`ollama` provider keeps every byte on your machine.
+opt-in.
+
+But — and this is important — inkhaven does *not* provide
+inherent privacy when you use one of the cloud LLM
+providers (Gemini, Claude, OpenAI, DeepSeek, Grok). Every
+chord that talks to those providers sends prose to their
+servers under their terms of service. They may log it,
+train on it, or otherwise retain it. Chapter 18 covers this
+in detail.
+
+For privacy, install a local Ollama instance and set
+`llm.default_provider: "ollama"`. Every non-LLM AI surface
+in inkhaven is already on-device; Ollama closes the last
+loop. If you write entirely without AI, the configured
+provider is irrelevant — none of inkhaven's non-AI features
+need an LLM.
 
 #v(4cm)
 #align(center,

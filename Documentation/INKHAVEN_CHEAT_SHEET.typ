@@ -1,9 +1,9 @@
-// Inkhaven 1.2.4 — printable cheat sheet
+// Inkhaven 1.2.6 — printable cheat sheet
 // Compile: `typst compile Documentation/INKHAVEN_CHEAT_SHEET.typ`
 // Or in the TUI: open this file via F3 then `Ctrl+B B` to build.
 
 #set document(
-  title: "Inkhaven 1.2.4 — Cheat Sheet",
+  title: "Inkhaven 1.2.6 — Cheat Sheet",
   author: "Inkhaven",
 )
 #set page(
@@ -11,7 +11,7 @@
   margin: (top: 1.2cm, bottom: 1.2cm, left: 1.2cm, right: 1.2cm),
   footer: context [
     #set text(7pt, fill: luma(120))
-    Inkhaven 1.2.4 cheat sheet  ·  page #counter(page).display() / #counter(page).final().first()
+    Inkhaven 1.2.6 cheat sheet  ·  page #counter(page).display() / #counter(page).final().first()
   ],
 )
 #set text(font: "New Computer Modern", size: 8pt)
@@ -46,11 +46,19 @@
   ..rows.pos().flatten(),
 )
 
-= Inkhaven 1.2.4 — Cheat Sheet
+= Inkhaven 1.2.6 — Cheat Sheet
 
-A one-page reference. For workflows see
-`Documentation/Tutorials/`. For the full chord list see
+A two-page reference. For workflows see
+`Documentation/Tutorials/` and the *Book of Inkhaven* at
+`Book/`. For the full chord list see
 `Documentation/KEYBINDING.md`.
+
+#text(size: 7.5pt, style: "italic")[
+  Layout: search input at the top, three panes in the middle
+  (tree · editor · AI — temporary modal panes can replace
+  one or all), AI prompt input at the bottom, status line
+  beneath it.
+]
 
 #columns(2, gutter: 0.6cm)[
 
@@ -58,12 +66,12 @@ A one-page reference. For workflows see
 
 #kv-table(
   row([Ctrl+S], [Save current paragraph]),
-  row([Ctrl+/], [Focus search bar]),
-  row([Ctrl+I], [Focus AI prompt]),
+  row([Ctrl+/], [Focus search bar (top)]),
+  row([Ctrl+I], [Focus AI prompt (bottom)]),
   row([Tab],    [Cycle Tree → Editor → AI]),
   row([Shift+Tab], [Cycle in reverse]),
-  row([Ctrl+Q], [Hard quit]),
-  row([Q],      [Quit (tree pane; autosaves)]),
+  row([Ctrl+1..5], [Focus Editor / Tree / AI / Search / AI prompt]),
+  row([Ctrl+Q], [Quit (autosaves dirty paragraph)]),
 )
 
 == Meta — Ctrl+B prefix
@@ -71,55 +79,100 @@ A one-page reference. For workflows see
 #kv-table(
   row([B / C / S / P], [Add Book / Chapter / Subchapter / Paragraph]),
   row([D],   [Delete cursor node (confirm modal)]),
-  row([R],   [Cycle workflow status]),
+  row([R / Shift+R],   [Cycle workflow status fwd / back]),
   row([N],   [Snapshot current buffer (= F5)]),
   row([F],   [Typst function picker]),
   row([T],   [Re-title from first sentence]),
   row([P],   [Places RAG / image picker]),
-  row([C],   [Characters RAG]),
+  row([C],   [Characters RAG  (or: clear chat history)]),
   row([G],   [Notes RAG]),
   row([Y],   [Artefacts RAG]),
-  row([M],   [Cycle leaf type (¶ / json / .bund)]),
-  row([H],   [Quick-reference overlay]),
+  row([M],   [Cycle leaf type · or inference-mode read]),
+  row([H],   [Quick-reference overlay (auto-pulls all chord layers)]),
   row([L],   [Live-switch LLM provider]),
   row([I],   [Book info]),
-  row([V],   [Credits / version]),
-  row([A / B / O], [Assemble / Build (typst) / Take (PDF→cwd)]),
-  row([W / K], [Typewriter / AI full-screen]),
+  row([V],   [Credits / version (with embedded logo)]),
+  row([A / B / O], [Assemble / Build (PDF) / Take (extra formats)]),
+  row([W / K], [Typewriter mode / AI full-screen]),
   row([E],   [Toggle typewriter SFX]),
   row([1..7],[Status-filter modal]),
   row([↑ / ↓], [Reorder cursor row]),
-  row([\]],   [(1.2.5) Tag picker for open ¶ (Space/T/A/D)]),
+  row([\]],   [(1.2.5) Tag picker for open ¶]),
   row([\}],   [(1.2.5) Search-by-tag picker]),
 )
 
-== View — Ctrl+V prefix (1.2.4–1.2.5)
+Inside the tag picker (`Ctrl+B ]` / `Ctrl+B }`):
+#kv-table(
+  row([Space], [Toggle cursor tag]),
+  row([A],     [Add new tag (one-line prompt)]),
+  row([R],     [(1.2.6) Rename project-wide (merges if exists)]),
+  row([D],     [Delete project-wide (confirm)]),
+  row([T],     [Commit marked tags to target]),
+  row([Enter (search)], [Open per-tag paragraph list]),
+)
+
+== View — Ctrl+V prefix
 
 #kv-table(
-  row([1 / 2], [Md export: buffer / subchapter (save-as)]),
-  row([1 (tree)], [Md export: subtree (save-as)]),
+  row([1 / 2], [Md export: buffer / subchapter]),
+  row([1 (tree)], [Md export: subtree]),
   row([S],   [Toggle similar-paragraph mode]),
   row([G],   [Writing-progress modal]),
-  row([T],   [Per-paragraph word target]),
+  row([T],   [Per-¶ target  · (1.2.7) timeline view]),
   row([A / I], [Add outgoing / incoming wiki-link]),
   row([L / K], [List outgoing / backlinks]),
   row([B / M], [Toggle bookmark / open picker]),
   row([P],   [Fuzzy paragraph picker]),
-  row([R],   [(1.2.5) Render paragraph → floating PNG preview]),
-  row([N],   [(1.2.5) Next typst diagnostic (jump cursor)]),
-  row([W],   [(1.2.5) Story view — DOT graph PNG of current book]),
+  row([R],   [Render paragraph → floating PNG (1.2.5)]),
+  row([N / Shift+N], [Next / previous typst diagnostic]),
+  row([Shift+W], [Story view — book graph (1.2.5)]),
+  row([w],   [(1.2.6) Paragraph mini story view]),
+  row([e],   [(1.2.7) Event picker — chronological list]),
+  row([t],   [(1.2.7) Timeline swim-lane view]),
   row([Esc], [Cancel chord]),
 )
 
-== Render preview (Ctrl+V R, 1.2.5)
+== Render preview (Ctrl+V R)
 
 #kv-table(
   row([← / →], [Previous / next page]),
-  row([↑ / ↓], [Same as ← / →]),
   row([Home / End], [First / last page]),
-  row([S],     [Save *current* page · full-DPI PNG via picker]),
-  row([A],     [Save *all* pages · `<base>-page-NNN.png` per page]),
+  row("+ / =",  [(1.2.6) Zoom in (0.66× ticks/cell)]),
+  row("- / _",  [(1.2.6) Zoom out (1.5×)]),
+  row([0],      [(1.2.6) Reset zoom to 1.00×]),
+  row([S],     [Save *current* page · full-DPI PNG]),
+  row([A],     [Save *all* pages]),
   row([Esc],   [Close back to editor]),
+)
+
+== Timeline view (Ctrl+V t) — 1.2.7
+
+#kv-table(
+  row([← / →], [Scroll ~10 cells]),
+  row([PgUp / PgDn], [Scroll ~60 cells]),
+  row("+ / -", [Zoom in / out (anchored to cursor)]),
+  row([0],     [Reset zoom]),
+  row([Home / End], [Jump first / last event]),
+  row([Tab],   [Cycle highlighted track]),
+  row([Enter], [Open event closest to cursor]),
+  row([n / N], [New event at cursor tick]),
+  row([u / U], [Up-scope (subch → ch → book)]),
+  row([d / D], [Descent picker]),
+  row([b / B], [Book scope]),
+  row([p / P], [Project overlay (cross-book)]),
+  row([y],     [AI critique · scope + current track]),
+  row([Y],     [AI critique · scope + all tracks]),
+  row([Ctrl+Y], [AI critique · book-wide]),
+  row([Esc],   [Close]),
+)
+
+== Event picker (Ctrl+V e) — 1.2.7
+
+#kv-table(
+  row([↑ / ↓ / Home / End], [Navigate]),
+  row([t / T], [Cycle track filter]),
+  row([Enter], [Open event paragraph]),
+  row([Esc],   [Close]),
 )
 
 == Bund — Ctrl+Z prefix
@@ -138,28 +191,33 @@ A one-page reference. For workflows see
   row([F2],  [Rename modal]),
   row([F3],  [File picker (import / load)]),
   row([F4],  [Toggle split-edit]),
-  row([F5],  [Save versioned snapshot]),
-  row([F6],  [Snapshot picker — V diff, D del, Enter restore (1.2.4: pre-restore safety snapshot)]),
+  row([F5],  [Snapshot (1.2.6: with annotation prompt)]),
+  row([F6],  [Snapshot picker]),
   row([F7],  [Grammar check]),
-  row([F9],  [Cycle AI scope]),
-  row([F10], [Toggle inference mode]),
+  row([F8],  [(1.2.6) Diagnostics list modal]),
+  row([F9 / Shift+F9],  [Cycle AI scope fwd / back]),
+  row([F10], [Toggle inference mode (Local ↔ Full)]),
+  row([F12], [(1.2.6) AI critique (mode-aware)]),
+  row([Ctrl+F12], [(1.2.6) AI explain diagnostic at cursor — was F11; macOS grabs F11]),
 )
 
 == Tree pane
 
 #kv-table(
   row([↑ ↓], [Move cursor]),
-  row([→ / ←], [Expand / collapse (or up to parent)]),
+  row([→ / ←], [Expand / collapse]),
   row([Enter], [Open paragraph]),
   row([Home / End], [Jump first / last]),
   row([Z / X], [Collapse subchapter / collapse all]),
-  row([B C V A S +], [Add / insert variants]),
+  row([B C V A S P +], [Add / insert variants]),
   row([D / -], [Delete branch / paragraph]),
   row([U / J], [Move up / down]),
-  row([Space], [(1.2.4) Mark / unmark for multi-select]),
-  row([T],     [(1.2.4) Cycle type (single / bulk)]),
-  row([O],     [(1.2.4) Cycle status (single / bulk)]),
-  row([G],     [(1.2.5) Tag selection — opens tag picker]),
+  row([Space], [Mark for multi-select]),
+  row([T],     [Cycle type (single / bulk)]),
+  row([O],     [Cycle status (single / bulk)]),
+  row([g],     [(1.2.5) Tag selection]),
+  row([F2],    [Rename]),
+  row([F3],    [File picker]),
   row([Esc],   [Clear marks · focus search]),
 )
 
@@ -168,34 +226,61 @@ A one-page reference. For workflows see
 #kv-table(
   row([Ctrl+F / Ctrl+R], [Find / replace (regex)]),
   row([Ctrl+G],   [Repeat last find]),
-  row([Ctrl+Z / Ctrl+Y], [Undo / redo]),
   row([Ctrl+A / Ctrl+E], [Line start / end]),
   row([Ctrl+K],   [Kill to end of line]),
   row([Ctrl+U],   [Kill to start of line]),
   row([Ctrl+W],   [Delete word backward]),
   row([Alt+B / Alt+F], [Word back / forward]),
   row([Shift+arrows], [Selection]),
-  row([Ctrl+Space], [Vertical block selection mode]),
+  row([Ctrl+Space], [Vertical block selection]),
 )
+
+Editor gutter (1.2.6): red `●` marks lines that carry a typst
+diagnostic. Both parse + semantic. Marker keeps colour on the
+current-line highlight.
 
 == Snapshot picker (F6)
 
 #kv-table(
   row([↑ ↓], [Navigate]),
-  row([Enter], [Restore (1.2.4: safety snapshot first)]),
-  row([V],   [(1.2.4) Side-by-side diff vs current]),
+  row([Enter], [Restore (safety snapshot fires first)]),
+  row([V],   [Side-by-side diff vs current]),
   row([D / Del], [Delete snapshot]),
-  row([Esc], [Cancel · diff returns to picker]),
+  row([Home / End], [Newest / oldest]),
+  row([Esc], [Cancel]),
 )
+
+(1.2.6) Annotated snapshots show an italic-cyan `✎`-prefixed
+second line beneath each row.
 
 == AI prompt (Ctrl+I)
 
 #kv-table(
   row([Enter], [Send]),
-  row([↑ / ↓], [(1.2.4) Prompt history (cap 500)]),
-  row([/],     [Prompt-library picker (prefix-ranked)]),
+  row([↑ / ↓], [Prompt history (cap 500)]),
+  row([/],     [Prompt-library picker]),
   row([Tab],   [Commit picker selection]),
   row([Esc],   [Close]),
+)
+
+== AI pane apply chords
+
+#kv-table(
+  row([r / R], [Replace buffer (1.2.6: → diff modal)]),
+  row([g / G], [Grammar-replace (extracts corrected block)]),
+  row([i / I], [Insert at cursor]),
+  row([t / T], [Prepend (top)]),
+  row([b / B], [Append (bottom)]),
+  row([c / C], [Copy to clipboard]),
+)
+
+Inside the AI diff modal (1.2.6, when `ai.diff_review_on_apply`):
+#kv-table(
+  row([a / A / Enter], [Accept — apply + refocus editor]),
+  row([r / R], [Reject — buffer unchanged]),
+  row([e / E], [Alias for accept]),
+  row([↑ ↓ PgUp PgDn], [Scroll the diff]),
+  row([Esc],   [Same as reject]),
 )
 
 == AI full-screen (Ctrl+B K)
@@ -207,6 +292,18 @@ A one-page reference. For workflows see
   row([Esc],   [Leave full-screen]),
 )
 
+== Privacy posture
+
+#text(size: 7.5pt)[
+  Inkhaven does *not* provide inherent privacy when external
+  LLM providers are used (Gemini, Claude, OpenAI, DeepSeek,
+  Grok). Every prompt + RAG-attached paragraph travels to
+  the provider's servers per their terms. For increased
+  privacy use a *local Ollama* installation — set
+  `llm.default_provider: "ollama"` — and inkhaven's RAG,
+  embedding, and search stay fully on-device.
+]
+
 == CLI cheatsheet
 
 #kv-table(
@@ -216,15 +313,19 @@ A one-page reference. For workflows see
   row([search "query"],              [Semantic search]),
   row([reindex --prune --adopt],     [Reconcile disk ↔ store]),
   row([export typst|pdf|markdown|tex|epub], [Export]),
-  row([export --status=ready],       [(1.2.4) Status floor]),
+  row([export --status=ready],       [Status floor]),
+  row([export --tag draft],          [(1.2.6) Tag filter]),
   row([export --book-name "Tides"], [Scope to one book]),
   row([backup --out DIR],            [Backup zip]),
   row([restore ARCH --to DIR],       [Restore zip]),
   row([import-help --documents-directory DIR], [Wipe + import Help]),
   row([import-typst-help],           [Bundle Typst reference]),
-  row([import-scrivener PATH.scriv], [(1.2.4) Scrivener importer]),
-  row([stats --book-name "Tides"], [(1.2.4) Per-¶ stats table]),
-  row([doctor],                      [(1.2.5) Health report: engine + fonts + cache + project]),
+  row([import-scrivener PATH.scriv], [Scrivener importer (keywords → tags 1.2.6)]),
+  row([stats --book-name "Tides"], [Per-¶ stats table]),
+  row([doctor],                      [Health report]),
+  row([event add "Storm" --start "1A.2.3"], [(1.2.7) Add event]),
+  row([event list --track main],     [(1.2.7) Chronological event list]),
+  row([event show <path>],           [(1.2.7) Show event details]),
   row([ai "prompt"],                 [One-shot inference]),
   row([bund "40 2 + ."],             [Bund REPL one-shot]),
 )
@@ -235,50 +336,77 @@ A one-page reference. For workflows see
 keys: {
   meta_prefix: "Ctrl+b"
   bund_prefix: "Ctrl+z"
-  view_prefix: "Ctrl+v"   // 1.2.4
+  view_prefix: "Ctrl+v"
 }
 editor: {
   autosave_seconds: 5
-  startup_splash:   true  // 1.2.4
+  startup_splash:   true
 }
 goals: {
   daily_words:           1500
-  active_minutes_daily:  60    // 1.2.4
+  active_minutes_daily:  60
   streak_grace_per_week: 1
-  auto_promote_on_target: true // 1.2.4
+  auto_promote_on_target: true
   books: { tides: { target_words: 80000,
                     deadline: "2026-12-31" } }
 }
 output: { extra_formats: ["markdown", "epub"] }
 scripting: {
   enabled_categories: ["keymap"]
-  // 1.2.4 adds fs_read (default-allowed),
-  //           fs_write (default-DENIED)
+  // store_write opens ink.tag.add / ink.event.add etc.
+  // fs_write opens ink.story.render, ink.fs.write.
 }
-typst_compile: {                    // 1.2.5
+typst_compile: {
   engine:               "external"  // | "inprocess"
-  diagnostics:          true        // typst-syntax on idle/save
-  semantic_diagnostics: false       // full typst::compile (opt-in)
+  diagnostics:          true        // typst-syntax
+  semantic_diagnostics: false       // (1.2.5+) full compile
   bundle_fonts:         true        // CM + Linux Libertine
-  use_system_fonts:     true        // also fontdb-search system
-  packages_enabled:     true        // fetch @preview/<pkg>
+  use_system_fonts:     true
+  packages_enabled:     true        // @preview/<pkg>
+}
+
+// (1.2.6) AI behaviour
+ai: {
+  per_paragraph_memory:           false  // opt in: chat
+                                         // continuity per ¶
+  per_paragraph_memory_max_turns: 10
+  diff_review_on_apply:           true   // r/g via modal
+  reseed_prompt_examples:         true
+}
+
+// (1.2.7 preview) Story timeline — opt in
+timeline: {
+  enabled:        false               // ← flip to true
+  default_track:  "main"
+  calendar: { preset: "gregorian" }   // | "sols" | "custom"
+  display: {
+    show_orphans:       true
+    swim_lane_max_rows: 12
+    default_zoom:       1.0
+  }
 }
 ```
 
-== Bund stdlib (1.2.4 additions)
+== Bund stdlib (1.2.6 + 1.2.7 additions)
 
 #kv-table(
-  row([ink.editor.replace_all], [`( old new -- count )`]),
-  row([ink.search.load],        [`( query -- )` · top hit → editor]),
-  row([ink.ai.send_blocking],   [`( prompt -- response )`]),
-  row([ink.ai.poll],            [`( -- string )` · empty if none]),
-  row([ink.fs.read],            [`( path -- string )` · allowed]),
-  row([ink.fs.write],           [`( path content -- )` · DENIED]),
-  row([ink.paragraph.target],   [`( path -- int | NODATA )`]),
-  row([ink.paragraph.set_target], [`( path n -- )` · 0 clears]),
+  row([ink.tag.list],           [`( -- list )`]),
+  row([ink.tag.list_for],       [`( path -- list | NODATA )`]),
+  row([ink.tag.search],         [`( tag -- list )`]),
+  row([ink.tag.add],            [`( path tag -- )`  · store_write]),
+  row([ink.tag.remove],         [`( path tag -- )`  · store_write]),
+  row([ink.event.list],         [`( -- list )`]),
+  row([ink.event.list_orphans], [`( -- list )`]),
+  row([ink.event.add],          [`( book title spec -- uuid )` · store_write]),
+  row([ink.event.set_end],      [`( uuid spec -- )` · store_write]),
+  row([ink.event.set_precision], [`( uuid prec -- )` · store_write]),
+  row([ink.event.set_track],    [`( uuid track -- )` · store_write]),
+  row([ink.event.link_paragraph], [`( uuid path -- )` · store_write]),
+  row([ink.story.render],       [`( book path -- )` · fs_write]),
+  row([ink.editor.set_cursor],  [`( row col -- )` · 1-based]),
 )
 
-== Hook points (1.2.4)
+== Hook points (1.2.4–1.2.7)
 
 #kv-table(
   row([hook.on_save],      [`( uuid -- )`]),
@@ -290,6 +418,9 @@ typst_compile: {                    // 1.2.5
   row([hook.on_streak_break], [`( prev_days -- )`]),
   row([hook.on_assemble],  [`( uuid slug root files -- )`]),
   row([hook.on_take],      [`( uuid slug pdf -- )`]),
+  row([hook.on_diagnostic], [`( uuid count first-message -- )` · 1.2.6]),
+  row([hook.on_event_added], [`( uuid -- )` · 1.2.7]),
+  row([hook.on_event_orphaned], [`( uuid -- )` · 1.2.7]),
 )
 
 ]
@@ -297,11 +428,16 @@ typst_compile: {                    // 1.2.5
 #v(0.3em)
 #line(length: 100%, stroke: 0.4pt)
 #text(7pt, fill: luma(120))[
-  Tutorials referenced above (`Documentation/Tutorials/`):
+  Tutorials referenced (`Documentation/Tutorials/`):
   01 getting-started · 02 organising · 03 editor · 04 search · 05 AI ·
   06 grammar · 07 places + characters · 08 importing · 09 export ·
   10 backup · 11 theming · 12 providers · 13 AI full-screen ·
   14 status · 15 multi-format export · 16 similar paragraphs ·
-  17 writing goals · 18 Bund pane · *19 wiki-links · 20 snapshot diff ·
-  21 navigation · 22 tree multi-select · 23 Scrivener import*.
+  17 writing goals · 18 Bund pane · 19 wiki-links · 20 snapshot diff ·
+  21 navigation · 22 tree multi-select · 23 Scrivener import ·
+  24 typst-in-process · *25 tag-workflows · 26 story-view ·
+  27 diagnostics · 28 ai-critique-and-memory · 29 snapshot-annotations ·
+  30 render-preview · 31 story-timeline*. The full author's guide
+  lives at `Book/BOOK_OF_INKHAVEN.typ` (compile → PDF) with a
+  markdown mirror at `Book/markdown/`.
 ]
