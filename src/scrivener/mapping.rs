@@ -109,6 +109,7 @@ mod tests {
             kind: kind.into(),
             title: title.into(),
             children: Vec::new(),
+            keywords: Vec::new(),
         }
     }
 

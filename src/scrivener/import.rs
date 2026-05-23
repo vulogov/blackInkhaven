@@ -133,7 +133,7 @@ impl<'a> WalkCtx<'a> {
         let classification = classify(item, Some(depth));
         match classification {
             Classification::Paragraph => {
-                self.create_paragraph(&item.title, parent_id, &item.uuid)?;
+                self.create_paragraph(item, parent_id)?;
                 self.report.paragraphs_created += 1;
             }
             Classification::Chapter | Classification::Subchapter => {
@@ -229,13 +229,14 @@ impl<'a> WalkCtx<'a> {
 
     fn create_paragraph(
         &mut self,
-        title: &str,
+        item: &BinderItem,
         parent_id: uuid::Uuid,
-        scriv_uuid: &uuid::Uuid,
     ) -> Result<()> {
         if self.opts.dry_run {
             return Ok(());
         }
+        let title = item.title.as_str();
+        let scriv_uuid = &item.uuid;
         // Convert the source RTF first. Missing file isn't fatal
         // — Scrivener routinely leaves "empty" Text items with
         // no .rtf at all; just create an empty paragraph.
@@ -307,6 +308,23 @@ impl<'a> WalkCtx<'a> {
                 ));
             }
         }
+
+        // 1.2.6+ — propagate Scrivener keywords → inkhaven
+        // tags. Empty list = no-op (skip the metadata update).
+        // Tag values are trimmed + de-duped during the binder
+        // parse, so we can write them through as-is.
+        if !item.keywords.is_empty() {
+            node.tags = item.keywords.clone();
+            if let Err(e) = self
+                .store
+                .raw()
+                .update_metadata(node.id, node.to_json())
+            {
+                self.report.errors.push(format!(
+                    "tags persist for `{title}`: {e}"
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -352,7 +370,7 @@ impl<'a> WalkCtx<'a> {
         book_id: uuid::Uuid,
     ) -> Result<()> {
         if item.kind == "Text" {
-            self.create_paragraph(&item.title, book_id, &item.uuid)?;
+            self.create_paragraph(item, book_id)?;
             self.report.paragraphs_created += 1;
         }
         for child in &item.children {
