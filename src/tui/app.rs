@@ -406,6 +406,20 @@ pub fn run(project: &Path) -> Result<()> {
         }
     };
 
+    // 1.2.6+ — idempotent re-seed of the Prompts book with the
+    // embedded `<name>.example` defaults. The seeder skips
+    // paragraphs whose title already matches, so existing
+    // content is never overwritten. Covers users whose
+    // project was initialised before 1.2.6 (and so missed
+    // the init-time seeding) — they get the examples the
+    // first time they open the project under 1.2.6+.
+    if let Err(e) = crate::cli::init::seed_prompt_examples(&cfg, &store) {
+        tracing::warn!(
+            target: "inkhaven::tui::run",
+            "could not seed Prompts.book examples on open: {e}",
+        );
+    }
+
     // Keep a copy of the config and layout for the auto-backup hook below;
     // App takes ownership of the originals.
     let cfg_for_exit = cfg.clone();
