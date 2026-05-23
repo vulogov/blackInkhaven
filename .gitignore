@@ -10,6 +10,14 @@ target
 .DS_Store
 **/.DS_Store
 
+# Generated artefacts of the Book of Inkhaven. The
+# `*.pdf` line above already excludes the PDF; the line
+# below explicitly excludes screenshots so PRs don't
+# spam them.
+Book/BOOK_OF_INKHAVEN.pdf
+# Book/images/ is tracked — PNGs land there from author
+# capture work; check them in.
+
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 
