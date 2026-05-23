@@ -892,3 +892,159 @@ MODALS          Enter        confirm
                 Esc          cancel
                 y/n          (delete only)
 ```
+
+
+---
+
+## 1.2.5 + 1.2.6 + 1.2.7 — chord additions
+
+Every chord introduced between the original document and the
+1.2.6 release, organised by feature. This section is
+maintained in delta-style so the canonical chord-by-pane
+tables above stay readable; the entries below are the
+new ground.
+
+### Tag workflows (1.2.5+)
+
+```
+Ctrl+B ]   open the tag picker on the open paragraph
+Ctrl+B }   open the project-wide tag-search picker
+g (tree)   open the tag picker for the tree-cursor's paragraph
+           (or every marked paragraph at once)
+```
+
+Inside the tag picker (`Ctrl+B ]` / `Ctrl+B }` / `g`):
+
+```
+Space      toggle the cursor tag
+A          add a new tag (one-line prompt)
+R          rename project-wide (1.2.6+; merges if name exists)
+D          delete project-wide (confirm)
+T          commit marked tags onto the target
+Enter      Search mode: open the per-tag paragraph list
+↑↓ Home/End navigate
+```
+
+### Story view (1.2.5–1.2.6)
+
+```
+Ctrl+V Shift+W   book story view (1.2.5+)
+Ctrl+V w         paragraph mini story view (1.2.6+)
+```
+
+Inside either view:
+
+```
+S       save the rendered PNG to cwd
+Esc     close
+```
+
+### Diagnostics (1.2.5–1.2.6)
+
+```
+F8                 (1.2.6+) typst diagnostics list modal
+Ctrl+V N           next diagnostic in the open buffer
+Ctrl+V Shift+N     previous
+Ctrl+F12           (1.2.6+) AI explain the diagnostic at cursor
+                   (was F11 pre-1.2.6 — macOS grabs F11)
+```
+
+Inside the F8 modal:
+
+```
+↑↓ Home/End    navigate
+Enter          jump editor cursor to the diagnostic, close modal
+Esc            close
+```
+
+### AI critique + diff modal (1.2.6+)
+
+```
+F12       AI critique (mode-aware: critique-edit / critique-changes)
+```
+
+Inside the AI diff-review modal (`r` / `g` in the AI pane
+when `ai.diff_review_on_apply: true`):
+
+```
+a / A / Enter   accept — apply and refocus editor
+r / R           reject — buffer unchanged
+e / E           alias for `a`
+↑ ↓ PgUp PgDn   scroll the diff
+Home / End      jump top / bottom
+Esc             same as reject
+```
+
+### Snapshot annotation prompt (1.2.6+)
+
+```
+F5    open the annotation prompt over the editor
+```
+
+Inside the prompt:
+
+```
+Type a line   build up the annotation
+Enter         commit (empty = un-annotated)
+Esc           cancel — no snapshot
+```
+
+### Render-preview zoom (1.2.6+)
+
+Inside `Ctrl+V R`:
+
+```
++ / =     zoom in  (multiply ticks/cell by 0.66)
+- / _     zoom out (multiply by 1.5)
+0         reset to 1.00×
+```
+
+### Story timeline (1.2.7 preview — opt-in)
+
+```
+Ctrl+V e   chronological event picker
+Ctrl+V t   swim-lane timeline view
+```
+
+Inside Ctrl+V t:
+
+```
+← / →             scroll by ~10 cells
+PgUp / PgDn       page by ~60 cells
++ / =             zoom in   (0.66× ticks/cell)
+- / _             zoom out  (1.5×)
+0                 reset zoom to 1.00×
+Home / End        jump to first / last event in the visible set
+
+u / U             up-scope    (subchapter → chapter → book)
+d / D             open the inline descent picker
+b / B             jump to book scope
+p / P             toggle project overlay
+
+Tab               cycle highlighted track
+Enter             open the event closest to cursor
+n / N             new event at cursor tick (annotation prompt)
+
+y                 AI critique — current scope + current track
+Y                 AI critique — current scope + all tracks
+Ctrl+Y            AI critique — book scope (widens regardless)
+Esc               close
+```
+
+Inside the descent picker (`d` from the swim-lane view):
+
+```
+↑ ↓ Home/End   navigate
+Enter          descend into the selected scope
+Esc            return to the same scope
+```
+
+Inside Ctrl+V e:
+
+```
+↑ ↓ Home/End   navigate
+t / T          cycle the track filter (None → t0 → … → None)
+Enter          open the event paragraph
+Esc            close
+```
+

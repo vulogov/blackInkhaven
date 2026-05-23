@@ -307,3 +307,76 @@ After project open: every save prints `(saved)` to the TUI log;
 - **Bund-side bind without `keymap` enabled**: the `ink.key.*` word
   runs the deny-stub from the sandbox; you'll see "script denied
   by inkhaven policy" in your status bar / log.
+
+---
+
+## 1.2.5 + 1.2.6 + 1.2.7 — new actions
+
+Every named action introduced between the original document
+and the 1.2.6 release. Use these in your `keys.bindings`
+overlay.
+
+### Tag actions (1.2.5+)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `global.tag_paragraph` | `Ctrl+B ]` | Open the tag picker on the open paragraph. |
+| `global.tag_search` | `Ctrl+B }` | Open the project-wide tag-search picker. |
+
+(The tree-pane `g` chord for the picker is hard-coded
+because it shares the multi-select space with the
+existing tree pickers; not user-rebindable.)
+
+### View actions (1.2.5–1.2.6)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `view.story_graph` | `Ctrl+V Shift+W` | Book story view (radial PNG). |
+| `view.story_graph_paragraph` | `Ctrl+V w` | Paragraph mini story view (1.2.6+). |
+| `view.next_diagnostic` | `Ctrl+V N` | Jump to next typst diagnostic. |
+| `view.event_picker` | `Ctrl+V e` | (1.2.7+) Open the event picker. Requires `timeline.enabled`. |
+| `view.timeline` | `Ctrl+V t` | (1.2.7+) Open the swim-lane timeline view. Requires `timeline.enabled`. |
+
+### Diagnostic actions (1.2.6+)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `editor.diagnostics_list` | `F8` | Open the floating diagnostics list modal. |
+| `editor.explain_diagnostic` | `Ctrl+F12` | Send the diagnostic at cursor + ±5 context lines to AI. Was `F11`; macOS grabs F11 globally, so the chord moved. Linux + Windows users can bind F11 back via `keys.bindings`. |
+| `editor.critique` | `F12` | AI critique (mode-aware: critique-edit / critique-changes). |
+
+### Rebinding F11 back to explain (Linux + Windows)
+
+```hjson
+keys: {
+  bindings: [
+    { chord: "F11", action: "editor.explain_diagnostic" }
+  ]
+}
+```
+
+The existing `Ctrl+F12` binding stays — both fire the
+action. Multiple bindings → multiple working chords.
+
+### Snapshot annotation chord (1.2.6+)
+
+`F5` continues to bind `editor.create_snapshot`. The
+chord's *behaviour* changed (annotation prompt now pops
+first) but the binding is the same — no overlay change
+needed.
+
+### macOS-specific caveats
+
+macOS reserves several function keys system-wide:
+
+| Key | macOS owner |
+|-----|-------------|
+| F11 | Show Desktop (Mission Control) |
+| F12 | Dashboard (deprecated; sometimes still active) |
+| Ctrl+Up / Down / Left / Right | Mission Control gestures |
+| Cmd+Tab / Cmd+Q | System app switcher / quit |
+
+Inkhaven's `Ctrl+F12` works on macOS because the
+Ctrl-modifier shifts the chord out of Apple's owned
+range. `Cmd+anything` doesn't bind in the TUI — macOS
+doesn't pass those events to terminal apps.

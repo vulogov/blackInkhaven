@@ -621,3 +621,161 @@ You rarely need to touch this. The default is conservative.
 Full annotated template lives at
 [`assets/default_project.hjson`](../assets/default_project.hjson) — that
 is the same file `inkhaven init` writes verbatim.
+
+---
+
+## 1.2.6 + 1.2.7 — new HJSON blocks
+
+Two new top-level stanzas land in the 1.2.6 cycle. Both
+are opt-in; existing projects upgrade transparently.
+
+### `ai` (1.2.6+) — AI-pane behaviour
+
+```hjson
+ai: {
+  // 1.2.6+ — record (user, assistant) turns onto the open
+  // paragraph's `Node.ai_memory` when Paragraph-scope
+  // prompts fire. Subsequent Paragraph-scope prompts
+  // pre-pend that memory to the chat-history payload.
+  // Visible session chat history is untouched.
+  per_paragraph_memory:           false
+
+  // Max total turns (user + assistant) kept per paragraph.
+  // Oldest pair evicts first when length exceeds the cap.
+  // 0 = disabled regardless of `per_paragraph_memory`.
+  per_paragraph_memory_max_turns: 10
+
+  // 1.2.6+ — route `r` (Replace) and `g` (ReplaceCorrected)
+  // through a side-by-side diff modal before any bytes
+  // change. `a` accepts; `r` rejects; `e` is an alias for
+  // `a`. Set false to revert to the pre-1.2.6 immediate
+  // apply.
+  diff_review_on_apply:           true
+
+  // 1.2.6+ — re-seed the Prompts book on `inkhaven init`
+  // AND on every TUI open with the five embedded prompt
+  // .example seeds. Idempotent — paragraphs with the same
+  // title are skipped.
+  reseed_prompt_examples:         true
+}
+```
+
+All four fields are `#[serde(default)]`; missing block →
+default values. The implementation in
+`crate::config::AiConfig` carries the canonical types.
+
+### `timeline` (1.2.7+ preview, ships in 1.2.6) — story timeline
+
+```hjson
+timeline: {
+  // Master switch. When false, every timeline chord, CLI
+  // subcommand, and Bund word lands a "feature disabled"
+  // hint instead of running. Off by default so existing
+  // projects upgrade transparently.
+  enabled: false
+
+  // Default track label used when an event's `track`
+  // field is None. Shown in the swim-lane row header.
+  default_track: "main"
+
+  // Calendar configuration. Three preset shapes; `custom`
+  // for everything else.
+  calendar: {
+    // "gregorian" | "sols" | "custom"
+    preset: "custom"
+
+    // Name of the base unit (one tick == one of these).
+    base_unit: "day"
+
+    // Unit stack, base-first. Each entry's `per_parent`
+    // says how many of THIS unit make one of the next
+    // (parent) unit. The first entry's per_parent is
+    // ignored. `names` is optional — when empty the
+    // formatter falls back to numeric.
+    units: [
+      { name: "day", names: [] }
+      { name: "month", per_parent: 30,
+        names: ["Frostmoon", "Snowfall", "Greenstart",
+                "Bloomtide", "Highsun", "Goldfall",
+                "Mistwane", "Stormrise", "Coldgate",
+                "Longnight", "Hearthlit", "Yearfall"] }
+      { name: "year", per_parent: 12, names: [] }
+    ]
+
+    // Seasons (used by Precision::Season fuzz windows).
+    seasons: [
+      { name: "winter", start_month: 1, span_months: 3 }
+      { name: "spring", start_month: 4, span_months: 3 }
+      { name: "summer", start_month: 7, span_months: 3 }
+      { name: "autumn", start_month: 10, span_months: 3 }
+    ]
+
+    // Epoch label appended to positive years.
+    epoch_label:        "A"
+    // Epoch label for negative years (prequels).
+    epoch_before_label: "BA"
+
+    // Format string used by `Calendar::format()`. Tokens:
+    //   {year}, {epoch_label}, {epoch_before_label},
+    //   {month}, {month-name}, {day}, {hour}
+    display_format: "{year}{epoch_label}.{month}.{day}"
+
+    // Optional landmark aliases the parser recognises.
+    parse_aliases: [
+      { match: "Founding", ticks: 0 }
+    ]
+  }
+
+  // Swim-lane display knobs.
+  display: {
+    show_orphans:        true   # synthetic orphan row at the
+                                # bottom of the swim lane
+    swim_lane_max_rows:  12     # truncate beyond this with a
+                                # "+N more" row
+    default_zoom:        1.0    # initial ticks-per-cell
+  }
+}
+```
+
+#### Calendar preset shortcuts
+
+`preset: "sols"` expands to a single-unit calendar with
+`day` as the only unit, `Sol` as the epoch label, and
+`"Sol {day}"` as the format string. Useful for
+"days since day zero" timelines (Mars colony stories,
+generation ships, anything where the year isn't a useful
+unit).
+
+`preset: "gregorian"` expands to a Year / Month / Day
+stack with English month names and 30-day months
+(approximate — calendars don't model leap years; the
+ticks are absolute). Useful for real-world dates.
+
+`preset: "custom"` honours every field above verbatim.
+
+### `inkhaven.hjson` recap (1.2.6 cycle adds)
+
+```hjson
+{
+  ai: {
+    per_paragraph_memory:           false
+    per_paragraph_memory_max_turns: 10
+    diff_review_on_apply:           true
+    reseed_prompt_examples:         true
+  }
+
+  timeline: {
+    enabled: false
+    default_track: "main"
+    calendar: { preset: "gregorian" }
+    display: {
+      show_orphans:       true
+      swim_lane_max_rows: 12
+      default_zoom:       1.0
+    }
+  }
+}
+```
+
+Both stanzas are additive. Removing them restores the
+pre-1.2.6 behaviour exactly.
