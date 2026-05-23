@@ -124,6 +124,11 @@ pub enum Action {
     ScheduleBuild,
     #[serde(rename = "global.schedule_take")]
     ScheduleTake,
+    /// 1.2.6+ — `Ctrl+B Shift+B`. Trigger an immediate project
+    /// backup, ignoring the recency cooldown the exit hook uses.
+    /// Honours `backup.wait_for_key_after_backup`.
+    #[serde(rename = "global.backup_now")]
+    BackupNow,
     #[serde(rename = "global.toggle_typewriter")]
     ToggleTypewriter,
     #[serde(rename = "global.toggle_ai_fullscreen")]
@@ -365,6 +370,7 @@ impl Action {
             Action::ScheduleAssemble => "assemble".into(),
             Action::ScheduleBuild => "build".into(),
             Action::ScheduleTake => "take".into(),
+            Action::BackupNow => "backup".into(),
             Action::ToggleTypewriter => "typewriter".into(),
             Action::ToggleAiFullscreen => "AI-full".into(),
             Action::StatusFilterReady => "Ready".into(),
@@ -485,6 +491,8 @@ impl Action {
                 "Build the book — assemble + run `typst compile` (PDF lands in artefacts dir).".into(),
             Action::ScheduleTake =>
                 "Take the book — build then copy the PDF (and any configured extras) into the launch cwd.".into(),
+            Action::BackupNow =>
+                "Run a project backup now (Ctrl+B Shift+B). Always fires — ignores the exit-hook recency cooldown.".into(),
             Action::ToggleTypewriter =>
                 "Toggle full-screen typewriter mode — hides every other pane for focused writing.".into(),
             Action::ToggleAiFullscreen =>
@@ -688,6 +696,10 @@ impl KeyBindings {
                 entry("e", Action::ToggleSound, Scope::Any),
                 entry("a", Action::ScheduleAssemble, Scope::Any),
                 entry("b", Action::ScheduleBuild, Scope::Any),
+                // 1.2.6+: Ctrl+B Shift+B → manual project backup.
+                // Distinct chord from `Ctrl+B b` (lowercase build)
+                // because the matcher tracks SHIFT separately.
+                entry("Shift+b", Action::BackupNow, Scope::Any),
                 entry("o", Action::ScheduleTake, Scope::Any),
                 entry("w", Action::ToggleTypewriter, Scope::Any),
                 entry("k", Action::ToggleAiFullscreen, Scope::Any),
@@ -1164,6 +1176,26 @@ mod tests {
         assert_eq!(
             k.resolve_meta_sub(&ev('v'), Focus::Editor),
             Some(Action::OpenCredits)
+        );
+    }
+
+    #[test]
+    fn lowercase_b_and_shift_b_are_distinct_actions() {
+        let k = KeyBindings::defaults();
+        // Ctrl+B b (lowercase) → build the book (unchanged).
+        let lower = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE);
+        assert_eq!(
+            k.resolve_meta_sub(&lower, Focus::Editor),
+            Some(Action::ScheduleBuild)
+        );
+        // Ctrl+B Shift+B (uppercase) → manual backup. Different
+        // chord, different action — the matcher uppercases the
+        // event's char when SHIFT is set so 'B'+SHIFT and 'b'+none
+        // route to different entries.
+        let upper = KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT);
+        assert_eq!(
+            k.resolve_meta_sub(&upper, Focus::Editor),
+            Some(Action::BackupNow)
         );
     }
 

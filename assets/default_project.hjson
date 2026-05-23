@@ -186,6 +186,11 @@
   backup: {
     out_dir: ""
     max_age: "7d"
+    // 1.2.6+: when a backup finishes (manual Ctrl+B Shift+B or the
+    // exit-hook auto-backup), hold the splash with a
+    // "Press any key to continue…" prompt so the destination path
+    // is readable. Set false to keep the 1.2.5 auto-dismiss.
+    wait_for_key_after_backup: true
   }
 
   // Ctrl+B O multi-format hookup. Each format in `extra_formats`

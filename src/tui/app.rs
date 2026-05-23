@@ -486,52 +486,58 @@ pub fn run(project: &Path) -> Result<()> {
 /// Render the centered "Performing database backup" splash with a progress
 /// bar. Called from the exit hook each time another batch of files has
 /// been zipped so the bar visibly advances. `done`/`total` are file counts.
+///
+/// `done_dest`:
+/// * `None` — backup is in flight; spinner header + progress bar.
+/// * `Some(Some(path))` — backup finished; show success header,
+///   destination path, and the "Press any key…" footer.
+/// * `Some(None)` — backup failed; show failure header and the
+///   "Press any key…" footer (the status bar carries the error).
 fn draw_backup_splash(
     f: &mut ratatui::Frame,
     project_display: &str,
     done: usize,
     total: usize,
+    done_dest: Option<Option<&Path>>,
 ) {
     let area = f.area();
     let width = area.width.saturating_sub(8).clamp(50, 90);
-    let height: u16 = 9;
+    let height: u16 = if done_dest.is_some() { 11 } else { 9 };
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + (area.height.saturating_sub(height)) / 2;
     let rect = Rect { x, y, width, height };
     f.render_widget(ratatui::widgets::Clear, rect);
+    let (title, border_fg) = match done_dest {
+        None => (" Inkhaven · backup ", Color::Cyan),
+        Some(Some(_)) => (" Inkhaven · backup · done ", Color::Green),
+        Some(None) => (" Inkhaven · backup · failed ", Color::Red),
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Inkhaven · backup ")
+        .title(title)
         .border_style(
             Style::default()
-                .fg(Color::Cyan)
+                .fg(border_fg)
                 .add_modifier(Modifier::BOLD),
         );
     let inner = block.inner(rect);
     f.render_widget(block, rect);
 
-    let bar_width = (inner.width as usize).saturating_sub(8).max(20);
-    let pct = if total == 0 {
-        0.0
-    } else {
-        (done as f32 / total as f32).clamp(0.0, 1.0)
+    let (header_text, header_fg) = match done_dest {
+        None => (
+            "  Performing database backup…".to_string(),
+            Color::Yellow,
+        ),
+        Some(Some(_)) => ("  ✓  Backup complete.".to_string(), Color::Green),
+        Some(None) => ("  ✗  Backup failed.".to_string(), Color::Red),
     };
-    let filled = (pct * bar_width as f32).round() as usize;
-    let bar = format!(
-        "  [{}{}]  {}/{} ({:>3.0}%)",
-        "█".repeat(filled),
-        "·".repeat(bar_width.saturating_sub(filled)),
-        done,
-        total,
-        pct * 100.0,
-    );
 
-    let body = vec![
+    let mut body: Vec<Line<'static>> = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "  Performing database backup…".to_string(),
+            header_text,
             Style::default()
-                .fg(Color::Yellow)
+                .fg(header_fg)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -539,12 +545,82 @@ fn draw_backup_splash(
             format!("  Project: {project_display}"),
             Style::default().add_modifier(Modifier::DIM),
         )),
-        Line::from(Span::styled(
-            bar,
-            Style::default().add_modifier(Modifier::BOLD),
-        )),
     ];
+    match done_dest {
+        None => {
+            let bar_width = (inner.width as usize).saturating_sub(8).max(20);
+            let pct = if total == 0 {
+                0.0
+            } else {
+                (done as f32 / total as f32).clamp(0.0, 1.0)
+            };
+            let filled = (pct * bar_width as f32).round() as usize;
+            let bar = format!(
+                "  [{}{}]  {}/{} ({:>3.0}%)",
+                "█".repeat(filled),
+                "·".repeat(bar_width.saturating_sub(filled)),
+                done,
+                total,
+                pct * 100.0,
+            );
+            body.push(Line::from(Span::styled(
+                bar,
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+        }
+        Some(Some(p)) => {
+            body.push(Line::from(Span::styled(
+                format!("  Wrote:   {}", p.display()),
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+            body.push(Line::from(""));
+            body.push(Line::from(Span::styled(
+                "  Press any key to continue…",
+                Style::default().fg(Color::Gray),
+            )));
+        }
+        Some(None) => {
+            body.push(Line::from(Span::styled(
+                "  See status bar for the error.",
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+            body.push(Line::from(""));
+            body.push(Line::from(Span::styled(
+                "  Press any key to continue…",
+                Style::default().fg(Color::Gray),
+            )));
+        }
+    }
     f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
+}
+
+/// Block on a single key event so the user can read the
+/// completed backup splash before the TUI redraws. Drain non-key
+/// events (mouse, resize) so a stray scroll doesn't dismiss; on
+/// resize, redraw and keep waiting.
+fn wait_for_any_key_on_backup_splash<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    project_display: &str,
+    done: usize,
+    total: usize,
+    done_dest: Option<&Path>,
+) {
+    let done_flag = Some(done_dest);
+    let _ = terminal.draw(|f| {
+        draw_backup_splash(f, project_display, done, total, done_flag)
+    });
+    loop {
+        match crossterm::event::read() {
+            Ok(crossterm::event::Event::Key(_)) => break,
+            Ok(crossterm::event::Event::Resize(_, _)) => {
+                let _ = terminal.draw(|f| {
+                    draw_backup_splash(f, project_display, done, total, done_flag)
+                });
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
 }
 
 /// Render the centered "Importing directory" splash for the tree-pane
@@ -883,21 +959,136 @@ fn maybe_auto_backup<B: ratatui::backend::Backend>(
     let project_display = layout.root.display().to_string();
     // First frame: 0/0 so the bar shows immediately even before file
     // enumeration completes.
-    let _ = terminal.draw(|f| draw_backup_splash(f, &project_display, 0, 0));
+    let _ = terminal.draw(|f| draw_backup_splash(f, &project_display, 0, 0, None));
     let mut last_redraw = std::time::Instant::now();
-    let mut progress = |done: usize, total: usize| {
-        // Throttle redraws to ~30Hz so a tiny project doesn't drown the
-        // terminal in noise on a fast disk.
-        if last_redraw.elapsed() < std::time::Duration::from_millis(33) {
-            return;
-        }
-        last_redraw = std::time::Instant::now();
-        let _ = terminal.draw(|f| draw_backup_splash(f, &project_display, done, total));
+    // Track the most-recent progress numbers so the post-call
+    // wait-for-key splash can keep the bar at 100% instead of
+    // resetting it to 0/0.
+    let mut last_progress: (usize, usize) = (0, 0);
+    let backup_result = {
+        let mut progress = |done: usize, total: usize| {
+            last_progress = (done, total);
+            // Throttle redraws to ~30Hz so a tiny project doesn't drown the
+            // terminal in noise on a fast disk.
+            if last_redraw.elapsed() < std::time::Duration::from_millis(33) {
+                return;
+            }
+            last_redraw = std::time::Instant::now();
+            let _ = terminal.draw(|f| {
+                draw_backup_splash(f, &project_display, done, total, None)
+            });
+        };
+        crate::backup::create_backup(&abs_project, &abs_out, &skip, Some(&mut progress))
     };
+    let wait = cfg.backup.wait_for_key_after_backup;
+    let (done_n, total_n) = last_progress;
+    match backup_result {
+        Ok(out_path) => {
+            if wait {
+                wait_for_any_key_on_backup_splash(
+                    terminal,
+                    &project_display,
+                    done_n,
+                    total_n,
+                    Some(&out_path),
+                );
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if wait {
+                wait_for_any_key_on_backup_splash(
+                    terminal,
+                    &project_display,
+                    done_n,
+                    total_n,
+                    None,
+                );
+            }
+            Err(anyhow::Error::from(e))
+        }
+    }
+}
 
-    crate::backup::create_backup(&abs_project, &abs_out, &skip, Some(&mut progress))
-        .map_err(anyhow::Error::from)?;
-    Ok(())
+/// Manual backup triggered by `Ctrl+B B` (uppercase). Unlike
+/// `maybe_auto_backup`, this fires unconditionally — the
+/// "we already backed up recently" cooldown is skipped because
+/// the user explicitly asked for a fresh archive. The
+/// `backup.wait_for_key_after_backup` toggle still applies.
+fn run_manual_backup<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    layout: &ProjectLayout,
+    cfg: &Config,
+) -> Result<std::path::PathBuf> {
+    // Resolve the backup directory the same way `maybe_auto_backup`
+    // does. Kept duplicated rather than refactored out so a single
+    // future change to either path can be reasoned about in
+    // isolation.
+    let bcfg = &cfg.backup;
+    let out_dir = {
+        let raw = bcfg.out_dir.trim();
+        if raw.is_empty() {
+            crate::store::default_user_backup_dir(&layout.root)
+        } else {
+            let p = std::path::PathBuf::from(raw);
+            if p.is_absolute() {
+                p
+            } else {
+                layout.root.join(p)
+            }
+        }
+    };
+    std::fs::create_dir_all(&out_dir).ok();
+    let abs_project = std::fs::canonicalize(&layout.root)
+        .unwrap_or_else(|_| layout.root.clone());
+    let abs_out = std::fs::canonicalize(&out_dir).unwrap_or_else(|_| out_dir.clone());
+    let skip = crate::cli::backup::skip_dirs_for(&abs_project, &abs_out);
+
+    let project_display = layout.root.display().to_string();
+    let _ = terminal.draw(|f| draw_backup_splash(f, &project_display, 0, 0, None));
+    let mut last_redraw = std::time::Instant::now();
+    let mut last_progress: (usize, usize) = (0, 0);
+    let backup_result = {
+        let mut progress = |done: usize, total: usize| {
+            last_progress = (done, total);
+            if last_redraw.elapsed() < std::time::Duration::from_millis(33) {
+                return;
+            }
+            last_redraw = std::time::Instant::now();
+            let _ = terminal.draw(|f| {
+                draw_backup_splash(f, &project_display, done, total, None)
+            });
+        };
+        crate::backup::create_backup(&abs_project, &abs_out, &skip, Some(&mut progress))
+    };
+    let wait = cfg.backup.wait_for_key_after_backup;
+    let (done_n, total_n) = last_progress;
+    match backup_result {
+        Ok(out_path) => {
+            if wait {
+                wait_for_any_key_on_backup_splash(
+                    terminal,
+                    &project_display,
+                    done_n,
+                    total_n,
+                    Some(&out_path),
+                );
+            }
+            Ok(out_path)
+        }
+        Err(e) => {
+            if wait {
+                wait_for_any_key_on_backup_splash(
+                    terminal,
+                    &project_display,
+                    done_n,
+                    total_n,
+                    None,
+                );
+            }
+            Err(anyhow::Error::from(e))
+        }
+    }
 }
 
 struct Keymap {
@@ -2756,6 +2947,11 @@ pub(crate) struct App {
     /// Set by Ctrl+B B — run assembly + `typst compile`, surface
     /// errors via a fresh AI chat tuned for typst diagnostics.
     pending_build: Option<Uuid>,
+    /// 1.2.6+ — set by `Ctrl+B Shift+B` (Action::BackupNow). The
+    /// main event loop runs `run_manual_backup` next tick so the
+    /// splash + wait-for-key dance happens off the chord-handler
+    /// path (which doesn't own the terminal).
+    pending_backup_now: bool,
 
     /// Set by Ctrl+B O — Ctrl+B B + copy the resulting PDF into the
     /// inkhaven launch cwd with a timestamped filename.
@@ -3215,6 +3411,7 @@ impl App {
             pending_import: None,
             pending_assembly: None,
             pending_build: None,
+            pending_backup_now: false,
             pending_take: None,
             sound,
             image_picker,
@@ -3426,6 +3623,9 @@ impl App {
             }
             if let Some(book_id) = self.pending_take.take() {
                 self.run_pending_build(terminal, book_id, true);
+            }
+            if std::mem::take(&mut self.pending_backup_now) {
+                self.run_pending_backup_now(terminal);
             }
             terminal.draw(|f| self.draw(f))?;
             // Shorter poll interval while streaming so tokens render with low
@@ -8836,6 +9036,7 @@ impl App {
             A::ScheduleAssemble => self.schedule_assembly(),
             A::ScheduleBuild => self.schedule_build(),
             A::ScheduleTake => self.schedule_take(),
+            A::BackupNow => self.schedule_backup_now(),
             A::ToggleTypewriter => self.toggle_typewriter_mode(),
             A::ToggleAiFullscreen => self.toggle_ai_fullscreen(),
             A::StatusFilterReady => self.open_status_filter("Ready"),
@@ -12211,6 +12412,33 @@ impl App {
         };
         self.pending_build = Some(book_id);
         self.status = "Book build: assembling + compiling…".into();
+    }
+
+    /// Ctrl+B Shift+B — schedule an immediate project backup. The
+    /// next main-loop tick picks up the flag and runs
+    /// `run_pending_backup_now` against the live `terminal`.
+    fn schedule_backup_now(&mut self) {
+        self.pending_backup_now = true;
+        self.status = "Backup: zipping the project…".into();
+    }
+
+    /// Drain the `pending_backup_now` flag — runs the manual
+    /// backup with its own splash. Honours
+    /// `backup.wait_for_key_after_backup`. Status bar carries the
+    /// final outcome.
+    fn run_pending_backup_now<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+    ) {
+        let layout = ProjectLayout::new(self.store.project_root());
+        match run_manual_backup(terminal, &layout, &self.cfg) {
+            Ok(path) => {
+                self.status = format!("Backup OK · {}", path.display());
+            }
+            Err(e) => {
+                self.status = format!("Backup failed: {e:#}");
+            }
+        }
     }
 
     /// Ctrl+B O — schedule a Book "take": build, then copy the PDF

@@ -398,6 +398,7 @@ Drives the `inkhaven backup` CLI and the TUI's auto-backup-on-exit hook.
 backup: {
   out_dir: "backups"
   max_age: "7d"
+  wait_for_key_after_backup: true
 }
 ```
 
@@ -405,6 +406,11 @@ backup: {
 | ----- | ---- | ------- | ----------- |
 | `out_dir` | string | `"backups"` | Where `.zip` snapshots land. Relative paths resolve against the project root; absolute paths are used as-is. Created if missing. Empty string disables auto-backup. |
 | `max_age` | [humantime](https://docs.rs/humantime) duration | `"7d"` | Maximum age of the last successful backup before the TUI's exit hook creates a fresh one. Values like `"24h"`, `"12h"`, `"30m"`, `"1w"` all work. `"0s"` disables auto-backup but keeps the manual `inkhaven backup` command active. |
+| `wait_for_key_after_backup` | bool | `true` | 1.2.6+. When a backup finishes — either the manual `Ctrl+B Shift+B` chord or the exit-hook auto-backup — hold the splash on screen with a `Press any key to continue…` prompt so the user can read the destination path before the TUI dismisses it. Set `false` to keep the 1.2.5 auto-dismiss behaviour. |
+
+`Ctrl+B Shift+B` (1.2.6+) triggers a manual backup that bypasses
+the `max_age` cooldown — the splash always fires, the archive is
+always written.
 
 When the on-exit hook fires you see a splash:
 
