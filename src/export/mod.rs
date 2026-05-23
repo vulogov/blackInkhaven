@@ -50,7 +50,7 @@ pub fn assemble_typst_source(
     hierarchy: &Hierarchy,
     root_id: Option<uuid::Uuid>,
 ) -> Result<String> {
-    assemble_typst_source_filtered(layout, hierarchy, root_id, None)
+    assemble_typst_source_filtered(layout, hierarchy, root_id, None, None)
 }
 
 /// Same as [`assemble_typst_source`], but only emits paragraphs
@@ -61,12 +61,20 @@ pub fn assemble_typst_source(
 /// index 0 (`none`); a `--status=napkin` floor still includes
 /// them since 0 ≥ 0 is false → they're filtered out. Use
 /// `--status=none` (or omit the flag) to include everything.
+///
+/// `tag_filter` (1.2.6+) is an additional predicate: when set,
+/// only paragraphs carrying that tag (case-insensitive match)
+/// are emitted. Combines with the status floor — both must
+/// pass.
 pub fn assemble_typst_source_filtered(
     layout: &ProjectLayout,
     hierarchy: &Hierarchy,
     root_id: Option<uuid::Uuid>,
     status_floor_idx: Option<usize>,
+    tag_filter: Option<&str>,
 ) -> Result<String> {
+    let tag_filter_norm =
+        tag_filter.map(|t| t.trim().to_ascii_lowercase());
     let mut out = String::new();
     let candidates: Vec<&Node> = if let Some(root_id) = root_id {
         // Subtree mode — only the descendants of `root_id`, plus
@@ -88,6 +96,15 @@ pub fn assemble_typst_source_filtered(
         if let Some(floor) = status_floor_idx {
             let idx = status_ladder_index(node.status.as_deref());
             if idx < floor {
+                continue;
+            }
+        }
+        if let Some(needle) = tag_filter_norm.as_deref() {
+            let has = node
+                .tags
+                .iter()
+                .any(|t| t.to_ascii_lowercase() == needle);
+            if !has {
                 continue;
             }
         }
