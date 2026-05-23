@@ -14,6 +14,7 @@ pub mod reindex;
 pub mod restore;
 pub mod search;
 pub mod doctor;
+pub mod event;
 pub mod stats;
 
 use std::path::PathBuf;
@@ -241,8 +242,62 @@ pub enum Command {
     /// questions asked, pipe-friendly plain-text output.
     Doctor,
 
+    /// 1.2.7+ — story-timeline event management. Requires
+    /// `timeline.enabled: true` in HJSON.
+    #[command(subcommand)]
+    Event(EventCommand),
+
     /// Launch the TUI editor (default if no subcommand is given).
     Tui,
+}
+
+/// Sub-subcommands under `inkhaven event …`.
+#[derive(Debug, Subcommand)]
+pub enum EventCommand {
+    /// Create a new event under the named book's Timeline
+    /// chapter (created lazily on first use).
+    Add {
+        /// Event title (free-form). Becomes the paragraph's
+        /// display name + slug seed.
+        title: String,
+        /// Calendar-formatted start time. See
+        /// `timeline.calendar` in HJSON for the syntax
+        /// (defaults: sols `Sol N`; gregorian `Y.M.D`;
+        /// custom `1A.3.15`).
+        #[arg(long)]
+        start: String,
+        /// Calendar-formatted end time. Omit for an instant
+        /// event.
+        #[arg(long)]
+        end: Option<String>,
+        /// Precision override. When unset, inferred from the
+        /// shape of `--start` (no day segment → month; no
+        /// month → year; season name → season).
+        #[arg(long)]
+        precision: Option<String>,
+        /// Track / POV / parallel-storyline label. Defaults
+        /// to `timeline.default_track`.
+        #[arg(long)]
+        track: Option<String>,
+        /// Book slug or title (case-insensitive). Required
+        /// when the project holds more than one user book.
+        #[arg(long)]
+        book_name: Option<String>,
+    },
+    /// List events in chronological order.
+    List {
+        /// Filter to a single book.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Track filter (case-insensitive exact match).
+        #[arg(long)]
+        track: Option<String>,
+    },
+    /// Show details for one event by slug-path.
+    Show {
+        /// Slug-path of the event paragraph.
+        path: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -368,6 +423,7 @@ impl Cli {
                 stats::run(&project, book_name.as_deref()).map_err(Into::into)
             }
             Command::Doctor => doctor::run(&project).map_err(Into::into),
+            Command::Event(cmd) => event::run(&project, cmd).map_err(Into::into),
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
         }
     }
