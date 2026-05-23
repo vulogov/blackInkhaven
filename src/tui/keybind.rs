@@ -208,9 +208,11 @@ pub enum Action {
     /// editor cursor.
     #[serde(rename = "editor.diagnostics_list")]
     DiagnosticsList,
-    /// F11 (1.2.6+) — send the typst diagnostic at the cursor
-    /// (or nearest one, with surrounding context) to the AI
-    /// pane with an explain-or-fix prompt.
+    /// Ctrl+F12 (1.2.6+) — send the typst diagnostic at the
+    /// cursor (or nearest one, with surrounding context) to
+    /// the AI pane with an explain-or-fix prompt. Started life
+    /// on bare F11 but macOS grabs F11 globally (Show Desktop
+    /// / Mission Control) so the chord never reached the TUI.
     #[serde(rename = "editor.explain_diagnostic")]
     ExplainDiagnostic,
     /// F12 (1.2.6+) — AI critique of the open paragraph. In the
@@ -740,8 +742,13 @@ impl KeyBindings {
                 // F9 / F10 — global AI mode + inference toggle.
                 entry("F9", Action::CycleAiMode, Scope::Any),
                 entry("F10", Action::ToggleInferenceMode, Scope::Any),
-                // F11 (1.2.6+) — AI explain the diagnostic at the cursor.
-                entry("F11", Action::ExplainDiagnostic, Scope::Editor),
+                // Ctrl+F12 (1.2.6+) — AI explain the diagnostic
+                // at the cursor. Used to live on bare F11, but
+                // macOS grabs F11 (Show Desktop / Mission
+                // Control) so it never reached the TUI. Anyone
+                // who wants F11 back can rebind via HJSON
+                // `keys.bindings` — see KEYS_REASSIGNMENT.md.
+                entry("Ctrl+F12", Action::ExplainDiagnostic, Scope::Editor),
                 // F12 (1.2.6+) — AI critique (mode-aware).
                 entry("F12", Action::Critique, Scope::Editor),
             ],
