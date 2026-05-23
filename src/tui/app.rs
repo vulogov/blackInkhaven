@@ -412,12 +412,15 @@ pub fn run(project: &Path) -> Result<()> {
     // content is never overwritten. Covers users whose
     // project was initialised before 1.2.6 (and so missed
     // the init-time seeding) — they get the examples the
-    // first time they open the project under 1.2.6+.
-    if let Err(e) = crate::cli::init::seed_prompt_examples(&cfg, &store) {
-        tracing::warn!(
-            target: "inkhaven::tui::run",
-            "could not seed Prompts.book examples on open: {e}",
-        );
+    // first time they open the project under 1.2.6+. Gated
+    // on `ai.reseed_prompt_examples` (default true).
+    if cfg.ai.reseed_prompt_examples {
+        if let Err(e) = crate::cli::init::seed_prompt_examples(&cfg, &store) {
+            tracing::warn!(
+                target: "inkhaven::tui::run",
+                "could not seed Prompts.book examples on open: {e}",
+            );
+        }
     }
 
     // Keep a copy of the config and layout for the auto-backup hook below;

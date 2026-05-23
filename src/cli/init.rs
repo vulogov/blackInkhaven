@@ -70,14 +70,17 @@ pub fn run(path: &Path, force: bool) -> Result<()> {
     // diagnostic, F12 critique-edit + critique-changes). The
     // user reviews / tunes the body, then renames to drop the
     // `.example` suffix to take effect — without that suffix,
-    // inkhaven keeps using the built-in default.
-    if let Err(e) = seed_prompt_examples(&cfg, &store) {
-        // Non-fatal — the user can `inkhaven add ¶` these
-        // later if seeding hiccups for any reason.
-        tracing::warn!(
-            target: "inkhaven::init",
-            "could not seed Prompts.book examples: {e}",
-        );
+    // inkhaven keeps using the built-in default. Gated on
+    // `ai.reseed_prompt_examples` (default true).
+    if cfg.ai.reseed_prompt_examples {
+        if let Err(e) = seed_prompt_examples(&cfg, &store) {
+            // Non-fatal — the user can `inkhaven add ¶` these
+            // later if seeding hiccups for any reason.
+            tracing::warn!(
+                target: "inkhaven::init",
+                "could not seed Prompts.book examples: {e}",
+            );
+        }
     }
 
     eprintln!("Initialized inkhaven project at {}", layout.root.display());
