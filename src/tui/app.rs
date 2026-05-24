@@ -3220,6 +3220,12 @@ pub(crate) struct TimelineViewState {
     /// `timeline_step_cursor` auto-pans the viewport so both
     /// `start_ticks` and `end_ticks` are visible.
     pub selected_event_id: Option<Uuid>,
+    /// 1.2.7+ — tracks (by label) the user has collapsed.
+    /// Collapsed tracks render as a single header line
+    /// "▸ track-name · N events" instead of the full swim
+    /// lane. Toggle with Space on the currently-highlighted
+    /// track (Tab cycles the highlight).
+    pub collapsed_tracks: std::collections::HashSet<String>,
     /// Cross-book project overlay. Phase-2 batch 3.
     pub project_overlay: bool,
     /// 1.2.6+ — inline descent picker overlay. None when not
@@ -15245,7 +15251,36 @@ impl App {
             KeyCode::F(12) => {
                 self.timeline_start_health_critique(true, true);
             }
+            // 1.2.7+ — Space toggles collapse on the currently
+            // highlighted track (Tab cycles). Collapsed tracks
+            // render as a single dim header line; expanded
+            // tracks show the full swim lane. Mirrors the
+            // tree pane's ▾/▸ collapse model.
+            KeyCode::Char(' ') => {
+                self.timeline_toggle_collapse();
+            }
             _ => {}
+        }
+    }
+
+    /// 1.2.7+ — flip the highlighted track between expanded
+    /// (▾) and collapsed (▸). When no track is highlighted,
+    /// status hint nudges the user toward Tab. Orphan row is
+    /// not collapsible — it's already a one-liner.
+    fn timeline_toggle_collapse(&mut self) {
+        let Modal::TimelineView { state } = &mut self.modal else { return; };
+        let Some(label) = state.track_highlight.clone() else {
+            self.status =
+                "timeline · Tab to highlight a track, then Space to collapse / expand".into();
+            return;
+        };
+        let was_collapsed = state.collapsed_tracks.contains(&label);
+        if was_collapsed {
+            state.collapsed_tracks.remove(&label);
+            self.status = format!("timeline · expanded `{label}`");
+        } else {
+            state.collapsed_tracks.insert(label.clone());
+            self.status = format!("timeline · collapsed `{label}`");
         }
     }
 
@@ -15494,6 +15529,7 @@ impl App {
                 scroll_ticks: 0,
                 cursor_ticks: 0,
                 selected_event_id: None,
+                collapsed_tracks: std::collections::HashSet::new(),
                 project_overlay: project,
                 descent: None,
             };
@@ -16290,7 +16326,9 @@ impl App {
             .max()
             .unwrap_or(4)
             .clamp(4, 16) as u16
-            + 2;
+            // +3 = leading space + expand glyph (▾/▸) + space
+            // after it, before the label text starts.
+            + 3;
         let swim_w = inner.width.saturating_sub(label_w);
         // Recompute with the final swim_w (label widths might
         // have changed how much room the lanes get).
@@ -16364,7 +16402,7 @@ impl App {
         label_row.push_str(&label_chars.iter().collect::<String>());
 
         // Footer hint.
-        let footer = " ←/→ scroll · +/- zoom · 0 reset · Home/End jump · u/d/b/p scope · Tab track · Enter open · Esc close ";
+        let footer = " ←/→ scroll · ↑/↓ event · Tab/Space track · +/- zoom · u/d/b/p scope · Enter ¶ list · F12 critique · Esc close ";
 
         // Compose lines.
         let mut all_lines: Vec<Line<'_>> = Vec::new();
@@ -16380,20 +16418,65 @@ impl App {
             .add_modifier(Modifier::BOLD);
         let dim_style = Style::default().add_modifier(Modifier::DIM);
         for row in &rows {
+            // 1.2.7+ — collapsed track: emit a one-line
+            // header with ▸ glyph + event count, skip the
+            // swim-lane cell loop. Orphan row is never
+            // collapsible (it's already a one-liner).
+            let is_collapsed = !row.is_orphan_row
+                && state.collapsed_tracks.contains(&row.label);
+            let is_highlighted = state
+                .track_highlight
+                .as_deref()
+                == Some(row.label.as_str());
+            // Tree-style expand glyph: ▾ expanded, ▸ collapsed.
+            // Orphan row keeps a blank prefix.
+            let expand_glyph = if row.is_orphan_row {
+                ' '
+            } else if is_collapsed {
+                '▸'
+            } else {
+                '▾'
+            };
+            if is_collapsed {
+                let n_events = state
+                    .events
+                    .iter()
+                    .filter(|e| {
+                        !e.is_orphan
+                            && e.track.as_deref().unwrap_or(default_track)
+                                == row.label
+                    })
+                    .count();
+                let mut style = dim_style;
+                if is_highlighted {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                let line = format!(
+                    " {expand_glyph} {label} · {n_events} event{plural} (collapsed — Space to expand)",
+                    label = row.label,
+                    plural = if n_events == 1 { "" } else { "s" },
+                );
+                all_lines.push(Line::from(Span::styled(line, style)));
+                continue;
+            }
             let mut spans: Vec<Span<'_>> = Vec::new();
-            let label_text = format!(
-                " {:<width$}",
-                truncate_label(&row.label, label_w as usize - 2),
-                width = label_w as usize - 2,
+            let truncated = truncate_label(
+                &row.label,
+                label_w as usize - 3,
             );
-            spans.push(Span::styled(
-                format!("{label_text} "),
-                if row.is_orphan_row {
-                    dim_style
-                } else {
-                    track_label_style
-                },
-            ));
+            let label_text = format!(
+                "{expand_glyph} {:<width$}",
+                truncated,
+                width = label_w as usize - 3,
+            );
+            let label_style = if row.is_orphan_row {
+                dim_style
+            } else if is_highlighted {
+                track_label_style.add_modifier(Modifier::UNDERLINED)
+            } else {
+                track_label_style
+            };
+            spans.push(Span::styled(format!("{label_text} "), label_style));
             // Each cell becomes one Span so we can give
             // bars / dots / cursor different colours
             // without flickering.
@@ -16624,6 +16707,7 @@ impl App {
             scroll_ticks,
             cursor_ticks,
             selected_event_id: None,
+            collapsed_tracks: std::collections::HashSet::new(),
             project_overlay: false,
             descent: None,
         };
