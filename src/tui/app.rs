@@ -800,6 +800,73 @@ fn draw_assembly_splash(
     f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
 }
 
+/// 1.2.6+ — splash that ticks through the configured
+/// `output.extra_formats` during a Ctrl+B O take. Each
+/// format gets ✓ (done), ▶ (in flight), or · (pending);
+/// the body lists every format so the user can see what's
+/// coming.
+fn draw_take_extras_splash(
+    f: &mut ratatui::Frame,
+    book_display: &str,
+    current_idx: usize,
+    formats: &[String],
+    statuses: &[char],
+) {
+    let area = f.area();
+    let height: u16 = (formats.len() as u16).saturating_add(7).min(20);
+    let width = area.width.saturating_sub(8).clamp(50, 100);
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let rect = Rect { x, y, width, height };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Inkhaven · Take · extra formats ")
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let mut body: Vec<Line<'_>> = Vec::with_capacity(formats.len() + 4);
+    body.push(Line::from(""));
+    body.push(Line::from(Span::styled(
+        "  Writing extra formats alongside the PDF…".to_string(),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )));
+    body.push(Line::from(""));
+    body.push(Line::from(Span::styled(
+        format!("  Book: {book_display}"),
+        Style::default().add_modifier(Modifier::DIM),
+    )));
+    body.push(Line::from(""));
+    for (i, fmt) in formats.iter().enumerate() {
+        let marker = statuses.get(i).copied().unwrap_or('·');
+        let style = match marker {
+            '✓' => Style::default().fg(Color::Green),
+            '▶' => Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+            '✗' => Style::default().fg(Color::Red),
+            _ => Style::default().add_modifier(Modifier::DIM),
+        };
+        let highlight = if i == current_idx {
+            "  ▶ "
+        } else {
+            "    "
+        };
+        body.push(Line::from(Span::styled(
+            format!("{highlight}{marker}  {fmt}"),
+            style,
+        )));
+    }
+    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
+}
+
 /// Splash for the `typst compile` step (Ctrl+B B / Ctrl+B O). Static
 /// "Please wait" body plus an animated spinner the caller advances
 /// each frame so the user can tell the TUI is still alive while the
@@ -12722,7 +12789,7 @@ impl App {
                         // (status bar) but never abort the take —
                         // the PDF the user actually asked for is
                         // already on disk.
-                        let extras = self.take_extra_formats(&book, &dest);
+                        let extras = self.take_extra_formats(terminal, &book, &dest);
                         let extras_msg = if extras.is_empty() {
                             String::new()
                         } else {
@@ -12913,8 +12980,9 @@ impl App {
     /// the returned brief list (`["markdown", "tex error: …"]`),
     /// never aborting — the PDF the user asked for is already on
     /// disk before this fires.
-    fn take_extra_formats(
+    fn take_extra_formats<B: ratatui::backend::Backend>(
         &self,
+        terminal: &mut Terminal<B>,
         book: &crate::store::node::Node,
         pdf_dest: &Path,
     ) -> Vec<String> {
@@ -12947,8 +13015,31 @@ impl App {
                 return vec![format!("assemble failed: {e}")];
             }
         };
+        let book_display = book.title.clone();
+        let formats_display: Vec<String> = formats.iter().map(|s| s.trim().to_string()).collect();
+        let mut statuses: Vec<char> = vec!['·'; formats_display.len()];
         let mut produced: Vec<String> = Vec::new();
-        for raw in formats {
+        // 1.2.6+ — draw the splash with a brief per-format
+        // pause so the user can actually SEE which format is
+        // being written. Without the pause the loop finishes
+        // in milliseconds and the splash is invisible.
+        let step_pause = std::time::Duration::from_millis(
+            self.cfg.output.extras_step_pause_ms,
+        );
+        for (i, raw) in formats.iter().enumerate() {
+            statuses[i] = '▶';
+            let _ = terminal.draw(|f| {
+                draw_take_extras_splash(
+                    f,
+                    &book_display,
+                    i,
+                    &formats_display,
+                    &statuses,
+                )
+            });
+            if !step_pause.is_zero() {
+                std::thread::sleep(step_pause);
+            }
             let fmt = raw.trim().to_ascii_lowercase();
             let outcome = self.build_one_extra_format(&fmt, &combined, &book.title);
             let artefact = match outcome {
@@ -12958,6 +13049,7 @@ impl App {
                         target: "inkhaven::take",
                         "extra format {fmt}: {e}",
                     );
+                    statuses[i] = '✗';
                     produced.push(format!("{fmt} error"));
                     continue;
                 }
@@ -12966,6 +13058,7 @@ impl App {
                         target: "inkhaven::take",
                         "extra format {fmt}: unknown — skipped",
                     );
+                    statuses[i] = '✗';
                     produced.push(format!("{fmt}?"));
                     continue;
                 }
@@ -12977,13 +13070,30 @@ impl App {
                     "extra format {fmt} write {}: {e}",
                     dest.display(),
                 );
+                statuses[i] = '✗';
                 produced.push(format!("{fmt} write error"));
                 continue;
             }
+            statuses[i] = '✓';
             produced.push(dest.file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or(&fmt)
                 .to_string());
+        }
+        // Final frame so the user sees all checkmarks before
+        // the splash collapses + the wait-for-key (when on)
+        // kicks in upstream.
+        let _ = terminal.draw(|f| {
+            draw_take_extras_splash(
+                f,
+                &book_display,
+                formats_display.len().saturating_sub(1),
+                &formats_display,
+                &statuses,
+            )
+        });
+        if !step_pause.is_zero() {
+            std::thread::sleep(step_pause);
         }
         produced
     }
