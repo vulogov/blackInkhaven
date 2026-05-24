@@ -15221,6 +15221,14 @@ impl App {
             KeyCode::Char('y') => {
                 self.timeline_start_health_critique(false, false);
             }
+            // 1.2.7+ — F12 mirrors the editor's "full AI
+            // analysis" chord. In the timeline view it widens
+            // to book scope + all tracks (same as Ctrl+Y) so
+            // function-key users get the broadest consistency
+            // audit without remembering scope letters.
+            KeyCode::F(12) => {
+                self.timeline_start_health_critique(true, true);
+            }
             _ => {}
         }
     }
@@ -16197,6 +16205,16 @@ impl App {
             state.ticks_per_cell,
             swim_w as usize,
         );
+        // 1.2.7+ — grid stripes every N days, from HJSON.
+        let grid_cols: std::collections::HashSet<usize> =
+            crate::tui::timeline_render::grid_columns(
+                state.scroll_ticks,
+                state.ticks_per_cell,
+                swim_w as usize,
+                self.cfg.timeline.display.grid_every_days,
+            )
+            .into_iter()
+            .collect();
         let mut axis_chars: Vec<char> = vec![' '; swim_w as usize];
         let mut label_strings: Vec<(usize, String)> = Vec::new();
         for (col, tick) in &axis_labels {
@@ -16287,8 +16305,23 @@ impl App {
                     cursor_col >= 0 && col == cursor_col as usize;
                 let (glyph, style) = match cell {
                     None => {
-                        let g = if is_cursor { '│' } else { ' ' };
+                        let is_grid = grid_cols.contains(&col);
+                        let g = if is_cursor {
+                            '│'
+                        } else if is_grid {
+                            '┊'
+                        } else {
+                            ' '
+                        };
                         let s = if is_cursor {
+                            Style::default()
+                                .fg(self.theme.tree_chapter_fg)
+                                .add_modifier(Modifier::DIM)
+                        } else if is_grid {
+                            // 1.2.7+ grid stripe — faint vertical
+                            // dotted bar so the eye gets a
+                            // 7-day (or whatever step) ruler
+                            // beneath the events.
                             Style::default()
                                 .fg(self.theme.tree_chapter_fg)
                                 .add_modifier(Modifier::DIM)

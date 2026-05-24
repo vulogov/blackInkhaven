@@ -147,6 +147,43 @@ pub(crate) fn col_to_tick(col: usize, scroll_ticks: i64, ticks_per_cell: f64) ->
     scroll_ticks + (col as f64 * ticks_per_cell).round() as i64
 }
 
+/// 1.2.7+ — compute the column indices where a vertical grid
+/// stripe should land, given a per-day stride. Spacing is
+/// expressed in ticks (= days when `base_unit = "day"`, the
+/// default for all three calendar presets). `step_days == 0`
+/// disables the grid (returns an empty vec). Columns that
+/// don't fall inside `[0, width)` are skipped.
+pub(crate) fn grid_columns(
+    scroll_ticks: i64,
+    ticks_per_cell: f64,
+    width: usize,
+    step_days: u32,
+) -> Vec<usize> {
+    if width == 0 || ticks_per_cell <= 0.0 || step_days == 0 {
+        return Vec::new();
+    }
+    let step = step_days as i64;
+    // First grid tick at or before scroll_ticks (aligned to
+    // step boundaries).
+    let aligned = scroll_ticks - scroll_ticks.rem_euclid(step);
+    let span_ticks = (width as f64 * ticks_per_cell).ceil() as i64;
+    let mut out = Vec::new();
+    let mut t = aligned;
+    while t <= scroll_ticks + span_ticks {
+        let col = tick_to_col(t, scroll_ticks, ticks_per_cell);
+        if col >= 0 && (col as usize) < width {
+            out.push(col as usize);
+        }
+        t = t.saturating_add(step);
+        // Sanity guard — at huge zoom-outs the loop is bounded
+        // by span_ticks, but defensive cap keeps us safe.
+        if out.len() > width {
+            break;
+        }
+    }
+    out
+}
+
 /// Compute the tick stamps that should carry a label on the
 /// time axis. Chosen to be a roughly-even ~12-column cadence
 /// without overlap. Returns `(column, tick)` pairs.
