@@ -89,9 +89,36 @@ pub fn assemble_typst_source_filtered(
         hierarchy.flatten().into_iter().map(|(n, _)| n).collect()
     };
 
+    // 1.2.7+: identify the Timeline chapter so its paragraphs
+    // never land in the exported prose. The chapter carries the
+    // `book_timeline` system_tag; we also belt-and-brace by
+    // filtering individual event paragraphs (those with
+    // `node.event.is_some()`) in case a stray event lives
+    // elsewhere.
+    let timeline_chapter_ids: std::collections::HashSet<uuid::Uuid> = hierarchy
+        .iter()
+        .filter(|n| {
+            n.kind == NodeKind::Chapter
+                && n.system_tag.as_deref()
+                    == Some(crate::store::SYSTEM_TAG_BOOK_TIMELINE)
+        })
+        .map(|n| n.id)
+        .collect();
+
     for node in candidates {
         if node.kind != NodeKind::Paragraph {
             continue;
+        }
+        // 1.2.7+: skip event paragraphs AND any paragraph whose
+        // parent is the Timeline chapter — timeline data is
+        // metadata about the manuscript, not manuscript prose.
+        if node.event.is_some() {
+            continue;
+        }
+        if let Some(parent_id) = node.parent_id {
+            if timeline_chapter_ids.contains(&parent_id) {
+                continue;
+            }
         }
         if let Some(floor) = status_floor_idx {
             let idx = status_ladder_index(node.status.as_deref());

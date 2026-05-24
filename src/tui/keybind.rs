@@ -313,6 +313,13 @@ pub enum Action {
     /// HJSON.
     #[serde(rename = "view.event_picker")]
     ViewEventPicker,
+    /// Ctrl+V Shift+E (1.2.7+) — open the timeline view AND
+    /// immediately trigger the new-event prompt, so a fresh
+    /// project can add its first event without going through
+    /// the CLI's `inkhaven event add`. Honours
+    /// `timeline.enabled`.
+    #[serde(rename = "view.new_event_prompt")]
+    ViewNewEventPrompt,
     /// Ctrl+V t (1.2.7+) — open the swim-lane timeline view
     /// scoped to the current paragraph's nearest Subchapter
     /// (or Chapter, or Book). Inside the modal:
@@ -423,6 +430,7 @@ impl Action {
             Action::ViewStoryGraph => "story view".into(),
             Action::ViewStoryGraphParagraph => "story view (¶)".into(),
             Action::ViewEventPicker => "events".into(),
+            Action::ViewNewEventPrompt => "new event".into(),
             Action::ViewTimeline => "timeline".into(),
 
             Action::None => String::new(),
@@ -596,6 +604,8 @@ impl Action {
                 "Paragraph mini story view — the open paragraph at the centre, its wiki-link neighbours (one hop out + one hop in) on the first ring, and any Characters / Places / Artefacts it mentions on the outer ring. Same render + save flow as the book view.".into(),
             Action::ViewEventPicker =>
                 "Open the timeline event picker (1.2.7+). Lists every event in the project sorted by start time; Enter jumps to the event paragraph. Requires `timeline.enabled: true` in HJSON.".into(),
+            Action::ViewNewEventPrompt =>
+                "Open the swim-lane timeline view and immediately prompt for a new event title (1.2.7+). Same flow as opening the timeline then pressing `n`. Requires `timeline.enabled: true`.".into(),
             Action::ViewTimeline =>
                 "Open the swim-lane timeline view (1.2.7+). Scope-aware: anchors to the current paragraph's nearest Subchapter / Chapter / Book by default. Inside: u/U up-scope, d/D down-scope picker, b/B book, p/P project; ←/→ scroll, +/- zoom, Tab cycle track, Enter open event. Requires `timeline.enabled: true`.".into(),
 
@@ -750,6 +760,12 @@ impl KeyBindings {
                 entry("Shift+W", Action::ViewStoryGraph, Scope::Any),
                 // 1.2.7+ — timeline event picker.
                 entry("e", Action::ViewEventPicker, Scope::Any),
+                // 1.2.7+ — new event from any pane. Opens the
+                // timeline view and immediately triggers the
+                // new-event prompt, so a fresh project (zero
+                // events) can add its first event without going
+                // through `inkhaven event add` on the CLI.
+                entry("Shift+e", Action::ViewNewEventPrompt, Scope::Any),
                 // 1.2.7+ — swim-lane timeline view. Bound to
                 // Shift+T so the lowercase `t` chord stays free
                 // for `ViewOpenParagraphTarget` (open the

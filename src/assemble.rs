@@ -179,6 +179,19 @@ fn write_branch(
     // reference filenames that already exist.
     let mut child_refs: Vec<ChildRef> = Vec::new();
     for child in &children {
+        // 1.2.7+: the Timeline chapter and the event paragraphs
+        // inside it are metadata about the manuscript, not part
+        // of the rendered prose. Skip both at the assembler so
+        // nothing leaks into PDF / Markdown / TeX / EPUB exports.
+        if child.kind == NodeKind::Chapter
+            && child.system_tag.as_deref()
+                == Some(crate::store::SYSTEM_TAG_BOOK_TIMELINE)
+        {
+            continue;
+        }
+        if child.kind == NodeKind::Paragraph && child.event.is_some() {
+            continue;
+        }
         match child.kind {
             NodeKind::Paragraph => {
                 let fname = child.fs_name(); // "NN-slug.typ"

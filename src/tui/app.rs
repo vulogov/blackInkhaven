@@ -9158,6 +9158,7 @@ impl App {
             A::ViewStoryGraphParagraph => self.open_story_view_paragraph(),
             A::ViewEventPicker => self.open_event_picker(),
             A::ViewTimeline => self.open_timeline_view(),
+            A::ViewNewEventPrompt => self.open_new_event_prompt_from_anywhere(),
 
             // ── Top-level F-keys (1.2.4+ migration) ───────────
             A::HelpQuery => self.open_help_query_modal(),
@@ -16015,7 +16016,7 @@ impl App {
     fn open_timeline_view(&mut self) {
         if !self.cfg.timeline.enabled {
             self.status =
-                "timeline view: timeline.enabled is false in HJSON — enable it to use Ctrl+V t".into();
+                "timeline view: timeline.enabled is false in HJSON — enable it to use Ctrl+V Shift+T".into();
             return;
         }
         let Some(book_id) = self.resolve_anchor_book() else {
@@ -16025,14 +16026,12 @@ impl App {
         };
         let scope_id = self.resolve_anchor_scope(book_id);
         let events = self.collect_book_events(book_id, false);
-        if events.is_empty() {
-            self.status =
-                "timeline view: no events in this book yet — `inkhaven event add …` from the CLI"
-                    .into();
-            return;
-        }
-        // Anchor the cursor to the first event's start so the
-        // initial frame shows content even with a tiny zoom.
+        let is_empty = events.is_empty();
+        // 1.2.7+: when the book has no events yet, still open the
+        // timeline at the epoch tick so the user can press `n` to
+        // add the first event from inside the TUI. The previous
+        // behaviour was to refuse-and-redirect to the CLI, which
+        // hid the in-TUI add chord entirely.
         let cursor_ticks = events.first().map(|e| e.start_ticks).unwrap_or(0);
         let scroll_ticks = cursor_ticks.saturating_sub(20);
         let state = TimelineViewState {
@@ -16049,9 +16048,30 @@ impl App {
         };
         let crumb = self.timeline_scope_crumb(&state);
         self.modal = Modal::TimelineView { state };
-        self.status = format!(
-            "timeline {crumb} · ←/→ scroll · +/- zoom · u/d/b/p scope · Esc closes"
-        );
+        self.status = if is_empty {
+            format!("timeline {crumb} · empty — press `n` to add the first event · Esc closes")
+        } else {
+            format!(
+                "timeline {crumb} · ←/→ scroll · +/- zoom · u/d/b/p scope · n new · Esc closes"
+            )
+        };
+    }
+
+    /// 1.2.7+ — `Ctrl+V Shift+E`. Opens the timeline view and
+    /// immediately triggers the new-event prompt so a fresh
+    /// project (zero events) can add its first event from any
+    /// pane without going through the CLI. When the timeline
+    /// has events, the prompt fires at the timeline cursor's
+    /// current tick (same as pressing `n` after opening).
+    fn open_new_event_prompt_from_anywhere(&mut self) {
+        self.open_timeline_view();
+        // open_timeline_view bails before setting Modal::TimelineView
+        // when timeline is disabled / no books exist; in that case
+        // the status bar already explains why, and the chained
+        // prompt is a no-op.
+        if matches!(self.modal, Modal::TimelineView { .. }) {
+            self.timeline_open_new_event_prompt();
+        }
     }
 
     /// Walk up from the editor (or tree cursor) to find the
@@ -20671,10 +20691,19 @@ impl App {
             "►"
         } else {
             match node.kind {
-                NodeKind::Paragraph => match node.content_type.as_deref() {
-                    Some("hjson") => "❴ ",
-                    _ => "¶ ",
-                },
+                NodeKind::Paragraph => {
+                    // 1.2.7+ events outrank hjson — an event
+                    // paragraph that also stores hjson body
+                    // still reads first as a timeline event.
+                    if node.event.is_some() {
+                        "◆ "
+                    } else {
+                        match node.content_type.as_deref() {
+                            Some("hjson") => "❴ ",
+                            _ => "¶ ",
+                        }
+                    }
+                }
                 NodeKind::Image => "▣ ",
                 NodeKind::Script => "λ ",
                 _ => {
@@ -20967,11 +20996,79 @@ impl App {
                     let secs = delta.num_seconds().max(0) as u64;
                     format_age_humantime(std::time::Duration::from_secs(secs))
                 });
+                // 1.2.7+: event paragraphs show their calendar
+                // timing (start [→ end] · precision · track) and
+                // an [ORPHAN] tag when unlinked, so the timing
+                // metadata is visible while editing the body.
+                // Use Ctrl+V Shift+T to open the swim-lane view;
+                // edit start / end / precision / track via the
+                // `inkhaven event ...` CLI for now.
+                let event_summary: Option<String> = status_node.and_then(|n| {
+                    n.event.as_ref().map(|ev| {
+                        let cal = crate::timeline::Calendar::from_config(
+                            self.cfg.timeline.calendar.clone(),
+                        );
+                        let start = cal.format(
+                            crate::timeline::TimelinePoint::from_ticks(ev.start_ticks),
+                            ev.precision,
+                        );
+                        let mut s = start;
+                        if let Some(end_ticks) = ev.end_ticks {
+                            let end = cal.format(
+                                crate::timeline::TimelinePoint::from_ticks(end_ticks),
+                                ev.precision,
+                            );
+                            s.push_str(" → ");
+                            s.push_str(&end);
+                        }
+                        let prec = match ev.precision {
+                            crate::timeline::Precision::Year => "year",
+                            crate::timeline::Precision::Season => "season",
+                            crate::timeline::Precision::Month => "month",
+                            crate::timeline::Precision::Week => "week",
+                            crate::timeline::Precision::Day => "day",
+                            crate::timeline::Precision::Hour => "hour",
+                            crate::timeline::Precision::Tick => "tick",
+                        };
+                        s.push_str(&format!(" · {prec}"));
+                        if let Some(track) = ev.track.as_ref() {
+                            s.push_str(&format!(" · {track}"));
+                        }
+                        s
+                    })
+                });
+                let is_orphan_event = status_node
+                    .map(|n| {
+                        n.event.is_some()
+                            && n.tags
+                                .iter()
+                                .any(|t| t.eq_ignore_ascii_case("orphan"))
+                    })
+                    .unwrap_or(false);
+
                 let mut spans: Vec<Span<'_>> = Vec::new();
                 spans.push(Span::raw(format!(
                     " Editor — {}{}{}{} · ",
                     d.title, lang_tag, ro, dirty
                 )));
+                if let Some(summary) = event_summary {
+                    spans.push(Span::styled(
+                        format!("◆ {summary}"),
+                        Style::default()
+                            .fg(self.theme.tree_open_marker)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                    spans.push(Span::raw(" · "));
+                    if is_orphan_event {
+                        spans.push(Span::styled(
+                            "[ORPHAN]",
+                            Style::default()
+                                .fg(Color::Red)
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                        spans.push(Span::raw(" · "));
+                    }
+                }
                 if let Some(label) = status_label {
                     spans.push(Span::styled(
                         format!("[{label}]"),
