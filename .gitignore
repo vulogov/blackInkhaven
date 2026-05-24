@@ -10,13 +10,10 @@ target
 .DS_Store
 **/.DS_Store
 
-# Generated artefacts of the Book of Inkhaven. The
-# `*.pdf` line above already excludes the PDF; the line
-# below explicitly excludes screenshots so PRs don't
-# spam them.
-Book/BOOK_OF_INKHAVEN.pdf
 # Book/images/ is tracked — PNGs land there from author
-# capture work; check them in.
+# capture work; check them in. PDFs in Book/ are re-included
+# below (after the *.pdf ignore line) so the canonical
+# companion-volume builds ship in git for readers.
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
@@ -47,6 +44,11 @@ Book/BOOK_OF_INKHAVEN.pdf
 # Filename pattern is `<book-slug>-YYYYDDMM-HHMM.pdf`; these are
 # generated outputs, never source.
 *.pdf
+# Book/ PDFs are checked in (canonical companion volume —
+# readers should be able to download the rendered build
+# from GitHub directly without compiling). The exception
+# must follow the `*.pdf` line above to take effect.
+!Book/**/*.pdf
 
 # Rendered paragraph PNGs dropped by Ctrl+V R into the launch cwd
 # (1.2.5+). Filenames are `<paragraph-slug>-YYYYDDMM-HHMM.png`
