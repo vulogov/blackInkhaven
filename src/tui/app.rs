@@ -6941,6 +6941,27 @@ impl App {
             self.status = "node missing from hierarchy".into();
             return;
         };
+        // 1.2.7+ — dedupe. If the latest existing snapshot for
+        // this paragraph has identical content, skip the
+        // annotation prompt entirely and stamp a "no changes"
+        // status line. Stops F5 mashing from littering history
+        // with duplicates AND keeps the annotation prompt
+        // honest (no point annotating a no-op).
+        if let Ok(snaps) = self.store.list_snapshots(id) {
+            if let Some(latest) = snaps.first() {
+                if let Ok(Some(prev)) =
+                    self.store.snapshot_content(latest.id)
+                {
+                    if prev == body {
+                        self.status = format!(
+                            "snapshot: `{}` unchanged since the last snapshot — no new snapshot taken",
+                            node.title
+                        );
+                        return;
+                    }
+                }
+            }
+        }
         // 1.2.6+ — pop an annotation prompt so the user can
         // jot a one-line note ("first complete draft", "before
         // the lighthouse rewrite"). Enter on empty input still
@@ -7539,6 +7560,43 @@ impl App {
         };
         self.status =
             "find ¶: type to filter · ↑↓ select · Enter opens · Esc cancels".into();
+    }
+
+    /// 1.2.7+ — Ctrl+V Shift+P. Same fuzzy picker as
+    /// `Ctrl+V p` but the entry list is sorted by
+    /// `modified_at desc` instead of slug-path. Answers
+    /// "what did I touch most recently?" without trawling
+    /// the tree.
+    fn open_recent_paragraph_picker(&mut self) {
+        let mut entries = self.collect_all_paragraph_entries();
+        if entries.is_empty() {
+            self.status =
+                "recent ¶: no paragraphs in this project".into();
+            return;
+        }
+        // Sort by modified_at desc. Look up modified_at via
+        // the hierarchy — the picker entry struct doesn't
+        // carry it, so we re-resolve here.
+        let modified: std::collections::HashMap<Uuid, chrono::DateTime<chrono::Utc>> =
+            self.hierarchy
+                .iter()
+                .map(|n| (n.id, n.modified_at))
+                .collect();
+        entries.sort_by(|a, b| {
+            let ta = modified.get(&a.id).copied()
+                .unwrap_or_else(chrono::Utc::now);
+            let tb = modified.get(&b.id).copied()
+                .unwrap_or_else(chrono::Utc::now);
+            tb.cmp(&ta)
+        });
+        self.modal = Modal::FuzzyParagraphPicker {
+            input: TextInput::new(),
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status =
+            "recent ¶: most-recently-modified first · type to filter · ↑↓ select · Enter opens · Esc cancels".into();
     }
 
     /// Collect every paragraph in the project (excluding
@@ -9343,6 +9401,7 @@ impl App {
             A::ViewToggleBookmark => self.toggle_bookmark(),
             A::ViewListBookmarks => self.open_bookmark_picker_modal(),
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
+            A::ViewRecentParagraphPicker => self.open_recent_paragraph_picker(),
             A::ViewRenderParagraph => self.open_rendered_paragraph_preview(),
             A::ViewNextDiagnostic => self.jump_to_next_diagnostic(),
             A::ViewStoryGraph => self.open_story_view(),
