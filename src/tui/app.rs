@@ -2844,6 +2844,22 @@ pub(crate) struct App {
     /// `Ctrl+Shift+M`.
     mouse_captured: bool,
 
+    /// 1.2.7+ — visited-paragraph history (browser-style
+    /// back/forward). Pushed on every `load_paragraph` that
+    /// isn't itself a back/forward navigation; truncated
+    /// forward on a new push (just like a browser).
+    /// Persisted in `.session.json`.
+    visited_history: Vec<Uuid>,
+    /// Index into `visited_history` pointing at the current
+    /// paragraph. Back = -1, Forward = +1.
+    visited_cursor: usize,
+    /// Set by Alt+Left / Alt+Right before they call
+    /// `open_paragraph_by_uuid` so the resulting
+    /// `load_paragraph` doesn't re-push (which would
+    /// instantly clobber the forward stack). Cleared by
+    /// `load_paragraph` after read.
+    visited_skip_next_push: bool,
+
     hierarchy: Hierarchy,
     rows: Vec<(Uuid, usize)>,
     /// Branches whose children are hidden in the tree pane. The branch
@@ -3562,6 +3578,9 @@ impl App {
             ai,
             prompts,
             mouse_captured: true,
+            visited_history: Vec::new(),
+            visited_cursor: 0,
+            visited_skip_next_push: false,
             hierarchy,
             rows,
             modal: Modal::None,
@@ -5559,6 +5578,11 @@ impl App {
             .iter()
             .map(|(id, pc)| (id.to_string(), *pc))
             .collect();
+        let visited_history: Vec<String> = self
+            .visited_history
+            .iter()
+            .map(|u| u.to_string())
+            .collect();
         let state = SessionState {
             tree: TreeSession {
                 cursor_id,
@@ -5567,6 +5591,8 @@ impl App {
             editor: editor_session,
             focus: format!("{:?}", self.focus),
             paragraph_cursors,
+            visited_history,
+            visited_cursor: self.visited_cursor,
         };
         state.save(&self.layout.root)
     }
@@ -5606,6 +5632,21 @@ impl App {
             if let Ok(id) = Uuid::parse_str(key) {
                 self.paragraph_cursors.insert(id, *pc);
             }
+        }
+
+        // 1.2.7+ — visited-paragraph history. Restore only the
+        // entries whose nodes still exist (deleted paragraphs
+        // drop out silently), and clamp the cursor.
+        let history: Vec<Uuid> = state
+            .visited_history
+            .iter()
+            .filter_map(|s| Uuid::parse_str(s).ok())
+            .filter(|id| self.hierarchy.get(*id).is_some())
+            .collect();
+        if !history.is_empty() {
+            let max_idx = history.len().saturating_sub(1);
+            self.visited_cursor = state.visited_cursor.min(max_idx);
+            self.visited_history = history;
         }
 
         // Collapsed branches.
@@ -9371,6 +9412,8 @@ impl App {
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
             A::ToggleMouseCapture => self.toggle_mouse_capture(),
+            A::VisitedBack => self.navigate_visited_back(),
+            A::VisitedForward => self.navigate_visited_forward(),
             A::ScheduleAssemble => self.schedule_assembly(),
             A::ScheduleBuild => self.schedule_build(),
             A::ScheduleTake => self.schedule_take(),
@@ -10256,6 +10299,71 @@ impl App {
             "LLM provider switched to `{chosen}` · saved to {}",
             config_path.display()
         );
+    }
+
+    /// 1.2.7+ — Alt+Left. Browser-style back through the
+    /// visited-paragraph history.
+    fn navigate_visited_back(&mut self) {
+        if self.visited_history.is_empty() || self.visited_cursor == 0 {
+            self.status = "navigate: already at the start of the visit history".into();
+            return;
+        }
+        self.visited_cursor -= 1;
+        let id = self.visited_history[self.visited_cursor];
+        self.visited_skip_next_push = true;
+        match self.open_paragraph_by_uuid(id) {
+            Ok(()) => {
+                let title = self
+                    .hierarchy
+                    .get(id)
+                    .map(|n| n.title.clone())
+                    .unwrap_or_else(|| id.to_string());
+                self.status = format!(
+                    "← back · `{title}` ({}/{})",
+                    self.visited_cursor + 1,
+                    self.visited_history.len()
+                );
+            }
+            Err(e) => {
+                // Failed to open — restore cursor; the
+                // skip-flag will be consumed only if we
+                // actually loaded.
+                self.visited_skip_next_push = false;
+                self.visited_cursor += 1;
+                self.status = format!("navigate: couldn't open back-target: {e}");
+            }
+        }
+    }
+
+    /// 1.2.7+ — Alt+Right. Forward through the visited-
+    /// paragraph history. No-op if already at the head.
+    fn navigate_visited_forward(&mut self) {
+        if self.visited_cursor + 1 >= self.visited_history.len() {
+            self.status = "navigate: already at the end of the visit history".into();
+            return;
+        }
+        self.visited_cursor += 1;
+        let id = self.visited_history[self.visited_cursor];
+        self.visited_skip_next_push = true;
+        match self.open_paragraph_by_uuid(id) {
+            Ok(()) => {
+                let title = self
+                    .hierarchy
+                    .get(id)
+                    .map(|n| n.title.clone())
+                    .unwrap_or_else(|| id.to_string());
+                self.status = format!(
+                    "→ forward · `{title}` ({}/{})",
+                    self.visited_cursor + 1,
+                    self.visited_history.len()
+                );
+            }
+            Err(e) => {
+                self.visited_skip_next_push = false;
+                self.visited_cursor -= 1;
+                self.status = format!("navigate: couldn't open forward-target: {e}");
+            }
+        }
     }
 
     /// 1.2.7+ — Ctrl+Shift+M. Flip TUI mouse capture so the
@@ -15052,6 +15160,27 @@ impl App {
         self.refresh_typst_diagnostics_for_opened();
         self.change_focus(Focus::Editor);
         self.status = format!("opened {}", abs.display());
+        // 1.2.7+ — push to the visited-paragraph history,
+        // unless this load_paragraph was triggered by a
+        // back/forward navigation (in which case the cursor
+        // already moved + the caller set skip_next_push).
+        if std::mem::take(&mut self.visited_skip_next_push) {
+            // back/forward — nothing to push
+        } else {
+            // New visit. Truncate any forward stack (browser
+            // semantics) and push.
+            let cur = self.visited_cursor;
+            let already_current = self
+                .visited_history
+                .get(cur)
+                .copied()
+                == Some(node.id);
+            if !already_current {
+                self.visited_history.truncate(cur + 1);
+                self.visited_history.push(node.id);
+                self.visited_cursor = self.visited_history.len() - 1;
+            }
+        }
         Ok(())
     }
 
@@ -23495,13 +23624,10 @@ impl App {
         // Paragraph with right alignment so it can't be pushed
         // off-screen by a long status message; the left part
         // truncates if the terminal is narrow.
-        let progress_text = self.progress_widget_text();
-        if !progress_text.is_empty() {
-            let right = Paragraph::new(Line::from(Span::styled(
-                progress_text,
-                Style::default().add_modifier(Modifier::DIM),
-            )))
-            .alignment(ratatui::layout::Alignment::Right);
+        let progress_spans = self.progress_widget_spans();
+        if !progress_spans.is_empty() {
+            let right = Paragraph::new(Line::from(progress_spans))
+                .alignment(ratatui::layout::Alignment::Right);
             f.render_widget(right, area);
         }
         f.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -23510,16 +23636,75 @@ impl App {
     /// One-line writing-progress summary for the right edge of
     /// the status bar. Empty when progress tracking is disabled
     /// (no store installed or no goals configured).
-    fn progress_widget_text(&self) -> String {
+    /// 1.2.7+ — same content as the old text-only widget,
+    /// but the `today` segment gets a colour + glyph based
+    /// on goal state (green ✓ when over goal, amber while
+    /// climbing, dim when still cold). The rest stays DIM
+    /// so the writing-progress widget reads as a calm
+    /// rightside chip with one always-bright element.
+    fn progress_widget_spans(&self) -> Vec<Span<'static>> {
         let Some(snap) = self.progress_cache.as_ref() else {
-            return String::new();
+            return Vec::new();
         };
-        let mut parts: Vec<String> = Vec::new();
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let mut out: Vec<Span<'static>> = Vec::new();
         let today = snap.project.today_words;
-        match snap.project.daily_goal {
-            Some(goal) => parts.push(format!("today {today}/{goal}w")),
-            None => parts.push(format!("today {today}w")),
+        let (today_text, today_style) = match snap.project.daily_goal {
+            Some(goal) if goal > 0 => {
+                let (glyph, style) = if today >= goal {
+                    (
+                        "✓",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else if today > 0 {
+                    (
+                        "·",
+                        Style::default().fg(Color::Yellow),
+                    )
+                } else {
+                    (
+                        "·",
+                        dim,
+                    )
+                };
+                (
+                    format!("{glyph} today {today}/{goal}w"),
+                    style,
+                )
+            }
+            _ => {
+                let style = if today > 0 {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    dim
+                };
+                (format!("today {today}w"), style)
+            }
+        };
+        out.push(Span::styled(today_text, today_style));
+        // Everything after `today` joins the dim trailing
+        // chips via a single computed-on-the-fly string —
+        // matches the pre-1.2.7 text layout for those
+        // segments and keeps the widget tight.
+        let trailing = self.progress_widget_trailing(snap);
+        if !trailing.is_empty() {
+            out.push(Span::styled(format!(" · {trailing}"), dim));
         }
+        out.push(Span::raw(" "));
+        out
+    }
+
+    /// Build the comma-joined trailing chip string (active
+    /// time, streak, link count, book pace). Pulled out of
+    /// `progress_widget_spans` so the `today` segment can
+    /// own its own colour without copy-pasting the rest.
+    fn progress_widget_trailing(
+        &self,
+        snap: &crate::progress::ProgressSnapshot,
+    ) -> String {
+        let mut parts: Vec<String> = Vec::new();
         // Active-time chip — bare duration when no goal is set,
         // `<spent>/<goal>` when there is one.
         let active_goal_secs = self.cfg.goals.active_minutes_daily.max(0) * 60;
@@ -23569,7 +23754,7 @@ impl App {
                 ));
             }
         }
-        format!("{} ", parts.join(" · "))
+        parts.join(" · ")
     }
 
     fn draw_search_overlay(&self, f: &mut ratatui::Frame, area: Rect) {

@@ -335,6 +335,15 @@ pub enum Action {
     /// new state.
     #[serde(rename = "global.toggle_mouse_capture")]
     ToggleMouseCapture,
+    /// Alt+Left (1.2.7+) — browser-style "back" through
+    /// the visited-paragraph history. Doesn't push to the
+    /// history itself (so back/forward is reversible).
+    #[serde(rename = "global.visited_back")]
+    VisitedBack,
+    /// Alt+Right (1.2.7+) — browser-style "forward". Only
+    /// active when the user has gone back at least once.
+    #[serde(rename = "global.visited_forward")]
+    VisitedForward,
     /// Ctrl+V Shift+I (1.2.6+) — open a one-line edit prompt for
     /// the open event paragraph's start / end / track (pipe-
     /// separated). Precision is re-derived from the start
@@ -455,6 +464,8 @@ impl Action {
             Action::ViewEventPicker => "events".into(),
             Action::ViewNewEventPrompt => "new event".into(),
             Action::ToggleMouseCapture => "mouse".into(),
+            Action::VisitedBack => "← back".into(),
+            Action::VisitedForward => "fwd →".into(),
             Action::ViewEditEventMetadata => "edit event".into(),
             Action::ViewTimeline => "timeline".into(),
 
@@ -635,6 +646,10 @@ impl Action {
                 "Open the swim-lane timeline view and immediately prompt for a new event title (1.2.6+). Same flow as opening the timeline then pressing `n`. Requires `timeline.enabled: true`.".into(),
             Action::ToggleMouseCapture =>
                 "Toggle TUI mouse capture (1.2.7+). Default ON. When OFF, the terminal handles mouse natively: drag-to-select text in the editor / AI pane, system-clipboard copy via Cmd+C (macOS) or Ctrl+Shift+C (Linux/Windows). Toggle back to re-enable click-to-focus + scroll-wheel inside the TUI.".into(),
+            Action::VisitedBack =>
+                "Browser-style back (1.2.7+) — re-open the previously-visited paragraph. Default chord: Alt+Left. History persists across sessions in .session.json.".into(),
+            Action::VisitedForward =>
+                "Browser-style forward (1.2.7+) — re-open the next paragraph in the visit history. Default chord: Alt+Right. Only active after at least one back-press.".into(),
             Action::ViewEditEventMetadata =>
                 "Edit the open event paragraph's start / end / track (pipe-separated, 1.2.6+). Pre-fills with current values; empty middle = no end; empty trailing = drop track. Precision re-derived from start on commit. No-op when the open paragraph isn't an event.".into(),
             Action::ViewTimeline =>
@@ -843,6 +858,10 @@ impl KeyBindings {
                 // editor / AI pane via the terminal's native
                 // selection model + system clipboard copy.
                 entry("Ctrl+Shift+m", Action::ToggleMouseCapture, Scope::Any),
+                // 1.2.7+ — Alt+Left / Alt+Right back/forward
+                // through visited-paragraph history.
+                entry("Alt+Left", Action::VisitedBack, Scope::Any),
+                entry("Alt+Right", Action::VisitedForward, Scope::Any),
                 // F9 / F10 — global AI mode + inference toggle.
                 entry("F9", Action::CycleAiMode, Scope::Any),
                 entry("F10", Action::ToggleInferenceMode, Scope::Any),
