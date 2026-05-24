@@ -3214,6 +3214,12 @@ pub(crate) struct TimelineViewState {
     /// Initially anchored to the median visible event so the
     /// first frame isn't empty.
     pub cursor_ticks: i64,
+    /// 1.2.7+ — the event the cursor is currently anchored
+    /// to (None until the user steps with ↑/↓). When set, the
+    /// render highlights every cell carrying this id, and
+    /// `timeline_step_cursor` auto-pans the viewport so both
+    /// `start_ticks` and `end_ticks` are visible.
+    pub selected_event_id: Option<Uuid>,
     /// Cross-book project overlay. Phase-2 batch 3.
     pub project_overlay: bool,
     /// 1.2.6+ — inline descent picker overlay. None when not
@@ -3306,21 +3312,31 @@ pub(crate) fn timeline_auto_fit(
 /// chronological order (start_ticks). Used by the timeline view's
 /// Up/Down arrows so the user can hop event-to-event without
 /// hunting with horizontal scroll.
+///
+/// 1.2.7+ — returns the target event's uuid alongside its
+/// start tick so the caller can stamp `selected_event_id` for
+/// the highlight + auto-pan logic.
 fn timeline_step_event_cursor(
     events: &[TimelineEvent],
     cursor: i64,
     direction: i64,
-) -> Option<i64> {
-    let mut starts: Vec<i64> = events.iter().map(|e| e.start_ticks).collect();
-    starts.sort();
-    starts.dedup();
-    if starts.is_empty() {
+) -> Option<(Uuid, i64)> {
+    let mut by_start: Vec<(i64, Uuid)> = events
+        .iter()
+        .map(|e| (e.start_ticks, e.id))
+        .collect();
+    by_start.sort_by_key(|(t, _)| *t);
+    if by_start.is_empty() {
         return None;
     }
     if direction > 0 {
-        starts.into_iter().find(|t| *t > cursor)
+        by_start.into_iter().find(|(t, _)| *t > cursor).map(|(t, id)| (id, t))
     } else {
-        starts.into_iter().rev().find(|t| *t < cursor)
+        by_start
+            .into_iter()
+            .rev()
+            .find(|(t, _)| *t < cursor)
+            .map(|(t, id)| (id, t))
     }
 }
 
@@ -15270,26 +15286,40 @@ impl App {
     /// each handled with the right shortcut.
     fn timeline_open_event_under_cursor(&mut self) {
         let Modal::TimelineView { state } = &self.modal else { return; };
-        let cursor = state.cursor_ticks;
-        let highlight = state.track_highlight.clone();
-        let mut best: Option<(Uuid, i64)> = None;
-        for ev in &state.events {
-            // Track filter is a preference, not a hard
-            // requirement — if no on-track event is close,
-            // we still pick the absolute nearest.
-            let on_highlight = match (&highlight, &ev.track) {
-                (Some(h), Some(t)) => h == t,
-                (Some(_), None) => false,
-                (None, _) => true,
-            };
-            let distance = (ev.start_ticks - cursor).abs();
-            let weight = if on_highlight { distance } else { distance + 1_000_000 };
-            match best {
-                None => best = Some((ev.id, weight)),
-                Some((_, w)) if weight < w => best = Some((ev.id, weight)),
-                _ => {}
+        // 1.2.7+ — when ↑/↓ has explicitly selected an event,
+        // route Enter to THAT event so the highlight on the
+        // swim lane matches the picker that opens. Falls back
+        // to the nearest-by-tick search for cold opens (e.g.
+        // first Enter after opening the timeline).
+        let best: Option<(Uuid, i64)> = if let Some(id) = state.selected_event_id {
+            state
+                .events
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| (e.id, 0))
+        } else {
+            let cursor = state.cursor_ticks;
+            let highlight = state.track_highlight.clone();
+            let mut best: Option<(Uuid, i64)> = None;
+            for ev in &state.events {
+                // Track filter is a preference, not a hard
+                // requirement — if no on-track event is close,
+                // we still pick the absolute nearest.
+                let on_highlight = match (&highlight, &ev.track) {
+                    (Some(h), Some(t)) => h == t,
+                    (Some(_), None) => false,
+                    (None, _) => true,
+                };
+                let distance = (ev.start_ticks - cursor).abs();
+                let weight = if on_highlight { distance } else { distance + 1_000_000 };
+                match best {
+                    None => best = Some((ev.id, weight)),
+                    Some((_, w)) if weight < w => best = Some((ev.id, weight)),
+                    _ => {}
+                }
             }
-        }
+            best
+        };
         let Some((event_id, _)) = best else {
             self.status = "timeline · no events to open".into();
             return;
@@ -15463,6 +15493,7 @@ impl App {
                 ticks_per_cell: 1.0,
                 scroll_ticks: 0,
                 cursor_ticks: 0,
+                selected_event_id: None,
                 project_overlay: project,
                 descent: None,
             };
@@ -16087,9 +16118,15 @@ impl App {
     /// previous / next event in chronological order, and pan
     /// the viewport just enough to keep the new cursor on
     /// screen. Direction: -1 = previous, +1 = next.
+    ///
+    /// 1.2.7+ — also stamps `selected_event_id` so the
+    /// render highlights the entire event span (start → end),
+    /// and pans so both endpoints land inside the visible
+    /// viewport (zooms out if the event is wider than the
+    /// available space).
     fn timeline_step_cursor(&mut self, direction: i64) {
         let Modal::TimelineView { state } = &mut self.modal else { return; };
-        let Some(target) = timeline_step_event_cursor(
+        let Some((event_id, target)) = timeline_step_event_cursor(
             &state.events,
             state.cursor_ticks,
             direction,
@@ -16101,25 +16138,45 @@ impl App {
             };
             return;
         };
-        // Keep the cursor in the middle 60% of the viewport when
-        // we jump — guards against landing on a hidden tick.
+        // Stamp the selection so the render can highlight the
+        // whole event span and the link-picker (Enter) knows
+        // which event to query.
+        state.selected_event_id = Some(event_id);
+        state.cursor_ticks = target;
+        // Auto-pan so the WHOLE selected event sits in the
+        // viewport — start + end both visible. Falls back to
+        // cursor-centred behaviour when the event has no end.
         let term_w = crossterm::terminal::size()
             .map(|(w, _)| w as usize)
             .unwrap_or(80);
         let content_w = term_w.saturating_sub(16).max(40) as f64;
         let visible_ticks = (content_w * state.ticks_per_cell) as i64;
-        let left = state.scroll_ticks;
-        let right = state.scroll_ticks + visible_ticks;
-        let margin = visible_ticks / 5; // 20% margin
-        if target < left + margin {
-            state.scroll_ticks = target.saturating_sub(margin);
-        } else if target > right - margin {
+        let span_end = state
+            .events
+            .iter()
+            .find(|e| e.id == event_id)
+            .and_then(|e| e.end_ticks)
+            .unwrap_or(target);
+        let span_width = (span_end - target).abs();
+        if span_width >= visible_ticks {
+            // Event spans more than one screen — centre it.
             state.scroll_ticks = target
-                .saturating_sub(visible_ticks - margin);
+                .saturating_sub((visible_ticks - span_width) / 2);
+        } else {
+            // Pan with a 15% margin on each edge so the event
+            // doesn't kiss the border.
+            let margin = (visible_ticks / 7).max(2);
+            let left = state.scroll_ticks;
+            let right = state.scroll_ticks + visible_ticks;
+            if target < left + margin {
+                state.scroll_ticks = target.saturating_sub(margin);
+            } else if span_end > right - margin {
+                state.scroll_ticks = span_end
+                    .saturating_sub(visible_ticks - margin);
+            }
         }
-        state.cursor_ticks = target;
         self.status = format!(
-            "timeline · cursor → tick {target} · Enter opens nearest event"
+            "timeline · cursor → tick {target} · Enter opens linked paragraphs"
         );
     }
 
@@ -16380,7 +16437,23 @@ impl App {
                         (g, s)
                     }
                     Some(tc) => {
-                        let s = if tc.is_orphan {
+                        // 1.2.7+ — the cell belongs to the
+                        // user-selected event (set by ↑/↓
+                        // navigation)? If so, paint it BOLD
+                        // + REVERSED so the whole event span
+                        // — endpoints and interior cells —
+                        // stands out from the rest of the
+                        // swim lane.
+                        let is_selected = state
+                            .selected_event_id
+                            .is_some_and(|id| id == tc.event_id);
+                        let s = if is_selected {
+                            Style::default()
+                                .fg(self.theme.tree_chapter_fg)
+                                .add_modifier(
+                                    Modifier::BOLD | Modifier::REVERSED,
+                                )
+                        } else if tc.is_orphan {
                             dim_style.fg(Color::Yellow)
                         } else if tc.is_endpoint {
                             Style::default()
@@ -16550,6 +16623,7 @@ impl App {
             ticks_per_cell,
             scroll_ticks,
             cursor_ticks,
+            selected_event_id: None,
             project_overlay: false,
             descent: None,
         };
