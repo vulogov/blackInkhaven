@@ -320,6 +320,13 @@ pub enum Action {
     /// `timeline.enabled`.
     #[serde(rename = "view.new_event_prompt")]
     ViewNewEventPrompt,
+    /// Ctrl+V Shift+I (1.2.7+) — open a one-line edit prompt for
+    /// the open event paragraph's start / end / track (pipe-
+    /// separated). Precision is re-derived from the start
+    /// string each commit. No-op when the open paragraph
+    /// isn't an event.
+    #[serde(rename = "view.edit_event_metadata")]
+    ViewEditEventMetadata,
     /// Ctrl+V t (1.2.7+) — open the swim-lane timeline view
     /// scoped to the current paragraph's nearest Subchapter
     /// (or Chapter, or Book). Inside the modal:
@@ -431,6 +438,7 @@ impl Action {
             Action::ViewStoryGraphParagraph => "story view (¶)".into(),
             Action::ViewEventPicker => "events".into(),
             Action::ViewNewEventPrompt => "new event".into(),
+            Action::ViewEditEventMetadata => "edit event".into(),
             Action::ViewTimeline => "timeline".into(),
 
             Action::None => String::new(),
@@ -606,6 +614,8 @@ impl Action {
                 "Open the timeline event picker (1.2.7+). Lists every event in the project sorted by start time; Enter jumps to the event paragraph. Requires `timeline.enabled: true` in HJSON.".into(),
             Action::ViewNewEventPrompt =>
                 "Open the swim-lane timeline view and immediately prompt for a new event title (1.2.7+). Same flow as opening the timeline then pressing `n`. Requires `timeline.enabled: true`.".into(),
+            Action::ViewEditEventMetadata =>
+                "Edit the open event paragraph's start / end / track (pipe-separated, 1.2.7+). Pre-fills with current values; empty middle = no end; empty trailing = drop track. Precision re-derived from start on commit. No-op when the open paragraph isn't an event.".into(),
             Action::ViewTimeline =>
                 "Open the swim-lane timeline view (1.2.7+). Scope-aware: anchors to the current paragraph's nearest Subchapter / Chapter / Book by default. Inside: u/U up-scope, d/D down-scope picker, b/B book, p/P project; ←/→ scroll, +/- zoom, Tab cycle track, Enter open event. Requires `timeline.enabled: true`.".into(),
 
@@ -766,6 +776,8 @@ impl KeyBindings {
                 // events) can add its first event without going
                 // through `inkhaven event add` on the CLI.
                 entry("Shift+e", Action::ViewNewEventPrompt, Scope::Any),
+                // 1.2.7+ — edit timing of the open event ¶.
+                entry("Shift+i", Action::ViewEditEventMetadata, Scope::Any),
                 // 1.2.7+ — swim-lane timeline view. Bound to
                 // Shift+T so the lowercase `t` chord stays free
                 // for `ViewOpenParagraphTarget` (open the

@@ -130,6 +130,8 @@ Inside the tag picker (`Ctrl+B ]` / `Ctrl+B }`):
   row([Shift+W], [Story view — book graph (1.2.5)]),
   row([w],   [(1.2.6) Paragraph mini story view]),
   row([e],   [(1.2.7) Event picker — chronological list]),
+  row([Shift+E], [(1.2.7) New event (opens timeline + prompts for title)]),
+  row([Shift+I], [(1.2.7) Edit open event's start | end | track]),
   row([Esc], [Cancel chord]),
 )
 
