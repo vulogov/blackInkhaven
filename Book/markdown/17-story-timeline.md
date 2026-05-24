@@ -68,6 +68,81 @@ Empty `names` falls back to numeric. Negative ticks (prequels) supported through
 
 Precision matters for AI critique: a season-precision event collides differently against other season-precision events than against a day-precision one.
 
+## Where events live
+
+The first time you add an event under a book — from the CLI or the TUI — a Timeline chapter materialises inside that book:
+
+```
+Aerin Saga/
+├── Chapter 1/
+├── Chapter 2/
+└── Timeline/                ← lazy; system_tag: "book_timeline"
+    ├── ◆ Birth of Aerin     ← event paragraph (Node.event = Some(...))
+    ├── ◆ Storm
+    └── ◆ Marketplace scene
+```
+
+Each event is a paragraph carrying `EventData` in its metadata: `start_ticks`, optional `end_ticks`, `precision`, optional `track`, lists of `characters` / `places` / `linked_paragraphs`.
+
+The Timeline chapter is auto-managed and **excluded from every export** — `inkhaven export pdf|markdown|tex|epub|typst`, the TUI's Ctrl+B B build, and the in-process render all skip both the Timeline chapter and any individual event paragraph (anything with `node.event.is_some()`). Your manuscript prose never gets timeline noise glued onto it.
+
+## Tree + editor visual cues
+
+| Cue | Meaning |
+|-----|---------|
+| `◆ ` | Tree-pane glyph for an event paragraph (replaces the prose `¶`). |
+| `◆ <start>[ → <end>] · <prec> · <track>` | Editor title bar shows full timing while editing an event. |
+| `[ORPHAN]` | Red chip in the editor title when an event has no linked paragraphs / characters / places. |
+| `◆ linked from N event(s)` | Editor title when a *manuscript* paragraph is referenced by N events — same paragraph can anchor any number of events. |
+
+The visible timing in the editor means you can edit the event's body prose AND see at a glance which calendar moment it covers — no flipping to the swim-lane view.
+
+## Adding events — three paths
+
+| Path | How |
+|------|-----|
+| CLI | `inkhaven event add "Storm" --start "1A.2.3" --end "1A.2.5" --track main --book-name "Aerin Saga"` |
+| TUI · `Ctrl+V Shift+E` | From any pane: opens the timeline AND immediately fires the title prompt. Works on a fresh project — no chicken-and-egg with the CLI. |
+| TUI · `n` inside Ctrl+V Shift+T | Position the timeline cursor first, then `n` for a title prompt at that tick + the highlighted track. |
+
+For the TUI paths, the title prompt commits with day-precision at the cursor's current tick. To change the start, add an end, or rename the track, use the edit-timing chord (next section).
+
+![figure: timeline-new-event-prompt](images/timeline-new-event-prompt.png) — Ctrl+V Shift+E: title prompt for a brand-new event. The status bar shows the calendar-formatted tick the event will land on.
+
+## Editing event timing (Ctrl+V Shift+I)
+
+When the open paragraph is an event, `Ctrl+V Shift+I` pops a one-line edit prompt for **start | end | track**, pipe-separated:
+
+```
+› Sol 13 | Sol 14 | main
+```
+
+Pre-filled with the event's current values. Conventions:
+
+| Input | Effect |
+|-------|--------|
+| `Sol 13 \| Sol 14 \| main` | Start, end, track. |
+| `Sol 13 \|  \| main` | No end (instant event). |
+| `Sol 13 \| Sol 14 \|` | Drop the track (falls back to `timeline.default_track`). |
+| `Sol 13` | Start only — no end, no track. |
+
+Enter commits all three at once. Precision is re-derived from the start string on each commit, so `Sol 13` is day-precision, `1A.3` is month-precision, etc. Bad parse fails to the status bar; the modal stays so you can fix it.
+
+![figure: timeline-edit-event-prompt](images/timeline-edit-event-prompt.png) — Ctrl+V Shift+I: edit prompt for the open event's timing. Pipe-separated start | end | track.
+
+## Linking events to manuscript paragraphs
+
+An event is far more useful when anchored to the scene where it happens. To link from an open event paragraph:
+
+| Path | How |
+|------|-----|
+| `Ctrl+V A` | Enter link-pick mode: focus moves to the tree; navigate to the manuscript paragraph; `Enter` commits. |
+| Bund | `event-uuid "aerin-saga/ch4/marketplace" ink.event.link_paragraph` |
+
+The link drops the `orphan` tag atomically with the link write — no separate "reconcile" step required. The same chord from the inverse direction (`Ctrl+V I` from the manuscript paragraph, picking the event in the tree) does the same write.
+
+> **Same paragraph, many events.** The data model is many-to-one: any number of events can carry the same manuscript paragraph in their `linked_paragraphs` list. Useful when a single scene resolves multiple plot lines, or when the same setting recurs across POV tracks. The editor title bar surfaces the count (`◆ linked from N event(s)`) so the user knows a scene is timeline-anchored before opening Ctrl+V K. Removing a link reconciles the orphan tag on every affected event.
+
 ## CLI
 
 ```
@@ -80,23 +155,7 @@ inkhaven event list --book-name "Aerin Saga" --track main
 inkhaven event show aerin-saga/timeline/storm
 ```
 
-## Where events live
-
-The first time you `event add` under a book, a Timeline chapter materialises inside that book:
-
-```
-Aerin Saga/
-├── Chapter 1/
-├── Chapter 2/
-└── Timeline/           ← lazy; system_tag: "book_timeline"
-    ├── Birth of Aerin  ← event paragraph (Node.event = Some(...))
-    ├── Storm
-    └── Marketplace scene
-```
-
-Each event is a paragraph carrying `EventData` in its metadata: `start_ticks`, optional `end_ticks`, `precision`, optional `track`, lists of `characters` / `places` / `linked_paragraphs`.
-
-## Ctrl+V e — vertical picker
+## Ctrl+V e — vertical event picker
 
 ![figure: timeline-event-picker](images/timeline-event-picker.png) — Ctrl+V e: chronological event picker. Track filter via `t`. Enter opens the event paragraph.
 
@@ -107,25 +166,32 @@ Each event is a paragraph carrying `EventData` in its metadata: `start_ticks`, o
 | Enter | Open the event paragraph in the editor. |
 | Esc | Close. |
 
-## Ctrl+V t — swim-lane view
+## Ctrl+V Shift+T — swim-lane view
 
-The headline UI. Opens at the current paragraph's nearest scope (Subchapter → Chapter → Book):
+The headline UI. Opens at the current paragraph's nearest scope (Subchapter → Chapter → Book), auto-fitting the full event span (earliest start → latest end) inside the visible pane so you can see the whole timeline before drilling in:
 
-![figure: timeline-swim-lanes](images/timeline-swim-lanes.png) — Ctrl+V t: swim-lane view. Per-track rows. ● instant; ─ duration; ◌ orphan. Axis labels along the top.
+![figure: timeline-swim-lanes](images/timeline-swim-lanes.png) — Ctrl+V Shift+T: swim-lane view, auto-fitted on open. Per-track rows. ● instant; ─ duration; ◌ orphan. Axis labels along the top.
+
+Four distinct navigation modes — fine scroll, event-hop, page-scroll, range-extremes:
 
 | Chord | What it does |
 |-------|--------------|
-| ← / → | Scroll by ~10 cells. |
-| PgUp / PgDn | Page by ~60 cells. |
-| + / = | Zoom in (0.66× ticks/cell). |
-| - / _ | Zoom out (1.5×). |
+| ← / → | Smooth scroll (~10 cells per press). |
+| ↑ / ↓ | (1.2.6+) Hop the cursor to the previous / next event, chronologically. Viewport pans automatically to keep the new cursor on screen. |
+| PgUp / PgDn | Page-scroll (~60 cells per press). |
+| Home / End | Jump to first / last event. |
+| + / = | Zoom in (0.66× ticks/cell — anchored to cursor). |
+| - / _ | Zoom out (1.5× — anchored to cursor). |
 | 0 | Reset zoom to 1.00×. |
-| Home / End | Jump to first / last event in the visible set. |
 | Tab | Cycle highlighted track. |
 | Enter | Open the event closest to the cursor. |
 | n / N | Pop a title prompt; commit a new event at cursor tick. |
 
-Zoom preserves the cursor's screen column — drilling in feels anchored to whatever event you were inspecting.
+The auto-fit on open means you almost never need `0` (reset) manually — the initial frame already shows everything. Zoom preserves the cursor's screen column through `+` / `-`, so drilling in feels like inspecting, not jumping.
+
+When the book has *zero* events, the swim-lane view still opens — just empty, with a status hint pointing at `n` so the first event is one key away:
+
+![figure: timeline-empty](images/timeline-empty.png) — Ctrl+V Shift+T on a fresh book with no events. The status bar tells you `press n to add the first event`.
 
 ## Scope navigation
 
@@ -183,21 +249,26 @@ Policy: reads under `store_read`; mutations under `store_write`.
 | Hook | When |
 |------|------|
 | `hook.on_event_added(uuid)` | Every successful add — CLI, TUI `n` chord, Bund `ink.event.add`. |
-| `hook.on_event_orphaned(uuid)` | When an event transitions linked → orphan. Catches deletes via the 1.2.6 AC scrub. |
+| `hook.on_event_orphaned(uuid)` | When an event transitions linked → orphan. Catches deletes via the AC scrub. |
 
 ## Orphans
 
-An event with no linked_paragraphs AND no characters AND no places auto-tags `orphan`. The reconciler runs on every metadata write that touches an event. Orphans render with `◌` glyphs across every UI (CLI list, picker, swim lanes).
+An event with no `linked_paragraphs` AND no characters AND no places auto-tags `orphan`. The reconciler runs on every metadata write that touches an event — including link adds / removes via `Ctrl+V A` from the TUI, `Ctrl+V Shift+I` edits, and the Bund / CLI write paths. Orphans render with `◌` across every UI (CLI list, picker, swim lanes) and the red `[ORPHAN]` chip in the editor title bar.
 
 They're not errors — they're a soft signal that the event might want a scene attached.
+
+To clear an orphan from the TUI: open the event paragraph (the editor title's hint reminds you), press `Ctrl+V A`, pick the manuscript paragraph in the tree, `Enter`. The write that adds the link removes the `orphan` tag in the same metadata update.
 
 ## Recap
 
 - Opt-in: `timeline.enabled: true` + a calendar preset.
 - Calendars: sols, gregorian, or custom (configurable named months, seasons, fuzz windows).
-- CLI: `inkhaven event add/list/show`.
-- `Ctrl+V e` vertical picker, `Ctrl+V t` swim lanes.
+- Three add paths: CLI `event add`, TUI `Ctrl+V Shift+E` from anywhere, `n` inside the timeline.
+- Edit timing: TUI `Ctrl+V Shift+I` on an event ¶ — pipe-separated `start | end | track`.
+- Tree shows events with `◆`; editor title shows `◆ <timing>` for events and `◆ linked from N event(s)` for anchor paragraphs.
+- Multi-link: any number of events can target the same manuscript paragraph; orphan tag reconciles atomically with every link write.
+- `Ctrl+V Shift+T` swim lanes auto-fit on open. Four nav modes: ↑↓ event-hop, ←→ scroll, PgUp/PgDn page, Home/End extremes.
 - Scope nav: `u` up, `d` descent picker, `b` book, `p` project.
 - AI critique: `y` track, `Y` scope, `Ctrl+Y` book-wide.
 - Bund: 7 `ink.event.*` words + 2 hooks (`on_event_added`, `on_event_orphaned`).
-- Orphans auto-tagged; surfaced via `◌` everywhere.
+- Timeline data is auto-excluded from every export format — your manuscript never picks up timeline noise.

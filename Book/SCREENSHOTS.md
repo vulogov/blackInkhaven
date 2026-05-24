@@ -122,11 +122,27 @@ Each table column:
 
 ### Chapter 17 — Story timeline
 
+The timeline shipped as the headline 1.2.6 feature. Twelve
+figures cover the full surface from tree glyph through edit
+prompt. See **How to capture the timeline screenshots**
+below for an end-to-end recipe that seeds a small demo
+book to a state where each figure can be captured in one
+chord press.
+
 | id | state | caption |
 |----|-------|---------|
+| `tree-event-glyph` | Tree pane showing the Timeline chapter expanded, with 3-4 event paragraphs rendered with the `◆ ` glyph next to one or two prose paragraphs (`¶ `) in a sibling chapter, so the two glyphs sit on the same screen for comparison. | Tree pane — event paragraphs render with `◆ ` (1.2.6+) so timeline data is visually distinct from manuscript prose. |
+| `editor-event-title` | Editor pane open on an event paragraph; the title bar shows `Editor — Storm · ◆ 1A.2.3 → 1A.2.5 · day · main · L1 C1 · …`. Pick an event that's linked to at least one manuscript paragraph so `[ORPHAN]` is **absent**. | Editor title bar for an event — `◆ start → end · precision · track` reads at a glance while editing the body. |
+| `editor-event-title-orphan` | Same as above but on an orphan event — title bar carries the red `[ORPHAN]` chip after the `◆ <timing>` block. | Orphan event in the editor — red `[ORPHAN]` chip + the status hint reminds the user that `Ctrl+V A` clears it. |
+| `editor-multi-event-link` | Editor open on a *manuscript* paragraph that's linked from 2-3 events; title bar shows `… · ◆ linked from 3 events · …`. | A manuscript paragraph anchored to multiple events (1.2.6+) — the title bar surfaces the count without opening Ctrl+V K. |
+| `timeline-empty` | Ctrl+V Shift+T on a freshly-`init`ed book that has zero events. Empty swim-lane area; status bar shows `timeline … · empty — press \`n\` to add the first event · Esc closes`. | Empty timeline (1.2.6+) — the view opens regardless and points at `n` for the first event. |
+| `timeline-new-event-prompt` | The title prompt that pops after `Ctrl+V Shift+E` or `n` inside the timeline. Modal sits on top of the swim-lane view; cursor blinking in the input box. | Ctrl+V Shift+E (or `n` inside Ctrl+V Shift+T) — title prompt for a brand-new event at the cursor tick. |
+| `timeline-edit-event-prompt` | The `Ctrl+V Shift+I` edit modal, prefilled with something like `1A.2.3 \| 1A.2.5 \| main`. Cursor inside the input. | Ctrl+V Shift+I — edit the open event's timing. Pipe-separated `start \| end \| track`. |
 | `timeline-event-picker` | Ctrl+V e picker with at least 6-8 events across 2 tracks. | Ctrl+V e — chronological event picker. Track filter via `t`. Enter opens the event paragraph. |
-| `timeline-swim-lanes` | Ctrl+V t swim-lane view with at least 2 tracks + the orphan row. Axis labels visible along the top. | Ctrl+V t — swim-lane view. Per-track rows. ● instant; ─ duration; ◌ orphan. Axis labels along the top. |
-| `timeline-descent-picker` | Descent picker (`d` inside Ctrl+V t) with 3-4 child scopes + event counts. | Descent picker (`d`) — immediate child scopes with their event counts. Enter descends; Esc returns. |
+| `timeline-swim-lanes` | Ctrl+V Shift+T swim-lane view, auto-fitted on open, showing the full event span. At least 2 tracks + the orphan row. Axis labels visible along the top. Cursor centered. | Ctrl+V Shift+T — swim-lane view, auto-fitted on open (1.2.6+). Per-track rows. ● instant; ─ duration; ◌ orphan. Axis labels along the top. |
+| `timeline-zoomed-in` | Same swim-lane state as above but after a couple of `+` presses — the same events visible at higher temporal resolution (longer bars, fewer labels). | After `+` zoom — the same span shown at finer granularity. Auto-fit on open is the wide overview; `+`/`-` drills in. |
+| `timeline-up-down-nav` | Swim-lane view with the cursor visibly anchored to one event (a vertical guide line through one event marker), captured mid-Up/Down navigation. Status bar shows `timeline · cursor → tick N · Enter opens nearest event`. | Up/Down (1.2.6+) — hop cursor to the previous/next event chronologically. Viewport auto-pans to keep the new cursor visible. |
+| `timeline-descent-picker` | Descent picker (`d` inside Ctrl+V Shift+T) with 3-4 child scopes + event counts. | Descent picker (`d`) — immediate child scopes with their event counts. Enter descends; Esc returns. |
 
 ### Chapter 18 — Configuring AI providers
 
@@ -220,9 +236,128 @@ Each table column:
 | Chapter range | Figures |
 |---------------|---------|
 | 0–9 | 8 |
-| 10–19 | 11 |
+| 10–19 | 20 |
 | 20–29 | 8 |
 | Appendices | 0 |
-| **Total** | **~27** |
+| **Total** | **~36** |
 
 If you find a `#figure_slot` in the typst sources that isn't catalogued here, add it — keeping the catalog and the placeholders in lockstep is what makes the "drop a PNG to fill" workflow safe.
+
+## How to capture the timeline screenshots
+
+The 12 figures in Chapter 17 are the largest single-chapter
+batch in the book. Capture them in one TUI session so the
+demo state is consistent across all of them. The recipe
+below assumes a throwaway project so you don't tag /
+event-link your real manuscript.
+
+### Step 0: throwaway project
+
+```bash
+mkdir -p /tmp/timeline-demo
+inkhaven init /tmp/timeline-demo
+cd /tmp/timeline-demo
+```
+
+Edit `inkhaven.hjson` to enable the timeline:
+
+```hjson
+timeline: {
+  enabled: true
+  default_track: "main"
+  calendar: { preset: "gregorian" }
+}
+```
+
+(Use `sols` instead for short tick numbers in the screenshots
+— `Sol 13 → Sol 14` reads cleaner than `2026.5.23 → 2026.5.24`.)
+
+### Step 1: seed a book and a few prose paragraphs
+
+From the CLI:
+
+```bash
+inkhaven add book "Aerin Saga"
+inkhaven add chapter "Chapter 1 — The Storm" --parent aerin-saga
+inkhaven add chapter "Chapter 2 — The Marketplace" --parent aerin-saga
+inkhaven add paragraph "morning" --parent aerin-saga/chapter-1-the-storm
+inkhaven add paragraph "noon"    --parent aerin-saga/chapter-1-the-storm
+inkhaven add paragraph "evening" --parent aerin-saga/chapter-1-the-storm
+inkhaven add paragraph "marketplace-scene" --parent aerin-saga/chapter-2-the-marketplace
+# Optional body so the lexicon mentions feel real
+for f in books/aerin-saga/01-chapter-1-the-storm/*.typ; do
+  echo 'A short paragraph in the lighthouse by the harbour.' > "$f"
+done
+inkhaven reindex
+```
+
+### Step 2: seed events (CLI is fastest for the seed)
+
+```bash
+inkhaven event add "Birth of Aerin"  --start "2026.1.1"  --track main      --book-name "Aerin Saga"
+inkhaven event add "Storm"           --start "2026.2.3"  --end "2026.2.5"  --track main      --book-name "Aerin Saga"
+inkhaven event add "Marketplace"     --start "2026.2.5"  --track main      --book-name "Aerin Saga"
+inkhaven event add "Aerin POV — flight" --start "2026.2.4" --track "aerin-pov" --book-name "Aerin Saga"
+inkhaven event add "Trial"           --start "2026.3.10" --end "2026.3.12" --track "aerin-pov" --book-name "Aerin Saga"
+inkhaven event add "Lost map"        --start "2026.2.4.spr" --track main   --book-name "Aerin Saga"   # ← left as orphan deliberately
+```
+
+Now link Storm → morning, Marketplace → marketplace-scene,
+and Birth → marketplace-scene (so marketplace-scene is the
+multi-link example):
+
+```bash
+# Use the TUI for these — Ctrl+V A from each event paragraph.
+inkhaven
+```
+
+Inside the TUI: open each event paragraph via the tree
+(`Timeline → Storm`, etc), press `Ctrl+V A`, navigate to
+the manuscript paragraph in the tree, `Enter`. Three
+linkages get you all the "linked" / "orphan" / "multi-link"
+variations the screenshots need.
+
+### Step 3: capture each figure
+
+| Figure | Setup | Capture chord(s) |
+|--------|-------|------------------|
+| `tree-event-glyph` | Tree pane focused, `Timeline` chapter expanded next to a prose chapter (e.g. Chapter 1). | None — just the tree state. Resize so both `◆ Storm` (event) and `¶ morning` (prose) are visible on one screen. |
+| `editor-event-title` | Open `Timeline → Marketplace` (a linked, non-orphan event). | `Enter` on the row. Capture the editor pane with the title bar showing `◆ 2026.2.5 · day · main`. |
+| `editor-event-title-orphan` | Open `Timeline → Lost map` (the orphan you didn't link). | `Enter` on the row. Title bar carries `◆ … · [ORPHAN]`. |
+| `editor-multi-event-link` | Open `Chapter 2 → marketplace-scene` (the manuscript paragraph linked from 2-3 events). | `Enter`. Title bar shows `◆ linked from 3 events`. |
+| `timeline-empty` | Add a second user book that has zero events: `inkhaven add book "Empty Book"`. In the TUI, put the cursor inside Empty Book, then `Ctrl+V Shift+T`. | Capture the empty swim-lane pane + the `press n` status hint. |
+| `timeline-new-event-prompt` | From Empty Book (or any pane), `Ctrl+V Shift+E`. | The title prompt pops over the timeline. Type a placeholder title for the screenshot, do NOT press Enter. |
+| `timeline-edit-event-prompt` | Open `Timeline → Storm`, then `Ctrl+V Shift+I`. | The prompt pops prefilled with `2026.2.3 \| 2026.2.5 \| main`. Capture, then Esc. |
+| `timeline-event-picker` | From any pane, `Ctrl+V e`. | Shows all 6 events sorted by start. Cycle the track filter with `t` if you want to show that variant. |
+| `timeline-swim-lanes` | From any paragraph inside Aerin Saga, `Ctrl+V Shift+T`. | Auto-fit shows the full Jan → Mar span. 2 tracks (`main`, `aerin-pov`) + the orphan row. Capture the full pane. |
+| `timeline-zoomed-in` | Same as above, then press `+` twice. | Same events at higher resolution. Useful to show what `+`/`-` do relative to the auto-fit. |
+| `timeline-up-down-nav` | Same as `timeline-swim-lanes`, press `↓` once or twice. | Cursor visibly moves to a different event; status bar shows `cursor → tick N`. Capture mid-state. |
+| `timeline-descent-picker` | Inside `Ctrl+V Shift+T`, press `d`. | The descent picker overlays the swim-lane view, showing Chapter 1 / Chapter 2 with their event counts. |
+
+Total: ~10 minutes once the project is seeded.
+
+### Step 4: drop PNGs
+
+```bash
+# Each PNG must be named exactly the `id` from the table.
+cp ~/Desktop/screenshot-1.png  Book/images/tree-event-glyph.png
+cp ~/Desktop/screenshot-2.png  Book/images/editor-event-title.png
+# … etc
+```
+
+Recompile the book:
+
+```bash
+cd Book && typst compile BOOK_OF_INKHAVEN.typ
+```
+
+The placeholder rectangles get swapped for the real images
+on the next compile. Run `find Book/images -name "timeline-*"
+-o -name "editor-event-*" -o -name "editor-multi-event-*"
+-o -name "tree-event-*"` to verify all 12 files landed.
+
+### Cleanup
+
+The throwaway project is at `/tmp/timeline-demo`; delete it
+when done. The screenshots are in `Book/images/` and travel
+with the manuscript.
