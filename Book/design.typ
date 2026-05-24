@@ -194,28 +194,24 @@
   v(3mm)
 }
 
-// Inline figure placeholder. The book ships with
-// rectangular slots that the author fills with PNGs from
-// the inkhaven TUI. See SCREENSHOTS.md for the catalog.
+// Inline figure. Loads `images/<id>.png` (relative to this
+// design.typ — i.e. `Book/images/<id>.png`) and renders it
+// fit-to-page-width capped at `height`. Caption sits below.
+//
+// Build fails loudly with `file not found` when the PNG is
+// missing — by design. The previous placeholder-rectangle
+// fallback was silent and let figures ship with empty
+// rectangles in the final PDF. See SCREENSHOTS.md for the
+// id catalog + capture recipes.
 #let figure_slot(id: "tree-pane-empty", caption: "", height: 60mm) = {
   v(3mm)
-  block(
-    fill: ink_code_bg,
-    stroke: 0.5pt + ink_rule,
-    inset: 6pt,
-    width: 100%,
-    {
-      align(center)[
-        #v(height / 2 - 8pt)
-        #text(
-          font: mono_family,
-          size: 9pt,
-          fill: ink_faint,
-          "[ figure: " + id + " ]",
-        )
-        #v(height / 2 - 8pt)
-      ]
-    },
+  align(center,
+    image(
+      "images/" + id + ".png",
+      width: 100%,
+      height: height,
+      fit: "contain",
+    )
   )
   if caption != "" {
     v(1mm)
