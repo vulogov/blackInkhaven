@@ -20615,60 +20615,204 @@ impl App {
         f.render_widget(p, area);
     }
 
-    /// Approximate visual height (in terminal lines) of one tree
-    /// row at the given pane `width`. Used by the wrap-aware
-    /// scroll loop so a multi-line row at the bottom of the
-    /// viewport advances `tree_scroll` enough to keep the cursor
-    /// row visible. Approximate because counting char widths
-    /// without `unicode-width` undercounts CJK / wide glyphs —
-    /// good enough for the latin-script titles inkhaven targets.
+    /// Exact visual height (in terminal lines) of one tree row
+    /// at the given pane `width`. Delegates to `tree_row_lines`
+    /// so the scroll loop and the renderer always agree on row
+    /// height — no chance of "cursor row almost visible" drift.
     fn tree_row_visual_height(&self, row_idx: usize, width: usize) -> usize {
+        self.tree_row_lines(row_idx, width).len().max(1)
+    }
+
+    /// Build the styled `Line`s for a single tree row. Returns
+    /// one Line when the row fits on a single visual line;
+    /// otherwise returns N+1 Lines where the title wraps with a
+    /// hanging indent matching the row's prefix column (so
+    /// continuation lines start under the title, not at column
+    /// zero). Pips ride on the last title line when they fit,
+    /// otherwise they get their own hanging-indent line.
+    fn tree_row_lines(&self, row_idx: usize, width: usize) -> Vec<Line<'_>> {
         let Some(&(id, depth)) = self.rows.get(row_idx) else {
-            return 1;
+            return vec![Line::from("")];
         };
         let Some(node) = self.hierarchy.get(id) else {
-            return 1;
+            return vec![Line::from("")];
         };
-        if width == 0 {
-            return 1;
-        }
-        // Mirror the row layout in `draw_tree`:
-        //   indent      = 2 * depth
-        //   select_prefix = 2 when ANY paragraph is marked, else 0
-        //   marker      = 2 chars ("¶ ", "▾ ", "▸ ", "►", "λ ", "❴ ", "▣ ")
-        //   status      = 2 chars (letter + space)
-        //   title       = full chars
-        //   progress    = up to 2 chars ("  •")
-        //   tag pips    = up to 30 chars  (#tag #tag +N, each tag <= 11)
-        let indent = 2 * depth;
-        let select_prefix = if !self.tree_marked.is_empty() { 2 } else { 0 };
-        let marker = 2;
-        let status = 2;
-        let title_chars = node.title.chars().count();
-        let trailing = if matches!(node.kind, NodeKind::Paragraph) {
-            let progress = if node.target_words.is_some_and(|n| n > 0) {
-                2
-            } else {
-                0
-            };
-            let tags = if !node.tags.is_empty() {
-                let visible = node.tags.iter().take(2).map(|t| {
-                    let n = t.chars().count().min(10);
-                    n + 2 // "#" + tag + leading space
-                }).sum::<usize>();
-                let plus_n = if node.tags.len() > 2 { 4 } else { 0 };
-                visible + plus_n
-            } else {
-                0
-            };
-            progress + tags
+        let open_id: Option<Uuid> = self.opened.as_ref().map(|d| d.id);
+        let is_open = open_id.is_some_and(|o| o == node.id);
+        let is_collapsed = self.collapsed_nodes.contains(&node.id);
+        let marker = if is_open {
+            "►"
         } else {
-            0
+            match node.kind {
+                NodeKind::Paragraph => match node.content_type.as_deref() {
+                    Some("hjson") => "❴ ",
+                    _ => "¶ ",
+                },
+                NodeKind::Image => "▣ ",
+                NodeKind::Script => "λ ",
+                _ => {
+                    if is_collapsed {
+                        "▸ "
+                    } else {
+                        "▾ "
+                    }
+                }
+            }
         };
-        let total = indent + select_prefix + marker + status + title_chars + trailing;
-        // ceil(total / width) with a floor of 1 so even an empty
-        // row counts as one visual line.
-        ((total + width - 1) / width).max(1)
+        let kind_fg = match node.kind {
+            NodeKind::Book => self.theme.tree_book_fg,
+            NodeKind::Chapter => self.theme.tree_chapter_fg,
+            NodeKind::Subchapter => self.theme.tree_subchapter_fg,
+            NodeKind::Paragraph => self.theme.tree_paragraph_fg,
+            NodeKind::Image => self.theme.tree_image_fg,
+            NodeKind::Script => self.theme.tree_script_fg,
+        };
+        let mut row_style = Style::default().fg(kind_fg);
+        if matches!(node.kind, NodeKind::Book | NodeKind::Chapter) {
+            row_style = row_style.add_modifier(Modifier::BOLD);
+        }
+        if is_open {
+            row_style = row_style
+                .fg(self.theme.tree_open_marker)
+                .add_modifier(Modifier::BOLD);
+        }
+        let is_cursor = row_idx == self.tree_cursor;
+        if is_cursor {
+            row_style = row_style.add_modifier(Modifier::REVERSED);
+        }
+
+        let indent_str = "  ".repeat(depth);
+        let select_prefix = if self.tree_marked.contains(&node.id) {
+            "✓ "
+        } else if !self.tree_marked.is_empty()
+            && matches!(node.kind, NodeKind::Paragraph)
+        {
+            "  "
+        } else {
+            ""
+        };
+        let prefix_str = format!("{indent_str}{select_prefix}{marker}");
+        let status_label = if matches!(node.kind, NodeKind::Paragraph) {
+            display_status(node.status.as_deref())
+        } else {
+            "None"
+        };
+        let status_letter = status_letter(status_label);
+        let status_badge_style = status_style(status_label, &self.theme);
+        let status_str = format!("{status_letter} ");
+
+        // The hanging indent (continuation column) sits where
+        // the title starts — after prefix + status badge.
+        let prefix_width = prefix_str.chars().count() + status_str.chars().count();
+
+        // Trailing pips (progress + tags + "+N") — built once,
+        // appended to whichever Line carries the title's last
+        // chunk.
+        let mut pip_spans: Vec<Span<'_>> = Vec::new();
+        if matches!(node.kind, NodeKind::Paragraph) {
+            if let Some(target) = node.target_words.filter(|n| *n > 0) {
+                let pct =
+                    (node.word_count as i64 * 100 / target as i64).clamp(0, 999);
+                let pip = if pct >= 100 {
+                    "●"
+                } else if pct >= 75 {
+                    "◕"
+                } else if pct >= 50 {
+                    "◑"
+                } else if pct >= 25 {
+                    "◔"
+                } else {
+                    "○"
+                };
+                let style = if pct >= 100 {
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD)
+                } else if pct >= 75 {
+                    Style::default().fg(Color::LightGreen)
+                } else if pct >= 50 {
+                    Style::default().fg(Color::Yellow)
+                } else if pct >= 25 {
+                    Style::default().fg(Color::LightRed)
+                } else {
+                    Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
+                };
+                pip_spans.push(Span::raw(" "));
+                pip_spans.push(Span::styled(pip.to_string(), style));
+            }
+        }
+        if matches!(node.kind, NodeKind::Paragraph) && !node.tags.is_empty() {
+            let tag_style = Style::default()
+                .fg(self.theme.tree_script_fg)
+                .add_modifier(Modifier::DIM);
+            for tag in node.tags.iter().take(2) {
+                let short: String = if tag.chars().count() > 10 {
+                    let truncated: String = tag.chars().take(9).collect();
+                    format!("{truncated}…")
+                } else {
+                    tag.clone()
+                };
+                pip_spans.push(Span::raw(" "));
+                pip_spans.push(Span::styled(format!("#{short}"), tag_style));
+            }
+            if node.tags.len() > 2 {
+                pip_spans.push(Span::styled(
+                    format!(" +{}", node.tags.len() - 2),
+                    tag_style,
+                ));
+            }
+        }
+        let pip_width: usize = pip_spans
+            .iter()
+            .map(|s| s.content.chars().count())
+            .sum();
+
+        // Wrap the title. Title chunks fill the pane width
+        // minus the prefix; pips ride on the LAST chunk's line
+        // when they fit, else get their own hanging-indent line.
+        let title_budget = width.saturating_sub(prefix_width).max(1);
+        let chunks = wrap_words_or_chars(&node.title, title_budget);
+        let last_idx = chunks.len().saturating_sub(1);
+        let last_chunk_width = chunks.last().map(|s| s.chars().count()).unwrap_or(0);
+        let pips_fit_on_last = pip_width == 0
+            || last_chunk_width + pip_width <= title_budget;
+
+        let mut out: Vec<Line<'_>> = Vec::with_capacity(chunks.len() + 1);
+        for (i, chunk) in chunks.iter().enumerate() {
+            let is_last = i == last_idx;
+            let mut spans: Vec<Span<'_>> = Vec::new();
+            if i == 0 {
+                spans.push(Span::styled(prefix_str.clone(), row_style));
+                spans.push(Span::styled(
+                    status_str.clone(),
+                    if status_label == "None" {
+                        Style::default().add_modifier(Modifier::DIM)
+                    } else {
+                        status_badge_style
+                    },
+                ));
+            } else {
+                // Hanging indent — whitespace styled with
+                // row_style so the cursor's REVERSED highlight
+                // bar extends across the continuation column.
+                spans.push(Span::styled(" ".repeat(prefix_width), row_style));
+            }
+            spans.push(Span::styled(chunk.clone(), row_style));
+            if is_last && pips_fit_on_last {
+                spans.extend(pip_spans.iter().cloned());
+            }
+            out.push(Line::from(spans));
+        }
+        if !pips_fit_on_last && !pip_spans.is_empty() {
+            let mut spans: Vec<Span<'_>> = Vec::new();
+            spans.push(Span::styled(" ".repeat(prefix_width), row_style));
+            spans.extend(pip_spans.into_iter());
+            out.push(Line::from(spans));
+        }
+        if out.is_empty() {
+            out.push(Line::from(""));
+        }
+        out
     }
 
     fn draw_tree(&self, f: &mut ratatui::Frame, area: Rect) {
@@ -20727,197 +20871,26 @@ impl App {
         // way a partially-visible wrapped row still shows its
         // first lines instead of being dropped entirely.
 
-        let open_id: Option<Uuid> = self.opened.as_ref().map(|d| d.id);
-
+        // Build the visible Lines by delegating each row to
+        // `tree_row_lines`, which does the wrap + hanging-indent
+        // layout. ratatui clips at the pane bottom, so emitting
+        // every row from `scroll` onward is fine — a wrapped row
+        // straddling the bottom still shows its first lines.
         let mut lines: Vec<Line> = Vec::new();
-        for (i, (id, depth)) in self.rows.iter().enumerate().skip(scroll) {
-            let Some(node) = self.hierarchy.get(*id) else {
-                continue;
-            };
-            let indent = "  ".repeat(*depth);
-            // When this row is the paragraph currently open in the editor,
-            // swap its kind glyph for a "►" arrow so it's obvious at a
-            // glance which paragraph the editor pane is showing.
-            let is_open = open_id.is_some_and(|o| o == node.id);
-            let is_collapsed = self.collapsed_nodes.contains(&node.id);
-            let marker = if is_open {
-                "►"
-            } else {
-                match node.kind {
-                    // Paragraphs split by content_type: HJSON data
-                    // nodes get curly-brace glyph, plain typst keeps
-                    // the pilcrow.
-                    NodeKind::Paragraph => match node.content_type.as_deref() {
-                        Some("hjson") => "❴ ",
-                        _ => "¶ ",
-                    },
-                    NodeKind::Image => "▣ ",
-                    // Bund scripts: lambda glyph signals "executable
-                    // code, not prose". Paired with the mauve row
-                    // colour from tree_script_fg.
-                    NodeKind::Script => "λ ",
-                    // For branches, use ▾ (expanded) / ▸ (collapsed)
-                    // glyphs so the expand/collapse state is visible
-                    // at a glance.
-                    _ => {
-                        if is_collapsed {
-                            "▸ "
-                        } else {
-                            "▾ "
-                        }
-                    }
-                }
-            };
-            // Per-kind row colour; override with `tree_open_marker` for
-            // the currently-loaded paragraph so the editor pane's clean-
-            // state border has a matching visual cue in the tree.
-            let kind_fg = match node.kind {
-                NodeKind::Book => self.theme.tree_book_fg,
-                NodeKind::Chapter => self.theme.tree_chapter_fg,
-                NodeKind::Subchapter => self.theme.tree_subchapter_fg,
-                NodeKind::Paragraph => self.theme.tree_paragraph_fg,
-                NodeKind::Image => self.theme.tree_image_fg,
-                NodeKind::Script => self.theme.tree_script_fg,
-            };
-            let mut row_style = Style::default().fg(kind_fg);
-            if matches!(node.kind, NodeKind::Book | NodeKind::Chapter) {
-                row_style = row_style.add_modifier(Modifier::BOLD);
+        for row_idx in scroll..self.rows.len() {
+            for line in self.tree_row_lines(row_idx, width) {
+                lines.push(line);
             }
-            if is_open {
-                row_style = row_style
-                    .fg(self.theme.tree_open_marker)
-                    .add_modifier(Modifier::BOLD);
+            // Cheap upper-bound check so we don't build Lines
+            // for rows that are clearly off-screen.
+            if lines.len() >= height + 4 {
+                break;
             }
-            if i == self.tree_cursor {
-                row_style = row_style.add_modifier(Modifier::REVERSED);
-            }
-
-            // 1.2.6+: long titles wrap at the pane edge rather
-            // than truncate. The Paragraph render below has
-            // `Wrap { trim: false }`; the scroll loop accounts
-            // for the multi-line rows. (Previously truncated to
-            // TITLE_MAX_DISPLAY chars to keep the trailing pips
-            // visible; now pips ride on whichever wrapped line
-            // the title ends on.)
-            let display_title = node.title.as_str();
-            // Build the prefix: indent + glyph + status-letter badge.
-            // The badge is one char (or space) styled with the matching
-            // workflow colour — gives every paragraph row a consistent
-            // gutter column the eye can scan down.
-            let status_label = if matches!(node.kind, NodeKind::Paragraph) {
-                display_status(node.status.as_deref())
-            } else {
-                "None"
-            };
-            let status_letter = status_letter(status_label);
-            let status_badge_style = status_style(status_label, &self.theme);
-            let mut spans: Vec<Span<'_>> = Vec::new();
-            // 1.2.4+: multi-select marker. A `✓` glyph in
-            // front of the kind-marker when this row is in
-            // `tree_marked`. Costs one char of indent at most.
-            let select_prefix = if self.tree_marked.contains(&node.id) {
-                "✓ "
-            } else if !self.tree_marked.is_empty()
-                && matches!(node.kind, NodeKind::Paragraph)
-            {
-                // Reserve the column when ANY row is marked so
-                // the list visually aligns.
-                "  "
-            } else {
-                ""
-            };
-            spans.push(Span::styled(
-                format!("{indent}{select_prefix}{marker}"),
-                row_style,
-            ));
-            // Always reserve the badge column (a space when None) so
-            // titles align across rows regardless of which paragraphs
-            // have a status set.
-            spans.push(Span::styled(
-                format!("{status_letter} "),
-                if status_label == "None" {
-                    Style::default().add_modifier(Modifier::DIM)
-                } else {
-                    status_badge_style
-                },
-            ));
-            spans.push(Span::styled(display_title.to_string(), row_style));
-            // Per-paragraph progress glyph (1.2.4+). The full gauge
-            // lives on the editor pane's bottom border (see
-            // `editor_goal_footer_text`); the tree pane just shows
-            // a compact 1-char status pip so users can scan which
-            // paragraphs carry goals without losing room to a
-            // long auto-derived title.
-            if matches!(node.kind, NodeKind::Paragraph) {
-                if let Some(target) = node.target_words.filter(|n| *n > 0) {
-                    let pct =
-                        (node.word_count as i64 * 100 / target as i64).clamp(0, 999);
-                    let pip = if pct >= 100 {
-                        "●"
-                    } else if pct >= 75 {
-                        "◕"
-                    } else if pct >= 50 {
-                        "◑"
-                    } else if pct >= 25 {
-                        "◔"
-                    } else {
-                        "○"
-                    };
-                    let style = if pct >= 100 {
-                        Style::default()
-                            .fg(Color::Green)
-                            .add_modifier(Modifier::BOLD)
-                    } else if pct >= 75 {
-                        Style::default().fg(Color::LightGreen)
-                    } else if pct >= 50 {
-                        Style::default().fg(Color::Yellow)
-                    } else if pct >= 25 {
-                        Style::default().fg(Color::LightRed)
-                    } else {
-                        Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
-                    };
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled(pip.to_string(), style));
-                }
-            }
-            // 1.2.6+ — first two tags as compact `#tag` chips
-            // after the progress pip. Keeps the row tight: at
-            // most ~20 chars (`#worldbuild #lighthous +N`) for
-            // a heavily-tagged paragraph; truncates each name
-            // to 10 chars + ellipsis. The "+N" suffix surfaces
-            // additional-tag count when more than two exist
-            // (so the user knows to open Ctrl+B ] for the rest).
-            if matches!(node.kind, NodeKind::Paragraph)
-                && !node.tags.is_empty()
-            {
-                let pip_style = Style::default()
-                    .fg(self.theme.tree_script_fg)
-                    .add_modifier(Modifier::DIM);
-                for tag in node.tags.iter().take(2) {
-                    let short: String = if tag.chars().count() > 10 {
-                        let truncated: String = tag.chars().take(9).collect();
-                        format!("{truncated}…")
-                    } else {
-                        tag.clone()
-                    };
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled(format!("#{short}"), pip_style));
-                }
-                if node.tags.len() > 2 {
-                    spans.push(Span::styled(
-                        format!(" +{}", node.tags.len() - 2),
-                        pip_style,
-                    ));
-                }
-            }
-            lines.push(Line::from(spans));
         }
 
-        // 1.2.6+: wrap so long titles continue on the next
-        // visual line instead of being truncated. `trim: false`
-        // keeps the indent / prefix whitespace intact on each
-        // wrapped chunk.
-        let p = Paragraph::new(lines).wrap(Wrap { trim: false });
+        // Pre-wrapped manually so ratatui doesn't re-wrap and
+        // double-indent. No `.wrap(...)` here.
+        let p = Paragraph::new(lines);
         f.render_widget(p, inner);
     }
 
@@ -22883,6 +22856,69 @@ const PARAGRAPH_PLACEHOLDER_TITLE: &str = "Untitled paragraph";
 /// tree pane. Beyond that, the title is truncated with an ellipsis so the
 /// `Nw` word-count suffix stays visible on a single row.
 const TITLE_MAX_DISPLAY: usize = 60;
+
+/// Greedy word-wrap (`text` over a `width`-wide column),
+/// falling back to char-break when a single word doesn't fit.
+/// Empty input returns one empty line; zero width returns the
+/// original (no useful wrap available). Used by
+/// `tree_row_lines` to wrap long node titles with a hanging
+/// indent.
+fn wrap_words_or_chars(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![text.to_owned()];
+    }
+    if text.is_empty() {
+        return vec![String::new()];
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut current_w = 0usize;
+    for word in text.split_whitespace() {
+        let word_w = word.chars().count();
+        if word_w > width {
+            // Word doesn't fit even on a line of its own —
+            // flush whatever's pending, then hard-break by
+            // character.
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+            }
+            let mut buf = String::new();
+            let mut bw = 0;
+            for c in word.chars() {
+                if bw == width {
+                    lines.push(std::mem::take(&mut buf));
+                    bw = 0;
+                }
+                buf.push(c);
+                bw += 1;
+            }
+            current = buf;
+            current_w = bw;
+        } else {
+            let needed = if current.is_empty() {
+                word_w
+            } else {
+                current_w + 1 + word_w
+            };
+            if needed > width {
+                lines.push(std::mem::take(&mut current));
+                current = word.to_owned();
+                current_w = word_w;
+            } else {
+                if !current.is_empty() {
+                    current.push(' ');
+                    current_w += 1;
+                }
+                current.push_str(word);
+                current_w += word_w;
+            }
+        }
+    }
+    if !current.is_empty() || lines.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
 
 /// 1.2.7+ — truncate a track label to `max_chars`, appending
 /// `…` when the value was actually shortened. Returns the
