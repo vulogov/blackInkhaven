@@ -28,6 +28,13 @@ pub struct SessionState {
     /// left it, even after a full restart.
     #[serde(default)]
     pub paragraph_cursors: HashMap<String, ParagraphCursor>,
+    /// 1.2.7+ — visited-paragraph history (browser-style
+    /// back/forward via Alt+Left / Alt+Right). UUIDs in
+    /// visit order; cursor points at the current one.
+    #[serde(default)]
+    pub visited_history: Vec<String>,
+    #[serde(default)]
+    pub visited_cursor: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
