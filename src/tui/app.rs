@@ -13096,7 +13096,7 @@ impl App {
                 &statuses,
             )
         });
-        if self.cfg.typst_compile.wait_for_key_after_compile {
+        if self.cfg.output.extras_wait_for_key {
             loop {
                 match crossterm::event::read() {
                     Ok(crossterm::event::Event::Key(_)) => break,

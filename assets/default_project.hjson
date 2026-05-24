@@ -203,6 +203,17 @@
   // run. Empty list (the default) = PDF-only, same as 1.2.2.
   output: {
     extra_formats: []
+    // 1.2.6+ — hold each extras step on screen for this many
+    // milliseconds during the Ctrl+B O splash so the
+    // markdown → tex → epub transitions are visible. Set to
+    // 0 to disable the artificial pause.
+    extras_step_pause_ms: 400
+    // 1.2.6+ — when true, the final all-✓ extras frame holds
+    // until any key press (same shape as
+    // typst_compile.wait_for_key_after_compile). Default
+    // false so batch `Ctrl+B O` doesn't trap on a key prompt;
+    // flip to true for screenshots / demos.
+    extras_wait_for_key: false
   }
 
   // Writing-progress goals — fuels the status-bar widget (today
