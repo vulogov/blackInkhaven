@@ -2835,6 +2835,15 @@ pub(crate) struct App {
     ai: AiClient,
     prompts: PromptLibrary,
 
+    /// 1.2.7+ — mouse capture toggle. True (the default)
+    /// means crossterm captures every mouse event for the
+    /// TUI (focus on click, scroll wheel, etc.). False
+    /// releases capture so terminal-native drag-to-select +
+    /// Cmd+C (macOS) / Ctrl+Shift+C (Linux/Windows) work
+    /// inside the editor and AI pane. Toggled by
+    /// `Ctrl+Shift+M`.
+    mouse_captured: bool,
+
     hierarchy: Hierarchy,
     rows: Vec<(Uuid, usize)>,
     /// Branches whose children are hidden in the tree pane. The branch
@@ -3552,6 +3561,7 @@ impl App {
             cfg,
             ai,
             prompts,
+            mouse_captured: true,
             hierarchy,
             rows,
             modal: Modal::None,
@@ -9360,6 +9370,7 @@ impl App {
             A::OpenBookInfo => self.open_book_info(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
+            A::ToggleMouseCapture => self.toggle_mouse_capture(),
             A::ScheduleAssemble => self.schedule_assembly(),
             A::ScheduleBuild => self.schedule_build(),
             A::ScheduleTake => self.schedule_take(),
@@ -10245,6 +10256,36 @@ impl App {
             "LLM provider switched to `{chosen}` · saved to {}",
             config_path.display()
         );
+    }
+
+    /// 1.2.7+ — Ctrl+Shift+M. Flip TUI mouse capture so the
+    /// user can use terminal-native drag-to-select +
+    /// system-clipboard copy in the editor and AI panes.
+    /// Status reports the new state. No HJSON persistence —
+    /// the choice is per-session; default is always ON.
+    fn toggle_mouse_capture(&mut self) {
+        use crossterm::execute;
+        self.mouse_captured = !self.mouse_captured;
+        let mut stdout = std::io::stdout();
+        let result = if self.mouse_captured {
+            execute!(stdout, EnableMouseCapture)
+        } else {
+            execute!(stdout, DisableMouseCapture)
+        };
+        match result {
+            Ok(()) => {
+                self.status = if self.mouse_captured {
+                    "mouse capture: ON — click-to-focus + scroll wheel; native selection disabled".into()
+                } else {
+                    "mouse capture: OFF — terminal-native selection enabled (drag-select + Cmd+C / Ctrl+Shift+C). Ctrl+Shift+M to re-enable.".into()
+                };
+            }
+            Err(e) => {
+                // Flip back; report the error.
+                self.mouse_captured = !self.mouse_captured;
+                self.status = format!("mouse capture toggle failed: {e}");
+            }
+        }
     }
 
     /// Ctrl+B E — flip `sound.enabled` in the live config + on disk,

@@ -326,6 +326,15 @@ pub enum Action {
     /// `timeline.enabled`.
     #[serde(rename = "view.new_event_prompt")]
     ViewNewEventPrompt,
+    /// Ctrl+Shift+M (1.2.7+) — toggle TUI mouse capture.
+    /// Default ON (TUI sees click-to-focus, scroll wheel,
+    /// etc.). Toggle OFF to let the terminal handle mouse
+    /// natively: drag-to-select inside the editor / AI
+    /// pane, system-clipboard copy via Cmd+C (macOS) or
+    /// Ctrl+Shift+C (Linux/Windows). Status reports the
+    /// new state.
+    #[serde(rename = "global.toggle_mouse_capture")]
+    ToggleMouseCapture,
     /// Ctrl+V Shift+I (1.2.6+) — open a one-line edit prompt for
     /// the open event paragraph's start / end / track (pipe-
     /// separated). Precision is re-derived from the start
@@ -445,6 +454,7 @@ impl Action {
             Action::ViewStoryGraphParagraph => "story view (¶)".into(),
             Action::ViewEventPicker => "events".into(),
             Action::ViewNewEventPrompt => "new event".into(),
+            Action::ToggleMouseCapture => "mouse".into(),
             Action::ViewEditEventMetadata => "edit event".into(),
             Action::ViewTimeline => "timeline".into(),
 
@@ -623,6 +633,8 @@ impl Action {
                 "Open the timeline event picker (1.2.6+). Lists every event in the project sorted by start time; Enter jumps to the event paragraph. Requires `timeline.enabled: true` in HJSON.".into(),
             Action::ViewNewEventPrompt =>
                 "Open the swim-lane timeline view and immediately prompt for a new event title (1.2.6+). Same flow as opening the timeline then pressing `n`. Requires `timeline.enabled: true`.".into(),
+            Action::ToggleMouseCapture =>
+                "Toggle TUI mouse capture (1.2.7+). Default ON. When OFF, the terminal handles mouse natively: drag-to-select text in the editor / AI pane, system-clipboard copy via Cmd+C (macOS) or Ctrl+Shift+C (Linux/Windows). Toggle back to re-enable click-to-focus + scroll-wheel inside the TUI.".into(),
             Action::ViewEditEventMetadata =>
                 "Edit the open event paragraph's start / end / track (pipe-separated, 1.2.6+). Pre-fills with current values; empty middle = no end; empty trailing = drop track. Precision re-derived from start on commit. No-op when the open paragraph isn't an event.".into(),
             Action::ViewTimeline =>
@@ -826,6 +838,11 @@ impl KeyBindings {
                 // not just from a focused editor. The handler
                 // re-focuses the editor when the modal opens.
                 entry("F8", Action::DiagnosticsList, Scope::Any),
+                // 1.2.7+ — Ctrl+Shift+M toggles mouse capture
+                // so the user can drag-select text in the
+                // editor / AI pane via the terminal's native
+                // selection model + system clipboard copy.
+                entry("Ctrl+Shift+m", Action::ToggleMouseCapture, Scope::Any),
                 // F9 / F10 — global AI mode + inference toggle.
                 entry("F9", Action::CycleAiMode, Scope::Any),
                 entry("F10", Action::ToggleInferenceMode, Scope::Any),
