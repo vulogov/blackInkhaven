@@ -2607,7 +2607,7 @@ enum Modal {
     DiagnosticsList {
         cursor: usize,
     },
-    /// Ctrl+V e (1.2.7+) — vertical event picker. `entries`
+    /// Ctrl+V e (1.2.6+) — vertical event picker. `entries`
     /// is a chronological snapshot built at open-time
     /// (`open_event_picker`); the picker doesn't refresh
     /// while open. Enter jumps to the event paragraph.
@@ -2616,7 +2616,7 @@ enum Modal {
         cursor: usize,
         track_filter: Option<String>,
     },
-    /// Ctrl+V t (1.2.7+) — swim-lane timeline view (Phase 2).
+    /// Ctrl+V t (1.2.6+) — swim-lane timeline view (Phase 2).
     /// Scope-aware: opens at the current paragraph's nearest
     /// Subchapter / Chapter / Book; up/down chords walk the
     /// tree. The modal builds its event snapshot at open
@@ -2636,7 +2636,7 @@ enum Modal {
         track: Option<String>,
         return_to: Box<Modal>,
     },
-    /// 1.2.7+ — `Ctrl+V Shift+I` on an event paragraph. One-line
+    /// 1.2.6+ — `Ctrl+V Shift+I` on an event paragraph. One-line
     /// edit prompt for start / end / track, pipe-separated.
     /// Example pre-fill: `Sol 13 | Sol 14 | main`. Empty middle
     /// (`Sol 13 |  | main`) means "no end". Empty trailing track
@@ -3078,7 +3078,7 @@ struct StatusFilterEntry {
     breadcrumb: String,
 }
 
-/// 1.2.7+ — one entry in the Ctrl+V e event picker.
+/// 1.2.6+ — one entry in the Ctrl+V e event picker.
 /// Snapshot built at open time so navigation is pure UI work
 /// (no hierarchy reload per keystroke).
 #[derive(Debug, Clone)]
@@ -3113,7 +3113,7 @@ pub(crate) fn visible_event_entries<'a>(
     }
 }
 
-/// 1.2.7+ — full state for `Modal::TimelineView`. Lives in
+/// 1.2.6+ — full state for `Modal::TimelineView`. Lives in
 /// the modal only; not persisted across open/close.
 #[derive(Debug, Clone)]
 pub(crate) struct TimelineViewState {
@@ -3149,7 +3149,7 @@ pub(crate) struct TimelineViewState {
     pub cursor_ticks: i64,
     /// Cross-book project overlay. Phase-2 batch 3.
     pub project_overlay: bool,
-    /// 1.2.7+ — inline descent picker overlay. None when not
+    /// 1.2.6+ — inline descent picker overlay. None when not
     /// open; `Some` when `d`/`D` is pressed and the user is
     /// choosing which child scope to enter.
     pub descent: Option<TimelineDescentState>,
@@ -3194,6 +3194,69 @@ pub struct TimelineEvent {
 
 /// Pick the next track in a cycle: `None` → tracks[0] →
 /// tracks[1] → … → `None`. Stable / wrap-aware.
+/// 1.2.6+ — pick a `(cursor_ticks, scroll_ticks, ticks_per_cell)`
+/// triplet that makes the entire timeline span visible in the
+/// current terminal. Used by `open_timeline_view` so a fresh open
+/// shows the full range (`+`/`-` then drills in). Width is
+/// sampled from `crossterm::terminal::size()` at call time;
+/// caller is responsible for not calling this with an empty
+/// event list (defaults are baked into `open_timeline_view`).
+pub(crate) fn timeline_auto_fit(
+    events: &[TimelineEvent],
+) -> (i64, i64, f64) {
+    let min_start = events
+        .iter()
+        .map(|e| e.start_ticks)
+        .min()
+        .unwrap_or(0);
+    let max_end = events
+        .iter()
+        .map(|e| e.end_ticks.unwrap_or(e.start_ticks).max(e.start_ticks))
+        .max()
+        .unwrap_or(min_start);
+    let span = (max_end - min_start).max(1);
+    // Sample terminal width. The swim-lane modal eats ~2 cells of
+    // border on each side + ~12 for the track-label gutter, so the
+    // content area is roughly `terminal_width - 16`. Fall back to
+    // 80 when crossterm can't tell us.
+    let term_w = crossterm::terminal::size()
+        .map(|(w, _)| w as usize)
+        .unwrap_or(80);
+    let content_w = term_w.saturating_sub(16).max(40);
+    // 10% headroom on each side so events at the edges don't
+    // touch the border.
+    let target_w = (content_w as f64 * 0.8).max(20.0);
+    let ticks_per_cell = ((span as f64) / target_w).max(1.0);
+    let cursor_ticks = min_start + span / 2;
+    // Scroll a little to the left of min_start so the first event
+    // doesn't touch column 0.
+    let pad = (content_w as f64 * 0.1 * ticks_per_cell).round() as i64;
+    let scroll_ticks = min_start.saturating_sub(pad);
+    (cursor_ticks, scroll_ticks, ticks_per_cell)
+}
+
+/// 1.2.6+ — jump cursor to the previous / next event by
+/// chronological order (start_ticks). Used by the timeline view's
+/// Up/Down arrows so the user can hop event-to-event without
+/// hunting with horizontal scroll.
+fn timeline_step_event_cursor(
+    events: &[TimelineEvent],
+    cursor: i64,
+    direction: i64,
+) -> Option<i64> {
+    let mut starts: Vec<i64> = events.iter().map(|e| e.start_ticks).collect();
+    starts.sort();
+    starts.dedup();
+    if starts.is_empty() {
+        return None;
+    }
+    if direction > 0 {
+        starts.into_iter().find(|t| *t > cursor)
+    } else {
+        starts.into_iter().rev().find(|t| *t < cursor)
+    }
+}
+
 pub(crate) fn cycle_track(current: Option<&str>, tracks: &[String]) -> Option<String> {
     if tracks.is_empty() {
         return None;
@@ -8332,7 +8395,7 @@ impl App {
         let mut updated = owner_node.clone();
         updated.linked_paragraphs.push(target);
         updated.modified_at = chrono::Utc::now();
-        // 1.2.7+: when `owner` is an event paragraph, the new
+        // 1.2.6+: when `owner` is an event paragraph, the new
         // link drops the `orphan` tag (and fires
         // hook.on_event_linked if/when that exists). Reconcile
         // BEFORE writing so a single update_metadata persists
@@ -8365,7 +8428,7 @@ impl App {
         let mut updated = owner_node.clone();
         updated.linked_paragraphs.retain(|u| *u != target);
         updated.modified_at = chrono::Utc::now();
-        // 1.2.7+: when `owner` is an event paragraph, losing
+        // 1.2.6+: when `owner` is an event paragraph, losing
         // its last link flips it back to orphan. Reconcile
         // before writing so the tag re-appears atomically with
         // the link removal. No-op on non-event nodes.
@@ -13641,14 +13704,14 @@ impl App {
                 self.status = "tag rename: cancelled".into();
                 return Ok(false);
             }
-            // 1.2.7+ — timeline new-event prompt.
+            // 1.2.6+ — timeline new-event prompt.
             if let Modal::TimelineNewEventPrompt { return_to, .. } = &mut self.modal {
                 let prev = std::mem::replace(return_to.as_mut(), Modal::None);
                 self.modal = prev;
                 self.status = "new event: cancelled".into();
                 return Ok(false);
             }
-            // 1.2.7+ — timeline edit-event prompt.
+            // 1.2.6+ — timeline edit-event prompt.
             if let Modal::TimelineEditEventPrompt { .. } = &mut self.modal {
                 self.modal = Modal::None;
                 self.status = "edit event: cancelled".into();
@@ -14932,7 +14995,7 @@ impl App {
     /// F8 (1.2.6+) — open the typst-diagnostics list modal.
     /// Refreshes the diagnostic cache up-front so the modal
     /// reflects the live buffer, not the last save.
-    /// 1.2.7+ — open the paragraph with `id` in the editor;
+    /// 1.2.6+ — open the paragraph with `id` in the editor;
     /// also moves the tree cursor onto it so the visible
     /// state is consistent with the action that triggered.
     fn open_paragraph_by_uuid(&mut self, id: Uuid) -> std::result::Result<(), String> {
@@ -14949,7 +15012,7 @@ impl App {
         }
         self.load_paragraph(&node).map_err(|e| e.to_string())?;
         self.change_focus(Focus::Editor);
-        // 1.2.7+: surface a clear next-step hint when the user
+        // 1.2.6+: surface a clear next-step hint when the user
         // opens an orphan event paragraph — otherwise the only
         // visible signal that the event needs a target is the
         // `[ORPHAN]` tag in the timeline view, with no nudge
@@ -14978,6 +15041,12 @@ impl App {
             KeyCode::Right => self.timeline_scroll(1, false),
             KeyCode::PageUp => self.timeline_scroll(-1, true),
             KeyCode::PageDown => self.timeline_scroll(1, true),
+            // 1.2.6+ — Up/Down hop the cursor between events
+            // chronologically. Pairs with Left/Right (viewport
+            // scroll) and PgUp/PgDn (page scroll) to give the
+            // user four distinct navigation modes.
+            KeyCode::Up => self.timeline_step_cursor(-1),
+            KeyCode::Down => self.timeline_step_cursor(1),
             // Zoom: + / =  zooms in (fewer ticks per cell),
             // - / _  zooms out (more ticks per cell). Each
             // press is a multiplicative step; keeps the
@@ -15004,7 +15073,7 @@ impl App {
             KeyCode::Char('n') | KeyCode::Char('N') => {
                 self.timeline_open_new_event_prompt()
             }
-            // 1.2.7+ Phase 3 — AI health critique.
+            // 1.2.6+ Phase 3 — AI health critique.
             //   y       — current scope, highlighted track only.
             //   Y       — current scope, all tracks.
             //   Ctrl+Y  — book scope, all tracks (widens regardless).
@@ -15151,7 +15220,7 @@ impl App {
         }
     }
 
-    /// 1.2.7+ Phase 3 — kick off the timeline health
+    /// 1.2.6+ Phase 3 — kick off the timeline health
     /// critique. `widen_to_book` ignores the current
     /// sub-scope and uses the whole book's event set;
     /// `widen_to_all_tracks` ignores `track_highlight`.
@@ -15314,7 +15383,7 @@ impl App {
             .update_metadata(node.id, node.to_json())
             .map_err(|e| format!("update_metadata: {e}"))?;
         self.store.sync().map_err(|e| format!("sync: {e}"))?;
-        // 1.2.7+ — same hook the CLI / Bund paths fire.
+        // 1.2.6+ — same hook the CLI / Bund paths fire.
         crate::scripting::hooks::fire(
             "hook.on_event_added",
             vec![rust_dynamic::value::Value::from_string(
@@ -15507,7 +15576,7 @@ impl App {
         );
     }
 
-    // ── 1.2.7+ scope navigation ──────────────────────────
+    // ── 1.2.6+ scope navigation ──────────────────────────
 
     fn timeline_descent_active(&self) -> bool {
         matches!(
@@ -15824,6 +15893,46 @@ impl App {
         state.cursor_ticks = state.cursor_ticks.saturating_add(delta_ticks);
     }
 
+    /// 1.2.6+ — Up/Down arrows: hop the timeline cursor to the
+    /// previous / next event in chronological order, and pan
+    /// the viewport just enough to keep the new cursor on
+    /// screen. Direction: -1 = previous, +1 = next.
+    fn timeline_step_cursor(&mut self, direction: i64) {
+        let Modal::TimelineView { state } = &mut self.modal else { return; };
+        let Some(target) = timeline_step_event_cursor(
+            &state.events,
+            state.cursor_ticks,
+            direction,
+        ) else {
+            self.status = if direction > 0 {
+                "timeline · already at the last event".into()
+            } else {
+                "timeline · already at the first event".into()
+            };
+            return;
+        };
+        // Keep the cursor in the middle 60% of the viewport when
+        // we jump — guards against landing on a hidden tick.
+        let term_w = crossterm::terminal::size()
+            .map(|(w, _)| w as usize)
+            .unwrap_or(80);
+        let content_w = term_w.saturating_sub(16).max(40) as f64;
+        let visible_ticks = (content_w * state.ticks_per_cell) as i64;
+        let left = state.scroll_ticks;
+        let right = state.scroll_ticks + visible_ticks;
+        let margin = visible_ticks / 5; // 20% margin
+        if target < left + margin {
+            state.scroll_ticks = target.saturating_sub(margin);
+        } else if target > right - margin {
+            state.scroll_ticks = target
+                .saturating_sub(visible_ticks - margin);
+        }
+        state.cursor_ticks = target;
+        self.status = format!(
+            "timeline · cursor → tick {target} · Enter opens nearest event"
+        );
+    }
+
     fn timeline_zoom(&mut self, factor: f64) {
         let Modal::TimelineView { state } = &mut self.modal else {
             return;
@@ -16120,7 +16229,7 @@ impl App {
             footer_rect,
         );
 
-        // 1.2.7+ — descent picker overlay. Renders above
+        // 1.2.6+ — descent picker overlay. Renders above
         // the swim lanes when active.
         if let Some(descent) = state.descent.as_ref() {
             let dw = (modal_w / 2).max(40).min(modal_w - 4);
@@ -16181,7 +16290,7 @@ impl App {
         }
     }
 
-    /// Ctrl+V t (1.2.7+) — open the swim-lane timeline view.
+    /// Ctrl+V t (1.2.6+) — open the swim-lane timeline view.
     /// Anchors to the current paragraph's nearest
     /// Subchapter / Chapter / Book ancestor; falls back to
     /// the tree cursor and finally to the first user book.
@@ -16199,20 +16308,31 @@ impl App {
         let scope_id = self.resolve_anchor_scope(book_id);
         let events = self.collect_book_events(book_id, false);
         let is_empty = events.is_empty();
-        // 1.2.7+: when the book has no events yet, still open the
+        // 1.2.6+: when the book has no events yet, still open the
         // timeline at the epoch tick so the user can press `n` to
         // add the first event from inside the TUI. The previous
         // behaviour was to refuse-and-redirect to the CLI, which
         // hid the in-TUI add chord entirely.
-        let cursor_ticks = events.first().map(|e| e.start_ticks).unwrap_or(0);
-        let scroll_ticks = cursor_ticks.saturating_sub(20);
+        //
+        // 1.2.6+ auto-fit: when events ARE present, compute the
+        // total span (earliest start → latest end/start) and pick
+        // a `ticks_per_cell` that makes the whole range fit in
+        // the visible pane. The user then drills in with `+` /
+        // `-`. Width is sampled via `crossterm::terminal::size()`
+        // at open time — close enough; the swim-lane content
+        // area is ~ `terminal_width - track_gutter - borders`.
+        let (cursor_ticks, scroll_ticks, ticks_per_cell) = if events.is_empty() {
+            (0i64, -20i64, 1.0f64)
+        } else {
+            timeline_auto_fit(&events)
+        };
         let state = TimelineViewState {
             book_id,
             scope_id,
             nav_history: Vec::new(),
             events,
             track_highlight: None,
-            ticks_per_cell: 1.0,
+            ticks_per_cell,
             scroll_ticks,
             cursor_ticks,
             project_overlay: false,
@@ -16224,12 +16344,12 @@ impl App {
             format!("timeline {crumb} · empty — press `n` to add the first event · Esc closes")
         } else {
             format!(
-                "timeline {crumb} · ←/→ scroll · +/- zoom · u/d/b/p scope · n new · Esc closes"
+                "timeline {crumb} · auto-fit · ↑↓ event step · ←→ scroll · +/- zoom · n new · Esc closes"
             )
         };
     }
 
-    /// 1.2.7+ — `Ctrl+V Shift+E`. Opens the timeline view and
+    /// 1.2.6+ — `Ctrl+V Shift+E`. Opens the timeline view and
     /// immediately triggers the new-event prompt so a fresh
     /// project (zero events) can add its first event from any
     /// pane without going through the CLI. When the timeline
@@ -16389,7 +16509,7 @@ impl App {
         }
     }
 
-    /// Ctrl+V e (1.2.7+) — gather every event in the project
+    /// Ctrl+V e (1.2.6+) — gather every event in the project
     /// and pop the picker. Bails early when timeline is
     /// disabled in HJSON so users see a precise hint instead
     /// of an empty picker.
@@ -20886,7 +21006,7 @@ impl App {
         } else {
             match node.kind {
                 NodeKind::Paragraph => {
-                    // 1.2.7+ events outrank hjson — an event
+                    // 1.2.6+ events outrank hjson — an event
                     // paragraph that also stores hjson body
                     // still reads first as a timeline event.
                     if node.event.is_some() {
@@ -21190,7 +21310,7 @@ impl App {
                     let secs = delta.num_seconds().max(0) as u64;
                     format_age_humantime(std::time::Duration::from_secs(secs))
                 });
-                // 1.2.7+: event paragraphs show their calendar
+                // 1.2.6+: event paragraphs show their calendar
                 // timing (start [→ end] · precision · track) and
                 // an [ORPHAN] tag when unlinked, so the timing
                 // metadata is visible while editing the body.
@@ -21239,6 +21359,26 @@ impl App {
                                 .any(|t| t.eq_ignore_ascii_case("orphan"))
                     })
                     .unwrap_or(false);
+                // 1.2.6+ — when the open paragraph is a regular
+                // manuscript paragraph (not itself an event),
+                // count how many timeline events link to it. The
+                // data model has supported many-to-one for a
+                // while; this surface makes the relationship
+                // visible from the editor. Linear scan over the
+                // hierarchy; cheap at literary scale.
+                let incoming_events: usize = status_node
+                    .filter(|n| n.event.is_none())
+                    .map(|n| {
+                        let me = n.id;
+                        self.hierarchy
+                            .iter()
+                            .filter(|other| {
+                                other.event.is_some()
+                                    && other.linked_paragraphs.contains(&me)
+                            })
+                            .count()
+                    })
+                    .unwrap_or(0);
 
                 let mut spans: Vec<Span<'_>> = Vec::new();
                 spans.push(Span::raw(format!(
@@ -21262,6 +21402,15 @@ impl App {
                         ));
                         spans.push(Span::raw(" · "));
                     }
+                } else if incoming_events > 0 {
+                    let plural = if incoming_events == 1 { "" } else { "s" };
+                    spans.push(Span::styled(
+                        format!("◆ linked from {incoming_events} event{plural}"),
+                        Style::default()
+                            .fg(self.theme.tree_open_marker)
+                            .add_modifier(Modifier::DIM),
+                    ));
+                    spans.push(Span::raw(" · "));
                 }
                 if let Some(label) = status_label {
                     spans.push(Span::styled(
@@ -23238,7 +23387,7 @@ fn wrap_words_or_chars(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-/// 1.2.7+ — truncate a track label to `max_chars`, appending
+/// 1.2.6+ — truncate a track label to `max_chars`, appending
 /// `…` when the value was actually shortened. Returns the
 /// original on short strings.
 fn truncate_label(label: &str, max_chars: usize) -> String {
@@ -24745,7 +24894,7 @@ regression, or neutral. Quote the specific phrases that moved. End with one \
 suggestion for what the next revision pass should focus on."
 }
 
-/// 1.2.7+ — embedded fallback for the timeline health
+/// 1.2.6+ — embedded fallback for the timeline health
 /// check (y / Y / Ctrl+Y inside Ctrl+V t). The payload
 /// itself does the heavy lifting; this top text just sets
 /// the model's task tone.

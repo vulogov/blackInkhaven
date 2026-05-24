@@ -60,7 +60,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
     vm.register_inline("ink.paragraph.save".to_string(), ink_paragraph_save)
         .map_err(|e| anyhow!("register ink.paragraph.save: {e}"))?;
 
-    // ── Events (1.2.7+ — Phase 4 of the timeline feature).
+    // ── Events (1.2.6+ — Phase 4 of the timeline feature).
     //   Reads under store_read; writes under store_write.
     vm.register_inline("ink.event.list".to_string(), ink_event_list)
         .map_err(|e| anyhow!("register ink.event.list: {e}"))?;
@@ -981,7 +981,7 @@ fn do_ink_tag_remove(vm: &mut VM) -> Result<&mut VM> {
     Ok(vm)
 }
 
-// ── 1.2.7+ Events (Phase 4 of the timeline feature) ────────────
+// ── 1.2.6+ Events (Phase 4 of the timeline feature) ────────────
 
 fn require_timeline_enabled(tag: &str) -> Result<&'static crate::config::Config> {
     let cfg = crate::scripting::active_config()

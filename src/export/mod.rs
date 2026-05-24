@@ -89,7 +89,7 @@ pub fn assemble_typst_source_filtered(
         hierarchy.flatten().into_iter().map(|(n, _)| n).collect()
     };
 
-    // 1.2.7+: identify the Timeline chapter so its paragraphs
+    // 1.2.6+: identify the Timeline chapter so its paragraphs
     // never land in the exported prose. The chapter carries the
     // `book_timeline` system_tag; we also belt-and-brace by
     // filtering individual event paragraphs (those with
@@ -109,7 +109,7 @@ pub fn assemble_typst_source_filtered(
         if node.kind != NodeKind::Paragraph {
             continue;
         }
-        // 1.2.7+: skip event paragraphs AND any paragraph whose
+        // 1.2.6+: skip event paragraphs AND any paragraph whose
         // parent is the Timeline chapter — timeline data is
         // metadata about the manuscript, not manuscript prose.
         if node.event.is_some() {

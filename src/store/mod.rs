@@ -46,7 +46,7 @@ pub const SYSTEM_TAG_ARTEFACTS: &str = "artefacts";
 pub const SYSTEM_TAG_TYPST: &str = "typst";
 pub const SYSTEM_TAG_SCRIPTS: &str = "scripts";
 pub const SYSTEM_TAG_HELP: &str = "help";
-/// 1.2.7+ — system tag stamped onto the auto-created
+/// 1.2.6+ — system tag stamped onto the auto-created
 /// Timeline chapter inside each user book that has events.
 /// Lookups by tag find the chapter regardless of user
 /// renames (rename keeps the tag).
@@ -174,7 +174,7 @@ impl Store {
     ///
     /// Called from both the TUI's `commit_add` (when creating a Book at
     /// root via the Tree pane) and the CLI's `add` subcommand.
-    /// 1.2.7+ — find (or lazily create) the `Timeline`
+    /// 1.2.6+ — find (or lazily create) the `Timeline`
     /// chapter inside `book_id`. Stamped with
     /// `system_tag: "book_timeline"` so subsequent lookups
     /// survive user renames. Returns the chapter's node id.
@@ -1268,7 +1268,7 @@ impl Store {
         };
         let mut touched = 0usize;
         for (n, _) in hierarchy.flatten() {
-            // 1.2.7+ — also scrub event-side links (characters
+            // 1.2.6+ — also scrub event-side links (characters
             // / places). Either source of dirt counts as
             // "needs rewrite".
             let para_hit = n
@@ -1445,7 +1445,7 @@ fn bund_string(s: &str) -> rust_dynamic::value::Value {
     rust_dynamic::value::Value::from_string(s)
 }
 
-/// 1.2.7+ — keep the `orphan` tag in sync with the event's
+/// 1.2.6+ — keep the `orphan` tag in sync with the event's
 /// actual link state. Called by every mutation that touches
 /// an event (add, link change, scrub-on-delete). Idempotent;
 /// no-op when the node isn't an event.

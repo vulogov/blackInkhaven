@@ -1,4 +1,4 @@
-//! Story timeline (Phase 1 of the 1.2.7+ timeline feature).
+//! Story timeline (Phase 1 of the 1.2.6+ timeline feature).
 //!
 //! Timelines in inkhaven are built around three primitives:
 //!

@@ -155,7 +155,7 @@ pub(crate) fn seed_prompt_examples(cfg: &Config, store: &Store) -> Result<()> {
         (
             "timeline-health.example",
             format!(
-                "// 1.2.7+ — Ctrl+V t · y/Y/Ctrl+Y · timeline\n\
+                "// 1.2.6+ — Ctrl+V t · y/Y/Ctrl+Y · timeline\n\
                  // consistency audit. Rename to `timeline-health`\n\
                  // to take effect.\n\n\
                  {}\n",

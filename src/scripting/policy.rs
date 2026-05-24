@@ -122,7 +122,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.tag.list", category::STORE_READ),
     ("ink.tag.list_for", category::STORE_READ),
     ("ink.tag.search", category::STORE_READ),
-    // 1.2.7+ events — reads.
+    // 1.2.6+ events — reads.
     ("ink.event.list", category::STORE_READ),
     ("ink.event.list_orphans", category::STORE_READ),
 
@@ -142,7 +142,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // 1.2.6+ tag mutations.
     ("ink.tag.add", category::STORE_WRITE),
     ("ink.tag.remove", category::STORE_WRITE),
-    // 1.2.7+ event mutations.
+    // 1.2.6+ event mutations.
     ("ink.event.add", category::STORE_WRITE),
     ("ink.event.set_end", category::STORE_WRITE),
     ("ink.event.set_precision", category::STORE_WRITE),
