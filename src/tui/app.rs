@@ -13080,9 +13080,13 @@ impl App {
                 .unwrap_or(&fmt)
                 .to_string());
         }
-        // Final frame so the user sees all checkmarks before
-        // the splash collapses + the wait-for-key (when on)
-        // kicks in upstream.
+        // Final frame so the user sees all checkmarks. When
+        // `typst_compile.wait_for_key_after_compile` is on (the
+        // 1.2.6 default), we hold this frame until any key
+        // press — exactly the same pattern the compile splash
+        // uses. Without the wait, we sleep one more step_pause
+        // so even auto-dismiss configs are catchable in a
+        // terminal screenshot.
         let _ = terminal.draw(|f| {
             draw_take_extras_splash(
                 f,
@@ -13092,7 +13096,26 @@ impl App {
                 &statuses,
             )
         });
-        if !step_pause.is_zero() {
+        if self.cfg.typst_compile.wait_for_key_after_compile {
+            loop {
+                match crossterm::event::read() {
+                    Ok(crossterm::event::Event::Key(_)) => break,
+                    Ok(crossterm::event::Event::Resize(_, _)) => {
+                        let _ = terminal.draw(|f| {
+                            draw_take_extras_splash(
+                                f,
+                                &book_display,
+                                formats_display.len().saturating_sub(1),
+                                &formats_display,
+                                &statuses,
+                            )
+                        });
+                    }
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
+            }
+        } else if !step_pause.is_zero() {
             std::thread::sleep(step_pause);
         }
         produced
