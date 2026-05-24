@@ -52,7 +52,7 @@ pub struct Config {
     /// turn-history overrides, etc).
     #[serde(default)]
     pub ai: AiConfig,
-    /// 1.2.7+ — story timeline configuration. Disabled by
+    /// 1.2.6+ — story timeline configuration. Disabled by
     /// default; set `timeline.enabled: true` plus a calendar
     /// preset to turn on event tracking. See
     /// `crate::timeline::calendar::CalendarConfig`.
@@ -1369,7 +1369,7 @@ pub struct OutputConfig {
     pub extra_formats: Vec<String>,
 }
 
-/// 1.2.7+ — story timeline feature config. `enabled: false`
+/// 1.2.6+ — story timeline feature config. `enabled: false`
 /// (the default) hides every timeline chord, CLI subcommand,
 /// and Bund word. Once enabled, events become a first-class
 /// metadata layer over the existing paragraph tree (see

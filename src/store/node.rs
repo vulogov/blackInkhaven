@@ -192,7 +192,7 @@ pub struct Node {
     #[serde(default)]
     pub ai_memory: Vec<AiMemoryTurn>,
 
-    /// 1.2.7+ — when set, this paragraph is also a story
+    /// 1.2.6+ — when set, this paragraph is also a story
     /// event. Carries start/end ticks (integers from the
     /// project's calendar epoch), a precision hint for fuzzy
     /// dates, plus links to characters / places. The
@@ -204,7 +204,7 @@ pub struct Node {
     pub event: Option<EventData>,
 }
 
-/// 1.2.7+ — story-timeline metadata attached to a paragraph
+/// 1.2.6+ — story-timeline metadata attached to a paragraph
 /// that doubles as an event marker. None means "not an event"
 /// (the default for every regular paragraph).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]

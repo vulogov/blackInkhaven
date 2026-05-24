@@ -243,7 +243,7 @@ pub enum Command {
     /// questions asked, pipe-friendly plain-text output.
     Doctor,
 
-    /// 1.2.7+ — story-timeline event management. Requires
+    /// 1.2.6+ — story-timeline event management. Requires
     /// `timeline.enabled: true` in HJSON.
     #[command(subcommand)]
     Event(EventCommand),

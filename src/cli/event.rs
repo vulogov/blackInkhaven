@@ -1,4 +1,4 @@
-//! `inkhaven event …` subcommands (1.2.7+).
+//! `inkhaven event …` subcommands (1.2.6+).
 //!
 //! Phase 1 of the timeline feature exposes three operations:
 //!
@@ -129,7 +129,7 @@ fn add(
         .map_err(|e| anyhow!("stamp event metadata: {e}"))?;
     store.sync()?;
 
-    // 1.2.7+ Phase 4 — fire `hook.on_event_added` so Bund
+    // 1.2.6+ Phase 4 — fire `hook.on_event_added` so Bund
     // scripts can react (timeline-aware indexing, automated
     // critique, etc.).
     crate::scripting::hooks::fire(

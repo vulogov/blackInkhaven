@@ -89,7 +89,7 @@ pub fn fire(name: &str, args: Vec<Value>) {
     }
 
     DEPTH.with(|c| c.set(depth + 1));
-    // 1.2.7+ — drain anything in the print buffer BEFORE
+    // 1.2.6+ — drain anything in the print buffer BEFORE
     // the hook eval so we can attribute output that arrived
     // afterwards to this specific fire.
     let _ = super::stdlib::io::drain_print_buffer();
