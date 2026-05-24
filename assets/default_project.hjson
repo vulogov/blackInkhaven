@@ -258,6 +258,31 @@
     volume: 0.6
   }
 
+  // 1.2.6+ — story timeline. Off by default. Flip `enabled` to
+  // `true` to unlock the timeline surfaces: `Ctrl+V e` event
+  // picker, `Ctrl+V Shift+T` swim-lane view, `Ctrl+V Shift+E`
+  // new event from any pane, `Ctrl+V Shift+I` edit event
+  // timing, and the `inkhaven event add/list/show` CLI. The
+  // calendar preset decides how `--start` strings are parsed
+  // and rendered:
+  //
+  // - `gregorian` — real-world Y.M.D (e.g. `2026.1.1`).
+  // - `sols`      — single-unit Sol N since day zero
+  //   (e.g. `Sol 13`).
+  // - `custom`    — define units + seasons + format string
+  //   yourself. See Documentation/Tutorials/31-story-timeline.md
+  //   for the full custom-calendar schema.
+  //
+  // `default_track` names the swim lane an event lands on when
+  // its `--track` is omitted.
+  timeline: {
+    enabled: false
+    default_track: "main"
+    calendar: {
+      preset: "gregorian"
+    }
+  }
+
   // Typst wrap function templates used by Book assembly (Ctrl+B A).
   // The strings below are inlined verbatim into the per-book
   // `globals.typ` paragraph the first time a user book is created —
