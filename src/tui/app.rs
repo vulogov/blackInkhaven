@@ -15256,7 +15256,18 @@ impl App {
     }
 
     /// Find the event closest to `cursor_ticks` (preferring
-    /// the highlighted track) and load its paragraph.
+    /// the highlighted track) and open the LinkPicker over
+    /// its `linked_paragraphs` — the scenes / manuscript
+    /// paragraphs the event is anchored to.
+    ///
+    /// 1.2.7+ behaviour change: Enter used to open the
+    /// event paragraph body itself. That surface still lives
+    /// behind the `Ctrl+V e` picker. Enter in the timeline
+    /// view now takes the user to the *content* the event
+    /// references — the typical follow-up from "I see this
+    /// event on the swim lane, take me to the scene it
+    /// anchors". Zero / single / many linked paragraphs
+    /// each handled with the right shortcut.
     fn timeline_open_event_under_cursor(&mut self) {
         let Modal::TimelineView { state } = &self.modal else { return; };
         let cursor = state.cursor_ticks;
@@ -15279,14 +15290,52 @@ impl App {
                 _ => {}
             }
         }
-        let Some((id, _)) = best else {
+        let Some((event_id, _)) = best else {
             self.status = "timeline · no events to open".into();
             return;
         };
-        // Close the modal first, then load.
-        self.modal = Modal::None;
-        if let Err(e) = self.open_paragraph_by_uuid(id) {
-            self.status = format!("timeline · couldn't open event: {e}");
+        let event_title = self
+            .hierarchy
+            .get(event_id)
+            .map(|n| n.title.clone())
+            .unwrap_or_else(|| "<event>".into());
+        // Pull the linked paragraphs from the event node.
+        // Empty / single / many → three different paths.
+        let entries = self.collect_link_entries(event_id);
+        match entries.len() {
+            0 => {
+                self.status = format!(
+                    "timeline · `{event_title}` has no linked paragraphs — Ctrl+V A on the event ¶ to link a scene"
+                );
+            }
+            1 => {
+                // Single hit — open it directly. Status
+                // notes which event we routed through so
+                // the user can audit later.
+                let id = entries[0].id;
+                let target_title = entries[0].title.clone();
+                self.modal = Modal::None;
+                if let Err(e) = self.open_paragraph_by_uuid(id) {
+                    self.status =
+                        format!("timeline · couldn't open `{target_title}`: {e}");
+                } else if !self.status.starts_with("orphan event") {
+                    self.status = format!(
+                        "timeline · `{event_title}` → `{target_title}`"
+                    );
+                }
+            }
+            _ => {
+                let count = entries.len();
+                self.modal = Modal::LinkPicker {
+                    owner: event_id,
+                    entries,
+                    cursor: 0,
+                    scroll: 0,
+                };
+                self.status = format!(
+                    "timeline · `{event_title}` links to {count} paragraph(s) · ↑↓ select · Enter opens · Esc closes"
+                );
+            }
         }
     }
 
