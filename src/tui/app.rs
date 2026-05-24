@@ -3226,12 +3226,41 @@ pub(crate) struct TimelineViewState {
     /// lane. Toggle with Space on the currently-highlighted
     /// track (Tab cycles the highlight).
     pub collapsed_tracks: std::collections::HashSet<String>,
+    /// 1.2.7+ — the track whose events are currently shown
+    /// as text sub-rows beneath the swim lane (tree-style
+    /// expansion). At most one track is expanded at a time.
+    /// `None` when navigation is at TRACK focus level; `Some`
+    /// when the user has pressed Enter on a track and is now
+    /// at EVENT focus level for that track.
+    pub expanded_track: Option<String>,
+    /// 1.2.7+ — navigation focus mode. `Track` (the default):
+    /// Tab cycles tracks, Enter expands the focused track.
+    /// `Event`: Tab cycles events of `expanded_track`, Enter
+    /// opens the linked-paragraphs picker for the focused
+    /// event. Esc / Backspace pops back to `Track`.
+    pub focus_level: TimelineFocusLevel,
     /// Cross-book project overlay. Phase-2 batch 3.
     pub project_overlay: bool,
     /// 1.2.6+ — inline descent picker overlay. None when not
     /// open; `Some` when `d`/`D` is pressed and the user is
     /// choosing which child scope to enter.
     pub descent: Option<TimelineDescentState>,
+}
+
+/// 1.2.7+ — two-level navigation cursor for the timeline
+/// view. Mirrors the tree pane's "Tab cycles siblings, Enter
+/// descends into children" model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TimelineFocusLevel {
+    /// Top-level. Tab cycles between tracks; Enter on a track
+    /// expands that track's events as text sub-rows below the
+    /// swim lane and drops focus into `Event`.
+    Track,
+    /// Inside an expanded track. Tab cycles events of that
+    /// track in chronological order; Enter on an event opens
+    /// the linked-paragraphs picker (same modal Ctrl+V L
+    /// surfaces). Esc / Backspace pops back to `Track`.
+    Event,
 }
 
 /// State for the inline descent picker shown over the swim
@@ -15223,8 +15252,14 @@ impl App {
             KeyCode::Char('d') | KeyCode::Char('D') => self.timeline_open_descent(),
             KeyCode::Char('b') | KeyCode::Char('B') => self.timeline_jump_book_scope(),
             KeyCode::Char('p') | KeyCode::Char('P') => self.timeline_toggle_project(),
-            KeyCode::Tab => self.timeline_cycle_track(),
-            KeyCode::Enter => self.timeline_open_event_under_cursor(),
+            // 1.2.7+ — tree-style nav. Tab cycles at the
+            // current focus level (Track or Event). Shift+Tab
+            // cycles backward. Enter descends; Backspace pops
+            // up; Esc closes the modal.
+            KeyCode::Tab => self.timeline_tab(false),
+            KeyCode::BackTab => self.timeline_tab(true),
+            KeyCode::Enter => self.timeline_enter(),
+            KeyCode::Backspace => self.timeline_pop_to_track_focus(),
             KeyCode::Char('n') | KeyCode::Char('N') => {
                 self.timeline_open_new_event_prompt()
             }
@@ -15260,6 +15295,221 @@ impl App {
                 self.timeline_toggle_collapse();
             }
             _ => {}
+        }
+    }
+
+    /// 1.2.7+ — collect the events of a given track in
+    /// chronological order. Used by the tree-style nav to
+    /// cycle events of the expanded track via Tab.
+    fn timeline_events_of_track(&self, label: &str) -> Vec<Uuid> {
+        let Modal::TimelineView { state } = &self.modal else { return Vec::new(); };
+        let default_track = &self.cfg.timeline.default_track;
+        let mut hits: Vec<(i64, Uuid)> = state
+            .events
+            .iter()
+            .filter(|e| {
+                !e.is_orphan
+                    && e.track.as_deref().unwrap_or(default_track) == label
+            })
+            .map(|e| (e.start_ticks, e.id))
+            .collect();
+        hits.sort_by_key(|(t, _)| *t);
+        hits.into_iter().map(|(_, id)| id).collect()
+    }
+
+    /// 1.2.7+ — list of tracks visible in the swim lane, in
+    /// the same order the render uses (default track first,
+    /// then alphabetical). Skips the synthetic `orphan` row.
+    fn timeline_visible_tracks(&self) -> Vec<String> {
+        let Modal::TimelineView { state } = &self.modal else { return Vec::new(); };
+        let default_track = self.cfg.timeline.default_track.clone();
+        let mut tracks: Vec<String> = state
+            .events
+            .iter()
+            .filter(|e| !e.is_orphan)
+            .map(|e| e.track.clone().unwrap_or_else(|| default_track.clone()))
+            .collect();
+        tracks.sort();
+        tracks.dedup();
+        if let Some(i) = tracks.iter().position(|t| t == &default_track) {
+            tracks.swap(0, i);
+        }
+        tracks
+    }
+
+    /// 1.2.7+ — Tab / Shift+Tab handler.
+    /// * Track focus: cycle tracks (forward or backward).
+    /// * Event focus: cycle events of the expanded track.
+    fn timeline_tab(&mut self, backward: bool) {
+        // Pull the focus level out first to avoid borrow
+        // tangles with the helpers below.
+        let focus = {
+            let Modal::TimelineView { state } = &self.modal else { return; };
+            state.focus_level.clone()
+        };
+        match focus {
+            TimelineFocusLevel::Track => self.timeline_tab_track(backward),
+            TimelineFocusLevel::Event => self.timeline_tab_event(backward),
+        }
+    }
+
+    fn timeline_tab_track(&mut self, backward: bool) {
+        let tracks = self.timeline_visible_tracks();
+        if tracks.is_empty() {
+            self.status = "timeline · no tracks to cycle".into();
+            return;
+        }
+        let Modal::TimelineView { state } = &mut self.modal else { return; };
+        let current_idx = state
+            .track_highlight
+            .as_ref()
+            .and_then(|h| tracks.iter().position(|t| t == h));
+        let next_idx = match (current_idx, backward) {
+            (None, false) => 0,
+            (None, true) => tracks.len() - 1,
+            (Some(i), false) => (i + 1) % tracks.len(),
+            (Some(i), true) => (i + tracks.len() - 1) % tracks.len(),
+        };
+        let next_label = tracks[next_idx].clone();
+        state.track_highlight = Some(next_label.clone());
+        self.status = format!(
+            "timeline · track `{next_label}` highlighted — Enter to expand · Space to collapse"
+        );
+    }
+
+    fn timeline_tab_event(&mut self, backward: bool) {
+        // Pull the expanded track + current event out, then
+        // compute next via the events_of_track helper.
+        let (track_label, current_event) = {
+            let Modal::TimelineView { state } = &self.modal else { return; };
+            (
+                state.expanded_track.clone(),
+                state.selected_event_id,
+            )
+        };
+        let Some(label) = track_label else {
+            // Shouldn't happen — Event focus implies
+            // expanded_track is set — but recover safely.
+            self.timeline_pop_to_track_focus();
+            return;
+        };
+        let events = self.timeline_events_of_track(&label);
+        if events.is_empty() {
+            self.status = format!("timeline · `{label}` has no events");
+            self.timeline_pop_to_track_focus();
+            return;
+        }
+        let current_idx = current_event.and_then(|id| events.iter().position(|e| *e == id));
+        let next_idx = match (current_idx, backward) {
+            (None, false) => 0,
+            (None, true) => events.len() - 1,
+            (Some(i), false) => (i + 1) % events.len(),
+            (Some(i), true) => (i + events.len() - 1) % events.len(),
+        };
+        let next_id = events[next_idx];
+        // Use the existing select-by-id flow (sets cursor +
+        // pans viewport).
+        self.timeline_select_event_by_id(next_id);
+    }
+
+    /// 1.2.7+ — Enter handler.
+    /// * Track focus: expand the highlighted track and drop
+    ///   into Event focus (first event of that track).
+    /// * Event focus: open the linked-paragraphs picker
+    ///   (existing `timeline_open_event_under_cursor`).
+    fn timeline_enter(&mut self) {
+        let focus = {
+            let Modal::TimelineView { state } = &self.modal else { return; };
+            state.focus_level.clone()
+        };
+        match focus {
+            TimelineFocusLevel::Track => {
+                let highlight = {
+                    let Modal::TimelineView { state } = &self.modal else { return; };
+                    state.track_highlight.clone()
+                };
+                let Some(label) = highlight else {
+                    self.status =
+                        "timeline · Tab to highlight a track, then Enter to expand its events".into();
+                    return;
+                };
+                let events = self.timeline_events_of_track(&label);
+                let first = events.first().copied();
+                {
+                    let Modal::TimelineView { state } = &mut self.modal else { return; };
+                    state.expanded_track = Some(label.clone());
+                    state.focus_level = TimelineFocusLevel::Event;
+                }
+                if let Some(id) = first {
+                    self.timeline_select_event_by_id(id);
+                }
+                let n = events.len();
+                self.status = format!(
+                    "timeline · expanded `{label}` ({n} event{plural}) · Tab cycles events · Enter opens linked ¶ · Backspace pops up",
+                    plural = if n == 1 { "" } else { "s" }
+                );
+            }
+            TimelineFocusLevel::Event => {
+                self.timeline_open_event_under_cursor();
+            }
+        }
+    }
+
+    /// Helper used by Tab-cycle-events and Enter-on-track to
+    /// stamp the selection + pan the viewport in one place.
+    fn timeline_select_event_by_id(&mut self, id: Uuid) {
+        let (start_ticks, end_ticks) = {
+            let Modal::TimelineView { state } = &self.modal else { return; };
+            let ev = state.events.iter().find(|e| e.id == id);
+            match ev {
+                Some(e) => (e.start_ticks, e.end_ticks),
+                None => return,
+            }
+        };
+        let Modal::TimelineView { state } = &mut self.modal else { return; };
+        state.selected_event_id = Some(id);
+        state.cursor_ticks = start_ticks;
+        // Same auto-pan rule as `timeline_step_cursor`.
+        let term_w = crossterm::terminal::size()
+            .map(|(w, _)| w as usize)
+            .unwrap_or(80);
+        let content_w = term_w.saturating_sub(16).max(40) as f64;
+        let visible_ticks = (content_w * state.ticks_per_cell) as i64;
+        let span_end = end_ticks.unwrap_or(start_ticks);
+        let span_width = (span_end - start_ticks).abs();
+        if span_width >= visible_ticks {
+            state.scroll_ticks =
+                start_ticks.saturating_sub((visible_ticks - span_width) / 2);
+        } else {
+            let margin = (visible_ticks / 7).max(2);
+            let left = state.scroll_ticks;
+            let right = state.scroll_ticks + visible_ticks;
+            if start_ticks < left + margin {
+                state.scroll_ticks = start_ticks.saturating_sub(margin);
+            } else if span_end > right - margin {
+                state.scroll_ticks = span_end.saturating_sub(visible_ticks - margin);
+            }
+        }
+    }
+
+    /// 1.2.7+ — Backspace / Esc-at-Event handler. Drops back
+    /// to Track focus, clears event selection but keeps the
+    /// track highlight + the expanded sub-rows visible.
+    fn timeline_pop_to_track_focus(&mut self) {
+        let Modal::TimelineView { state } = &mut self.modal else { return; };
+        if state.focus_level == TimelineFocusLevel::Event {
+            state.focus_level = TimelineFocusLevel::Track;
+            // Clear selection so the swim-lane highlight goes
+            // away; expansion stays so the user can re-enter
+            // it with Enter.
+            state.selected_event_id = None;
+            let label = state
+                .expanded_track
+                .clone()
+                .unwrap_or_else(|| "?".into());
+            self.status = format!(
+                "timeline · back to track focus (`{label}` still expanded — Enter re-enters)"
+            );
         }
     }
 
@@ -15530,6 +15780,8 @@ impl App {
                 cursor_ticks: 0,
                 selected_event_id: None,
                 collapsed_tracks: std::collections::HashSet::new(),
+                expanded_track: None,
+                focus_level: TimelineFocusLevel::Track,
                 project_overlay: project,
                 descent: None,
             };
@@ -16402,7 +16654,7 @@ impl App {
         label_row.push_str(&label_chars.iter().collect::<String>());
 
         // Footer hint.
-        let footer = " ←/→ scroll · ↑/↓ event · Tab/Space track · +/- zoom · u/d/b/p scope · Enter ¶ list · F12 critique · Esc close ";
+        let footer = " Tab/Shift+Tab cycle · Enter expand/open · Backspace up · ←/→ scroll · ↑/↓ event · Space collapse · +/- zoom · F12 critique · Esc close ";
 
         // Compose lines.
         let mut all_lines: Vec<Line<'_>> = Vec::new();
@@ -16559,6 +16811,67 @@ impl App {
             }
             flush(&mut buf, cur_style, &mut spans);
             all_lines.push(Line::from(spans));
+
+            // 1.2.7+ — expanded track: emit each event of
+            // this track as an indented text sub-row beneath
+            // the swim lane. Mirrors the tree pane's
+            // "branch expanded → children visible" model.
+            // Highlights the currently-selected event row
+            // when focus_level == Event.
+            if !row.is_orphan_row
+                && state.expanded_track.as_deref() == Some(row.label.as_str())
+            {
+                let default_track = &self.cfg.timeline.default_track;
+                let mut track_events: Vec<&TimelineEvent> = state
+                    .events
+                    .iter()
+                    .filter(|e| {
+                        !e.is_orphan
+                            && e.track.as_deref().unwrap_or(default_track)
+                                == row.label
+                    })
+                    .collect();
+                track_events.sort_by_key(|e| e.start_ticks);
+                for ev in track_events {
+                    let is_focused = state
+                        .selected_event_id
+                        .is_some_and(|id| id == ev.id);
+                    let start_str = calendar.format(
+                        crate::timeline::TimelinePoint::from_ticks(ev.start_ticks),
+                        ev.precision,
+                    );
+                    let timing = match ev.end_ticks {
+                        Some(end_t) => {
+                            let e = calendar.format(
+                                crate::timeline::TimelinePoint::from_ticks(end_t),
+                                ev.precision,
+                            );
+                            format!("{start_str} → {e}")
+                        }
+                        None => start_str,
+                    };
+                    let n_links = ev.linked_paragraphs.len();
+                    let links_str = match n_links {
+                        0 => "no links".to_string(),
+                        1 => "1 link".to_string(),
+                        n => format!("{n} links"),
+                    };
+                    let bullet = if is_focused { '►' } else { '◆' };
+                    let line_text = format!(
+                        "       {bullet} {title}  ·  {timing}  ·  {links_str}",
+                        title = truncate_label(&ev.title, 40),
+                    );
+                    let style = if is_focused {
+                        Style::default()
+                            .fg(self.theme.tree_chapter_fg)
+                            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                            .fg(self.theme.tree_paragraph_fg)
+                    };
+                    all_lines.push(Line::from(Span::styled(line_text, style)));
+                }
+            }
         }
         // Pad to fill the body height with empty lines.
         let body_h = inner.height.saturating_sub(1);
@@ -16708,6 +17021,8 @@ impl App {
             cursor_ticks,
             selected_event_id: None,
             collapsed_tracks: std::collections::HashSet::new(),
+            expanded_track: None,
+            focus_level: TimelineFocusLevel::Track,
             project_overlay: false,
             descent: None,
         };
