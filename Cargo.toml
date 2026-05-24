@@ -15,6 +15,46 @@ readme = "README.md"
 keywords = ["tui", "editor", "typst", "writing", "ai"]
 categories = ["command-line-utilities", "text-editors", "text-processing"]
 
+# `cargo publish` packaging filter. Keeps the crate tarball
+# small + focused on what a `cargo install inkhaven` consumer
+# actually needs to compile and run the binary. Without
+# this, the Book/ PDF (≈7 MB), screenshots (1+ MB each),
+# rendered artefacts, and the entire Documentation/ tree
+# would get bundled — pushing the crate past crates.io's
+# default per-file ceilings and the practical 10 MB total
+# soft-cap, and bloating the cargo-binstall fallback path
+# for users without prebuilts.
+#
+# Patterns are glob-style relative to the crate root. The
+# Book of Inkhaven companion volume lives in git for readers
+# and gets re-rendered on every release tag — it does NOT
+# need to ship inside the crate.
+exclude = [
+    # Companion book — typst sources, markdown mirror, the
+    # rendered PDF, every screenshot PNG, the cover art.
+    "Book/**",
+    # User-facing docs — read on GitHub, not from cargo doc.
+    "Documentation/**",
+    # CI workflows + per-machine editor / agent state.
+    ".github/**",
+    ".claude/**",
+    ".vscode/**",
+    ".idea/**",
+    # macOS / shell scratch.
+    ".DS_Store",
+    "**/.DS_Store",
+    # Rendered artefacts from `Ctrl+B O` takes that ended up
+    # at the repo root during development. Same patterns the
+    # top-level .gitignore protects against.
+    "/*.pdf",
+    "/*.epub",
+    # NB: do NOT exclude `*.png` globally — `logo.png` at the
+    # repo root is `include_bytes!`'d into the binary; the
+    # build breaks without it. assets/* is also untouched
+    # because every file there is loaded via include_str! /
+    # include_bytes!.
+]
+
 # Distribution model: binary releases via GitHub Actions
 # (`.github/workflows/release.yml`) on tag push. Users install with:
 #   * `cargo install --git https://github.com/vulogov/blackInkhaven`
