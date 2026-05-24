@@ -1375,6 +1375,13 @@ pub struct OutputConfig {
     /// `✓` frame. Set to `0` to disable the artificial pause.
     /// Default `400` (≈ 1.2s for a 3-format build).
     pub extras_step_pause_ms: u64,
+    /// 1.2.6+ — when true, the final all-✓ frame of the extras
+    /// splash holds until the user presses any key (same shape
+    /// as `typst_compile.wait_for_key_after_compile`). Useful
+    /// for screenshots / demos; off in normal use so a batch
+    /// `Ctrl+B O` doesn't trap the user behind a key prompt.
+    /// Default `false`.
+    pub extras_wait_for_key: bool,
 }
 
 impl Default for OutputConfig {
@@ -1382,6 +1389,7 @@ impl Default for OutputConfig {
         Self {
             extra_formats: Vec::new(),
             extras_step_pause_ms: 400,
+            extras_wait_for_key: false,
         }
     }
 }
