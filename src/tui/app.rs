@@ -8322,6 +8322,13 @@ impl App {
         let mut updated = owner_node.clone();
         updated.linked_paragraphs.push(target);
         updated.modified_at = chrono::Utc::now();
+        // 1.2.7+: when `owner` is an event paragraph, the new
+        // link drops the `orphan` tag (and fires
+        // hook.on_event_linked if/when that exists). Reconcile
+        // BEFORE writing so a single update_metadata persists
+        // both the link AND the tag transition. Idempotent /
+        // no-op on non-event nodes.
+        crate::store::reconcile_event_orphan_tag(&mut updated);
         self.store
             .raw()
             .update_metadata(owner, updated.to_json())
@@ -8348,6 +8355,11 @@ impl App {
         let mut updated = owner_node.clone();
         updated.linked_paragraphs.retain(|u| *u != target);
         updated.modified_at = chrono::Utc::now();
+        // 1.2.7+: when `owner` is an event paragraph, losing
+        // its last link flips it back to orphan. Reconcile
+        // before writing so the tag re-appears atomically with
+        // the link removal. No-op on non-event nodes.
+        crate::store::reconcile_event_orphan_tag(&mut updated);
         self.store
             .raw()
             .update_metadata(owner, updated.to_json())
