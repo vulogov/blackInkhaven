@@ -33,8 +33,14 @@ exclude = [
     # Companion book — typst sources, markdown mirror, the
     # rendered PDF, every screenshot PNG, the cover art.
     "Book/**",
-    # User-facing docs — read on GitHub, not from cargo doc.
-    "Documentation/**",
+    # Documentation/ ships in the crate — the markdown
+    # tutorials + release notes are small (~800 KB
+    # uncompressed, ~150 KB after gzip) and useful to
+    # `cargo install` consumers without a clone. The only
+    # carve-out is rendered PDFs of those docs, which are
+    # ephemeral local builds and should never travel inside
+    # the crate.
+    "Documentation/**/*.pdf",
     # CI workflows + per-machine editor / agent state.
     ".github/**",
     ".claude/**",
