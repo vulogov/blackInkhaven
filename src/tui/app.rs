@@ -15357,19 +15357,34 @@ impl App {
         }
     }
 
+    /// 1.2.7+ — the effective track-key for an event,
+    /// matching what `layout_swim_lanes` uses to build row
+    /// labels. In project-overlay mode the key is prefixed
+    /// with the event's book slug
+    /// (`aerin-saga/main` vs bare `main`) so cross-book
+    /// tracks don't collide. All track-aware helpers must
+    /// agree on this key.
+    fn timeline_event_track_key(&self, e: &TimelineEvent) -> String {
+        let raw = e
+            .track
+            .clone()
+            .unwrap_or_else(|| self.cfg.timeline.default_track.clone());
+        if e.book_prefix.is_empty() {
+            raw
+        } else {
+            format!("{}/{}", e.book_prefix, raw)
+        }
+    }
+
     /// 1.2.7+ — collect the events of a given track in
     /// chronological order. Used by the tree-style nav to
     /// cycle events of the expanded track via Tab.
     fn timeline_events_of_track(&self, label: &str) -> Vec<Uuid> {
         let Modal::TimelineView { state } = &self.modal else { return Vec::new(); };
-        let default_track = &self.cfg.timeline.default_track;
         let mut hits: Vec<(i64, Uuid)> = state
             .events
             .iter()
-            .filter(|e| {
-                !e.is_orphan
-                    && e.track.as_deref().unwrap_or(default_track) == label
-            })
+            .filter(|e| !e.is_orphan && self.timeline_event_track_key(e) == label)
             .map(|e| (e.start_ticks, e.id))
             .collect();
         hits.sort_by_key(|(t, _)| *t);
@@ -15379,6 +15394,7 @@ impl App {
     /// 1.2.7+ — list of tracks visible in the swim lane, in
     /// the same order the render uses (default track first,
     /// then alphabetical). Skips the synthetic `orphan` row.
+    /// Uses the book-prefixed key when project overlay is on.
     fn timeline_visible_tracks(&self) -> Vec<String> {
         let Modal::TimelineView { state } = &self.modal else { return Vec::new(); };
         let default_track = self.cfg.timeline.default_track.clone();
@@ -15386,7 +15402,7 @@ impl App {
             .events
             .iter()
             .filter(|e| !e.is_orphan)
-            .map(|e| e.track.clone().unwrap_or_else(|| default_track.clone()))
+            .map(|e| self.timeline_event_track_key(e))
             .collect();
         tracks.sort();
         tracks.dedup();
@@ -16754,8 +16770,7 @@ impl App {
                     .iter()
                     .filter(|e| {
                         !e.is_orphan
-                            && e.track.as_deref().unwrap_or(default_track)
-                                == row.label
+                            && self.timeline_event_track_key(e) == row.label
                     })
                     .count();
                 let mut style = dim_style;
@@ -16880,14 +16895,12 @@ impl App {
             if !row.is_orphan_row
                 && state.expanded_track.as_deref() == Some(row.label.as_str())
             {
-                let default_track = &self.cfg.timeline.default_track;
                 let mut track_events: Vec<&TimelineEvent> = state
                     .events
                     .iter()
                     .filter(|e| {
                         !e.is_orphan
-                            && e.track.as_deref().unwrap_or(default_track)
-                                == row.label
+                            && self.timeline_event_track_key(e) == row.label
                     })
                     .collect();
                 track_events.sort_by_key(|e| e.start_ticks);
@@ -17103,6 +17116,24 @@ impl App {
     /// has events, the prompt fires at the timeline cursor's
     /// current tick (same as pressing `n` after opening).
     fn open_new_event_prompt_from_anywhere(&mut self) {
+        // 1.2.7+ — pre-fill the event title with the editor's
+        // current selection, if any. Lets the user highlight
+        // a phrase like "the storm at dawn" → Ctrl+V Shift+E
+        // → modal pops with that text already in the input.
+        // Selection truncated to 60 chars (the prompt's
+        // practical width); newlines flattened to spaces.
+        let prefill = self.editor_selection_text().map(|s| {
+            let flat = s
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if flat.chars().count() > 60 {
+                let truncated: String = flat.chars().take(59).collect();
+                format!("{truncated}…")
+            } else {
+                flat
+            }
+        });
         self.open_timeline_view();
         // open_timeline_view bails before setting Modal::TimelineView
         // when timeline is disabled / no books exist; in that case
@@ -17110,6 +17141,35 @@ impl App {
         // prompt is a no-op.
         if matches!(self.modal, Modal::TimelineView { .. }) {
             self.timeline_open_new_event_prompt();
+            if let (Some(text), Modal::TimelineNewEventPrompt { input, .. }) =
+                (prefill, &mut self.modal)
+            {
+                for c in text.chars() {
+                    input.insert_char(c);
+                }
+                self.status =
+                    "new event: title pre-filled from editor selection · Enter commits · Esc cancels".into();
+            }
+        }
+    }
+
+    /// 1.2.7+ — return the current editor selection as a
+    /// `String`, or `None` when no selection is active.
+    /// Preserves the textarea's yank buffer (we briefly
+    /// hijack it to read the selection then restore).
+    fn editor_selection_text(&mut self) -> Option<String> {
+        let doc = self.opened.as_mut()?;
+        if doc.textarea.selection_range().is_none() {
+            return None;
+        }
+        let saved = doc.textarea.yank_text();
+        doc.textarea.copy();
+        let text = doc.textarea.yank_text();
+        doc.textarea.set_yank_text(saved);
+        if text.trim().is_empty() {
+            None
+        } else {
+            Some(text)
         }
     }
 
@@ -17545,6 +17605,10 @@ impl App {
             self.status = "F8 diagnostics: no typst diagnostics in this buffer".into();
             return;
         }
+        // 1.2.7+ — F8 now fires from any pane; pull focus
+        // back to the editor so the Enter-jumps-to-line
+        // behaviour lands in the right place.
+        self.change_focus(Focus::Editor);
         self.modal = Modal::DiagnosticsList { cursor: 0 };
         self.status = format!(
             "diagnostics ({count}) · ↑↓ select · Enter jumps · Esc closes"
