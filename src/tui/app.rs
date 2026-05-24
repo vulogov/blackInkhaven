@@ -2636,6 +2636,16 @@ enum Modal {
         track: Option<String>,
         return_to: Box<Modal>,
     },
+    /// 1.2.7+ — `Ctrl+V Shift+I` on an event paragraph. One-line
+    /// edit prompt for start / end / track, pipe-separated.
+    /// Example pre-fill: `Sol 13 | Sol 14 | main`. Empty middle
+    /// (`Sol 13 |  | main`) means "no end". Empty trailing track
+    /// (`Sol 13 | Sol 14 |`) means "drop the track". Precision
+    /// is re-derived from the start string each commit.
+    TimelineEditEventPrompt {
+        input: TextInput,
+        event_id: Uuid,
+    },
     /// 1.2.6+ — side-by-side diff review before a buffer-
     /// replacing AI apply lands. Built by `apply_inference`
     /// when `ai.diff_review_on_apply = true` (default) and
@@ -9159,6 +9169,7 @@ impl App {
             A::ViewEventPicker => self.open_event_picker(),
             A::ViewTimeline => self.open_timeline_view(),
             A::ViewNewEventPrompt => self.open_new_event_prompt_from_anywhere(),
+            A::ViewEditEventMetadata => self.open_edit_event_metadata_prompt(),
 
             // ── Top-level F-keys (1.2.4+ migration) ───────────
             A::HelpQuery => self.open_help_query_modal(),
@@ -13637,6 +13648,12 @@ impl App {
                 self.status = "new event: cancelled".into();
                 return Ok(false);
             }
+            // 1.2.7+ — timeline edit-event prompt.
+            if let Modal::TimelineEditEventPrompt { .. } = &mut self.modal {
+                self.modal = Modal::None;
+                self.status = "edit event: cancelled".into();
+                return Ok(false);
+            }
             self.modal = Modal::None;
             return Ok(false);
         }
@@ -13676,6 +13693,7 @@ impl App {
         let is_event_picker = matches!(self.modal, Modal::EventPicker { .. });
         let is_timeline_view = matches!(self.modal, Modal::TimelineView { .. });
         let is_timeline_new_event = matches!(self.modal, Modal::TimelineNewEventPrompt { .. });
+        let is_timeline_edit_event = matches!(self.modal, Modal::TimelineEditEventPrompt { .. });
         let is_snapshot_annotation = matches!(self.modal, Modal::SnapshotAnnotation { .. });
         let is_tag_picker = matches!(self.modal, Modal::TagPicker { .. });
         let is_tag_add_prompt = matches!(self.modal, Modal::TagAddPrompt { .. });
@@ -13992,6 +14010,10 @@ impl App {
         }
         if is_timeline_new_event {
             self.timeline_new_event_prompt_handle_key(key);
+            return Ok(false);
+        }
+        if is_timeline_edit_event {
+            self.timeline_edit_event_prompt_handle_key(key);
             return Ok(false);
         }
         if is_snapshot_annotation {
@@ -15307,6 +15329,156 @@ impl App {
     /// title; on Enter the event is created at
     /// `cursor_ticks` with the current track highlight (or
     /// the default track).
+    /// `Ctrl+V Shift+I` — pop a one-line edit prompt for the
+    /// open event paragraph's start / end / track. Pipe-
+    /// separated:
+    ///   `Sol 13 | Sol 14 | main`     ← start, end, track
+    ///   `Sol 13 |  | main`           ← no end
+    ///   `Sol 13 | Sol 14 |`          ← drop the track
+    /// Pre-fills from current values. Precision is re-derived
+    /// from the start string on commit. No-op when the open
+    /// paragraph isn't an event.
+    fn open_edit_event_metadata_prompt(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status =
+                "edit event: no paragraph open (Ctrl+V Shift+I needs an editor buffer)".into();
+            return;
+        };
+        let event_id = doc.id;
+        let node = match self.hierarchy.get(event_id).cloned() {
+            Some(n) => n,
+            None => {
+                self.status = "edit event: paragraph missing from hierarchy".into();
+                return;
+            }
+        };
+        let ev = match node.event.as_ref() {
+            Some(ev) => ev,
+            None => {
+                self.status =
+                    "edit event: `{open paragraph}` isn't an event — use `inkhaven event add` first".into();
+                return;
+            }
+        };
+        let cal = crate::timeline::Calendar::from_config(
+            self.cfg.timeline.calendar.clone(),
+        );
+        let start_str = cal.format(
+            crate::timeline::TimelinePoint::from_ticks(ev.start_ticks),
+            ev.precision,
+        );
+        let end_str = ev
+            .end_ticks
+            .map(|t| {
+                cal.format(
+                    crate::timeline::TimelinePoint::from_ticks(t),
+                    ev.precision,
+                )
+            })
+            .unwrap_or_default();
+        let track_str = ev.track.as_deref().unwrap_or("");
+        let prefill = format!("{start_str} | {end_str} | {track_str}");
+        let mut input = TextInput::new();
+        for c in prefill.chars() {
+            input.insert_char(c);
+        }
+        self.modal = Modal::TimelineEditEventPrompt { input, event_id };
+        self.status =
+            "edit event: <start> | <end> | <track> · empty middle = no end · Enter commits · Esc cancels".into();
+    }
+
+    fn timeline_edit_event_prompt_handle_key(&mut self, key: KeyEvent) {
+        if matches!(key.code, KeyCode::Enter) {
+            self.commit_edit_event_metadata();
+            return;
+        }
+        if let Modal::TimelineEditEventPrompt { input, .. } = &mut self.modal {
+            handle_text_input_key(input, key);
+        }
+    }
+
+    fn commit_edit_event_metadata(&mut self) {
+        let taken = std::mem::replace(&mut self.modal, Modal::None);
+        let Modal::TimelineEditEventPrompt { input, event_id } = taken else {
+            return;
+        };
+        let raw = input.as_str().to_owned();
+        let parts: Vec<&str> = raw.split('|').collect();
+        // Tolerate fewer than 3 segments (user may have left the
+        // trailing pipes off — treat missing as empty).
+        let start_str = parts.first().map(|s| s.trim()).unwrap_or("").to_owned();
+        let end_str = parts.get(1).map(|s| s.trim()).unwrap_or("").to_owned();
+        let track_str = parts.get(2).map(|s| s.trim()).unwrap_or("").to_owned();
+        if start_str.is_empty() {
+            self.status = "edit event: start can't be empty".into();
+            return;
+        }
+        let cal = crate::timeline::Calendar::from_config(
+            self.cfg.timeline.calendar.clone(),
+        );
+        let (start_point, precision) = match cal.parse(&start_str) {
+            Ok(pp) => pp,
+            Err(e) => {
+                self.status = format!("edit event: bad start `{start_str}`: {e}");
+                return;
+            }
+        };
+        let end_ticks: Option<i64> = if end_str.is_empty() {
+            None
+        } else {
+            match cal.parse(&end_str) {
+                Ok((p, _)) => Some(p.ticks()),
+                Err(e) => {
+                    self.status = format!("edit event: bad end `{end_str}`: {e}");
+                    return;
+                }
+            }
+        };
+        let new_track: Option<String> = if track_str.is_empty() {
+            None
+        } else {
+            Some(track_str)
+        };
+        let mut node = match self.hierarchy.get(event_id).cloned() {
+            Some(n) => n,
+            None => {
+                self.status = "edit event: paragraph vanished".into();
+                return;
+            }
+        };
+        let Some(ev) = node.event.as_mut() else {
+            self.status = "edit event: paragraph isn't an event".into();
+            return;
+        };
+        ev.start_ticks = start_point.ticks();
+        ev.end_ticks = end_ticks;
+        ev.precision = precision;
+        ev.track = new_track;
+        node.modified_at = chrono::Utc::now();
+        crate::store::reconcile_event_orphan_tag(&mut node);
+        if let Err(e) = self
+            .store
+            .raw()
+            .update_metadata(node.id, node.to_json())
+        {
+            self.status = format!("edit event: persist: {e}");
+            return;
+        }
+        if let Err(e) = self.store.sync() {
+            self.status = format!("edit event: sync: {e}");
+            return;
+        }
+        self.reload_hierarchy();
+        self.status = format!(
+            "event updated · start={start_str}{}",
+            if !end_str.is_empty() {
+                format!(" · end={end_str}")
+            } else {
+                String::new()
+            }
+        );
+    }
+
     fn timeline_open_new_event_prompt(&mut self) {
         let Modal::TimelineView { state } = &self.modal else { return; };
         let cursor = state.cursor_ticks;
@@ -19953,6 +20125,28 @@ impl App {
                 ];
                 (
                     " New event — n ".to_string(),
+                    self.theme.tree_chapter_fg,
+                    body_lines,
+                )
+            }
+            Modal::TimelineEditEventPrompt { input, .. } => {
+                let body_lines = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Edit event — format: start | end | track",
+                        Style::default()
+                            .fg(self.theme.tree_chapter_fg)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Empty middle = no end · empty trailing = drop track · Enter commits · Esc cancels",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Edit event — Ctrl+V Shift+I ".to_string(),
                     self.theme.tree_chapter_fg,
                     body_lines,
                 )
