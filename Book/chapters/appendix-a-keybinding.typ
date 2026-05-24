@@ -113,7 +113,7 @@ companion.
   chord_row("Ctrl+V 1 / 2", "Markdown extract: paragraph / subchapter."),
   chord_row("Ctrl+V S", "Toggle similar-paragraph mode."),
   chord_row("Ctrl+V G", "Open progress modal."),
-  chord_row("Ctrl+V T (editor) / Ctrl+V T (1.2.7+ timeline)", "Set paragraph target / open timeline view."),
+  chord_row("Ctrl+V t / Shift+T", "Per-¶ word-count target / open timeline view (1.2.6+)."),
   chord_row("Ctrl+V A / I", "Add outgoing / incoming link."),
   chord_row("Ctrl+V L / K", "List outgoing / incoming links."),
   chord_row("Ctrl+V B / M", "Toggle / list bookmarks."),
@@ -121,11 +121,12 @@ companion.
   chord_row("Ctrl+V R", "Render paragraph preview."),
   chord_row("Ctrl+V N / Shift+N", "Next / previous diagnostic."),
   chord_row("Ctrl+V w / Shift+W", "Paragraph mini story view / book story view (1.2.6+)."),
-  chord_row("Ctrl+V e", "Event picker (1.2.7+)."),
-  chord_row("Ctrl+V t", "Timeline swim-lane view (1.2.7+)."),
+  chord_row("Ctrl+V e", "Event picker (1.2.6+)."),
+  chord_row("Ctrl+V Shift+E", "New event from any pane (1.2.6+)."),
+  chord_row("Ctrl+V Shift+I", "Edit open event's start | end | track (1.2.6+)."),
 ))
 
-#section("Inside the timeline view (Ctrl+V t)")
+#section("Inside the timeline view (Ctrl+V Shift+T)")
 
 #chord_table((
   chord_row("← / → / PgUp / PgDn", "Scroll."),

@@ -7,7 +7,7 @@
 metadata layer. Every scene-worthy paragraph can be tied to
 a calendar moment; the swim-lane view shows the book as
 horizontal tracks; AI critique audits the timeline for
-consistency. This is the headline feature of the 1.2.7
+consistency. This is the headline feature of the 1.2.6
 cycle.
 
 The feature is opt-in: set `timeline.enabled: true` in HJSON

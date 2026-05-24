@@ -86,7 +86,7 @@ and the book.
 
 | Inkhaven binary | Book version | What's new in the book |
 |-----------------|--------------|------------------------|
-| 1.2.6           | 1.2.6        | First public edition. Covers 1.2.0 through 1.2.6 fully; 1.2.7 timeline preview chapter. |
+| 1.2.6           | 1.2.6        | First public edition. Covers 1.2.0 through 1.2.6 fully, including the timeline chapter. |
 
 ## Licence
 

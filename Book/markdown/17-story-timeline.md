@@ -1,6 +1,6 @@
 # 17 — Story timeline
 
-The timeline is inkhaven's first-class story-time metadata layer. Every scene-worthy paragraph can be tied to a calendar moment; the swim-lane view shows the book as horizontal tracks; AI critique audits the timeline for consistency. This is the headline feature of the 1.2.7 cycle.
+The timeline is inkhaven's first-class story-time metadata layer. Every scene-worthy paragraph can be tied to a calendar moment; the swim-lane view shows the book as horizontal tracks; AI critique audits the timeline for consistency. This is the headline feature of the 1.2.6 cycle.
 
 The feature is opt-in: set `timeline.enabled: true` in HJSON to turn it on. Existing projects upgrade without surprise.
 

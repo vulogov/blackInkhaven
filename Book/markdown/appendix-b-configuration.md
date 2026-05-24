@@ -118,7 +118,7 @@ goals: {
 }
 ```
 
-## timeline (1.2.7+)
+## timeline (1.2.6+)
 
 ```hjson
 timeline: {

@@ -309,13 +309,13 @@ still shows it; `println` shows it inline first.
 
 ---
 
-## 1.2.6 + 1.2.7 — stdlib + hook additions
+## 1.2.6 — stdlib + hook additions
 
 The 1.2.6 cycle expanded the `ink.*` stdlib substantially.
 Three families landed:
 
 - `ink.tag.*` (1.2.6+) — project-wide tag metadata.
-- `ink.event.*` (1.2.7+) — story-timeline events.
+- `ink.event.*` (1.2.6+) — story-timeline events.
 - `ink.story.render` (1.2.6+) — book-graph PNG writer.
 
 Plus one new editor word (`ink.editor.set_cursor`) and
@@ -363,7 +363,7 @@ Example — auto-tag every paragraph in a chapter as
 } each
 ```
 
-### `ink.event.*` — story timeline (1.2.7+)
+### `ink.event.*` — story timeline (1.2.6+)
 
 Requires `timeline.enabled: true` in HJSON. Each word
 that needs the timeline checks at call time and errors
