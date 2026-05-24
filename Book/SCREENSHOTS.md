@@ -254,23 +254,31 @@ event-link your real manuscript.
 ### Step 0: throwaway project
 
 ```bash
-mkdir -p /tmp/timeline-demo
 inkhaven init /tmp/timeline-demo
 cd /tmp/timeline-demo
 ```
 
-Edit `inkhaven.hjson` to enable the timeline:
+The default `inkhaven.hjson` ships a `timeline:` block with
+`enabled: false` — flip it on. One-shot edit:
 
-```hjson
-timeline: {
-  enabled: true
-  default_track: "main"
-  calendar: { preset: "gregorian" }
-}
+```bash
+sed -i.bak 's/enabled: false$/enabled: true/' inkhaven.hjson \
+  && rm inkhaven.hjson.bak
 ```
 
-(Use `sols` instead for short tick numbers in the screenshots
-— `Sol 13 → Sol 14` reads cleaner than `2026.5.23 → 2026.5.24`.)
+(That `sed` matches both `sound.enabled: false` and
+`timeline.enabled: false` lines — flipping both is fine for a
+throwaway project. Verify with `grep enabled inkhaven.hjson`.)
+
+The default calendar preset is `gregorian` so `--start` takes
+`Y.M.D` strings like `2026.1.1`. Switch to `sols` for
+shorter tick labels in the screenshots — `Sol 13 → Sol 14`
+reads cleaner than `2026.5.23 → 2026.5.24`:
+
+```bash
+sed -i.bak 's/preset: "gregorian"/preset: "sols"/' inkhaven.hjson \
+  && rm inkhaven.hjson.bak
+```
 
 ### Step 1: seed a book and a few prose paragraphs
 
@@ -294,12 +302,12 @@ inkhaven reindex
 ### Step 2: seed events (CLI is fastest for the seed)
 
 ```bash
-inkhaven event add "Birth of Aerin"  --start "2026.1.1"  --track main      --book-name "Aerin Saga"
-inkhaven event add "Storm"           --start "2026.2.3"  --end "2026.2.5"  --track main      --book-name "Aerin Saga"
-inkhaven event add "Marketplace"     --start "2026.2.5"  --track main      --book-name "Aerin Saga"
-inkhaven event add "Aerin POV — flight" --start "2026.2.4" --track "aerin-pov" --book-name "Aerin Saga"
-inkhaven event add "Trial"           --start "2026.3.10" --end "2026.3.12" --track "aerin-pov" --book-name "Aerin Saga"
-inkhaven event add "Lost map"        --start "2026.2.4.spr" --track main   --book-name "Aerin Saga"   # ← left as orphan deliberately
+inkhaven event add "Birth of Aerin"     --start "Sol 1"  --track main      --book-name "Aerin Saga"
+inkhaven event add "Storm"              --start "Sol 13" --end "Sol 14"    --track main      --book-name "Aerin Saga"
+inkhaven event add "Marketplace"        --start "Sol 14" --track main      --book-name "Aerin Saga"
+inkhaven event add "Aerin POV — flight" --start "Sol 14" --track "aerin-pov" --book-name "Aerin Saga"
+inkhaven event add "Trial"              --start "Sol 28" --end "Sol 30"    --track "aerin-pov" --book-name "Aerin Saga"
+inkhaven event add "Lost map"           --start "Sol 14" --track main      --book-name "Aerin Saga"   # ← left as orphan deliberately
 ```
 
 Now link Storm → morning, Marketplace → marketplace-scene,
@@ -322,14 +330,14 @@ variations the screenshots need.
 | Figure | Setup | Capture chord(s) |
 |--------|-------|------------------|
 | `tree-event-glyph` | Tree pane focused, `Timeline` chapter expanded next to a prose chapter (e.g. Chapter 1). | None — just the tree state. Resize so both `◆ Storm` (event) and `¶ morning` (prose) are visible on one screen. |
-| `editor-event-title` | Open `Timeline → Marketplace` (a linked, non-orphan event). | `Enter` on the row. Capture the editor pane with the title bar showing `◆ 2026.2.5 · day · main`. |
+| `editor-event-title` | Open `Timeline → Marketplace` (a linked, non-orphan event). | `Enter` on the row. Capture the editor pane with the title bar showing `◆ Sol 14 · day · main`. |
 | `editor-event-title-orphan` | Open `Timeline → Lost map` (the orphan you didn't link). | `Enter` on the row. Title bar carries `◆ … · [ORPHAN]`. |
 | `editor-multi-event-link` | Open `Chapter 2 → marketplace-scene` (the manuscript paragraph linked from 2-3 events). | `Enter`. Title bar shows `◆ linked from 3 events`. |
 | `timeline-empty` | Add a second user book that has zero events: `inkhaven add book "Empty Book"`. In the TUI, put the cursor inside Empty Book, then `Ctrl+V Shift+T`. | Capture the empty swim-lane pane + the `press n` status hint. |
 | `timeline-new-event-prompt` | From Empty Book (or any pane), `Ctrl+V Shift+E`. | The title prompt pops over the timeline. Type a placeholder title for the screenshot, do NOT press Enter. |
-| `timeline-edit-event-prompt` | Open `Timeline → Storm`, then `Ctrl+V Shift+I`. | The prompt pops prefilled with `2026.2.3 \| 2026.2.5 \| main`. Capture, then Esc. |
+| `timeline-edit-event-prompt` | Open `Timeline → Storm`, then `Ctrl+V Shift+I`. | The prompt pops prefilled with `Sol 13 \| Sol 14 \| main`. Capture, then Esc. |
 | `timeline-event-picker` | From any pane, `Ctrl+V e`. | Shows all 6 events sorted by start. Cycle the track filter with `t` if you want to show that variant. |
-| `timeline-swim-lanes` | From any paragraph inside Aerin Saga, `Ctrl+V Shift+T`. | Auto-fit shows the full Jan → Mar span. 2 tracks (`main`, `aerin-pov`) + the orphan row. Capture the full pane. |
+| `timeline-swim-lanes` | From any paragraph inside Aerin Saga, `Ctrl+V Shift+T`. | Auto-fit shows the full Sol 1 → Sol 30 span. 2 tracks (`main`, `aerin-pov`) + the orphan row. Capture the full pane. |
 | `timeline-zoomed-in` | Same as above, then press `+` twice. | Same events at higher resolution. Useful to show what `+`/`-` do relative to the auto-fit. |
 | `timeline-up-down-nav` | Same as `timeline-swim-lanes`, press `↓` once or twice. | Cursor visibly moves to a different event; status bar shows `cursor → tick N`. Capture mid-state. |
 | `timeline-descent-picker` | Inside `Ctrl+V Shift+T`, press `d`. | The descent picker overlays the swim-lane view, showing Chapter 1 / Chapter 2 with their event counts. |
