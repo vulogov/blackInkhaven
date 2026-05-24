@@ -1363,10 +1363,27 @@ pub struct BookGoal {
 /// Unknown entries log a WARN and are skipped. Per-format
 /// errors are reported in the status bar but never abort the
 /// take.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OutputConfig {
     pub extra_formats: Vec<String>,
+    /// 1.2.6+ — milliseconds the Ctrl+B O extras splash holds
+    /// each format on screen so the user can actually see the
+    /// transitions (markdown → tex → epub …). Each value is the
+    /// sleep applied right after the format is drawn as the
+    /// in-flight `▶` step, plus the same delay after the final
+    /// `✓` frame. Set to `0` to disable the artificial pause.
+    /// Default `400` (≈ 1.2s for a 3-format build).
+    pub extras_step_pause_ms: u64,
+}
+
+impl Default for OutputConfig {
+    fn default() -> Self {
+        Self {
+            extra_formats: Vec::new(),
+            extras_step_pause_ms: 400,
+        }
+    }
 }
 
 /// 1.2.6+ — story timeline feature config. `enabled: false`

@@ -258,6 +258,35 @@
     volume: 0.6
   }
 
+  // 1.2.6+ — AI-pane behaviour knobs that aren't tied to a
+  // specific provider. Defaults match the pre-1.2.6 behaviour
+  // for projects that don't override them.
+  //
+  // - `per_paragraph_memory` (false) — when true, every
+  //   Paragraph-scope AI exchange (F12, Ctrl+B G, Ctrl+B P,
+  //   one-shot prompts with Paragraph scope, etc) is recorded
+  //   onto the paragraph's `Node.ai_memory`. Subsequent
+  //   Paragraph-scope prompts on the same paragraph see prior
+  //   turns as the model's chat history. Turn budget capped
+  //   by `per_paragraph_memory_max_turns`.
+  // - `per_paragraph_memory_max_turns` (10) — soft cap on
+  //   how many (user, assistant) pairs travel as history.
+  //   Oldest turns drop first.
+  // - `reseed_prompt_examples` (true) — re-write the
+  //   `Prompts/*.example` seed paragraphs on every TUI open
+  //   (idempotent — skips entries that already exist as
+  //   non-example versions).
+  // - `diff_review_on_apply` (true) — pop a side-by-side
+  //   diff modal before any buffer-replacing AI apply (`r`,
+  //   `g` chords from the result pane). `a` accepts, `r`
+  //   rejects, `e` accepts + refocuses the editor.
+  ai: {
+    per_paragraph_memory:           false
+    per_paragraph_memory_max_turns: 10
+    reseed_prompt_examples:         true
+    diff_review_on_apply:           true
+  }
+
   // 1.2.6+ — story timeline. Off by default. Flip `enabled` to
   // `true` to unlock the timeline surfaces: `Ctrl+V e` event
   // picker, `Ctrl+V Shift+T` swim-lane view, `Ctrl+V Shift+E`
