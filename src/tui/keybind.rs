@@ -821,7 +821,11 @@ impl KeyBindings {
                 // F7 — grammar check.
                 entry("F7", Action::GrammarCheck, Scope::Editor),
                 // F8 (1.2.6+) — typst diagnostics list modal.
-                entry("F8", Action::DiagnosticsList, Scope::Editor),
+                // 1.2.7+ — scope widened to `Any` so the chord
+                // fires from Tree / AI / Search panes too,
+                // not just from a focused editor. The handler
+                // re-focuses the editor when the modal opens.
+                entry("F8", Action::DiagnosticsList, Scope::Any),
                 // F9 / F10 — global AI mode + inference toggle.
                 entry("F9", Action::CycleAiMode, Scope::Any),
                 entry("F10", Action::ToggleInferenceMode, Scope::Any),

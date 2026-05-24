@@ -44,15 +44,29 @@ pub(crate) fn layout_swim_lanes(
         return Vec::new();
     }
 
+    // 1.2.7+ — when an event's `book_prefix` is non-empty
+    // (set by `collect_book_events` in project-overlay mode),
+    // prepend it to the track label as `<book-slug>/<track>`.
+    // Otherwise the track key is the raw track name. Same
+    // value used for both row creation and per-event row
+    // lookup so the keys match.
+    let track_key = |e: &TimelineEvent| -> String {
+        let raw = e
+            .track
+            .clone()
+            .unwrap_or_else(|| default_track_label.to_owned());
+        if e.book_prefix.is_empty() {
+            raw
+        } else {
+            format!("{}/{}", e.book_prefix, raw)
+        }
+    };
+
     // Collect unique non-orphan tracks.
     let mut tracks: Vec<String> = events
         .iter()
         .filter(|e| !e.is_orphan)
-        .map(|e| {
-            e.track
-                .clone()
-                .unwrap_or_else(|| default_track_label.to_owned())
-        })
+        .map(&track_key)
         .collect();
     tracks.sort();
     tracks.dedup();
@@ -85,10 +99,7 @@ pub(crate) fn layout_swim_lanes(
             rows.iter()
                 .position(|r| r.is_orphan_row)
         } else {
-            let want = ev
-                .track
-                .clone()
-                .unwrap_or_else(|| default_track_label.to_owned());
+            let want = track_key(ev);
             rows.iter().position(|r| !r.is_orphan_row && r.label == want)
         };
         let Some(row_idx) = row_idx else { continue };
