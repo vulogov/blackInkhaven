@@ -198,9 +198,9 @@ Different books get their own.
 The picker is a chronological snapshot built at open time —
 re-open to refresh.
 
-## TUI — Ctrl+V t (swim-lane view)
+## TUI — Ctrl+V Shift+T (swim-lane view)
 
-The headline UI. `Ctrl+V t` opens at the **current paragraph's
+The headline UI. `Ctrl+V Shift+T` opens at the **current paragraph's
 nearest scope** (Subchapter → Chapter → Book) and renders one
 row per track:
 
@@ -373,10 +373,24 @@ places is auto-tagged `orphan` by the reconciler. The tag
 sync runs on every metadata write that touches an event:
 
 - Add an event → no links yet → tagged orphan.
-- Link a paragraph via `Ctrl+V L` or `ink.event.link_paragraph`
-  → tag removed.
+- Link a paragraph via `Ctrl+V A` (`view.add_link` — opens
+  link-pick mode in the tree; pick the manuscript paragraph
+  where the event happens, Enter to confirm) or
+  `ink.event.link_paragraph` → tag removed.
 - Delete the only linked paragraph → orphan tag returns;
   `hook.on_event_orphaned` fires.
+
+Opening an orphan event in the editor (Enter on it from the
+timeline / picker / tree) lands a one-line hint on the status
+bar:
+
+```
+orphan event — Ctrl+V A to link a manuscript paragraph (target).
+Saving the link drops [ORPHAN].
+```
+
+So the chord-to-fix is always one keystroke away from where the
+event opened.
 
 Orphans render with the `◌` glyph everywhere (CLI list, picker,
 swim lanes). They're not errors — they're a soft signal that
@@ -415,7 +429,7 @@ timeline: {
 
 - **HJSON gate**: `timeline.enabled: true` + a calendar preset.
 - **CLI**: `inkhaven event add/list/show`.
-- **TUI**: `Ctrl+V e` (picker) · `Ctrl+V t` (swim lanes).
+- **TUI**: `Ctrl+V e` (picker) · `Ctrl+V Shift+T` (swim lanes).
 - **Swim lanes**: scroll / zoom / scope nav (u/d/b/p) / Tab
   track / Enter open / `n` new.
 - **AI critique**: `y` track · `Y` scope · `Ctrl+Y` book-wide.

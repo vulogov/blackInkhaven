@@ -750,8 +750,14 @@ impl KeyBindings {
                 entry("Shift+W", Action::ViewStoryGraph, Scope::Any),
                 // 1.2.7+ — timeline event picker.
                 entry("e", Action::ViewEventPicker, Scope::Any),
-                // 1.2.7+ — swim-lane timeline view.
-                entry("t", Action::ViewTimeline, Scope::Any),
+                // 1.2.7+ — swim-lane timeline view. Bound to
+                // Shift+T so the lowercase `t` chord stays free
+                // for `ViewOpenParagraphTarget` (open the
+                // wiki-link target under the cursor) — the two
+                // used to collide on plain `t`, with the
+                // earlier-listed `ViewOpenParagraphTarget`
+                // shadowing this entry entirely.
+                entry("Shift+t", Action::ViewTimeline, Scope::Any),
             ],
             top_level: vec![
                 // F1 anywhere: Help-book RAG modal.
@@ -1176,6 +1182,25 @@ mod tests {
         assert_eq!(
             k.resolve_meta_sub(&ev('v'), Focus::Editor),
             Some(Action::OpenCredits)
+        );
+    }
+
+    #[test]
+    fn view_sub_t_and_shift_t_route_to_distinct_actions() {
+        // 1.2.7+ — `Ctrl+V t` opens the wiki-link target,
+        // `Ctrl+V Shift+T` opens the timeline. They used to
+        // collide on plain `t` (the second binding was shadowed
+        // and dead).
+        let k = KeyBindings::defaults();
+        let lower = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        assert_eq!(
+            k.resolve_view_sub(&lower, Focus::Editor),
+            Some(Action::ViewOpenParagraphTarget)
+        );
+        let upper = KeyEvent::new(KeyCode::Char('T'), KeyModifiers::SHIFT);
+        assert_eq!(
+            k.resolve_view_sub(&upper, Focus::Editor),
+            Some(Action::ViewTimeline)
         );
     }
 

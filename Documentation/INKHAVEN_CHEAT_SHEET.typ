@@ -119,7 +119,8 @@ Inside the tag picker (`Ctrl+B ]` / `Ctrl+B }`):
   row([1 (tree)], [Md export: subtree]),
   row([S],   [Toggle similar-paragraph mode]),
   row([G],   [Writing-progress modal]),
-  row([T],   [Per-¶ target  · (1.2.7) timeline view]),
+  row([t],   [Per-¶ word-count target modal]),
+  row([Shift+T], [(1.2.7) Timeline swim-lane view]),
   row([A / I], [Add outgoing / incoming wiki-link]),
   row([L / K], [List outgoing / backlinks]),
   row([B / M], [Toggle bookmark / open picker]),
@@ -129,7 +130,6 @@ Inside the tag picker (`Ctrl+B ]` / `Ctrl+B }`):
   row([Shift+W], [Story view — book graph (1.2.5)]),
   row([w],   [(1.2.6) Paragraph mini story view]),
   row([e],   [(1.2.7) Event picker — chronological list]),
-  row([t],   [(1.2.7) Timeline swim-lane view]),
   row([Esc], [Cancel chord]),
 )
 
@@ -146,7 +146,7 @@ Inside the tag picker (`Ctrl+B ]` / `Ctrl+B }`):
   row([Esc],   [Close back to editor]),
 )
 
-== Timeline view (Ctrl+V t) — 1.2.7
+== Timeline view (Ctrl+V Shift+T) — 1.2.7
 
 #kv-table(
   row([← / →], [Scroll ~10 cells]),

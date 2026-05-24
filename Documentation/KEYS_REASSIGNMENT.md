@@ -184,7 +184,7 @@ Layer name: `view_sub`. Rebind via HJSON or `ink.key.bind_view_sub`.
 | `view.export_markdown_subtree` | `Ctrl+V 1` (tree) | Save-as-picker — write cursor's subtree as markdown |
 | `view.toggle_similar_mode` | `Ctrl+V S` | Open / close the similar-paragraph picker + secondary editor |
 | `view.open_progress` | `Ctrl+V G` | Open the writing-progress modal |
-| `view.open_paragraph_target` | `Ctrl+V T` | Set / clear the per-paragraph word-count target |
+| `view.open_paragraph_target` | `Ctrl+V t` | Set / clear the per-paragraph word-count target |
 | `view.add_link` | `Ctrl+V A` | Add outgoing wiki-link (tree picks target) |
 | `view.add_incoming_link` | `Ctrl+V I` | Add incoming wiki-link (tree picks source) |
 | `view.list_links` | `Ctrl+V L` | Open the outgoing-links picker |
@@ -335,7 +335,7 @@ existing tree pickers; not user-rebindable.)
 | `view.story_graph_paragraph` | `Ctrl+V w` | Paragraph mini story view (1.2.6+). |
 | `view.next_diagnostic` | `Ctrl+V N` | Jump to next typst diagnostic. |
 | `view.event_picker` | `Ctrl+V e` | (1.2.7+) Open the event picker. Requires `timeline.enabled`. |
-| `view.timeline` | `Ctrl+V t` | (1.2.7+) Open the swim-lane timeline view. Requires `timeline.enabled`. |
+| `view.timeline` | `Ctrl+V Shift+T` | (1.2.7+) Open the swim-lane timeline view. Requires `timeline.enabled`. Lowercase `Ctrl+V t` is the per-paragraph word-count target. |
 
 ### Diagnostic actions (1.2.6+)
 

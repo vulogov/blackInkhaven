@@ -14914,6 +14914,17 @@ impl App {
         }
         self.load_paragraph(&node).map_err(|e| e.to_string())?;
         self.change_focus(Focus::Editor);
+        // 1.2.7+: surface a clear next-step hint when the user
+        // opens an orphan event paragraph — otherwise the only
+        // visible signal that the event needs a target is the
+        // `[ORPHAN]` tag in the timeline view, with no nudge
+        // about which chord assigns one.
+        if node.event.is_some()
+            && node.tags.iter().any(|t| t.eq_ignore_ascii_case("orphan"))
+        {
+            self.status =
+                "orphan event — Ctrl+V A to link a manuscript paragraph (target). Saving the link drops [ORPHAN].".into();
+        }
         Ok(())
     }
 
@@ -16310,7 +16321,11 @@ impl App {
                 self.modal = Modal::None;
                 if let Err(e) = self.open_paragraph_by_uuid(id) {
                     self.status = format!("event picker: couldn't open `{title}`: {e}");
-                } else {
+                } else if !self.status.starts_with("orphan event") {
+                    // open_paragraph_by_uuid leaves the orphan
+                    // hint in `status` when applicable; preserve
+                    // it instead of stomping with a redundant
+                    // "opened event" message.
                     self.status = format!("opened event `{title}`");
                 }
             }
