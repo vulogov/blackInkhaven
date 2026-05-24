@@ -1002,11 +1002,13 @@ Inside `Ctrl+V R`:
 ### Story timeline (1.2.7 preview — opt-in)
 
 ```
-Ctrl+V e   chronological event picker
-Ctrl+V t   swim-lane timeline view
+Ctrl+V e         chronological event picker
+Ctrl+V Shift+T   swim-lane timeline view
+                 (lowercase Ctrl+V t stays bound to the
+                  per-paragraph word-count target modal)
 ```
 
-Inside Ctrl+V t:
+Inside Ctrl+V Shift+T:
 
 ```
 ← / →             scroll by ~10 cells
