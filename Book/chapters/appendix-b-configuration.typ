@@ -126,7 +126,7 @@ goals: {
 }
 ```
 
-#section("timeline (1.2.7+)")
+#section("timeline (1.2.6+)")
 
 ```hjson
 timeline: {

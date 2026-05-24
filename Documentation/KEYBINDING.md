@@ -896,7 +896,7 @@ MODALS          Enter        confirm
 
 ---
 
-## 1.2.5 + 1.2.6 + 1.2.7 — chord additions
+## 1.2.5 + 1.2.6 — chord additions
 
 Every chord introduced between the original document and the
 1.2.6 release, organised by feature. This section is
@@ -999,7 +999,7 @@ Inside `Ctrl+V R`:
 0         reset to 1.00×
 ```
 
-### Story timeline (1.2.7 preview — opt-in)
+### Story timeline (1.2.6 — opt-in)
 
 ```
 Ctrl+V e         chronological event picker

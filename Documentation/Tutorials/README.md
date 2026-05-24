@@ -40,7 +40,7 @@ covers.
 | 28 | [`28-ai-critique-and-memory.md`](28-ai-critique-and-memory.md) | `F12` mode-aware critique, opt-in per-paragraph AI memory, diff-review modal on apply (`a`/`r`/`e`), smart marker extraction for grammar replies. |
 | 29 | [`29-snapshot-annotations.md`](29-snapshot-annotations.md) | `F5` annotation prompt; `F6` picker rendering with `✎` indent; when to label which snapshots. |
 | 30 | [`30-render-preview.md`](30-render-preview.md) | `Ctrl+V R` render preview with `+/-` live zoom (1.2.6+); `S` saves current page, `A` saves all. |
-| 31 | [`31-story-timeline.md`](31-story-timeline.md) | The full timeline feature (1.2.7+) — calendars, CLI `event add/list/show`, `Ctrl+V e` picker, `Ctrl+V t` swim lanes with scope nav, AI health critique (y/Y/Ctrl+Y), `ink.event.*` Bund + hooks. |
+| 31 | [`31-story-timeline.md`](31-story-timeline.md) | The full timeline feature (1.2.6+) — calendars, CLI `event add/list/show`, `Ctrl+V e` picker, `Ctrl+V Shift+T` swim lanes with scope nav, `Ctrl+V Shift+E` new event from any pane, `Ctrl+V Shift+I` edit event timing, AI health critique (y/Y/Ctrl+Y), `ink.event.*` Bund + hooks. |
 
 ## Scripting + chord customisation
 

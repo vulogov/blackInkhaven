@@ -109,7 +109,7 @@ Every chord that ships with inkhaven, by layer. The canonical machine-readable l
 | Ctrl+V 1 / 2 | Markdown extract: paragraph / subchapter. |
 | Ctrl+V S | Toggle similar-paragraph mode. |
 | Ctrl+V G | Open progress modal. |
-| Ctrl+V T (editor) / Ctrl+V T (1.2.7+ timeline) | Set paragraph target / open timeline view. |
+| Ctrl+V t / Shift+T | Per-¶ word-count target / open timeline view (1.2.6+). |
 | Ctrl+V A / I | Add outgoing / incoming link. |
 | Ctrl+V L / K | List outgoing / incoming links. |
 | Ctrl+V B / M | Toggle / list bookmarks. |
@@ -117,10 +117,11 @@ Every chord that ships with inkhaven, by layer. The canonical machine-readable l
 | Ctrl+V R | Render paragraph preview. |
 | Ctrl+V N / Shift+N | Next / previous diagnostic. |
 | Ctrl+V w / Shift+W | Paragraph mini story view / book story view (1.2.6+). |
-| Ctrl+V e | Event picker (1.2.7+). |
-| Ctrl+V t | Timeline swim-lane view (1.2.7+). |
+| Ctrl+V e | Event picker (1.2.6+). |
+| Ctrl+V Shift+E | New event from any pane (1.2.6+). |
+| Ctrl+V Shift+I | Edit open event's start \| end \| track (1.2.6+). |
 
-## Inside the timeline view (Ctrl+V t)
+## Inside the timeline view (Ctrl+V Shift+T)
 
 | Chord | What it does |
 |-------|--------------|

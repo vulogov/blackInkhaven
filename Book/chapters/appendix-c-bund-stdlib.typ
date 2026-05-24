@@ -41,7 +41,7 @@ language tutorial lives at
   chord_row("ink.tag.remove", "( path tag -- )"),
 ))
 
-#section("Events (ink.event.*, 1.2.7+)")
+#section("Events (ink.event.*, 1.2.6+)")
 
 #chord_table((
   chord_row("ink.event.list", "( -- list )"),
@@ -142,8 +142,8 @@ fire-time arguments on the stack, bottom-first.
   chord_row("hook.on_assemble", "( book_uuid path -- )"),
   chord_row("hook.on_take", "( book_uuid pdf_path -- )"),
   chord_row("hook.on_diagnostic", "( uuid count first-message -- )  // 1.2.6+"),
-  chord_row("hook.on_event_added", "( uuid -- )                       // 1.2.7+"),
-  chord_row("hook.on_event_orphaned", "( uuid -- )                    // 1.2.7+"),
+  chord_row("hook.on_event_added", "( uuid -- )                       // 1.2.6+"),
+  chord_row("hook.on_event_orphaned", "( uuid -- )                    // 1.2.6+"),
 ))
 
 #section("Policy categories")

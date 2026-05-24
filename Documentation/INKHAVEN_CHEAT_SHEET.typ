@@ -120,7 +120,7 @@ Inside the tag picker (`Ctrl+B ]` / `Ctrl+B }`):
   row([S],   [Toggle similar-paragraph mode]),
   row([G],   [Writing-progress modal]),
   row([t],   [Per-¶ word-count target modal]),
-  row([Shift+T], [(1.2.7) Timeline swim-lane view]),
+  row([Shift+T], [(1.2.6) Timeline swim-lane view]),
   row([A / I], [Add outgoing / incoming wiki-link]),
   row([L / K], [List outgoing / backlinks]),
   row([B / M], [Toggle bookmark / open picker]),
@@ -129,9 +129,9 @@ Inside the tag picker (`Ctrl+B ]` / `Ctrl+B }`):
   row([N / Shift+N], [Next / previous typst diagnostic]),
   row([Shift+W], [Story view — book graph (1.2.5)]),
   row([w],   [(1.2.6) Paragraph mini story view]),
-  row([e],   [(1.2.7) Event picker — chronological list]),
-  row([Shift+E], [(1.2.7) New event (opens timeline + prompts for title)]),
-  row([Shift+I], [(1.2.7) Edit open event's start | end | track]),
+  row([e],   [(1.2.6) Event picker — chronological list]),
+  row([Shift+E], [(1.2.6) New event (opens timeline + prompts for title)]),
+  row([Shift+I], [(1.2.6) Edit open event's start | end | track]),
   row([Esc], [Cancel chord]),
 )
 
@@ -148,7 +148,7 @@ Inside the tag picker (`Ctrl+B ]` / `Ctrl+B }`):
   row([Esc],   [Close back to editor]),
 )
 
-== Timeline view (Ctrl+V Shift+T) — 1.2.7
+== Timeline view (Ctrl+V Shift+T) — 1.2.6
 
 #kv-table(
   row([← / →], [Scroll ~10 cells]),
@@ -169,7 +169,7 @@ Inside the tag picker (`Ctrl+B ]` / `Ctrl+B }`):
   row([Esc],   [Close]),
 )
 
-== Event picker (Ctrl+V e) — 1.2.7
+== Event picker (Ctrl+V e) — 1.2.6
 
 #kv-table(
   row([↑ / ↓ / Home / End], [Navigate]),
@@ -326,9 +326,9 @@ Inside the AI diff modal (1.2.6, when `ai.diff_review_on_apply`):
   row([import-scrivener PATH.scriv], [Scrivener importer (keywords → tags 1.2.6)]),
   row([stats --book-name "Tides"], [Per-¶ stats table]),
   row([doctor],                      [Health report]),
-  row([event add "Storm" --start "1A.2.3"], [(1.2.7) Add event]),
-  row([event list --track main],     [(1.2.7) Chronological event list]),
-  row([event show <path>],           [(1.2.7) Show event details]),
+  row([event add "Storm" --start "1A.2.3"], [(1.2.6) Add event]),
+  row([event list --track main],     [(1.2.6) Chronological event list]),
+  row([event show <path>],           [(1.2.6) Show event details]),
   row([ai "prompt"],                 [One-shot inference]),
   row([bund "40 2 + ."],             [Bund REPL one-shot]),
 )
@@ -378,7 +378,7 @@ ai: {
   reseed_prompt_examples:         true
 }
 
-// (1.2.7 preview) Story timeline — opt in
+// (1.2.6) Story timeline — opt in
 timeline: {
   enabled:        false               // ← flip to true
   default_track:  "main"
@@ -391,7 +391,7 @@ timeline: {
 }
 ```
 
-== Bund stdlib (1.2.6 + 1.2.7 additions)
+== Bund stdlib (1.2.6 additions)
 
 #kv-table(
   row([ink.tag.list],           [`( -- list )`]),
@@ -410,7 +410,7 @@ timeline: {
   row([ink.editor.set_cursor],  [`( row col -- )` · 1-based]),
 )
 
-== Hook points (1.2.4–1.2.7)
+== Hook points (1.2.4–1.2.6)
 
 #kv-table(
   row([hook.on_save],      [`( uuid -- )`]),
@@ -423,8 +423,8 @@ timeline: {
   row([hook.on_assemble],  [`( uuid slug root files -- )`]),
   row([hook.on_take],      [`( uuid slug pdf -- )`]),
   row([hook.on_diagnostic], [`( uuid count first-message -- )` · 1.2.6]),
-  row([hook.on_event_added], [`( uuid -- )` · 1.2.7]),
-  row([hook.on_event_orphaned], [`( uuid -- )` · 1.2.7]),
+  row([hook.on_event_added], [`( uuid -- )` · 1.2.6]),
+  row([hook.on_event_orphaned], [`( uuid -- )` · 1.2.6]),
 )
 
 ]

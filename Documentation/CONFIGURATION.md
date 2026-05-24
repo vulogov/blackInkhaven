@@ -632,7 +632,7 @@ is the same file `inkhaven init` writes verbatim.
 
 ---
 
-## 1.2.6 + 1.2.7 — new HJSON blocks
+## 1.2.6 — new HJSON blocks
 
 Two new top-level stanzas land in the 1.2.6 cycle. Both
 are opt-in; existing projects upgrade transparently.
@@ -672,7 +672,7 @@ All four fields are `#[serde(default)]`; missing block →
 default values. The implementation in
 `crate::config::AiConfig` carries the canonical types.
 
-### `timeline` (1.2.7+ preview, ships in 1.2.6) — story timeline
+### `timeline` (1.2.6+) — story timeline
 
 ```hjson
 timeline: {

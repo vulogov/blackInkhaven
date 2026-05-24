@@ -310,7 +310,7 @@ After project open: every save prints `(saved)` to the TUI log;
 
 ---
 
-## 1.2.5 + 1.2.6 + 1.2.7 — new actions
+## 1.2.5 + 1.2.6 — new actions
 
 Every named action introduced between the original document
 and the 1.2.6 release. Use these in your `keys.bindings`
@@ -334,10 +334,10 @@ existing tree pickers; not user-rebindable.)
 | `view.story_graph` | `Ctrl+V Shift+W` | Book story view (radial PNG). |
 | `view.story_graph_paragraph` | `Ctrl+V w` | Paragraph mini story view (1.2.6+). |
 | `view.next_diagnostic` | `Ctrl+V N` | Jump to next typst diagnostic. |
-| `view.event_picker` | `Ctrl+V e` | (1.2.7+) Open the event picker. Requires `timeline.enabled`. |
-| `view.new_event_prompt` | `Ctrl+V Shift+E` | (1.2.7+) Open the timeline view AND immediately fire the new-event title prompt — works from any pane, no need to first add an event from the CLI. Requires `timeline.enabled`. |
-| `view.timeline` | `Ctrl+V Shift+T` | (1.2.7+) Open the swim-lane timeline view. Requires `timeline.enabled`. Lowercase `Ctrl+V t` is the per-paragraph word-count target. |
-| `view.edit_event_metadata` | `Ctrl+V Shift+I` | (1.2.7+) Edit the open event paragraph's `start | end | track` in a one-line pipe-separated prompt. Precision is re-derived from the start string on commit. No-op when the open paragraph isn't an event. |
+| `view.event_picker` | `Ctrl+V e` | (1.2.6+) Open the event picker. Requires `timeline.enabled`. |
+| `view.new_event_prompt` | `Ctrl+V Shift+E` | (1.2.6+) Open the timeline view AND immediately fire the new-event title prompt — works from any pane, no need to first add an event from the CLI. Requires `timeline.enabled`. |
+| `view.timeline` | `Ctrl+V Shift+T` | (1.2.6+) Open the swim-lane timeline view. Requires `timeline.enabled`. Lowercase `Ctrl+V t` is the per-paragraph word-count target. |
+| `view.edit_event_metadata` | `Ctrl+V Shift+I` | (1.2.6+) Edit the open event paragraph's `start | end | track` in a one-line pipe-separated prompt. Precision is re-derived from the start string on commit. No-op when the open paragraph isn't an event. |
 
 ### Diagnostic actions (1.2.6+)
 

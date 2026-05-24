@@ -36,7 +36,7 @@ Quick reference for the `ink.*` stdlib and the hook lambda names. Stack signatur
 | ink.tag.add | `( path tag -- )` |
 | ink.tag.remove | `( path tag -- )` |
 
-## Events (ink.event.*, 1.2.7+)
+## Events (ink.event.*, 1.2.6+)
 
 | Word | Signature |
 |------|-----------|
@@ -136,8 +136,8 @@ Each hook is registered with `register`. The body sees the fire-time arguments o
 | hook.on_assemble | `( book_uuid path -- )` |
 | hook.on_take | `( book_uuid pdf_path -- )` |
 | hook.on_diagnostic | `( uuid count first-message -- )  // 1.2.6+` |
-| hook.on_event_added | `( uuid -- )                       // 1.2.7+` |
-| hook.on_event_orphaned | `( uuid -- )                    // 1.2.7+` |
+| hook.on_event_added | `( uuid -- )                       // 1.2.6+` |
+| hook.on_event_orphaned | `( uuid -- )                    // 1.2.6+` |
 
 ## Policy categories
 

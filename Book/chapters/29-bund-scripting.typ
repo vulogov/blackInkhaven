@@ -84,8 +84,8 @@ a lambda with the hook's name to react:
   chord_row("hook.on_status_promoted ( uuid new_status -- )", "Status ladder bumped up."),
   chord_row("hook.on_goal_hit ( word_count_today -- )", "Daily goal reached."),
   chord_row("hook.on_diagnostic ( uuid count first-message -- )", "Typst diagnostic state changed (1.2.6+)."),
-  chord_row("hook.on_event_added ( uuid -- )", "Timeline event created (1.2.7+)."),
-  chord_row("hook.on_event_orphaned ( uuid -- )", "Event lost its last link (1.2.7+)."),
+  chord_row("hook.on_event_added ( uuid -- )", "Timeline event created (1.2.6+)."),
+  chord_row("hook.on_event_orphaned ( uuid -- )", "Event lost its last link (1.2.6+)."),
 ))
 
 #section("Sandbox policy")

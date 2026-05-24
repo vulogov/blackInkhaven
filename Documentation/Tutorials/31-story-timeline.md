@@ -1,6 +1,6 @@
 # 31 — Story timeline
 
-Inkhaven 1.2.7 adds **events** — first-class story-time
+Inkhaven 1.2.6 adds **events** — first-class story-time
 metadata layered over the existing paragraph hierarchy. With
 the timeline enabled you can:
 
@@ -37,7 +37,7 @@ timeline: {
 }
 ```
 
-Three calendar presets ship in 1.2.7:
+Three calendar presets ship in 1.2.6:
 
 | Preset       | Use case                                  | Display format    |
 |--------------|-------------------------------------------|--------------------|
@@ -314,7 +314,7 @@ inference. The modal closes so the AI pane is visible.
 
 ## Bund stdlib — `ink.event.*`
 
-Seven words (1.2.7+):
+Seven words (1.2.6+):
 
 ```bund
                               ink.event.list             ( -- list )
