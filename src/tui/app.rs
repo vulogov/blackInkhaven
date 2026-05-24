@@ -16370,13 +16370,26 @@ impl App {
     /// containing user Book. Returns its UUID. None when the
     /// project has no user books at all.
     fn resolve_anchor_book(&self) -> Option<Uuid> {
-        // Prefer the editor's open paragraph; fall back to
-        // tree cursor; fall back to first user book.
-        let candidate_id = self
-            .opened
-            .as_ref()
-            .map(|d| d.id)
-            .or_else(|| self.rows.get(self.tree_cursor).map(|(id, _)| *id))?;
+        // 1.2.6+ — focus-aware: when the Tree pane has focus,
+        // the tree cursor wins over the (possibly stale) open
+        // paragraph. Previously the open-paragraph branch
+        // always won, so navigating the tree cursor into a
+        // different book and pressing Ctrl+V Shift+T still
+        // opened the timeline of the book the editor was last
+        // viewing. Editor / AI / search focus still prefer the
+        // open paragraph (the natural "I'm editing X, timeline
+        // for X's book" reading).
+        let candidate_id = if self.focus == Focus::Tree {
+            self.rows
+                .get(self.tree_cursor)
+                .map(|(id, _)| *id)
+                .or_else(|| self.opened.as_ref().map(|d| d.id))?
+        } else {
+            self.opened
+                .as_ref()
+                .map(|d| d.id)
+                .or_else(|| self.rows.get(self.tree_cursor).map(|(id, _)| *id))?
+        };
         let mut cur_id = candidate_id;
         loop {
             let Some(node) = self.hierarchy.get(cur_id) else {
@@ -16402,11 +16415,22 @@ impl App {
     /// (or Chapter, or the book itself). Walks the parent
     /// chain; never returns a non-tree-cursor scope.
     fn resolve_anchor_scope(&self, book_id: Uuid) -> Uuid {
-        let candidate = self
-            .opened
-            .as_ref()
-            .map(|d| d.id)
-            .or_else(|| self.rows.get(self.tree_cursor).map(|(id, _)| *id));
+        // Same focus-aware preference as resolve_anchor_book —
+        // Tree-pane focus uses the tree cursor; other panes use
+        // the open paragraph. Without this the scope walked up
+        // from a stale opened-doc paragraph and landed in the
+        // wrong book entirely.
+        let candidate = if self.focus == Focus::Tree {
+            self.rows
+                .get(self.tree_cursor)
+                .map(|(id, _)| *id)
+                .or_else(|| self.opened.as_ref().map(|d| d.id))
+        } else {
+            self.opened
+                .as_ref()
+                .map(|d| d.id)
+                .or_else(|| self.rows.get(self.tree_cursor).map(|(id, _)| *id))
+        };
         let Some(mut cur_id) = candidate else {
             return book_id;
         };
