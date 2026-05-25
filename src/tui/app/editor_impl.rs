@@ -617,6 +617,17 @@ impl super::App {
         doc.saved_lines = doc.textarea.lines().to_vec();
         doc.correction_baseline = None;
         doc.last_activity = std::time::Instant::now();
+        // Restamp loaded_mtime so `tick_external_change_check` on the
+        // next loop iteration doesn't mistake our OWN save for an
+        // external file edit and trigger a clean-reload (which would
+        // recreate the textarea and snap the cursor to (0,0)). The
+        // sibling save_doc path stamps the same way; this was missing
+        // from save_current and surfaced as a cursor-jump-on-Ctrl+S
+        // regression.
+        let abs_for_mtime = self.layout.root.join(&doc.rel_path);
+        doc.loaded_mtime = std::fs::metadata(&abs_for_mtime)
+            .and_then(|m| m.modified())
+            .ok();
         let words = node.word_count;
         if title_was_placeholder && node.title != PARAGRAPH_PLACEHOLDER_TITLE {
             self.status = format!(
