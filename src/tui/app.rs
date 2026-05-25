@@ -18,7 +18,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders};
 use tui_textarea::{CursorMove, TextArea};
 use uuid::Uuid;
 
@@ -31,152 +31,55 @@ use crate::project::ProjectLayout;
 use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::{Node, NodeKind};
-use crate::store::{InsertPosition, Snapshot};
+use crate::store::InsertPosition;
 
 use super::file_picker::{FilePicker, PickerContext};
 use super::focus::Focus;
 use super::quickref;
-use super::search_replace::{RowMatch, SearchState, row_matches};
-use super::session::{EditorSession, ParagraphCursor, SessionState, TreeSession};
-use super::highlight::{
-    BlockSelection, RowHit, TypstHighlighter, build_row_spans, build_visual_row_spans,
-    diff_added, wrap_line,
+use super::search_replace::SearchState;
+use super::session::{
+    ParagraphCursor, SessionState, TimelineViewSnapshot,
 };
+use super::highlight::{
+    BlockSelection, TypstHighlighter,
+};
+use super::backup_ui::maybe_auto_backup;
+use super::credits::embedded_logo_image;
 use super::input::TextInput;
-use super::keymap::KeyChord;
+use super::lexicon_build::{LexiconKind, build_lexicon};
+use super::modal::{
+    EventPickerEntry, ImagePickerEntry, Modal, PagesToSave, PromptBody,
+    PromptSource, RenderedPageProto, ScriptPickerEntry, ScriptPickerScope,
+    SimilarPickerEntry, StatusFilterEntry, TagPickerTarget, visible_event_entries,
+};
+use super::timeline_state::{
+    TimelineEvent, TimelineFocusLevel, TimelineViewState, cycle_track, timeline_auto_fit,
+};
 use super::search_results::SearchHit;
-
-enum StartupError {
-    UserAborted,
-    Store(anyhow::Error),
-}
-
-/// Spawn `Store::open` on a worker thread and animate a "Please wait" splash
-/// while it runs. Returns the opened store, or `UserAborted` if Ctrl+Q is
-/// pressed during the splash.
-fn open_store_with_splash<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>,
-    layout: ProjectLayout,
-    cfg: Config,
-) -> std::result::Result<Store, StartupError> {
-    use std::sync::mpsc;
-
-    let project_display = layout.root.display().to_string();
-    let (tx, rx) = mpsc::channel::<crate::error::Result<Store>>();
-    let layout_for_thread = layout.clone();
-    let cfg_for_thread = cfg.clone();
-    let _ = std::thread::Builder::new()
-        .name("store-open".into())
-        .spawn(move || {
-            let result = Store::open(layout_for_thread, &cfg_for_thread);
-            let _ = tx.send(result);
-        });
-
-    let started_at = std::time::Instant::now();
-    let spinner_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    let mut spinner_idx: usize = 0;
-
-    loop {
-        let elapsed = started_at.elapsed().as_secs();
-        let frame = spinner_frames[spinner_idx % spinner_frames.len()];
-        spinner_idx = spinner_idx.wrapping_add(1);
-
-        terminal
-            .draw(|f| draw_splash(f, &project_display, frame, elapsed))
-            .map_err(|e| StartupError::Store(anyhow::anyhow!("draw splash: {e}")))?;
-
-        // Honor Ctrl+Q during the splash so a stuck DB load can be cancelled.
-        if event::poll(std::time::Duration::from_millis(80))
-            .map_err(|e| StartupError::Store(anyhow::anyhow!("event poll: {e}")))?
-        {
-            if let Event::Key(key) = event::read()
-                .map_err(|e| StartupError::Store(anyhow::anyhow!("event read: {e}")))?
-            {
-                if key.kind == KeyEventKind::Press
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
-                    && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'))
-                {
-                    return Err(StartupError::UserAborted);
-                }
-            }
-        }
-
-        match rx.try_recv() {
-            Ok(Ok(store)) => return Ok(store),
-            Ok(Err(e)) => return Err(StartupError::Store(anyhow::Error::from(e))),
-            Err(mpsc::TryRecvError::Empty) => continue,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                return Err(StartupError::Store(anyhow::anyhow!(
-                    "store-open worker thread died without sending a result"
-                )));
-            }
-        }
-    }
-}
-
-fn draw_splash(f: &mut ratatui::Frame, project_display: &str, spinner: char, elapsed_s: u64) {
-    let area = f.area();
-    // Center a small panel.
-    let width = area.width.saturating_sub(8).clamp(40, 80);
-    let height: u16 = 9;
-    let x = area.x + (area.width.saturating_sub(width)) / 2;
-    let y = area.y + (area.height.saturating_sub(height)) / 2;
-    let rect = Rect { x, y, width, height };
-
-    f.render_widget(ratatui::widgets::Clear, rect);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Inkhaven ")
-        .border_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
-    let inner = block.inner(rect);
-    f.render_widget(block, rect);
-
-    let body = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            format!("  {} Please wait for database to open…", spinner),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            format!("  Project: {project_display}"),
-            Style::default().add_modifier(Modifier::DIM),
-        )),
-        Line::from(Span::styled(
-            format!("  Elapsed: {elapsed_s}s (first-run model download can take a minute)"),
-            Style::default().add_modifier(Modifier::DIM),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  Ctrl+Q to abort startup",
-            Style::default().add_modifier(Modifier::DIM),
-        )),
-    ];
-    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
-}
-
-/// 1.2.5+ — `logo.png` from the repo root embedded directly in
-/// the binary via `include_bytes!`. Decoded lazily the first
-/// time the credits modal opens so the cost is paid once per
-/// session, not every Ctrl+B V press. The PNG's size on disk
-/// is the binary-size delta; keep the source PNG appropriately
-/// sized (~1–2 MB is a sensible upper bound).
-static EMBEDDED_LOGO: &[u8] = include_bytes!("../../logo.png");
-
-static DECODED_LOGO: std::sync::OnceLock<Option<image::DynamicImage>> =
-    std::sync::OnceLock::new();
-
-fn embedded_logo_image() -> Option<&'static image::DynamicImage> {
-    DECODED_LOGO
-        .get_or_init(|| image::load_from_memory(EMBEDDED_LOGO).ok())
-        .as_ref()
-}
+use super::splash::{
+    StartupError, TYPST_COMPILE_SPINNER, draw_assembly_splash, draw_import_splash,
+    draw_pulse_splash, draw_take_extras_splash, draw_typst_compile_splash,
+    open_store_with_splash,
+};
+use super::hjson_edit::{
+    set_key_in_hjson_block, set_llm_default_in_hjson,
+    set_sound_enabled_in_hjson,
+};
+use super::inference::{
+    AiMode, Inference, InferenceAction, InferenceMode, InferenceStatus,
+};
+use super::state::{
+    BookStats, ChatSearchState, ChatSelectionState, DeletedParagraphStash,
+    ImageCallContext, ImportCounts, Keymap, LinkPickDirection, MoveDir, OpenedDoc,
+    SplitView, ViewMdScope,
+};
+use super::status_helpers::{display_status, next_status, prev_status};
+use super::text_utils::{
+    PARAGRAPH_PLACEHOLDER_TITLE, body_to_lines, extract_first_sentence,
+    format_active_duration, format_age_humantime, pad_or_trim, truncate_to_chars,
+};
+#[cfg(test)]
+use super::text_utils::format_reading_time;
 
 /// 1.2.4+: project-pulse splash shown right after project open.
 /// Renders for up to `STARTUP_SPLASH_SECS` seconds or until a key
@@ -255,86 +158,6 @@ fn run_startup_pulse_splash<B: ratatui::backend::Backend>(
             }
         }
     }
-}
-
-/// Render the startup project-pulse splash. See
-/// `run_startup_pulse_splash` for the lifecycle.
-fn draw_pulse_splash(
-    f: &mut ratatui::Frame,
-    project_display: &str,
-    snap: Option<&crate::progress::ProgressSnapshot>,
-    total_paragraphs: usize,
-    by_status: &std::collections::BTreeMap<String, usize>,
-    remaining_secs: u64,
-) {
-    let area = f.area();
-    let width = area.width.saturating_sub(8).clamp(50, 90);
-    let height: u16 = 15;
-    let x = area.x + (area.width.saturating_sub(width)) / 2;
-    let y = area.y + (area.height.saturating_sub(height)) / 2;
-    let rect = Rect { x, y, width, height };
-
-    f.render_widget(ratatui::widgets::Clear, rect);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" Inkhaven · {project_display} "))
-        .border_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
-    let inner = block.inner(rect);
-    f.render_widget(block, rect);
-
-    let bold = Style::default().add_modifier(Modifier::BOLD);
-    let dim = Style::default().add_modifier(Modifier::DIM);
-    let mut lines: Vec<Line<'_>> = Vec::new();
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(" Today's pulse", bold)));
-    if let Some(s) = snap {
-        let today_line = match s.project.daily_goal {
-            Some(goal) => {
-                let pct = if goal > 0 {
-                    (s.project.today_words.max(0) * 100 / goal).clamp(0, 999)
-                } else {
-                    0
-                };
-                format!(
-                    "   words: {}/{} ({}%)",
-                    s.project.today_words, goal, pct
-                )
-            }
-            None => format!("   words: {}", s.project.today_words),
-        };
-        lines.push(Line::from(today_line));
-        lines.push(Line::from(format!(
-            "   streak: {}d · active: {}",
-            s.streak.days,
-            format_active_duration(s.active_seconds_today)
-        )));
-    } else {
-        lines.push(Line::from(Span::styled(
-            "   (progress tracking disabled or no data yet)",
-            dim,
-        )));
-    }
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(" Project", bold)));
-    lines.push(Line::from(format!("   {total_paragraphs} paragraphs total")));
-    if !by_status.is_empty() {
-        let summary = by_status
-            .iter()
-            .map(|(k, v)| format!("{v} {k}"))
-            .collect::<Vec<_>>()
-            .join(" · ");
-        lines.push(Line::from(format!("   by status: {summary}")));
-    }
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        format!("  any key dismisses · auto-close in {remaining_secs}s"),
-        dim,
-    )));
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 pub fn run(project: &Path) -> Result<()> {
@@ -483,479 +306,6 @@ pub fn run(project: &Path) -> Result<()> {
     result
 }
 
-/// Render the centered "Performing database backup" splash with a progress
-/// bar. Called from the exit hook each time another batch of files has
-/// been zipped so the bar visibly advances. `done`/`total` are file counts.
-///
-/// `done_dest`:
-/// * `None` — backup is in flight; spinner header + progress bar.
-/// * `Some(Some(path))` — backup finished; show success header,
-///   destination path, and the "Press any key…" footer.
-/// * `Some(None)` — backup failed; show failure header and the
-///   "Press any key…" footer (the status bar carries the error).
-fn draw_backup_splash(
-    f: &mut ratatui::Frame,
-    project_display: &str,
-    done: usize,
-    total: usize,
-    done_dest: Option<Option<&Path>>,
-) {
-    let area = f.area();
-    let width = area.width.saturating_sub(8).clamp(50, 90);
-    let height: u16 = if done_dest.is_some() { 11 } else { 9 };
-    let x = area.x + (area.width.saturating_sub(width)) / 2;
-    let y = area.y + (area.height.saturating_sub(height)) / 2;
-    let rect = Rect { x, y, width, height };
-    f.render_widget(ratatui::widgets::Clear, rect);
-    let (title, border_fg) = match done_dest {
-        None => (" Inkhaven · backup ", Color::Cyan),
-        Some(Some(_)) => (" Inkhaven · backup · done ", Color::Green),
-        Some(None) => (" Inkhaven · backup · failed ", Color::Red),
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .border_style(
-            Style::default()
-                .fg(border_fg)
-                .add_modifier(Modifier::BOLD),
-        );
-    let inner = block.inner(rect);
-    f.render_widget(block, rect);
-
-    let (header_text, header_fg) = match done_dest {
-        None => (
-            "  Performing database backup…".to_string(),
-            Color::Yellow,
-        ),
-        Some(Some(_)) => ("  ✓  Backup complete.".to_string(), Color::Green),
-        Some(None) => ("  ✗  Backup failed.".to_string(), Color::Red),
-    };
-
-    let mut body: Vec<Line<'static>> = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            header_text,
-            Style::default()
-                .fg(header_fg)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            format!("  Project: {project_display}"),
-            Style::default().add_modifier(Modifier::DIM),
-        )),
-    ];
-    match done_dest {
-        None => {
-            let bar_width = (inner.width as usize).saturating_sub(8).max(20);
-            let pct = if total == 0 {
-                0.0
-            } else {
-                (done as f32 / total as f32).clamp(0.0, 1.0)
-            };
-            let filled = (pct * bar_width as f32).round() as usize;
-            let bar = format!(
-                "  [{}{}]  {}/{} ({:>3.0}%)",
-                "█".repeat(filled),
-                "·".repeat(bar_width.saturating_sub(filled)),
-                done,
-                total,
-                pct * 100.0,
-            );
-            body.push(Line::from(Span::styled(
-                bar,
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
-        }
-        Some(Some(p)) => {
-            body.push(Line::from(Span::styled(
-                format!("  Wrote:   {}", p.display()),
-                Style::default().add_modifier(Modifier::DIM),
-            )));
-            body.push(Line::from(""));
-            body.push(Line::from(Span::styled(
-                "  Press any key to continue…",
-                Style::default().fg(Color::Gray),
-            )));
-        }
-        Some(None) => {
-            body.push(Line::from(Span::styled(
-                "  See status bar for the error.",
-                Style::default().add_modifier(Modifier::DIM),
-            )));
-            body.push(Line::from(""));
-            body.push(Line::from(Span::styled(
-                "  Press any key to continue…",
-                Style::default().fg(Color::Gray),
-            )));
-        }
-    }
-    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
-}
-
-/// Block on a single key event so the user can read the
-/// completed backup splash before the TUI redraws. Drain non-key
-/// events (mouse, resize) so a stray scroll doesn't dismiss; on
-/// resize, redraw and keep waiting.
-fn wait_for_any_key_on_backup_splash<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>,
-    project_display: &str,
-    done: usize,
-    total: usize,
-    done_dest: Option<&Path>,
-) {
-    let done_flag = Some(done_dest);
-    let _ = terminal.draw(|f| {
-        draw_backup_splash(f, project_display, done, total, done_flag)
-    });
-    loop {
-        match crossterm::event::read() {
-            Ok(crossterm::event::Event::Key(_)) => break,
-            Ok(crossterm::event::Event::Resize(_, _)) => {
-                let _ = terminal.draw(|f| {
-                    draw_backup_splash(f, project_display, done, total, done_flag)
-                });
-            }
-            Ok(_) => {}
-            Err(_) => break,
-        }
-    }
-}
-
-/// Render the centered "Importing directory" splash for the tree-pane
-/// directory import. Mirrors `draw_backup_splash` but adds a third line
-/// showing the file currently being imported so the user can see the
-/// walk advance through the tree.
-fn draw_import_splash(
-    f: &mut ratatui::Frame,
-    source_display: &str,
-    done: usize,
-    total: usize,
-    current: &str,
-) {
-    let area = f.area();
-    let width = area.width.saturating_sub(8).clamp(50, 100);
-    let height: u16 = 11;
-    let x = area.x + (area.width.saturating_sub(width)) / 2;
-    let y = area.y + (area.height.saturating_sub(height)) / 2;
-    let rect = Rect { x, y, width, height };
-    f.render_widget(ratatui::widgets::Clear, rect);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Inkhaven · import directory ")
-        .border_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
-    let inner = block.inner(rect);
-    f.render_widget(block, rect);
-
-    let bar_width = (inner.width as usize).saturating_sub(8).max(20);
-    let pct = if total == 0 {
-        0.0
-    } else {
-        (done as f32 / total as f32).clamp(0.0, 1.0)
-    };
-    let filled = (pct * bar_width as f32).round() as usize;
-    let bar = format!(
-        "  [{}{}]  {}/{} ({:>3.0}%)",
-        "█".repeat(filled),
-        "·".repeat(bar_width.saturating_sub(filled)),
-        done,
-        total,
-        pct * 100.0,
-    );
-
-    // Clip the current-file line so the splash never wraps and shoves
-    // the bar off-screen on narrow terminals.
-    let label_budget = inner.width.saturating_sub(4) as usize;
-    let current_clipped: String = if current.chars().count() > label_budget {
-        let mut s: String = current
-            .chars()
-            .rev()
-            .take(label_budget.saturating_sub(1))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        s.insert(0, '…');
-        s
-    } else {
-        current.to_string()
-    };
-
-    let body = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "  Importing directory…".to_string(),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            format!("  Source:  {source_display}"),
-            Style::default().add_modifier(Modifier::DIM),
-        )),
-        Line::from(Span::styled(
-            format!("  Current: {current_clipped}"),
-            Style::default().add_modifier(Modifier::DIM),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            bar,
-            Style::default().add_modifier(Modifier::BOLD),
-        )),
-    ];
-    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
-}
-
-/// Splash for the Book-assembly procedure (Ctrl+B A). Mirrors the
-/// import splash visually but the body line is "Assembling …" and the
-/// per-file readout is relative to `<artefacts-root>` so the user sees
-/// `inkhaven-artefacts/<project>/<book>/book/<chapter>/index.typ`-shape
-/// paths scroll past.
-fn draw_assembly_splash(
-    f: &mut ratatui::Frame,
-    book_display: &str,
-    done: usize,
-    total: usize,
-    current: &str,
-) {
-    let area = f.area();
-    let width = area.width.saturating_sub(8).clamp(50, 100);
-    let height: u16 = 11;
-    let x = area.x + (area.width.saturating_sub(width)) / 2;
-    let y = area.y + (area.height.saturating_sub(height)) / 2;
-    let rect = Rect { x, y, width, height };
-    f.render_widget(ratatui::widgets::Clear, rect);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Inkhaven · Book assembly ")
-        .border_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
-    let inner = block.inner(rect);
-    f.render_widget(block, rect);
-
-    let bar_width = (inner.width as usize).saturating_sub(8).max(20);
-    let pct = if total == 0 {
-        0.0
-    } else {
-        (done as f32 / total as f32).clamp(0.0, 1.0)
-    };
-    let filled = (pct * bar_width as f32).round() as usize;
-    let bar = format!(
-        "  [{}{}]  {}/{} ({:>3.0}%)",
-        "█".repeat(filled),
-        "·".repeat(bar_width.saturating_sub(filled)),
-        done,
-        total,
-        pct * 100.0,
-    );
-
-    let label_budget = inner.width.saturating_sub(4) as usize;
-    let current_clipped: String = if current.chars().count() > label_budget {
-        let mut s: String = current
-            .chars()
-            .rev()
-            .take(label_budget.saturating_sub(1))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        s.insert(0, '…');
-        s
-    } else {
-        current.to_string()
-    };
-
-    let body = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "  Assembling book…".to_string(),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            format!("  Book:    {book_display}"),
-            Style::default().add_modifier(Modifier::DIM),
-        )),
-        Line::from(Span::styled(
-            format!("  Writing: {current_clipped}"),
-            Style::default().add_modifier(Modifier::DIM),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            bar,
-            Style::default().add_modifier(Modifier::BOLD),
-        )),
-    ];
-    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
-}
-
-/// 1.2.6+ — splash that ticks through the configured
-/// `output.extra_formats` during a Ctrl+B O take. Each
-/// format gets ✓ (done), ▶ (in flight), or · (pending);
-/// the body lists every format so the user can see what's
-/// coming.
-fn draw_take_extras_splash(
-    f: &mut ratatui::Frame,
-    book_display: &str,
-    current_idx: usize,
-    formats: &[String],
-    statuses: &[char],
-) {
-    let area = f.area();
-    let height: u16 = (formats.len() as u16).saturating_add(7).min(20);
-    let width = area.width.saturating_sub(8).clamp(50, 100);
-    let x = area.x + (area.width.saturating_sub(width)) / 2;
-    let y = area.y + (area.height.saturating_sub(height)) / 2;
-    let rect = Rect { x, y, width, height };
-    f.render_widget(ratatui::widgets::Clear, rect);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Inkhaven · Take · extra formats ")
-        .border_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
-    let inner = block.inner(rect);
-    f.render_widget(block, rect);
-
-    let mut body: Vec<Line<'_>> = Vec::with_capacity(formats.len() + 4);
-    body.push(Line::from(""));
-    body.push(Line::from(Span::styled(
-        "  Writing extra formats alongside the PDF…".to_string(),
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD),
-    )));
-    body.push(Line::from(""));
-    body.push(Line::from(Span::styled(
-        format!("  Book: {book_display}"),
-        Style::default().add_modifier(Modifier::DIM),
-    )));
-    body.push(Line::from(""));
-    for (i, fmt) in formats.iter().enumerate() {
-        let marker = statuses.get(i).copied().unwrap_or('·');
-        let style = match marker {
-            '✓' => Style::default().fg(Color::Green),
-            '▶' => Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-            '✗' => Style::default().fg(Color::Red),
-            _ => Style::default().add_modifier(Modifier::DIM),
-        };
-        let highlight = if i == current_idx {
-            "  ▶ "
-        } else {
-            "    "
-        };
-        body.push(Line::from(Span::styled(
-            format!("{highlight}{marker}  {fmt}"),
-            style,
-        )));
-    }
-    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
-}
-
-/// Splash for the `typst compile` step (Ctrl+B B / Ctrl+B O). Static
-/// "Please wait" body plus an animated spinner the caller advances
-/// each frame so the user can tell the TUI is still alive while the
-/// child process churns.
-///
-/// `done` selects the variant:
-/// * `None` — compile is still running; header reads
-///   "Please wait while PDF is generated…" and footer "Press Esc to cancel."
-/// * `Some(true)` — compile succeeded; header reads "Build complete." and
-///   footer "Press any key to continue…" (toggle:
-///   `typst_compile.wait_for_key_after_compile`).
-/// * `Some(false)` — compile failed; header reads "Build failed." and the
-///   footer prompts the same way before the AI error-analysis chat opens.
-fn draw_typst_compile_splash(
-    f: &mut ratatui::Frame,
-    book_display: &str,
-    engine_label: &str,
-    elapsed_secs: u64,
-    spinner: char,
-    done: Option<bool>,
-) {
-    let area = f.area();
-    let width = area.width.saturating_sub(8).clamp(50, 100);
-    let height: u16 = 11;
-    let x = area.x + (area.width.saturating_sub(width)) / 2;
-    let y = area.y + (area.height.saturating_sub(height)) / 2;
-    let rect = Rect { x, y, width, height };
-    f.render_widget(ratatui::widgets::Clear, rect);
-    let (title, border_fg) = match done {
-        None => (" Inkhaven · typst compile ", Color::Cyan),
-        Some(true) => (" Inkhaven · typst compile · done ", Color::Green),
-        Some(false) => (" Inkhaven · typst compile · failed ", Color::Red),
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .border_style(
-            Style::default()
-                .fg(border_fg)
-                .add_modifier(Modifier::BOLD),
-        );
-    let inner = block.inner(rect);
-    f.render_widget(block, rect);
-
-    let (header_text, header_fg) = match done {
-        None => (
-            format!("  {spinner}  Please wait while PDF is generated…"),
-            Color::Yellow,
-        ),
-        Some(true) => ("  ✓  Build complete.".to_owned(), Color::Green),
-        Some(false) => ("  ✗  Build failed.".to_owned(), Color::Red),
-    };
-    let footer_text = match done {
-        None => "  Press Esc to cancel.",
-        Some(_) => "  Press any key to continue…",
-    };
-    let body = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            header_text,
-            Style::default()
-                .fg(header_fg)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            format!("  Book:    {book_display}"),
-            Style::default().add_modifier(Modifier::DIM),
-        )),
-        Line::from(Span::styled(
-            format!("  Engine:  {engine_label}"),
-            Style::default().add_modifier(Modifier::DIM),
-        )),
-        Line::from(Span::styled(
-            format!("  Elapsed: {elapsed_secs}s"),
-            Style::default().add_modifier(Modifier::DIM),
-        )),
-        Line::from(Span::styled(
-            footer_text,
-            Style::default().fg(Color::Gray),
-        )),
-    ];
-    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
-}
-
-const TYPST_COMPILE_SPINNER: &[char] = &[
-    '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏',
-];
-
 /// Walk `root` and count regular files that would be imported as
 /// paragraphs (mirrors the importer's hidden-entry filter so the total
 /// matches the progress callbacks).
@@ -972,273 +322,6 @@ fn count_importable_files(root: &Path) -> usize {
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
         .count()
-}
-
-/// Check whether the project is overdue for a backup and run one if so,
-/// streaming progress into the splash drawn over the alternate screen.
-/// Returns `Ok(())` when no backup was required OR the backup succeeded;
-/// `Err(_)` if the zip failed mid-flight.
-fn maybe_auto_backup<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>,
-    layout: &ProjectLayout,
-    cfg: &Config,
-) -> Result<()> {
-    // Auto-backup opts out only via `max_age = 0s` now — `out_dir` empty
-    // means "use the per-user default" (see `default_user_backup_dir`).
-    let bcfg = &cfg.backup;
-    if bcfg.max_age.as_secs() == 0 {
-        return Ok(());
-    }
-    // If we already backed up recently, do nothing.
-    let now = chrono::Utc::now();
-    if let Some(state) = crate::backup::BackupState::load(&layout.root) {
-        let age = now.signed_duration_since(state.last_at);
-        if age.num_seconds() >= 0
-            && (age.num_seconds() as u64) < bcfg.max_age.as_secs()
-        {
-            return Ok(());
-        }
-    }
-
-    // Resolve the backup directory. Empty `out_dir` → per-user data
-    // location; absolute path → used as-is; relative → resolved against
-    // the project root (legacy override for users who explicitly want
-    // backups inside the project).
-    let out_dir = {
-        let raw = bcfg.out_dir.trim();
-        if raw.is_empty() {
-            crate::store::default_user_backup_dir(&layout.root)
-        } else {
-            let p = std::path::PathBuf::from(raw);
-            if p.is_absolute() {
-                p
-            } else {
-                layout.root.join(p)
-            }
-        }
-    };
-    std::fs::create_dir_all(&out_dir).ok();
-    let abs_project = std::fs::canonicalize(&layout.root)
-        .unwrap_or_else(|_| layout.root.clone());
-    let abs_out = std::fs::canonicalize(&out_dir).unwrap_or_else(|_| out_dir.clone());
-    let skip = crate::cli::backup::skip_dirs_for(&abs_project, &abs_out);
-
-    let project_display = layout.root.display().to_string();
-    // First frame: 0/0 so the bar shows immediately even before file
-    // enumeration completes.
-    let _ = terminal.draw(|f| draw_backup_splash(f, &project_display, 0, 0, None));
-    let mut last_redraw = std::time::Instant::now();
-    // Track the most-recent progress numbers so the post-call
-    // wait-for-key splash can keep the bar at 100% instead of
-    // resetting it to 0/0.
-    let mut last_progress: (usize, usize) = (0, 0);
-    let backup_result = {
-        let mut progress = |done: usize, total: usize| {
-            last_progress = (done, total);
-            // Throttle redraws to ~30Hz so a tiny project doesn't drown the
-            // terminal in noise on a fast disk.
-            if last_redraw.elapsed() < std::time::Duration::from_millis(33) {
-                return;
-            }
-            last_redraw = std::time::Instant::now();
-            let _ = terminal.draw(|f| {
-                draw_backup_splash(f, &project_display, done, total, None)
-            });
-        };
-        crate::backup::create_backup(&abs_project, &abs_out, &skip, Some(&mut progress))
-    };
-    let wait = cfg.backup.wait_for_key_after_backup;
-    let (done_n, total_n) = last_progress;
-    match backup_result {
-        Ok(out_path) => {
-            if wait {
-                wait_for_any_key_on_backup_splash(
-                    terminal,
-                    &project_display,
-                    done_n,
-                    total_n,
-                    Some(&out_path),
-                );
-            }
-            Ok(())
-        }
-        Err(e) => {
-            if wait {
-                wait_for_any_key_on_backup_splash(
-                    terminal,
-                    &project_display,
-                    done_n,
-                    total_n,
-                    None,
-                );
-            }
-            Err(anyhow::Error::from(e))
-        }
-    }
-}
-
-/// Manual backup triggered by `Ctrl+B B` (uppercase). Unlike
-/// `maybe_auto_backup`, this fires unconditionally — the
-/// "we already backed up recently" cooldown is skipped because
-/// the user explicitly asked for a fresh archive. The
-/// `backup.wait_for_key_after_backup` toggle still applies.
-fn run_manual_backup<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>,
-    layout: &ProjectLayout,
-    cfg: &Config,
-) -> Result<std::path::PathBuf> {
-    // Resolve the backup directory the same way `maybe_auto_backup`
-    // does. Kept duplicated rather than refactored out so a single
-    // future change to either path can be reasoned about in
-    // isolation.
-    let bcfg = &cfg.backup;
-    let out_dir = {
-        let raw = bcfg.out_dir.trim();
-        if raw.is_empty() {
-            crate::store::default_user_backup_dir(&layout.root)
-        } else {
-            let p = std::path::PathBuf::from(raw);
-            if p.is_absolute() {
-                p
-            } else {
-                layout.root.join(p)
-            }
-        }
-    };
-    std::fs::create_dir_all(&out_dir).ok();
-    let abs_project = std::fs::canonicalize(&layout.root)
-        .unwrap_or_else(|_| layout.root.clone());
-    let abs_out = std::fs::canonicalize(&out_dir).unwrap_or_else(|_| out_dir.clone());
-    let skip = crate::cli::backup::skip_dirs_for(&abs_project, &abs_out);
-
-    let project_display = layout.root.display().to_string();
-    let _ = terminal.draw(|f| draw_backup_splash(f, &project_display, 0, 0, None));
-    let mut last_redraw = std::time::Instant::now();
-    let mut last_progress: (usize, usize) = (0, 0);
-    let backup_result = {
-        let mut progress = |done: usize, total: usize| {
-            last_progress = (done, total);
-            if last_redraw.elapsed() < std::time::Duration::from_millis(33) {
-                return;
-            }
-            last_redraw = std::time::Instant::now();
-            let _ = terminal.draw(|f| {
-                draw_backup_splash(f, &project_display, done, total, None)
-            });
-        };
-        crate::backup::create_backup(&abs_project, &abs_out, &skip, Some(&mut progress))
-    };
-    let wait = cfg.backup.wait_for_key_after_backup;
-    let (done_n, total_n) = last_progress;
-    match backup_result {
-        Ok(out_path) => {
-            if wait {
-                wait_for_any_key_on_backup_splash(
-                    terminal,
-                    &project_display,
-                    done_n,
-                    total_n,
-                    Some(&out_path),
-                );
-            }
-            Ok(out_path)
-        }
-        Err(e) => {
-            if wait {
-                wait_for_any_key_on_backup_splash(
-                    terminal,
-                    &project_display,
-                    done_n,
-                    total_n,
-                    None,
-                );
-            }
-            Err(anyhow::Error::from(e))
-        }
-    }
-}
-
-struct Keymap {
-    next_pane: KeyChord,
-    prev_pane: KeyChord,
-    search: KeyChord,
-    ai_prompt: KeyChord,
-    save: KeyChord,
-    page_up: KeyChord,
-    page_down: KeyChord,
-    meta_prefix: KeyChord,
-    /// Bund-meta prefix. `None` when the config sets
-    /// `keys.bund_prefix = ""` to disable the chord (some users
-    /// reserve Ctrl+Z for their terminal multiplexer).
-    bund_prefix: Option<KeyChord>,
-    /// View-meta prefix (1.2.4+, default `Ctrl+V`). `None`
-    /// disables the layer (some terminals bind Ctrl+V to "verbatim
-    /// next" and the user might want it back).
-    view_prefix: Option<KeyChord>,
-}
-
-impl Keymap {
-    fn from_config(cfg: &Config) -> InkResult<Self> {
-        let parse = |label: &str, s: &str| -> InkResult<KeyChord> {
-            KeyChord::parse(s).map_err(|e| Error::Config(format!("keys.{label}: {e}")))
-        };
-        let bund_prefix = if cfg.keys.bund_prefix.trim().is_empty() {
-            None
-        } else {
-            Some(parse("bund_prefix", &cfg.keys.bund_prefix)?)
-        };
-        let view_prefix = if cfg.keys.view_prefix.trim().is_empty() {
-            None
-        } else {
-            Some(parse("view_prefix", &cfg.keys.view_prefix)?)
-        };
-        Ok(Self {
-            next_pane: parse("next_pane", &cfg.keys.next_pane)?,
-            prev_pane: parse("prev_pane", &cfg.keys.prev_pane)?,
-            search: parse("search", &cfg.keys.search)?,
-            ai_prompt: parse("ai_prompt", &cfg.keys.ai_prompt)?,
-            save: parse("save", &cfg.keys.save)?,
-            page_up: parse("page_up", &cfg.keys.page_up)?,
-            page_down: parse("page_down", &cfg.keys.page_down)?,
-            meta_prefix: parse("meta_prefix", &cfg.keys.meta_prefix)?,
-            bund_prefix,
-            view_prefix,
-        })
-    }
-}
-
-/// Which scope the Ctrl+V markdown export targets. Used by
-/// `view_export_markdown` to route through the existing
-/// per-scope helpers from one binding-table arm.
-#[derive(Debug, Clone, Copy)]
-enum ViewMdScope {
-    Buffer,
-    Subchapter,
-    Subtree,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum MoveDir {
-    Up,
-    Down,
-}
-
-/// Direction of a link-pick flow (Ctrl+V A vs Ctrl+V I).
-/// `Outgoing` adds the picked target to the open paragraph's
-/// outgoing links; `Incoming` adds the open paragraph to the
-/// picked target's outgoing links (== an incoming link for
-/// current).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LinkPickDirection {
-    Outgoing,
-    Incoming,
-}
-
-#[derive(Default)]
-struct ImportCounts {
-    /// Any branch created during import: chapter, subchapter, or book.
-    branches: usize,
-    paragraphs: usize,
 }
 
 /// Read a directory's immediate children, filter hidden entries, sort dirs
@@ -1295,7 +378,7 @@ fn derive_paragraph_title_from_path(path: &std::path::Path) -> String {
 /// we'll route to `import_single_image`. The list is the recognised
 /// set Typst's `#image(...)` natively understands: PNG, JPG, JPEG,
 /// GIF, WebP, SVG. Anything else stays a paragraph candidate.
-fn image_extension_for(path: &std::path::Path) -> Option<String> {
+pub(super) fn image_extension_for(path: &std::path::Path) -> Option<String> {
     let ext = path.extension()?.to_str()?.to_lowercase();
     match ext.as_str() {
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => Some(ext),
@@ -1315,103 +398,6 @@ fn content_type_for(path: &std::path::Path) -> Option<String> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InferenceAction {
-    Replace,
-    Insert,
-    Top,
-    Bottom,
-    CopyOnly,
-    /// Grammar-check-aware replace: lifts ONLY the corrected paragraph
-    /// from the response (between `<<<CORRECTED>>>` / `<<<END>>>` markers,
-    /// or fenced code, or a "Corrected …" heading) and overwrites the
-    /// editor buffer with it. No markdown→typst conversion runs — the
-    /// grammar prompt instructs the model to keep Typst markup verbatim.
-    ReplaceCorrected,
-}
-
-/// Scope of context an AI prompt sweeps in along with the user's query.
-/// Cycled by F9: None → Selection → Paragraph → Subchapter → Chapter →
-/// Book → None. Each non-None scope prepends the relevant text to the
-/// query before sending; after a successful submission the mode auto-
-/// resets to None so a follow-up prompt isn't surprised by stale scope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AiMode {
-    None,
-    Selection,
-    Paragraph,
-    Subchapter,
-    Chapter,
-    Book,
-}
-
-impl AiMode {
-    fn label(self) -> &'static str {
-        match self {
-            AiMode::None => "None",
-            AiMode::Selection => "Selection",
-            AiMode::Paragraph => "Paragraph",
-            AiMode::Subchapter => "Subchapter",
-            AiMode::Chapter => "Chapter",
-            AiMode::Book => "Book",
-        }
-    }
-    fn next(self) -> Self {
-        match self {
-            AiMode::None => AiMode::Selection,
-            AiMode::Selection => AiMode::Paragraph,
-            AiMode::Paragraph => AiMode::Subchapter,
-            AiMode::Subchapter => AiMode::Chapter,
-            AiMode::Chapter => AiMode::Book,
-            AiMode::Book => AiMode::None,
-        }
-    }
-}
-
-/// How aggressively the model is allowed to draw on its own knowledge.
-/// F10 toggles between the two values. Help inferences always run as
-/// `Local` regardless of the user's current toggle — the Help book is the
-/// authoritative source and we don't want the model paraphrasing from
-/// general training data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InferenceMode {
-    /// Only the supplied RAG / scope context (and prior chat turns) may be
-    /// used. The system prompt instructs the model to refuse rather than
-    /// fall back on outside knowledge.
-    Local,
-    /// Context is treated as ground truth where present, but the model
-    /// may augment with general knowledge. Default for fresh chats.
-    Full,
-}
-
-impl InferenceMode {
-    fn label(self) -> &'static str {
-        match self {
-            InferenceMode::Local => "Local",
-            InferenceMode::Full => "Full",
-        }
-    }
-    fn toggle(self) -> Self {
-        match self {
-            InferenceMode::Local => InferenceMode::Full,
-            InferenceMode::Full => InferenceMode::Local,
-        }
-    }
-}
-
-impl InferenceAction {
-    fn label(&self) -> &'static str {
-        match self {
-            InferenceAction::Replace => "replaced",
-            InferenceAction::Insert => "inserted at cursor",
-            InferenceAction::Top => "prepended to top",
-            InferenceAction::Bottom => "appended to bottom",
-            InferenceAction::CopyOnly => "copied",
-            InferenceAction::ReplaceCorrected => "replaced with corrected text",
-        }
-    }
-}
-
 /// 1.2.6+ — pick the "thing to paste" for a Replace-style AI
 /// apply. For grammar-style outputs (`<<<CORRECTED>>> … <<<END>>>`
 /// markers, a trailing fenced code block, or a "Corrected …"
@@ -1427,7 +413,7 @@ impl InferenceAction {
 /// "if I can't find a discrete block, treat that as an error";
 /// the caller should refuse to apply rather than paste prose
 /// commentary by mistake.
-fn select_apply_text(
+pub(super) fn select_apply_text(
     raw: &str,
     force_extract: bool,
 ) -> Result<(String, bool), &'static str> {
@@ -1477,7 +463,7 @@ fn select_apply_text(
 ///
 /// Returns `None` if none of those patterns match so callers
 /// can refuse rather than paste commentary by mistake.
-fn extract_corrected_text(response: &str) -> Option<String> {
+pub(super) fn extract_corrected_text(response: &str) -> Option<String> {
     if let Some(begin) = response.find(CORRECTED_BEGIN) {
         let after = &response[begin + CORRECTED_BEGIN.len()..];
         if let Some(end_offset) = after.find(CORRECTED_END) {
@@ -1799,68 +785,6 @@ mod book_info_tests {
             ChatTurn::Assistant(s) => assert_eq!(s, "I don't have a weather tool."),
             _ => panic!("expected Assistant turn"),
         }
-    }
-
-    #[test]
-    fn digit_to_status_mapping() {
-        assert_eq!(digit_to_status('1'), Some("Ready"));
-        assert_eq!(digit_to_status('2'), Some("Final"));
-        assert_eq!(digit_to_status('3'), Some("Third"));
-        assert_eq!(digit_to_status('4'), Some("Second"));
-        assert_eq!(digit_to_status('5'), Some("First"));
-        assert_eq!(digit_to_status('6'), Some("Napkin"));
-        assert_eq!(digit_to_status('7'), Some("None"));
-        // 0, 8, 9 and letters don't map.
-        assert_eq!(digit_to_status('0'), None);
-        assert_eq!(digit_to_status('8'), None);
-        assert_eq!(digit_to_status('a'), None);
-    }
-
-    #[test]
-    fn status_letter_returns_one_char_or_space() {
-        assert_eq!(status_letter("Napkin"), "n");
-        assert_eq!(status_letter("First"), "1");
-        assert_eq!(status_letter("Second"), "2");
-        assert_eq!(status_letter("Third"), "3");
-        assert_eq!(status_letter("Final"), "F");
-        assert_eq!(status_letter("Ready"), "R");
-        assert_eq!(status_letter("None"), " ");
-        assert_eq!(status_letter("Unknown"), " ");
-    }
-
-    #[test]
-    fn next_status_walks_the_ring() {
-        assert_eq!(next_status(None), "Napkin");
-        assert_eq!(next_status(Some("Napkin")), "First");
-        assert_eq!(next_status(Some("First")), "Second");
-        assert_eq!(next_status(Some("Second")), "Third");
-        assert_eq!(next_status(Some("Third")), "Final");
-        assert_eq!(next_status(Some("Final")), "Ready");
-        // Wrap.
-        assert_eq!(next_status(Some("Ready")), "None");
-        // Empty string = same as None.
-        assert_eq!(next_status(Some("")), "Napkin");
-    }
-
-    #[test]
-    fn prev_status_walks_backwards_and_wraps() {
-        assert_eq!(prev_status(Some("Napkin")), "None");
-        assert_eq!(prev_status(Some("Ready")), "Final");
-        assert_eq!(prev_status(Some("Final")), "Third");
-        assert_eq!(prev_status(None), "Ready"); // wrap from None backwards
-    }
-
-    #[test]
-    fn next_status_unknown_value_treated_as_none() {
-        assert_eq!(next_status(Some("WeirdCustom")), "Napkin");
-    }
-
-    #[test]
-    fn display_status_collapses_none_variants() {
-        assert_eq!(display_status(None), "None");
-        assert_eq!(display_status(Some("")), "None");
-        assert_eq!(display_status(Some("   ")), "None");
-        assert_eq!(display_status(Some("Napkin")), "Napkin");
     }
 
     #[test]
@@ -2263,30 +1187,6 @@ llm: {
     }
 }
 
-/// One entry in the `/` prompt picker. Wraps both shipping HJSON prompts
-/// (`PromptSource::System`) and user-authored paragraphs under the Prompts
-/// book (`PromptSource::Book`). The body is lazily fetched for book
-/// paragraphs so we don't hit the store while filtering as the user types.
-#[derive(Debug, Clone)]
-struct PromptCandidate {
-    name: String,
-    description: String,
-    body: PromptBody,
-    source: PromptSource,
-}
-
-#[derive(Debug, Clone)]
-enum PromptBody {
-    Static(String),
-    BookParagraph(Uuid),
-}
-
-#[derive(Debug, Clone, Copy)]
-enum PromptSource {
-    System,
-    Book,
-}
-
 /// Strip a leading Typst heading line (`= Title`) from a paragraph body so
 /// it doesn't end up in the LLM prompt. The heading is editor chrome — it
 /// describes the prompt for tree-pane navigation, not text the user wants
@@ -2304,529 +1204,6 @@ fn strip_leading_typst_heading(body: &str) -> String {
     lines.join("\n")
 }
 
-/// Where the `Ctrl+Z ?` script picker is sourcing entries from.
-/// `A` inside the modal toggles between the two.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ScriptPickerScope {
-    /// Scripts under the cursor's nearest containing branch
-    /// (subchapter / chapter / book — whichever is closest).
-    Branch,
-    /// Scripts under the `Scripts` system book.
-    ScriptsBook,
-}
-
-/// One row in the script-picker modal.
-#[derive(Debug, Clone)]
-pub(crate) struct ScriptPickerEntry {
-    pub id: Uuid,
-    pub title: String,
-    pub slug_path: String,
-}
-
-/// One row in the similar-paragraph picker modal.
-#[derive(Debug, Clone)]
-pub(crate) struct SimilarPickerEntry {
-    pub id: Uuid,
-    pub title: String,
-    pub slug_path: String,
-    pub score: f64,
-    pub snippet: String,
-}
-
-/// One aligned row in the snapshot-diff view. `left_*` holds the
-/// snapshot side (or `None` for an addition); `right_*` holds the
-/// current-buffer side (or `None` for a deletion).
-#[derive(Debug, Clone)]
-pub(crate) struct SnapshotDiffRow {
-    pub left: Option<String>,
-    pub right: Option<String>,
-    pub kind: SnapshotDiffKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SnapshotDiffKind {
-    /// Same line on both sides.
-    Equal,
-    /// Snapshot had it, buffer dropped it.
-    Removed,
-    /// Buffer added it.
-    Added,
-    /// Both sides have a line at this position but they differ.
-    Changed,
-}
-
-/// One page of a rendered paragraph kept in the preview modal —
-/// just enough state for ratatui-image to repaint it and for the
-/// title bar to show "page N/M · width×height".
-struct RenderedPageProto {
-    proto: ratatui_image::protocol::StatefulProtocol,
-    width: u32,
-    height: u32,
-}
-
-/// Which set of nodes the Ctrl+B ] / g tag picker applies tags
-/// to when the user hits T. `Search` is the read-only mode
-/// triggered by Ctrl+B }; T is a no-op there and Enter opens
-/// the tag-search results instead.
-#[derive(Debug, Clone)]
-enum TagPickerTarget {
-    /// Editor pane: the open paragraph (carries its title for
-    /// the modal's status hint).
-    EditorParagraph { id: Uuid, title: String },
-    /// Tree pane: the marked set (or the cursor row when marks
-    /// are empty) — every paragraph-kind node in the list.
-    TreeSelection(Vec<Uuid>),
-    /// Search-by-tag: T / Space have no effect; Enter on a tag
-    /// opens the TagSearchResults modal.
-    Search,
-}
-
-/// Save-mode for the SaveRenderedPng picker. Drives whether one
-/// page or every page lands on disk.
-#[derive(Debug, Clone)]
-enum PagesToSave {
-    /// Single page at the given 0-based index. File path is the
-    /// user's input verbatim.
-    Single(usize),
-    /// Every page. The user's input is the *base* path
-    /// (`/path/to/render` or `/path/to/render.png`); inkhaven
-    /// inserts `-page-NNN` before the `.png` extension and
-    /// writes one file per page.
-    All,
-}
-
-enum Modal {
-    None,
-    Adding {
-        kind: NodeKind,
-        parent_id: Option<Uuid>,
-        parent_label: String,
-        input: TextInput,
-        /// Where in the parent's children list the new node lands.
-        position: InsertPosition,
-    },
-    Deleting {
-        root_id: Uuid,
-        root_kind: NodeKind,
-        title: String,
-        descendant_count: usize,
-        ids: Vec<Uuid>,
-    },
-    Renaming {
-        node_id: Uuid,
-        kind: NodeKind,
-        input: TextInput,
-    },
-    /// Ctrl+Z E — one-shot Bund eval. The user types an
-    /// expression; Enter runs it against Adam and pops the
-    /// result onto the status bar. Esc cancels.
-    BundEval {
-        input: TextInput,
-    },
-    /// Generic input modal opened by the `ink.input` Bund word.
-    /// Shows `prompt`, reads a single line of text, and on Enter
-    /// fires the named hook with the typed string on the stack
-    /// (`scripting::hooks::fire(hook, [Value::String])`). Esc
-    /// closes without firing. Hook-driven rather than synchronous
-    /// because a blocking modal would freeze autosave + inference
-    /// polling for the duration of the prompt.
-    BundInput {
-        prompt: String,
-        input: TextInput,
-        hook: String,
-    },
-    /// Floating Bund output pane. Opened by `ink.pane.show`,
-    /// receives every subsequent `print`/`println` output until
-    /// `ink.pane.close` (or Esc). While this is open, the print
-    /// buffer that normally drains to the status bar is bypassed
-    /// and text lands here instead — letting scripts emit long /
-    /// multi-line output without clobbering the status line.
-    BundPane {
-        title: String,
-        lines: Vec<String>,
-        scroll: usize,
-    },
-    /// Ctrl+Z ? — pick + execute a Bund script. `scope`
-    /// switches between the cursor's containing branch and the
-    /// global `Scripts` system book via the `A` key.
-    ScriptPicker {
-        scope: ScriptPickerScope,
-        entries: Vec<ScriptPickerEntry>,
-        cursor: usize,
-        scroll: usize,
-    },
-    /// Ctrl+V G — writing-progress overview. Renders the cached
-    /// snapshot (today/streak/per-book/status ladder) plus a
-    /// 30-day sparkline. Read-only; refresh on open.
-    Progress {
-        scroll: usize,
-    },
-    /// Ctrl+V T — set / clear the per-paragraph word-count goal.
-    /// Empty or `0` clears the target. Lives in the same input-
-    /// modal family as BundEval / HelpQuery.
-    ParagraphTarget {
-        input: TextInput,
-    },
-    /// Ctrl+V 1/2 save-as modal (1.2.4+). Pre-filled with the
-    /// default markdown destination — Enter writes; Esc cancels.
-    /// `body` is the markdown bytes computed before the modal
-    /// opened; `label` is the human-readable name used for any
-    /// fallback default path computation.
-    SaveMarkdown {
-        input: TextInput,
-        body: String,
-        label: String,
-    },
-    /// Ctrl+V L (1.2.4+) — linked-paragraphs floating modal.
-    /// Lists the open paragraph's outgoing `linked_paragraphs`
-    /// metadata entries. `D` on a row removes the link.
-    LinkPicker {
-        owner: Uuid,
-        entries: Vec<ScriptPickerEntry>,
-        cursor: usize,
-        scroll: usize,
-    },
-    /// Ctrl+V K (1.2.4+) — backlinks floating modal. Reverse of
-    /// LinkPicker: lists paragraphs whose `linked_paragraphs`
-    /// contains `target`. `D` removes the source's outgoing
-    /// link to `target` (mutates the source paragraph).
-    BacklinkPicker {
-        target: Uuid,
-        entries: Vec<ScriptPickerEntry>,
-        cursor: usize,
-        scroll: usize,
-    },
-    /// Ctrl+V M (1.2.4+) — bookmark picker. Lists every
-    /// paragraph with `bookmark = true`. Enter opens; D
-    /// clears the bookmark flag.
-    BookmarkPicker {
-        entries: Vec<ScriptPickerEntry>,
-        cursor: usize,
-        scroll: usize,
-    },
-    /// Ctrl+V P (1.2.4+) — fuzzy paragraph picker. The
-    /// `entries` field is pre-computed from every paragraph
-    /// node; the input box narrows the visible list as the
-    /// user types.
-    FuzzyParagraphPicker {
-        input: TextInput,
-        entries: Vec<ScriptPickerEntry>,
-        cursor: usize,
-        scroll: usize,
-    },
-    /// F6 picker → `V` opens a two-pane diff of the cursor's
-    /// snapshot against the open paragraph's current buffer.
-    /// Read-only; Esc returns to the snapshot picker.
-    SnapshotDiff {
-        paragraph_title: String,
-        when: String,
-        /// Aligned line pairs: `(left_label, left_text,
-        /// right_label, right_text, kind)` per row. `kind`
-        /// drives the row colour.
-        rows: Vec<SnapshotDiffRow>,
-        scroll: usize,
-        /// Stashed snapshot picker we came from, so `Esc`
-        /// restores it intact instead of closing both layers.
-        return_to: Box<Modal>,
-    },
-    /// Ctrl+V S — pick a paragraph similar to the current buffer.
-    /// Result list comes from the vector index seeded with the
-    /// current paragraph's text; entries always exclude the
-    /// current paragraph itself.
-    SimilarPicker {
-        entries: Vec<SimilarPickerEntry>,
-        cursor: usize,
-        scroll: usize,
-    },
-    FilePicker(FilePicker),
-    /// Ctrl+H quick reference. Pane-aware: content is fetched from
-    /// `quickref::entries_for(focus_when_opened)`.
-    QuickRef {
-        focus: Focus,
-        scroll: usize,
-    },
-    /// Ctrl+B V — version, author, and credits panel. Scrollable.
-    /// Content is rendered fresh each frame so it picks up the current
-    /// `CARGO_PKG_VERSION` / `CARGO_PKG_AUTHORS` env vars.
-    ///
-    /// 1.2.5+: optional `logo` `StatefulProtocol` rendered as a
-    /// banner above the text — populated from the embedded
-    /// `logo.png` when the host terminal supports ratatui-image
-    /// (kitty / iterm2 / sixel / unicode half-blocks). `None`
-    /// when image-preview is disabled or the terminal can't
-    /// negotiate a graphics protocol.
-    Credits {
-        scroll: usize,
-        logo: Option<ratatui_image::protocol::StatefulProtocol>,
-    },
-    /// Ctrl+B I — current-book info panel: backup / artefacts paths,
-    /// structural counts (chapters / subchapters / paragraphs /
-    /// sentences / words), reading-time estimate, and rendered-PDF
-    /// status. Content is recomputed each frame so the figures stay
-    /// fresh as the user edits.
-    BookInfo {
-        scroll: usize,
-    },
-    /// Ctrl+B L — pick a different `llm.default` provider from the set
-    /// configured in inkhaven.hjson. On commit we rewrite just the
-    /// `default:` line of the HJSON file in place so user comments and
-    /// the rest of the config survive.
-    LlmPicker {
-        providers: Vec<String>,
-        cursor: usize,
-        initial_default: String,
-    },
-    /// Ctrl+B P fired with the cursor inside `#image("…")`: pick a
-    /// sibling Image node to insert. Filename gets inserted at the
-    /// cursor (plus a closing `"` when the call had none).
-    ImagePicker {
-        entries: Vec<ImagePickerEntry>,
-        cursor: usize,
-        /// Tells `commit_image_picker` whether to append a `"` after
-        /// the filename — true when the `#image(` call was unclosed.
-        close_quote: bool,
-    },
-    /// Enter-on-Image preview using ratatui-image. The `proto` is a
-    /// resize-aware StatefulProtocol scoped to one image; it's
-    /// re-encoded each frame against the modal's current rect so a
-    /// terminal resize Just Works. None when the picker isn't
-    /// available — caller falls back to the status-line info path.
-    ImagePreview {
-        title: String,
-        fs_rel: String,
-        size_bytes: u64,
-        proto: ratatui_image::protocol::StatefulProtocol,
-    },
-    /// Ctrl+V R (1.2.5+) — float a rasterised PNG of the open
-    /// paragraph on top of the editor. `pages` holds one
-    /// ratatui-image protocol per page of the compiled
-    /// document; `current_page` selects which one renders.
-    /// `body` + `settings` are captured so an `S` or `A`
-    /// keypress can re-render at high DPI without re-prompting.
-    RenderedPreview {
-        title: String,
-        body: String,
-        settings: crate::typst_world::WorldSettings,
-        pages: Vec<RenderedPageProto>,
-        current_page: usize,
-        /// 1.2.6+ — pixels-per-typst-point factor used for the
-        /// current page set. Initialised to 2.0 (≈ 144 dpi)
-        /// when the modal first opens; `+`/`=` boost by 0.5
-        /// (capped at 6.0), `-`/`_` reduce by 0.5 (floored at
-        /// 0.5). Each change re-runs `render_all` with the new
-        /// PPI and replaces `pages` in-place. Save flow (S /
-        /// A) keeps using its own default DPI — that's the
-        /// "publish" copy, not the screen preview.
-        ppi: f32,
-    },
-    /// Ctrl+B ] (editor), `g` (tree), or Ctrl+B } (search) —
-    /// 1.2.5+ project-wide tag picker. Shows every tag in use
-    /// across the project; keys depend on `target` (see
-    /// `TagPickerTarget`).
-    TagPicker {
-        target: TagPickerTarget,
-        all_tags: Vec<String>,
-        cursor: usize,
-        /// Multi-select state — only meaningful in `EditorParagraph`
-        /// and `TreeSelection` modes. Stored as a `BTreeSet` for
-        /// deterministic glyph rendering in the modal.
-        selected: std::collections::BTreeSet<String>,
-    },
-    /// `A` from `TagPicker` — prompt for a new tag name. Enter
-    /// adds the tag to the project-wide set AND keeps the
-    /// underlying picker's selection state via `return_to`.
-    TagAddPrompt {
-        input: TextInput,
-        return_to: Box<Modal>,
-    },
-    /// `D` from `TagPicker` — confirm + execute project-wide tag
-    /// deletion. Removes the tag from every node that carries it.
-    /// `affected` reports how many nodes will be touched.
-    TagDeleteConfirm {
-        tag: String,
-        affected: usize,
-        return_to: Box<Modal>,
-    },
-    /// `R` from `TagPicker` (1.2.6+) — project-wide rename of
-    /// the cursor tag. Empty input cancels; Enter rewrites
-    /// every node carrying `old_tag` to use the new name.
-    /// Merges into an existing tag if the new name already
-    /// exists in the project.
-    TagRenamePrompt {
-        input: TextInput,
-        old_tag: String,
-        affected: usize,
-        return_to: Box<Modal>,
-    },
-    /// Enter from `TagPicker` in `Search` mode — show every
-    /// paragraph that carries the chosen tag, with a typeable
-    /// filter input that narrows the list.
-    TagSearchResults {
-        tag: String,
-        filter: TextInput,
-        all_results: Vec<ScriptPickerEntry>,
-        cursor: usize,
-    },
-    /// F8 (1.2.6+) — floating typst-diagnostics list for the
-    /// open paragraph. Pure UI: reads from `opened.typst_diagnostics`
-    /// on every frame, no copy held. Enter on a row moves the
-    /// editor cursor to the diagnostic's line/col.
-    DiagnosticsList {
-        cursor: usize,
-    },
-    /// Ctrl+V e (1.2.6+) — vertical event picker. `entries`
-    /// is a chronological snapshot built at open-time
-    /// (`open_event_picker`); the picker doesn't refresh
-    /// while open. Enter jumps to the event paragraph.
-    EventPicker {
-        entries: Vec<EventPickerEntry>,
-        cursor: usize,
-        track_filter: Option<String>,
-    },
-    /// Ctrl+V t (1.2.6+) — swim-lane timeline view (Phase 2).
-    /// Scope-aware: opens at the current paragraph's nearest
-    /// Subchapter / Chapter / Book; up/down chords walk the
-    /// tree. The modal builds its event snapshot at open
-    /// time and rebuilds on scope changes — pure UI state
-    /// the rest of the lifecycle.
-    TimelineView {
-        state: TimelineViewState,
-    },
-    /// `n` from `TimelineView` — title prompt for a new
-    /// event at the cursor's tick. Enter commits to the
-    /// store via the same path as `inkhaven event add`; Esc
-    /// returns to the underlying TimelineView modal.
-    TimelineNewEventPrompt {
-        input: TextInput,
-        book_id: Uuid,
-        cursor_ticks: i64,
-        track: Option<String>,
-        return_to: Box<Modal>,
-    },
-    /// 1.2.6+ — `Ctrl+V Shift+I` on an event paragraph. One-line
-    /// edit prompt for start / end / track, pipe-separated.
-    /// Example pre-fill: `Sol 13 | Sol 14 | main`. Empty middle
-    /// (`Sol 13 |  | main`) means "no end". Empty trailing track
-    /// (`Sol 13 | Sol 14 |`) means "drop the track". Precision
-    /// is re-derived from the start string each commit.
-    TimelineEditEventPrompt {
-        input: TextInput,
-        event_id: Uuid,
-    },
-    /// 1.2.6+ — side-by-side diff review before a buffer-
-    /// replacing AI apply lands. Built by `apply_inference`
-    /// when `ai.diff_review_on_apply = true` (default) and
-    /// the action is `Replace` or `ReplaceCorrected`. The
-    /// user reviews and presses `a` (accept) / `r` (reject)
-    /// / `e` (edit — accept and refocus the editor).
-    AiDiffReview {
-        before_lines: Vec<String>,
-        after_lines: Vec<String>,
-        action: InferenceAction,
-        scroll: usize,
-    },
-    /// F5 (1.2.6+) — annotation prompt that pops before a new
-    /// snapshot is committed. `body` is captured at open time
-    /// so the user can keep typing in the editor without
-    /// affecting what gets snapshotted. Enter commits with the
-    /// typed annotation (empty allowed); Esc cancels.
-    SnapshotAnnotation {
-        input: TextInput,
-        parent_id: Uuid,
-        parent_title: String,
-        body: Vec<u8>,
-    },
-    /// Ctrl+V W (1.2.5+) — story view: floating PNG of the
-    /// current book's DOT graph, rendered via `layout-rs` +
-    /// `resvg`. `proto` drives the ratatui-image widget;
-    /// `png_bytes` is kept around so `S` can dump it to disk
-    /// without re-running the layout.
-    StoryView {
-        book_title: String,
-        width: u32,
-        height: u32,
-        png_bytes: Vec<u8>,
-        proto: ratatui_image::protocol::StatefulProtocol,
-    },
-    /// `S` from `StoryView` — save-as picker for the rendered
-    /// PNG. Same shape as `SaveRenderedPng`; Esc restores the
-    /// `StoryView` modal via `return_to`.
-    SaveStoryPng {
-        input: TextInput,
-        png_bytes: Vec<u8>,
-        book_title: String,
-        return_to: Box<Modal>,
-    },
-    /// `S` (current page) or `A` (all pages) from
-    /// `RenderedPreview` — save-as path picker for the full-DPI
-    /// PNG(s). Enter writes the file(s); Esc restores the
-    /// underlying `RenderedPreview` so navigation state survives
-    /// a cancelled save.
-    SaveRenderedPng {
-        input: TextInput,
-        body: String,
-        settings: crate::typst_world::WorldSettings,
-        title: String,
-        pages: PagesToSave,
-        /// Stash of the underlying preview modal so Esc returns
-        /// to it. Same `return_to: Box<Modal>` pattern the
-        /// snapshot-diff picker uses.
-        return_to: Box<Modal>,
-    },
-    /// Ctrl+B F (editor pane) — Typst function picker. The filter
-    /// input narrows the baked-in list as the user types; Enter
-    /// inserts `#<name>(|)` at the cursor with the editor cursor
-    /// positioned between the parens (Phase 1 = markup-mode default).
-    FunctionPicker {
-        filter: TextInput,
-        cursor: usize,
-    },
-    /// Ctrl+F in AI-fullscreen — query string entry for the chat-
-    /// history search. Enter commits the query into
-    /// `App::chat_search`; Esc cancels with no search.
-    ChatSearchPrompt {
-        input: TextInput,
-    },
-    /// Ctrl+B 1..7 — list paragraphs whose `status` matches the
-    /// chord's target value (1 = Ready, 2 = Final, …, 7 = None),
-    /// scoped to the tree cursor's enclosing branch (or the whole
-    /// project when the cursor sits at the root). Actions inside the
-    /// modal:
-    ///   Enter → jump tree cursor + open the paragraph
-    ///   r / R → cycle the highlighted paragraph's status forward
-    ///           (if it no longer matches, the row disappears from
-    ///           the list and the next one slides up)
-    ///   - / Backspace → cycle status backward
-    StatusFilter {
-        status_label: &'static str,
-        scope: String,
-        entries: Vec<StatusFilterEntry>,
-        cursor: usize,
-    },
-    /// F1 help-manual query. Asks a free-form question against the Help
-    /// system book (RAG), then streams the constrained LLM answer into the
-    /// AI pane. Esc cancels; Enter submits.
-    HelpQuery {
-        input: TextInput,
-    },
-    /// Find / replace prompt. `replace` is None for Ctrl+F search-only mode
-    /// and Some for Ctrl+R replace mode (Tab switches focus between the two
-    /// input fields when present).
-    FindReplace {
-        search_input: TextInput,
-        replace_input: Option<TextInput>,
-        focus_replace: bool,
-    },
-    SnapshotPicker {
-        /// Kept for potential refresh ops after future snapshot mutations.
-        #[allow(dead_code)]
-        paragraph_id: Uuid,
-        paragraph_title: String,
-        snapshots: Vec<Snapshot>,
-        cursor: usize,
-    },
-}
-
 pub(crate) struct App {
     layout: ProjectLayout,
     store: Store,
@@ -2834,6 +1211,49 @@ pub(crate) struct App {
     cfg: Config,
     ai: AiClient,
     prompts: PromptLibrary,
+
+    /// 1.2.7+ — mouse capture toggle. True (the default)
+    /// means crossterm captures every mouse event for the
+    /// TUI (focus on click, scroll wheel, etc.). False
+    /// releases capture so terminal-native drag-to-select +
+    /// Cmd+C (macOS) / Ctrl+Shift+C (Linux/Windows) work
+    /// inside the editor and AI pane. Toggled by
+    /// `Ctrl+Shift+M`.
+    mouse_captured: bool,
+
+    /// 1.2.7+ — per-book swim-lane view state cache.
+    /// Captured when the timeline view closes (Esc), restored
+    /// on next `open_timeline_view` for the same book.
+    /// Survives restart via `.session.json`.
+    timeline_views: std::collections::HashMap<Uuid, TimelineViewSnapshot>,
+
+    /// 1.2.7+ — single-slot kill-ring for the most recent
+    /// PARAGRAPH delete. Captured in `commit_delete` just
+    /// before `delete_subtree` fires (single-paragraph only;
+    /// subtree deletes are too risky to undo without store
+    /// API support). Restored by Ctrl+B U via
+    /// `create_node` at the original position — content,
+    /// tags, linked_paragraphs, event data preserved; the
+    /// uuid changes (so wiki-links from elsewhere pointing
+    /// at the deleted id stay broken). Single-shot — taking
+    /// undo clears the slot.
+    last_deleted: Option<DeletedParagraphStash>,
+
+    /// 1.2.7+ — visited-paragraph history (browser-style
+    /// back/forward). Pushed on every `load_paragraph` that
+    /// isn't itself a back/forward navigation; truncated
+    /// forward on a new push (just like a browser).
+    /// Persisted in `.session.json`.
+    visited_history: Vec<Uuid>,
+    /// Index into `visited_history` pointing at the current
+    /// paragraph. Back = -1, Forward = +1.
+    visited_cursor: usize,
+    /// Set by Alt+Left / Alt+Right before they call
+    /// `open_paragraph_by_uuid` so the resulting
+    /// `load_paragraph` doesn't re-push (which would
+    /// instantly clobber the forward stack). Cleared by
+    /// `load_paragraph` after read.
+    visited_skip_next_push: bool,
 
     hierarchy: Hierarchy,
     rows: Vec<(Uuid, usize)>,
@@ -3080,332 +1500,14 @@ pub(crate) struct App {
     chat_selection: Option<ChatSelectionState>,
 }
 
-#[derive(Debug)]
-struct Inference {
-    provider: String,
-    /// Kept for diagnostics on the Debug impl; not displayed in the UI.
-    #[allow(dead_code)]
-    model: String,
-    response: String,
-    status: InferenceStatus,
-    rx: tokio::sync::mpsc::UnboundedReceiver<StreamMsg>,
-    started_at: std::time::Instant,
-}
-
-#[derive(Debug, Clone)]
-enum InferenceStatus {
-    Streaming,
-    Done,
-    Error(String),
-}
-
-/// One row in the `Ctrl+B P`-while-inside-`#image(...)` picker. The
-/// `fname` is what gets inserted at the cursor — already in
-/// `NN-slug.<ext>` form (Node::fs_name).
-#[derive(Debug, Clone)]
-struct ImagePickerEntry {
-    fname: String,
-    title: String,
-    size_bytes: u64,
-}
-
-/// Active search session inside the AI-fullscreen chat-history pane.
-/// `matches` is recomputed lazily by `draw_chat_history` whenever the
-/// rendered line count changes (terminal resize) — we just track the
-/// query + which match we're currently centred on.
-#[derive(Debug, Clone)]
-struct ChatSearchState {
-    query: String,
-    /// Index into `matches`. The render hook clamps this against the
-    /// freshly-computed match count each frame so terminal resize +
-    /// streaming-token arrival can't push it out of range.
-    current: usize,
-}
-
-/// "Chat selection mode" (Ctrl+C in AI-fullscreen). The cursor
-/// points at a single turn in `chat_history`; Up / Down step through
-/// turns, `c` / `C` copies the turn text to the clipboard, `t` / `T`
-/// inserts it at the editor cursor.
-#[derive(Debug, Clone, Copy)]
-struct ChatSelectionState {
-    /// Index into `chat_history`. Always points at a valid turn —
-    /// reset / clamped if the history shrinks while selection is
-    /// active.
-    turn: usize,
-}
-
-/// One row in the `Ctrl+B 1..7` status-filter list. Carries the
-/// paragraph id (for opening on Enter) plus a pre-rendered
-/// breadcrumb so the user can disambiguate same-titled paragraphs
-/// across chapters at a glance.
-#[derive(Debug, Clone)]
-struct StatusFilterEntry {
-    id: Uuid,
-    title: String,
-    breadcrumb: String,
-}
-
-/// 1.2.6+ — one entry in the Ctrl+V e event picker.
-/// Snapshot built at open time so navigation is pure UI work
-/// (no hierarchy reload per keystroke).
-#[derive(Debug, Clone)]
-pub(crate) struct EventPickerEntry {
-    pub id: Uuid,
-    pub title: String,
-    pub start_ticks: i64,
-    pub start_str: String,
-    pub glyph: String,
-    pub track: Option<String>,
-    pub is_orphan: bool,
-}
-
-/// Filter helper: returns refs to the entries whose `track`
-/// equals `filter` (case-insensitive). `None` filter passes
-/// everything through.
-pub(crate) fn visible_event_entries<'a>(
-    entries: &'a [EventPickerEntry],
-    filter: Option<&str>,
-) -> Vec<&'a EventPickerEntry> {
-    match filter {
-        Some(t) => entries
-            .iter()
-            .filter(|e| {
-                e.track
-                    .as_deref()
-                    .map(|track| track.eq_ignore_ascii_case(t))
-                    .unwrap_or(false)
-            })
-            .collect(),
-        None => entries.iter().collect(),
-    }
-}
-
-/// 1.2.6+ — full state for `Modal::TimelineView`. Lives in
-/// the modal only; not persisted across open/close.
-#[derive(Debug, Clone)]
-pub(crate) struct TimelineViewState {
-    /// User book that anchors the visible events. Cross-book
-    /// project mode (Ctrl+P) widens this conceptually but
-    /// the field stays book-shaped for snapshot building.
-    pub book_id: Uuid,
-    /// Tree node the current view is scoped to. Events
-    /// visible iff one of their `linked_paragraphs` (or the
-    /// event itself, since events live in the Timeline
-    /// chapter) sits in this subtree.
-    pub scope_id: Uuid,
-    /// Stack of previous scopes for "Esc back" in the
-    /// descent picker. Phase-2 batch 3 wires this; Phase-2
-    /// batch 1 just initialises empty.
-    pub nav_history: Vec<Uuid>,
-    /// All events in the current book, ticks-sorted. Rebuilt
-    /// from the hierarchy whenever scope changes (cheap —
-    /// books rarely hold thousands of events).
-    pub events: Vec<TimelineEvent>,
-    /// Track row name to highlight (cursor row). `None`
-    /// means "first row". `Tab` cycles.
-    pub track_highlight: Option<String>,
-    /// Display scale — base units per cell. 1.0 means one
-    /// base unit (day, hour, etc.) per terminal cell. +/-
-    /// multiplies by 0.66 / 1.5; clamped to [0.05, 1000.0].
-    pub ticks_per_cell: f64,
-    /// Leftmost tick currently visible. ←/→ shifts this.
-    pub scroll_ticks: i64,
-    /// Cursor tick — where `n` would create an event.
-    /// Initially anchored to the median visible event so the
-    /// first frame isn't empty.
-    pub cursor_ticks: i64,
-    /// Cross-book project overlay. Phase-2 batch 3.
-    pub project_overlay: bool,
-    /// 1.2.6+ — inline descent picker overlay. None when not
-    /// open; `Some` when `d`/`D` is pressed and the user is
-    /// choosing which child scope to enter.
-    pub descent: Option<TimelineDescentState>,
-}
-
-/// State for the inline descent picker shown over the swim
-/// lanes when the user presses `d`.
-#[derive(Debug, Clone)]
-pub(crate) struct TimelineDescentState {
-    pub choices: Vec<TimelineDescentChoice>,
-    pub cursor: usize,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct TimelineDescentChoice {
-    pub id: Uuid,
-    pub title: String,
-    pub event_count: usize,
-}
-
-/// Snapshot of one event for the swim-lane view. Cached at
-/// open / scope-change time so each render frame is a
-/// straight columnar walk. Phase 3 widened this to carry
-/// `characters` / `places` so the AI critique payload
-/// builder doesn't need a second hierarchy walk.
-#[derive(Debug, Clone)]
-pub struct TimelineEvent {
-    pub id: Uuid,
-    pub title: String,
-    pub start_ticks: i64,
-    pub end_ticks: Option<i64>,
-    pub precision: crate::timeline::Precision,
-    pub track: Option<String>,
-    pub is_orphan: bool,
-    pub linked_paragraphs: Vec<Uuid>,
-    pub characters: Vec<Uuid>,
-    pub places: Vec<Uuid>,
-    /// Optional book-slug prefix when the project overlay
-    /// is on. Empty otherwise.
-    pub book_prefix: String,
-}
-
-/// Pick the next track in a cycle: `None` → tracks[0] →
-/// tracks[1] → … → `None`. Stable / wrap-aware.
-/// 1.2.6+ — pick a `(cursor_ticks, scroll_ticks, ticks_per_cell)`
-/// triplet that makes the entire timeline span visible in the
-/// current terminal. Used by `open_timeline_view` so a fresh open
-/// shows the full range (`+`/`-` then drills in). Width is
-/// sampled from `crossterm::terminal::size()` at call time;
-/// caller is responsible for not calling this with an empty
-/// event list (defaults are baked into `open_timeline_view`).
-pub(crate) fn timeline_auto_fit(
-    events: &[TimelineEvent],
-) -> (i64, i64, f64) {
-    let min_start = events
-        .iter()
-        .map(|e| e.start_ticks)
-        .min()
-        .unwrap_or(0);
-    let max_end = events
-        .iter()
-        .map(|e| e.end_ticks.unwrap_or(e.start_ticks).max(e.start_ticks))
-        .max()
-        .unwrap_or(min_start);
-    let span = (max_end - min_start).max(1);
-    // Sample terminal width. The swim-lane modal eats ~2 cells of
-    // border on each side + ~12 for the track-label gutter, so the
-    // content area is roughly `terminal_width - 16`. Fall back to
-    // 80 when crossterm can't tell us.
-    let term_w = crossterm::terminal::size()
-        .map(|(w, _)| w as usize)
-        .unwrap_or(80);
-    let content_w = term_w.saturating_sub(16).max(40);
-    // 10% headroom on each side so events at the edges don't
-    // touch the border.
-    let target_w = (content_w as f64 * 0.8).max(20.0);
-    let ticks_per_cell = ((span as f64) / target_w).max(1.0);
-    let cursor_ticks = min_start + span / 2;
-    // Scroll a little to the left of min_start so the first event
-    // doesn't touch column 0.
-    let pad = (content_w as f64 * 0.1 * ticks_per_cell).round() as i64;
-    let scroll_ticks = min_start.saturating_sub(pad);
-    (cursor_ticks, scroll_ticks, ticks_per_cell)
-}
-
-/// 1.2.6+ — jump cursor to the previous / next event by
-/// chronological order (start_ticks). Used by the timeline view's
-/// Up/Down arrows so the user can hop event-to-event without
-/// hunting with horizontal scroll.
-fn timeline_step_event_cursor(
-    events: &[TimelineEvent],
-    cursor: i64,
-    direction: i64,
-) -> Option<i64> {
-    let mut starts: Vec<i64> = events.iter().map(|e| e.start_ticks).collect();
-    starts.sort();
-    starts.dedup();
-    if starts.is_empty() {
-        return None;
-    }
-    if direction > 0 {
-        starts.into_iter().find(|t| *t > cursor)
-    } else {
-        starts.into_iter().rev().find(|t| *t < cursor)
-    }
-}
-
-pub(crate) fn cycle_track(current: Option<&str>, tracks: &[String]) -> Option<String> {
-    if tracks.is_empty() {
-        return None;
-    }
-    match current {
-        None => Some(tracks[0].clone()),
-        Some(cur) => {
-            let idx = tracks.iter().position(|t| t == cur);
-            match idx {
-                Some(i) if i + 1 < tracks.len() => Some(tracks[i + 1].clone()),
-                _ => None,
-            }
-        }
-    }
-}
-
-struct OpenedDoc {
-    id: Uuid,
-    title: String,
-    rel_path: String,
-    textarea: TextArea<'static>,
-    dirty: bool,
-    /// Custom scroll state. tui-textarea v0.7 does not expose its viewport, so
-    /// we maintain our own and never call `textarea.scroll()`.
-    scroll_row: usize,
-    scroll_col: usize,
-    /// Anchor of a vertical-block selection (entered with Alt+arrows).
-    /// While Some, the cursor's current position plus this anchor define a
-    /// rectangular selection drawn with REVERSED style.
-    block_anchor: Option<(usize, usize)>,
-    /// Wall-clock of the last key event handled by the editor. Idle autosave
-    /// fires when (now - last_activity) >= editor.autosave_seconds.
-    last_activity: std::time::Instant,
-    /// Snapshot of `textarea.lines()` at the most recent save / load. Used to
-    /// bold characters added since then.
-    saved_lines: Vec<String>,
-    /// Set when split-edit mode is active. The lower pane shows a read-only
-    /// copy of `snapshot_lines`, scrolled independently of the live editor.
-    split: Option<SplitView>,
-    /// Active find / replace session (Ctrl+F / Ctrl+R). While Some, matches
-    /// are highlighted red and Ctrl+G advances or replaces.
-    search: Option<SearchState>,
-    /// True when this paragraph lives inside the Help book. The editor still
-    /// renders it normally (so the user can read it, scroll, search), but
-    /// every mutating keystroke is intercepted with a status message.
-    read_only: bool,
-    /// Picked from the Node's `content_type` at open time. Drives
-    /// which syntax highlighter the editor uses (`"hjson"` → the
-    /// hand-rolled HJSON lexer; anything else → tree-sitter-typst).
-    /// Also reported in the editor header so the user can tell at a
-    /// glance which language they're editing.
-    content_type: Option<String>,
-    /// Pre-correction baseline captured when the AI pane's `T` (grammar-
-    /// check apply) overwrites the buffer with the model's corrected text.
-    /// Lines that differ from this baseline render in `theme.grammar_change_fg`
-    /// so the user can eyeball what changed. Cleared on the next save
-    /// (implicit "accept the corrections") or when the user opens a
-    /// different paragraph.
-    correction_baseline: Option<Vec<String>>,
-    /// Cached typst parse-time diagnostics (1.2.5+). Recomputed on
-    /// save and on idle when `typst_compile.diagnostics` is on and
-    /// the buffer's content type is `None` (default = typst) or
-    /// `Some("typst")`. Empty when the buffer parses cleanly OR
-    /// when diagnostics are disabled in HJSON. See
-    /// `crate::typst_check`.
-    typst_diagnostics: Vec<crate::typst_check::TypstDiagnostic>,
-    /// Wall-clock of the last typst-syntax recheck. Throttles the
-    /// idle re-check against `typst_compile.diagnostics_idle_seconds`.
-    typst_diagnostics_checked_at: std::time::Instant,
-    /// 1.2.6+ — snapshot of the last diagnostic state we fired
-    /// `hook.on_diagnostic` for: `(count, first-message)`. Used
-    /// to debounce the hook so it only re-fires on actual state
-    /// transitions (clean → errored, count change, top-message
-    /// change). `None` means we've never fired or the doc is
-    /// freshly opened.
-    typst_diag_last_fired: Option<(usize, String)>,
-}
-
-struct SplitView {
-    snapshot_lines: Vec<String>,
-    scroll_row: usize,
-}
+mod ai_impl;
+mod backup_impl;
+mod editor_impl;
+mod render;
+mod snapshot_impl;
+mod tag_impl;
+mod timeline_impl;
+mod tree_impl;
 
 impl App {
     fn new(layout: ProjectLayout, cfg: Config, store: Store) -> Result<Self> {
@@ -3501,6 +1603,12 @@ impl App {
             cfg,
             ai,
             prompts,
+            mouse_captured: true,
+            timeline_views: std::collections::HashMap::new(),
+            last_deleted: None,
+            visited_history: Vec::new(),
+            visited_cursor: 0,
+            visited_skip_next_push: false,
             hierarchy,
             rows,
             modal: Modal::None,
@@ -3837,6 +1945,16 @@ impl App {
             }
         }
 
+        // 1.2.7+ — external-change watch. If the open
+        // paragraph's file mtime moved since we loaded it,
+        // someone else (CLI, sed, git pull) touched it.
+        // Clean buffer → silently reload + status hint;
+        // dirty buffer → red warning with a hint to use
+        // Ctrl+B Shift+R to reload (losing local changes)
+        // or Ctrl+S to overwrite. Cheap (one syscall per
+        // tick) so safe at the autosave cadence.
+        self.tick_external_change_check();
+
         // 1.2.5+: idle typst-syntax recheck. Independent of save
         // — runs whenever the user has paused for
         // `typst_compile.diagnostics_idle_seconds` and the buffer
@@ -3863,6 +1981,67 @@ impl App {
                 self.refresh_typst_diagnostics_for_opened();
             }
         }
+    }
+
+    /// 1.2.7+ — once per tick, check whether the open
+    /// paragraph's file changed on disk since we loaded it.
+    /// Three cases:
+    ///   1. mtime unchanged → no-op.
+    ///   2. mtime newer + buffer CLEAN → silent reload +
+    ///      stamp the new mtime. Status notes the reload.
+    ///   3. mtime newer + buffer DIRTY → red warning. We do
+    ///      NOT clobber the user's edits; they decide via
+    ///      Ctrl+S (overwrite the on-disk change) or by
+    ///      copying their text elsewhere + manually
+    ///      reloading.
+    fn tick_external_change_check(&mut self) {
+        let Some(doc) = self.opened.as_ref() else { return; };
+        let Some(loaded_mtime) = doc.loaded_mtime else { return; };
+        let abs = self.layout.root.join(&doc.rel_path);
+        let on_disk_mtime = match std::fs::metadata(&abs).and_then(|m| m.modified()) {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        if on_disk_mtime <= loaded_mtime {
+            return;
+        }
+        // File changed externally.
+        if doc.dirty {
+            // Status warning, don't touch the buffer.
+            self.status = format!(
+                "⚠ `{}` changed on disk while you have unsaved edits — Ctrl+S to overwrite the external change",
+                doc.title
+            );
+            return;
+        }
+        // Clean buffer → silent reload.
+        let body = match std::fs::read_to_string(&abs) {
+            Ok(b) => b,
+            Err(e) => {
+                self.status =
+                    format!("external reload failed: {}: {e}", abs.display());
+                return;
+            }
+        };
+        let lines = body_to_lines(&body);
+        let title = doc.title.clone();
+        let id = doc.id;
+        if let Some(doc) = self.opened.as_mut() {
+            let saved_lines = lines.clone();
+            doc.textarea = TextArea::new(lines);
+            doc.saved_lines = saved_lines;
+            doc.dirty = false;
+            doc.loaded_mtime = Some(on_disk_mtime);
+            // Move cursor to (0, 0) — the previous
+            // position may no longer make sense after an
+            // external rewrite.
+            doc.textarea.move_cursor(CursorMove::Jump(0, 0));
+        }
+        let _ = id;
+        self.refresh_typst_diagnostics_for_opened();
+        self.status = format!(
+            "↻ reloaded `{title}` — file changed on disk"
+        );
     }
 
     fn is_streaming(&self) -> bool {
@@ -4645,119 +2824,6 @@ impl App {
         Ok(false)
     }
 
-    fn tree_expand_at_cursor(&mut self) {
-        let Some(&(id, _)) = self.rows.get(self.tree_cursor) else {
-            return;
-        };
-        let Some(node) = self.hierarchy.get(id) else {
-            return;
-        };
-        if node.kind == NodeKind::Paragraph {
-            return;
-        }
-        if self.collapsed_nodes.remove(&id) {
-            self.rebuild_rows_preserving_cursor();
-        }
-    }
-
-    fn tree_collapse_or_step_out(&mut self) {
-        let Some(&(id, _)) = self.rows.get(self.tree_cursor) else {
-            return;
-        };
-        let Some(node) = self.hierarchy.get(id) else {
-            return;
-        };
-
-        let is_branch = node.kind != NodeKind::Paragraph;
-        let has_children = is_branch && self.hierarchy.has_children(id);
-        let is_currently_collapsed = self.collapsed_nodes.contains(&id);
-
-        if is_branch && has_children && !is_currently_collapsed {
-            self.collapsed_nodes.insert(id);
-            self.rebuild_rows_preserving_cursor();
-            return;
-        }
-
-        // Otherwise step out to parent.
-        if let Some(parent_id) = node.parent_id {
-            if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == parent_id) {
-                self.tree_cursor = i;
-            }
-        }
-    }
-
-    /// Collapse the cursor's enclosing Subchapter. If the cursor is on a
-    /// Subchapter itself, collapse it directly. Walks ancestors otherwise;
-    /// no-op if no Subchapter is in scope (e.g. cursor on a chapter or
-    /// directly under a book). After collapsing, the tree cursor moves to
-    /// the now-folded subchapter row so the user sees what happened.
-    fn collapse_enclosing_subchapter(&mut self) {
-        let Some(&(id, _)) = self.rows.get(self.tree_cursor) else {
-            self.status = "nothing selected".into();
-            return;
-        };
-        let Some(node) = self.hierarchy.get(id) else {
-            return;
-        };
-        // Pick the cursor's enclosing subchapter — itself if it IS one,
-        // otherwise the nearest ancestor of kind Subchapter.
-        let target = if node.kind == NodeKind::Subchapter {
-            Some(node.id)
-        } else {
-            self.hierarchy
-                .ancestors(node)
-                .into_iter()
-                .find(|a| a.kind == NodeKind::Subchapter)
-                .map(|a| a.id)
-        };
-        let Some(target_id) = target else {
-            self.status = "no enclosing subchapter to collapse".into();
-            return;
-        };
-        if self.collapsed_nodes.insert(target_id) {
-            self.rebuild_rows_preserving_cursor();
-            // Land the cursor on the freshly-collapsed subchapter row so
-            // the user can see what was folded.
-            if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == target_id) {
-                self.tree_cursor = i;
-            }
-            let title = self
-                .hierarchy
-                .get(target_id)
-                .map(|n| n.title.as_str())
-                .unwrap_or("?");
-            self.status = format!("collapsed subchapter `{title}`");
-        } else {
-            self.status = "subchapter is already collapsed".into();
-        }
-    }
-
-    /// Collapse every branch that has children. Paragraphs and empty
-    /// branches are untouched (they wouldn't render differently anyway).
-    /// The tree cursor stays on the same node if it survives the fold;
-    /// otherwise `rebuild_rows_preserving_cursor` snaps it to the nearest
-    /// remaining visible row.
-    fn collapse_all_branches(&mut self) {
-        let mut added = 0usize;
-        let candidates: Vec<Uuid> = self
-            .hierarchy
-            .iter()
-            .filter(|n| n.kind != NodeKind::Paragraph && self.hierarchy.has_children(n.id))
-            .map(|n| n.id)
-            .collect();
-        for id in candidates {
-            if self.collapsed_nodes.insert(id) {
-                added += 1;
-            }
-        }
-        if added == 0 {
-            self.status = "all branches already collapsed".into();
-            return;
-        }
-        self.rebuild_rows_preserving_cursor();
-        self.status = format!("collapsed {added} branch(es)");
-    }
-
     fn rebuild_rows_preserving_cursor(&mut self) {
         let prev_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
         self.rows = self
@@ -5158,141 +3224,6 @@ impl App {
         Ok(false)
     }
 
-    /// Insert `open` + `close` at the cursor and step back one
-    /// character so the cursor sits between them.
-    fn editor_auto_open_pair(&mut self, open: char, close: char) {
-        let Some(doc) = self.opened.as_mut() else { return };
-        doc.textarea.insert_char(open);
-        doc.textarea.insert_char(close);
-        doc.textarea.move_cursor(CursorMove::Back);
-        doc.dirty = true;
-    }
-
-    /// When the next char on the line is the same close character
-    /// the user just typed, step over it instead of inserting a
-    /// duplicate. Returns `false` when the next char doesn't match
-    /// (caller falls through to normal insertion).
-    fn editor_try_skip_close(&mut self, close: char) -> bool {
-        let Some(doc) = self.opened.as_mut() else { return false };
-        let (row, col) = doc.textarea.cursor();
-        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
-        let next_char = line.chars().nth(col);
-        if next_char == Some(close) {
-            doc.textarea.move_cursor(CursorMove::Forward);
-            return true;
-        }
-        false
-    }
-
-    /// Enter pressed with the cursor between matching brackets:
-    /// expand to a 3-line indented block. Returns `false` when the
-    /// cursor isn't between a pair (caller does the regular Enter).
-    fn editor_try_expand_pair_on_enter(&mut self) -> bool {
-        let Some(doc) = self.opened.as_ref() else { return false };
-        let (row, col) = doc.textarea.cursor();
-        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
-        let chars: Vec<char> = line.chars().collect();
-        let before = if col > 0 { chars.get(col - 1).copied() } else { None };
-        let after = chars.get(col).copied();
-        if !matches!(
-            (before, after),
-            (Some('('), Some(')')) | (Some('['), Some(']')) | (Some('{'), Some('}'))
-        ) {
-            return false;
-        }
-        let base_indent: String = chars
-            .iter()
-            .take_while(|c| **c == ' ' || **c == '\t')
-            .collect();
-        let extra = " ".repeat(self.cfg.editor.tab_width.max(1));
-        let new_indent = format!("{base_indent}{extra}");
-        let Some(doc) = self.opened.as_mut() else { return false };
-        // 1. Newline → cursor lands at column 0 of a new line with
-        //    the close-bracket as its first char.
-        doc.textarea.insert_char('\n');
-        // 2. Type the deeper indent, then ANOTHER newline so the
-        //    close-bracket slides further down. Cursor lands at
-        //    column 0 of the close-bracket line.
-        doc.textarea.insert_str(&new_indent);
-        doc.textarea.insert_char('\n');
-        // 3. Indent the close-bracket line with the base indent.
-        doc.textarea.insert_str(&base_indent);
-        // 4. Move up to the middle line, end of indent.
-        doc.textarea.move_cursor(CursorMove::Up);
-        doc.textarea.move_cursor(CursorMove::End);
-        doc.dirty = true;
-        true
-    }
-
-    /// Backspace when cursor sits between a freshly typed pair like
-    /// `(|)`: delete BOTH halves. Returns `false` otherwise.
-    fn editor_try_delete_pair(&mut self) -> bool {
-        let Some(doc) = self.opened.as_ref() else { return false };
-        let (row, col) = doc.textarea.cursor();
-        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
-        let chars: Vec<char> = line.chars().collect();
-        let before = if col > 0 { chars.get(col - 1).copied() } else { None };
-        let after = chars.get(col).copied();
-        let is_pair = matches!(
-            (before, after),
-            (Some('('), Some(')'))
-                | (Some('['), Some(']'))
-                | (Some('{'), Some('}'))
-                | (Some('"'), Some('"'))
-                | (Some('\''), Some('\''))
-        );
-        if !is_pair {
-            return false;
-        }
-        let Some(doc) = self.opened.as_mut() else { return false };
-        doc.textarea.delete_next_char();
-        doc.textarea.delete_char();
-        doc.dirty = true;
-        true
-    }
-
-    fn editor_copy(&mut self) {
-        let Some(doc) = self.opened.as_mut() else {
-            return;
-        };
-        doc.textarea.copy();
-        let text = doc.textarea.yank_text();
-        if !text.is_empty() {
-            if let Some(cb) = self.clipboard.as_mut() {
-                let _ = cb.set_text(text);
-            }
-        }
-    }
-
-    fn editor_cut(&mut self) {
-        let Some(doc) = self.opened.as_mut() else {
-            return;
-        };
-        if doc.textarea.cut() {
-            let text = doc.textarea.yank_text();
-            if !text.is_empty() {
-                if let Some(cb) = self.clipboard.as_mut() {
-                    let _ = cb.set_text(text);
-                }
-            }
-            doc.dirty = true;
-        }
-    }
-
-    fn editor_paste(&mut self) {
-        let Some(doc) = self.opened.as_mut() else {
-            return;
-        };
-        if let Some(cb) = self.clipboard.as_mut() {
-            if let Ok(text) = cb.get_text() {
-                doc.textarea.set_yank_text(text);
-            }
-        }
-        if doc.textarea.paste() {
-            doc.dirty = true;
-        }
-    }
-
     /// Copy the current rectangular selection to the system clipboard
     /// (falling back to tui-textarea's yank buffer). The rectangle is the
     /// inclusive range from `block_anchor` to the current cursor.
@@ -5336,63 +3267,6 @@ impl App {
             anchor,
             doc.textarea.cursor(),
         ))
-    }
-
-    /// Delete the current line entirely (content + trailing newline). Cursor
-    /// lands on the line that took its place. Preserves the yank buffer.
-    fn editor_delete_line(&mut self) {
-        let Some(doc) = self.opened.as_mut() else {
-            return;
-        };
-        let saved_yank = doc.textarea.yank_text();
-        // Move to start of line, clear to end, then remove the newline so
-        // the next line collapses up.
-        doc.textarea.move_cursor(CursorMove::Head);
-        doc.textarea.delete_line_by_end();
-        // delete_next_char removes the newline; on the last line it's a
-        // no-op which leaves an empty line where the deleted one was. That's
-        // an acceptable quirk — the user can hit Ctrl+D again to remove it,
-        // or move up and delete the previous newline.
-        doc.textarea.delete_next_char();
-        doc.textarea.set_yank_text(saved_yank);
-        doc.dirty = true;
-    }
-
-    /// Delete from the cursor to the end of the current line. Used by both
-    /// Ctrl+E and Ctrl+Z (the user requested both bindings for the same op).
-    fn editor_delete_to_eol(&mut self) {
-        let Some(doc) = self.opened.as_mut() else {
-            return;
-        };
-        let saved_yank = doc.textarea.yank_text();
-        if doc.textarea.delete_line_by_end() {
-            doc.dirty = true;
-        }
-        doc.textarea.set_yank_text(saved_yank);
-    }
-
-    /// Delete from the cursor back to the beginning of the current line.
-    fn editor_delete_to_bol(&mut self) {
-        let Some(doc) = self.opened.as_mut() else {
-            return;
-        };
-        let saved_yank = doc.textarea.yank_text();
-        if doc.textarea.delete_line_by_head() {
-            doc.dirty = true;
-        }
-        doc.textarea.set_yank_text(saved_yank);
-    }
-
-    fn editor_select_all(&mut self) {
-        let Some(doc) = self.opened.as_mut() else {
-            return;
-        };
-        doc.textarea.move_cursor(CursorMove::Top);
-        doc.textarea.start_selection();
-        doc.textarea.move_cursor(CursorMove::Bottom);
-        // CursorMove::Bottom lands at (last_row, 0). Without this End move
-        // the selection would exclude the last line's content entirely.
-        doc.textarea.move_cursor(CursorMove::End);
     }
 
     fn handle_passive_key(&mut self, key: KeyEvent) -> Result<bool> {
@@ -5470,66 +3344,6 @@ impl App {
         true
     }
 
-    fn save_session(&mut self) -> std::io::Result<()> {
-        // Snapshot the live paragraph's cursor into the persistent map before
-        // we serialise — otherwise an exit (or focus-loss session save) right
-        // after a cursor move would lose the latest position.
-        self.snapshot_open_paragraph_cursor();
-
-        let cursor_id = self
-            .rows
-            .get(self.tree_cursor)
-            .map(|(id, _)| id.to_string());
-        let collapsed: Vec<String> = self
-            .collapsed_nodes
-            .iter()
-            .map(|u| u.to_string())
-            .collect();
-        let editor_session = self.opened.as_ref().map(|d| {
-            let (row, col) = d.textarea.cursor();
-            EditorSession {
-                opened_id: d.id.to_string(),
-                cursor_row: row,
-                cursor_col: col,
-            }
-        });
-        let paragraph_cursors: std::collections::HashMap<String, ParagraphCursor> = self
-            .paragraph_cursors
-            .iter()
-            .map(|(id, pc)| (id.to_string(), *pc))
-            .collect();
-        let state = SessionState {
-            tree: TreeSession {
-                cursor_id,
-                collapsed_nodes: collapsed,
-            },
-            editor: editor_session,
-            focus: format!("{:?}", self.focus),
-            paragraph_cursors,
-        };
-        state.save(&self.layout.root)
-    }
-
-    /// Copy the currently-open paragraph's cursor + scroll into the
-    /// in-memory `paragraph_cursors` map. Called on focus loss, on
-    /// paragraph switch, and right before `save_session` writes to disk.
-    /// No-op when no paragraph is open.
-    fn snapshot_open_paragraph_cursor(&mut self) {
-        let Some(doc) = self.opened.as_ref() else {
-            return;
-        };
-        let (row, col) = doc.textarea.cursor();
-        self.paragraph_cursors.insert(
-            doc.id,
-            ParagraphCursor {
-                cursor_row: row,
-                cursor_col: col,
-                scroll_row: doc.scroll_row,
-                scroll_col: doc.scroll_col,
-            },
-        );
-    }
-
     /// Re-apply a saved session on startup. Silently ignores anything that
     /// no longer makes sense (missing UUIDs, corrupt fields). Should be
     /// called after `Hierarchy::load` so the lookups can resolve.
@@ -5544,6 +3358,29 @@ impl App {
         for (key, pc) in &state.paragraph_cursors {
             if let Ok(id) = Uuid::parse_str(key) {
                 self.paragraph_cursors.insert(id, *pc);
+            }
+        }
+
+        // 1.2.7+ — visited-paragraph history. Restore only the
+        // entries whose nodes still exist (deleted paragraphs
+        // drop out silently), and clamp the cursor.
+        let history: Vec<Uuid> = state
+            .visited_history
+            .iter()
+            .filter_map(|s| Uuid::parse_str(s).ok())
+            .filter(|id| self.hierarchy.get(*id).is_some())
+            .collect();
+        if !history.is_empty() {
+            let max_idx = history.len().saturating_sub(1);
+            self.visited_cursor = state.visited_cursor.min(max_idx);
+            self.visited_history = history;
+        }
+        // 1.2.7+ — per-book timeline view snapshots.
+        for (key, snap) in &state.timeline_views {
+            if let Ok(id) = Uuid::parse_str(key) {
+                if self.hierarchy.get(id).is_some() {
+                    self.timeline_views.insert(id, snap.clone());
+                }
             }
         }
 
@@ -5602,160 +3439,6 @@ impl App {
         if let Some(f) = restored_focus {
             self.focus = f;
         }
-    }
-
-    fn inference_done_with_text(&self) -> bool {
-        matches!(
-            self.inference.as_ref().map(|i| (&i.status, i.response.is_empty())),
-            Some((InferenceStatus::Done, false))
-        )
-    }
-
-    fn apply_inference(&mut self, action: InferenceAction) {
-        let Some(inf) = self.inference.as_ref() else {
-            return;
-        };
-        let raw = inf.response.clone();
-        if matches!(action, InferenceAction::CopyOnly) {
-            // Copy keeps the original markdown — the user might paste it
-            // somewhere that expects markdown, not Typst.
-            if let Some(cb) = self.clipboard.as_mut() {
-                let _ = cb.set_text(raw.clone());
-            }
-            self.status = "copied AI result to clipboard".into();
-            return;
-        }
-        // 1.2.6+ — diff review gate. Only intercepts the
-        // buffer-replacing actions (Replace / ReplaceCorrected);
-        // additive actions (Insert / Top / Bottom) fall
-        // through to the original direct path. The Modal::AiDiffReview
-        // dispatcher calls `apply_inference_direct` after
-        // the user accepts.
-        if self.cfg.ai.diff_review_on_apply
-            && matches!(action, InferenceAction::Replace | InferenceAction::ReplaceCorrected)
-        {
-            self.open_ai_diff_review(action, &raw);
-            return;
-        }
-        self.apply_inference_direct(action, raw);
-    }
-
-    fn apply_inference_direct(&mut self, action: InferenceAction, raw: String) {
-        let Some(doc) = self.opened.as_mut() else {
-            self.status = "no paragraph open — apply needs a focused paragraph".into();
-            return;
-        };
-
-        // ReplaceCorrected has its own pipeline: pull just the corrected
-        // paragraph (no commentary), skip the markdown→typst conversion
-        // because the grammar prompt instructs the model to keep Typst
-        // markup verbatim, and overwrite the buffer wholesale. Before
-        // overwriting, snapshot the pre-correction buffer into
-        // `correction_baseline` so the renderer can highlight what
-        // changed in `theme.grammar_change_fg`. The highlight survives
-        // saves (autosave or manual) and is dismissed only by switching
-        // paragraphs or by Ctrl+B C — saving an accepted correction
-        // shouldn't yank the visual diff out from under the user.
-        if matches!(action, InferenceAction::ReplaceCorrected) {
-            let Some(corrected) = extract_corrected_text(&raw) else {
-                self.status =
-                    "couldn't find corrected text in the response \
-                     (expected `<<<CORRECTED>>>` block or fenced code)"
-                        .into();
-                return;
-            };
-            let baseline = doc.textarea.lines().to_vec();
-            // Build a fresh TextArea from the corrected text rather than
-            // shuffling cursor + selection inside the existing one — the
-            // cut/select dance was leaving stray characters in the buffer
-            // (the "In _The H" duplication seen in user reports).
-            let corrected_lines: Vec<String> = if corrected.is_empty() {
-                vec![String::new()]
-            } else {
-                corrected.split('\n').map(String::from).collect()
-            };
-            let mut new_ta = TextArea::new(corrected_lines);
-            new_ta.set_cursor_line_style(
-                Style::default().add_modifier(Modifier::REVERSED),
-            );
-            new_ta.set_line_number_style(
-                Style::default().fg(self.theme.line_number_fg),
-            );
-            doc.textarea = new_ta;
-            doc.correction_baseline = Some(baseline);
-            doc.dirty = true;
-            // Bump activity so idle autosave doesn't fire on the very
-            // next tick (which would otherwise lose the freshness of
-            // the diff before the user has had a chance to read it).
-            doc.last_activity = std::time::Instant::now();
-            self.status = format!(
-                "applied AI result ({}) — changes highlighted; Ctrl+B C dismisses",
-                action.label()
-            );
-            self.change_focus(Focus::Editor);
-            return;
-        }
-
-        // 1.2.6+ — Replace runs through `select_apply_text`
-        // so a grammar-style response with markers / fence /
-        // "Corrected" heading lands ONLY the discrete block,
-        // even when the user pressed `r` (which used to paste
-        // the whole reply, commentary included). Insert / Top /
-        // Bottom still take the full markdown→typst converted
-        // body because additive applies are usually meant to
-        // surface commentary too.
-        let replace_payload: Option<String> =
-            if matches!(action, InferenceAction::Replace) {
-                match select_apply_text(&raw, false) {
-                    Ok((s, _)) => Some(s),
-                    Err(msg) => {
-                        self.status = msg.into();
-                        return;
-                    }
-                }
-            } else {
-                None
-            };
-        let text = super::markdown::markdown_to_typst(&raw);
-        match action {
-            InferenceAction::Replace => {
-                if doc.textarea.selection_range().is_some() {
-                    doc.textarea.cut();
-                } else {
-                    // No selection: replace the whole document.
-                    use tui_textarea::CursorMove;
-                    doc.textarea.move_cursor(CursorMove::Top);
-                    doc.textarea.start_selection();
-                    doc.textarea.move_cursor(CursorMove::Bottom);
-                    doc.textarea.cut();
-                }
-                doc.textarea
-                    .set_yank_text(replace_payload.unwrap_or_else(|| text.clone()));
-                doc.textarea.paste();
-            }
-            InferenceAction::Insert => {
-                doc.textarea.set_yank_text(text);
-                doc.textarea.paste();
-            }
-            InferenceAction::Top => {
-                use tui_textarea::CursorMove;
-                doc.textarea.move_cursor(CursorMove::Top);
-                doc.textarea.move_cursor(CursorMove::Head);
-                doc.textarea.set_yank_text(format!("{text}\n\n"));
-                doc.textarea.paste();
-            }
-            InferenceAction::Bottom => {
-                use tui_textarea::CursorMove;
-                doc.textarea.move_cursor(CursorMove::Bottom);
-                doc.textarea.move_cursor(CursorMove::End);
-                doc.textarea.set_yank_text(format!("\n\n{text}"));
-                doc.textarea.paste();
-            }
-            InferenceAction::CopyOnly | InferenceAction::ReplaceCorrected => unreachable!(),
-        }
-        doc.dirty = true;
-        self.status = format!("applied AI result ({})", action.label());
-        self.change_focus(Focus::Editor);
     }
 
     fn handle_input_key(&mut self, key: KeyEvent, is_search: bool) -> Result<bool> {
@@ -5937,87 +3620,6 @@ impl App {
             .min(self.prompt_picker_matches().len().saturating_sub(1));
     }
 
-    /// Union of system-level prompts (from prompts.hjson) and paragraphs
-    /// nested under the "Prompts" system book. System prompts come first so
-    /// the user's mental model — "well-known commands at the top, project-
-    /// specific scratch prompts below" — is preserved. Filtered by the
-    /// substring after `/` in `ai_input`.
-    fn prompt_picker_matches(&self) -> Vec<PromptCandidate> {
-        let q = self.ai_input.as_str();
-        let filter = q.strip_prefix('/').unwrap_or("").trim().to_lowercase();
-
-        // 1.2.4+: rank candidates so prefix matches beat
-        // mid-word substring matches. Empty filter → keep
-        // insertion order (system before book). Match scores:
-        //   3 = name starts with filter
-        //   2 = description starts with filter (after splitting
-        //       on whitespace — so "summarize selection" matches
-        //       a /sel prefix on the second word)
-        //   1 = name or description contains filter
-        //   0 = no match (excluded)
-        let score = |name: &str, desc: &str| -> i32 {
-            if filter.is_empty() {
-                return 1;
-            }
-            let nl = name.to_lowercase();
-            let dl = desc.to_lowercase();
-            if nl.starts_with(&filter) {
-                return 3;
-            }
-            if dl.split_whitespace().any(|w| w.starts_with(&filter)) {
-                return 2;
-            }
-            if nl.contains(&filter) || dl.contains(&filter) {
-                return 1;
-            }
-            0
-        };
-
-        let mut scored: Vec<(i32, PromptCandidate)> = Vec::new();
-        // 1) prompts.hjson (system)
-        for p in &self.prompts.prompts {
-            let s = score(&p.name, &p.description);
-            if s > 0 {
-                scored.push((s, PromptCandidate {
-                    name: p.name.clone(),
-                    description: p.description.clone(),
-                    body: PromptBody::Static(p.template.clone()),
-                    source: PromptSource::System,
-                }));
-            }
-        }
-        // 2) Paragraphs under the Prompts system book
-        if let Some(book_id) = self.system_book_id(crate::store::SYSTEM_TAG_PROMPTS) {
-            for id in self.hierarchy.collect_subtree(book_id) {
-                if id == book_id {
-                    continue;
-                }
-                let Some(node) = self.hierarchy.get(id) else {
-                    continue;
-                };
-                if node.kind != NodeKind::Paragraph {
-                    continue;
-                }
-                let name = node.slug.clone();
-                let title = node.title.clone();
-                let s = score(&name, &title);
-                if s > 0 {
-                    scored.push((s, PromptCandidate {
-                        name,
-                        description: title,
-                        body: PromptBody::BookParagraph(node.id),
-                        source: PromptSource::Book,
-                    }));
-                }
-            }
-        }
-        // Stable sort by descending score — preserves the
-        // "system before book" within-tier ordering.
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
-        let out: Vec<PromptCandidate> = scored.into_iter().map(|(_, c)| c).collect();
-        out
-    }
-
     fn commit_prompt_pick(&mut self) {
         let matches = self.prompt_picker_matches();
         let Some(picked) = matches.into_iter().nth(self.prompt_picker_cursor) else {
@@ -6125,16 +3727,6 @@ impl App {
         None
     }
 
-    fn render_template(&self, template: &str) -> String {
-        let selection = self.current_selection_or_paragraph();
-        let context = self.current_context_breadcrumb();
-        template
-            .replace("{{selection}}", &selection)
-            .replace("{{context}}", &context)
-            .trim()
-            .to_string()
-    }
-
     fn current_selection_or_paragraph(&self) -> String {
         let Some(doc) = self.opened.as_ref() else {
             return String::new();
@@ -6161,180 +3753,6 @@ impl App {
             .collect();
         parts.push(node.title.clone());
         parts.join(" › ")
-    }
-
-    fn start_inference(&mut self) {
-        let raw = self.ai_input.as_str().trim().to_string();
-        if raw.is_empty() {
-            self.status = "empty prompt".into();
-            return;
-        }
-        // 1.2.4+: stash the raw prompt in the history ring for
-        // Up/Down recall. Avoids dupes-against-most-recent so
-        // the list stays useful when the user re-sends the same
-        // prompt repeatedly.
-        if self.ai_prompt_history.last() != Some(&raw) {
-            self.ai_prompt_history.push(raw.clone());
-            // Cap the history so a long session doesn't grow
-            // unbounded. 500 entries is past any reasonable
-            // recall horizon.
-            if self.ai_prompt_history.len() > 500 {
-                let drop_n = self.ai_prompt_history.len() - 500;
-                self.ai_prompt_history.drain(..drop_n);
-            }
-        }
-        self.ai_prompt_history_cursor = None;
-        // "Help!" prefix (case-sensitive) reroutes through the F1 Help-book
-        // RAG flow. The rest of the line becomes the question; the AI pane
-        // shows the same grounded answer the F1 modal produces.
-        if let Some(rest) = raw.strip_prefix("Help!") {
-            let question = rest.trim().to_string();
-            self.ai_input.clear();
-            if question.is_empty() {
-                self.status = "Help: type a question after `Help!`".into();
-                return;
-            }
-            self.start_help_inference(&question);
-            return;
-        }
-        let user_query = if raw.starts_with('/') {
-            // Resolve `/name [extra args]` form. Search system prompts
-            // (prompts.hjson) first, then paragraphs under the Prompts book.
-            let after = raw.trim_start_matches('/').trim();
-            if let Some(p) = self.prompts.find(after) {
-                self.render_template(&p.template.clone())
-            } else if let Some(text) = self.lookup_book_prompt_template(after) {
-                self.render_template(&text)
-            } else {
-                self.status =
-                    format!("no prompt `{after}` — type `/` to see the list");
-                return;
-            }
-        } else {
-            raw
-        };
-
-        // Prepend the AI scope context if one is set. Failures (no
-        // selection, etc.) abort the submission with a status message; the
-        // scope sticks around so the user can fix the cause and re-submit.
-        let prompt_text = match self.build_ai_mode_context() {
-            Ok(Some(prefix)) => format!("{prefix}\n\n{user_query}"),
-            Ok(None) => user_query,
-            Err(reason) => {
-                self.status = reason;
-                return;
-            }
-        };
-        // Lift any pending Place/Character RAG prefix (set by Ctrl+B P / C
-        // when the AI prompt was empty). Consumes it — one-shot.
-        let prompt_text = match self.pending_rag_prefix.take() {
-            Some(rag) => format!("{rag}\n\n{prompt_text}"),
-            None => prompt_text,
-        };
-        let mode_used = self.ai_mode;
-
-        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
-            Ok(pair) => pair,
-            Err(e) => {
-                self.status = e.to_string();
-                return;
-            }
-        };
-        let model = model.to_string();
-        let provider = self.ai.default_provider.clone();
-
-        // Replay the accumulated chat history before this new user message
-        // so the model has continuous context across turns.
-        let mut history = self.chat_history.clone();
-
-        // 1.2.6+ — per-paragraph AI memory. When this is a
-        // Paragraph-scoped prompt AND the feature is on AND
-        // there's an open paragraph, prepend the paragraph's
-        // stored memory turns to the chat history so the
-        // model sees the prior paragraph-specific context.
-        // Also stash the target id so `pump_inference` can
-        // stamp the new turns onto it after the stream
-        // completes.
-        let memory_target: Option<Uuid> = if self.cfg.ai.per_paragraph_memory
-            && self.cfg.ai.per_paragraph_memory_max_turns > 0
-            && mode_used == AiMode::Paragraph
-        {
-            self.opened.as_ref().map(|d| d.id)
-        } else {
-            None
-        };
-        if let Some(target_id) = memory_target {
-            if let Some(node) = self.hierarchy.get(target_id) {
-                let mut memory_history: Vec<ChatTurn> =
-                    Vec::with_capacity(node.ai_memory.len());
-                for turn in &node.ai_memory {
-                    match turn.role.as_str() {
-                        "user" => memory_history
-                            .push(ChatTurn::User(turn.text.clone())),
-                        "assistant" => memory_history
-                            .push(ChatTurn::Assistant(turn.text.clone())),
-                        _ => {}
-                    }
-                }
-                // Memory comes BEFORE the visible chat
-                // history — these are older turns from prior
-                // sessions, so they're the prologue.
-                memory_history.append(&mut history);
-                history = memory_history;
-            }
-        }
-        self.pending_paragraph_memory_target = memory_target;
-        // System prompt depends on the inference mode. Local clamps the
-        // model to supplied context only; Full lets it augment with
-        // general knowledge while still treating context as ground truth.
-        // `ink.ai.set_system_prompt` overrides both via a Bund script.
-        let system_prompt = self
-            .system_prompt_override
-            .clone()
-            .or_else(|| match self.inference_mode {
-                InferenceMode::Local => Some(LOCAL_SYSTEM_PROMPT.to_string()),
-                InferenceMode::Full => Some(FULL_SYSTEM_PROMPT.to_string()),
-            });
-        let rx = spawn_chat_stream(
-            self.ai.client.clone(),
-            model.clone(),
-            system_prompt,
-            history,
-            prompt_text.clone(),
-        );
-
-        self.inference = Some(Inference {
-            provider: provider.clone(),
-            model,
-            response: String::new(),
-            status: InferenceStatus::Streaming,
-            rx,
-            started_at: std::time::Instant::now(),
-        });
-        // Remember the user message so we can pair it with the assistant
-        // turn once the stream finishes.
-        self.pending_chat_user_msg = Some(prompt_text);
-        // Reset chat-history scroll so the user always sees the
-        // streaming reply (if they'd PageUp'd to look at earlier turns
-        // before sending, the new turn would otherwise land off-screen).
-        self.chat_history_scroll = 0;
-        // Stay on the AI prompt pane so follow-up questions are one keystroke
-        // away. Esc bounces to the AI pane to read/scroll the answer.
-        self.change_focus(Focus::AiPrompt);
-        let depth = self.chat_history.len() / 2 + 1;
-        let scope_note = if mode_used == AiMode::None {
-            String::new()
-        } else {
-            format!(" · scope={}", mode_used.label())
-        };
-        self.status = format!(
-            "streaming from {provider} (chat turn #{depth}{scope_note})…"
-        );
-        // Auto-reset the scope so the next prompt isn't surprised by stale
-        // context. The user re-cycles with F9 to pick a new scope.
-        self.ai_mode = AiMode::None;
-        // Clear the prompt so the next inference starts fresh.
-        self.ai_input.clear();
     }
 
     fn run_search(&mut self) {
@@ -6832,34 +4250,6 @@ impl App {
         }
     }
 
-    /// Replace the live buffer with the split snapshot and exit split mode.
-    /// Used to "roll back" to the captured version after experimenting.
-    fn accept_split_snapshot(&mut self) {
-        let Some(doc) = self.opened.as_mut() else {
-            return;
-        };
-        let Some(split) = doc.split.take() else {
-            self.status = "split is not open".into();
-            return;
-        };
-        let lines = if split.snapshot_lines.is_empty() {
-            vec![String::new()]
-        } else {
-            split.snapshot_lines
-        };
-        let mut new_ta = TextArea::new(lines);
-        new_ta.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-        new_ta.set_line_number_style(Style::default().fg(Color::DarkGray));
-        doc.textarea = new_ta;
-        doc.dirty = true;
-        doc.scroll_row = 0;
-        doc.scroll_col = 0;
-        doc.last_activity = std::time::Instant::now();
-        self.status =
-            "split snapshot accepted — buffer replaced; Ctrl+S to commit · bold shows the diff"
-                .into();
-    }
-
     fn scroll_split_up(&mut self) {
         if let Some(doc) = self.opened.as_mut() {
             if let Some(split) = &mut doc.split {
@@ -6875,74 +4265,6 @@ impl App {
                 if split.scroll_row < max {
                     split.scroll_row += 1;
                 }
-            }
-        }
-    }
-
-    fn create_snapshot_of_current(&mut self) {
-        let Some(doc) = self.opened.as_ref() else {
-            self.status = "no paragraph open".into();
-            return;
-        };
-        let body = doc.textarea.lines().join("\n").into_bytes();
-        let id = doc.id;
-        let Some(node) = self.hierarchy.get(id).cloned() else {
-            self.status = "node missing from hierarchy".into();
-            return;
-        };
-        // 1.2.6+ — pop an annotation prompt so the user can
-        // jot a one-line note ("first complete draft", "before
-        // the lighthouse rewrite"). Enter on empty input still
-        // commits — keeps the F5 → Enter flow as fast as the
-        // old one-keystroke path. Esc cancels.
-        self.modal = Modal::SnapshotAnnotation {
-            input: TextInput::new(),
-            parent_id: id,
-            parent_title: node.title,
-            body,
-        };
-        self.status =
-            "snapshot annotation: type a note (or Enter for no note) · Esc cancels".into();
-    }
-
-    /// Commit step for `Modal::SnapshotAnnotation` — invoked by
-    /// the modal's Enter handler. Calls
-    /// `Store::create_snapshot_annotated`, stamps the result on
-    /// the status bar, and closes the modal.
-    fn commit_snapshot_annotation(
-        &mut self,
-        parent_id: Uuid,
-        parent_title: &str,
-        body: &[u8],
-        annotation: &str,
-    ) {
-        let Some(node) = self.hierarchy.get(parent_id).cloned() else {
-            self.status = "snapshot: paragraph vanished".into();
-            return;
-        };
-        match self
-            .store
-            .create_snapshot_annotated(&node, body, annotation)
-        {
-            Ok(snap_id) => {
-                let n_snaps = self
-                    .store
-                    .list_snapshots(parent_id)
-                    .map(|v| v.len())
-                    .unwrap_or(0);
-                let note = if annotation.trim().is_empty() {
-                    String::new()
-                } else {
-                    format!(" · `{annotation}`")
-                };
-                self.status = format!(
-                    "snapshot {} of `{parent_title}` created ({} total){note} — F6 to view",
-                    snap_id.simple(),
-                    n_snaps,
-                );
-            }
-            Err(e) => {
-                self.status = format!("snapshot failed: {e}");
             }
         }
     }
@@ -7490,6 +4812,43 @@ impl App {
             "find ¶: type to filter · ↑↓ select · Enter opens · Esc cancels".into();
     }
 
+    /// 1.2.7+ — Ctrl+V Shift+P. Same fuzzy picker as
+    /// `Ctrl+V p` but the entry list is sorted by
+    /// `modified_at desc` instead of slug-path. Answers
+    /// "what did I touch most recently?" without trawling
+    /// the tree.
+    fn open_recent_paragraph_picker(&mut self) {
+        let mut entries = self.collect_all_paragraph_entries();
+        if entries.is_empty() {
+            self.status =
+                "recent ¶: no paragraphs in this project".into();
+            return;
+        }
+        // Sort by modified_at desc. Look up modified_at via
+        // the hierarchy — the picker entry struct doesn't
+        // carry it, so we re-resolve here.
+        let modified: std::collections::HashMap<Uuid, chrono::DateTime<chrono::Utc>> =
+            self.hierarchy
+                .iter()
+                .map(|n| (n.id, n.modified_at))
+                .collect();
+        entries.sort_by(|a, b| {
+            let ta = modified.get(&a.id).copied()
+                .unwrap_or_else(chrono::Utc::now);
+            let tb = modified.get(&b.id).copied()
+                .unwrap_or_else(chrono::Utc::now);
+            tb.cmp(&ta)
+        });
+        self.modal = Modal::FuzzyParagraphPicker {
+            input: TextInput::new(),
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status =
+            "recent ¶: most-recently-modified first · type to filter · ↑↓ select · Enter opens · Esc cancels".into();
+    }
+
     /// Collect every paragraph in the project (excluding
     /// system-book content) as picker entries.
     fn collect_all_paragraph_entries(&self) -> Vec<ScriptPickerEntry> {
@@ -7690,360 +5049,6 @@ impl App {
             .count()
     }
 
-    /// Ctrl+B ] (editor) — open the tag picker for the currently
-    /// open paragraph.
-    fn open_tag_picker_for_editor(&mut self) {
-        let Some(doc) = self.opened.as_ref() else {
-            self.status =
-                "tag ¶: no paragraph open (Ctrl+B ] needs an editor buffer)".into();
-            return;
-        };
-        let target = TagPickerTarget::EditorParagraph {
-            id: doc.id,
-            title: doc.title.clone(),
-        };
-        self.open_tag_picker_modal(target);
-    }
-
-    /// `g` (tree pane) — open the tag picker over the tree's
-    /// marked set, falling back to the cursor row when no marks
-    /// exist. Only paragraph-kind nodes go in; non-paragraphs
-    /// are skipped with a status hint when nothing applies.
-    fn open_tag_picker_for_tree_selection(&mut self) {
-        let marked: Vec<Uuid> = self.tree_marked.iter().copied().collect();
-        let candidates: Vec<Uuid> = if !marked.is_empty() {
-            marked
-        } else if let Some(&(id, _)) = self.rows.get(self.tree_cursor) {
-            vec![id]
-        } else {
-            Vec::new()
-        };
-        let paragraphs: Vec<Uuid> = candidates
-            .into_iter()
-            .filter(|id| {
-                self.hierarchy
-                    .get(*id)
-                    .map(|n| n.kind == NodeKind::Paragraph)
-                    .unwrap_or(false)
-            })
-            .collect();
-        if paragraphs.is_empty() {
-            self.status =
-                "tag g: select at least one paragraph (Space marks rows in the tree pane)".into();
-            return;
-        }
-        let target = TagPickerTarget::TreeSelection(paragraphs);
-        self.open_tag_picker_modal(target);
-    }
-
-    /// Ctrl+B } — open the tag picker in search mode.
-    fn open_tag_search_picker(&mut self) {
-        self.open_tag_picker_modal(TagPickerTarget::Search);
-    }
-
-    /// Shared open-the-picker plumbing.
-    fn open_tag_picker_modal(&mut self, target: TagPickerTarget) {
-        let all_tags = self.collect_all_tags();
-        // 1.2.6+: pre-populate `selected` with the target's current
-        // tags so the `[x]/[ ]` markers reflect reality on open.
-        // Single-paragraph targets get a set-replace commit (an
-        // unchecked tag is removed); multi-paragraph stays additive
-        // and so opens empty.
-        let preselected: std::collections::BTreeSet<String> = match &target {
-            TagPickerTarget::EditorParagraph { id, .. } => self
-                .hierarchy
-                .get(*id)
-                .map(|n| n.tags.iter().cloned().collect())
-                .unwrap_or_default(),
-            TagPickerTarget::TreeSelection(ids) if ids.len() == 1 => self
-                .hierarchy
-                .get(ids[0])
-                .map(|n| n.tags.iter().cloned().collect())
-                .unwrap_or_default(),
-            _ => std::collections::BTreeSet::new(),
-        };
-        // Don't block — an empty tag namespace is the normal
-        // starting state; the user adds via `A`.
-        let status = match (&target, all_tags.is_empty()) {
-            (TagPickerTarget::EditorParagraph { title, .. }, true) => format!(
-                "tag ¶ `{title}`: no tags yet — press A to add the first one"
-            ),
-            (TagPickerTarget::EditorParagraph { title, .. }, false) => format!(
-                "tag ¶ `{title}`: Space selects · T applies · A adds · D deletes · Esc closes"
-            ),
-            (TagPickerTarget::TreeSelection(ids), true) => format!(
-                "tag g ({} paragraph(s)): no tags yet — press A to add the first one",
-                ids.len()
-            ),
-            (TagPickerTarget::TreeSelection(ids), false) => format!(
-                "tag g ({} paragraph(s)): Space selects · T applies · A adds · D deletes · Esc closes",
-                ids.len()
-            ),
-            (TagPickerTarget::Search, true) => {
-                "tag search: no tags yet · A adds · Esc closes".into()
-            }
-            (TagPickerTarget::Search, false) => {
-                "tag search: ↑↓ select · Enter opens results · A adds · D deletes · Esc closes".into()
-            }
-        };
-        self.status = status;
-        self.modal = Modal::TagPicker {
-            target,
-            all_tags,
-            cursor: 0,
-            selected: preselected,
-        };
-    }
-
-    fn tag_picker_handle_key(&mut self, key: KeyEvent) {
-        let total = match &self.modal {
-            Modal::TagPicker { all_tags, .. } => all_tags.len(),
-            _ => return,
-        };
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') if key.modifiers.is_empty() => {
-                if let Modal::TagPicker { cursor, .. } = &mut self.modal {
-                    if *cursor > 0 {
-                        *cursor -= 1;
-                    }
-                }
-            }
-            KeyCode::Down | KeyCode::Char('j') if key.modifiers.is_empty() => {
-                if let Modal::TagPicker { cursor, .. } = &mut self.modal {
-                    if total > 0 && *cursor + 1 < total {
-                        *cursor += 1;
-                    }
-                }
-            }
-            KeyCode::Home => {
-                if let Modal::TagPicker { cursor, .. } = &mut self.modal {
-                    *cursor = 0;
-                }
-            }
-            KeyCode::End => {
-                if let Modal::TagPicker { cursor, .. } = &mut self.modal {
-                    *cursor = total.saturating_sub(1);
-                }
-            }
-            KeyCode::Char(' ') => {
-                // Multi-select toggle — no-op in Search mode.
-                if let Modal::TagPicker {
-                    target,
-                    all_tags,
-                    cursor,
-                    selected,
-                    ..
-                } = &mut self.modal
-                {
-                    if matches!(target, TagPickerTarget::Search) {
-                        return;
-                    }
-                    if let Some(tag) = all_tags.get(*cursor).cloned() {
-                        if selected.contains(&tag) {
-                            selected.remove(&tag);
-                        } else {
-                            selected.insert(tag);
-                        }
-                    }
-                }
-            }
-            KeyCode::Char('a') | KeyCode::Char('A') => {
-                self.open_tag_add_prompt();
-            }
-            KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
-                self.open_tag_delete_confirm();
-            }
-            KeyCode::Char('r') | KeyCode::Char('R') => {
-                self.open_tag_rename_prompt();
-            }
-            KeyCode::Char('t') | KeyCode::Char('T') => {
-                self.commit_tags_to_target();
-            }
-            KeyCode::Enter => {
-                // Different meaning by mode:
-                //   Search       — open results for the cursor tag
-                //   Editor/Tree  — quality-of-life: same as T
-                let in_search = matches!(
-                    self.modal,
-                    Modal::TagPicker {
-                        target: TagPickerTarget::Search,
-                        ..
-                    }
-                );
-                if in_search {
-                    self.open_tag_search_results_for_cursor();
-                } else {
-                    self.commit_tags_to_target();
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// `A` — pop a small text-input modal for a new tag name.
-    /// On Enter we *don't* immediately apply the tag — we just
-    /// add it to the project-wide list (by tagging the current
-    /// target with it if there is one) and return to the picker.
-    fn open_tag_add_prompt(&mut self) {
-        // Stash the current picker as return_to.
-        let taken = std::mem::replace(&mut self.modal, Modal::None);
-        if !matches!(taken, Modal::TagPicker { .. }) {
-            // Shouldn't happen but restore and bail safely.
-            self.modal = taken;
-            return;
-        }
-        self.modal = Modal::TagAddPrompt {
-            input: TextInput::new(),
-            return_to: Box::new(taken),
-        };
-        self.status =
-            "new tag: type a name, Enter adds it · Esc cancels".into();
-    }
-
-    fn tag_add_prompt_handle_key(&mut self, key: KeyEvent) {
-        // Esc is handled at the top of handle_modal_key. Here we
-        // only act on Enter (commit) and forward everything else
-        // to the input box.
-        if matches!(key.code, KeyCode::Enter) {
-            let taken = std::mem::replace(&mut self.modal, Modal::None);
-            if let Modal::TagAddPrompt { input, return_to } = taken {
-                let name = input.as_str().trim().to_string();
-                let mut picker = *return_to;
-                if name.is_empty() {
-                    self.status = "tag add: empty name — try again".into();
-                    self.modal = picker;
-                    return;
-                }
-                // Bring the picker back so we can mutate its state
-                // before re-displaying.
-                if let Modal::TagPicker {
-                    target,
-                    all_tags,
-                    cursor,
-                    selected,
-                    ..
-                } = &mut picker
-                {
-                    let already_known =
-                        all_tags.iter().any(|t| t == &name);
-                    if !already_known {
-                        all_tags.push(name.clone());
-                        all_tags.sort();
-                    }
-                    // Land the cursor on the newly added tag.
-                    if let Some(idx) =
-                        all_tags.iter().position(|t| t == &name)
-                    {
-                        *cursor = idx;
-                    }
-                    // Auto-select for convenience in apply-modes
-                    // — the user almost certainly wants to T it
-                    // onto the target. No-op in Search mode.
-                    if !matches!(target, TagPickerTarget::Search) {
-                        selected.insert(name.clone());
-                    }
-                }
-                self.modal = picker;
-                self.status = format!("tag added: `{name}` · selected");
-            }
-            return;
-        }
-        if let Modal::TagAddPrompt { input, .. } = &mut self.modal {
-            handle_text_input_key(input, key);
-        }
-    }
-
-    /// `R` (1.2.6+) — open a project-wide rename prompt for
-    /// the cursor tag.
-    fn open_tag_rename_prompt(&mut self) {
-        let (old_tag, affected) = match &self.modal {
-            Modal::TagPicker { all_tags, cursor, .. } => {
-                let Some(t) = all_tags.get(*cursor).cloned() else {
-                    self.status = "tag rename: no tag at cursor".into();
-                    return;
-                };
-                let n = self.count_nodes_with_tag(&t);
-                (t, n)
-            }
-            _ => return,
-        };
-        let mut input = TextInput::new();
-        for c in old_tag.chars() {
-            input.insert_char(c);
-        }
-        let taken = std::mem::replace(&mut self.modal, Modal::None);
-        self.modal = Modal::TagRenamePrompt {
-            input,
-            old_tag: old_tag.clone(),
-            affected,
-            return_to: Box::new(taken),
-        };
-        self.status = format!(
-            "tag rename `{old_tag}` ({affected} paragraph{plur}): edit + Enter · Esc cancels",
-            plur = if affected == 1 { "" } else { "s" },
-        );
-    }
-
-    fn tag_rename_prompt_handle_key(&mut self, key: KeyEvent) {
-        if matches!(key.code, KeyCode::Enter) {
-            let taken = std::mem::replace(&mut self.modal, Modal::None);
-            if let Modal::TagRenamePrompt {
-                input,
-                old_tag,
-                affected: _,
-                return_to,
-            } = taken
-            {
-                let new_name = input.as_str().trim().to_string();
-                let mut picker = *return_to;
-                if new_name.is_empty() || new_name == old_tag {
-                    self.modal = picker;
-                    self.status = if new_name.is_empty() {
-                        "tag rename: empty name — cancelled".into()
-                    } else {
-                        "tag rename: same name — no-op".into()
-                    };
-                    return;
-                }
-                let touched =
-                    self.rename_tag_project_wide(&old_tag, &new_name);
-                self.reload_hierarchy();
-                let fresh = self.collect_all_tags();
-                if let Modal::TagPicker {
-                    all_tags,
-                    cursor,
-                    selected,
-                    ..
-                } = &mut picker
-                {
-                    *all_tags = fresh;
-                    // Land the cursor on the renamed tag's new
-                    // position if present.
-                    if let Some(idx) =
-                        all_tags.iter().position(|t| t == &new_name)
-                    {
-                        *cursor = idx;
-                    } else if *cursor >= all_tags.len().max(1) {
-                        *cursor = all_tags.len().saturating_sub(1);
-                    }
-                    // Update the selection set in case the old
-                    // name was selected: swap to the new name.
-                    if selected.remove(&old_tag) {
-                        selected.insert(new_name.clone());
-                    }
-                }
-                self.modal = picker;
-                self.status = format!(
-                    "tag renamed: `{old_tag}` → `{new_name}` · touched {touched} paragraph(s)"
-                );
-            }
-            return;
-        }
-        if let Modal::TagRenamePrompt { input, .. } = &mut self.modal {
-            handle_text_input_key(input, key);
-        }
-    }
-
     /// Walk every node carrying `old_tag` and replace it with
     /// `new_tag`. If `new_tag` is already present on the node,
     /// the result dedupes (effectively merging the two tags
@@ -8092,78 +5097,6 @@ impl App {
             touched += 1;
         }
         touched
-    }
-
-    /// `D` — confirm + execute project-wide deletion of the tag
-    /// under the cursor. Pops a tiny y/n confirm modal so the
-    /// user sees the blast radius first.
-    fn open_tag_delete_confirm(&mut self) {
-        let (tag, affected) = match &self.modal {
-            Modal::TagPicker {
-                all_tags, cursor, ..
-            } => {
-                let Some(t) = all_tags.get(*cursor).cloned() else {
-                    self.status = "tag delete: no tag selected".into();
-                    return;
-                };
-                let n = self.count_nodes_with_tag(&t);
-                (t, n)
-            }
-            _ => return,
-        };
-        let taken = std::mem::replace(&mut self.modal, Modal::None);
-        self.modal = Modal::TagDeleteConfirm {
-            tag: tag.clone(),
-            affected,
-            return_to: Box::new(taken),
-        };
-        self.status = format!(
-            "delete tag `{tag}`? affects {affected} paragraph(s) · y / n"
-        );
-    }
-
-    fn tag_delete_confirm_handle_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                let taken = std::mem::replace(&mut self.modal, Modal::None);
-                if let Modal::TagDeleteConfirm {
-                    tag, return_to, ..
-                } = taken
-                {
-                    let removed = self.delete_tag_project_wide(&tag);
-                    self.reload_hierarchy();
-                    // Rebuild the picker's all_tags + drop the
-                    // deleted entry from its selection.
-                    let mut picker = *return_to;
-                    let fresh_tags = self.collect_all_tags();
-                    if let Modal::TagPicker {
-                        all_tags,
-                        cursor,
-                        selected,
-                        ..
-                    } = &mut picker
-                    {
-                        *all_tags = fresh_tags;
-                        if *cursor >= all_tags.len().max(1) {
-                            *cursor = all_tags.len().saturating_sub(1);
-                        }
-                        selected.remove(&tag);
-                    }
-                    self.modal = picker;
-                    self.status = format!(
-                        "tag deleted: `{tag}` · removed from {removed} paragraph(s)"
-                    );
-                }
-            }
-            KeyCode::Char('n') | KeyCode::Char('N') => {
-                let taken = std::mem::replace(&mut self.modal, Modal::None);
-                if let Modal::TagDeleteConfirm { return_to, .. } = taken {
-                    self.modal = *return_to;
-                    self.status = "tag delete: cancelled".into();
-                }
-            }
-            _ => {}
-        }
     }
 
     /// `T` (or Enter in apply-modes) — apply the selected tag
@@ -8265,97 +5198,6 @@ impl App {
                 };
             }
             TagPickerTarget::Search => {}
-        }
-    }
-
-    /// Search mode — Enter on a tag row → open `TagSearchResults`.
-    fn open_tag_search_results_for_cursor(&mut self) {
-        let tag = match &self.modal {
-            Modal::TagPicker {
-                all_tags, cursor, ..
-            } => match all_tags.get(*cursor).cloned() {
-                Some(t) => t,
-                None => {
-                    self.status = "tag search: no tag at cursor".into();
-                    return;
-                }
-            },
-            _ => return,
-        };
-        let results = self.collect_paragraphs_with_tag(&tag);
-        if results.is_empty() {
-            self.status = format!("tag search: no paragraphs tagged `{tag}`");
-            return;
-        }
-        let count = results.len();
-        self.modal = Modal::TagSearchResults {
-            tag: tag.clone(),
-            filter: TextInput::new(),
-            all_results: results,
-            cursor: 0,
-        };
-        self.status = format!(
-            "tag `{tag}`: {count} paragraph(s) · type to filter · Enter opens · Esc closes"
-        );
-    }
-
-    fn tag_search_results_handle_key(&mut self, key: KeyEvent) {
-        let filtered_len = match &self.modal {
-            Modal::TagSearchResults {
-                all_results, filter, ..
-            } => filter_tag_results(all_results, filter.as_str()).len(),
-            _ => return,
-        };
-        match key.code {
-            KeyCode::Up => {
-                if let Modal::TagSearchResults { cursor, .. } = &mut self.modal {
-                    if *cursor > 0 {
-                        *cursor -= 1;
-                    }
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::TagSearchResults { cursor, .. } = &mut self.modal {
-                    if filtered_len > 0 && *cursor + 1 < filtered_len {
-                        *cursor += 1;
-                    }
-                }
-            }
-            KeyCode::Home => {
-                if let Modal::TagSearchResults { cursor, .. } = &mut self.modal {
-                    *cursor = 0;
-                }
-            }
-            KeyCode::End => {
-                if let Modal::TagSearchResults { cursor, .. } = &mut self.modal {
-                    *cursor = filtered_len.saturating_sub(1);
-                }
-            }
-            KeyCode::Enter => {
-                let chosen = match &self.modal {
-                    Modal::TagSearchResults {
-                        all_results,
-                        filter,
-                        cursor,
-                        ..
-                    } => filter_tag_results(all_results, filter.as_str())
-                        .get(*cursor)
-                        .cloned(),
-                    _ => None,
-                };
-                if let Some(entry) = chosen {
-                    self.modal = Modal::None;
-                    let _ = self.open_search_result(entry.id);
-                }
-            }
-            _ => {
-                if let Modal::TagSearchResults { filter, cursor, .. } = &mut self.modal {
-                    handle_text_input_key(filter, key);
-                    // Reset cursor on filter change so we don't
-                    // sit past the filtered list's end.
-                    *cursor = 0;
-                }
-            }
         }
     }
 
@@ -8772,43 +5614,6 @@ impl App {
             }
         }
         Ok(out)
-    }
-
-    /// Save an arbitrary OpenedDoc to disk. Used by the
-    /// similar-paragraph mode toggle to flush the secondary doc
-    /// (which lives in `self.secondary`, outside the normal
-    /// save_current path). Mirrors save_current's body so the
-    /// two stay in sync; refactoring both onto one impl is
-    /// future work.
-    fn save_doc(
-        &mut self,
-        doc: &mut OpenedDoc,
-    ) -> std::result::Result<(), String> {
-        let abs = self.layout.root.join(&doc.rel_path);
-        let body = doc.textarea.lines().join("\n");
-        let prev_words =
-            crate::progress::count_words(&doc.saved_lines.join("\n"));
-        std::fs::write(&abs, body.as_bytes())
-            .map_err(|e| format!("write {}: {e}", abs.display()))?;
-        // Refresh the store so subsequent searches see the new
-        // text. We deliberately skip the snapshot machinery —
-        // secondary saves are routine + cheap; explicit snapshots
-        // go through the F5 / Ctrl+B N flow on the primary doc.
-        let mut node = self
-            .hierarchy
-            .get(doc.id)
-            .cloned()
-            .ok_or_else(|| format!("paragraph {} not in hierarchy", doc.id))?;
-        self.store
-            .update_paragraph_content(&mut node, body.as_bytes())
-            .map_err(|e| format!("store update: {e}"))?;
-        doc.dirty = false;
-        doc.saved_lines = doc.textarea.lines().to_vec();
-        let new_words = crate::progress::count_words(&body);
-        let book_id = self.book_of_node(doc.id);
-        crate::progress::record_save(doc.id, book_id, prev_words, new_words);
-        self.refresh_progress_cache();
-        Ok(())
     }
 
     /// Compute (markdown body, default destination, status-bar
@@ -9251,6 +6056,10 @@ impl App {
             A::OpenBookInfo => self.open_book_info(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
+            A::ToggleMouseCapture => self.toggle_mouse_capture(),
+            A::VisitedBack => self.navigate_visited_back(),
+            A::VisitedForward => self.navigate_visited_forward(),
+            A::UndoLastDelete => self.undo_last_delete(),
             A::ScheduleAssemble => self.schedule_assembly(),
             A::ScheduleBuild => self.schedule_build(),
             A::ScheduleTake => self.schedule_take(),
@@ -9292,6 +6101,7 @@ impl App {
             A::ViewToggleBookmark => self.toggle_bookmark(),
             A::ViewListBookmarks => self.open_bookmark_picker_modal(),
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
+            A::ViewRecentParagraphPicker => self.open_recent_paragraph_picker(),
             A::ViewRenderParagraph => self.open_rendered_paragraph_preview(),
             A::ViewNextDiagnostic => self.jump_to_next_diagnostic(),
             A::ViewStoryGraph => self.open_story_view(),
@@ -9768,75 +6578,6 @@ impl App {
         }
     }
 
-    fn draw_book_info_modal(
-        &self,
-        f: &mut ratatui::Frame,
-        area: Rect,
-        scroll: usize,
-    ) {
-        let lines = self.build_book_info_lines();
-        let total = lines.len();
-
-        let width = area.width.saturating_sub(8).max(60);
-        let height = area.height.saturating_sub(4).max(12);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let header = " Book info · Ctrl+B I ".to_string();
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let body_h = inner.height.saturating_sub(1) as usize;
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(1),
-        };
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-
-        let max_scroll = total.saturating_sub(body_h);
-        let scroll = scroll.min(max_scroll);
-        let end = (scroll + body_h).min(total);
-        let visible: Vec<Line<'_>> = lines[scroll..end].to_vec();
-        f.render_widget(Paragraph::new(visible), body_rect);
-
-        let at_end = end >= total;
-        let more_hint = if at_end { " " } else { " · more below" };
-        let hint = format!(
-            " ↑↓ / PgUp/PgDn / Home/End scroll · Esc close{more_hint}    (showing {}–{} of {total}) ",
-            scroll + 1,
-            end
-        );
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                hint,
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
     fn build_book_info_lines(&self) -> Vec<Line<'static>> {
         let bold = Style::default().add_modifier(Modifier::BOLD);
         let dim = Style::default().add_modifier(Modifier::DIM);
@@ -10137,6 +6878,213 @@ impl App {
         );
     }
 
+    /// 1.2.7+ — capture a paragraph's full state into the
+    /// single-slot kill-ring before delete_subtree drops it.
+    /// Skipped silently when the file body can't be read
+    /// (which still permits the delete to proceed).
+    fn stash_deleted_paragraph(&mut self, node: &Node) {
+        // Find the sibling that comes immediately BEFORE the
+        // about-to-be-deleted node so we can re-insert at
+        // the same position via InsertPosition::After.
+        let siblings = self.hierarchy.children_of(node.parent_id);
+        let pos = siblings.iter().position(|s| s.id == node.id);
+        let anchor_id = match pos {
+            Some(0) => None, // first child — restore at end via fallback
+            Some(i) => siblings.get(i - 1).map(|n| n.id),
+            None => None,
+        };
+        let content = node
+            .file
+            .as_ref()
+            .map(|rel| self.layout.root.join(rel))
+            .and_then(|abs| std::fs::read(&abs).ok())
+            .unwrap_or_default();
+        self.last_deleted = Some(DeletedParagraphStash {
+            parent_id: node.parent_id,
+            anchor_id,
+            title: node.title.clone(),
+            slug: node.slug.clone(),
+            content,
+            tags: node.tags.clone(),
+            linked_paragraphs: node.linked_paragraphs.clone(),
+            status: node.status.clone(),
+            target_words: node.target_words,
+            content_type: node.content_type.clone(),
+            event: node.event.clone(),
+        });
+    }
+
+    /// 1.2.7+ — Ctrl+B U. Pop the kill-ring; re-create the
+    /// paragraph at its original position; restore body +
+    /// metadata. Single-shot (slot is cleared after).
+    fn undo_last_delete(&mut self) {
+        let Some(stash) = self.last_deleted.take() else {
+            self.status = "undo: kill-ring is empty".into();
+            return;
+        };
+        let parent = stash
+            .parent_id
+            .and_then(|id| self.hierarchy.get(id).cloned());
+        let position = match stash.anchor_id {
+            Some(id) if self.hierarchy.get(id).is_some() => {
+                crate::store::InsertPosition::After(id)
+            }
+            _ => crate::store::InsertPosition::End,
+        };
+        let created = match self.store.create_node(
+            &self.cfg,
+            &self.hierarchy,
+            NodeKind::Paragraph,
+            &stash.title,
+            parent.as_ref(),
+            Some(&stash.slug),
+            position,
+        ) {
+            Ok(n) => n,
+            Err(e) => {
+                // Re-stash so the user can retry after
+                // fixing whatever rejected the create.
+                self.last_deleted = Some(stash);
+                self.status = format!("undo: create_node failed: {e}");
+                return;
+            }
+        };
+        // Write the body to disk.
+        if let Some(rel) = created.file.as_ref() {
+            let abs = self.layout.root.join(rel);
+            if let Err(e) = std::fs::write(&abs, &stash.content) {
+                self.status = format!(
+                    "undo: paragraph created at `{}` but body write failed: {e}",
+                    created.slug
+                );
+                self.reload_hierarchy();
+                return;
+            }
+        }
+        // Restore the metadata (tags, linked_paragraphs,
+        // status, target_words, content_type, event).
+        let mut updated = created.clone();
+        updated.tags = stash.tags;
+        updated.linked_paragraphs = stash.linked_paragraphs;
+        updated.status = stash.status;
+        updated.target_words = stash.target_words;
+        if stash.content_type.is_some() {
+            updated.content_type = stash.content_type;
+        }
+        updated.event = stash.event;
+        updated.modified_at = chrono::Utc::now();
+        crate::store::reconcile_event_orphan_tag(&mut updated);
+        if let Err(e) = self
+            .store
+            .raw()
+            .update_metadata(updated.id, updated.to_json())
+        {
+            tracing::warn!(target: "inkhaven::undo",
+                "metadata restore failed for {}: {e}", updated.id);
+        }
+        self.reload_hierarchy();
+        self.status = format!(
+            "↺ restored `{}` (new uuid {} — cross-refs to old uuid stay broken)",
+            updated.title,
+            updated.id.simple()
+        );
+    }
+
+    /// 1.2.7+ — Alt+Left. Browser-style back through the
+    /// visited-paragraph history.
+    fn navigate_visited_back(&mut self) {
+        if self.visited_history.is_empty() || self.visited_cursor == 0 {
+            self.status = "navigate: already at the start of the visit history".into();
+            return;
+        }
+        self.visited_cursor -= 1;
+        let id = self.visited_history[self.visited_cursor];
+        self.visited_skip_next_push = true;
+        match self.open_paragraph_by_uuid(id) {
+            Ok(()) => {
+                let title = self
+                    .hierarchy
+                    .get(id)
+                    .map(|n| n.title.clone())
+                    .unwrap_or_else(|| id.to_string());
+                self.status = format!(
+                    "← back · `{title}` ({}/{})",
+                    self.visited_cursor + 1,
+                    self.visited_history.len()
+                );
+            }
+            Err(e) => {
+                // Failed to open — restore cursor; the
+                // skip-flag will be consumed only if we
+                // actually loaded.
+                self.visited_skip_next_push = false;
+                self.visited_cursor += 1;
+                self.status = format!("navigate: couldn't open back-target: {e}");
+            }
+        }
+    }
+
+    /// 1.2.7+ — Alt+Right. Forward through the visited-
+    /// paragraph history. No-op if already at the head.
+    fn navigate_visited_forward(&mut self) {
+        if self.visited_cursor + 1 >= self.visited_history.len() {
+            self.status = "navigate: already at the end of the visit history".into();
+            return;
+        }
+        self.visited_cursor += 1;
+        let id = self.visited_history[self.visited_cursor];
+        self.visited_skip_next_push = true;
+        match self.open_paragraph_by_uuid(id) {
+            Ok(()) => {
+                let title = self
+                    .hierarchy
+                    .get(id)
+                    .map(|n| n.title.clone())
+                    .unwrap_or_else(|| id.to_string());
+                self.status = format!(
+                    "→ forward · `{title}` ({}/{})",
+                    self.visited_cursor + 1,
+                    self.visited_history.len()
+                );
+            }
+            Err(e) => {
+                self.visited_skip_next_push = false;
+                self.visited_cursor -= 1;
+                self.status = format!("navigate: couldn't open forward-target: {e}");
+            }
+        }
+    }
+
+    /// 1.2.7+ — Ctrl+Shift+M. Flip TUI mouse capture so the
+    /// user can use terminal-native drag-to-select +
+    /// system-clipboard copy in the editor and AI panes.
+    /// Status reports the new state. No HJSON persistence —
+    /// the choice is per-session; default is always ON.
+    fn toggle_mouse_capture(&mut self) {
+        use crossterm::execute;
+        self.mouse_captured = !self.mouse_captured;
+        let mut stdout = std::io::stdout();
+        let result = if self.mouse_captured {
+            execute!(stdout, EnableMouseCapture)
+        } else {
+            execute!(stdout, DisableMouseCapture)
+        };
+        match result {
+            Ok(()) => {
+                self.status = if self.mouse_captured {
+                    "mouse capture: ON — click-to-focus + scroll wheel; native selection disabled".into()
+                } else {
+                    "mouse capture: OFF — terminal-native selection enabled (drag-select + Cmd+C / Ctrl+Shift+C). Ctrl+Shift+M to re-enable.".into()
+                };
+            }
+            Err(e) => {
+                // Flip back; report the error.
+                self.mouse_captured = !self.mouse_captured;
+                self.status = format!("mouse capture toggle failed: {e}");
+            }
+        }
+    }
+
     /// Ctrl+B E — flip `sound.enabled` in the live config + on disk,
     /// and toggle the live SoundPlayer's enabled flag. No-ops on hosts
     /// without an audio device beyond updating the config (so the
@@ -10180,100 +7128,6 @@ impl App {
         };
         self.status =
             format!("Typewriter sound {label}{audio_note} · saved to {}", config_path.display());
-    }
-
-    fn draw_llm_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::LlmPicker {
-            providers,
-            cursor,
-            initial_default,
-        } = &self.modal
-        else {
-            return;
-        };
-
-        // Build the visible lines so we can size the modal to fit.
-        let header_lines = 2; // title + blank
-        let footer_lines = 2; // blank + hint
-        let body_lines = providers.len();
-        let height = (header_lines + body_lines + footer_lines + 2) as u16;
-        let height = height.clamp(8, area.height.saturating_sub(2));
-
-        // Widest provider name + model for column alignment.
-        let max_name = providers.iter().map(|p| p.chars().count()).max().unwrap_or(8);
-        let max_model = providers
-            .iter()
-            .filter_map(|p| self.cfg.llm.providers.get(p).map(|c| c.model.chars().count()))
-            .max()
-            .unwrap_or(8);
-        let width = (max_name + max_model + 28) as u16;
-        let width = width.clamp(50, area.width.saturating_sub(6));
-
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Switch LLM provider · Ctrl+B L ")
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(Line::from(""));
-        for (i, name) in providers.iter().enumerate() {
-            let prov = self.cfg.llm.providers.get(name);
-            let model = prov.map(|p| p.model.as_str()).unwrap_or("?");
-            let api_key_state = prov
-                .and_then(|p| p.api_key_env.clone())
-                .map(|env| {
-                    if std::env::var(&env).is_ok() {
-                        format!("· {env} set")
-                    } else {
-                        format!("· {env} MISSING")
-                    }
-                })
-                .unwrap_or_else(|| "· local (no key)".to_string());
-            let marker = if i == *cursor { "›" } else { " " };
-            let current_tag = if name == initial_default {
-                "  (current)"
-            } else {
-                ""
-            };
-            let name_padded = format!("{name:<width$}", width = max_name);
-            let model_padded = format!("{model:<width$}", width = max_model);
-            let row = format!(
-                "  {marker} {name_padded}   {model_padded}   {api_key_state}{current_tag}"
-            );
-            let style = if i == *cursor {
-                Style::default()
-                    .add_modifier(Modifier::REVERSED)
-                    .add_modifier(Modifier::BOLD)
-            } else if name == initial_default {
-                Style::default().add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            lines.push(Line::from(Span::styled(row, style)));
-        }
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  ↑↓ to select · Enter to switch · Esc to cancel".to_string(),
-            Style::default().add_modifier(Modifier::DIM),
-        )));
-
-        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 
     /// Try the in-`#image(…)` picker; returns false when the cursor
@@ -10413,89 +7267,6 @@ impl App {
         self.status = format!("inserted `{fname}` into #image(…)");
     }
 
-    fn draw_image_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::ImagePicker {
-            entries, cursor, ..
-        } = &self.modal
-        else {
-            return;
-        };
-        let header_lines = 2usize;
-        let footer_lines = 2usize;
-        let body_lines = entries.len().max(1);
-        let height = ((header_lines + body_lines + footer_lines + 2) as u16)
-            .clamp(8, area.height.saturating_sub(2));
-        let max_name = entries
-            .iter()
-            .map(|e| e.fname.chars().count())
-            .max()
-            .unwrap_or(16);
-        let max_title = entries
-            .iter()
-            .map(|e| e.title.chars().count())
-            .max()
-            .unwrap_or(16);
-        let width = ((max_name + max_title + 24) as u16).clamp(50, area.width.saturating_sub(6));
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Pick an image · Ctrl+B P ")
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(Line::from(""));
-        if entries.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "  No Image siblings at this level. Use F3 to import one,"
-                    .to_string(),
-                Style::default().add_modifier(Modifier::DIM),
-            )));
-            lines.push(Line::from(Span::styled(
-                "  then re-run Ctrl+B P inside the #image(\"…\") call."
-                    .to_string(),
-                Style::default().add_modifier(Modifier::DIM),
-            )));
-        } else {
-            for (i, e) in entries.iter().enumerate() {
-                let marker = if i == *cursor { "›" } else { " " };
-                let name_padded =
-                    format!("{n:<width$}", n = e.fname, width = max_name);
-                let title_padded =
-                    format!("{t:<width$}", t = e.title, width = max_title);
-                let size_kib = e.size_bytes / 1024;
-                let row = format!("  {marker} {name_padded}   {title_padded}   ({size_kib} KiB)");
-                let style = if i == *cursor {
-                    Style::default()
-                        .add_modifier(Modifier::REVERSED)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                };
-                lines.push(Line::from(Span::styled(row, style)));
-            }
-        }
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  ↑↓ select · Enter insert · Esc cancel".to_string(),
-            Style::default().add_modifier(Modifier::DIM),
-        )));
-        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
-    }
-
     fn open_function_picker(&mut self) {
         if self.opened.is_none() {
             self.status = "function picker needs an open paragraph".into();
@@ -10599,445 +7370,6 @@ impl App {
             super::highlight::TypstMode::Math => "math",
         };
         self.status = format!("inserted {prefix}{}( … ) · {mode_tag} mode", picked.name);
-    }
-
-    fn draw_function_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::FunctionPicker { filter, cursor } = &self.modal else {
-            return;
-        };
-        let matches = filter_functions(filter.as_str());
-        let width = area.width.saturating_sub(6).max(60);
-        let height = area.height.saturating_sub(4).max(14);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let title = " Typst function · Ctrl+B F ".to_string();
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        // 3 rows of chrome: filter, blank spacer, footer.
-        let filter_h: u16 = 2;
-        let footer_h: u16 = 2;
-        let list_h = inner.height.saturating_sub(filter_h + footer_h);
-        let filter_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: filter_h,
-        };
-        let list_rect = Rect {
-            x: inner.x,
-            y: inner.y + filter_h,
-            width: inner.width,
-            height: list_h,
-        };
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + filter_h + list_h,
-            width: inner.width,
-            height: footer_h,
-        };
-
-        let cursor_char = '│';
-        let filter_lines = vec![
-            Line::from(Span::styled(
-                format!(" › Filter: {}", filter.render_with_cursor(cursor_char)),
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                format!(
-                    "   {} match{} of {}",
-                    matches.len(),
-                    if matches.len() == 1 { "" } else { "es" },
-                    super::typst_funcs::all().len()
-                ),
-                Style::default().add_modifier(Modifier::DIM),
-            )),
-        ];
-        f.render_widget(Paragraph::new(filter_lines), filter_rect);
-
-        // List body — scroll so the cursor is always in view.
-        let body_height = list_h as usize;
-        let total = matches.len();
-        let cursor = (*cursor).min(total.saturating_sub(1));
-        let scroll = if cursor >= body_height {
-            cursor - body_height + 1
-        } else {
-            0
-        };
-        let max_name = matches
-            .iter()
-            .map(|f| f.name.chars().count())
-            .max()
-            .unwrap_or(8);
-
-        let mut rows: Vec<Line<'static>> = Vec::new();
-        if matches.is_empty() {
-            rows.push(Line::from(Span::styled(
-                "  (no functions match the filter)".to_string(),
-                Style::default().add_modifier(Modifier::DIM),
-            )));
-        }
-        let body_end = (scroll + body_height).min(total);
-        for i in scroll..body_end {
-            let entry = matches[i];
-            let marker = if i == cursor { "›" } else { " " };
-            let name_padded =
-                format!("{n:<width$}", n = entry.name, width = max_name);
-            let line = format!("  {marker} {name_padded}   {desc}", desc = entry.description);
-            let style = if i == cursor {
-                Style::default()
-                    .add_modifier(Modifier::REVERSED)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            rows.push(Line::from(Span::styled(line, style)));
-        }
-        // Also include the signature underneath the selected entry as
-        // a hint row. Kept narrow to avoid pushing the list off-screen.
-        f.render_widget(Paragraph::new(rows), list_rect);
-
-        let signature_hint = matches
-            .get(cursor)
-            .map(|f| format!(" sig: {}", f.signature))
-            .unwrap_or_default();
-        let hint = format!(
-            "{signature_hint}\n ↑↓ select · Enter inserts #name(…) · Esc cancel"
-        );
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                hint,
-                Style::default().add_modifier(Modifier::DIM),
-            )))
-            .wrap(Wrap { trim: false }),
-            footer_rect,
-        );
-    }
-
-    fn draw_image_preview_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        // Pull the variant fields out by value (cloning the cheap
-        // strings/numbers) and take a `&mut` borrow of `proto` only
-        // for the render call — keeps the modal field accessible
-        // for read elsewhere if needed.
-        let Modal::ImagePreview {
-            title,
-            fs_rel,
-            size_bytes,
-            proto,
-        } = &mut self.modal
-        else {
-            return;
-        };
-
-        let width = area.width.saturating_sub(4).max(40);
-        let height = area.height.saturating_sub(4).max(12);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let title_line = format!(
-            " 🖼 {title}  ·  {fs_rel}  ·  {size_bytes} bytes "
-        );
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title_line)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        // Reserve the last inner row for the hint line.
-        let body_h = inner.height.saturating_sub(1);
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: body_h,
-        };
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + body_h,
-            width: inner.width,
-            height: 1,
-        };
-
-        let widget = ratatui_image::StatefulImage::new();
-        f.render_stateful_widget(widget, body_rect, proto);
-
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                "  Esc closes  ·  resize the terminal to re-fit ".to_string(),
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
-    /// Ctrl+V R floating preview. Same plumbing as the image-
-    /// preview modal — ratatui-image's StatefulImage widget
-    /// repaints on every frame so a terminal resize Just Works.
-    /// Multi-page documents: ← / → cycle between page protos.
-    fn draw_rendered_preview_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::RenderedPreview {
-            title,
-            pages,
-            current_page,
-            ..
-        } = &mut self.modal
-        else {
-            return;
-        };
-        let total = pages.len();
-        let idx = (*current_page).min(total.saturating_sub(1));
-        let page = match pages.get_mut(idx) {
-            Some(p) => p,
-            None => return,
-        };
-        let preview_width = page.width;
-        let preview_height = page.height;
-
-        let width = area.width.saturating_sub(4).max(40);
-        let height = area.height.saturating_sub(4).max(12);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let pages_note = if total > 1 {
-            format!(" · page {}/{}", idx + 1, total)
-        } else {
-            String::new()
-        };
-        let title_line = format!(
-            " 🖨 {title}  ·  {preview_width}×{preview_height}{pages_note} "
-        );
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title_line)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let body_h = inner.height.saturating_sub(1);
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: body_h,
-        };
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + body_h,
-            width: inner.width,
-            height: 1,
-        };
-
-        let widget = ratatui_image::StatefulImage::new();
-        f.render_stateful_widget(widget, body_rect, &mut page.proto);
-
-        let hint = if total > 1 {
-            "  ← / → navigate  ·  S saves current  ·  A saves all  ·  Esc closes ".to_string()
-        } else {
-            "  Esc closes  ·  S saves full-DPI PNG  ·  A saves all (same here) ".to_string()
-        };
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                hint,
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
-    /// Save-as picker triggered by `S` in the rendered preview.
-    /// Same dimensions / style as the markdown save-as picker so
-    /// the UX is consistent.
-    fn draw_save_rendered_png_modal(
-        &self,
-        f: &mut ratatui::Frame,
-        area: Rect,
-    ) {
-        let Modal::SaveRenderedPng { input, title, .. } = &self.modal else {
-            return;
-        };
-        let width = area.width.saturating_sub(8).clamp(40, 96);
-        let height: u16 = 7;
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" Save rendered PNG · {title} "))
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let cursor = '│';
-        let body = vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                format!(" Path: {}", input.render_with_cursor(cursor)),
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from(Span::styled(
-                "  Enter saves · Esc cancels · ~/ expands to home".to_string(),
-                Style::default().add_modifier(Modifier::DIM),
-            )),
-        ];
-        f.render_widget(Paragraph::new(body), inner);
-    }
-
-    /// Ctrl+V W floating preview. Same plumbing as the paragraph
-    /// render preview, but single-page (no navigation) — DOT
-    /// layout produces one canvas.
-    fn draw_story_view_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::StoryView {
-            book_title,
-            width,
-            height,
-            proto,
-            ..
-        } = &mut self.modal
-        else {
-            return;
-        };
-
-        let render_w = area.width.saturating_sub(4).max(40);
-        let render_h = area.height.saturating_sub(4).max(12);
-        let x = area.x + (area.width.saturating_sub(render_w)) / 2;
-        let y = area.y + (area.height.saturating_sub(render_h)) / 2;
-        let rect = Rect { x, y, width: render_w, height: render_h };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let title_line = format!(" 🕸 Story · {book_title}  ·  {width}×{height} ");
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title_line)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let body_h = inner.height.saturating_sub(1);
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: body_h,
-        };
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + body_h,
-            width: inner.width,
-            height: 1,
-        };
-
-        let widget = ratatui_image::StatefulImage::new();
-        f.render_stateful_widget(widget, body_rect, proto);
-
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                "  Esc closes  ·  S saves PNG  ·  resize terminal to re-fit ".to_string(),
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
-    /// `S` inside the story-view modal — small save-as picker
-    /// for the rendered PNG.
-    fn draw_save_story_png_modal(&self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::SaveStoryPng { input, book_title, .. } = &self.modal else {
-            return;
-        };
-        let width = area.width.saturating_sub(8).clamp(40, 96);
-        let height: u16 = 7;
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" Save story PNG · {book_title} "))
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let body = vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                format!(" Path: {}", input.render_with_cursor('│')),
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from(Span::styled(
-                "  Enter saves · Esc cancels · ~/ expands to home".to_string(),
-                Style::default().add_modifier(Modifier::DIM),
-            )),
-        ];
-        f.render_widget(Paragraph::new(body), inner);
     }
 
     fn cycle_ai_mode(&mut self) {
@@ -11324,50 +7656,6 @@ impl App {
                 }
             }
         }
-    }
-
-    /// Path used by the chat-history persistence hooks. Lives next
-    /// to `.inkhaven-backup.json` and `.session.json` inside the
-    /// project root.
-    fn chat_history_path(&self) -> std::path::PathBuf {
-        self.layout.root.join(".inkhaven-chat.json")
-    }
-
-    /// Write the in-memory `chat_history` to disk. Empty history
-    /// removes the file so a stale list doesn't haunt the next
-    /// session.
-    fn save_chat_history_to_disk(&self) -> std::io::Result<()> {
-        let path = self.chat_history_path();
-        if self.chat_history.is_empty() {
-            // Nothing to save — clean up any prior file so the next
-            // entry doesn't restore a phantom.
-            if path.exists() {
-                std::fs::remove_file(&path)?;
-            }
-            return Ok(());
-        }
-        let json = serde_json::to_string_pretty(&self.chat_history)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        std::fs::write(&path, json)
-    }
-
-    /// Load the on-disk chat history into `chat_history`. Returns
-    /// the number of turns loaded (0 when the file is absent or
-    /// empty). Parse / IO errors propagate so the caller can log.
-    fn load_chat_history_from_disk(&mut self) -> std::io::Result<usize> {
-        let path = self.chat_history_path();
-        if !path.exists() {
-            return Ok(0);
-        }
-        let bytes = std::fs::read(&path)?;
-        if bytes.is_empty() {
-            return Ok(0);
-        }
-        let history: Vec<ChatTurn> = serde_json::from_slice(&bytes)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        let n = history.len();
-        self.chat_history = history;
-        Ok(n)
     }
 
     /// Editor meta `Ctrl+B R`: advance the open paragraph's status one
@@ -11708,89 +7996,6 @@ impl App {
         }
     }
 
-    fn draw_status_filter_modal(&self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::StatusFilter { status_label, scope, entries, cursor } = &self.modal else {
-            return;
-        };
-        let header_lines = 3usize; // title row inside chrome stays 0; footer grows
-        let footer_lines = 3usize;
-        let body_lines = entries.len().max(1);
-        let height = ((header_lines + body_lines + footer_lines + 2) as u16)
-            .clamp(10, area.height.saturating_sub(2));
-        let max_title = entries.iter().map(|e| e.title.chars().count()).max().unwrap_or(20);
-        let max_crumb = entries.iter().map(|e| e.breadcrumb.chars().count()).max().unwrap_or(30);
-        let width = ((max_title + max_crumb + 12) as u16).clamp(60, area.width.saturating_sub(6));
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let title = format!(" Paragraphs with status [{status_label}] · scope: {scope} · Ctrl+B {} ",
-            match *status_label {
-                "Ready" => "1",
-                "Final" => "2",
-                "Third" => "3",
-                "Second" => "4",
-                "First" => "5",
-                "Napkin" => "6",
-                "None" => "7",
-                _ => "?",
-            });
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        lines.push(Line::from(""));
-        if entries.is_empty() {
-            lines.push(Line::from(Span::styled(
-                format!("  No paragraphs tagged [{status_label}]."),
-                Style::default().add_modifier(Modifier::DIM),
-            )));
-        } else {
-            let body_h = inner.height.saturating_sub((header_lines + footer_lines) as u16) as usize;
-            let body_h = body_h.max(1);
-            let cursor = (*cursor).min(entries.len() - 1);
-            let scroll = if cursor >= body_h { cursor - body_h + 1 } else { 0 };
-            let end = (scroll + body_h).min(entries.len());
-            for (i_offset, entry) in entries[scroll..end].iter().enumerate() {
-                let i = scroll + i_offset;
-                let marker = if i == cursor { "›" } else { " " };
-                let title_padded =
-                    format!("{t:<width$}", t = entry.title, width = max_title);
-                let row =
-                    format!("  {marker} {title_padded}   {b}", b = entry.breadcrumb);
-                let style = if i == cursor {
-                    Style::default()
-                        .add_modifier(Modifier::REVERSED)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                };
-                lines.push(Line::from(Span::styled(row, style)));
-            }
-        }
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  ↑↓ select · Enter opens · r/R advances status · - / Backspace reverses · Esc cancel"
-                .to_string(),
-            Style::default().add_modifier(Modifier::DIM),
-        )));
-        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
-    }
-
     /// Editor meta `Ctrl+B T`: rerun the placeholder-title derivation on
     /// the currently-open paragraph. Same logic that fires on save when
     /// the title is still `PARAGRAPH_PLACEHOLDER_TITLE`, but exposed
@@ -11826,298 +8031,6 @@ impl App {
                 self.status = format!("rename failed: {e}");
             }
         }
-    }
-
-    /// Editor meta `Ctrl+B P` (Places) / `Ctrl+B C` (Characters). Treats
-    /// the editor's selection (or the word under the cursor) as a lookup
-    /// term, sweeps matching paragraphs in the named system book, builds
-    /// a RAG context block, and either fires the inference immediately
-    /// (if the AI prompt already has a query) or stashes the context as
-    /// `pending_rag_prefix` and refocuses the AI prompt for the user to
-    /// type a query (item 4 in the spec).
-    fn start_lexicon_inference(&mut self, kind: LexiconKind) {
-        let Some(doc) = self.opened.as_ref() else {
-            self.status = format!("{} RAG needs an open paragraph", kind.label());
-            return;
-        };
-        let lookup = current_word_or_selection(doc);
-        if lookup.trim().is_empty() {
-            self.status = format!(
-                "{} RAG: select a name or place the cursor on one first",
-                kind.label()
-            );
-            return;
-        }
-
-        let Some(book_id) = self.system_book_id(kind.system_tag()) else {
-            self.status = format!(
-                "{} book is missing — re-open the project to seed it",
-                kind.label()
-            );
-            return;
-        };
-
-        // Case-insensitive substring match against paragraph titles. A
-        // selection of "Москва" finds both "Москва" and "Москва-Сити",
-        // which is usually the user's intent.
-        let needle = lookup.to_lowercase();
-        let mut chunks: Vec<String> = Vec::new();
-        for id in self.hierarchy.collect_subtree(book_id) {
-            if id == book_id {
-                continue;
-            }
-            let Some(node) = self.hierarchy.get(id) else {
-                continue;
-            };
-            if node.kind != NodeKind::Paragraph {
-                continue;
-            }
-            if !node.title.to_lowercase().contains(&needle) {
-                continue;
-            }
-            let body = match self.store.get_content(node.id) {
-                Ok(Some(b)) => String::from_utf8_lossy(&b).to_string(),
-                _ => continue,
-            };
-            chunks.push(format!(
-                "── {}: {} ──\n{}\n── end {} ──",
-                kind.label(),
-                node.title,
-                body,
-                kind.label().to_lowercase()
-            ));
-        }
-        if chunks.is_empty() {
-            self.status = format!(
-                "{} RAG: no entry titled like `{lookup}` in the {} book",
-                kind.label(),
-                kind.label()
-            );
-            return;
-        }
-        let prefix = format!(
-            "── {} context for `{lookup}` ({} match(es)) ──\n\n{}",
-            kind.label(),
-            chunks.len(),
-            chunks.join("\n\n")
-        );
-
-        // Item 4: if the AI prompt is empty, arm the prefix and let the
-        // user type their question. Otherwise send immediately with the
-        // current prompt as the question.
-        let prompt_present = !self.ai_input.as_str().trim().is_empty();
-        if prompt_present {
-            self.pending_rag_prefix = Some(prefix);
-            self.start_inference();
-            // start_inference moves focus to AiPrompt; bounce to AI pane
-            // so the user can watch the streamed answer per spec.
-            self.change_focus(Focus::Ai);
-        } else {
-            self.pending_rag_prefix = Some(prefix);
-            self.change_focus(Focus::AiPrompt);
-            self.status = format!(
-                "{} RAG armed for `{lookup}` — type your question and Enter",
-                kind.label()
-            );
-        }
-    }
-
-    /// Run a grammar check on the currently-open paragraph. Resolves a
-    /// "Grammar check" prompt template by precedence:
-    ///   1. Paragraph titled / slugged `grammar-check` (or `Grammar check`)
-    ///      under the Prompts system book.
-    ///   2. Same-named entry in `prompts.hjson` (`name: "grammar-check"`).
-    ///   3. Built-in fallback that constrains the LLM to checking syntax
-    ///      and punctuation in `cfg.language` while preserving any Typst
-    ///      formatting.
-    ///
-    /// In all three cases the paragraph body is appended verbatim. After
-    /// streaming starts focus jumps to the AI pane so the user can watch
-    /// the result render in real time.
-    fn start_grammar_check(&mut self) {
-        let Some(doc) = self.opened.as_ref() else {
-            self.status = "grammar check needs an open paragraph".into();
-            return;
-        };
-        let body = doc.textarea.lines().join("\n");
-        if body.trim().is_empty() {
-            self.status = "grammar check: paragraph is empty".into();
-            return;
-        }
-
-        // Resolver precedence. `grammar-check` is the canonical slug —
-        // case-insensitive match against both slug and title catches the
-        // common variants ("Grammar check", "GRAMMAR CHECK", etc.).
-        const NAME: &str = "grammar-check";
-        const TITLE: &str = "grammar check";
-        let template = if let Some(t) = self.lookup_book_prompt_template(NAME) {
-            t
-        } else if let Some(t) = self.lookup_book_prompt_template(TITLE) {
-            t
-        } else if let Some(p) = self.prompts.find(NAME) {
-            p.template.clone()
-        } else if let Some(p) = self.prompts.find(TITLE) {
-            p.template.clone()
-        } else {
-            grammar_check_default_prompt(&self.cfg.language)
-        };
-
-        // Render placeholders ({{selection}} / {{context}}) and then
-        // append the paragraph body so the model has a single trailing
-        // block to work on regardless of whether the template already
-        // referenced it.
-        let rendered = self.render_template(&template);
-        let prompt_text = format!(
-            "{rendered}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──",
-            title = doc.title
-        );
-
-        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
-            Ok(pair) => pair,
-            Err(e) => {
-                self.status = format!("grammar check: {e}");
-                return;
-            }
-        };
-        let model = model.to_string();
-        let provider = self.ai.default_provider.clone();
-        // Grammar check is a one-shot: don't replay chat history, don't
-        // append the turn to history. Behaviour matches Help in that
-        // sense.
-        let rx = spawn_chat_stream(
-            self.ai.client.clone(),
-            model.clone(),
-            Some(GRAMMAR_CHECK_SYSTEM_PROMPT.to_string()),
-            Vec::new(),
-            prompt_text,
-        );
-        self.inference = Some(Inference {
-            provider: provider.clone(),
-            model,
-            response: String::new(),
-            status: InferenceStatus::Streaming,
-            rx,
-            started_at: std::time::Instant::now(),
-        });
-        self.pending_chat_user_msg = None;
-        // Per spec: focus moves to the AI pane so the user can watch the
-        // streamed result. Esc bounces back to AiPrompt for follow-ups.
-        self.change_focus(Focus::Ai);
-        self.status = format!(
-            "Grammar check: streaming from {provider} ({})…",
-            self.cfg.language
-        );
-    }
-
-    fn start_help_inference(&mut self, query: &str) {
-        let query = query.trim();
-        if query.is_empty() {
-            self.status = "Help: empty question".into();
-            return;
-        }
-
-        // Locate the Help book; required as the RAG source.
-        let Some(help_id) = self.system_book_id(crate::store::SYSTEM_TAG_HELP) else {
-            self.status = "Help book not present — re-open the project to seed it".into();
-            return;
-        };
-        let help_subtree: std::collections::HashSet<Uuid> =
-            self.hierarchy.collect_subtree(help_id).into_iter().collect();
-
-        // Search broadly, then filter to nodes inside the Help subtree. We
-        // ask for more than we'll actually feed to the LLM so the post-filter
-        // doesn't starve us if many hits are outside Help.
-        let raw_hits = match self.store.search_text(query, 40) {
-            Ok(hits) => hits,
-            Err(e) => {
-                self.status = format!("Help: search failed: {e}");
-                return;
-            }
-        };
-        let mut chosen: Vec<SearchHit> = raw_hits
-            .iter()
-            .filter_map(SearchHit::parse)
-            .filter(|h| help_subtree.contains(&h.id))
-            .collect();
-        // Keep only paragraphs — branches don't have prose to ground on.
-        chosen.retain(|h| h.kind == NodeKind::Paragraph);
-        // Cap context size to avoid blowing the model's window.
-        const MAX_CONTEXT_PARAGRAPHS: usize = 8;
-        const MAX_CHARS_PER_PARAGRAPH: usize = 2000;
-        chosen.truncate(MAX_CONTEXT_PARAGRAPHS);
-
-        // Fetch full content for the chosen paragraphs and assemble the
-        // grounded context block.
-        let mut context = String::new();
-        let mut included = 0usize;
-        for hit in &chosen {
-            let body = match self.store.get_content(hit.id) {
-                Ok(Some(bytes)) => String::from_utf8_lossy(&bytes).to_string(),
-                _ => continue,
-            };
-            let trimmed = if body.chars().count() > MAX_CHARS_PER_PARAGRAPH {
-                let mut t: String = body.chars().take(MAX_CHARS_PER_PARAGRAPH).collect();
-                t.push('…');
-                t
-            } else {
-                body
-            };
-            let breadcrumb = self.title_breadcrumb(hit.id);
-            context.push_str(&format!(
-                "── Help excerpt: {} (path: {}) ──\n{}\n\n",
-                hit.title, breadcrumb, trimmed
-            ));
-            included += 1;
-        }
-
-        if included == 0 {
-            self.status = format!(
-                "Help: no entries found for `{}`. Try a different question.",
-                query
-            );
-            return;
-        }
-
-        let system_prompt = HELP_SYSTEM_PROMPT.to_string();
-        let user_prompt = format!(
-            "Question: {query}\n\nContext (Inkhaven Help excerpts — your ONLY allowed source):\n\n{context}\nAnswer using only the context above. If it does not contain the answer, say so plainly and suggest which part of the Help book might be relevant."
-        );
-
-        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
-            Ok(pair) => pair,
-            Err(e) => {
-                self.status = format!("Help: {e}");
-                return;
-            }
-        };
-        let model = model.to_string();
-        let provider = self.ai.default_provider.clone();
-
-        // Help is a one-shot RAG inference — no chat history is replayed
-        // (so the strict grounding system prompt isn't diluted), and the
-        // turn does not accumulate into `chat_history`.
-        let rx = spawn_chat_stream(
-            self.ai.client.clone(),
-            model.clone(),
-            Some(system_prompt),
-            Vec::new(),
-            user_prompt,
-        );
-        self.inference = Some(Inference {
-            provider: provider.clone(),
-            model,
-            response: String::new(),
-            status: InferenceStatus::Streaming,
-            rx,
-            started_at: std::time::Instant::now(),
-        });
-        self.pending_chat_user_msg = None;
-        // Land on the AI prompt pane so the user can immediately ask a
-        // follow-up Help question; Esc flips to the AI pane to read.
-        self.change_focus(Focus::AiPrompt);
-        self.status = format!(
-            "Help: streaming answer from {provider} (grounded on {included} excerpt(s))…"
-        );
     }
 
     fn quickref_handle_key(&mut self, key: KeyEvent) -> bool {
@@ -12232,32 +8145,6 @@ impl App {
                 self.pending_import = Some(path);
             }
         }
-    }
-
-    fn load_file_into_editor(&mut self, path: &std::path::Path) {
-        let bytes = match std::fs::read(path) {
-            Ok(b) => b,
-            Err(e) => {
-                self.status = format!("read {}: {e}", path.display());
-                return;
-            }
-        };
-        let body = String::from_utf8_lossy(&bytes).into_owned();
-        let Some(doc) = self.opened.as_mut() else {
-            self.status =
-                "no paragraph open — open one first, then F3 to replace its body".into();
-            return;
-        };
-        let mut new_textarea = TextArea::new(body_to_lines(&body));
-        new_textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-        new_textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
-        doc.textarea = new_textarea;
-        doc.dirty = true;
-        doc.scroll_row = 0;
-        doc.scroll_col = 0;
-        doc.last_activity = std::time::Instant::now();
-        self.change_focus(Focus::Editor);
-        self.status = format!("loaded `{}` — bold marks the change vs saved", path.display());
     }
 
     fn import_single_file(&mut self, path: &std::path::Path) {
@@ -12632,33 +8519,6 @@ impl App {
         };
         self.pending_build = Some(book_id);
         self.status = "Book build: assembling + compiling…".into();
-    }
-
-    /// Ctrl+B Shift+B — schedule an immediate project backup. The
-    /// next main-loop tick picks up the flag and runs
-    /// `run_pending_backup_now` against the live `terminal`.
-    fn schedule_backup_now(&mut self) {
-        self.pending_backup_now = true;
-        self.status = "Backup: zipping the project…".into();
-    }
-
-    /// Drain the `pending_backup_now` flag — runs the manual
-    /// backup with its own splash. Honours
-    /// `backup.wait_for_key_after_backup`. Status bar carries the
-    /// final outcome.
-    fn run_pending_backup_now<B: ratatui::backend::Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-    ) {
-        let layout = ProjectLayout::new(self.store.project_root());
-        match run_manual_backup(terminal, &layout, &self.cfg) {
-            Ok(path) => {
-                self.status = format!("Backup OK · {}", path.display());
-            }
-            Err(e) => {
-                self.status = format!("Backup failed: {e:#}");
-            }
-        }
     }
 
     /// Ctrl+B O — schedule a Book "take": build, then copy the PDF
@@ -13515,232 +9375,6 @@ impl App {
         }
     }
 
-    fn open_snapshot_picker(&mut self) {
-        let Some(doc) = self.opened.as_ref() else {
-            self.status = "no paragraph open".into();
-            return;
-        };
-        let id = doc.id;
-        let title = doc.title.clone();
-        match self.store.list_snapshots(id) {
-            Ok(snapshots) => {
-                if snapshots.is_empty() {
-                    self.status =
-                        format!("no snapshots yet for `{title}` — press F5 to create one");
-                    return;
-                }
-                self.modal = Modal::SnapshotPicker {
-                    paragraph_id: id,
-                    paragraph_title: title,
-                    snapshots,
-                    cursor: 0,
-                };
-            }
-            Err(e) => {
-                self.status = format!("snapshot list failed: {e}");
-            }
-        }
-    }
-
-    fn commit_snapshot_load(&mut self) {
-        let (snap_id, when) = match &self.modal {
-            Modal::SnapshotPicker {
-                snapshots, cursor, ..
-            } => {
-                let Some(snap) = snapshots.get(*cursor) else {
-                    self.modal = Modal::None;
-                    return;
-                };
-                (snap.id, snap.created_at)
-            }
-            _ => return,
-        };
-        let content = match self.store.snapshot_content(snap_id) {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) => {
-                self.status = "snapshot has no body".into();
-                self.modal = Modal::None;
-                return;
-            }
-            Err(e) => {
-                self.status = format!("snapshot load failed: {e}");
-                self.modal = Modal::None;
-                return;
-            }
-        };
-
-        // Safety net (1.2.4+): before we replace the editor buffer,
-        // snapshot whatever is currently in it. Without this, hitting
-        // Enter on an old snapshot would silently discard any
-        // unsaved typing — "oops! a day of work gone". Now the
-        // recoverable history grows by one row instead.
-        //
-        // The pre-restore snapshot fires `hook.on_snapshot` like any
-        // other snapshot. If snapshot creation itself fails, we
-        // abort the load: the whole point is data safety, so doing
-        // the replace without the safety net would defeat the
-        // change. The user can fix the underlying error (disk full,
-        // store offline) and retry.
-        let pre_restore_id = if let Some(doc) = self.opened.as_ref() {
-            let body_now = doc.textarea.lines().join("\n");
-            let node = self.hierarchy.get(doc.id).cloned();
-            match node {
-                Some(n) => match self.store.create_snapshot(&n, body_now.as_bytes()) {
-                    Ok(id) => Some(id),
-                    Err(e) => {
-                        self.status = format!(
-                            "snapshot load aborted: safety snapshot failed ({e}) — retry once the store is healthy"
-                        );
-                        self.modal = Modal::None;
-                        return;
-                    }
-                },
-                None => None,
-            }
-        } else {
-            None
-        };
-
-        let body = String::from_utf8_lossy(&content).into_owned();
-        let Some(doc) = self.opened.as_mut() else {
-            self.modal = Modal::None;
-            return;
-        };
-        let mut new_textarea = TextArea::new(body_to_lines(&body));
-        new_textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-        new_textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
-        doc.textarea = new_textarea;
-        doc.dirty = true;
-        doc.scroll_row = 0;
-        doc.scroll_col = 0;
-        doc.last_activity = std::time::Instant::now();
-        // saved_lines stays at the previously-saved on-disk version, so the
-        // snapshot text shows as "added" (bold) until the user accepts it
-        // by hitting Ctrl+S.
-        self.modal = Modal::None;
-        self.change_focus(Focus::Editor);
-        let safety_msg = match pre_restore_id {
-            Some(id) => format!(" · safety snapshot {} created", id.simple()),
-            None => String::new(),
-        };
-        self.status = format!(
-            "loaded snapshot from {} — bold marks the change vs saved{}",
-            when.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S %z"),
-            safety_msg,
-        );
-    }
-
-    /// Open the snapshot-diff modal against the cursor's snapshot.
-    /// Stashes the current `SnapshotPicker` modal inside the new
-    /// variant so `Esc` returns to the picker rather than closing
-    /// both layers.
-    fn open_snapshot_diff(&mut self) {
-        let (snap_id, when, paragraph_title) = match &self.modal {
-            Modal::SnapshotPicker {
-                snapshots,
-                cursor,
-                paragraph_title,
-                ..
-            } => {
-                let Some(snap) = snapshots.get(*cursor) else {
-                    return;
-                };
-                (snap.id, snap.created_at, paragraph_title.clone())
-            }
-            _ => return,
-        };
-        let snapshot_bytes = match self.store.snapshot_content(snap_id) {
-            Ok(Some(b)) => b,
-            Ok(None) => {
-                self.status = "snapshot has no body".into();
-                return;
-            }
-            Err(e) => {
-                self.status = format!("snapshot load failed: {e}");
-                return;
-            }
-        };
-        let snapshot_text = String::from_utf8_lossy(&snapshot_bytes).into_owned();
-        let current_text = self
-            .opened
-            .as_ref()
-            .map(|d| d.textarea.lines().join("\n"))
-            .unwrap_or_default();
-        let rows = compute_line_diff(&snapshot_text, &current_text);
-        let when_str = when
-            .with_timezone(&chrono::Local)
-            .format("%Y-%m-%d %H:%M:%S %z")
-            .to_string();
-        let return_to = Box::new(std::mem::replace(&mut self.modal, Modal::None));
-        self.modal = Modal::SnapshotDiff {
-            paragraph_title,
-            when: when_str,
-            rows,
-            scroll: 0,
-            return_to,
-        };
-        self.status = "diff: snapshot ← left · current → right · ↑↓ scroll · Esc back".into();
-    }
-
-    fn delete_current_snapshot(&mut self) {
-        let (snap_id, when, paragraph_id, paragraph_title) = match &self.modal {
-            Modal::SnapshotPicker {
-                snapshots,
-                cursor,
-                paragraph_id,
-                paragraph_title,
-            } => {
-                let Some(snap) = snapshots.get(*cursor).cloned() else {
-                    return;
-                };
-                (snap.id, snap.created_at, *paragraph_id, paragraph_title.clone())
-            }
-            _ => return,
-        };
-
-        if let Err(e) = self.store.delete_snapshot(snap_id) {
-            self.status = format!("delete snapshot failed: {e}");
-            return;
-        }
-
-        let when_local = when
-            .with_timezone(&chrono::Local)
-            .format("%Y-%m-%d %H:%M:%S %z");
-
-        match self.store.list_snapshots(paragraph_id) {
-            Ok(snapshots) => {
-                if snapshots.is_empty() {
-                    self.modal = Modal::None;
-                    self.status = format!(
-                        "deleted snapshot {when_local} — no snapshots left for `{paragraph_title}`"
-                    );
-                } else {
-                    // Keep the cursor on the same row index, clamped
-                    // to the new (shorter) list — feels like "the row
-                    // below the deleted one slid up".
-                    let new_cursor = match &self.modal {
-                        Modal::SnapshotPicker { cursor, .. } => {
-                            (*cursor).min(snapshots.len() - 1)
-                        }
-                        _ => 0,
-                    };
-                    self.modal = Modal::SnapshotPicker {
-                        paragraph_id,
-                        paragraph_title,
-                        snapshots,
-                        cursor: new_cursor,
-                    };
-                    self.status = format!("deleted snapshot {when_local}");
-                }
-            }
-            Err(e) => {
-                self.modal = Modal::None;
-                self.status =
-                    format!("deleted snapshot, but couldn't refresh list: {e}");
-            }
-        }
-    }
-
     fn open_delete_modal(&mut self) {
         let Some(&(id, _)) = self.rows.get(self.tree_cursor) else {
             self.status = "nothing selected to delete".into();
@@ -13849,6 +9483,13 @@ impl App {
                 self.modal = Modal::None;
                 self.status = "edit event: cancelled".into();
                 return Ok(false);
+            }
+            // 1.2.7+ — timeline view: snapshot the per-book
+            // state (collapsed tracks, expanded track, zoom,
+            // scroll, cursor) into the session cache so the
+            // next Ctrl+V Shift+T for this book restores it.
+            if matches!(self.modal, Modal::TimelineView { .. }) {
+                self.timeline_capture_view_state();
             }
             self.modal = Modal::None;
             return Ok(false);
@@ -14683,8 +10324,25 @@ impl App {
             _ => self.hierarchy.fs_path(&root_node, &self.layout),
         };
 
+        // 1.2.7+ — stash a single-paragraph delete into the
+        // kill-ring so Ctrl+B U can recover the content
+        // afterwards. Skipped for branch deletes (chapters /
+        // books) because subtree restoration without UUID
+        // preservation is too risky to ship without store
+        // API support.
+        if root_kind == NodeKind::Paragraph && ids.len() == 1 {
+            self.stash_deleted_paragraph(&root_node);
+        } else {
+            // Different delete shape — clear any stale stash
+            // so Ctrl+B U doesn't surprise the user with an
+            // older recoverable that no longer matches the
+            // most-recent action.
+            self.last_deleted = None;
+        }
+
         if let Err(e) = self.store.delete_subtree(&fs_rel, &ids) {
             self.status = format!("delete failed: {e}");
+            self.last_deleted = None;
             return;
         }
 
@@ -14696,8 +10354,13 @@ impl App {
         }
 
         self.modal = Modal::None;
+        let undo_hint = if self.last_deleted.is_some() {
+            " · Ctrl+B U to restore (new uuid — wiki-links to old id stay broken)"
+        } else {
+            ""
+        };
         self.status = format!(
-            "deleted {} `{}` ({} other node{} removed)",
+            "deleted {} `{}` ({} other node{} removed){undo_hint}",
             root_kind.as_str(),
             title,
             ids.len() - 1,
@@ -14801,237 +10464,6 @@ impl App {
         );
     }
 
-    fn load_paragraph(&mut self, node: &Node) -> Result<()> {
-        if let Some(prev) = &self.opened {
-            if prev.id == node.id {
-                self.change_focus(Focus::Editor);
-                return Ok(());
-            }
-            // Auto-save any pending edits in the previous paragraph before
-            // swapping to the new one. If the save fails (disk error etc.),
-            // keep the old doc open so the user can see and fix it.
-            if prev.dirty {
-                let _ = self.save_current();
-                if self.opened.as_ref().is_some_and(|d| d.dirty) {
-                    self.status = format!(
-                        "couldn't autosave `{}` — opening blocked. Fix the error or Ctrl+S manually.",
-                        self.opened.as_ref().map(|d| d.title.as_str()).unwrap_or("")
-                    );
-                    return Ok(());
-                }
-            }
-            // Memorise the outgoing paragraph's cursor so re-opening it
-            // (now or next session) lands back where the user left it.
-            self.snapshot_open_paragraph_cursor();
-        }
-
-        let Some(rel) = node.file.as_ref() else {
-            self.status = format!("paragraph `{}` has no file on disk", node.title);
-            return Ok(());
-        };
-        let abs = self.layout.root.join(rel);
-        let body = match std::fs::read_to_string(&abs) {
-            Ok(b) => b,
-            Err(e) => {
-                self.status = format!("read {}: {e}", abs.display());
-                return Ok(());
-            }
-        };
-
-        let lines = body_to_lines(&body);
-        let saved_lines = lines.clone();
-        let mut textarea = TextArea::new(lines);
-        textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-        textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
-
-        let read_only = self.hierarchy.ancestors(node).iter().any(|a| {
-            a.protected && a.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_HELP)
-        });
-
-        // Restore the saved cursor + scroll for this paragraph if we've
-        // seen it before. Coords are clamped against the loaded buffer so a
-        // shorter post-edit body can't crash the cursor.
-        let saved_cursor = self.paragraph_cursors.get(&node.id).copied();
-        let (init_row, init_col, init_scroll_row, init_scroll_col) = match saved_cursor {
-            Some(pc) => {
-                let max_row = textarea.lines().len().saturating_sub(1);
-                let row = pc.cursor_row.min(max_row);
-                let line_len = textarea
-                    .lines()
-                    .get(row)
-                    .map_or(0, |s| s.chars().count());
-                let col = pc.cursor_col.min(line_len);
-                (row, col, pc.scroll_row.min(max_row), pc.scroll_col)
-            }
-            None => (0, 0, 0, 0),
-        };
-        if init_row > 0 || init_col > 0 {
-            textarea.move_cursor(CursorMove::Jump(init_row as u16, init_col as u16));
-        }
-
-        self.opened = Some(OpenedDoc {
-            id: node.id,
-            title: node.title.clone(),
-            rel_path: rel.clone(),
-            textarea,
-            dirty: false,
-            scroll_row: init_scroll_row,
-            scroll_col: init_scroll_col,
-            block_anchor: None,
-            last_activity: std::time::Instant::now(),
-            saved_lines,
-            split: None,
-            search: None,
-            read_only,
-            correction_baseline: None,
-            // Script nodes default to the "bund" content_type even
-            // if the persisted metadata is missing it — covers
-            // scripts created before content_type stamping landed.
-            content_type: node
-                .content_type
-                .clone()
-                .or_else(|| match node.kind {
-                    NodeKind::Script => Some("bund".to_string()),
-                    _ => None,
-                }),
-            typst_diagnostics: Vec::new(),
-            typst_diagnostics_checked_at: std::time::Instant::now(),
-            typst_diag_last_fired: None,
-        });
-        self.refresh_typst_diagnostics_for_opened();
-        self.change_focus(Focus::Editor);
-        self.status = format!("opened {}", abs.display());
-        Ok(())
-    }
-
-    fn save_current(&mut self) -> Result<()> {
-        let Some(doc) = self.opened.as_mut() else {
-            return Ok(());
-        };
-        if doc.read_only {
-            // Quietly clear the dirty bit so the autosave loop doesn't keep
-            // retrying. Nothing got mutated anyway — the editor's key handler
-            // blocks every write — but a stray block_anchor or focus blur
-            // could still flip dirty=true on a corner case.
-            doc.dirty = false;
-            self.status = "Help is read-only — nothing to save".into();
-            return Ok(());
-        }
-        let body = doc.textarea.lines().join("\n");
-        // Capture pre-save word count before we overwrite anything
-        // — used by the progress event log to compute word_delta.
-        let prev_words = crate::progress::count_words(&doc.saved_lines.join("\n"));
-        let abs = self.layout.root.join(&doc.rel_path);
-
-        // Filesystem write first; if that fails, abort before touching the store.
-        if let Err(e) = std::fs::write(&abs, body.as_bytes()) {
-            self.status = format!("write {}: {e}", abs.display());
-            return Ok(());
-        }
-
-        let id = doc.id;
-        let Some(mut node) = self.hierarchy.get(id).cloned() else {
-            self.status = format!("node {id} missing from hierarchy — try reopening the TUI");
-            return Ok(());
-        };
-
-        // If this paragraph still has the placeholder title, derive a real one
-        // from the body's first sentence and stamp it onto the node — that
-        // becomes the displayed name in the tree pane.
-        //
-        // 1.2.4+: when we auto-derive a title here, route through
-        // `rename_node` so the on-disk filename + slug track the
-        // new title. The body has already been written to the
-        // OLD path above; `rename_node` will `fs::rename` it to
-        // the new path, so the bytes follow the new name.
-        let title_was_placeholder = node.title == PARAGRAPH_PLACEHOLDER_TITLE;
-        if title_was_placeholder {
-            if let Some(derived) = extract_first_sentence(&body) {
-                if let Err(e) =
-                    self.store.rename_node(&self.hierarchy, node.id, &derived)
-                {
-                    tracing::warn!(
-                        target: "inkhaven::save",
-                        "auto-rename to first sentence failed: {e:#}",
-                    );
-                } else {
-                    // Reload so the local `node` + the open doc
-                    // reflect the new slug + file path. If the
-                    // hierarchy reload itself fails, leave the
-                    // existing one in place — the rename is
-                    // already on disk, just no in-memory refresh.
-                    if let Ok(h) =
-                        crate::store::hierarchy::Hierarchy::load(&self.store)
-                    {
-                        self.hierarchy = h;
-                    }
-                    if let Some(refreshed) = self.hierarchy.get(node.id).cloned() {
-                        // Sync `doc` (the outstanding &mut borrow
-                        // taken at the top of save_current_inner)
-                        // so its title + rel_path match the new
-                        // on-disk layout.
-                        doc.title = refreshed.title.clone();
-                        if let Some(rel) = refreshed.file.as_ref() {
-                            doc.rel_path = rel.clone();
-                        }
-                        node = refreshed;
-                    }
-                }
-            }
-        }
-
-        if let Err(e) = self
-            .store
-            .update_paragraph_content(&mut node, body.as_bytes())
-        {
-            self.status = format!("store update failed: {e}");
-            return Ok(());
-        }
-        if let Err(e) = self.store.sync() {
-            self.status = format!("store sync failed: {e}");
-            return Ok(());
-        }
-
-        doc.dirty = false;
-        // Refresh the saved-lines snapshot so the bold-new-additions overlay
-        // resets, and stamp last_activity to "now" so idle autosave restarts.
-        // Save is the explicit "I've reviewed and accepted the
-        // corrections" signal — drop the highlight + resume normal
-        // autosave cadence.
-        doc.saved_lines = doc.textarea.lines().to_vec();
-        doc.correction_baseline = None;
-        doc.last_activity = std::time::Instant::now();
-        let words = node.word_count;
-        if title_was_placeholder && node.title != PARAGRAPH_PLACEHOLDER_TITLE {
-            self.status = format!(
-                "saved {} ({} words) · named `{}` from first sentence",
-                abs.display(),
-                words,
-                node.title
-            );
-        } else {
-            self.status = format!("saved {} ({} words, re-embedded)", abs.display(), words);
-        }
-        // Progress event log. The book this paragraph belongs
-        // to feeds per-book aggregates; project-wide events drop
-        // book_id = None for the same record.
-        let new_words = crate::progress::count_words(&body);
-        let book_id = self.book_of_node(node.id);
-        crate::progress::record_save(node.id, book_id, prev_words, new_words);
-        // Auto-promote on goal-hit. Idempotent per
-        // (paragraph, status) — see Goals.auto_promote_on_target
-        // semantics.
-        self.maybe_auto_promote_on_target(node.id, new_words);
-        self.reload_hierarchy();
-        self.refresh_progress_cache();
-        // 1.2.5+: refresh typst-syntax diagnostics on save. Pulls
-        // the most-recently-saved body straight from the editor's
-        // mutable doc so the next render reflects errors the user
-        // just introduced (or fixed).
-        self.refresh_typst_diagnostics_for_opened();
-        Ok(())
-    }
-
     /// 1.2.5+: re-parse the open paragraph with `typst-syntax` and
     /// cache the resulting diagnostics on `OpenedDoc`. Honors the
     /// `typst_compile.diagnostics` HJSON flag and the buffer's
@@ -15123,350 +10555,6 @@ impl App {
                 ],
             );
         }
-    }
-
-    /// F8 (1.2.6+) — open the typst-diagnostics list modal.
-    /// Refreshes the diagnostic cache up-front so the modal
-    /// reflects the live buffer, not the last save.
-    /// 1.2.6+ — open the paragraph with `id` in the editor;
-    /// also moves the tree cursor onto it so the visible
-    /// state is consistent with the action that triggered.
-    fn open_paragraph_by_uuid(&mut self, id: Uuid) -> std::result::Result<(), String> {
-        let node = self
-            .hierarchy
-            .get(id)
-            .cloned()
-            .ok_or_else(|| format!("node {id} missing from hierarchy"))?;
-        if node.kind != NodeKind::Paragraph {
-            return Err(format!("{} is not a Paragraph", node.title));
-        }
-        if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == id) {
-            self.tree_cursor = i;
-        }
-        self.load_paragraph(&node).map_err(|e| e.to_string())?;
-        self.change_focus(Focus::Editor);
-        // 1.2.6+: surface a clear next-step hint when the user
-        // opens an orphan event paragraph — otherwise the only
-        // visible signal that the event needs a target is the
-        // `[ORPHAN]` tag in the timeline view, with no nudge
-        // about which chord assigns one.
-        if node.event.is_some()
-            && node.tags.iter().any(|t| t.eq_ignore_ascii_case("orphan"))
-        {
-            self.status =
-                "orphan event — Ctrl+V A to link a manuscript paragraph (target). Saving the link drops [ORPHAN].".into();
-        }
-        Ok(())
-    }
-
-    fn timeline_view_handle_key(&mut self, key: KeyEvent) {
-        // Descent picker captures keys when active.
-        if self.timeline_descent_active() {
-            self.timeline_descent_handle_key(key);
-            return;
-        }
-        match key.code {
-            // Scroll: ← / → shift the viewport by 1/6 of its
-            // span (a "page-step" feels right at the default
-            // ticks_per_cell). Shift+Left/Right page-jump
-            // (full viewport width).
-            KeyCode::Left => self.timeline_scroll(-1, false),
-            KeyCode::Right => self.timeline_scroll(1, false),
-            KeyCode::PageUp => self.timeline_scroll(-1, true),
-            KeyCode::PageDown => self.timeline_scroll(1, true),
-            // 1.2.6+ — Up/Down hop the cursor between events
-            // chronologically. Pairs with Left/Right (viewport
-            // scroll) and PgUp/PgDn (page scroll) to give the
-            // user four distinct navigation modes.
-            KeyCode::Up => self.timeline_step_cursor(-1),
-            KeyCode::Down => self.timeline_step_cursor(1),
-            // Zoom: + / =  zooms in (fewer ticks per cell),
-            // - / _  zooms out (more ticks per cell). Each
-            // press is a multiplicative step; keeps the
-            // cursor tick fixed so the user can drill into
-            // a specific event.
-            KeyCode::Char('+') | KeyCode::Char('=') => self.timeline_zoom(0.66),
-            KeyCode::Char('-') | KeyCode::Char('_') => self.timeline_zoom(1.5),
-            KeyCode::Char('0') => self.timeline_reset_zoom(),
-            // Cursor at center / Home / End — quick recenters.
-            KeyCode::Home => self.timeline_jump_home(),
-            KeyCode::End => self.timeline_jump_end(),
-            // Descent-picker key dispatch routes here first.
-            // When descent.is_some(), Up/Down/Enter/Esc are
-            // captured by the picker. Otherwise they fall
-            // through to the swim-lane handler above. We
-            // re-handle a few above; this block catches what
-            // the descent picker needs and the scope-nav chords.
-            KeyCode::Char('u') | KeyCode::Char('U') => self.timeline_up_scope(),
-            KeyCode::Char('d') | KeyCode::Char('D') => self.timeline_open_descent(),
-            KeyCode::Char('b') | KeyCode::Char('B') => self.timeline_jump_book_scope(),
-            KeyCode::Char('p') | KeyCode::Char('P') => self.timeline_toggle_project(),
-            KeyCode::Tab => self.timeline_cycle_track(),
-            KeyCode::Enter => self.timeline_open_event_under_cursor(),
-            KeyCode::Char('n') | KeyCode::Char('N') => {
-                self.timeline_open_new_event_prompt()
-            }
-            // 1.2.6+ Phase 3 — AI health critique.
-            //   y       — current scope, highlighted track only.
-            //   Y       — current scope, all tracks.
-            //   Ctrl+Y  — book scope, all tracks (widens regardless).
-            KeyCode::Char('y') | KeyCode::Char('Y')
-                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                self.timeline_start_health_critique(true, true);
-            }
-            KeyCode::Char('Y') => {
-                self.timeline_start_health_critique(false, true);
-            }
-            KeyCode::Char('y') => {
-                self.timeline_start_health_critique(false, false);
-            }
-            _ => {}
-        }
-    }
-
-    /// Cycle `track_highlight` through the tracks that
-    /// appear in the current event snapshot. None → first
-    /// track → next → … → None.
-    fn timeline_cycle_track(&mut self) {
-        let Modal::TimelineView { state } = &mut self.modal else { return; };
-        let default_track = self.cfg.timeline.default_track.clone();
-        let mut tracks: Vec<String> = state
-            .events
-            .iter()
-            .filter(|e| !e.is_orphan)
-            .map(|e| e.track.clone().unwrap_or_else(|| default_track.clone()))
-            .collect();
-        tracks.sort();
-        tracks.dedup();
-        let next = cycle_track(state.track_highlight.as_deref(), &tracks);
-        state.track_highlight = next.clone();
-        self.status = match next {
-            Some(t) => format!("timeline · track highlight: `{t}`"),
-            None => "timeline · track highlight cleared".into(),
-        };
-    }
-
-    /// Find the event closest to `cursor_ticks` (preferring
-    /// the highlighted track) and load its paragraph.
-    fn timeline_open_event_under_cursor(&mut self) {
-        let Modal::TimelineView { state } = &self.modal else { return; };
-        let cursor = state.cursor_ticks;
-        let highlight = state.track_highlight.clone();
-        let mut best: Option<(Uuid, i64)> = None;
-        for ev in &state.events {
-            // Track filter is a preference, not a hard
-            // requirement — if no on-track event is close,
-            // we still pick the absolute nearest.
-            let on_highlight = match (&highlight, &ev.track) {
-                (Some(h), Some(t)) => h == t,
-                (Some(_), None) => false,
-                (None, _) => true,
-            };
-            let distance = (ev.start_ticks - cursor).abs();
-            let weight = if on_highlight { distance } else { distance + 1_000_000 };
-            match best {
-                None => best = Some((ev.id, weight)),
-                Some((_, w)) if weight < w => best = Some((ev.id, weight)),
-                _ => {}
-            }
-        }
-        let Some((id, _)) = best else {
-            self.status = "timeline · no events to open".into();
-            return;
-        };
-        // Close the modal first, then load.
-        self.modal = Modal::None;
-        if let Err(e) = self.open_paragraph_by_uuid(id) {
-            self.status = format!("timeline · couldn't open event: {e}");
-        }
-    }
-
-    fn timeline_new_event_prompt_handle_key(&mut self, key: KeyEvent) {
-        if matches!(key.code, KeyCode::Enter) {
-            let taken = std::mem::replace(&mut self.modal, Modal::None);
-            if let Modal::TimelineNewEventPrompt {
-                input,
-                book_id,
-                cursor_ticks,
-                track,
-                return_to,
-            } = taken
-            {
-                let title = input.as_str().trim().to_string();
-                let mut underlying = *return_to;
-                if title.is_empty() {
-                    self.modal = underlying;
-                    self.status = "new event: empty title — cancelled".into();
-                    return;
-                }
-                // Create the event via the same path the CLI
-                // uses. Errors surface in the status bar and
-                // the timeline view re-opens with whatever
-                // state survived.
-                match self.create_event_at_cursor(book_id, &title, cursor_ticks, track.as_deref()) {
-                    Ok(()) => {
-                        // Refresh the timeline state's events.
-                        if let Modal::TimelineView { state } = &mut underlying {
-                            // Rebuild the snapshot in-place.
-                            let book_id = state.book_id;
-                            let project = state.project_overlay;
-                            let scope_id = state.scope_id;
-                            let all = self.collect_book_events(book_id, project);
-                            let filtered: Vec<TimelineEvent> = if scope_id == book_id || project {
-                                all
-                            } else {
-                                let subtree: std::collections::HashSet<Uuid> = self
-                                    .hierarchy
-                                    .collect_subtree(scope_id)
-                                    .into_iter()
-                                    .collect();
-                                all.into_iter()
-                                    .filter(|ev| {
-                                        subtree.contains(&ev.id)
-                                            || ev
-                                                .linked_paragraphs
-                                                .iter()
-                                                .any(|p| subtree.contains(p))
-                                    })
-                                    .collect()
-                            };
-                            if let Modal::TimelineView { state } = &mut underlying {
-                                state.events = filtered;
-                                // Land the cursor on the new event.
-                                state.cursor_ticks = cursor_ticks;
-                            }
-                        }
-                        self.modal = underlying;
-                        self.status = format!("event `{title}` added at cursor");
-                    }
-                    Err(e) => {
-                        self.modal = underlying;
-                        self.status = format!("new event: {e}");
-                    }
-                }
-            }
-            return;
-        }
-        if let Modal::TimelineNewEventPrompt { input, .. } = &mut self.modal {
-            handle_text_input_key(input, key);
-        }
-    }
-
-    /// 1.2.6+ Phase 3 — kick off the timeline health
-    /// critique. `widen_to_book` ignores the current
-    /// sub-scope and uses the whole book's event set;
-    /// `widen_to_all_tracks` ignores `track_highlight`.
-    fn timeline_start_health_critique(
-        &mut self,
-        widen_to_book: bool,
-        widen_to_all_tracks: bool,
-    ) {
-        let (book_id, project, scope_id, track_highlight, scope_events) =
-            match &self.modal {
-                Modal::TimelineView { state } => (
-                    state.book_id,
-                    state.project_overlay,
-                    state.scope_id,
-                    state.track_highlight.clone(),
-                    state.events.clone(),
-                ),
-                _ => return,
-            };
-        // Build the event set for the critique. When
-        // widen_to_book is true we sidestep the scope filter
-        // and grab everything in the book (or project).
-        let critique_events: Vec<TimelineEvent> = if widen_to_book {
-            self.collect_book_events(book_id, project)
-        } else {
-            scope_events
-        };
-        if critique_events.is_empty() {
-            self.status =
-                "timeline critique: no events in this scope".into();
-            return;
-        }
-        let track_filter: Option<String> = if widen_to_all_tracks {
-            None
-        } else {
-            track_highlight.clone()
-        };
-        let crumb = if widen_to_book {
-            self.hierarchy
-                .get(book_id)
-                .map(|n| n.title.clone())
-                .unwrap_or_else(|| "(book)".into())
-        } else {
-            let snapshot = TimelineViewState {
-                book_id,
-                scope_id,
-                nav_history: Vec::new(),
-                events: Vec::new(),
-                track_highlight: None,
-                ticks_per_cell: 1.0,
-                scroll_ticks: 0,
-                cursor_ticks: 0,
-                project_overlay: project,
-                descent: None,
-            };
-            self.timeline_scope_crumb(&snapshot)
-        };
-        let calendar = crate::timeline::Calendar::from_config(
-            self.cfg.timeline.calendar.clone(),
-        );
-        let payload_body = crate::timeline::critique::build_health_payload(
-            &critique_events,
-            &calendar,
-            &self.hierarchy,
-            &crumb,
-            track_filter.as_deref(),
-            &self.cfg.timeline.default_track,
-        );
-        let template = self.resolve_prompt_template("timeline-health", || {
-            timeline_health_default_prompt().to_string()
-        });
-        let rendered = self.render_template(&template);
-        let prompt_text = format!("{rendered}\n\n{payload_body}");
-
-        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
-            Ok(pair) => pair,
-            Err(e) => {
-                self.status = format!("timeline critique: {e}");
-                return;
-            }
-        };
-        let model = model.to_string();
-        let provider = self.ai.default_provider.clone();
-        let rx = spawn_chat_stream(
-            self.ai.client.clone(),
-            model.clone(),
-            None,
-            Vec::new(),
-            prompt_text,
-        );
-        self.inference = Some(Inference {
-            provider: provider.clone(),
-            model,
-            response: String::new(),
-            status: InferenceStatus::Streaming,
-            rx,
-            started_at: std::time::Instant::now(),
-        });
-        self.pending_chat_user_msg = None;
-        // Close the modal so the AI pane is visible.
-        self.modal = Modal::None;
-        self.change_focus(Focus::Ai);
-        let scope_label = if widen_to_book {
-            "book"
-        } else if widen_to_all_tracks {
-            "scope · all tracks"
-        } else {
-            "scope · current track"
-        };
-        self.status = format!(
-            "timeline critique ({scope_label}) · {n} events → {provider}…",
-            n = critique_events.len(),
-        );
     }
 
     /// Create an event paragraph under the book's Timeline
@@ -15589,16 +10677,6 @@ impl App {
             "edit event: <start> | <end> | <track> · empty middle = no end · Enter commits · Esc cancels".into();
     }
 
-    fn timeline_edit_event_prompt_handle_key(&mut self, key: KeyEvent) {
-        if matches!(key.code, KeyCode::Enter) {
-            self.commit_edit_event_metadata();
-            return;
-        }
-        if let Modal::TimelineEditEventPrompt { input, .. } = &mut self.modal {
-            handle_text_input_key(input, key);
-        }
-    }
-
     fn commit_edit_event_metadata(&mut self) {
         let taken = std::mem::replace(&mut self.modal, Modal::None);
         let Modal::TimelineEditEventPrompt { input, event_id } = taken else {
@@ -15681,747 +10759,7 @@ impl App {
         );
     }
 
-    fn timeline_open_new_event_prompt(&mut self) {
-        let Modal::TimelineView { state } = &self.modal else { return; };
-        let cursor = state.cursor_ticks;
-        let calendar = crate::timeline::Calendar::from_config(
-            self.cfg.timeline.calendar.clone(),
-        );
-        let formatted = calendar.format(
-            crate::timeline::TimelinePoint::from_ticks(cursor),
-            crate::timeline::Precision::Day,
-        );
-        let track = state.track_highlight.clone();
-        let book_id = state.book_id;
-        // Stash the timeline state in a closure-callable
-        // place via a NewEventPrompt sub-modal — return_to
-        // pattern mirrors TagAddPrompt.
-        let return_to = std::mem::replace(&mut self.modal, Modal::None);
-        self.modal = Modal::TimelineNewEventPrompt {
-            input: TextInput::new(),
-            book_id,
-            cursor_ticks: cursor,
-            track,
-            return_to: Box::new(return_to),
-        };
-        self.status = format!(
-            "new event @ {formatted}: type title, Enter commits, Esc cancels"
-        );
-    }
-
     // ── 1.2.6+ scope navigation ──────────────────────────
-
-    fn timeline_descent_active(&self) -> bool {
-        matches!(
-            &self.modal,
-            Modal::TimelineView { state } if state.descent.is_some()
-        )
-    }
-
-    fn timeline_up_scope(&mut self) {
-        let (project, scope_id) = match &self.modal {
-            Modal::TimelineView { state } => (state.project_overlay, state.scope_id),
-            _ => return,
-        };
-        if project {
-            self.status =
-                "timeline · already at project scope (Ctrl+P to toggle off)".into();
-            return;
-        }
-        let Some(parent_id) =
-            self.hierarchy.get(scope_id).and_then(|n| n.parent_id)
-        else {
-            self.status =
-                "timeline · at book root (Ctrl+P widens to project)".into();
-            return;
-        };
-        // Walk up until we hit a Chapter / Subchapter / Book.
-        let mut cur = parent_id;
-        let mut target: Option<Uuid> = None;
-        loop {
-            let Some(n) = self.hierarchy.get(cur) else { break };
-            if matches!(n.kind, NodeKind::Book | NodeKind::Chapter | NodeKind::Subchapter) {
-                target = Some(cur);
-                break;
-            }
-            match n.parent_id {
-                Some(p) => cur = p,
-                None => break,
-            }
-        }
-        let Some(new_scope) = target else {
-            self.status = "timeline · no parent scope to climb to".into();
-            return;
-        };
-        if let Modal::TimelineView { state } = &mut self.modal {
-            state.nav_history.push(state.scope_id);
-            state.scope_id = new_scope;
-        }
-        self.timeline_refresh_after_scope_change();
-        let crumb = match &self.modal {
-            Modal::TimelineView { state } => self.timeline_scope_crumb(state),
-            _ => String::new(),
-        };
-        self.status = format!("timeline · up-scope · {crumb}");
-    }
-
-    fn timeline_open_descent(&mut self) {
-        // Extract everything we need from the modal first to
-        // avoid holding a &mut self.modal while we touch
-        // self.hierarchy.
-        let (project, scope_id, book_id, events_total, event_links): (
-            bool,
-            Uuid,
-            Uuid,
-            usize,
-            std::collections::HashSet<Uuid>,
-        ) = match &self.modal {
-            Modal::TimelineView { state } => (
-                state.project_overlay,
-                state.scope_id,
-                state.book_id,
-                state.events.len(),
-                state
-                    .events
-                    .iter()
-                    .flat_map(|e| e.linked_paragraphs.iter().copied())
-                    .collect(),
-            ),
-            _ => return,
-        };
-        if project {
-            self.status =
-                "timeline · descent disabled in project overlay (Ctrl+P off to drill in)"
-                    .into();
-            return;
-        }
-        let children = self.hierarchy.children_of(Some(scope_id));
-        let mut choices: Vec<TimelineDescentChoice> = children
-            .into_iter()
-            .filter(|n| matches!(n.kind, NodeKind::Chapter | NodeKind::Subchapter))
-            .map(|n| {
-                let descendants = self.hierarchy.collect_subtree(n.id);
-                let mut count = 0usize;
-                for d in &descendants {
-                    if event_links.contains(d) {
-                        count += 1;
-                    }
-                    if let Some(node) = self.hierarchy.get(*d) {
-                        if node.event.is_some() {
-                            count += 1;
-                        }
-                    }
-                }
-                TimelineDescentChoice {
-                    id: n.id,
-                    title: n.title.clone(),
-                    event_count: count,
-                }
-            })
-            .collect();
-        if let Some(timeline_chapter) = self.hierarchy.iter().find(|n| {
-            n.parent_id == Some(book_id)
-                && n.system_tag.as_deref()
-                    == Some(crate::store::SYSTEM_TAG_BOOK_TIMELINE)
-        }) {
-            if scope_id == book_id
-                && !choices.iter().any(|c| c.id == timeline_chapter.id)
-            {
-                choices.push(TimelineDescentChoice {
-                    id: timeline_chapter.id,
-                    title: format!("{} (system)", timeline_chapter.title),
-                    event_count: events_total,
-                });
-            }
-        }
-        if choices.is_empty() {
-            self.status = "timeline · no sub-scopes here".into();
-            return;
-        }
-        if let Modal::TimelineView { state } = &mut self.modal {
-            state.descent = Some(TimelineDescentState { choices, cursor: 0 });
-        }
-        self.status =
-            "timeline · descend into … · ↑↓ select · Enter · Esc cancel".into();
-    }
-
-    fn timeline_descent_handle_key(&mut self, key: KeyEvent) {
-        let chosen: Option<TimelineDescentChoice> = match key.code {
-            KeyCode::Up => {
-                if let Modal::TimelineView { state } = &mut self.modal {
-                    if let Some(d) = state.descent.as_mut() {
-                        if d.cursor > 0 {
-                            d.cursor -= 1;
-                        }
-                    }
-                }
-                return;
-            }
-            KeyCode::Down => {
-                if let Modal::TimelineView { state } = &mut self.modal {
-                    if let Some(d) = state.descent.as_mut() {
-                        if d.cursor + 1 < d.choices.len() {
-                            d.cursor += 1;
-                        }
-                    }
-                }
-                return;
-            }
-            KeyCode::Home => {
-                if let Modal::TimelineView { state } = &mut self.modal {
-                    if let Some(d) = state.descent.as_mut() {
-                        d.cursor = 0;
-                    }
-                }
-                return;
-            }
-            KeyCode::End => {
-                if let Modal::TimelineView { state } = &mut self.modal {
-                    if let Some(d) = state.descent.as_mut() {
-                        d.cursor = d.choices.len().saturating_sub(1);
-                    }
-                }
-                return;
-            }
-            KeyCode::Esc => {
-                if let Modal::TimelineView { state } = &mut self.modal {
-                    state.descent = None;
-                }
-                self.status = "timeline · descent cancelled".into();
-                return;
-            }
-            KeyCode::Enter => {
-                if let Modal::TimelineView { state } = &mut self.modal {
-                    let pick = state
-                        .descent
-                        .as_ref()
-                        .and_then(|d| d.choices.get(d.cursor).cloned());
-                    state.descent = None;
-                    pick
-                } else {
-                    None
-                }
-            }
-            _ => return,
-        };
-        let Some(choice) = chosen else { return };
-        if let Modal::TimelineView { state } = &mut self.modal {
-            state.nav_history.push(state.scope_id);
-            state.scope_id = choice.id;
-        }
-        self.timeline_refresh_after_scope_change();
-        let crumb = match &self.modal {
-            Modal::TimelineView { state } => self.timeline_scope_crumb(state),
-            _ => String::new(),
-        };
-        self.status = format!(
-            "timeline · descended into `{}` · {crumb}",
-            choice.title
-        );
-    }
-
-    fn timeline_jump_book_scope(&mut self) {
-        let (scope_eq_book, project) = match &self.modal {
-            Modal::TimelineView { state } => {
-                (state.scope_id == state.book_id, state.project_overlay)
-            }
-            _ => return,
-        };
-        if scope_eq_book && !project {
-            self.status = "timeline · already at book scope".into();
-            return;
-        }
-        if let Modal::TimelineView { state } = &mut self.modal {
-            state.nav_history.push(state.scope_id);
-            state.scope_id = state.book_id;
-            state.project_overlay = false;
-        }
-        self.timeline_refresh_after_scope_change();
-        let crumb = match &self.modal {
-            Modal::TimelineView { state } => self.timeline_scope_crumb(state),
-            _ => String::new(),
-        };
-        self.status = format!("timeline · book scope · {crumb}");
-    }
-
-    fn timeline_toggle_project(&mut self) {
-        let user_book_count = self
-            .hierarchy
-            .children_of(None)
-            .into_iter()
-            .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
-            .count();
-        if user_book_count < 2 {
-            self.status =
-                "timeline · only one user book; project overlay needs ≥2".into();
-            return;
-        }
-        let new_overlay = match &self.modal {
-            Modal::TimelineView { state } => !state.project_overlay,
-            _ => return,
-        };
-        if let Modal::TimelineView { state } = &mut self.modal {
-            if new_overlay {
-                state.nav_history.push(state.scope_id);
-            }
-            state.project_overlay = new_overlay;
-        }
-        self.timeline_refresh_after_scope_change();
-        self.status = if new_overlay {
-            "timeline · project overlay ON · tracks prefixed with book slug · Ctrl+P toggles".into()
-        } else {
-            "timeline · project overlay OFF · book scope".into()
-        };
-    }
-
-    /// Rebuild the event snapshot after any scope or project-
-    /// overlay change. Keeps cursor / scroll positions
-    /// reasonable.
-    fn timeline_refresh_after_scope_change(&mut self) {
-        let (book_id, scope_id, project) = match &self.modal {
-            Modal::TimelineView { state } => {
-                (state.book_id, state.scope_id, state.project_overlay)
-            }
-            _ => return,
-        };
-        let all = self.collect_book_events(book_id, project);
-        let filtered: Vec<TimelineEvent> = if scope_id == book_id || project {
-            all
-        } else {
-            let subtree: std::collections::HashSet<Uuid> = self
-                .hierarchy
-                .collect_subtree(scope_id)
-                .into_iter()
-                .collect();
-            all.into_iter()
-                .filter(|ev| {
-                    if subtree.contains(&ev.id) {
-                        return true;
-                    }
-                    ev.linked_paragraphs.iter().any(|p| subtree.contains(p))
-                })
-                .collect()
-        };
-        if let Modal::TimelineView { state } = &mut self.modal {
-            state.events = filtered;
-            if let Some(first) = state.events.first() {
-                if !state.events.iter().any(|e| e.start_ticks == state.cursor_ticks) {
-                    state.cursor_ticks = first.start_ticks;
-                    state.scroll_ticks = first.start_ticks.saturating_sub(20);
-                }
-            }
-        }
-    }
-
-    fn timeline_scroll(&mut self, dir: i64, page: bool) {
-        let Modal::TimelineView { state } = &mut self.modal else {
-            return;
-        };
-        // Determine inner pane width to scale page steps.
-        // We don't know the modal width here; approximate
-        // with a sensible page = 60 cells, step = 10 cells.
-        let cells = if page { 60.0 } else { 10.0 };
-        let delta_ticks = (cells * state.ticks_per_cell * dir as f64).round() as i64;
-        state.scroll_ticks = state.scroll_ticks.saturating_add(delta_ticks);
-        state.cursor_ticks = state.cursor_ticks.saturating_add(delta_ticks);
-    }
-
-    /// 1.2.6+ — Up/Down arrows: hop the timeline cursor to the
-    /// previous / next event in chronological order, and pan
-    /// the viewport just enough to keep the new cursor on
-    /// screen. Direction: -1 = previous, +1 = next.
-    fn timeline_step_cursor(&mut self, direction: i64) {
-        let Modal::TimelineView { state } = &mut self.modal else { return; };
-        let Some(target) = timeline_step_event_cursor(
-            &state.events,
-            state.cursor_ticks,
-            direction,
-        ) else {
-            self.status = if direction > 0 {
-                "timeline · already at the last event".into()
-            } else {
-                "timeline · already at the first event".into()
-            };
-            return;
-        };
-        // Keep the cursor in the middle 60% of the viewport when
-        // we jump — guards against landing on a hidden tick.
-        let term_w = crossterm::terminal::size()
-            .map(|(w, _)| w as usize)
-            .unwrap_or(80);
-        let content_w = term_w.saturating_sub(16).max(40) as f64;
-        let visible_ticks = (content_w * state.ticks_per_cell) as i64;
-        let left = state.scroll_ticks;
-        let right = state.scroll_ticks + visible_ticks;
-        let margin = visible_ticks / 5; // 20% margin
-        if target < left + margin {
-            state.scroll_ticks = target.saturating_sub(margin);
-        } else if target > right - margin {
-            state.scroll_ticks = target
-                .saturating_sub(visible_ticks - margin);
-        }
-        state.cursor_ticks = target;
-        self.status = format!(
-            "timeline · cursor → tick {target} · Enter opens nearest event"
-        );
-    }
-
-    fn timeline_zoom(&mut self, factor: f64) {
-        let Modal::TimelineView { state } = &mut self.modal else {
-            return;
-        };
-        let new = (state.ticks_per_cell * factor).clamp(0.05, 1000.0);
-        if (new - state.ticks_per_cell).abs() < f64::EPSILON {
-            return;
-        }
-        // Keep the cursor's screen column stable through the
-        // zoom — recompute scroll_ticks so cursor_ticks lands
-        // at the same column count.
-        let approx_col = ((state.cursor_ticks - state.scroll_ticks) as f64
-            / state.ticks_per_cell)
-            .round();
-        let new_scroll =
-            state.cursor_ticks - (approx_col * new).round() as i64;
-        state.ticks_per_cell = new;
-        state.scroll_ticks = new_scroll;
-        self.status = format!(
-            "timeline view · zoom {z:.2}× ({ticks_per_cell:.3} ticks/cell)",
-            z = 1.0 / new,
-            ticks_per_cell = new,
-        );
-    }
-
-    fn timeline_reset_zoom(&mut self) {
-        let Modal::TimelineView { state } = &mut self.modal else {
-            return;
-        };
-        state.ticks_per_cell = 1.0;
-        state.scroll_ticks = state.cursor_ticks.saturating_sub(20);
-        self.status = "timeline view · zoom 1.00× (reset)".into();
-    }
-
-    fn timeline_jump_home(&mut self) {
-        let Modal::TimelineView { state } = &mut self.modal else {
-            return;
-        };
-        if let Some(first) = state.events.first() {
-            state.cursor_ticks = first.start_ticks;
-            state.scroll_ticks = first.start_ticks.saturating_sub(10);
-        }
-    }
-
-    fn timeline_jump_end(&mut self) {
-        let Modal::TimelineView { state } = &mut self.modal else {
-            return;
-        };
-        if let Some(last) = state.events.last() {
-            state.cursor_ticks = last.start_ticks;
-            state.scroll_ticks = last.start_ticks.saturating_sub(30);
-        }
-    }
-
-    fn draw_timeline_view_modal(
-        &self,
-        f: &mut ratatui::Frame,
-        area: Rect,
-    ) {
-        let Modal::TimelineView { state } = &self.modal else {
-            return;
-        };
-        let modal_w = area.width.saturating_sub(4).max(80);
-        let modal_h = area.height.saturating_sub(2).max(14);
-        let x = area.x + (area.width.saturating_sub(modal_w)) / 2;
-        let y = area.y + (area.height.saturating_sub(modal_h)) / 2;
-        let rect = Rect { x, y, width: modal_w, height: modal_h };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let crumb = self.timeline_scope_crumb(state);
-        let title = format!(
-            " Timeline · {crumb} · {n} events · zoom {z:.2}× ",
-            n = state.events.len(),
-            z = 1.0 / state.ticks_per_cell,
-        );
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        // Layout columns:
-        //   [ label_w ][ swim_w ]
-        // label_w = max track-name width + padding (min 8,
-        // max 18); swim_w fills the rest.
-        let default_track = &self.cfg.timeline.default_track;
-        let raw_rows = crate::tui::timeline_render::layout_swim_lanes(
-            &state.events,
-            state.scroll_ticks,
-            state.ticks_per_cell,
-            inner.width.saturating_sub(10) as usize, // tentative
-            default_track,
-            self.cfg.timeline.display.show_orphans,
-        );
-        let label_w = raw_rows
-            .iter()
-            .map(|r| r.label.chars().count())
-            .max()
-            .unwrap_or(4)
-            .clamp(4, 16) as u16
-            + 2;
-        let swim_w = inner.width.saturating_sub(label_w);
-        // Recompute with the final swim_w (label widths might
-        // have changed how much room the lanes get).
-        let rows = crate::tui::timeline_render::layout_swim_lanes(
-            &state.events,
-            state.scroll_ticks,
-            state.ticks_per_cell,
-            swim_w as usize,
-            default_track,
-            self.cfg.timeline.display.show_orphans,
-        );
-
-        // Time axis (1 row).
-        let calendar =
-            crate::timeline::Calendar::from_config(self.cfg.timeline.calendar.clone());
-        let axis_labels = crate::tui::timeline_render::time_axis_labels(
-            state.scroll_ticks,
-            state.ticks_per_cell,
-            swim_w as usize,
-        );
-        let mut axis_chars: Vec<char> = vec![' '; swim_w as usize];
-        let mut label_strings: Vec<(usize, String)> = Vec::new();
-        for (col, tick) in &axis_labels {
-            if *col < swim_w as usize {
-                axis_chars[*col] = '│';
-                let label = calendar.format(
-                    crate::timeline::TimelinePoint::from_ticks(*tick),
-                    crate::timeline::Precision::Day,
-                );
-                label_strings.push((*col, label));
-            }
-        }
-        // Cursor column marker.
-        let cursor_col = (((state.cursor_ticks - state.scroll_ticks) as f64)
-            / state.ticks_per_cell)
-            .round() as isize;
-        if cursor_col >= 0 && (cursor_col as usize) < swim_w as usize {
-            // Draw a `▾` cursor on the axis tick row.
-            // Replace whatever was there.
-            axis_chars[cursor_col as usize] = '▾';
-        }
-        // Build axis line: a row of marker chars + a row
-        // beneath with label text staggered every N columns.
-        let axis_spans: Vec<Span<'_>> = vec![
-            Span::raw(" ".repeat(label_w as usize)),
-            Span::styled(
-                axis_chars.iter().collect::<String>(),
-                Style::default().fg(self.theme.tree_chapter_fg),
-            ),
-        ];
-        let mut label_row: String = " ".repeat(label_w as usize);
-        let mut label_chars: Vec<char> = vec![' '; swim_w as usize];
-        for (col, label) in &label_strings {
-            for (i, c) in label.chars().enumerate() {
-                let pos = col + i;
-                if pos < label_chars.len() {
-                    label_chars[pos] = c;
-                }
-            }
-        }
-        label_row.push_str(&label_chars.iter().collect::<String>());
-
-        // Footer hint.
-        let footer = " ←/→ scroll · +/- zoom · 0 reset · Home/End jump · u/d/b/p scope · Tab track · Enter open · Esc close ";
-
-        // Compose lines.
-        let mut all_lines: Vec<Line<'_>> = Vec::new();
-        all_lines.push(Line::from(axis_spans));
-        all_lines.push(Line::from(Span::styled(
-            label_row,
-            Style::default().add_modifier(Modifier::DIM),
-        )));
-        all_lines.push(Line::from("".to_string()));
-        // Swim-lane rows.
-        let track_label_style = Style::default()
-            .fg(self.theme.tree_subchapter_fg)
-            .add_modifier(Modifier::BOLD);
-        let dim_style = Style::default().add_modifier(Modifier::DIM);
-        for row in &rows {
-            let mut spans: Vec<Span<'_>> = Vec::new();
-            let label_text = format!(
-                " {:<width$}",
-                truncate_label(&row.label, label_w as usize - 2),
-                width = label_w as usize - 2,
-            );
-            spans.push(Span::styled(
-                format!("{label_text} "),
-                if row.is_orphan_row {
-                    dim_style
-                } else {
-                    track_label_style
-                },
-            ));
-            // Each cell becomes one Span so we can give
-            // bars / dots / cursor different colours
-            // without flickering.
-            let mut buf: String = String::new();
-            let mut cur_style: Style =
-                Style::default().fg(self.theme.tree_paragraph_fg);
-            let flush =
-                |buf: &mut String, style: Style, spans: &mut Vec<Span<'_>>| {
-                    if !buf.is_empty() {
-                        spans.push(Span::styled(std::mem::take(buf), style));
-                    }
-                };
-            for (col, cell) in row.cells.iter().enumerate() {
-                let is_cursor =
-                    cursor_col >= 0 && col == cursor_col as usize;
-                let (glyph, style) = match cell {
-                    None => {
-                        let g = if is_cursor { '│' } else { ' ' };
-                        let s = if is_cursor {
-                            Style::default()
-                                .fg(self.theme.tree_chapter_fg)
-                                .add_modifier(Modifier::DIM)
-                        } else {
-                            Style::default()
-                        };
-                        (g, s)
-                    }
-                    Some(tc) => {
-                        let s = if tc.is_orphan {
-                            dim_style.fg(Color::Yellow)
-                        } else if tc.is_endpoint {
-                            Style::default()
-                                .fg(self.theme.tree_chapter_fg)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default()
-                                .fg(self.theme.tree_paragraph_fg)
-                        };
-                        (tc.glyph, s)
-                    }
-                };
-                if style != cur_style && !buf.is_empty() {
-                    flush(&mut buf, cur_style, &mut spans);
-                    cur_style = style;
-                } else if buf.is_empty() {
-                    cur_style = style;
-                }
-                buf.push(glyph);
-            }
-            flush(&mut buf, cur_style, &mut spans);
-            all_lines.push(Line::from(spans));
-        }
-        // Pad to fill the body height with empty lines.
-        let body_h = inner.height.saturating_sub(1);
-        while all_lines.len() < body_h as usize {
-            all_lines.push(Line::from(""));
-        }
-        // Cursor-tick readout row (last visible row, dim).
-        let cursor_tick_str = calendar.format(
-            crate::timeline::TimelinePoint::from_ticks(state.cursor_ticks),
-            crate::timeline::Precision::Day,
-        );
-        let stat_row = format!(
-            " ▾ cursor: {cursor_tick_str}   scroll: tick {scroll}   pps: {pps:.3}",
-            scroll = state.scroll_ticks,
-            pps = state.ticks_per_cell,
-        );
-        if let Some(last) = all_lines.last_mut() {
-            *last = Line::from(Span::styled(stat_row, dim_style));
-        }
-
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: body_h,
-        };
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + body_h,
-            width: inner.width,
-            height: 1,
-        };
-        f.render_widget(Paragraph::new(all_lines), body_rect);
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                footer,
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-
-        // 1.2.6+ — descent picker overlay. Renders above
-        // the swim lanes when active.
-        if let Some(descent) = state.descent.as_ref() {
-            let dw = (modal_w / 2).max(40).min(modal_w - 4);
-            let dh = (descent.choices.len() as u16 + 4).min(modal_h - 4);
-            let dx = rect.x + (modal_w - dw) / 2;
-            let dy = rect.y + (modal_h - dh) / 2;
-            let drect = Rect { x: dx, y: dy, width: dw, height: dh };
-            f.render_widget(ratatui::widgets::Clear, drect);
-            let dblock = Block::default()
-                .borders(Borders::ALL)
-                .title(" Descend into … ")
-                .border_style(
-                    Style::default()
-                        .fg(self.theme.modal_border)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .style(
-                    Style::default()
-                        .bg(self.theme.modal_bg)
-                        .fg(self.theme.modal_fg),
-                );
-            let dinner = dblock.inner(drect);
-            f.render_widget(dblock, drect);
-            let dim_style = Style::default().add_modifier(Modifier::DIM);
-            let mut dlines: Vec<Line<'_>> = Vec::new();
-            dlines.push(Line::from(""));
-            for (i, choice) in descent.choices.iter().enumerate() {
-                let glyph = if choice.event_count == 0 {
-                    "◌"
-                } else {
-                    "●"
-                };
-                let main = format!(
-                    "  {arrow} {glyph}  {title}",
-                    arrow = if i == descent.cursor { "→" } else { " " },
-                    glyph = glyph,
-                    title = choice.title,
-                );
-                let trail = format!("   {} event(s)", choice.event_count);
-                let style = if i == descent.cursor {
-                    Style::default().add_modifier(Modifier::REVERSED)
-                } else if choice.event_count == 0 {
-                    dim_style
-                } else {
-                    Style::default()
-                };
-                dlines.push(Line::from(vec![
-                    Span::styled(main, style),
-                    Span::styled(trail, dim_style),
-                ]));
-            }
-            dlines.push(Line::from(""));
-            dlines.push(Line::from(Span::styled(
-                "  ↑↓ select · Enter descends · Esc returns to same scope",
-                dim_style,
-            )));
-            f.render_widget(Paragraph::new(dlines), dinner);
-        }
-    }
 
     /// Ctrl+V t (1.2.6+) — open the swim-lane timeline view.
     /// Anchors to the current paragraph's nearest
@@ -16468,11 +10806,20 @@ impl App {
             ticks_per_cell,
             scroll_ticks,
             cursor_ticks,
+            selected_event_id: None,
+            collapsed_tracks: std::collections::HashSet::new(),
+            expanded_track: None,
+            focus_level: TimelineFocusLevel::Track,
             project_overlay: false,
             descent: None,
         };
         let crumb = self.timeline_scope_crumb(&state);
         self.modal = Modal::TimelineView { state };
+        // 1.2.7+ — apply any cached per-book view state
+        // (collapsed tracks, expanded track, zoom, scroll).
+        // No-op on a fresh book or a session.json without an
+        // entry — auto-fit defaults from above stay.
+        self.timeline_restore_view_state();
         self.status = if is_empty {
             format!("timeline {crumb} · empty — press `n` to add the first event · Esc closes")
         } else {
@@ -16489,6 +10836,24 @@ impl App {
     /// has events, the prompt fires at the timeline cursor's
     /// current tick (same as pressing `n` after opening).
     fn open_new_event_prompt_from_anywhere(&mut self) {
+        // 1.2.7+ — pre-fill the event title with the editor's
+        // current selection, if any. Lets the user highlight
+        // a phrase like "the storm at dawn" → Ctrl+V Shift+E
+        // → modal pops with that text already in the input.
+        // Selection truncated to 60 chars (the prompt's
+        // practical width); newlines flattened to spaces.
+        let prefill = self.editor_selection_text().map(|s| {
+            let flat = s
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if flat.chars().count() > 60 {
+                let truncated: String = flat.chars().take(59).collect();
+                format!("{truncated}…")
+            } else {
+                flat
+            }
+        });
         self.open_timeline_view();
         // open_timeline_view bails before setting Modal::TimelineView
         // when timeline is disabled / no books exist; in that case
@@ -16496,6 +10861,15 @@ impl App {
         // prompt is a no-op.
         if matches!(self.modal, Modal::TimelineView { .. }) {
             self.timeline_open_new_event_prompt();
+            if let (Some(text), Modal::TimelineNewEventPrompt { input, .. }) =
+                (prefill, &mut self.modal)
+            {
+                for c in text.chars() {
+                    input.insert_char(c);
+                }
+                self.status =
+                    "new event: title pre-filled from editor selection · Enter commits · Esc cancels".into();
+            }
         }
     }
 
@@ -16641,29 +11015,6 @@ impl App {
         }
         out.sort_by_key(|e| e.start_ticks);
         out
-    }
-
-    /// Human-readable breadcrumb for the scope crumb shown in
-    /// the modal header + status bar.
-    fn timeline_scope_crumb(&self, state: &TimelineViewState) -> String {
-        let mut parts: Vec<String> = Vec::new();
-        let mut cur_id = state.scope_id;
-        loop {
-            let Some(node) = self.hierarchy.get(cur_id) else {
-                break;
-            };
-            parts.push(node.title.clone());
-            match node.parent_id {
-                Some(p) => cur_id = p,
-                None => break,
-            }
-        }
-        parts.reverse();
-        if parts.is_empty() {
-            "(scope?)".into()
-        } else {
-            parts.join(" ▸ ")
-        }
     }
 
     /// Ctrl+V e (1.2.6+) — gather every event in the project
@@ -16814,108 +11165,6 @@ impl App {
         }
     }
 
-    fn draw_event_picker_modal(
-        &self,
-        f: &mut ratatui::Frame,
-        area: Rect,
-    ) {
-        let Modal::EventPicker {
-            entries,
-            cursor,
-            track_filter,
-        } = &self.modal
-        else {
-            return;
-        };
-        let visible = visible_event_entries(entries, track_filter.as_deref());
-        let total = visible.len();
-
-        let width = area.width.saturating_sub(8).max(60);
-        let height = area.height.saturating_sub(4).max(14);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-        let title = match track_filter {
-            Some(t) => format!(" Events ({total}) · track: {t} "),
-            None => format!(" Events ({total}) · all tracks "),
-        };
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let body_h = inner.height.saturating_sub(1) as usize;
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(1),
-        };
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-
-        let scroll = if *cursor >= body_h {
-            cursor - body_h + 1
-        } else {
-            0
-        };
-        let lines: Vec<Line<'_>> = visible
-            .iter()
-            .enumerate()
-            .skip(scroll)
-            .take(body_h)
-            .map(|(i, e)| {
-                let track = e.track.as_deref().unwrap_or("—");
-                let head = format!(
-                    " {start:>14} {glyph}  ",
-                    start = e.start_str,
-                    glyph = e.glyph,
-                );
-                let title_style = if e.is_orphan {
-                    Style::default().add_modifier(Modifier::DIM)
-                } else {
-                    Style::default()
-                };
-                let trail = format!("  ({track})");
-                let line = Line::from(vec![
-                    Span::styled(head, Style::default().fg(Color::Cyan)),
-                    Span::styled(e.title.clone(), title_style),
-                    Span::styled(trail, Style::default().add_modifier(Modifier::DIM)),
-                ]);
-                if i == *cursor {
-                    line.style(Style::default().add_modifier(Modifier::REVERSED))
-                } else {
-                    line
-                }
-            })
-            .collect();
-        f.render_widget(Paragraph::new(lines), body_rect);
-
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                " ↑↓ select · Enter opens · t cycles tracks · Esc closes ",
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
     fn open_diagnostics_list(&mut self) {
         if self.opened.is_none() {
             self.status = "F8 diagnostics: no paragraph open".into();
@@ -16931,6 +11180,10 @@ impl App {
             self.status = "F8 diagnostics: no typst diagnostics in this buffer".into();
             return;
         }
+        // 1.2.7+ — F8 now fires from any pane; pull focus
+        // back to the editor so the Enter-jumps-to-line
+        // behaviour lands in the right place.
+        self.change_focus(Focus::Editor);
         self.modal = Modal::DiagnosticsList { cursor: 0 };
         self.status = format!(
             "diagnostics ({count}) · ↑↓ select · Enter jumps · Esc closes"
@@ -16999,266 +11252,6 @@ impl App {
         }
     }
 
-    fn draw_diagnostics_list_modal(
-        &self,
-        f: &mut ratatui::Frame,
-        area: Rect,
-    ) {
-        let Modal::DiagnosticsList { cursor } = &self.modal else {
-            return;
-        };
-        let diags: Vec<crate::typst_check::TypstDiagnostic> = self
-            .opened
-            .as_ref()
-            .map(|d| d.typst_diagnostics.clone())
-            .unwrap_or_default();
-        let total = diags.len();
-
-        let width = area.width.saturating_sub(8).max(60);
-        let height = area.height.saturating_sub(4).max(12);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" Typst diagnostics ({total}) "))
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let body_h = inner.height.saturating_sub(1) as usize;
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(1),
-        };
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-
-        let scroll = if *cursor >= body_h {
-            cursor - body_h + 1
-        } else {
-            0
-        };
-        let lines: Vec<Line<'_>> = diags
-            .iter()
-            .enumerate()
-            .skip(scroll)
-            .take(body_h)
-            .map(|(i, d)| {
-                let head = format!(" line {:>4}:{:<3} ", d.line, d.col);
-                let line = Line::from(vec![
-                    Span::styled(
-                        head,
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(d.message.clone()),
-                ]);
-                if i == *cursor {
-                    line.style(Style::default().add_modifier(Modifier::REVERSED))
-                } else {
-                    line
-                }
-            })
-            .collect();
-        f.render_widget(Paragraph::new(lines), body_rect);
-
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                " ↑↓ select · Enter jumps cursor · Esc closes ",
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
-    /// Ctrl+F12 (1.2.6+) — send the typst diagnostic at the
-    /// cursor (or the closest one) to the AI pane with the
-    /// configured explain-or-fix prompt. Surrounds the
-    /// diagnostic with ±5 context lines so the model sees the
-    /// problem and what's around it without the whole file.
-    /// Used to live on bare F11; macOS grabs F11 (Mission
-    /// Control / Show Desktop) so the chord never made it
-    /// into the TUI.
-    fn start_explain_diagnostic(&mut self) {
-        // Force a refresh so we explain the live state, not the
-        // cached one.
-        self.refresh_typst_diagnostics_for_opened();
-        let (diag, body, title) = match self.opened.as_ref() {
-            Some(doc) => {
-                if doc.typst_diagnostics.is_empty() {
-                    self.status =
-                        "Ctrl+F12 explain: no typst diagnostics in this buffer".into();
-                    return;
-                }
-                let (cur_row, _) = doc.textarea.cursor();
-                let cur1 = cur_row + 1;
-                // Pick the diagnostic closest to the cursor row.
-                let picked = doc
-                    .typst_diagnostics
-                    .iter()
-                    .min_by_key(|d| {
-                        ((d.line as i64) - (cur1 as i64)).abs()
-                    })
-                    .cloned();
-                let Some(d) = picked else {
-                    self.status =
-                        "Ctrl+F12 explain: no diagnostic to anchor on".into();
-                    return;
-                };
-                let body = doc.textarea.lines().join("\n");
-                (d, body, doc.title.clone())
-            }
-            None => {
-                self.status = "Ctrl+F12 explain: no paragraph open".into();
-                return;
-            }
-        };
-
-        // ±5 lines of context around the diagnostic.
-        let lines: Vec<&str> = body.lines().collect();
-        let lo = diag.line.saturating_sub(6); // 0-based
-        let hi = (diag.line + 4).min(lines.len()); // exclusive
-        let mut context = String::new();
-        for (idx_zero, line) in lines.iter().enumerate().take(hi).skip(lo) {
-            let lineno = idx_zero + 1;
-            let mark = if lineno == diag.line { ">> " } else { "   " };
-            context.push_str(&format!("{mark}{lineno:>4}  {line}\n"));
-        }
-
-        let template = self.resolve_prompt_template("explain-diagnostic", || {
-            explain_diagnostic_default_prompt().to_string()
-        });
-        let rendered = self.render_template(&template);
-        let prompt_text = format!(
-            "{rendered}\n\n── Diagnostic ──\nline {line}:{col} — {msg}\n── end ──\n\n── Context (paragraph: {title}) ──\n{context}── end context ──",
-            line = diag.line,
-            col = diag.col,
-            msg = diag.message,
-        );
-
-        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
-            Ok(pair) => pair,
-            Err(e) => {
-                self.status = format!("Ctrl+F12 explain: {e}");
-                return;
-            }
-        };
-        let model = model.to_string();
-        let provider = self.ai.default_provider.clone();
-        let rx = spawn_chat_stream(
-            self.ai.client.clone(),
-            model.clone(),
-            None,
-            Vec::new(),
-            prompt_text,
-        );
-        self.inference = Some(Inference {
-            provider: provider.clone(),
-            model,
-            response: String::new(),
-            status: InferenceStatus::Streaming,
-            rx,
-            started_at: std::time::Instant::now(),
-        });
-        self.pending_chat_user_msg = None;
-        self.change_focus(Focus::Ai);
-        self.status = format!(
-            "Explaining typst diagnostic at line {}:{} via {provider}…",
-            diag.line, diag.col,
-        );
-    }
-
-    /// F12 (1.2.6+) — AI critique of the open paragraph. Mode-
-    /// aware: when split-edit (F4) is active, sends the
-    /// "evaluate-changes" prompt with both the snapshot and
-    /// the live buffer; otherwise sends the "critique-edit"
-    /// prompt with just the live buffer. Both prompt names
-    /// resolve via the standard Prompts-book → prompts.hjson
-    /// → embedded precedence.
-    fn start_critique(&mut self) {
-        let Some(doc) = self.opened.as_ref() else {
-            self.status = "F12 critique: no paragraph open".into();
-            return;
-        };
-        let body = doc.textarea.lines().join("\n");
-        if body.trim().is_empty() {
-            self.status = "F12 critique: paragraph is empty".into();
-            return;
-        }
-        let title = doc.title.clone();
-        let split_baseline = doc
-            .split
-            .as_ref()
-            .map(|s| s.snapshot_lines.join("\n"));
-
-        let (prompt_name, embedded): (&str, fn() -> &'static str) =
-            if split_baseline.is_some() {
-                ("critique-changes", || critique_changes_default_prompt())
-            } else {
-                ("critique-edit", || critique_edit_default_prompt())
-            };
-        let template = self
-            .resolve_prompt_template(prompt_name, || embedded().to_string());
-        let rendered = self.render_template(&template);
-
-        let prompt_text = match split_baseline.as_ref() {
-            Some(baseline) => format!(
-                "{rendered}\n\n── Before (snapshot) ──\n{baseline}\n── end before ──\n\n── After (current buffer of `{title}`) ──\n{body}\n── end after ──",
-            ),
-            None => format!(
-                "{rendered}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──",
-            ),
-        };
-
-        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
-            Ok(pair) => pair,
-            Err(e) => {
-                self.status = format!("F12 critique: {e}");
-                return;
-            }
-        };
-        let model = model.to_string();
-        let provider = self.ai.default_provider.clone();
-        let rx = spawn_chat_stream(
-            self.ai.client.clone(),
-            model.clone(),
-            None,
-            Vec::new(),
-            prompt_text,
-        );
-        self.inference = Some(Inference {
-            provider: provider.clone(),
-            model,
-            response: String::new(),
-            status: InferenceStatus::Streaming,
-            rx,
-            started_at: std::time::Instant::now(),
-        });
-        self.pending_chat_user_msg = None;
-        self.change_focus(Focus::Ai);
-        self.status = format!(
-            "F12 critique (`{prompt_name}`): streaming from {provider}…",
-        );
-    }
-
     /// 1.2.6+ — open the AI diff-review modal. Captures the
     /// current buffer as `before_lines` and the would-be
     /// result of the named action as `after_lines`. The
@@ -17310,88 +11303,6 @@ impl App {
         };
     }
 
-    fn ai_diff_review_handle_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Up => {
-                if let Modal::AiDiffReview { scroll, .. } = &mut self.modal {
-                    if *scroll > 0 {
-                        *scroll -= 1;
-                    }
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::AiDiffReview {
-                    before_lines,
-                    after_lines,
-                    scroll,
-                    ..
-                } = &mut self.modal
-                {
-                    let max = before_lines.len().max(after_lines.len());
-                    if *scroll + 1 < max {
-                        *scroll += 1;
-                    }
-                }
-            }
-            KeyCode::PageUp => {
-                if let Modal::AiDiffReview { scroll, .. } = &mut self.modal {
-                    *scroll = scroll.saturating_sub(10);
-                }
-            }
-            KeyCode::PageDown => {
-                if let Modal::AiDiffReview {
-                    before_lines,
-                    after_lines,
-                    scroll,
-                    ..
-                } = &mut self.modal
-                {
-                    let max = before_lines.len().max(after_lines.len());
-                    *scroll = (*scroll + 10).min(max.saturating_sub(1));
-                }
-            }
-            KeyCode::Home => {
-                if let Modal::AiDiffReview { scroll, .. } = &mut self.modal {
-                    *scroll = 0;
-                }
-            }
-            KeyCode::End => {
-                if let Modal::AiDiffReview {
-                    before_lines,
-                    after_lines,
-                    scroll,
-                    ..
-                } = &mut self.modal
-                {
-                    let max = before_lines.len().max(after_lines.len());
-                    *scroll = max.saturating_sub(1);
-                }
-            }
-            // Accept — commit via the original direct path AND
-            // refocus the editor pane so the user lands on the
-            // freshly-edited buffer ready to type. (`e` is kept
-            // as an alias for muscle memory; both behave the
-            // same since 1.2.6 batch 7.)
-            KeyCode::Char('a')
-            | KeyCode::Char('A')
-            | KeyCode::Char('e')
-            | KeyCode::Char('E')
-            | KeyCode::Enter => {
-                let taken = std::mem::replace(&mut self.modal, Modal::None);
-                if let Modal::AiDiffReview { after_lines, action, .. } = taken {
-                    let after = after_lines.join("\n");
-                    self.apply_ai_diff_accepted(action, after, true);
-                }
-            }
-            // Reject — close and leave the buffer alone.
-            KeyCode::Char('r') | KeyCode::Char('R') => {
-                self.modal = Modal::None;
-                self.status = "AI diff: rejected — buffer unchanged".into();
-            }
-            _ => {}
-        }
-    }
-
     /// Commit step for `Modal::AiDiffReview`. `after_text` is
     /// the buffer content the user accepted; `refocus_editor`
     /// jumps focus back to the editor pane (used by the `e`
@@ -17434,123 +11345,6 @@ impl App {
         if refocus_editor {
             self.change_focus(Focus::Editor);
         }
-    }
-
-    /// Side-by-side renderer for `Modal::AiDiffReview`. Uses
-    /// `similar::TextDiff::from_lines` to mark inserted /
-    /// removed lines; the two columns are aligned so paired
-    /// changes land on the same screen row when possible.
-    fn draw_ai_diff_review_modal(
-        &self,
-        f: &mut ratatui::Frame,
-        area: Rect,
-    ) {
-        let Modal::AiDiffReview {
-            before_lines,
-            after_lines,
-            scroll,
-            ..
-        } = &self.modal
-        else {
-            return;
-        };
-        let width = area.width.saturating_sub(4).max(80);
-        let height = area.height.saturating_sub(4).max(20);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" AI diff review — a accept · r reject ")
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let footer_h: u16 = 1;
-        let body_h = inner.height.saturating_sub(footer_h) as usize;
-        let half = inner.width / 2;
-        let before_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: half,
-            height: inner.height.saturating_sub(footer_h),
-        };
-        let after_rect = Rect {
-            x: inner.x + half,
-            y: inner.y,
-            width: inner.width - half,
-            height: inner.height.saturating_sub(footer_h),
-        };
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(footer_h),
-            width: inner.width,
-            height: footer_h,
-        };
-
-        let before_text = before_lines.join("\n");
-        let after_text = after_lines.join("\n");
-        let diff = similar::TextDiff::from_lines(&before_text, &after_text);
-        let mut left: Vec<Line> = Vec::new();
-        let mut right: Vec<Line> = Vec::new();
-        for change in diff.iter_all_changes() {
-            let raw = change.value().trim_end_matches('\n').to_string();
-            match change.tag() {
-                similar::ChangeTag::Equal => {
-                    let line = Line::from(format!("  {raw}"));
-                    left.push(line.clone());
-                    right.push(line);
-                }
-                similar::ChangeTag::Delete => {
-                    left.push(Line::from(Span::styled(
-                        format!("- {raw}"),
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::BOLD),
-                    )));
-                    right.push(Line::from(""));
-                }
-                similar::ChangeTag::Insert => {
-                    left.push(Line::from(""));
-                    right.push(Line::from(Span::styled(
-                        format!("+ {raw}"),
-                        Style::default()
-                            .fg(Color::Green)
-                            .add_modifier(Modifier::BOLD),
-                    )));
-                }
-            }
-        }
-        let total = left.len();
-        let start = (*scroll).min(total.saturating_sub(1));
-        let take = body_h;
-        let left_view: Vec<Line> =
-            left.into_iter().skip(start).take(take).collect();
-        let right_view: Vec<Line> =
-            right.into_iter().skip(start).take(take).collect();
-        f.render_widget(Paragraph::new(left_view), before_rect);
-        f.render_widget(Paragraph::new(right_view), after_rect);
-
-        let footer = format!(
-            "  before (left) ─ after (right) · scroll {start}/{total} · ↑↓ PgUp PgDn Home End ",
-        );
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                footer,
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
     }
 
     /// Ctrl+V N (1.2.5+) — move the editor cursor to the next
@@ -17710,42 +11504,6 @@ impl App {
         Some(book.id)
     }
 
-    /// Re-read the hierarchy from bdslib and rebuild the flattened tree-row
-    /// list, preserving the cursor on the same UUID if it still exists.
-    fn reload_hierarchy(&mut self) {
-        let prev_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
-        match Hierarchy::load(&self.store) {
-            Ok(h) => {
-                self.hierarchy = h;
-                // Prune collapsed-state for nodes that no longer exist.
-                self.collapsed_nodes
-                    .retain(|id| self.hierarchy.get(*id).is_some());
-                self.rows = self
-                    .hierarchy
-                    .flatten_with_collapsed(&self.collapsed_nodes)
-                    .into_iter()
-                    .map(|(n, d)| (n.id, d))
-                    .collect();
-                if let Some(id) = prev_id {
-                    if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == id) {
-                        self.tree_cursor = i;
-                    }
-                }
-                if !self.rows.is_empty() {
-                    self.tree_cursor = self.tree_cursor.min(self.rows.len() - 1);
-                }
-                // Lexicon depends on Places/Characters paragraph titles, so
-                // any hierarchy change is potentially a lexicon change. The
-                // recompute is cheap at literary scale (a few hundred names
-                // stemmed once per language).
-                self.lexicon = build_lexicon(&self.hierarchy, &self.cfg);
-            }
-            Err(e) => {
-                self.status = format!("hierarchy reload failed: {e}");
-            }
-        }
-    }
-
     // -------- drawing -----------------------------------------------------
 
     fn draw(&mut self, f: &mut ratatui::Frame) {
@@ -17878,326 +11636,6 @@ impl App {
     }
 
 
-    /// Render the Ctrl+B V credits panel. Version + author come from
-    /// `CARGO_PKG_*` env vars set by cargo at compile time; the component
-    /// list is a hand-curated static (kept here so it stays in sync with
-    /// what Cargo.toml actually depends on — automating from Cargo.lock
-    /// would dump 200+ transitive crates that no user wants to read).
-    fn draw_credits_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let engine_summary = crate::typst_compile::engine_summary(&self.cfg);
-        let lines = build_credits_lines(&self.theme, &engine_summary);
-        let total = lines.len();
-
-        // Pull scroll + logo out of the modal up front. Logo is
-        // taken via `&mut` so the StatefulImage widget can update
-        // its protocol state during render.
-        let Modal::Credits { scroll, logo } = &mut self.modal else {
-            return;
-        };
-        let scroll_value = *scroll;
-        let logo_present = logo.is_some();
-
-        let width = area.width.saturating_sub(8).max(60);
-        let height = area.height.saturating_sub(4).max(12);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let header = format!(
-            " Inkhaven v{} · author / credits ",
-            env!("CARGO_PKG_VERSION")
-        );
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        // Layout: optional logo banner (top), scrollable text body
-        // (middle), one-row hint (bottom). When the logo is
-        // present, give it the smaller of 1/3 of the inner height
-        // or 12 rows — enough for the image to read without
-        // crowding out the text.
-        let footer_h: u16 = 1;
-        let logo_h: u16 = if logo_present {
-            (inner.height / 3).min(12).max(4).min(inner.height.saturating_sub(footer_h + 4))
-        } else {
-            0
-        };
-        let body_h_rows = inner.height.saturating_sub(logo_h + footer_h);
-
-        let logo_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: logo_h,
-        };
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y + logo_h,
-            width: inner.width,
-            height: body_h_rows,
-        };
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + logo_h + body_h_rows,
-            width: inner.width,
-            height: footer_h,
-        };
-
-        if let Some(proto) = logo.as_mut() {
-            if logo_h > 0 {
-                let widget = ratatui_image::StatefulImage::new();
-                f.render_stateful_widget(widget, logo_rect, proto);
-            }
-        }
-
-        let body_h = body_rect.height as usize;
-        let max_scroll = total.saturating_sub(body_h);
-        let scroll_value = scroll_value.min(max_scroll);
-        let end = (scroll_value + body_h).min(total);
-        let visible: Vec<Line<'_>> = lines[scroll_value..end].to_vec();
-        f.render_widget(Paragraph::new(visible), body_rect);
-
-        let at_end = end >= total;
-        let more_hint = if at_end { " " } else { " · more below" };
-        let hint = format!(
-            " ↑↓ / PgUp/PgDn / Home/End scroll · Esc close{more_hint}    (showing {}–{} of {total}) ",
-            scroll_value + 1,
-            end
-        );
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                hint,
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
-    fn draw_quickref_modal(
-        &self,
-        f: &mut ratatui::Frame,
-        area: Rect,
-        focus: Focus,
-        scroll: usize,
-    ) {
-        let entries = quickref::entries_for(focus);
-        let total = entries.len();
-
-        // Roomy panel — most of the screen with a margin.
-        let width = area.width.saturating_sub(8).max(60);
-        let height = area.height.saturating_sub(4).max(12);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect {
-            x,
-            y,
-            width,
-            height,
-        };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let header = format!(" Quick reference · {} pane ", focus.label());
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-        let body_h = inner.height.saturating_sub(1) as usize;
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(1),
-        };
-
-        // Two columns. Each column gets half the inner width (with a small
-        // gap). Entries fill column 1 top-to-bottom, then column 2.
-        let col_w = (inner.width / 2) as usize;
-        let visible_per_col = body_h;
-        let visible_count = (visible_per_col * 2).min(total.saturating_sub(scroll));
-
-        let left_count = visible_count.min(visible_per_col);
-        let right_count = visible_count.saturating_sub(left_count);
-
-        let mut left_lines: Vec<Line> = Vec::with_capacity(left_count);
-        let mut right_lines: Vec<Line> = Vec::with_capacity(right_count);
-
-        for i in 0..left_count {
-            let e = &entries[scroll + i];
-            left_lines.push(format_entry_line(e, col_w));
-        }
-        for i in 0..right_count {
-            let e = &entries[scroll + left_count + i];
-            right_lines.push(format_entry_line(e, col_w));
-        }
-
-        let left_rect = Rect {
-            x: body_rect.x,
-            y: body_rect.y,
-            width: (body_rect.width / 2),
-            height: body_rect.height,
-        };
-        let right_rect = Rect {
-            x: body_rect.x + (body_rect.width / 2),
-            y: body_rect.y,
-            width: body_rect.width - (body_rect.width / 2),
-            height: body_rect.height,
-        };
-        f.render_widget(Paragraph::new(left_lines), left_rect);
-        f.render_widget(Paragraph::new(right_lines), right_rect);
-
-        let at_end = scroll + visible_count >= total;
-        let more = if at_end { " " } else { " · more below" };
-        let hint = format!(
-            " ↑↓ / PgUp/PgDn / Home/End scroll · Esc close{more}    (showing {}–{} of {total}) ",
-            scroll + 1,
-            scroll + visible_count
-        );
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                hint,
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
-    fn draw_file_picker_modal(
-        &self,
-        f: &mut ratatui::Frame,
-        area: Rect,
-        picker: &FilePicker,
-    ) {
-        // Roomy panel — most of the screen, leaving a margin on all sides.
-        let width = area.width.saturating_sub(8).max(40);
-        let height = area.height.saturating_sub(4).max(10);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect {
-            x,
-            y,
-            width,
-            height,
-        };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let header = match picker.context {
-            PickerContext::EditorLoad => format!(" Load file into editor — {} ", picker.root.display()),
-            PickerContext::TreeInsertOrImport => {
-                format!(" Import into tree — {} ", picker.root.display())
-            }
-        };
-
-        // The block reserves 2 rows (borders); a footer hint takes 1 more.
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let list_height = inner.height.saturating_sub(1) as usize;
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-        let list_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(1),
-        };
-
-        // Scroll: keep cursor in view.
-        let mut scroll = 0;
-        if picker.cursor >= list_height && list_height > 0 {
-            scroll = picker.cursor + 1 - list_height;
-        }
-
-        let mut lines: Vec<Line> = Vec::with_capacity(list_height);
-        for (i, entry) in picker
-            .entries
-            .iter()
-            .enumerate()
-            .skip(scroll)
-            .take(list_height)
-        {
-            let indent = "  ".repeat(entry.depth);
-            let glyph = if entry.is_dir {
-                if entry.expanded { "▾ 📁 " } else { "▸ 📁 " }
-            } else {
-                "  📄 "
-            };
-            let name = entry
-                .path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("?")
-                .to_string();
-            let mut style = if entry.is_dir {
-                Style::default().fg(Color::Cyan)
-            } else {
-                Style::default()
-            };
-            if i == picker.cursor {
-                style = style.add_modifier(Modifier::REVERSED);
-            }
-            lines.push(Line::from(Span::styled(
-                format!("{indent}{glyph}{name}"),
-                style,
-            )));
-        }
-
-        f.render_widget(Paragraph::new(lines), list_rect);
-
-        let hint = Line::from(Span::styled(
-            " ↑↓ navigate · → expand · ← collapse/parent · Enter pick · Esc cancel ",
-            Style::default().add_modifier(Modifier::DIM),
-        ));
-        f.render_widget(Paragraph::new(hint), footer_rect);
-    }
-
     fn bund_pane_handle_key(&mut self, key: KeyEvent) {
         // Esc closes the pane (top of handle_modal_key already
         // covers it). Here we just handle scrolling.
@@ -18236,76 +11674,6 @@ impl App {
             }
             _ => {}
         }
-    }
-
-    fn draw_bund_pane_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::BundPane { title, lines, scroll } = &self.modal else {
-            return;
-        };
-        // Roomy panel — same shape as the quickref modal.
-        let width = area.width.saturating_sub(8).max(60);
-        let height = area.height.saturating_sub(4).max(12);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let total = lines.len();
-        let header = format!(" Bund · {} ({} lines) ", title, total);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.tree_script_fg)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let body_h = inner.height.saturating_sub(1) as usize;
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(1),
-        };
-
-        let visible: Vec<Line<'_>> = lines
-            .iter()
-            .skip(*scroll)
-            .take(body_h)
-            .map(|l| Line::from(l.as_str()))
-            .collect();
-        f.render_widget(Paragraph::new(visible), body_rect);
-
-        let at_end = scroll + body_h >= total;
-        let more = if at_end { " " } else { " · more below" };
-        let shown_start = scroll + 1;
-        let shown_end = (scroll + body_h).min(total);
-        let hint = format!(
-            " ↑↓ / PgUp/PgDn / Home/End scroll · Ctrl+C clear · Esc close{more}    ({}–{} of {total}) ",
-            shown_start.min(total.max(1)),
-            shown_end
-        );
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                hint,
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
     }
 
     fn script_picker_handle_key(&mut self, key: KeyEvent) {
@@ -18439,94 +11807,6 @@ impl App {
         }
     }
 
-    fn draw_script_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::ScriptPicker {
-            scope,
-            entries,
-            cursor,
-            scroll,
-        } = &self.modal
-        else {
-            return;
-        };
-        let width = area.width.saturating_sub(8).max(60);
-        let height = area.height.saturating_sub(4).max(12);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let scope_label = match scope {
-            ScriptPickerScope::Branch => "current branch",
-            ScriptPickerScope::ScriptsBook => "Scripts book",
-        };
-        let header = format!(" Bund · pick a script ({}) ", scope_label);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.tree_script_fg)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let body_h = inner.height.saturating_sub(1) as usize;
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(1),
-        };
-
-        let lines: Vec<Line<'_>> = entries
-            .iter()
-            .enumerate()
-            .skip(*scroll)
-            .take(body_h)
-            .map(|(i, e)| {
-                let glyph = "λ ";
-                let text = format!(" {glyph}{}    {}", e.title, e.slug_path);
-                let mut style = Style::default();
-                if i == *cursor {
-                    style = style.add_modifier(Modifier::REVERSED);
-                }
-                Line::from(Span::styled(text, style))
-            })
-            .collect();
-        f.render_widget(Paragraph::new(lines), body_rect);
-
-        let total = entries.len();
-        let hint = if total == 0 {
-            " (empty) · A toggle scope · Esc close ".to_string()
-        } else {
-            format!(
-                " ↑↓ select · Enter run · A toggle scope · Esc close    ({}/{}) ",
-                cursor + 1,
-                total
-            )
-        };
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                hint,
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
     fn link_picker_handle_key(&mut self, key: KeyEvent) {
         // Collect intent; close over the modal's mutable state.
         let (owner, target_to_remove, target_to_open) = {
@@ -18619,90 +11899,6 @@ impl App {
         }
     }
 
-    fn draw_link_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::LinkPicker { entries, cursor, scroll, .. } = &self.modal else {
-            return;
-        };
-        let width = area.width.saturating_sub(8).max(60);
-        let height = area.height.saturating_sub(4).max(12);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let header = format!(" Linked paragraphs ({}) ", entries.len());
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let body_h = inner.height.saturating_sub(1) as usize;
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(1),
-        };
-
-        let lines: Vec<Line<'_>> = entries
-            .iter()
-            .enumerate()
-            .skip(*scroll)
-            .take(body_h)
-            .map(|(i, e)| {
-                let head = format!(" → {}", e.title);
-                let path_dim = format!("    {}", e.slug_path);
-                let mut spans: Vec<Span> = vec![
-                    Span::raw(head),
-                    Span::styled(
-                        path_dim,
-                        Style::default().add_modifier(Modifier::DIM),
-                    ),
-                ];
-                let mut line = Line::from(std::mem::take(&mut spans));
-                if i == *cursor {
-                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
-                }
-                line
-            })
-            .collect();
-        f.render_widget(Paragraph::new(lines), body_rect);
-
-        let hint = if entries.is_empty() {
-            " (empty) · Esc close ".to_string()
-        } else {
-            format!(
-                " ↑↓ select · Enter opens · D removes · Esc closes    ({}/{}) ",
-                cursor + 1,
-                entries.len()
-            )
-        };
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                hint,
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
     fn fuzzy_paragraph_picker_handle_key(&mut self, key: KeyEvent) {
         let to_open = {
             let Modal::FuzzyParagraphPicker { input, entries, cursor, scroll } =
@@ -18754,341 +11950,6 @@ impl App {
             self.modal = Modal::None;
             self.open_search_result(id);
         }
-    }
-
-    fn draw_fuzzy_paragraph_picker_modal(
-        &mut self,
-        f: &mut ratatui::Frame,
-        area: Rect,
-    ) {
-        let Modal::FuzzyParagraphPicker { input, entries, cursor, scroll } = &self.modal
-        else {
-            return;
-        };
-        let matches = fuzzy_filter_entries(entries, input.as_str());
-
-        let width = area.width.saturating_sub(8).max(60);
-        let height = area.height.saturating_sub(4).max(14);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let header = format!(
-            " Find paragraph ({}/{}) ",
-            matches.len(),
-            entries.len()
-        );
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        // Top input row, body list, footer hint.
-        let input_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: 1,
-        };
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y + 1,
-            width: inner.width,
-            height: inner.height.saturating_sub(2),
-        };
-
-        f.render_widget(
-            Paragraph::new(Line::from(format!(
-                " › {}",
-                input.render_with_cursor('│')
-            ))),
-            input_rect,
-        );
-
-        let body_h = body_rect.height as usize;
-        let lines: Vec<Line<'_>> = matches
-            .iter()
-            .enumerate()
-            .skip(*scroll)
-            .take(body_h)
-            .map(|(i, idx)| {
-                let e = &entries[*idx];
-                let head = format!(" {}", e.title);
-                let path = format!("    {}", e.slug_path);
-                let spans: Vec<Span> = vec![
-                    Span::raw(head),
-                    Span::styled(
-                        path,
-                        Style::default().add_modifier(Modifier::DIM),
-                    ),
-                ];
-                let mut line = Line::from(spans);
-                if i == *cursor {
-                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
-                }
-                line
-            })
-            .collect();
-        f.render_widget(Paragraph::new(lines), body_rect);
-
-        let hint = " ↑↓ select · Enter opens · Esc closes ";
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                hint,
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
-    /// Ctrl+B ] / `g` / Ctrl+B } — floating tag-picker pane.
-    /// Each row shows `[ ] tag-name` or `[x] tag-name` (Search
-    /// mode hides the brackets — selection has no meaning).
-    fn draw_tag_picker_modal(
-        &mut self,
-        f: &mut ratatui::Frame,
-        area: Rect,
-    ) {
-        let Modal::TagPicker {
-            target,
-            all_tags,
-            cursor,
-            selected,
-        } = &self.modal
-        else {
-            return;
-        };
-        let in_search = matches!(target, TagPickerTarget::Search);
-        let total = all_tags.len();
-
-        let width = area.width.saturating_sub(8).max(50);
-        let height = area.height.saturating_sub(4).max(12);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let header = match target {
-            TagPickerTarget::EditorParagraph { title, .. } => {
-                format!(" Tags · `{title}` · {total} project tag(s) ")
-            }
-            TagPickerTarget::TreeSelection(ids) => {
-                format!(" Tags · {} paragraph(s) selected · {total} project tag(s) ", ids.len())
-            }
-            TagPickerTarget::Search => {
-                format!(" Tags · search · {total} project tag(s) ")
-            }
-        };
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let body_h = inner.height.saturating_sub(1) as usize;
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(1),
-        };
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-
-        let visible_scroll = if *cursor >= body_h {
-            cursor - body_h + 1
-        } else {
-            0
-        };
-        let lines: Vec<Line<'_>> = if all_tags.is_empty() {
-            vec![Line::from(Span::styled(
-                "  (no tags yet — press A to add the first one)".to_string(),
-                Style::default().add_modifier(Modifier::DIM),
-            ))]
-        } else {
-            all_tags
-                .iter()
-                .enumerate()
-                .skip(visible_scroll)
-                .take(body_h)
-                .map(|(i, tag)| {
-                    let marker = if in_search {
-                        "  ".to_string()
-                    } else if selected.contains(tag) {
-                        " [x] ".to_string()
-                    } else {
-                        " [ ] ".to_string()
-                    };
-                    let line = Line::from(vec![
-                        Span::raw(marker),
-                        Span::raw(tag.clone()),
-                    ]);
-                    if i == *cursor {
-                        line.style(Style::default().add_modifier(Modifier::REVERSED))
-                    } else {
-                        line
-                    }
-                })
-                .collect()
-        };
-        f.render_widget(Paragraph::new(lines), body_rect);
-
-        let hint = if in_search {
-            " ↑↓ select · Enter opens results · A adds · D deletes · Esc closes "
-        } else {
-            " ↑↓ select · Space marks · T applies · A adds · R renames · D deletes · Esc closes "
-        };
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                hint.to_string(),
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
-    /// Enter from `TagPicker` in Search mode → list of paragraphs
-    /// tagged with the chosen tag, with a typeable filter input.
-    fn draw_tag_search_results_modal(
-        &mut self,
-        f: &mut ratatui::Frame,
-        area: Rect,
-    ) {
-        let Modal::TagSearchResults {
-            tag,
-            filter,
-            all_results,
-            cursor,
-        } = &self.modal
-        else {
-            return;
-        };
-        let matches = filter_tag_results(all_results, filter.as_str());
-
-        let width = area.width.saturating_sub(8).max(60);
-        let height = area.height.saturating_sub(4).max(14);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let header = format!(
-            " Tag `{tag}` · {} match{} of {} ",
-            matches.len(),
-            if matches.len() == 1 { "" } else { "es" },
-            all_results.len()
-        );
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let input_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: 1,
-        };
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y + 1,
-            width: inner.width,
-            height: inner.height.saturating_sub(2),
-        };
-
-        f.render_widget(
-            Paragraph::new(Line::from(format!(
-                " › Filter: {}",
-                filter.render_with_cursor('│')
-            ))),
-            input_rect,
-        );
-
-        let body_h = body_rect.height as usize;
-        let visible_scroll = if *cursor >= body_h {
-            cursor - body_h + 1
-        } else {
-            0
-        };
-        let lines: Vec<Line<'_>> = matches
-            .iter()
-            .enumerate()
-            .skip(visible_scroll)
-            .take(body_h)
-            .map(|(i, e)| {
-                let spans = vec![
-                    Span::raw(format!(" {}", e.title)),
-                    Span::styled(
-                        format!("    {}", e.slug_path),
-                        Style::default().add_modifier(Modifier::DIM),
-                    ),
-                ];
-                let line = Line::from(spans);
-                if i == *cursor {
-                    line.style(Style::default().add_modifier(Modifier::REVERSED))
-                } else {
-                    line
-                }
-            })
-            .collect();
-        f.render_widget(Paragraph::new(lines), body_rect);
-
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                " ↑↓ select · Enter opens · type to filter · Esc closes ",
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
     }
 
     fn bookmark_picker_handle_key(&mut self, key: KeyEvent) {
@@ -19173,90 +12034,6 @@ impl App {
         }
     }
 
-    fn draw_bookmark_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::BookmarkPicker { entries, cursor, scroll } = &self.modal else {
-            return;
-        };
-        let width = area.width.saturating_sub(8).max(60);
-        let height = area.height.saturating_sub(4).max(12);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let header = format!(" Bookmarks ({}) ", entries.len());
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let body_h = inner.height.saturating_sub(1) as usize;
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(1),
-        };
-
-        let lines: Vec<Line<'_>> = entries
-            .iter()
-            .enumerate()
-            .skip(*scroll)
-            .take(body_h)
-            .map(|(i, e)| {
-                let head = format!(" ★ {}", e.title);
-                let path_dim = format!("    {}", e.slug_path);
-                let spans: Vec<Span> = vec![
-                    Span::raw(head),
-                    Span::styled(
-                        path_dim,
-                        Style::default().add_modifier(Modifier::DIM),
-                    ),
-                ];
-                let mut line = Line::from(spans);
-                if i == *cursor {
-                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
-                }
-                line
-            })
-            .collect();
-        f.render_widget(Paragraph::new(lines), body_rect);
-
-        let hint = if entries.is_empty() {
-            " (empty) · Esc close ".to_string()
-        } else {
-            format!(
-                " ↑↓ select · Enter opens · D removes bookmark · Esc closes    ({}/{}) ",
-                cursor + 1,
-                entries.len()
-            )
-        };
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                hint,
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
     fn backlink_picker_handle_key(&mut self, key: KeyEvent) {
         let (target, source_to_unlink, target_to_open) = {
             let Modal::BacklinkPicker { target, entries, cursor, scroll } = &mut self.modal else {
@@ -19339,92 +12116,6 @@ impl App {
         }
     }
 
-    fn draw_backlink_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::BacklinkPicker { entries, cursor, scroll, .. } = &self.modal else {
-            return;
-        };
-        let width = area.width.saturating_sub(8).max(60);
-        let height = area.height.saturating_sub(4).max(12);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let header = format!(" Backlinks ({}) ", entries.len());
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let body_h = inner.height.saturating_sub(1) as usize;
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(1),
-        };
-
-        let lines: Vec<Line<'_>> = entries
-            .iter()
-            .enumerate()
-            .skip(*scroll)
-            .take(body_h)
-            .map(|(i, e)| {
-                // "←" arrow signals incoming direction (vs the
-                // "→" used by the outgoing-links picker).
-                let head = format!(" ← {}", e.title);
-                let path_dim = format!("    {}", e.slug_path);
-                let spans: Vec<Span> = vec![
-                    Span::raw(head),
-                    Span::styled(
-                        path_dim,
-                        Style::default().add_modifier(Modifier::DIM),
-                    ),
-                ];
-                let mut line = Line::from(spans);
-                if i == *cursor {
-                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
-                }
-                line
-            })
-            .collect();
-        f.render_widget(Paragraph::new(lines), body_rect);
-
-        let hint = if entries.is_empty() {
-            " (empty) · Esc close ".to_string()
-        } else {
-            format!(
-                " ↑↓ select · Enter opens · D removes source link · Esc closes    ({}/{}) ",
-                cursor + 1,
-                entries.len()
-            )
-        };
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                hint,
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
     fn similar_picker_handle_key(&mut self, key: KeyEvent) {
         let (selected_id, total, was_enter) = {
             let Modal::SimilarPicker { entries, cursor, scroll } = &mut self.modal else {
@@ -19476,282 +12167,6 @@ impl App {
             } else if total == 0 {
                 self.status = "similar: nothing to open".into();
             }
-        }
-    }
-
-    /// Materialise the picked paragraph as a `secondary` OpenedDoc
-    /// rendered in the right pane (replacing AI while in similar
-    /// mode). Mirrors `load_paragraph`'s body construction; cursor
-    /// memory is honoured so re-opening lands where the user left
-    /// it (consistent with primary-pane behaviour).
-    fn load_secondary_paragraph(
-        &mut self,
-        id: Uuid,
-    ) -> std::result::Result<(), String> {
-        let node = self
-            .hierarchy
-            .get(id)
-            .cloned()
-            .ok_or_else(|| format!("paragraph {id} not in hierarchy"))?;
-        if node.kind != NodeKind::Paragraph {
-            return Err(format!("`{}` is not a paragraph", node.title));
-        }
-        let rel = node
-            .file
-            .as_ref()
-            .ok_or_else(|| format!("paragraph `{}` has no file on disk", node.title))?;
-        let abs = self.layout.root.join(rel);
-        let body = std::fs::read_to_string(&abs)
-            .map_err(|e| format!("read {}: {e}", abs.display()))?;
-        let lines = body_to_lines(&body);
-        let saved_lines = lines.clone();
-        let mut textarea = TextArea::new(lines);
-        textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-        textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
-        let read_only = self.hierarchy.ancestors(&node).iter().any(|a| {
-            a.protected && a.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_HELP)
-        });
-        let saved_cursor = self.paragraph_cursors.get(&node.id).copied();
-        let (init_row, init_col, init_scroll_row, init_scroll_col) = match saved_cursor {
-            Some(pc) => {
-                let max_row = textarea.lines().len().saturating_sub(1);
-                let row = pc.cursor_row.min(max_row);
-                let line_len = textarea
-                    .lines()
-                    .get(row)
-                    .map_or(0, |s| s.chars().count());
-                let col = pc.cursor_col.min(line_len);
-                (row, col, pc.scroll_row.min(max_row), pc.scroll_col)
-            }
-            None => (0, 0, 0, 0),
-        };
-        if init_row > 0 || init_col > 0 {
-            textarea.move_cursor(CursorMove::Jump(init_row as u16, init_col as u16));
-        }
-        self.secondary = Some(OpenedDoc {
-            id: node.id,
-            title: node.title.clone(),
-            rel_path: rel.clone(),
-            textarea,
-            dirty: false,
-            scroll_row: init_scroll_row,
-            scroll_col: init_scroll_col,
-            block_anchor: None,
-            last_activity: std::time::Instant::now(),
-            saved_lines,
-            split: None,
-            search: None,
-            read_only,
-            correction_baseline: None,
-            content_type: node.content_type.clone(),
-            typst_diagnostics: Vec::new(),
-            typst_diagnostics_checked_at: std::time::Instant::now(),
-            typst_diag_last_fired: None,
-        });
-        self.secondary_focused = false;
-        self.status = format!(
-            "similar: `{}` opened side-by-side (Tab swaps focus · Ctrl+V S exits)",
-            node.title
-        );
-        Ok(())
-    }
-
-    fn draw_similar_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::SimilarPicker { entries, cursor, scroll } = &self.modal else {
-            return;
-        };
-        let width = area.width.saturating_sub(8).max(60);
-        let height = area.height.saturating_sub(4).max(12);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let header = format!(" Similar paragraphs ({} hits) ", entries.len());
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        let body_h = inner.height.saturating_sub(1) as usize;
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(1),
-        };
-
-        let lines: Vec<Line<'_>> = entries
-            .iter()
-            .enumerate()
-            .skip(*scroll)
-            .take(body_h)
-            .map(|(i, e)| {
-                let score_pct = (e.score * 100.0).round() as i64;
-                let head = format!(" {:>3}%  {}", score_pct, e.title);
-                let path_dim = format!("    {}", e.slug_path);
-                let snippet_dim = if e.snippet.is_empty() {
-                    String::new()
-                } else {
-                    format!("    {}", e.snippet)
-                };
-                let mut spans: Vec<Span> = vec![
-                    Span::raw(head),
-                    Span::raw("   "),
-                    Span::styled(path_dim, Style::default().add_modifier(Modifier::DIM)),
-                ];
-                if !snippet_dim.is_empty() {
-                    spans.push(Span::raw("  · "));
-                    spans.push(Span::styled(
-                        snippet_dim,
-                        Style::default().add_modifier(Modifier::DIM),
-                    ));
-                }
-                let mut line = Line::from(spans);
-                if i == *cursor {
-                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
-                }
-                line
-            })
-            .collect();
-        f.render_widget(Paragraph::new(lines), body_rect);
-
-        let hint = if entries.is_empty() {
-            " (empty) · Esc close ".to_string()
-        } else {
-            format!(
-                " ↑↓ select · Enter open side-by-side · Esc cancel    ({}/{}) ",
-                cursor + 1,
-                entries.len()
-            )
-        };
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                hint,
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
-    /// Open the per-paragraph goal-setting modal. Pre-fills the
-    /// input box with the current `target_words` (if any) so
-    /// editing a goal is one keystroke; empty / `0` on Enter
-    /// clears the goal.
-    fn open_paragraph_target_modal(&mut self) {
-        // 1.2.4+: when the tree has multi-select active, the
-        // modal opens for ALL marked paragraphs and the commit
-        // applies the same target to each. Prefill is empty
-        // (no single "current" to display across a set).
-        if !self.tree_marked.is_empty() {
-            self.modal = Modal::ParagraphTarget {
-                input: TextInput::new(),
-            };
-            self.status = format!(
-                "paragraph target × {}: type a number, Enter sets all, Esc cancels",
-                self.tree_marked.len()
-            );
-            return;
-        }
-        let Some(doc) = self.opened.as_ref() else {
-            self.status = "view T: no paragraph open".into();
-            return;
-        };
-        let current = self
-            .hierarchy
-            .get(doc.id)
-            .and_then(|n| n.target_words)
-            .filter(|n| *n > 0);
-        let mut input = TextInput::new();
-        if let Some(n) = current {
-            for c in n.to_string().chars() {
-                input.insert_char(c);
-            }
-        }
-        self.modal = Modal::ParagraphTarget { input };
-        self.status =
-            "paragraph target: type a number, Enter to set, empty/0 to clear, Esc to cancel"
-                .into();
-    }
-
-    /// Commit `raw` as the open paragraph's `target_words`. Empty
-    /// or `"0"` clears the goal (sets to None). Non-numeric input
-    /// surfaces an error and leaves the existing value untouched.
-    ///
-    /// 1.2.4+: when `tree_marked` is non-empty, the same target
-    /// is applied to every marked paragraph instead of the open
-    /// one.
-    fn commit_paragraph_target(&mut self, raw: &str) {
-        let new_target: Option<i32> = if raw.is_empty() || raw == "0" {
-            None
-        } else {
-            match raw.parse::<i32>() {
-                Ok(n) if n > 0 => Some(n),
-                Ok(_) => {
-                    self.status = "view T: target must be > 0".into();
-                    return;
-                }
-                Err(_) => {
-                    self.status = format!("view T: `{raw}` is not a number");
-                    return;
-                }
-            }
-        };
-        // Multi-select path: apply the same target to every
-        // marked paragraph.
-        if !self.tree_marked.is_empty() {
-            let ids: Vec<Uuid> = self.tree_marked.iter().copied().collect();
-            let mut ok = 0usize;
-            let mut fail = 0usize;
-            for id in &ids {
-                if self.set_paragraph_target_now(*id, new_target).is_ok() {
-                    ok += 1;
-                } else {
-                    fail += 1;
-                }
-            }
-            self.status = match new_target {
-                Some(n) => format!(
-                    "target {n} set on {ok} paragraph(s){}",
-                    if fail > 0 { format!(" · {fail} failed") } else { String::new() }
-                ),
-                None => format!(
-                    "target cleared on {ok} paragraph(s){}",
-                    if fail > 0 { format!(" · {fail} failed") } else { String::new() }
-                ),
-            };
-            return;
-        }
-        let Some(doc) = self.opened.as_ref() else {
-            self.status = "view T: paragraph closed during input".into();
-            return;
-        };
-        let id = doc.id;
-        match self.set_paragraph_target_now(id, new_target) {
-            Ok(()) => {
-                self.status = match new_target {
-                    Some(n) => format!("paragraph target: {} words", n),
-                    None => "paragraph target: cleared".into(),
-                };
-            }
-            Err(e) => self.status = format!("view T: {e}"),
         }
     }
 
@@ -19813,1084 +12228,6 @@ impl App {
         }
     }
 
-    fn draw_progress_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let scroll = match &self.modal {
-            Modal::Progress { scroll } => *scroll,
-            _ => return,
-        };
-        let snap = match self.progress_cache.as_ref() {
-            Some(s) => s.clone(),
-            None => {
-                self.refresh_progress_cache();
-                self.progress_cache.clone().unwrap_or_else(|| {
-                    crate::progress::ProgressSnapshot::empty()
-                })
-            }
-        };
-
-        let width = area.width.saturating_sub(8).max(60);
-        let height = area.height.saturating_sub(4).max(20);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let header = " Writing progress ".to_string();
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        // Two-column body: text on left (2/3), 30-day sparkline
-        // + bar chart on right (1/3). Footer row.
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(1),
-        };
-        let split = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(60),
-                Constraint::Percentage(40),
-            ])
-            .split(body_rect);
-        let text_rect = split[0];
-        let chart_rect = split[1];
-
-        // ── Text panel ────────────────────────────────────────
-        let mut lines: Vec<Line> = Vec::new();
-        let bold = Style::default().add_modifier(Modifier::BOLD);
-        let dim = Style::default().add_modifier(Modifier::DIM);
-
-        // Today + streak
-        lines.push(Line::from(Span::styled(" Today", bold)));
-        let today_line = match snap.project.daily_goal {
-            Some(goal) => {
-                let pct = if goal > 0 {
-                    (snap.project.today_words.max(0) * 100 / goal).clamp(0, 999)
-                } else {
-                    0
-                };
-                format!(
-                    "   words: {}/{} ({}%)",
-                    snap.project.today_words, goal, pct
-                )
-            }
-            None => format!("   words: {} (no daily goal set)", snap.project.today_words),
-        };
-        lines.push(Line::from(today_line));
-        lines.push(Line::from(format!(
-            "   streak: {}d (grace {}/{} per week)",
-            snap.streak.days, snap.streak.grace_used, snap.streak.grace_per_week
-        )));
-        lines.push(Line::from(format!(
-            "   active: {} today · {} this week",
-            format_active_duration(snap.active_seconds_today),
-            format_active_duration(snap.active_seconds_week),
-        )));
-        lines.push(Line::from(""));
-
-        // Per-book breakdown
-        lines.push(Line::from(Span::styled(" Books", bold)));
-        if snap.books.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "   (no user books)",
-                dim,
-            )));
-        }
-        for b in &snap.books {
-            let header = match (b.target_words, b.required_pace, b.days_to_deadline) {
-                (Some(t), Some(p), Some(dd)) => format!(
-                    "   {}: {}w · target {}w · pace {}w/d · {} day(s)",
-                    b.label, b.total_words, t, p, dd
-                ),
-                (Some(t), _, _) => {
-                    format!("   {}: {}w · target {}w", b.label, b.total_words, t)
-                }
-                _ => format!("   {}: {}w", b.label, b.total_words),
-            };
-            lines.push(Line::from(header));
-            lines.push(Line::from(Span::styled(
-                format!("      today: {}w", b.today_words),
-                dim,
-            )));
-        }
-        lines.push(Line::from(""));
-
-        // Status ladder
-        lines.push(Line::from(Span::styled(
-            " Status ladder · last 7 days",
-            bold,
-        )));
-        if snap.status.recent.is_empty() && snap.status.goals.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "   (no status promotions recorded yet)",
-                dim,
-            )));
-        } else {
-            // Display each goal alongside its recent count.
-            let mut by_status: std::collections::HashMap<String, i64> =
-                std::collections::HashMap::new();
-            for (s, n) in &snap.status.recent {
-                by_status.insert(s.clone(), *n);
-            }
-            let mut shown: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
-            for (s, goal) in &snap.status.goals {
-                let n = by_status.get(s).copied().unwrap_or(0);
-                lines.push(Line::from(format!(
-                    "   → {}: {}/{} this week",
-                    s, n, goal
-                )));
-                shown.insert(s.clone());
-            }
-            for (s, n) in &snap.status.recent {
-                if shown.contains(s) {
-                    continue;
-                }
-                lines.push(Line::from(format!("   → {}: {}", s, n)));
-            }
-        }
-
-        // Apply scroll. The renderer truncates after the visible
-        // height; out-of-range scroll is clamped here so End +
-        // PageDown saturate at "show the bottom".
-        let total = lines.len();
-        let body_h = text_rect.height as usize;
-        let max_scroll = total.saturating_sub(body_h.max(1));
-        let scroll = scroll.min(max_scroll);
-        let visible: Vec<Line> = lines.into_iter().skip(scroll).take(body_h).collect();
-        f.render_widget(Paragraph::new(visible), text_rect);
-
-        // ── Chart column ───────────────────────────────────────
-        // Top half: 30-day daily-words sparkline.
-        // Bottom half: per-book progress bar chart (current %
-        // of target, capped at 100 for the bar height; bars
-        // can overshoot in the label).
-        let chart_split = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
-            ])
-            .split(chart_rect);
-        let sparkline_rect = chart_split[0];
-        let bars_rect = chart_split[1];
-
-        let data: Vec<u64> = snap
-            .sparkline
-            .iter()
-            .map(|n| (*n).max(0) as u64)
-            .collect();
-        if !data.is_empty() && sparkline_rect.height > 4 {
-            let sparkline = ratatui::widgets::Sparkline::default()
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" 30d words/day "),
-                )
-                .data(&data)
-                .style(Style::default().fg(self.theme.tree_script_fg));
-            f.render_widget(sparkline, sparkline_rect);
-        } else {
-            f.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    " (not enough history)",
-                    dim,
-                )))
-                .block(Block::default().borders(Borders::ALL).title(" 30d ")),
-                sparkline_rect,
-            );
-        }
-
-        // Per-book BarChart (1.2.4+). Each user book with a
-        // target shows one bar = pct of target, capped at 100.
-        // The labels are short slugs so multiple books fit in
-        // the narrow chart column.
-        let book_bars: Vec<(String, u64)> = snap
-            .books
-            .iter()
-            .filter_map(|b| {
-                let target = b.target_words?;
-                if target <= 0 {
-                    return None;
-                }
-                let pct = (b.total_words.max(0) * 100 / target).clamp(0, 100) as u64;
-                // Slugify the label so a wide book title doesn't
-                // truncate the bar.
-                let label = slug::slugify(&b.label);
-                Some((label, pct))
-            })
-            .collect();
-        if !book_bars.is_empty() && bars_rect.height > 4 {
-            let data: Vec<(&str, u64)> =
-                book_bars.iter().map(|(s, n)| (s.as_str(), *n)).collect();
-            let max_label_w = data
-                .iter()
-                .map(|(s, _)| s.len())
-                .max()
-                .unwrap_or(8)
-                .max(6) as u16;
-            let bar_chart = ratatui::widgets::BarChart::default()
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" books: % of target "),
-                )
-                .data(&data)
-                .max(100)
-                .bar_width(max_label_w)
-                .bar_gap(1)
-                .bar_style(Style::default().fg(self.theme.tree_script_fg))
-                .value_style(
-                    Style::default()
-                        .fg(self.theme.modal_fg)
-                        .add_modifier(Modifier::BOLD),
-                );
-            f.render_widget(bar_chart, bars_rect);
-        } else {
-            f.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    " (no per-book targets set)",
-                    dim,
-                )))
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" books "),
-                ),
-                bars_rect,
-            );
-        }
-
-        // ── Footer ─────────────────────────────────────────────
-        let hint = " ↑↓ / PgUp/PgDn scroll · r refresh · Esc close ";
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(hint, dim))),
-            footer_rect,
-        );
-    }
-
-    fn draw_snapshot_diff_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let (paragraph_title, when, rows, scroll) = match &self.modal {
-            Modal::SnapshotDiff {
-                paragraph_title,
-                when,
-                rows,
-                scroll,
-                ..
-            } => (
-                paragraph_title.clone(),
-                when.clone(),
-                rows.clone(),
-                *scroll,
-            ),
-            _ => return,
-        };
-
-        // Roomy modal — almost full screen so wide lines fit.
-        let width = area.width.saturating_sub(4).max(80);
-        let height = area.height.saturating_sub(2).max(20);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let header =
-            format!(" Diff · `{paragraph_title}` · snapshot {when} → current ");
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(header)
-            .border_style(
-                Style::default()
-                    .fg(self.theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.modal_bg)
-                    .fg(self.theme.modal_fg),
-            );
-        let inner = block.inner(rect);
-        f.render_widget(block, rect);
-
-        // Footer.
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(1),
-            width: inner.width,
-            height: 1,
-        };
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(1),
-        };
-        // Split body into two columns: snapshot (left) | current (right).
-        let split = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
-            ])
-            .split(body_rect);
-        let left_rect = split[0];
-        let right_rect = split[1];
-
-        let body_h = left_rect.height as usize;
-        let visible: Vec<&SnapshotDiffRow> =
-            rows.iter().skip(scroll).take(body_h).collect();
-
-        let mut left_lines: Vec<Line<'static>> = Vec::with_capacity(visible.len());
-        let mut right_lines: Vec<Line<'static>> = Vec::with_capacity(visible.len());
-
-        let removed_style = Style::default()
-            .fg(Color::Red)
-            .add_modifier(Modifier::BOLD);
-        let added_style = Style::default()
-            .fg(Color::Green)
-            .add_modifier(Modifier::BOLD);
-        let changed_style = Style::default().fg(Color::Yellow);
-        let dim = Style::default().add_modifier(Modifier::DIM);
-
-        for row in visible {
-            let (l_marker, r_marker, l_style, r_style) = match row.kind {
-                SnapshotDiffKind::Equal => (" ", " ", dim, dim),
-                SnapshotDiffKind::Removed => ("-", " ", removed_style, dim),
-                SnapshotDiffKind::Added => (" ", "+", dim, added_style),
-                SnapshotDiffKind::Changed => ("~", "~", changed_style, changed_style),
-            };
-            let left_text = row.left.clone().unwrap_or_default();
-            let right_text = row.right.clone().unwrap_or_default();
-            left_lines.push(Line::from(Span::styled(
-                format!("{l_marker} {left_text}"),
-                l_style,
-            )));
-            right_lines.push(Line::from(Span::styled(
-                format!("{r_marker} {right_text}"),
-                r_style,
-            )));
-        }
-
-        f.render_widget(Paragraph::new(left_lines), left_rect);
-        f.render_widget(Paragraph::new(right_lines), right_rect);
-
-        let hint = format!(
-            " ↑↓ / PgUp/PgDn / Home/End scroll · Esc back ({}/{}) ",
-            scroll + 1,
-            rows.len().max(1)
-        );
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                hint,
-                Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
-        );
-    }
-
-    fn draw_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        // The file picker needs a much larger panel than the fixed
-        // 80-wide / 8-high box used for confirms — give it its own renderer.
-        if let Modal::FilePicker(picker) = &self.modal {
-            self.draw_file_picker_modal(f, area, picker);
-            return;
-        }
-        if let Modal::QuickRef { focus, scroll } = &self.modal {
-            self.draw_quickref_modal(f, area, *focus, *scroll);
-            return;
-        }
-        if matches!(self.modal, Modal::Credits { .. }) {
-            self.draw_credits_modal(f, area);
-            return;
-        }
-        if let Modal::BookInfo { scroll } = &self.modal {
-            self.draw_book_info_modal(f, area, *scroll);
-            return;
-        }
-        if let Modal::LlmPicker { .. } = &self.modal {
-            self.draw_llm_picker_modal(f, area);
-            return;
-        }
-        if let Modal::ImagePicker { .. } = &self.modal {
-            self.draw_image_picker_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::ImagePreview { .. }) {
-            self.draw_image_preview_modal(f, area);
-            return;
-        }
-        if let Modal::FunctionPicker { .. } = &self.modal {
-            self.draw_function_picker_modal(f, area);
-            return;
-        }
-        if let Modal::StatusFilter { .. } = &self.modal {
-            self.draw_status_filter_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::BundPane { .. }) {
-            self.draw_bund_pane_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::ScriptPicker { .. }) {
-            self.draw_script_picker_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::SimilarPicker { .. }) {
-            self.draw_similar_picker_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::Progress { .. }) {
-            self.draw_progress_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::SnapshotDiff { .. }) {
-            self.draw_snapshot_diff_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::LinkPicker { .. }) {
-            self.draw_link_picker_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::BacklinkPicker { .. }) {
-            self.draw_backlink_picker_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::BookmarkPicker { .. }) {
-            self.draw_bookmark_picker_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::FuzzyParagraphPicker { .. }) {
-            self.draw_fuzzy_paragraph_picker_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::RenderedPreview { .. }) {
-            self.draw_rendered_preview_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::SaveRenderedPng { .. }) {
-            self.draw_save_rendered_png_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::StoryView { .. }) {
-            self.draw_story_view_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::DiagnosticsList { .. }) {
-            self.draw_diagnostics_list_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::AiDiffReview { .. }) {
-            self.draw_ai_diff_review_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::EventPicker { .. }) {
-            self.draw_event_picker_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::TimelineView { .. }) {
-            self.draw_timeline_view_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::SaveStoryPng { .. }) {
-            self.draw_save_story_png_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::TagPicker { .. }) {
-            self.draw_tag_picker_modal(f, area);
-            return;
-        }
-        if matches!(self.modal, Modal::TagSearchResults { .. }) {
-            self.draw_tag_search_results_modal(f, area);
-            return;
-        }
-
-        let width = area.width.saturating_sub(8).clamp(30, 80);
-        let height: u16 = 8;
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let (title, border_color, body): (String, Color, Vec<Line<'_>>) = match &self.modal {
-            Modal::None => return,
-            Modal::FilePicker(_) => unreachable!("file picker handled above"),
-            Modal::QuickRef { .. } => unreachable!("quickref handled above"),
-            Modal::Credits { .. } => unreachable!("credits handled above"),
-            Modal::BookInfo { .. } => unreachable!("book info handled above"),
-            Modal::LlmPicker { .. } => unreachable!("llm picker handled above"),
-            Modal::ImagePicker { .. } => unreachable!("image picker handled above"),
-            Modal::ImagePreview { .. } => unreachable!("image preview handled above"),
-            Modal::FunctionPicker { .. } => unreachable!("function picker handled above"),
-            Modal::StatusFilter { .. } => unreachable!("status filter handled above"),
-            Modal::BundPane { .. } => unreachable!("bund pane handled above"),
-            Modal::ScriptPicker { .. } => unreachable!("script picker handled above"),
-            Modal::SimilarPicker { .. } => unreachable!("similar picker handled above"),
-            Modal::Progress { .. } => unreachable!("progress modal handled above"),
-            Modal::SnapshotDiff { .. } => unreachable!("snapshot diff handled above"),
-            Modal::LinkPicker { .. } => unreachable!("link picker handled above"),
-            Modal::BacklinkPicker { .. } => unreachable!("backlink picker handled above"),
-            Modal::BookmarkPicker { .. } => unreachable!("bookmark picker handled above"),
-            Modal::FuzzyParagraphPicker { .. } =>
-                unreachable!("fuzzy paragraph picker handled above"),
-            Modal::RenderedPreview { .. } =>
-                unreachable!("rendered preview handled above"),
-            Modal::SaveRenderedPng { .. } =>
-                unreachable!("save rendered png handled above"),
-            Modal::TagPicker { .. } =>
-                unreachable!("tag picker handled above"),
-            Modal::TagSearchResults { .. } =>
-                unreachable!("tag search results handled above"),
-            Modal::StoryView { .. } =>
-                unreachable!("story view handled above"),
-            Modal::DiagnosticsList { .. } =>
-                unreachable!("diagnostics list handled above"),
-            Modal::AiDiffReview { .. } =>
-                unreachable!("ai diff review handled above"),
-            Modal::EventPicker { .. } =>
-                unreachable!("event picker handled above"),
-            Modal::TimelineView { .. } =>
-                unreachable!("timeline view handled above"),
-            Modal::TimelineNewEventPrompt {
-                input,
-                cursor_ticks,
-                track,
-                ..
-            } => {
-                let calendar = crate::timeline::Calendar::from_config(
-                    self.cfg.timeline.calendar.clone(),
-                );
-                let formatted = calendar.format(
-                    crate::timeline::TimelinePoint::from_ticks(*cursor_ticks),
-                    crate::timeline::Precision::Day,
-                );
-                let track_str = track.as_deref().unwrap_or("(default)");
-                let body_lines = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        format!(" New event @ {formatted} · track: {track_str}"),
-                        Style::default()
-                            .fg(self.theme.tree_chapter_fg)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "  Enter commits · Esc cancels",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (
-                    " New event — n ".to_string(),
-                    self.theme.tree_chapter_fg,
-                    body_lines,
-                )
-            }
-            Modal::TimelineEditEventPrompt { input, .. } => {
-                let body_lines = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        " Edit event — format: start | end | track",
-                        Style::default()
-                            .fg(self.theme.tree_chapter_fg)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "  Empty middle = no end · empty trailing = drop track · Enter commits · Esc cancels",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (
-                    " Edit event — Ctrl+V Shift+I ".to_string(),
-                    self.theme.tree_chapter_fg,
-                    body_lines,
-                )
-            }
-            Modal::SnapshotAnnotation { input, parent_title, .. } => {
-                let body_lines = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        format!(" Snapshot `{parent_title}` — annotation:"),
-                        Style::default()
-                            .fg(self.theme.tree_script_fg)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "  Enter commits (empty = no note) · Esc cancels",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (
-                    " Snapshot annotation — F5 ".to_string(),
-                    self.theme.tree_script_fg,
-                    body_lines,
-                )
-            }
-            Modal::SaveStoryPng { .. } =>
-                unreachable!("save story png handled above"),
-            Modal::TagAddPrompt { input, .. } => {
-                let body = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        " New tag name:",
-                        Style::default()
-                            .fg(self.theme.tree_script_fg)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "  Enter adds + auto-selects · Esc cancels",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (
-                    " Add tag — Ctrl+B ] then A ".to_string(),
-                    self.theme.tree_script_fg,
-                    body,
-                )
-            }
-            Modal::TagDeleteConfirm { tag, affected, .. } => {
-                let body = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        format!(" Delete tag `{tag}` project-wide?"),
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(Span::styled(
-                        format!("   Will be removed from {affected} paragraph(s)."),
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "  y / Enter confirm · n / Esc cancel",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (
-                    " Delete tag — y / n ".to_string(),
-                    Color::Red,
-                    body,
-                )
-            }
-            Modal::TagRenamePrompt {
-                input,
-                old_tag,
-                affected,
-                ..
-            } => {
-                let body = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        format!(" Rename tag `{old_tag}` ({affected} paragraph(s)):"),
-                        Style::default()
-                            .fg(self.theme.tree_script_fg)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "  Enter commits (merges if name exists) · Esc cancels",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (
-                    " Rename tag — R ".to_string(),
-                    self.theme.tree_script_fg,
-                    body,
-                )
-            }
-            Modal::ParagraphTarget { input } => {
-                let body = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        " Paragraph word-count target:",
-                        Style::default()
-                            .fg(self.theme.tree_script_fg)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "  Enter sets · empty/0 clears · Esc cancels",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (
-                    " Per-paragraph goal — Ctrl+V T ".to_string(),
-                    self.theme.tree_script_fg,
-                    body,
-                )
-            }
-            Modal::SaveMarkdown { input, label, .. } => {
-                let body = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        format!(" Save markdown of `{label}` to:"),
-                        Style::default()
-                            .fg(self.theme.tree_script_fg)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "  Enter writes (default path pre-filled) · Esc cancels",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (
-                    " Save markdown — Ctrl+V ".to_string(),
-                    self.theme.tree_script_fg,
-                    body,
-                )
-            }
-            Modal::HelpQuery { input } => {
-                let body = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        " Ask the Help book:",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "  Enter to ask · Esc to cancel · answer streams into the AI pane",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (" Help — F1 ".to_string(), Color::Cyan, body)
-            }
-            Modal::BundInput { prompt, input, hook } => {
-                let body = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        format!(" {prompt}"),
-                        Style::default()
-                            .fg(self.theme.tree_script_fg)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        format!(
-                            "  Enter fires hook `{hook}` with your input · Esc cancels"
-                        ),
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (
-                    " Bund — ink.input ".to_string(),
-                    self.theme.tree_script_fg,
-                    body,
-                )
-            }
-            Modal::BundEval { input } => {
-                let body = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        " Bund — evaluate one expression against Adam:",
-                        Style::default()
-                            .fg(self.theme.tree_script_fg)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "  Enter runs · Esc cancels · result lands on the status bar",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (
-                    " Bund — Ctrl+Z E ".to_string(),
-                    self.theme.tree_script_fg,
-                    body,
-                )
-            }
-            Modal::ChatSearchPrompt { input } => {
-                let body = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        " Search chat history:",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "  Enter starts from the newest match · Ctrl+X advances to older · Esc cancels",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (" Chat search — Ctrl+F ".to_string(), Color::Cyan, body)
-            }
-            Modal::FindReplace {
-                search_input,
-                replace_input,
-                focus_replace,
-            } => {
-                let cursor_char = '│';
-                let search_marker = if *focus_replace { " " } else { ">" };
-                let replace_marker = if *focus_replace { ">" } else { " " };
-                let mut body = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        format!(
-                            " {} Search:  {}",
-                            search_marker,
-                            search_input.render_with_cursor(cursor_char)
-                        ),
-                        if !*focus_replace {
-                            Style::default()
-                        } else {
-                            Style::default().add_modifier(Modifier::DIM)
-                        },
-                    )),
-                ];
-                if let Some(r) = replace_input {
-                    body.push(Line::from(Span::styled(
-                        format!(
-                            " {} Replace: {}",
-                            replace_marker,
-                            r.render_with_cursor(cursor_char)
-                        ),
-                        if *focus_replace {
-                            Style::default()
-                        } else {
-                            Style::default().add_modifier(Modifier::DIM)
-                        },
-                    )));
-                }
-                body.push(Line::from(""));
-                let hint = if replace_input.is_some() {
-                    " Enter run · Tab switch field · Esc cancel "
-                } else {
-                    " Enter find · Esc cancel "
-                };
-                body.push(Line::from(Span::styled(
-                    hint,
-                    Style::default().add_modifier(Modifier::DIM),
-                )));
-                let header = if replace_input.is_some() {
-                    " Find & Replace (regex) "
-                } else {
-                    " Find (regex) "
-                };
-                (header.into(), Color::Magenta, body)
-            }
-            Modal::Adding {
-                kind,
-                parent_label,
-                input,
-                position,
-                ..
-            } => {
-                let header = match position {
-                    InsertPosition::End => format!(" Add {} ", kind.as_str()),
-                    InsertPosition::After(_) => {
-                        format!(" Insert {} after current ", kind.as_str())
-                    }
-                    InsertPosition::Before(_) => {
-                        format!(" Insert {} before anchor ", kind.as_str())
-                    }
-                };
-                let parent = format!(" Parent: {}", parent_label);
-                let where_line = match position {
-                    InsertPosition::End => "    Where: append at end".to_string(),
-                    InsertPosition::After(anchor_id) => {
-                        let anchor_name = self
-                            .hierarchy
-                            .get(*anchor_id)
-                            .map(|n| n.title.clone())
-                            .unwrap_or_else(|| "<gone>".to_string());
-                        format!("    Where: after `{anchor_name}`")
-                    }
-                    InsertPosition::Before(anchor_id) => {
-                        let anchor_name = self
-                            .hierarchy
-                            .get(*anchor_id)
-                            .map(|n| n.title.clone())
-                            .unwrap_or_else(|| "<gone>".to_string());
-                        format!("    Where: before `{anchor_name}`")
-                    }
-                };
-                let title_line = format!(" Title : {}", input.render_with_cursor('│'));
-                let body = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(parent, Style::default().add_modifier(Modifier::DIM))),
-                    Line::from(Span::styled(
-                        where_line,
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                    Line::from(title_line),
-                    Line::from(Span::styled(
-                        " Enter to confirm · Esc to cancel ",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (header, Color::Green, body)
-            }
-            Modal::Deleting {
-                root_kind,
-                title,
-                descendant_count,
-                ..
-            } => {
-                let prompt = if *descendant_count > 0 {
-                    format!(
-                        " Delete {} `{}` and {} descendant{}?",
-                        root_kind.as_str(),
-                        title,
-                        descendant_count,
-                        if *descendant_count == 1 { "" } else { "s" }
-                    )
-                } else {
-                    format!(" Delete {} `{}`?", root_kind.as_str(), title)
-                };
-                let body = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        prompt,
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        " Removes files from disk AND records from the store.",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                    Line::from(Span::styled(
-                        " y / Enter to confirm · n / Esc to cancel ",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (" Confirm delete ".into(), Color::Red, body)
-            }
-            Modal::Renaming { kind, input, .. } => {
-                let header = format!(" Rename {} ", kind.as_str());
-                let title_line = format!(" Title : {}", input.render_with_cursor('│'));
-                let body = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        format!("    Renaming a {} — its slug and filesystem entry don't change.", kind.as_str()),
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                    Line::from(""),
-                    Line::from(title_line),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        " Enter to confirm · Esc to cancel ",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
-                (header, Color::Blue, body)
-            }
-            Modal::SnapshotPicker {
-                paragraph_title,
-                snapshots,
-                cursor,
-                ..
-            } => {
-                let header = format!(" Snapshots — {} ", paragraph_title);
-                let mut body: Vec<Line> = Vec::with_capacity(snapshots.len() + 2);
-                body.push(Line::from(""));
-                for (i, snap) in snapshots.iter().enumerate() {
-                    let selected = i == *cursor;
-                    let ts = snap
-                        .created_at
-                        .with_timezone(&chrono::Local)
-                        .format("%Y-%m-%d %H:%M:%S %z");
-                    let preview = if snap.preview.is_empty() {
-                        "(no body yet)"
-                    } else {
-                        snap.preview.as_str()
-                    };
-                    let head = format!(
-                        " {ts}   {}w   {}",
-                        snap.word_count, preview,
-                    );
-                    let style = if selected {
-                        Style::default()
-                            .add_modifier(Modifier::REVERSED | Modifier::BOLD)
-                            .fg(Color::Cyan)
-                    } else {
-                        Style::default()
-                    };
-                    body.push(Line::from(Span::styled(head, style)));
-                    // 1.2.6+ — render the user's annotation on a
-                    // second indented line when present. Italics +
-                    // cyan keeps it visually distinct from the
-                    // preview while staying readable.
-                    if !snap.annotation.trim().is_empty() {
-                        let annot_style = if selected {
-                            Style::default()
-                                .add_modifier(Modifier::REVERSED | Modifier::ITALIC)
-                                .fg(Color::Cyan)
-                        } else {
-                            Style::default()
-                                .add_modifier(Modifier::ITALIC)
-                                .fg(Color::Cyan)
-                        };
-                        body.push(Line::from(Span::styled(
-                            format!("       ✎ {}", snap.annotation),
-                            annot_style,
-                        )));
-                    }
-                }
-                body.push(Line::from(""));
-                body.push(Line::from(Span::styled(
-                    " ↑↓ navigate · Enter loads · V diff vs current · D / Del delete · Esc cancel ",
-                    Style::default().add_modifier(Modifier::DIM),
-                )));
-                (header, Color::Cyan, body)
-            }
-        };
-
-        // Generic confirms (Adding / Deleting / FindReplace / Renaming /
-        // SnapshotPicker) all share this final render. Theme drives the
-        // modal background + foreground; per-modal accent colour is the
-        // border (passed in via `border_color`).
-        f.render_widget(
-            Paragraph::new(body).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(title)
-                    .border_style(Style::default().fg(border_color).add_modifier(Modifier::BOLD))
-                    .style(
-                        Style::default()
-                            .bg(self.theme.modal_bg)
-                            .fg(self.theme.modal_fg),
-                    ),
-            ),
-            rect,
-        );
-    }
-
     fn pane_block<'a>(&self, title: &'a str, focus: Focus) -> Block<'a> {
         self.pane_block_line(Line::from(title), focus)
     }
@@ -20926,42 +12263,6 @@ impl App {
     #[allow(dead_code)] // string-title convenience; the live renderer
     // uses `editor_block_line` for the coloured cursor read-out, but the
     // string overload stays available for non-styled callers.
-    fn editor_block<'a>(&self, title: &'a str) -> Block<'a> {
-        self.editor_block_line(Line::from(title))
-    }
-
-    /// Variant of `editor_block` that takes a pre-built styled `Line` for
-    /// the title. Lets the renderer mix theme colours into the header
-    /// (used for the `L… C…` cursor read-out chip).
-    fn editor_block_line<'a>(&self, title: Line<'a>) -> Block<'a> {
-        let border_color = if self.focus == Focus::Editor {
-            let dirty = self.opened.as_ref().is_some_and(|d| d.dirty);
-            let ro = self.opened.as_ref().is_some_and(|d| d.read_only);
-            if ro {
-                self.theme.border_readonly
-            } else if dirty {
-                self.theme.border_dirty
-            } else {
-                self.theme.border_saved
-            }
-        } else {
-            self.theme.border_unfocused
-        };
-        Block::default()
-            .borders(Borders::ALL)
-            .title(title)
-            .border_style(
-                Style::default()
-                    .fg(border_color)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.pane_bg)
-                    .fg(self.theme.pane_fg),
-            )
-    }
-
     /// Centralized focus change. When leaving the Editor pane, autosave the
     /// open paragraph (best-effort) so unsaved edits are persisted even
     /// across Tab cycles, Ctrl+1..5 jumps, or any other focus shift. The
@@ -20995,1287 +12296,6 @@ impl App {
         self.focus = new;
     }
 
-    /// Render the secondary editor pane (right side, replaces AI
-    /// when in similar-paragraph mode). Simpler than draw_editor —
-    /// no syntax highlighting, no find/replace overlay, no split
-    /// view — but supports a moving cursor so the user can edit.
-    /// Focus highlight comes from `self.secondary_focused`, which
-    /// is independent of `self.focus` (keystrokes get routed to
-    /// secondary by the swap-on-dispatch wrapper in
-    /// `handle_editor_key`).
-    fn draw_secondary_editor(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let Some(doc) = self.secondary.as_ref() else {
-            return;
-        };
-        let focused = self.focus == Focus::Editor && self.secondary_focused;
-        let border_color = if focused {
-            self.theme.border_focused
-        } else {
-            self.theme.border_unfocused
-        };
-        let title = format!(" {}  ·  (similar) ", doc.title);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title)
-            .border_style(
-                Style::default()
-                    .fg(border_color)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .style(
-                Style::default()
-                    .bg(self.theme.pane_bg)
-                    .fg(self.theme.pane_fg),
-            );
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-
-        // Reserve one row at the bottom for the slug-path footer.
-        let footer_h: u16 = 1;
-        let footer_rect = Rect {
-            x: inner.x,
-            y: inner.y + inner.height.saturating_sub(footer_h),
-            width: inner.width,
-            height: footer_h,
-        };
-        let body_rect = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: inner.height.saturating_sub(footer_h),
-        };
-
-        // Render the textarea via the existing widget so cursor,
-        // selection, scroll all behave correctly. tui-textarea
-        // honours focus via cursor_line_style which we already
-        // configured at load time.
-        f.render_widget(&doc.textarea, body_rect);
-
-        // Footer: full slug path (the spec calls for full path on
-        // each editor pane in similar mode).
-        let path = if let Some(node) = self.hierarchy.get(doc.id) {
-            self.hierarchy.slug_path(node)
-        } else {
-            doc.rel_path.clone()
-        };
-        let footer = format!(" {}", path);
-        let style = Style::default().add_modifier(Modifier::DIM);
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(footer, style))),
-            footer_rect,
-        );
-    }
-
-    /// Slug-path footer drawn UNDER the primary editor pane when
-    /// in similar-paragraph mode (so both panes show their path).
-    /// Carved out of the primary editor's rect by the layout in
-    /// `draw()`. No-op when not in similar mode — primary editor
-    /// keeps its full area.
-    fn draw_primary_pane_footer(&self, f: &mut ratatui::Frame, area: Rect) {
-        let Some(doc) = self.opened.as_ref() else {
-            return;
-        };
-        let path = if let Some(node) = self.hierarchy.get(doc.id) {
-            self.hierarchy.slug_path(node)
-        } else {
-            doc.rel_path.clone()
-        };
-        let footer = format!(" {}", path);
-        let style = Style::default().add_modifier(Modifier::DIM);
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(footer, style))),
-            area,
-        );
-    }
-
-    fn draw_search_bar(&self, f: &mut ratatui::Frame, area: Rect) {
-        let text = if self.focus == Focus::SearchBar {
-            self.search_input.render_with_cursor('│')
-        } else if self.search_input.is_empty() {
-            String::from("(press Ctrl+/ to search)")
-        } else {
-            self.search_input.as_str().to_string()
-        };
-        let style = if self.focus == Focus::SearchBar {
-            Style::default()
-        } else {
-            Style::default().add_modifier(Modifier::DIM)
-        };
-        let p = Paragraph::new(text)
-            .style(style)
-            .block(self.pane_block("Search", Focus::SearchBar));
-        f.render_widget(p, area);
-    }
-
-    fn draw_ai_prompt(&self, f: &mut ratatui::Frame, area: Rect) {
-        let text = if self.focus == Focus::AiPrompt {
-            self.ai_input.render_with_cursor('│')
-        } else if self.ai_input.is_empty() {
-            String::from("(press Ctrl+I for AI; `/` lists prompts · F9 cycles scope)")
-        } else {
-            self.ai_input.as_str().to_string()
-        };
-        let style = if self.focus == Focus::AiPrompt {
-            Style::default()
-        } else {
-            Style::default().add_modifier(Modifier::DIM)
-        };
-        // Title carries the current AI scope so the user knows what
-        // context will be prepended on the next submit. Bright when scope
-        // is non-None — easy to spot accidentally-armed scope.
-        let title = match self.ai_mode {
-            AiMode::None => "AI prompt".to_string(),
-            other => format!("AI prompt · scope: {}", other.label()),
-        };
-        let p = Paragraph::new(text)
-            .style(style)
-            .block(self.pane_block(&title, Focus::AiPrompt));
-        f.render_widget(p, area);
-    }
-
-    /// Exact visual height (in terminal lines) of one tree row
-    /// at the given pane `width`. Delegates to `tree_row_lines`
-    /// so the scroll loop and the renderer always agree on row
-    /// height — no chance of "cursor row almost visible" drift.
-    fn tree_row_visual_height(&self, row_idx: usize, width: usize) -> usize {
-        self.tree_row_lines(row_idx, width).len().max(1)
-    }
-
-    /// Build the styled `Line`s for a single tree row. Returns
-    /// one Line when the row fits on a single visual line;
-    /// otherwise returns N+1 Lines where the title wraps with a
-    /// hanging indent matching the row's prefix column (so
-    /// continuation lines start under the title, not at column
-    /// zero). Pips ride on the last title line when they fit,
-    /// otherwise they get their own hanging-indent line.
-    fn tree_row_lines(&self, row_idx: usize, width: usize) -> Vec<Line<'_>> {
-        let Some(&(id, depth)) = self.rows.get(row_idx) else {
-            return vec![Line::from("")];
-        };
-        let Some(node) = self.hierarchy.get(id) else {
-            return vec![Line::from("")];
-        };
-        let open_id: Option<Uuid> = self.opened.as_ref().map(|d| d.id);
-        let is_open = open_id.is_some_and(|o| o == node.id);
-        let is_collapsed = self.collapsed_nodes.contains(&node.id);
-        let marker = if is_open {
-            "►"
-        } else {
-            match node.kind {
-                NodeKind::Paragraph => {
-                    // 1.2.6+ events outrank hjson — an event
-                    // paragraph that also stores hjson body
-                    // still reads first as a timeline event.
-                    if node.event.is_some() {
-                        "◆ "
-                    } else {
-                        match node.content_type.as_deref() {
-                            Some("hjson") => "❴ ",
-                            _ => "¶ ",
-                        }
-                    }
-                }
-                NodeKind::Image => "▣ ",
-                NodeKind::Script => "λ ",
-                _ => {
-                    if is_collapsed {
-                        "▸ "
-                    } else {
-                        "▾ "
-                    }
-                }
-            }
-        };
-        let kind_fg = match node.kind {
-            NodeKind::Book => self.theme.tree_book_fg,
-            NodeKind::Chapter => self.theme.tree_chapter_fg,
-            NodeKind::Subchapter => self.theme.tree_subchapter_fg,
-            NodeKind::Paragraph => self.theme.tree_paragraph_fg,
-            NodeKind::Image => self.theme.tree_image_fg,
-            NodeKind::Script => self.theme.tree_script_fg,
-        };
-        let mut row_style = Style::default().fg(kind_fg);
-        if matches!(node.kind, NodeKind::Book | NodeKind::Chapter) {
-            row_style = row_style.add_modifier(Modifier::BOLD);
-        }
-        if is_open {
-            row_style = row_style
-                .fg(self.theme.tree_open_marker)
-                .add_modifier(Modifier::BOLD);
-        }
-        let is_cursor = row_idx == self.tree_cursor;
-        if is_cursor {
-            row_style = row_style.add_modifier(Modifier::REVERSED);
-        }
-
-        let indent_str = "  ".repeat(depth);
-        let select_prefix = if self.tree_marked.contains(&node.id) {
-            "✓ "
-        } else if !self.tree_marked.is_empty()
-            && matches!(node.kind, NodeKind::Paragraph)
-        {
-            "  "
-        } else {
-            ""
-        };
-        let prefix_str = format!("{indent_str}{select_prefix}{marker}");
-        let status_label = if matches!(node.kind, NodeKind::Paragraph) {
-            display_status(node.status.as_deref())
-        } else {
-            "None"
-        };
-        let status_letter = status_letter(status_label);
-        let status_badge_style = status_style(status_label, &self.theme);
-        let status_str = format!("{status_letter} ");
-
-        // The hanging indent (continuation column) sits where
-        // the title starts — after prefix + status badge.
-        let prefix_width = prefix_str.chars().count() + status_str.chars().count();
-
-        // Trailing pips (progress + tags + "+N") — built once,
-        // appended to whichever Line carries the title's last
-        // chunk.
-        let mut pip_spans: Vec<Span<'_>> = Vec::new();
-        if matches!(node.kind, NodeKind::Paragraph) {
-            if let Some(target) = node.target_words.filter(|n| *n > 0) {
-                let pct =
-                    (node.word_count as i64 * 100 / target as i64).clamp(0, 999);
-                let pip = if pct >= 100 {
-                    "●"
-                } else if pct >= 75 {
-                    "◕"
-                } else if pct >= 50 {
-                    "◑"
-                } else if pct >= 25 {
-                    "◔"
-                } else {
-                    "○"
-                };
-                let style = if pct >= 100 {
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD)
-                } else if pct >= 75 {
-                    Style::default().fg(Color::LightGreen)
-                } else if pct >= 50 {
-                    Style::default().fg(Color::Yellow)
-                } else if pct >= 25 {
-                    Style::default().fg(Color::LightRed)
-                } else {
-                    Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
-                };
-                pip_spans.push(Span::raw(" "));
-                pip_spans.push(Span::styled(pip.to_string(), style));
-            }
-        }
-        if matches!(node.kind, NodeKind::Paragraph) && !node.tags.is_empty() {
-            let tag_style = Style::default()
-                .fg(self.theme.tree_script_fg)
-                .add_modifier(Modifier::DIM);
-            for tag in node.tags.iter().take(2) {
-                let short: String = if tag.chars().count() > 10 {
-                    let truncated: String = tag.chars().take(9).collect();
-                    format!("{truncated}…")
-                } else {
-                    tag.clone()
-                };
-                pip_spans.push(Span::raw(" "));
-                pip_spans.push(Span::styled(format!("#{short}"), tag_style));
-            }
-            if node.tags.len() > 2 {
-                pip_spans.push(Span::styled(
-                    format!(" +{}", node.tags.len() - 2),
-                    tag_style,
-                ));
-            }
-        }
-        let pip_width: usize = pip_spans
-            .iter()
-            .map(|s| s.content.chars().count())
-            .sum();
-
-        // Wrap the title. Title chunks fill the pane width
-        // minus the prefix; pips ride on the LAST chunk's line
-        // when they fit, else get their own hanging-indent line.
-        let title_budget = width.saturating_sub(prefix_width).max(1);
-        let chunks = wrap_words_or_chars(&node.title, title_budget);
-        let last_idx = chunks.len().saturating_sub(1);
-        let last_chunk_width = chunks.last().map(|s| s.chars().count()).unwrap_or(0);
-        let pips_fit_on_last = pip_width == 0
-            || last_chunk_width + pip_width <= title_budget;
-
-        let mut out: Vec<Line<'_>> = Vec::with_capacity(chunks.len() + 1);
-        for (i, chunk) in chunks.iter().enumerate() {
-            let is_last = i == last_idx;
-            let mut spans: Vec<Span<'_>> = Vec::new();
-            if i == 0 {
-                spans.push(Span::styled(prefix_str.clone(), row_style));
-                spans.push(Span::styled(
-                    status_str.clone(),
-                    if status_label == "None" {
-                        Style::default().add_modifier(Modifier::DIM)
-                    } else {
-                        status_badge_style
-                    },
-                ));
-            } else {
-                // Hanging indent — whitespace styled with
-                // row_style so the cursor's REVERSED highlight
-                // bar extends across the continuation column.
-                spans.push(Span::styled(" ".repeat(prefix_width), row_style));
-            }
-            spans.push(Span::styled(chunk.clone(), row_style));
-            if is_last && pips_fit_on_last {
-                spans.extend(pip_spans.iter().cloned());
-            }
-            out.push(Line::from(spans));
-        }
-        if !pips_fit_on_last && !pip_spans.is_empty() {
-            let mut spans: Vec<Span<'_>> = Vec::new();
-            spans.push(Span::styled(" ".repeat(prefix_width), row_style));
-            spans.extend(pip_spans.into_iter());
-            out.push(Line::from(spans));
-        }
-        if out.is_empty() {
-            out.push(Line::from(""));
-        }
-        out
-    }
-
-    fn draw_tree(&self, f: &mut ratatui::Frame, area: Rect) {
-        let tree_title: String = match self.link_pick_for {
-            Some((_, LinkPickDirection::Outgoing)) => {
-                " Tree · select paragraph to link · Esc cancels ".into()
-            }
-            Some((_, LinkPickDirection::Incoming)) => {
-                " Tree · select paragraph that will link to current · Esc cancels "
-                    .into()
-            }
-            None => "Tree".into(),
-        };
-        let block = self.pane_block(&tree_title, Focus::Tree);
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-
-        if self.rows.is_empty() {
-            let hint = Paragraph::new("(empty project — `inkhaven add book \"…\"` from the CLI)")
-                .style(Style::default().add_modifier(Modifier::DIM));
-            f.render_widget(hint, inner);
-            return;
-        }
-
-        let height = inner.height as usize;
-        let width = inner.width as usize;
-        let mut scroll = self.tree_scroll;
-        if self.tree_cursor < scroll {
-            scroll = self.tree_cursor;
-        }
-        // 1.2.6+: titles wrap rather than truncate, so a single
-        // logical row can occupy multiple visual lines. Find the
-        // smallest `scroll` such that the rows [scroll..=cursor]
-        // fit inside the pane's `height` visual lines. Greedy:
-        // walk forward from `scroll`, summing visual heights;
-        // advance `scroll` whenever the cumulative total
-        // overshoots.
-        if height > 0 && width > 0 {
-            let mut cumulative = 0usize;
-            let mut head = scroll;
-            for row_idx in scroll..=self.tree_cursor {
-                cumulative += self.tree_row_visual_height(row_idx, width);
-                while cumulative > height && head < self.tree_cursor {
-                    cumulative = cumulative.saturating_sub(
-                        self.tree_row_visual_height(head, width),
-                    );
-                    head += 1;
-                }
-                let _ = row_idx;
-            }
-            scroll = head;
-        }
-        // `take(...)` was a logical-row cap when the tree didn't
-        // wrap. With wrap on, render every row from `scroll`
-        // onward and let ratatui clip at the pane bottom — that
-        // way a partially-visible wrapped row still shows its
-        // first lines instead of being dropped entirely.
-
-        // Build the visible Lines by delegating each row to
-        // `tree_row_lines`, which does the wrap + hanging-indent
-        // layout. ratatui clips at the pane bottom, so emitting
-        // every row from `scroll` onward is fine — a wrapped row
-        // straddling the bottom still shows its first lines.
-        let mut lines: Vec<Line> = Vec::new();
-        for row_idx in scroll..self.rows.len() {
-            for line in self.tree_row_lines(row_idx, width) {
-                lines.push(line);
-            }
-            // Cheap upper-bound check so we don't build Lines
-            // for rows that are clearly off-screen.
-            if lines.len() >= height + 4 {
-                break;
-            }
-        }
-
-        // Pre-wrapped manually so ratatui doesn't re-wrap and
-        // double-indent. No `.wrap(...)` here.
-        let p = Paragraph::new(lines);
-        f.render_widget(p, inner);
-    }
-
-    fn draw_editor(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        // Build the title as a Line of styled spans so the `L… C…`
-        // cursor read-out can carry its own theme colour. ratatui's
-        // Block accepts a Line title directly.
-        let title_line: Line<'_> = match &self.opened {
-            Some(d) => {
-                let (row, col) = d.textarea.cursor();
-                let dirty = if d.dirty { " [modified]" } else { "" };
-                let ro = if d.read_only { " [read-only]" } else { "" };
-                // Live word count + reading-time estimate (250 wpm —
-                // matches the Ctrl+B I book-info modal). Computed each
-                // frame from the textarea so it tracks edits.
-                let words: usize = d
-                    .textarea
-                    .lines()
-                    .iter()
-                    .map(|l| l.split_whitespace().count())
-                    .sum();
-                let reading = format_reading_time(words);
-                let stats_style = Style::default()
-                    .fg(self.theme.editor_position_fg)
-                    .add_modifier(Modifier::BOLD);
-                let lang_tag = match d.content_type.as_deref() {
-                    Some("hjson") => " [hjson]",
-                    Some("bund") => " [bund]",
-                    _ => "",
-                };
-                // Status badge: hidden when None to keep the header
-                // visually quiet on fresh paragraphs; colour-coded
-                // through the workflow when set. The badge wraps in
-                // brackets so it reads as metadata, not prose.
-                let status_node = self.hierarchy.get(d.id);
-                let status_label = status_node
-                    .and_then(|n| n.status.as_deref())
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty() && *s != "None");
-                // "edited X ago" from the node's `modified_at`. Updated
-                // automatically on save (via `update_paragraph_content`),
-                // and recomputed on every frame so the value freshens
-                // visibly when the user re-opens after a break.
-                let edited_ago = status_node.map(|n| {
-                    let now = chrono::Utc::now();
-                    let delta = now.signed_duration_since(n.modified_at);
-                    let secs = delta.num_seconds().max(0) as u64;
-                    format_age_humantime(std::time::Duration::from_secs(secs))
-                });
-                // 1.2.6+: event paragraphs show their calendar
-                // timing (start [→ end] · precision · track) and
-                // an [ORPHAN] tag when unlinked, so the timing
-                // metadata is visible while editing the body.
-                // Use Ctrl+V Shift+T to open the swim-lane view;
-                // edit start / end / precision / track via the
-                // `inkhaven event ...` CLI for now.
-                let event_summary: Option<String> = status_node.and_then(|n| {
-                    n.event.as_ref().map(|ev| {
-                        let cal = crate::timeline::Calendar::from_config(
-                            self.cfg.timeline.calendar.clone(),
-                        );
-                        let start = cal.format(
-                            crate::timeline::TimelinePoint::from_ticks(ev.start_ticks),
-                            ev.precision,
-                        );
-                        let mut s = start;
-                        if let Some(end_ticks) = ev.end_ticks {
-                            let end = cal.format(
-                                crate::timeline::TimelinePoint::from_ticks(end_ticks),
-                                ev.precision,
-                            );
-                            s.push_str(" → ");
-                            s.push_str(&end);
-                        }
-                        let prec = match ev.precision {
-                            crate::timeline::Precision::Year => "year",
-                            crate::timeline::Precision::Season => "season",
-                            crate::timeline::Precision::Month => "month",
-                            crate::timeline::Precision::Week => "week",
-                            crate::timeline::Precision::Day => "day",
-                            crate::timeline::Precision::Hour => "hour",
-                            crate::timeline::Precision::Tick => "tick",
-                        };
-                        s.push_str(&format!(" · {prec}"));
-                        if let Some(track) = ev.track.as_ref() {
-                            s.push_str(&format!(" · {track}"));
-                        }
-                        s
-                    })
-                });
-                let is_orphan_event = status_node
-                    .map(|n| {
-                        n.event.is_some()
-                            && n.tags
-                                .iter()
-                                .any(|t| t.eq_ignore_ascii_case("orphan"))
-                    })
-                    .unwrap_or(false);
-                // 1.2.6+ — when the open paragraph is a regular
-                // manuscript paragraph (not itself an event),
-                // count how many timeline events link to it. The
-                // data model has supported many-to-one for a
-                // while; this surface makes the relationship
-                // visible from the editor. Linear scan over the
-                // hierarchy; cheap at literary scale.
-                let incoming_events: usize = status_node
-                    .filter(|n| n.event.is_none())
-                    .map(|n| {
-                        let me = n.id;
-                        self.hierarchy
-                            .iter()
-                            .filter(|other| {
-                                other.event.is_some()
-                                    && other.linked_paragraphs.contains(&me)
-                            })
-                            .count()
-                    })
-                    .unwrap_or(0);
-
-                let mut spans: Vec<Span<'_>> = Vec::new();
-                spans.push(Span::raw(format!(
-                    " Editor — {}{}{}{} · ",
-                    d.title, lang_tag, ro, dirty
-                )));
-                if let Some(summary) = event_summary {
-                    spans.push(Span::styled(
-                        format!("◆ {summary}"),
-                        Style::default()
-                            .fg(self.theme.tree_open_marker)
-                            .add_modifier(Modifier::BOLD),
-                    ));
-                    spans.push(Span::raw(" · "));
-                    if is_orphan_event {
-                        spans.push(Span::styled(
-                            "[ORPHAN]",
-                            Style::default()
-                                .fg(Color::Red)
-                                .add_modifier(Modifier::BOLD),
-                        ));
-                        spans.push(Span::raw(" · "));
-                    }
-                } else if incoming_events > 0 {
-                    let plural = if incoming_events == 1 { "" } else { "s" };
-                    spans.push(Span::styled(
-                        format!("◆ linked from {incoming_events} event{plural}"),
-                        Style::default()
-                            .fg(self.theme.tree_open_marker)
-                            .add_modifier(Modifier::DIM),
-                    ));
-                    spans.push(Span::raw(" · "));
-                }
-                if let Some(label) = status_label {
-                    spans.push(Span::styled(
-                        format!("[{label}]"),
-                        status_style(label, &self.theme),
-                    ));
-                    spans.push(Span::raw(" · "));
-                }
-                spans.push(Span::styled(
-                    format!("L{} C{} ", row + 1, col + 1),
-                    stats_style,
-                ));
-                spans.push(Span::raw("· "));
-                spans.push(Span::styled(format!("{words}w"), stats_style));
-                spans.push(Span::raw(" · "));
-                spans.push(Span::styled(reading, stats_style));
-                if let Some(ago) = edited_ago {
-                    spans.push(Span::raw(" · "));
-                    spans.push(Span::styled(
-                        format!("edited {ago} ago"),
-                        Style::default().add_modifier(Modifier::DIM),
-                    ));
-                }
-                spans.push(Span::raw(" "));
-                Line::from(spans)
-            }
-            None => Line::from(" Editor "),
-        };
-        let block = self.editor_block_line(title_line);
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-
-        if self.opened.is_none() {
-            let hint = Paragraph::new(
-                "(no paragraph open — select one in the Tree pane and press Enter)",
-            )
-            .style(Style::default().add_modifier(Modifier::DIM))
-            .wrap(Wrap { trim: false });
-            f.render_widget(hint, inner);
-            return;
-        }
-
-        // Per-paragraph goal footer (1.2.4+). Carve one row off
-        // the bottom of the editor area when the open paragraph
-        // has a target word-count set. Provides reliable space
-        // for the gauge — the tree pane can't fit it for long
-        // auto-derived titles.
-        let goal_footer = self.editor_goal_footer_text();
-        let (editor_rect, footer_rect) = match goal_footer.as_ref() {
-            Some(_) => {
-                let footer_h: u16 = 1;
-                let er = Rect {
-                    x: inner.x,
-                    y: inner.y,
-                    width: inner.width,
-                    height: inner.height.saturating_sub(footer_h),
-                };
-                let fr = Rect {
-                    x: inner.x,
-                    y: inner.y + inner.height.saturating_sub(footer_h),
-                    width: inner.width,
-                    height: footer_h,
-                };
-                (er, Some(fr))
-            }
-            None => (inner, None),
-        };
-        let inner = editor_rect;
-
-        // Split-edit mode: divide the editor area into two halves; upper is
-        // the live editor, lower is the read-only snapshot.
-        let split_active = self.opened.as_ref().is_some_and(|d| d.split.is_some());
-        if split_active {
-            let halves = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .split(inner);
-            let upper = halves[0];
-            let lower = halves[1];
-            if self.cfg.editor.wrap {
-                self.draw_editor_wrapped(f, upper);
-            } else {
-                self.draw_editor_unwrapped(f, upper);
-            }
-            self.draw_split_snapshot(f, lower);
-        } else if self.cfg.editor.wrap {
-            self.draw_editor_wrapped(f, inner);
-        } else {
-            self.draw_editor_unwrapped(f, inner);
-        }
-
-        // Render the goal footer last so it sits on top of the
-        // textarea's bottom row (the carve-out above shrunk the
-        // textarea, leaving exactly one free row for us).
-        if let (Some((gauge, words, target)), Some(rect)) =
-            (goal_footer, footer_rect)
-        {
-            let pct = (words.max(0) * 100 / target.max(1)).clamp(0, 999);
-            let (gauge_str, _pct, gauge_style) =
-                format_progress_gauge(words, target);
-            let pct_str = format!(" {pct}%");
-            let counts =
-                format!("  {words}/{target} words");
-            let line = Line::from(vec![
-                Span::raw(" "),
-                Span::styled(gauge_str, gauge_style),
-                Span::styled(pct_str, gauge_style),
-                Span::styled(
-                    counts,
-                    Style::default().add_modifier(Modifier::DIM),
-                ),
-                Span::raw(format!("  · goal: {gauge}")),
-            ]);
-            f.render_widget(Paragraph::new(line), rect);
-        }
-    }
-
-    /// Compute the editor-pane goal footer text from the open
-    /// doc + its node metadata. Returns `(breadcrumb, words,
-    /// target)` when a goal is set, otherwise `None`. The
-    /// breadcrumb is the human-readable title chain
-    /// ("My book › Chapter one › The morning") rather than the
-    /// slug path — slugs are stale after a rename until we
-    /// re-derive them, and users think in titles anyway.
-    fn editor_goal_footer_text(&self) -> Option<(String, i64, i64)> {
-        let doc = self.opened.as_ref()?;
-        let node = self.hierarchy.get(doc.id)?;
-        let target = node.target_words.filter(|n| *n > 0)? as i64;
-        // Count live in-memory text via the same algorithm the
-        // save path uses so the footer matches what the save
-        // event will record.
-        let body = doc.textarea.lines().join("\n");
-        let words = crate::progress::count_words(&body);
-        let breadcrumb = self.title_breadcrumb(node.id);
-        Some((breadcrumb, words, target))
-    }
-
-    /// Render the lower (read-only) pane of split-edit mode. No cursor,
-    /// no diff/bold, no current-line highlight — it's a frozen view of the
-    /// buffer at the moment F4 was pressed.
-    fn draw_split_snapshot(&self, f: &mut ratatui::Frame, area: Rect) {
-        let Some(doc) = self.opened.as_ref() else {
-            return;
-        };
-        let Some(split) = &doc.split else {
-            return;
-        };
-
-        // 1 row for the separator/hint header, the rest for content.
-        if area.height < 2 {
-            return;
-        }
-        let header_rect = Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width,
-            height: 1,
-        };
-        let content_rect = Rect {
-            x: area.x,
-            y: area.y + 1,
-            width: area.width,
-            height: area.height - 1,
-        };
-
-        let header = format!(
-            "── snapshot · Ctrl+H/J scroll · Ctrl+F4 accept · F4 close (line {}/{}) ──",
-            split.scroll_row + 1,
-            split.snapshot_lines.len().max(1)
-        );
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                header,
-                Style::default().fg(Color::DarkGray),
-            ))),
-            header_rect,
-        );
-
-        let lineno_chars = digit_count(split.snapshot_lines.len().max(1));
-        let gutter_width = (lineno_chars + 1) as u16;
-        let visible = content_rect.height as usize;
-        let body_w = content_rect.width.saturating_sub(gutter_width) as usize;
-
-        let lineno_style = Style::default().fg(Color::DarkGray);
-        let body_style = Style::default()
-            .fg(Color::Gray)
-            .add_modifier(Modifier::DIM);
-
-        let mut lines: Vec<Line> = Vec::with_capacity(visible);
-        for (i, line) in split
-            .snapshot_lines
-            .iter()
-            .enumerate()
-            .skip(split.scroll_row)
-            .take(visible)
-        {
-            // Clip line to body_w chars so long lines don't overflow into
-            // the pane border.
-            let chars: Vec<char> = line.chars().collect();
-            let shown: String = if chars.len() > body_w {
-                chars.iter().take(body_w).collect()
-            } else {
-                chars.iter().collect()
-            };
-            let lineno = format!("{:>w$} ", i + 1, w = lineno_chars);
-            lines.push(Line::from(vec![
-                Span::styled(lineno, lineno_style),
-                Span::styled(shown, body_style),
-            ]));
-        }
-        f.render_widget(Paragraph::new(lines), content_rect);
-    }
-
-    fn draw_editor_unwrapped(&mut self, f: &mut ratatui::Frame, inner: Rect) {
-        let block = self.current_block();
-        let lexicon = &self.lexicon;
-        let theme = &self.theme;
-        let opened = self.opened.as_mut().expect("opened checked above");
-        let highlighter = &mut self.highlighter;
-        let current_lines: Vec<String> = opened.textarea.lines().to_vec();
-        let source = current_lines.join("\n");
-        let highlighted = highlight_for_content(highlighter, &source, theme, opened.content_type.as_deref());
-
-        // Precompute "added since last save" bitmaps per source row.
-        let saved = &opened.saved_lines;
-        let added_per_row: Vec<Vec<bool>> = current_lines
-            .iter()
-            .enumerate()
-            .map(|(i, line)| {
-                let saved_line = saved.get(i).map(String::as_str).unwrap_or("");
-                if saved.get(i).is_none() {
-                    // Line beyond the saved snapshot: everything is new.
-                    vec![true; line.chars().count()]
-                } else {
-                    diff_added(saved_line, line)
-                }
-            })
-            .collect();
-
-        // Grammar-correction changes: same diff function against the
-        // pre-correction baseline (set by `T` apply). Empty when no
-        // correction is pending — the renderer then short-circuits.
-        let correction_per_row: Vec<Vec<bool>> = match opened.correction_baseline.as_ref() {
-            Some(base) => current_lines
-                .iter()
-                .enumerate()
-                .map(|(i, line)| match base.get(i) {
-                    Some(b) => diff_added(b, line),
-                    None => vec![true; line.chars().count()],
-                })
-                .collect(),
-            None => Vec::new(),
-        };
-
-        // Per-row regex hits for the match-highlight overlay.
-        let matches_per_row: Vec<Vec<RowHit>> = (0..current_lines.len())
-            .map(|row| match &opened.search {
-                Some(state) => row_matches(state, row)
-                    .into_iter()
-                    .map(|h: RowMatch| RowHit {
-                        col_start: h.col_start,
-                        col_end: h.col_end,
-                        is_current: h.is_current,
-                    })
-                    .collect(),
-                None => Vec::new(),
-            })
-            .collect();
-
-        // Per-row Place/Character matches.
-        let lex_per_row: Vec<Vec<super::lexicon::LexHit>> = current_lines
-            .iter()
-            .map(|line| {
-                if lexicon.is_empty() {
-                    Vec::new()
-                } else {
-                    lexicon.row_hits(line)
-                }
-            })
-            .collect();
-
-        let (cur_row, cur_col) = opened.textarea.cursor();
-        let selection = opened.textarea.selection_range();
-
-        let total_lines = highlighted.len().max(1);
-        let lineno_chars = digit_count(total_lines);
-        let gutter_width = (lineno_chars + 1) as u16;
-
-        let h = inner.height as usize;
-        let w = inner.width.saturating_sub(gutter_width) as usize;
-
-        if h > 0 {
-            if cur_row < opened.scroll_row {
-                opened.scroll_row = cur_row;
-            } else if cur_row >= opened.scroll_row + h {
-                opened.scroll_row = cur_row + 1 - h;
-            }
-        }
-        if w > 0 {
-            if cur_col < opened.scroll_col {
-                opened.scroll_col = cur_col;
-            } else if cur_col >= opened.scroll_col + w {
-                opened.scroll_col = cur_col + 1 - w;
-            }
-        }
-
-        let lineno_style = Style::default().fg(theme.line_number_fg);
-        let current_bg = theme.current_line_bg;
-
-        // 1.2.6+ — set of editor lines (1-based) that carry a
-        // typst diagnostic. Used to paint a red `●` in the
-        // trailing-space slot of the line-number gutter.
-        let diag_lines: std::collections::HashSet<usize> = opened
-            .typst_diagnostics
-            .iter()
-            .map(|d| d.line)
-            .collect();
-
-        let mut visible_lines: Vec<Line> = Vec::with_capacity(h);
-        let row_end = (opened.scroll_row + h).min(highlighted.len());
-        for row in opened.scroll_row..row_end {
-            let is_current = row == cur_row;
-            // Split the gutter into digits + 1-char marker slot
-            // (which is normally a space). When this row has a
-            // diagnostic, the slot turns into a bold red `●`.
-            let lineno_text = format!("{:>chars$}", row + 1, chars = lineno_chars);
-            let has_diag = diag_lines.contains(&(row + 1));
-            let mut lineno_span_style = lineno_style;
-            if is_current {
-                lineno_span_style = lineno_span_style
-                    .bg(current_bg)
-                    .add_modifier(Modifier::BOLD);
-            }
-            let marker_text = if has_diag { "●" } else { " " };
-            let mut marker_style = Style::default();
-            if has_diag {
-                marker_style = marker_style
-                    .fg(Color::Red)
-                    .add_modifier(Modifier::BOLD);
-            }
-            if is_current {
-                marker_style = marker_style.bg(current_bg);
-            }
-
-            let added_flags = added_per_row.get(row).map(Vec::as_slice);
-            let correction_flags = correction_per_row.get(row).map(Vec::as_slice);
-            let row_hits = matches_per_row
-                .get(row)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            let lex_hits = lex_per_row
-                .get(row)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            let mut text_spans = build_row_spans(
-                &highlighted[row],
-                row,
-                opened.scroll_col,
-                w,
-                selection,
-                block,
-                added_flags,
-                row_hits,
-                lex_hits,
-                correction_flags,
-                theme,
-            );
-            if is_current {
-                for s in &mut text_spans {
-                    if s.style.bg.is_none() {
-                        s.style = s.style.bg(current_bg);
-                    }
-                }
-            }
-
-            let text_chars: usize = text_spans.iter().map(|s| s.content.chars().count()).sum();
-            let mut spans = vec![
-                Span::styled(lineno_text, lineno_span_style),
-                Span::styled(marker_text.to_string(), marker_style),
-            ];
-            spans.extend(text_spans);
-            if is_current && text_chars < w {
-                spans.push(Span::styled(
-                    " ".repeat(w - text_chars),
-                    Style::default().bg(current_bg),
-                ));
-            }
-            visible_lines.push(Line::from(spans));
-        }
-        f.render_widget(Paragraph::new(visible_lines), inner);
-
-        if self.focus == Focus::Editor
-            && h > 0
-            && w > 0
-            && cur_row >= opened.scroll_row
-            && cur_row < opened.scroll_row + h
-            && cur_col >= opened.scroll_col
-            && cur_col < opened.scroll_col + w
-        {
-            let x = inner.x + gutter_width + (cur_col - opened.scroll_col) as u16;
-            let y = inner.y + (cur_row - opened.scroll_row) as u16;
-            f.set_cursor_position((x, y));
-        }
-    }
-
-    fn draw_editor_wrapped(&mut self, f: &mut ratatui::Frame, inner: Rect) {
-        let block = self.current_block();
-        let lexicon = &self.lexicon;
-        let theme = &self.theme;
-        let opened = self.opened.as_mut().expect("opened checked above");
-        let highlighter = &mut self.highlighter;
-        let current_lines: Vec<String> = opened.textarea.lines().to_vec();
-        let source = current_lines.join("\n");
-        let highlighted = highlight_for_content(highlighter, &source, theme, opened.content_type.as_deref());
-
-        let saved = &opened.saved_lines;
-        let added_per_row: Vec<Vec<bool>> = current_lines
-            .iter()
-            .enumerate()
-            .map(|(i, line)| {
-                if saved.get(i).is_none() {
-                    vec![true; line.chars().count()]
-                } else {
-                    diff_added(&saved[i], line)
-                }
-            })
-            .collect();
-
-        let correction_per_row: Vec<Vec<bool>> = match opened.correction_baseline.as_ref() {
-            Some(base) => current_lines
-                .iter()
-                .enumerate()
-                .map(|(i, line)| match base.get(i) {
-                    Some(b) => diff_added(b, line),
-                    None => vec![true; line.chars().count()],
-                })
-                .collect(),
-            None => Vec::new(),
-        };
-
-        let matches_per_row: Vec<Vec<RowHit>> = (0..current_lines.len())
-            .map(|row| match &opened.search {
-                Some(state) => row_matches(state, row)
-                    .into_iter()
-                    .map(|h: RowMatch| RowHit {
-                        col_start: h.col_start,
-                        col_end: h.col_end,
-                        is_current: h.is_current,
-                    })
-                    .collect(),
-                None => Vec::new(),
-            })
-            .collect();
-
-        let lex_per_row: Vec<Vec<super::lexicon::LexHit>> = current_lines
-            .iter()
-            .map(|line| {
-                if lexicon.is_empty() {
-                    Vec::new()
-                } else {
-                    lexicon.row_hits(line)
-                }
-            })
-            .collect();
-
-        let (cur_row, cur_col) = opened.textarea.cursor();
-        let selection = opened.textarea.selection_range();
-
-        let total_lines = highlighted.len().max(1);
-        let lineno_chars = digit_count(total_lines);
-        let gutter_width = (lineno_chars + 1) as u16;
-
-        let h = inner.height as usize;
-        let w = inner.width.saturating_sub(gutter_width) as usize;
-
-        let mut visual: Vec<super::highlight::VisualRow> = Vec::new();
-        for (src_row, runs) in highlighted.iter().enumerate() {
-            for vr in wrap_line(runs, src_row, w) {
-                visual.push(vr);
-            }
-        }
-
-        let cursor_visual = find_cursor_visual(&visual, cur_row, cur_col);
-
-        if h > 0 {
-            if cursor_visual.0 < opened.scroll_row {
-                opened.scroll_row = cursor_visual.0;
-            } else if cursor_visual.0 >= opened.scroll_row + h {
-                opened.scroll_row = cursor_visual.0 + 1 - h;
-            }
-        }
-        opened.scroll_col = 0;
-
-        let lineno_style = Style::default().fg(theme.line_number_fg);
-        let current_bg = theme.current_line_bg;
-
-        // 1.2.6+ — diagnostic marker set, same shape as the
-        // unwrapped renderer.
-        let diag_lines: std::collections::HashSet<usize> = opened
-            .typst_diagnostics
-            .iter()
-            .map(|d| d.line)
-            .collect();
-
-        let mut lines: Vec<Line> = Vec::with_capacity(h);
-        let row_end = (opened.scroll_row + h).min(visual.len());
-        for (i, v) in visual[opened.scroll_row..row_end].iter().enumerate() {
-            let visual_row_idx = opened.scroll_row + i;
-            let is_current = visual_row_idx == cursor_visual.0;
-
-            // Line number only on the first visual row of each source row.
-            let lineno_text = if v.src_col_start == 0 {
-                format!("{:>chars$}", v.src_row + 1, chars = lineno_chars)
-            } else {
-                format!("{:>chars$}", "", chars = lineno_chars)
-            };
-            let mut lineno_span_style = lineno_style;
-            if is_current {
-                lineno_span_style = lineno_span_style
-                    .bg(current_bg)
-                    .add_modifier(Modifier::BOLD);
-            }
-            // 1.2.6+ — diagnostic marker slot. Mirrors the
-            // unwrapped renderer above. Only paint the marker
-            // on the first visual row of the source line (so a
-            // wrapped line shows the dot once, not on every
-            // visual continuation).
-            let has_diag =
-                v.src_col_start == 0 && diag_lines.contains(&(v.src_row + 1));
-            let marker_text = if has_diag { "●" } else { " " };
-            let mut marker_style = Style::default();
-            if has_diag {
-                marker_style = marker_style
-                    .fg(Color::Red)
-                    .add_modifier(Modifier::BOLD);
-            }
-            if is_current {
-                marker_style = marker_style.bg(current_bg);
-            }
-
-            let added_flags = added_per_row.get(v.src_row).map(Vec::as_slice);
-            let correction_flags =
-                correction_per_row.get(v.src_row).map(Vec::as_slice);
-            let row_hits = matches_per_row
-                .get(v.src_row)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            let lex_hits = lex_per_row
-                .get(v.src_row)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            let mut text_spans = build_visual_row_spans(
-                v,
-                selection,
-                block,
-                added_flags,
-                row_hits,
-                lex_hits,
-                correction_flags,
-                theme,
-            );
-            if is_current {
-                for s in &mut text_spans {
-                    if s.style.bg.is_none() {
-                        s.style = s.style.bg(current_bg);
-                    }
-                }
-            }
-
-            let text_chars: usize = text_spans.iter().map(|s| s.content.chars().count()).sum();
-            let mut spans = vec![
-                Span::styled(lineno_text, lineno_span_style),
-                Span::styled(marker_text.to_string(), marker_style),
-            ];
-            spans.extend(text_spans);
-            if is_current && text_chars < w {
-                spans.push(Span::styled(
-                    " ".repeat(w - text_chars),
-                    Style::default().bg(current_bg),
-                ));
-            }
-            lines.push(Line::from(spans));
-        }
-        f.render_widget(Paragraph::new(lines), inner);
-
-        if self.focus == Focus::Editor
-            && h > 0
-            && w > 0
-            && cursor_visual.0 >= opened.scroll_row
-            && cursor_visual.0 < opened.scroll_row + h
-            && cursor_visual.1 < w
-        {
-            let x = inner.x + gutter_width + cursor_visual.1 as u16;
-            let y = inner.y + (cursor_visual.0 - opened.scroll_row) as u16;
-            f.set_cursor_position((x, y));
-        }
-    }
-
-    fn draw_ai(&self, f: &mut ratatui::Frame, area: Rect) {
-        // Title carries the inference state plus mode chips so the user
-        // can see at a glance:
-        //   - provider + streaming/done/error status
-        //   - chat history depth (N turns) when non-empty
-        //   - active AI scope (Selection/Paragraph/...) when non-None
-        //   - active InferenceMode (Local/Full) — always shown so F10's
-        //     effect is visible
-        let chat_turns = self.chat_history.len() / 2;
-        // Build the title as a styled Line so the scope= / infer= chips
-        // can carry their own theme colours (F9 / F10 effects are
-        // visible at a glance).
-        let mut spans: Vec<Span<'static>> = Vec::new();
-        spans.push(Span::raw(" AI".to_string()));
-        if let Some(inf) = &self.inference {
-            let status_text = match &inf.status {
-                InferenceStatus::Streaming => format!(" — {} · streaming…", inf.provider),
-                InferenceStatus::Done => format!(" — {} · done", inf.provider),
-                InferenceStatus::Error(_) => format!(" — {} · error", inf.provider),
-            };
-            spans.push(Span::raw(status_text));
-        }
-        if self.ai_mode != AiMode::None {
-            spans.push(Span::raw(" · scope="));
-            spans.push(Span::styled(
-                self.ai_mode.label().to_string(),
-                Style::default()
-                    .fg(self.theme.ai_scope_fg)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
-        spans.push(Span::raw(" · infer="));
-        spans.push(Span::styled(
-            self.inference_mode.label().to_string(),
-            Style::default()
-                .fg(self.theme.ai_infer_fg)
-                .add_modifier(Modifier::BOLD),
-        ));
-        if chat_turns > 0 {
-            spans.push(Span::raw(format!(" · {chat_turns} turn(s)")));
-        }
-        spans.push(Span::raw(" "));
-        let title_line = Line::from(spans);
-        let block = self.pane_block_line(title_line, Focus::Ai);
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-
-        match &self.inference {
-            None => {
-                let hint = Paragraph::new(
-                    "(focus AI prompt with Ctrl+I, type a query and press Enter\n\n type `/` to pick from the prompt library)",
-                )
-                .style(Style::default().add_modifier(Modifier::DIM))
-                .wrap(Wrap { trim: false });
-                f.render_widget(hint, inner);
-            }
-            Some(inf) => {
-                // Reserve the last line for action hints when done.
-                let show_hints = matches!(inf.status, InferenceStatus::Done) && !inf.response.is_empty();
-                let body_height = if show_hints {
-                    inner.height.saturating_sub(2)
-                } else {
-                    inner.height
-                };
-                let body_rect = Rect {
-                    x: inner.x,
-                    y: inner.y,
-                    width: inner.width,
-                    height: body_height,
-                };
-                let widget = match &inf.status {
-                    InferenceStatus::Error(e) => Paragraph::new(e.clone())
-                        .style(Style::default().fg(Color::Red))
-                        .wrap(Wrap { trim: false }),
-                    InferenceStatus::Streaming | InferenceStatus::Done => {
-                        // Render the response as markdown — bold/italic/
-                        // headings/code/lists all light up. Partial input
-                        // during streaming is tolerated by the renderer.
-                        let lines = super::markdown::render(&inf.response);
-                        Paragraph::new(lines).wrap(Wrap { trim: false })
-                    }
-                };
-                f.render_widget(widget, body_rect);
-                if show_hints && inner.height >= 2 {
-                    let hints_rect = Rect {
-                        x: inner.x,
-                        y: inner.y + inner.height - 1,
-                        width: inner.width,
-                        height: 1,
-                    };
-                    let hints = Line::from(vec![
-                        Span::styled(" r ", reverse_chip(Color::Yellow)),
-                        Span::raw("replace  "),
-                        Span::styled(" i ", reverse_chip(Color::Yellow)),
-                        Span::raw("insert  "),
-                        Span::styled(" t ", reverse_chip(Color::Yellow)),
-                        Span::raw("top  "),
-                        Span::styled(" b ", reverse_chip(Color::Yellow)),
-                        Span::raw("bottom  "),
-                        Span::styled(" c ", reverse_chip(Color::Yellow)),
-                        Span::raw("copy  "),
-                        Span::styled(" g ", reverse_chip(Color::Green)),
-                        Span::raw("grammar"),
-                    ]);
-                    f.render_widget(Paragraph::new(hints), hints_rect);
-                }
-            }
-        }
-    }
-
     fn toggle_chat_selection_mode(&mut self) {
         if self.chat_selection.is_some() {
             self.chat_selection = None;
@@ -22298,103 +12318,6 @@ impl App {
         self.chat_history_scroll = 0;
         self.status =
             "chat selection mode · ↑↓ navigate · c=copy · t=insert into editor · Esc to exit".into();
-    }
-
-    fn chat_selection_step(&mut self, delta: isize) {
-        let Some(sel) = self.chat_selection else { return };
-        let total = self.chat_history.len();
-        if total == 0 {
-            self.chat_selection = None;
-            return;
-        }
-        let new_turn = if delta < 0 {
-            sel.turn.saturating_sub(delta.unsigned_abs())
-        } else {
-            (sel.turn + delta as usize).min(total - 1)
-        };
-        if let Some(s) = self.chat_selection.as_mut() {
-            s.turn = new_turn;
-        }
-        let label = self.chat_turn_label(new_turn);
-        self.status = format!("chat selection: {} {}/{total}", label, new_turn + 1);
-    }
-
-    fn chat_selection_jump(&mut self, target: usize) {
-        let Some(_sel) = self.chat_selection else { return };
-        let total = self.chat_history.len();
-        if total == 0 {
-            self.chat_selection = None;
-            return;
-        }
-        let new_turn = target.min(total - 1);
-        if let Some(s) = self.chat_selection.as_mut() {
-            s.turn = new_turn;
-        }
-        let label = self.chat_turn_label(new_turn);
-        self.status = format!("chat selection: {} {}/{total}", label, new_turn + 1);
-    }
-
-    fn chat_turn_label(&self, idx: usize) -> &'static str {
-        match self.chat_history.get(idx) {
-            Some(ChatTurn::User(_)) => "User",
-            Some(ChatTurn::Assistant(_)) => "Assistant",
-            None => "?",
-        }
-    }
-
-    /// `c` / `C` action: copy the selected turn's text to the system
-    /// clipboard. Silently no-op when no clipboard is available
-    /// (headless host); status bar reports the outcome either way.
-    fn chat_selection_copy(&mut self) {
-        let Some(sel) = self.chat_selection else { return };
-        let Some(turn) = self.chat_history.get(sel.turn) else { return };
-        let text = match turn {
-            ChatTurn::User(s) | ChatTurn::Assistant(s) => s.clone(),
-        };
-        match self.clipboard.as_mut() {
-            Some(cb) => match cb.set_text(text.clone()) {
-                Ok(()) => {
-                    self.status = format!(
-                        "copied {} turn ({} chars)",
-                        self.chat_turn_label(sel.turn),
-                        text.chars().count()
-                    );
-                }
-                Err(e) => {
-                    self.status = format!("clipboard copy failed: {e}");
-                }
-            },
-            None => {
-                self.status =
-                    "no system clipboard available — copy unavailable on this host".into();
-            }
-        }
-    }
-
-    /// `t` / `T` action: insert the selected turn's text at the
-    /// editor cursor. Useful when an Assistant reply is the right
-    /// next paragraph or when a User question becomes the new
-    /// prompt body. Requires an open paragraph in the editor.
-    fn chat_selection_into_editor(&mut self) {
-        let Some(sel) = self.chat_selection else { return };
-        let Some(turn) = self.chat_history.get(sel.turn) else { return };
-        let text = match turn {
-            ChatTurn::User(s) | ChatTurn::Assistant(s) => s.clone(),
-        };
-        let label = self.chat_turn_label(sel.turn);
-        if self.opened.is_none() {
-            self.status =
-                "no paragraph open — switch off AI fullscreen (Ctrl+B K) and pick one".into();
-            return;
-        }
-        if let Some(doc) = self.opened.as_mut() {
-            doc.textarea.insert_str(&text);
-            doc.dirty = true;
-        }
-        self.status = format!(
-            "inserted {label} turn into editor ({} chars)",
-            text.chars().count()
-        );
     }
 
     /// Open the chat-history search query modal. Pre-populates the
@@ -22470,26 +12393,6 @@ impl App {
         );
     }
 
-    /// Find every line index in the rendered chat-history pane
-    /// whose text contains `query` (case-insensitive). Render runs
-    /// against the same shape `draw_chat_history` produces so the
-    /// indices map 1-1 to rendered rows.
-    fn chat_search_matches(&self, query: &str) -> Vec<usize> {
-        if query.is_empty() {
-            return Vec::new();
-        }
-        let needle = query.to_lowercase();
-        let (lines, _) = self.build_chat_history_lines();
-        let mut out: Vec<usize> = Vec::new();
-        for (i, line) in lines.iter().enumerate() {
-            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-            if text.to_lowercase().contains(&needle) {
-                out.push(i);
-            }
-        }
-        out
-    }
-
     /// Build the chat-history pane's Lines exactly as
     /// `draw_chat_history` does — same iteration, same markdown
     /// rendering, same headers. Returns both the lines and per-turn
@@ -22541,266 +12444,78 @@ impl App {
         (lines, turn_ranges)
     }
 
-    /// Render the accumulated chat history (User / Assistant turns).
-    /// Used by the `Ctrl+B K` AI-fullscreen layout. The newest turn is
-    /// pinned to the bottom of the pane — old history scrolls up off-
-    /// screen, matching the natural chat-window UX. `Paragraph::scroll`
-    /// handles the offset so we don't have to track per-pane state.
-    fn draw_chat_history(&self, f: &mut ratatui::Frame, area: Rect) {
-        let scroll_tag = if self.chat_history_scroll > 0 {
-            format!(" · ↑ {} line(s)", self.chat_history_scroll)
-        } else {
-            String::new()
-        };
-        let block = self.pane_block_line(
-            Line::from(format!(
-                " Chat history · {} turn(s){scroll_tag} · ↑↓ / PgUp / PgDn ",
-                self.chat_history.len()
-            )),
-            // Use the AI focus colouring so the two AI-related panes
-            // visually group together when the layout is active.
-            Focus::Ai,
-        );
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-
-        if self.chat_history.is_empty() {
-            let hint = Paragraph::new(
-                "(no chat turns yet — send a query from the AI prompt below)",
-            )
-            .style(Style::default().add_modifier(Modifier::DIM))
-            .wrap(Wrap { trim: false });
-            f.render_widget(hint, inner);
-            return;
-        }
-
-        let (mut lines, turn_ranges) = self.build_chat_history_lines();
-
-        // Chat-selection mode: paint the selected turn's lines with
-        // a block bg + clamp the turn index against the live
-        // history (so a deletion / wipe doesn't leave the highlight
-        // dangling).
-        let centred_selection: Option<usize> = if let Some(sel) = self.chat_selection {
-            let total_turns = self.chat_history.len();
-            if total_turns == 0 {
-                None
-            } else {
-                let turn = sel.turn.min(total_turns - 1);
-                match turn_ranges.get(turn).cloned() {
-                    Some(range) => {
-                        let block_style = ratatui::style::Style::default()
-                            .bg(self.theme.current_line_bg);
-                        for i in range.clone() {
-                            if let Some(line) = lines.get_mut(i) {
-                                for span in line.spans.iter_mut() {
-                                    span.style = span.style.patch(block_style);
-                                }
-                            }
-                        }
-                        Some((range.start + range.end) / 2)
-                    }
-                    None => None,
-                }
-            }
-        } else {
-            None
-        };
-
-        // If a search is active, highlight ONLY the matched substring
-        // on each hit line (not the whole line) and pin the
-        // centred match's line index for the scroll math. Matches
-        // the editor's per-token search highlight visually: the
-        // matched word reads dark text on a light pink bg, so the
-        // characters stay legible.
-        let body_h = inner.height as usize;
-        let centred_match: Option<usize> = if let Some(search) = &self.chat_search {
-            let needle = search.query.to_lowercase();
-            let mut match_indices: Vec<usize> = Vec::new();
-            for (i, line) in lines.iter().enumerate() {
-                let text: String =
-                    line.spans.iter().map(|s| s.content.as_ref()).collect();
-                if text.to_lowercase().contains(&needle) {
-                    match_indices.push(i);
-                }
-            }
-            let total = match_indices.len();
-            let cursor = if total == 0 {
-                0
-            } else {
-                search.current.min(total - 1)
-            };
-            for (mi, idx) in match_indices.iter().enumerate() {
-                let is_current = mi == cursor;
-                highlight_substring_in_line(
-                    &mut lines[*idx],
-                    &needle,
-                    is_current,
-                    &self.theme,
-                );
-            }
-            match_indices.get(cursor).copied()
-        } else {
-            None
-        };
-
-        // Scroll: search-centred mode wins over manual / auto when
-        // active. Otherwise the existing auto-bottom-pin minus the
-        // user's PageUp delta still drives.
-        let total = lines.len();
-        let auto_scroll = total.saturating_sub(body_h);
-        // Centring precedence: a live search trumps selection (the
-        // user is presumably hunting for a phrase); otherwise the
-        // chat-selection focal point; otherwise the user's manual
-        // PageUp delta over the auto-pin.
-        let centre_line = centred_match.or(centred_selection);
-        let scroll_offset = if let Some(line_idx) = centre_line {
-            line_idx.saturating_sub(body_h / 2).min(auto_scroll.max(0))
-        } else {
-            auto_scroll.saturating_sub(self.chat_history_scroll)
-        };
-        let p = Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .scroll((scroll_offset as u16, 0));
-        f.render_widget(p, inner);
-    }
-
-    fn draw_prompt_picker(&self, f: &mut ratatui::Frame, area: Rect) {
-        let width = (area.width * 6 / 10).max(40).min(area.width.saturating_sub(4));
-        let matches = self.prompt_picker_matches();
-        let row_count = matches.len() as u16;
-        let height = (row_count * 2 + 2).max(4).min(area.height.saturating_sub(4));
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        // Anchor near the bottom (above the AI prompt bar).
-        let y = area.height.saturating_sub(height + 4) + area.y;
-        let rect = Rect {
-            x,
-            y,
-            width,
-            height,
-        };
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let mut lines: Vec<Line> = Vec::new();
-        if matches.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "(no matching prompts)",
-                Style::default().add_modifier(Modifier::DIM),
-            )));
-        } else {
-            for (i, p) in matches.iter().enumerate() {
-                let selected = i == self.prompt_picker_cursor;
-                let name_style = if selected {
-                    Style::default()
-                        .add_modifier(Modifier::REVERSED | Modifier::BOLD)
-                        .fg(Color::Magenta)
-                } else {
-                    Style::default().fg(Color::Magenta)
-                };
-                let desc_style = if selected {
-                    Style::default().add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default().add_modifier(Modifier::DIM)
-                };
-                let (chip_text, chip_color) = match p.source {
-                    PromptSource::System => (" system ", Color::Cyan),
-                    PromptSource::Book => (" book ", Color::Green),
-                };
-                let chip_style = Style::default()
-                    .bg(chip_color)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD);
-                lines.push(Line::from(vec![
-                    Span::styled(chip_text.to_string(), chip_style),
-                    Span::styled(format!(" /{}", p.name), name_style),
-                ]));
-                lines.push(Line::from(Span::styled(
-                    format!("        {}", p.description),
-                    desc_style,
-                )));
-            }
-        }
-
-        f.render_widget(
-            Paragraph::new(lines).wrap(Wrap { trim: false }).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Prompts ")
-                    .border_style(
-                        Style::default()
-                            .fg(self.theme.modal_border)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                    .style(
-                        Style::default()
-                            .bg(self.theme.modal_bg)
-                            .fg(self.theme.modal_fg),
-                    ),
-            ),
-            rect,
-        );
-    }
-
-    fn draw_status(&self, f: &mut ratatui::Frame, area: Rect) {
-        let dirty = self.opened.as_ref().is_some_and(|d| d.dirty);
-        let mut spans: Vec<Span<'_>> = Vec::new();
-        if dirty {
-            spans.push(Span::styled(
-                " ● ",
-                Style::default()
-                    .bg(Color::Red)
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
-        if self.meta_pending {
-            spans.push(Span::styled(
-                " META ",
-                Style::default()
-                    .bg(Color::Yellow)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            spans.push(Span::raw(" "));
-        }
-        spans.push(Span::styled(
-            format!(" [{}] ", self.focus.label()),
-            Style::default()
-                .bg(Color::Cyan)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::raw("  "));
-        spans.push(Span::raw(self.status.clone()));
-
-        // Right-aligned progress widget — drawn on its own
-        // Paragraph with right alignment so it can't be pushed
-        // off-screen by a long status message; the left part
-        // truncates if the terminal is narrow.
-        let progress_text = self.progress_widget_text();
-        if !progress_text.is_empty() {
-            let right = Paragraph::new(Line::from(Span::styled(
-                progress_text,
-                Style::default().add_modifier(Modifier::DIM),
-            )))
-            .alignment(ratatui::layout::Alignment::Right);
-            f.render_widget(right, area);
-        }
-        f.render_widget(Paragraph::new(Line::from(spans)), area);
-    }
-
     /// One-line writing-progress summary for the right edge of
     /// the status bar. Empty when progress tracking is disabled
     /// (no store installed or no goals configured).
-    fn progress_widget_text(&self) -> String {
+    /// 1.2.7+ — same content as the old text-only widget,
+    /// but the `today` segment gets a colour + glyph based
+    /// on goal state (green ✓ when over goal, amber while
+    /// climbing, dim when still cold). The rest stays DIM
+    /// so the writing-progress widget reads as a calm
+    /// rightside chip with one always-bright element.
+    fn progress_widget_spans(&self) -> Vec<Span<'static>> {
         let Some(snap) = self.progress_cache.as_ref() else {
-            return String::new();
+            return Vec::new();
         };
-        let mut parts: Vec<String> = Vec::new();
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let mut out: Vec<Span<'static>> = Vec::new();
         let today = snap.project.today_words;
-        match snap.project.daily_goal {
-            Some(goal) => parts.push(format!("today {today}/{goal}w")),
-            None => parts.push(format!("today {today}w")),
+        let (today_text, today_style) = match snap.project.daily_goal {
+            Some(goal) if goal > 0 => {
+                let (glyph, style) = if today >= goal {
+                    (
+                        "✓",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else if today > 0 {
+                    (
+                        "·",
+                        Style::default().fg(Color::Yellow),
+                    )
+                } else {
+                    (
+                        "·",
+                        dim,
+                    )
+                };
+                (
+                    format!("{glyph} today {today}/{goal}w"),
+                    style,
+                )
+            }
+            _ => {
+                let style = if today > 0 {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    dim
+                };
+                (format!("today {today}w"), style)
+            }
+        };
+        out.push(Span::styled(today_text, today_style));
+        // Everything after `today` joins the dim trailing
+        // chips via a single computed-on-the-fly string —
+        // matches the pre-1.2.7 text layout for those
+        // segments and keeps the widget tight.
+        let trailing = self.progress_widget_trailing(snap);
+        if !trailing.is_empty() {
+            out.push(Span::styled(format!(" · {trailing}"), dim));
         }
+        out.push(Span::raw(" "));
+        out
+    }
+
+    /// Build the comma-joined trailing chip string (active
+    /// time, streak, link count, book pace). Pulled out of
+    /// `progress_widget_spans` so the `today` segment can
+    /// own its own colour without copy-pasting the rest.
+    fn progress_widget_trailing(
+        &self,
+        snap: &crate::progress::ProgressSnapshot,
+    ) -> String {
+        let mut parts: Vec<String> = Vec::new();
         // Active-time chip — bare duration when no goal is set,
         // `<spent>/<goal>` when there is one.
         let active_goal_secs = self.cfg.goals.active_minutes_daily.max(0) * 60;
@@ -22850,99 +12565,7 @@ impl App {
                 ));
             }
         }
-        format!("{} ", parts.join(" · "))
-    }
-
-    fn draw_search_overlay(&self, f: &mut ratatui::Frame, area: Rect) {
-        let width = area.width.saturating_sub(6).max(40);
-        // Each result takes 3 lines (header / title / snippet); +2 for borders;
-        // +1 for an "(no results)" hint when empty.
-        let body_rows = if self.results.is_empty() {
-            1
-        } else {
-            (self.results.len() as u16) * 3
-        };
-        let height = (body_rows + 2).min(area.height.saturating_sub(2)).max(5);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + 1;
-        let rect = Rect {
-            x,
-            y,
-            width,
-            height,
-        };
-
-        f.render_widget(ratatui::widgets::Clear, rect);
-
-        let title = format!(
-            " Results for `{}` ({}) ",
-            self.search_input.as_str(),
-            self.results.len()
-        );
-
-        let mut lines: Vec<Line> = Vec::new();
-        if self.results.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "(no results)",
-                Style::default().add_modifier(Modifier::DIM),
-            )));
-        } else {
-            for (i, hit) in self.results.iter().enumerate() {
-                let selected = i == self.results_cursor;
-                let header_style = if selected {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::REVERSED | Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::Yellow)
-                };
-                let title_style = if selected {
-                    Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
-                } else {
-                    Style::default().add_modifier(Modifier::BOLD)
-                };
-                let snippet_style = if selected {
-                    Style::default().add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default().add_modifier(Modifier::DIM)
-                };
-
-                // Display the human-readable breadcrumb (ancestor titles
-                // joined with `›`) instead of the slug-based directory path
-                // — book/chapter/subchapter names are what the user
-                // recognises.
-                let breadcrumb = self.title_breadcrumb(hit.id);
-                let header = format!(
-                    " {:>5.3}  [{:<10}] {} ",
-                    hit.score,
-                    hit.kind.as_str(),
-                    breadcrumb
-                );
-                lines.push(Line::from(Span::styled(header, header_style)));
-                lines.push(Line::from(Span::styled(
-                    format!("         {}", hit.title),
-                    title_style,
-                )));
-                let snip = if hit.snippet.is_empty() {
-                    "         (no body yet)".to_string()
-                } else {
-                    format!("         {}", hit.snippet)
-                };
-                lines.push(Line::from(Span::styled(snip, snippet_style)));
-            }
-        }
-
-        let body = Paragraph::new(lines).wrap(Wrap { trim: false }).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-        );
-        f.render_widget(body, rect);
+        parts.join(" · ")
     }
 
     // ── Bund stdlib bridge ───────────────────────────────────────────
@@ -23444,7 +13067,7 @@ impl App {
 /// Map a source-coordinate cursor (row, col) to its visual-coordinate
 /// position inside a wrapped layout. Linear in number of visual rows up to
 /// the cursor, which is bounded by the source size — cheap at literary scale.
-fn find_cursor_visual(
+pub(super) fn find_cursor_visual(
     visual: &[super::highlight::VisualRow],
     cur_row: usize,
     cur_col: usize,
@@ -23472,262 +13095,6 @@ fn find_cursor_visual(
     (0, 0)
 }
 
-/// Placeholder title for paragraphs added without one. The next save replaces
-/// it with the first sentence of the body.
-const PARAGRAPH_PLACEHOLDER_TITLE: &str = "Untitled paragraph";
-
-/// Maximum number of characters a node title is allowed to occupy in the
-/// tree pane. Beyond that, the title is truncated with an ellipsis so the
-/// `Nw` word-count suffix stays visible on a single row.
-const TITLE_MAX_DISPLAY: usize = 60;
-
-/// Greedy word-wrap (`text` over a `width`-wide column),
-/// falling back to char-break when a single word doesn't fit.
-/// Empty input returns one empty line; zero width returns the
-/// original (no useful wrap available). Used by
-/// `tree_row_lines` to wrap long node titles with a hanging
-/// indent.
-fn wrap_words_or_chars(text: &str, width: usize) -> Vec<String> {
-    if width == 0 {
-        return vec![text.to_owned()];
-    }
-    if text.is_empty() {
-        return vec![String::new()];
-    }
-    let mut lines: Vec<String> = Vec::new();
-    let mut current = String::new();
-    let mut current_w = 0usize;
-    for word in text.split_whitespace() {
-        let word_w = word.chars().count();
-        if word_w > width {
-            // Word doesn't fit even on a line of its own —
-            // flush whatever's pending, then hard-break by
-            // character.
-            if !current.is_empty() {
-                lines.push(std::mem::take(&mut current));
-            }
-            let mut buf = String::new();
-            let mut bw = 0;
-            for c in word.chars() {
-                if bw == width {
-                    lines.push(std::mem::take(&mut buf));
-                    bw = 0;
-                }
-                buf.push(c);
-                bw += 1;
-            }
-            current = buf;
-            current_w = bw;
-        } else {
-            let needed = if current.is_empty() {
-                word_w
-            } else {
-                current_w + 1 + word_w
-            };
-            if needed > width {
-                lines.push(std::mem::take(&mut current));
-                current = word.to_owned();
-                current_w = word_w;
-            } else {
-                if !current.is_empty() {
-                    current.push(' ');
-                    current_w += 1;
-                }
-                current.push_str(word);
-                current_w += word_w;
-            }
-        }
-    }
-    if !current.is_empty() || lines.is_empty() {
-        lines.push(current);
-    }
-    lines
-}
-
-/// 1.2.6+ — truncate a track label to `max_chars`, appending
-/// `…` when the value was actually shortened. Returns the
-/// original on short strings.
-fn truncate_label(label: &str, max_chars: usize) -> String {
-    if label.chars().count() <= max_chars {
-        return label.to_owned();
-    }
-    let take = max_chars.saturating_sub(1);
-    let mut s: String = label.chars().take(take).collect();
-    s.push('…');
-    s
-}
-
-
-/// Render a 4-cell Unicode gauge + percent for a per-paragraph
-/// word-count goal. Each cell represents 25% of progress; the
-/// last partial cell uses a medium-shade glyph when the gauge
-/// is between thresholds. Colour buckets:
-///   <25% red, <50% yellow, <75% light-green, ≥100% green-bold,
-///   between 75 and 100 green-dim. Returns `(gauge_str, percent_int, style)`.
-/// Compute aligned line-by-line diff rows for the F6 → V
-/// snapshot-diff modal. Uses `similar`'s `TextDiff::from_lines`
-/// (Myers algorithm) to get a sequence of `(tag, line)` chunks,
-/// then aligns them into side-by-side rows.
-///
-/// Heuristic for `Changed` rows: when a Delete is immediately
-/// followed by an Insert, fuse the pair into one Changed row
-/// rather than rendering them as a removal + an addition on
-/// different lines. This is what most diff viewers do.
-fn compute_line_diff(left: &str, right: &str) -> Vec<SnapshotDiffRow> {
-    use similar::{ChangeTag, TextDiff};
-    let diff = TextDiff::from_lines(left, right);
-    let mut out: Vec<SnapshotDiffRow> = Vec::new();
-    // Walk the change list; on a Delete, peek to see if the
-    // next change is an Insert and fuse them.
-    let changes: Vec<_> = diff.iter_all_changes().collect();
-    let mut i = 0;
-    while i < changes.len() {
-        let c = &changes[i];
-        let text = c
-            .value()
-            .strip_suffix('\n')
-            .unwrap_or(c.value())
-            .to_string();
-        match c.tag() {
-            ChangeTag::Equal => {
-                out.push(SnapshotDiffRow {
-                    left: Some(text.clone()),
-                    right: Some(text),
-                    kind: SnapshotDiffKind::Equal,
-                });
-                i += 1;
-            }
-            ChangeTag::Delete => {
-                // Look ahead for a paired Insert to fuse.
-                if let Some(next) = changes.get(i + 1) {
-                    if next.tag() == ChangeTag::Insert {
-                        let next_text = next
-                            .value()
-                            .strip_suffix('\n')
-                            .unwrap_or(next.value())
-                            .to_string();
-                        out.push(SnapshotDiffRow {
-                            left: Some(text),
-                            right: Some(next_text),
-                            kind: SnapshotDiffKind::Changed,
-                        });
-                        i += 2;
-                        continue;
-                    }
-                }
-                out.push(SnapshotDiffRow {
-                    left: Some(text),
-                    right: None,
-                    kind: SnapshotDiffKind::Removed,
-                });
-                i += 1;
-            }
-            ChangeTag::Insert => {
-                out.push(SnapshotDiffRow {
-                    left: None,
-                    right: Some(text),
-                    kind: SnapshotDiffKind::Added,
-                });
-                i += 1;
-            }
-        }
-    }
-    out
-}
-
-#[cfg(test)]
-mod event_picker_helpers {
-    use super::*;
-
-    fn entry(title: &str, ticks: i64, track: Option<&str>) -> EventPickerEntry {
-        EventPickerEntry {
-            id: Uuid::nil(),
-            title: title.into(),
-            start_ticks: ticks,
-            start_str: format!("{ticks}"),
-            glyph: "●".into(),
-            track: track.map(str::to_owned),
-            is_orphan: false,
-        }
-    }
-
-    #[test]
-    fn filter_none_passes_all() {
-        let es = vec![
-            entry("A", 0, Some("main")),
-            entry("B", 1, Some("flashback")),
-        ];
-        assert_eq!(visible_event_entries(&es, None).len(), 2);
-    }
-
-    #[test]
-    fn filter_track_case_insensitive() {
-        let es = vec![
-            entry("A", 0, Some("main")),
-            entry("B", 1, Some("flashback")),
-            entry("C", 2, None),
-        ];
-        let hits = visible_event_entries(&es, Some("MAIN"));
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].title, "A");
-    }
-
-    #[test]
-    fn cycle_through_tracks_then_back_to_none() {
-        let tracks = vec!["flashback".to_string(), "main".to_string()];
-        assert_eq!(cycle_track(None, &tracks).as_deref(), Some("flashback"));
-        assert_eq!(
-            cycle_track(Some("flashback"), &tracks).as_deref(),
-            Some("main")
-        );
-        assert_eq!(cycle_track(Some("main"), &tracks), None);
-    }
-
-    #[test]
-    fn cycle_empty_tracks_returns_none() {
-        assert_eq!(cycle_track(None, &[]), None);
-        assert_eq!(cycle_track(Some("anything"), &[]), None);
-    }
-}
-
-#[cfg(test)]
-mod tests_diff {
-    use super::*;
-
-    #[test]
-    fn identical() {
-        let r = compute_line_diff("a\nb\nc\n", "a\nb\nc\n");
-        assert_eq!(r.len(), 3);
-        assert!(r.iter().all(|x| x.kind == SnapshotDiffKind::Equal));
-    }
-
-    #[test]
-    fn pure_add() {
-        let r = compute_line_diff("a\n", "a\nb\n");
-        assert_eq!(r.len(), 2);
-        assert_eq!(r[0].kind, SnapshotDiffKind::Equal);
-        assert_eq!(r[1].kind, SnapshotDiffKind::Added);
-        assert_eq!(r[1].right.as_deref(), Some("b"));
-    }
-
-    #[test]
-    fn pure_remove() {
-        let r = compute_line_diff("a\nb\n", "a\n");
-        assert_eq!(r.len(), 2);
-        assert_eq!(r[1].kind, SnapshotDiffKind::Removed);
-        assert_eq!(r[1].left.as_deref(), Some("b"));
-    }
-
-    #[test]
-    fn fused_change() {
-        // Single-line rewrite fuses to Changed.
-        let r = compute_line_diff("foo\n", "bar\n");
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].kind, SnapshotDiffKind::Changed);
-        assert_eq!(r[0].left.as_deref(), Some("foo"));
-        assert_eq!(r[0].right.as_deref(), Some("bar"));
-    }
-}
 
 /// Fuzzy-rank `entries` against `query`. Returns indices into
 /// the original Vec, ordered by score (descending). Scoring:
@@ -23742,7 +13109,7 @@ mod tests_diff {
 /// kept simple (no scoring) because the result set already
 /// belongs to one chosen tag, and the user just wants to narrow
 /// further by title / slug fragment.
-fn filter_tag_results(
+pub(super) fn filter_tag_results(
     entries: &[ScriptPickerEntry],
     query: &str,
 ) -> Vec<ScriptPickerEntry> {
@@ -23760,7 +13127,7 @@ fn filter_tag_results(
         .collect()
 }
 
-fn fuzzy_filter_entries(
+pub(super) fn fuzzy_filter_entries(
     entries: &[ScriptPickerEntry],
     query: &str,
 ) -> Vec<usize> {
@@ -23791,50 +13158,7 @@ fn fuzzy_filter_entries(
     scored.into_iter().map(|(_, i)| i).collect()
 }
 
-/// Render an active-time count in shorthand:
-///   <60s   → "0m"
-///   <60m   → "Nm"
-///   else   → "Hh Mm" (zero-padded minutes)
-/// Used by the status-bar widget + Ctrl+V G modal.
-fn format_active_duration(seconds: i64) -> String {
-    let s = seconds.max(0);
-    if s < 60 {
-        return "0m".to_string();
-    }
-    let minutes = s / 60;
-    if minutes < 60 {
-        return format!("{minutes}m");
-    }
-    let h = minutes / 60;
-    let m = minutes % 60;
-    format!("{h}h {m:02}m")
-}
-
-#[cfg(test)]
-mod tests_active_duration {
-    use super::format_active_duration;
-
-    #[test]
-    fn under_a_minute_is_zero() {
-        assert_eq!(format_active_duration(0), "0m");
-        assert_eq!(format_active_duration(45), "0m");
-    }
-
-    #[test]
-    fn minutes_only() {
-        assert_eq!(format_active_duration(60), "1m");
-        assert_eq!(format_active_duration(3540), "59m");
-    }
-
-    #[test]
-    fn hours_with_minutes() {
-        assert_eq!(format_active_duration(3600), "1h 00m");
-        assert_eq!(format_active_duration(3660), "1h 01m");
-        assert_eq!(format_active_duration(7325), "2h 02m");
-    }
-}
-
-fn format_progress_gauge(current: i64, target: i64) -> (String, i64, Style) {
+pub(super) fn format_progress_gauge(current: i64, target: i64) -> (String, i64, Style) {
     if target <= 0 {
         return ("[░░░░]".into(), 0, Style::default());
     }
@@ -23923,7 +13247,7 @@ mod tests_gauge {
 /// Dispatch the per-line highlight call based on `content_type` —
 /// typst (default) goes through the cached tree-sitter highlighter;
 /// "hjson" runs the lightweight hand-rolled lexer.
-pub fn highlight_for_content(
+pub(super) fn highlight_for_content(
     highlighter: &mut super::highlight::TypstHighlighter,
     source: &str,
     theme: &super::theme::Theme,
@@ -23939,7 +13263,7 @@ pub fn highlight_for_content(
 /// Convert a tui-textarea (row, char-col) cursor into a byte offset
 /// inside `source = lines.join("\n")`. Used by the mode detector to
 /// query tree-sitter at the cursor's position.
-pub fn byte_offset_for_cursor(source: &str, row: usize, col: usize) -> usize {
+fn byte_offset_for_cursor(source: &str, row: usize, col: usize) -> usize {
     let mut byte: usize = 0;
     let mut current_row = 0;
     for line in source.split_inclusive('\n') {
@@ -23960,28 +13284,6 @@ pub fn byte_offset_for_cursor(source: &str, row: usize, col: usize) -> usize {
     source.len()
 }
 
-/// Map digit chars '1'..'7' to a status label. Empty for any other
-/// char. 1 is the most-advanced status so the typical writer query —
-/// "what's actually ready to ship?" — is the lowest-effort chord.
-/// Map a digit chord (`1`..`7`) to its workflow-status string.
-/// Once used inline by the meta dispatcher; the dispatcher now
-/// resolves to `StatusFilter*` actions via the binding table, so
-/// this stays only as a unit-test helper for the digit→status
-/// mapping itself.
-#[cfg(test)]
-pub fn digit_to_status(c: char) -> Option<&'static str> {
-    match c {
-        '1' => Some("Ready"),
-        '2' => Some("Final"),
-        '3' => Some("Third"),
-        '4' => Some("Second"),
-        '5' => Some("First"),
-        '6' => Some("Napkin"),
-        '7' => Some("None"),
-        _ => None,
-    }
-}
-
 /// Apply an editor-style "search match" highlight to the first
 /// occurrence of `needle` (case-insensitive) inside a chat-history
 /// rendered line. The matched substring gets a dark foreground on a
@@ -23991,7 +13293,7 @@ pub fn digit_to_status(c: char) -> Option<&'static str> {
 /// Only the FIRST occurrence per line is highlighted — multiple
 /// matches on the same line is a UX corner case; the user can hit
 /// Ctrl+X to walk to the next line's match either way.
-pub fn highlight_substring_in_line(
+pub(super) fn highlight_substring_in_line(
     line: &mut ratatui::text::Line<'static>,
     needle_lower: &str,
     is_current: bool,
@@ -24062,77 +13364,6 @@ pub fn highlight_substring_in_line(
     line.spans = new_spans;
 }
 
-/// Document-status workflow ring. `Ctrl+B R` advances through this
-/// sequence; the ring wraps back to "None" after "Ready". `None` is
-/// represented by both the absence of `status` on the Node and the
-/// literal "None" string in the ring — the helpers below collapse
-/// the two views.
-pub const STATUS_CYCLE: &[&str] = &[
-    "None", "Napkin", "First", "Second", "Third", "Final", "Ready",
-];
-
-pub fn next_status(current: Option<&str>) -> &'static str {
-    let cur = display_status(current);
-    let idx = STATUS_CYCLE
-        .iter()
-        .position(|s| *s == cur)
-        .unwrap_or(0);
-    STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.len()]
-}
-
-pub fn prev_status(current: Option<&str>) -> &'static str {
-    let cur = display_status(current);
-    let idx = STATUS_CYCLE
-        .iter()
-        .position(|s| *s == cur)
-        .unwrap_or(0);
-    STATUS_CYCLE[(idx + STATUS_CYCLE.len() - 1) % STATUS_CYCLE.len()]
-}
-
-pub fn display_status(current: Option<&str>) -> &str {
-    match current {
-        None => "None",
-        Some(s) if s.trim().is_empty() => "None",
-        Some(s) => s,
-    }
-}
-
-/// Compact one-character badge for the tree-pane row. The colour
-/// (from `status_style`) carries the meaning; the letter just gives
-/// the row a visual anchor so the user knows that column means
-/// status.
-pub fn status_letter(label: &str) -> &'static str {
-    match label {
-        "Napkin" => "n",
-        "First" => "1",
-        "Second" => "2",
-        "Third" => "3",
-        "Final" => "F",
-        "Ready" => "R",
-        _ => " ",
-    }
-}
-
-/// Colour the editor header uses for each status — picks from the
-/// existing theme palette so users with custom themes keep their
-/// preferred hues.
-pub fn status_style(label: &str, theme: &super::theme::Theme) -> Style {
-    let base = match label {
-        "None" => return Style::default().add_modifier(Modifier::DIM),
-        "Napkin" => theme.grammar_change_fg,           // red — "rough"
-        "First" => theme.ai_scope_fg,                  // peach
-        "Second" => theme.characters_fg,               // amber
-        "Third" => theme.places_fg,                    // cyan
-        "Final" => theme.border_saved,                 // green
-        "Ready" => theme.border_saved,                 // green + bold
-        _ => return Style::default(),
-    };
-    let mut style = Style::default().fg(base).add_modifier(Modifier::BOLD);
-    if label == "Ready" {
-        style = style.add_modifier(Modifier::REVERSED);
-    }
-    style
-}
 
 /// Open-bracket → matching close pair the auto-close logic emits.
 /// None for any character that isn't an opener we recognise.
@@ -24154,7 +13385,7 @@ fn is_close_pair_char(c: char) -> bool {
 /// Case-insensitive substring filter over the baked-in typst function
 /// table. Results are returned sorted alphabetically (the table is
 /// already sorted; we just preserve order across filter steps).
-pub fn filter_functions(filter: &str) -> Vec<super::typst_funcs::TypstFn> {
+pub(super) fn filter_functions(filter: &str) -> Vec<super::typst_funcs::TypstFn> {
     let needle = filter.trim().to_lowercase();
     if needle.is_empty() {
         return super::typst_funcs::all();
@@ -24163,16 +13394,6 @@ pub fn filter_functions(filter: &str) -> Vec<super::typst_funcs::TypstFn> {
         .into_iter()
         .filter(|f| f.name.to_lowercase().contains(&needle))
         .collect()
-}
-
-/// Detection result for "is the cursor sitting inside the first
-/// string argument of a `#image(...)` call on this line".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ImageCallContext {
-    /// True when the open `"` has a matching close `"` further along
-    /// the same line. The picker uses this to decide whether to
-    /// insert a closing quote after the filename or not.
-    pub closing_quote_present: bool,
 }
 
 /// Inspect the editor line up to the cursor and decide whether we're
@@ -24191,7 +13412,7 @@ pub struct ImageCallContext {
 /// detected. The line-local scope makes this a 50-line function and
 /// the failure mode is "Ctrl+B P falls through to Places RAG" rather
 /// than a bug.
-pub fn detect_image_call_context(line: &str, cursor_col: usize) -> Option<ImageCallContext> {
+fn detect_image_call_context(line: &str, cursor_col: usize) -> Option<ImageCallContext> {
     let cursor_byte = char_offset_to_byte(line, cursor_col);
     let prefix = &line[..cursor_byte];
     // Walk backward to find the last `#image(`. Allow whitespace
@@ -24267,7 +13488,7 @@ fn char_offset_to_byte(s: &str, char_off: usize) -> usize {
         .unwrap_or(s.len())
 }
 
-fn current_word_or_selection(doc: &OpenedDoc) -> String {
+pub(super) fn current_word_or_selection(doc: &OpenedDoc) -> String {
     if let Some(((r1, c1), (r2, c2))) = doc.textarea.selection_range() {
         return slice_lines(doc.textarea.lines(), r1, c1, r2, c2)
             .trim()
@@ -24287,22 +13508,6 @@ fn current_word_or_selection(doc: &OpenedDoc) -> String {
         }
     }
     String::new()
-}
-
-/// Aggregate counts for one root Book, computed by walking its subtree.
-/// Words come from each Paragraph's stored `word_count` (kept up to date
-/// at save time); sentences are derived by re-reading paragraph bodies
-/// from disk, which is fine for literary-scale projects (hundreds of
-/// short files) but should be reconsidered if a project ever grows past
-/// many thousands of paragraphs.
-#[derive(Debug, Default)]
-struct BookStats {
-    chapters: usize,
-    subchapters: usize,
-    paragraphs: usize,
-    images: usize,
-    sentences: usize,
-    words: u64,
 }
 
 fn compute_book_stats(
@@ -24368,349 +13573,11 @@ fn count_sentences(content: &str) -> usize {
     count
 }
 
-/// Compact reading-time estimate for the editor header. 250 wpm
-/// (educational adult silent-reading baseline) rounded up to whole
-/// minutes; short paragraphs collapse to `<1m`. Matches the per-book
-/// figure in the Ctrl+B I info panel — same constant, same rounding.
-fn format_reading_time(words: usize) -> String {
-    if words == 0 {
-        return "<1m".to_string();
-    }
-    let minutes = ((words as f64) / 250.0).ceil() as u64;
-    if minutes < 60 {
-        format!("~{minutes}m")
-    } else {
-        let h = minutes / 60;
-        let m = minutes % 60;
-        if m == 0 {
-            format!("~{h}h")
-        } else {
-            format!("~{h}h {m}m")
-        }
-    }
-}
-
-/// Format a `Duration` as a coarse "N units ago" string using only the
-/// largest two units (days+hours, hours+minutes, etc.). humantime's
-/// default formatter prints every non-zero unit down to nanoseconds,
-/// which is too noisy for a "how old is this PDF" read-out.
-fn format_age_humantime(dur: std::time::Duration) -> String {
-    let total_secs = dur.as_secs();
-    if total_secs < 60 {
-        return format!("{total_secs}s");
-    }
-    let days = total_secs / 86_400;
-    let hours = (total_secs % 86_400) / 3600;
-    let minutes = (total_secs % 3600) / 60;
-    if days > 0 {
-        if hours > 0 {
-            format!("{days}d {hours}h")
-        } else {
-            format!("{days}d")
-        }
-    } else if hours > 0 {
-        if minutes > 0 {
-            format!("{hours}h {minutes}m")
-        } else {
-            format!("{hours}h")
-        }
-    } else {
-        format!("{minutes}m")
-    }
-}
-
-/// Rewrite `<block>.<key> = <value_lit>` in an existing HJSON config
-/// file in place, preserving every other byte — comments, key
-/// ordering, indentation, trailing comments on the rewritten line.
-/// Returns the new file contents. The strategy is a targeted text
-/// edit (no full re-serialisation) so the carefully-annotated default
-/// HJSON template survives an update.
-///
-/// `value_lit` is the literal text to write (already quoted /
-/// formatted by the caller — e.g. `"ollama"` for a string, `true` for
-/// a bool). When the key isn't present we insert it right after the
-/// opening `{` of the block.
-///
-/// Returns Err with a human-readable reason when the file shape
-/// doesn't match our expectations (no block of that name, unterminated
-/// braces). The brace counter doesn't understand HJSON strings — it
-/// would miscount a `{` / `}` inside a quoted string. Fine for our
-/// shipped template, which uses braces only for nested objects.
-fn set_key_in_hjson_block(
-    raw: &str,
-    block: &str,
-    key: &str,
-    value_lit: &str,
-) -> Result<String, String> {
-    let lines: Vec<&str> = raw.split_inclusive('\n').collect();
-    if lines.is_empty() {
-        return Err("config file is empty".into());
-    }
-
-    let block_prefix = format!("{block}:");
-    let block_open_idx = lines.iter().position(|l| {
-        let trimmed = l.trim_start();
-        !trimmed.starts_with("//") && trimmed.starts_with(&block_prefix)
-    });
-    let block_open_idx = block_open_idx
-        .ok_or_else(|| format!("no `{block}:` block found in HJSON"))?;
-
-    // Walk forward tracking brace depth (ignoring `//` line comments)
-    // so we know where the block ends.
-    let mut depth: i32 = 0;
-    let mut block_started = false;
-    let mut block_end: Option<usize> = None;
-    for (i, line) in lines.iter().enumerate().skip(block_open_idx) {
-        let code = line.split("//").next().unwrap_or("");
-        for c in code.chars() {
-            match c {
-                '{' => {
-                    depth += 1;
-                    block_started = true;
-                }
-                '}' => depth -= 1,
-                _ => {}
-            }
-        }
-        if block_started && depth == 0 {
-            block_end = Some(i);
-            break;
-        }
-    }
-    let block_end = block_end
-        .ok_or_else(|| format!("unterminated `{block}: {{` block — check brace balance"))?;
-
-    // Scan for the target key as a *direct* child of the block
-    // (depth == 1 at the time the line starts being read).
-    let key_unquoted = format!("{key}:");
-    let key_quoted = format!("\"{key}\":");
-    let mut depth: i32 = 0;
-    let mut target_idx: Option<usize> = None;
-    for (i, line) in lines.iter().enumerate().take(block_end + 1).skip(block_open_idx) {
-        let depth_before = depth;
-        let code = line.split("//").next().unwrap_or("");
-        for c in code.chars() {
-            match c {
-                '{' => depth += 1,
-                '}' => depth -= 1,
-                _ => {}
-            }
-        }
-        if i == block_open_idx {
-            continue;
-        }
-        if depth_before == 1 {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            if trimmed.starts_with(&key_unquoted) || trimmed.starts_with(&key_quoted) {
-                target_idx = Some(i);
-                break;
-            }
-        }
-    }
-
-    let mut out = String::with_capacity(raw.len() + value_lit.len());
-    match target_idx {
-        Some(idx) => {
-            let mut rewrote = false;
-            for (i, line) in lines.iter().enumerate() {
-                if i == idx {
-                    rewrote = true;
-                    let (eol, core): (&str, &str) =
-                        if let Some(stripped) = line.strip_suffix("\r\n") {
-                            ("\r\n", stripped)
-                        } else if let Some(stripped) = line.strip_suffix('\n') {
-                            ("\n", stripped)
-                        } else {
-                            ("", *line)
-                        };
-                    let colon_pos = core.find(':').ok_or_else(|| {
-                        format!("`{key}` line missing `:` separator — unexpected HJSON")
-                    })?;
-                    let head = &core[..=colon_pos]; // includes ":"
-                    let tail = &core[colon_pos + 1..];
-                    let comment_pos = tail.find("//");
-                    let (_old_value, comment_suffix) = match comment_pos {
-                        Some(p) => (&tail[..p], &tail[p..]),
-                        None => (tail, ""),
-                    };
-                    if comment_suffix.is_empty() {
-                        out.push_str(&format!("{head} {value_lit}{eol}"));
-                    } else {
-                        // Keep one space between the new value and the
-                        // trailing comment so it doesn't slide left.
-                        out.push_str(&format!("{head} {value_lit}  {comment_suffix}{eol}"));
-                    }
-                } else {
-                    out.push_str(line);
-                }
-            }
-            if !rewrote {
-                return Err("internal error: target line not rewritten".into());
-            }
-            Ok(out)
-        }
-        None => {
-            // Insert the missing key right after the block-opening
-            // line, using two extra spaces of indentation relative to
-            // it.
-            let block_indent: String = lines[block_open_idx]
-                .chars()
-                .take_while(|c| *c == ' ' || *c == '\t')
-                .collect();
-            let child_indent = format!("{block_indent}  ");
-            for (i, line) in lines.iter().enumerate() {
-                out.push_str(line);
-                if i == block_open_idx {
-                    let eol = if line.ends_with("\r\n") {
-                        "\r\n"
-                    } else if line.ends_with('\n') {
-                        "\n"
-                    } else {
-                        "\n"
-                    };
-                    out.push_str(&format!("{child_indent}{key}: {value_lit}{eol}"));
-                }
-            }
-            Ok(out)
-        }
-    }
-}
-
-/// Wrapper that quotes `new_default` if needed and delegates to
-/// `set_key_in_hjson_block` for the `llm.default` slot.
-fn set_llm_default_in_hjson(raw: &str, new_default: &str) -> Result<String, String> {
-    let quote_needed = new_default.is_empty()
-        || !new_default
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-    let value_lit = if quote_needed {
-        format!("\"{}\"", new_default.replace('\\', "\\\\").replace('"', "\\\""))
-    } else {
-        new_default.to_string()
-    };
-    set_key_in_hjson_block(raw, "llm", "default", &value_lit)
-}
-
-/// Set `sound.enabled = true|false` in inkhaven.hjson. Inserts the
-/// key (and synthesises the block when missing) when the user has
-/// stripped them from an older config.
-fn set_sound_enabled_in_hjson(raw: &str, enabled: bool) -> Result<String, String> {
-    let value_lit = if enabled { "true" } else { "false" };
-    match set_key_in_hjson_block(raw, "sound", "enabled", value_lit) {
-        Ok(s) => Ok(s),
-        Err(reason) if reason.contains("no `sound:` block") => {
-            insert_sound_block_before_root_close(raw, value_lit)
-        }
-        Err(other) => Err(other),
-    }
-}
-
-/// Append a fresh `sound: { ... }` block just *inside* the root
-/// object's closing `}`. Older configs predating the sound feature
-/// don't have the block at all — the toggle synthesises one. The
-/// previous version of this helper appended after the file end, which
-/// landed the block *outside* the root and broke parsing on next
-/// launch.
-fn insert_sound_block_before_root_close(raw: &str, value_lit: &str) -> Result<String, String> {
-    let lines: Vec<&str> = raw.split_inclusive('\n').collect();
-    // Scan backward for the root object's closing brace — the last
-    // line whose first non-whitespace character is `}` and whose code
-    // (stripped of `//` comments) contains *only* whitespace + `}`.
-    let root_close_idx = lines.iter().enumerate().rev().find_map(|(i, l)| {
-        let code = l.split("//").next().unwrap_or("");
-        let trimmed = code.trim();
-        if trimmed == "}" {
-            Some(i)
-        } else {
-            None
-        }
-    });
-    let root_close_idx = root_close_idx.ok_or_else(|| {
-        "no root closing `}` found — file shape unrecognised".to_string()
-    })?;
-
-    let block = format!(
-        "\n  // Typewriter SFX (Ctrl+B E to toggle).\n  sound: {{\n    enabled: {value_lit}\n    volume: 0.6\n  }}\n"
-    );
-
-    let mut out = String::with_capacity(raw.len() + block.len());
-    for (i, line) in lines.iter().enumerate() {
-        if i == root_close_idx {
-            out.push_str(&block);
-        }
-        out.push_str(line);
-    }
-    Ok(out)
-}
-
-/// Split a file body into editor lines, normalising CRLF (`\r\n`) and
-/// bare CR (`\r`) line endings to LF first so trailing `\r` bytes never
-/// survive into the textarea (where ratatui would render them as
-/// control glyphs that look like vertical bars and visually offset the
-/// following characters). Triggered by Windows / DOS / old-Mac text
-/// dumps the user might import (e.g. the RFC corpus).
-fn body_to_lines(body: &str) -> Vec<String> {
-    if body.is_empty() {
-        return vec![String::new()];
-    }
-    // CRLF first so we don't double-split, then any remaining bare CR
-    // (pre-OS-X Mac files). After this every line break is one `\n`.
-    let normalised = body.replace("\r\n", "\n").replace('\r', "\n");
-    normalised.split('\n').map(String::from).collect()
-}
-
-fn extract_first_sentence(content: &str) -> Option<String> {
-    let prose: String = content
-        .lines()
-        .filter_map(|l| {
-            let t = l.trim();
-            if t.is_empty() || t.starts_with("=") || t.starts_with("//") {
-                None
-            } else {
-                Some(t.to_string())
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    if prose.is_empty() {
-        return None;
-    }
-
-    let chars: Vec<char> = prose.chars().collect();
-    let mut end = chars.len();
-    for (i, c) in chars.iter().enumerate() {
-        if matches!(*c, '.' | '!' | '?') {
-            let next_is_space_or_end = i + 1 >= chars.len() || chars[i + 1].is_whitespace();
-            if next_is_space_or_end {
-                end = i + 1;
-                break;
-            }
-        }
-    }
-    let sentence: String = chars.iter().take(end).collect();
-    let sentence = sentence.trim();
-    if sentence.is_empty() {
-        return None;
-    }
-
-    let s_chars: Vec<char> = sentence.chars().collect();
-    if s_chars.len() > TITLE_MAX_DISPLAY {
-        let mut out: String = s_chars.iter().take(TITLE_MAX_DISPLAY - 1).collect();
-        out.push('…');
-        Some(out)
-    } else {
-        Some(sentence.to_string())
-    }
-}
 
 /// Render one Quick reference entry as a single Line, sized to fit
 /// `col_w` terminal cells. Headers get cyan-bold styling; regular entries
 /// get a fixed 14-char key column followed by the description.
-fn format_entry_line(e: &quickref::Entry, col_w: usize) -> Line<'static> {
+pub(super) fn format_entry_line(e: &quickref::Entry, col_w: usize) -> Line<'static> {
     if e.is_header {
         let text = if e.key.is_empty() {
             String::new()
@@ -24759,103 +13626,6 @@ impl OkOrElseUnused for Line<'static> {
     }
 }
 
-fn pad_or_trim(s: &str, width: usize) -> String {
-    let cs: Vec<char> = s.chars().collect();
-    if cs.len() >= width {
-        cs.iter().take(width).collect()
-    } else {
-        let mut out: String = cs.iter().collect();
-        while out.chars().count() < width {
-            out.push(' ');
-        }
-        out
-    }
-}
-
-fn truncate_to_chars(s: &str, max: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        s.to_string()
-    } else if max == 0 {
-        String::new()
-    } else {
-        let mut out: String = chars.iter().take(max.saturating_sub(1)).collect();
-        out.push('…');
-        out
-    }
-}
-
-/// Locate the Places and Characters system books in the loaded hierarchy
-/// and compile a fresh `Lexicon` from their nested paragraph titles. Called
-/// at startup and after every successful save. Stemmer languages come from
-/// `editor.stemming.languages` in the project config. Unknown language
-/// names are skipped silently (with a tracing warning) so a typo doesn't
-/// break the editor.
-fn build_lexicon(hierarchy: &Hierarchy, cfg: &Config) -> super::lexicon::Lexicon {
-    use super::lexicon::LexCategory;
-    let mut places: Option<Uuid> = None;
-    let mut characters: Option<Uuid> = None;
-    let mut notes: Option<Uuid> = None;
-    let mut artefacts: Option<Uuid> = None;
-    for node in hierarchy.iter() {
-        match node.system_tag.as_deref() {
-            Some(crate::store::SYSTEM_TAG_PLACES) => places = Some(node.id),
-            Some(crate::store::SYSTEM_TAG_CHARACTERS) => characters = Some(node.id),
-            Some(crate::store::SYSTEM_TAG_NOTES) => notes = Some(node.id),
-            Some(crate::store::SYSTEM_TAG_ARTEFACTS) => artefacts = Some(node.id),
-            _ => {}
-        }
-    }
-    // Precedence: top-level `language` (when non-empty) wins over the
-    // legacy `editor.stemming.languages` list. The former is the one-knob
-    // primary setting; the latter stays for power users who want to
-    // stem across multiple languages simultaneously.
-    let algos: Vec<rust_stemmers::Algorithm> = if !cfg.language.trim().is_empty() {
-        match crate::config::parse_stemmer_language(&cfg.language) {
-            Some(a) => vec![a],
-            None => {
-                tracing::warn!(
-                    "language `{}` is not a known Snowball algorithm — \
-                     stemmer disabled (falling back to exact-phrase matching)",
-                    cfg.language
-                );
-                Vec::new()
-            }
-        }
-    } else {
-        cfg.editor
-            .stemming
-            .languages
-            .iter()
-            .filter_map(|name| match crate::config::parse_stemmer_language(name) {
-                Some(a) => Some(a),
-                None => {
-                    tracing::warn!(
-                        "editor.stemming.languages: unknown language `{name}` — skipped"
-                    );
-                    None
-                }
-            })
-            .collect()
-    };
-    // Higher-priority first: Place > Character > Artefact > Note —
-    // matches the renderer's overlap precedence so the build-time
-    // dedupe and the per-column style picker agree.
-    let mut books: Vec<(Uuid, LexCategory)> = Vec::new();
-    if let Some(id) = places {
-        books.push((id, LexCategory::Place));
-    }
-    if let Some(id) = characters {
-        books.push((id, LexCategory::Character));
-    }
-    if let Some(id) = artefacts {
-        books.push((id, LexCategory::Artefact));
-    }
-    if let Some(id) = notes {
-        books.push((id, LexCategory::Note));
-    }
-    super::lexicon::Lexicon::build(hierarchy, &books, algos)
-}
 
 /// Standard text-input key dispatch: typing, navigation, deletion. Shared
 /// helper so new modals don't have to re-implement the pattern that older
@@ -24883,7 +13653,7 @@ fn format_eval_output(out: &crate::scripting::EvalOutput, context: Option<&str>)
     }
 }
 
-fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) {
+pub(super) fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) {
     use KeyCode::*;
     match key.code {
         Backspace => input.backspace(),
@@ -24910,42 +13680,12 @@ fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) {
     }
 }
 
-/// Which system book a lexicon-RAG inference draws context from.
-/// Picked by the editor-meta chords (`P` Places, `C` Characters,
-/// `G` Notes, `Y` Artefacts).
-#[derive(Debug, Clone, Copy)]
-enum LexiconKind {
-    Places,
-    Characters,
-    Notes,
-    Artefacts,
-}
-
-impl LexiconKind {
-    fn label(self) -> &'static str {
-        match self {
-            LexiconKind::Places => "Place",
-            LexiconKind::Characters => "Character",
-            LexiconKind::Notes => "Note",
-            LexiconKind::Artefacts => "Artefact",
-        }
-    }
-    fn system_tag(self) -> &'static str {
-        match self {
-            LexiconKind::Places => crate::store::SYSTEM_TAG_PLACES,
-            LexiconKind::Characters => crate::store::SYSTEM_TAG_CHARACTERS,
-            LexiconKind::Notes => crate::store::SYSTEM_TAG_NOTES,
-            LexiconKind::Artefacts => crate::store::SYSTEM_TAG_ARTEFACTS,
-        }
-    }
-}
-
 /// System prompt used by regular chat when InferenceMode is Local. The
 /// model is told to treat any "── … context ──" blocks the user prepends
 /// (via the AI scope cycle) as the sole admissible source and to refuse
 /// rather than fall back on general knowledge. Empty context just means
 /// the conversation itself is the source.
-const LOCAL_SYSTEM_PROMPT: &str = "\
+pub(super) const LOCAL_SYSTEM_PROMPT: &str = "\
 You are Inkhaven's writing assistant. The user may prepend `── … context ──` \
 blocks (a selection, a paragraph, or whole chapters from their book). When \
 present, treat those blocks as the sole admissible source of information. \
@@ -24957,7 +13697,7 @@ do not draw on general knowledge.";
 /// System prompt used by regular chat when InferenceMode is Full. Context
 /// blocks (when present) are still ground truth, but the model is free to
 /// augment with general knowledge — the typical chat / brainstorm mode.
-const FULL_SYSTEM_PROMPT: &str = "\
+pub(super) const FULL_SYSTEM_PROMPT: &str = "\
 You are Inkhaven's writing assistant. If the user prepends `── … context ──` \
 blocks, treat that text as ground truth and prefer it to any conflicting \
 general knowledge. Otherwise, answer freely using your general knowledge \
@@ -24969,7 +13709,7 @@ concise; favour short paragraphs and concrete suggestions.";
 /// inside machine-parseable markers (`<<<CORRECTED>>>` / `<<<END>>>`) so
 /// the AI pane's `T` action can lift it out without dragging the
 /// summary / issue list along.
-const GRAMMAR_CHECK_SYSTEM_PROMPT: &str = "\
+pub(super) const GRAMMAR_CHECK_SYSTEM_PROMPT: &str = "\
 You are a meticulous copy-editor reviewing a paragraph from a Typst-formatted \
 manuscript. Check for grammar, syntax, and punctuation issues only. \
 Preserve every Typst markup token verbatim — `= Heading`, `== Subheading`, \
@@ -25001,8 +13741,8 @@ paragraph buffer with it.";
 /// Markers the grammar-check system prompt instructs the model to wrap
 /// the corrected paragraph in. Kept as named constants so the parser and
 /// the prompt stay in sync.
-const CORRECTED_BEGIN: &str = "<<<CORRECTED>>>";
-const CORRECTED_END: &str = "<<<END>>>";
+pub(super) const CORRECTED_BEGIN: &str = "<<<CORRECTED>>>";
+pub(super) const CORRECTED_END: &str = "<<<END>>>";
 
 /// Fallback prompt body for F7 grammar check when no user-defined
 /// `Grammar check` prompt exists in the Prompts book or `prompts.hjson`.
@@ -25067,7 +13807,7 @@ coherent, say so briefly rather than padding with caveats."
 /// stick to the supplied excerpts so the help feature behaves like a
 /// retrieval-grounded manual and not a general LLM chat — it should admit
 /// ignorance rather than confabulate Inkhaven features.
-const HELP_SYSTEM_PROMPT: &str = "\
+pub(super) const HELP_SYSTEM_PROMPT: &str = "\
 You are the Inkhaven help-manual assistant. Your job is to answer the \
 user's question about Inkhaven (a Rust TUI literary editor for Typst \
 books) using ONLY the Help excerpts the user provides below.
@@ -25088,159 +13828,6 @@ Rules:
 /// Inclusive on the top-left, exclusive on the bottom-right — matches
 /// ratatui's Rect semantics where width/height are spans (the column at
 /// `x + width` is one past the rect's last column).
-/// Components Inkhaven directly depends on. Each entry is
-/// `(crate-name, license, one-line description)`. The list is curated by
-/// hand so the credits panel stays readable — auto-pulling every
-/// transitive dep from Cargo.lock would dump 200+ rows nobody would
-/// scroll through. When you add a new direct dep in Cargo.toml, add it
-/// here too.
-const CREDITS_COMPONENTS: &[(&str, &str, &str)] = &[
-    ("duckdb",                "MIT",             "embedded SQL engine — metadata + blob stores"),
-    ("vecstore",              "MIT",             "HNSW vector index — semantic search"),
-    ("fastembed",             "Apache-2.0",      "multilingual ONNX text embeddings"),
-    ("ratatui",               "MIT",             "TUI rendering framework"),
-    ("tui-textarea",          "MIT",             "multi-line text widget (state model)"),
-    ("crossterm",             "MIT",             "cross-platform terminal control"),
-    ("tree-sitter",           "MIT",             "incremental parser engine"),
-    ("tree-sitter-highlight", "MIT",             "syntax-highlight tagging on top of tree-sitter"),
-    ("tree-sitter-typst",     "MIT",             "Typst grammar for tree-sitter (uben0)"),
-    ("genai",                 "MIT / Apache-2.0", "provider-neutral LLM client (Gemini, DeepSeek, Ollama, OpenAI, …)"),
-    ("pulldown-cmark",        "MIT",             "CommonMark parser — markdown rendering in the AI pane"),
-    ("rust-stemmers",         "MIT",             "Snowball stemmers — multilingual lexicon overlay"),
-    ("unicode-segmentation",  "MIT / Apache-2.0", "Unicode word boundaries"),
-    ("regex",                 "MIT / Apache-2.0", "in-buffer find / replace"),
-    ("tokio",                 "MIT",             "async runtime"),
-    ("tokio-stream",          "MIT",             "Stream adapters for tokio"),
-    ("futures-util",          "MIT / Apache-2.0", "futures combinators"),
-    ("clap",                  "MIT / Apache-2.0", "CLI parser"),
-    ("serde",                 "MIT / Apache-2.0", "serialisation framework"),
-    ("serde_json",            "MIT / Apache-2.0", "JSON support for serde"),
-    ("serde-hjson",           "MIT",             "HJSON parser — friendly config file format"),
-    ("humantime",             "MIT / Apache-2.0", "human-readable duration parsing — backup max_age"),
-    ("humantime-serde",       "MIT / Apache-2.0", "serde glue for humantime durations"),
-    ("rodio",                 "MIT / Apache-2.0", "audio playback — typewriter SFX (Ctrl+B E)"),
-    ("ratatui-image",         "MIT",             "in-TUI image preview — Enter on an Image node"),
-    ("image",                 "MIT / Apache-2.0", "image decoder for the preview pane"),
-    ("chrono",                "MIT / Apache-2.0", "timestamps, RFC-3339 formatting"),
-    ("uuid",                  "Apache-2.0",      "UUIDv7 paragraph IDs"),
-    ("zip",                   "MIT",             "backup / restore archive format"),
-    ("walkdir",               "MIT / Unlicense", "recursive directory walking"),
-    ("arboard",               "MIT / Apache-2.0", "system clipboard access"),
-    ("directories",           "MIT / Apache-2.0", "per-user cache path resolution"),
-    ("slug",                  "MIT / Apache-2.0", "URL-safe slug generation"),
-    ("tracing",               "MIT",             "structured logging"),
-    ("tracing-subscriber",    "MIT",             "log filtering and writer config"),
-    ("anyhow",                "MIT / Apache-2.0", "error wrapping in application boundaries"),
-    ("thiserror",             "MIT / Apache-2.0", "derive macros for typed errors"),
-];
-
-/// Build the styled `Line`s the credits modal renders. Returns one Line
-/// per row — section headers in cyan-bold, crate names in the configured
-/// modal-border colour, descriptions in dim. Each crate row is wrapped
-/// to fit a reasonable terminal width; very long descriptions naturally
-/// truncate at the right edge of the modal.
-fn build_credits_lines(
-    theme: &super::theme::Theme,
-    engine_summary: &str,
-) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line<'static>> = Vec::new();
-
-    let bold_accent = Style::default()
-        .fg(theme.modal_border)
-        .add_modifier(Modifier::BOLD);
-    let dim = Style::default().add_modifier(Modifier::DIM);
-
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![Span::styled(
-        format!("  Inkhaven v{}", env!("CARGO_PKG_VERSION")),
-        bold_accent,
-    )]));
-    lines.push(Line::from(Span::styled(
-        format!("  {}", env!("CARGO_PKG_DESCRIPTION")),
-        dim,
-    )));
-    lines.push(Line::from(""));
-
-    // 1.2.5+: surface the active Typst engine so users can confirm
-    // their HJSON setting took effect without going to the logs.
-    lines.push(Line::from(vec![Span::styled(
-        "  Typst engine".to_string(),
-        bold_accent,
-    )]));
-    lines.push(Line::from(format!("    {engine_summary}")));
-    lines.push(Line::from(""));
-
-    lines.push(Line::from(vec![Span::styled(
-        "  Author".to_string(),
-        bold_accent,
-    )]));
-    for a in env!("CARGO_PKG_AUTHORS").split(':') {
-        if !a.is_empty() {
-            lines.push(Line::from(format!("    {a}")));
-        }
-    }
-    lines.push(Line::from(""));
-
-    lines.push(Line::from(vec![Span::styled(
-        "  Project".to_string(),
-        bold_accent,
-    )]));
-    lines.push(Line::from(format!(
-        "    Repository: {}",
-        env!("CARGO_PKG_REPOSITORY")
-    )));
-    lines.push(Line::from(format!(
-        "    Licence:    {}",
-        env!("CARGO_PKG_LICENSE")
-    )));
-    lines.push(Line::from(""));
-
-    lines.push(Line::from(vec![Span::styled(
-        "  Components used".to_string(),
-        bold_accent,
-    )]));
-    lines.push(Line::from(Span::styled(
-        "  Inkhaven stands on the shoulders of these open-source projects:".to_string(),
-        dim,
-    )));
-    lines.push(Line::from(""));
-
-    // Two-column rendering inside the credits body would be neat but
-    // complicates wrapping; a single column with name + licence + tagline
-    // reads cleanly even on narrow terminals.
-    for (name, license, desc) in CREDITS_COMPONENTS {
-        lines.push(Line::from(vec![
-            Span::raw("    "),
-            Span::styled(
-                format!("{:<24}", name),
-                Style::default()
-                    .fg(theme.modal_border)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("  [{}]", license),
-                Style::default().add_modifier(Modifier::DIM),
-            ),
-        ]));
-        lines.push(Line::from(Span::styled(
-            format!("        {desc}"),
-            dim,
-        )));
-    }
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "  And a long tail of transitive dependencies — every one is".to_string(),
-        dim,
-    )));
-    lines.push(Line::from(Span::styled(
-        "  listed in `Cargo.lock`. Thanks to every author.".to_string(),
-        dim,
-    )));
-    lines.push(Line::from(""));
-
-    lines
-}
-
 fn rect_contains(rect: Rect, col: u16, row: u16) -> bool {
     if rect.width == 0 || rect.height == 0 {
         return false;
@@ -25251,7 +13838,7 @@ fn rect_contains(rect: Rect, col: u16, row: u16) -> bool {
         && row < rect.y.saturating_add(rect.height)
 }
 
-fn digit_count(n: usize) -> usize {
+pub(super) fn digit_count(n: usize) -> usize {
     let mut x = n.max(1);
     let mut d = 0;
     while x > 0 {
@@ -25313,7 +13900,7 @@ fn is_read_only_safe_key(key: &KeyEvent) -> bool {
     false
 }
 
-fn reverse_chip(fg: Color) -> Style {
+pub(super) fn reverse_chip(fg: Color) -> Style {
     Style::default()
         .bg(fg)
         .fg(Color::Black)
