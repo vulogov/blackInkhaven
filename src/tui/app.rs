@@ -2852,6 +2852,18 @@ pub(crate) struct App {
     /// Survives restart via `.session.json`.
     timeline_views: std::collections::HashMap<Uuid, TimelineViewSnapshot>,
 
+    /// 1.2.7+ — single-slot kill-ring for the most recent
+    /// PARAGRAPH delete. Captured in `commit_delete` just
+    /// before `delete_subtree` fires (single-paragraph only;
+    /// subtree deletes are too risky to undo without store
+    /// API support). Restored by Ctrl+B U via
+    /// `create_node` at the original position — content,
+    /// tags, linked_paragraphs, event data preserved; the
+    /// uuid changes (so wiki-links from elsewhere pointing
+    /// at the deleted id stay broken). Single-shot — taking
+    /// undo clears the slot.
+    last_deleted: Option<DeletedParagraphStash>,
+
     /// 1.2.7+ — visited-paragraph history (browser-style
     /// back/forward). Pushed on every `load_paragraph` that
     /// isn't itself a back/forward navigation; truncated
@@ -3280,6 +3292,29 @@ pub(crate) struct TimelineViewState {
     pub descent: Option<TimelineDescentState>,
 }
 
+/// 1.2.7+ — stash for the most-recent paragraph delete. Used
+/// by `Ctrl+B U` to recover content + metadata after a
+/// confirmed delete. Stores everything needed to call
+/// `create_node` + restore body + restore tags / linked
+/// paragraphs / event data. Note: the restored node gets a
+/// fresh uuid; cross-refs from other paragraphs (wiki-links,
+/// event.linked_paragraphs) pointing at the OLD uuid stay
+/// broken — flagged in the post-undo status.
+#[derive(Debug, Clone)]
+pub(crate) struct DeletedParagraphStash {
+    pub parent_id: Option<Uuid>,
+    pub anchor_id: Option<Uuid>, // sibling to insert after; None = end of parent
+    pub title: String,
+    pub slug: String,
+    pub content: Vec<u8>,
+    pub tags: Vec<String>,
+    pub linked_paragraphs: Vec<Uuid>,
+    pub status: Option<String>,
+    pub target_words: Option<i32>,
+    pub content_type: Option<String>,
+    pub event: Option<crate::store::node::EventData>,
+}
+
 /// 1.2.7+ — two-level navigation cursor for the timeline
 /// view. Mirrors the tree pane's "Tab cycles siblings, Enter
 /// descends into children" model.
@@ -3595,6 +3630,7 @@ impl App {
             prompts,
             mouse_captured: true,
             timeline_views: std::collections::HashMap::new(),
+            last_deleted: None,
             visited_history: Vec::new(),
             visited_cursor: 0,
             visited_skip_next_push: false,
@@ -9530,6 +9566,7 @@ impl App {
             A::ToggleMouseCapture => self.toggle_mouse_capture(),
             A::VisitedBack => self.navigate_visited_back(),
             A::VisitedForward => self.navigate_visited_forward(),
+            A::UndoLastDelete => self.undo_last_delete(),
             A::ScheduleAssemble => self.schedule_assembly(),
             A::ScheduleBuild => self.schedule_build(),
             A::ScheduleTake => self.schedule_take(),
@@ -10459,6 +10496,118 @@ impl App {
         // would also require validating that
         // `expanded_track` still maps to events that exist
         // — too much for a UX nicety. The user re-Enters.
+    }
+
+    /// 1.2.7+ — capture a paragraph's full state into the
+    /// single-slot kill-ring before delete_subtree drops it.
+    /// Skipped silently when the file body can't be read
+    /// (which still permits the delete to proceed).
+    fn stash_deleted_paragraph(&mut self, node: &Node) {
+        // Find the sibling that comes immediately BEFORE the
+        // about-to-be-deleted node so we can re-insert at
+        // the same position via InsertPosition::After.
+        let siblings = self.hierarchy.children_of(node.parent_id);
+        let pos = siblings.iter().position(|s| s.id == node.id);
+        let anchor_id = match pos {
+            Some(0) => None, // first child — restore at end via fallback
+            Some(i) => siblings.get(i - 1).map(|n| n.id),
+            None => None,
+        };
+        let content = node
+            .file
+            .as_ref()
+            .map(|rel| self.layout.root.join(rel))
+            .and_then(|abs| std::fs::read(&abs).ok())
+            .unwrap_or_default();
+        self.last_deleted = Some(DeletedParagraphStash {
+            parent_id: node.parent_id,
+            anchor_id,
+            title: node.title.clone(),
+            slug: node.slug.clone(),
+            content,
+            tags: node.tags.clone(),
+            linked_paragraphs: node.linked_paragraphs.clone(),
+            status: node.status.clone(),
+            target_words: node.target_words,
+            content_type: node.content_type.clone(),
+            event: node.event.clone(),
+        });
+    }
+
+    /// 1.2.7+ — Ctrl+B U. Pop the kill-ring; re-create the
+    /// paragraph at its original position; restore body +
+    /// metadata. Single-shot (slot is cleared after).
+    fn undo_last_delete(&mut self) {
+        let Some(stash) = self.last_deleted.take() else {
+            self.status = "undo: kill-ring is empty".into();
+            return;
+        };
+        let parent = stash
+            .parent_id
+            .and_then(|id| self.hierarchy.get(id).cloned());
+        let position = match stash.anchor_id {
+            Some(id) if self.hierarchy.get(id).is_some() => {
+                crate::store::InsertPosition::After(id)
+            }
+            _ => crate::store::InsertPosition::End,
+        };
+        let created = match self.store.create_node(
+            &self.cfg,
+            &self.hierarchy,
+            NodeKind::Paragraph,
+            &stash.title,
+            parent.as_ref(),
+            Some(&stash.slug),
+            position,
+        ) {
+            Ok(n) => n,
+            Err(e) => {
+                // Re-stash so the user can retry after
+                // fixing whatever rejected the create.
+                self.last_deleted = Some(stash);
+                self.status = format!("undo: create_node failed: {e}");
+                return;
+            }
+        };
+        // Write the body to disk.
+        if let Some(rel) = created.file.as_ref() {
+            let abs = self.layout.root.join(rel);
+            if let Err(e) = std::fs::write(&abs, &stash.content) {
+                self.status = format!(
+                    "undo: paragraph created at `{}` but body write failed: {e}",
+                    created.slug
+                );
+                self.reload_hierarchy();
+                return;
+            }
+        }
+        // Restore the metadata (tags, linked_paragraphs,
+        // status, target_words, content_type, event).
+        let mut updated = created.clone();
+        updated.tags = stash.tags;
+        updated.linked_paragraphs = stash.linked_paragraphs;
+        updated.status = stash.status;
+        updated.target_words = stash.target_words;
+        if stash.content_type.is_some() {
+            updated.content_type = stash.content_type;
+        }
+        updated.event = stash.event;
+        updated.modified_at = chrono::Utc::now();
+        crate::store::reconcile_event_orphan_tag(&mut updated);
+        if let Err(e) = self
+            .store
+            .raw()
+            .update_metadata(updated.id, updated.to_json())
+        {
+            tracing::warn!(target: "inkhaven::undo",
+                "metadata restore failed for {}: {e}", updated.id);
+        }
+        self.reload_hierarchy();
+        self.status = format!(
+            "↺ restored `{}` (new uuid {} — cross-refs to old uuid stay broken)",
+            updated.title,
+            updated.id.simple()
+        );
     }
 
     /// 1.2.7+ — Alt+Left. Browser-style back through the
@@ -15109,8 +15258,25 @@ impl App {
             _ => self.hierarchy.fs_path(&root_node, &self.layout),
         };
 
+        // 1.2.7+ — stash a single-paragraph delete into the
+        // kill-ring so Ctrl+B U can recover the content
+        // afterwards. Skipped for branch deletes (chapters /
+        // books) because subtree restoration without UUID
+        // preservation is too risky to ship without store
+        // API support.
+        if root_kind == NodeKind::Paragraph && ids.len() == 1 {
+            self.stash_deleted_paragraph(&root_node);
+        } else {
+            // Different delete shape — clear any stale stash
+            // so Ctrl+B U doesn't surprise the user with an
+            // older recoverable that no longer matches the
+            // most-recent action.
+            self.last_deleted = None;
+        }
+
         if let Err(e) = self.store.delete_subtree(&fs_rel, &ids) {
             self.status = format!("delete failed: {e}");
+            self.last_deleted = None;
             return;
         }
 
@@ -15122,8 +15288,13 @@ impl App {
         }
 
         self.modal = Modal::None;
+        let undo_hint = if self.last_deleted.is_some() {
+            " · Ctrl+B U to restore (new uuid — wiki-links to old id stay broken)"
+        } else {
+            ""
+        };
         self.status = format!(
-            "deleted {} `{}` ({} other node{} removed)",
+            "deleted {} `{}` ({} other node{} removed){undo_hint}",
             root_kind.as_str(),
             title,
             ids.len() - 1,
