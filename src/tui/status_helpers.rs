@@ -95,3 +95,70 @@ pub(super) fn status_style(label: &str, theme: &super::theme::Theme) -> Style {
     }
     style
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn digit_to_status_mapping() {
+        assert_eq!(digit_to_status('1'), Some("Ready"));
+        assert_eq!(digit_to_status('2'), Some("Final"));
+        assert_eq!(digit_to_status('3'), Some("Third"));
+        assert_eq!(digit_to_status('4'), Some("Second"));
+        assert_eq!(digit_to_status('5'), Some("First"));
+        assert_eq!(digit_to_status('6'), Some("Napkin"));
+        assert_eq!(digit_to_status('7'), Some("None"));
+        // 0, 8, 9 and letters don't map.
+        assert_eq!(digit_to_status('0'), None);
+        assert_eq!(digit_to_status('8'), None);
+        assert_eq!(digit_to_status('a'), None);
+    }
+
+    #[test]
+    fn status_letter_returns_one_char_or_space() {
+        assert_eq!(status_letter("Napkin"), "n");
+        assert_eq!(status_letter("First"), "1");
+        assert_eq!(status_letter("Second"), "2");
+        assert_eq!(status_letter("Third"), "3");
+        assert_eq!(status_letter("Final"), "F");
+        assert_eq!(status_letter("Ready"), "R");
+        assert_eq!(status_letter("None"), " ");
+        assert_eq!(status_letter("Unknown"), " ");
+    }
+
+    #[test]
+    fn next_status_walks_the_ring() {
+        assert_eq!(next_status(None), "Napkin");
+        assert_eq!(next_status(Some("Napkin")), "First");
+        assert_eq!(next_status(Some("First")), "Second");
+        assert_eq!(next_status(Some("Second")), "Third");
+        assert_eq!(next_status(Some("Third")), "Final");
+        assert_eq!(next_status(Some("Final")), "Ready");
+        // Wrap.
+        assert_eq!(next_status(Some("Ready")), "None");
+        // Empty string = same as None.
+        assert_eq!(next_status(Some("")), "Napkin");
+    }
+
+    #[test]
+    fn prev_status_walks_backwards_and_wraps() {
+        assert_eq!(prev_status(Some("Napkin")), "None");
+        assert_eq!(prev_status(Some("Ready")), "Final");
+        assert_eq!(prev_status(Some("Final")), "Third");
+        assert_eq!(prev_status(None), "Ready"); // wrap from None backwards
+    }
+
+    #[test]
+    fn next_status_unknown_value_treated_as_none() {
+        assert_eq!(next_status(Some("WeirdCustom")), "Napkin");
+    }
+
+    #[test]
+    fn display_status_collapses_none_variants() {
+        assert_eq!(display_status(None), "None");
+        assert_eq!(display_status(Some("")), "None");
+        assert_eq!(display_status(Some("   ")), "None");
+        assert_eq!(display_status(Some("Napkin")), "Napkin");
+    }
+}

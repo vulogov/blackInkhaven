@@ -1,5 +1,6 @@
 pub(crate) mod app;
 mod bund_highlight;
+mod diff_utils;
 mod file_picker;
 mod focus;
 mod highlight;
