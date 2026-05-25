@@ -12,6 +12,7 @@ mod input;
 pub(crate) mod keybind;
 pub(crate) mod keymap;
 mod lexicon;
+mod lexicon_build;
 mod markdown;
 mod quickref;
 mod sound;
