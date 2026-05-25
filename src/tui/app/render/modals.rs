@@ -2536,6 +2536,128 @@ impl super::super::App {
         );
     }
 
+    /// 1.2.8+ — kill-ring picker. Renders each deleted-
+    /// paragraph stash as title + original parent breadcrumb
+    /// + first-non-empty-line preview.  Cursor selection
+    /// reversed-highlight; D not supported (Enter is the
+    /// only mutator).
+    pub(in crate::tui::app) fn draw_kill_ring_picker_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::KillRingPicker { cursor } = &self.modal else {
+            return;
+        };
+        let len = self.kill_ring.len();
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Kill-ring ({}/{}) ", len, super::super::KILL_RING_CAP);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+
+        // Each entry consumes TWO lines: a title row + a dim
+        // breadcrumb+preview row.  Cap visible entries to
+        // body_h / 2 to keep the layout stable.
+        let per_entry = 2usize;
+        let visible = (body_h / per_entry).max(1);
+        let lines: Vec<Line<'_>> = self
+            .kill_ring
+            .iter()
+            .enumerate()
+            .take(visible)
+            .flat_map(|(i, stash)| {
+                let parent_label = stash
+                    .parent_id
+                    .and_then(|pid| self.hierarchy.get(pid))
+                    .map(|p| p.title.clone())
+                    .unwrap_or_else(|| "(parent gone)".into());
+                let body_text = std::str::from_utf8(&stash.content).unwrap_or("");
+                let first_line = body_text
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("(empty)");
+                let preview_budget = inner.width.saturating_sub(8) as usize;
+                let preview = if first_line.chars().count() > preview_budget {
+                    let mut s: String = first_line
+                        .chars()
+                        .take(preview_budget.saturating_sub(1))
+                        .collect();
+                    s.push('…');
+                    s
+                } else {
+                    first_line.to_string()
+                };
+                let head_text = format!(" ⌫ {}", stash.title);
+                let dim_text = format!("    in `{}`  ·  {}", parent_label, preview);
+                let mut head_line = Line::from(Span::raw(head_text));
+                let mut dim_line = Line::from(Span::styled(
+                    dim_text,
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+                if i == *cursor {
+                    head_line = head_line.style(
+                        Style::default().add_modifier(Modifier::REVERSED),
+                    );
+                    dim_line = dim_line.style(
+                        Style::default().add_modifier(Modifier::REVERSED),
+                    );
+                }
+                vec![head_line, dim_line]
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = if len == 0 {
+            " (empty — Ctrl+B delete pushes onto this ring) · Esc close ".to_string()
+        } else {
+            format!(
+                " ↑↓ select · Enter restore · Esc cancel    ({}/{}) ",
+                cursor + 1,
+                len
+            )
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     pub(in crate::tui::app) fn draw_backlink_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
         let Modal::BacklinkPicker { entries, cursor, scroll, .. } = &self.modal else {
             return;

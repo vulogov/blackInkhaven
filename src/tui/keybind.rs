@@ -285,6 +285,12 @@ pub enum Action {
     /// trawling the tree pane.
     #[serde(rename = "view.recent_paragraph_picker")]
     ViewRecentParagraphPicker,
+    /// Ctrl+V Shift+U (1.2.8+) — picker over the deleted-
+    /// paragraph kill-ring. Ctrl+B U restores the most-
+    /// recent entry; this chord opens a modal to choose
+    /// any of the (up to 10) buffered recoveries.
+    #[serde(rename = "view.kill_ring_picker")]
+    ViewKillRingPicker,
     /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
     /// via typst-render and float a PNG preview on top of the
     /// editor. `Esc` closes, `S` opens a save-as picker for the
@@ -467,6 +473,7 @@ impl Action {
             Action::ViewListBookmarks => "bookmarks".into(),
             Action::ViewFuzzyParagraphPicker => "find ¶".into(),
             Action::ViewRecentParagraphPicker => "recent ¶".into(),
+            Action::ViewKillRingPicker => "kill-ring".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -643,6 +650,8 @@ impl Action {
                 "Fuzzy paragraph picker — type any substring of the title or slug path, Enter opens the highlighted hit.".into(),
             Action::ViewRecentParagraphPicker =>
                 "Recent paragraph picker (1.2.7+) — same fuzzy picker as Ctrl+V P but sorted by modified_at desc. Answers \"what did I work on most recently?\" without trawling the tree.".into(),
+            Action::ViewKillRingPicker =>
+                "Kill-ring picker (1.2.8+) — list of recently-deleted paragraphs (up to 10). Enter restores the highlighted entry at its original position; Esc cancels. Ctrl+B U alone restores the most-recent without opening the picker.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -815,6 +824,8 @@ impl KeyBindings {
                 entry("p", Action::ViewFuzzyParagraphPicker, Scope::Any),
                 // 1.2.7+ — same picker sorted by modified_at desc.
                 entry("Shift+p", Action::ViewRecentParagraphPicker, Scope::Any),
+                // 1.2.8+ — kill-ring picker (paragraph undelete history).
+                entry("Shift+u", Action::ViewKillRingPicker, Scope::Any),
                 entry("r", Action::ViewRenderParagraph, Scope::Any),
                 entry("n", Action::ViewNextDiagnostic, Scope::Any),
                 // 1.2.6+: case differentiates view scope. Plain

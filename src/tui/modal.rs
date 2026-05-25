@@ -603,6 +603,16 @@ pub(super) enum Modal {
         snapshots: Vec<Snapshot>,
         cursor: usize,
     },
+    /// 1.2.8+ — `Ctrl+V Shift+U` picker over the deleted-
+    /// paragraph kill-ring. Renders each entry as title +
+    /// original parent breadcrumb + first-line preview.
+    /// Enter restores the cursor selection (removes from
+    /// ring); Esc cancels. State carries only the cursor
+    /// index — the entries live on `App.kill_ring`, read
+    /// fresh each frame.
+    KillRingPicker {
+        cursor: usize,
+    },
 }
 
 #[cfg(test)]

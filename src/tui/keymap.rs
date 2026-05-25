@@ -108,10 +108,23 @@ impl KeyChord {
                 KeyCode::Tab
             }
             KeyCode::Char(c) if c.is_ascii_alphabetic() => {
-                // Different terminals diverge: some send Char('P') + SHIFT,
-                // others send Char('p') + SHIFT. Normalize so either matches.
+                // Different terminals diverge:
+                //   * Kitty / iTerm2 disambiguation: Shift+p → Char('P') + SHIFT.
+                //   * Most TTYs: Shift+p → Char('P'), no SHIFT modifier flag
+                //     (case carries the info; SHIFT is implicit).
+                //   * `Ctrl+Shift+p` in any terminal: Char('p') + CONTROL+SHIFT.
+                // Normalize all three onto "Char(uppercase) + SHIFT" when the
+                // letter is upper, "Char(lowercase) without SHIFT" otherwise,
+                // so chord lookup is deterministic.
                 if ev_mods.contains(KeyModifiers::SHIFT) {
                     KeyCode::Char(c.to_ascii_uppercase())
+                } else if c.is_ascii_uppercase() {
+                    // Terminal sent a capital letter without the explicit
+                    // SHIFT bit (the common legacy path). Promote so a
+                    // chord parsed as `Shift+p` (stored as Char('P') + SHIFT)
+                    // still matches.
+                    ev_mods.insert(KeyModifiers::SHIFT);
+                    KeyCode::Char(c)
                 } else {
                     KeyCode::Char(c.to_ascii_lowercase())
                 }
@@ -206,5 +219,34 @@ mod tests {
         assert!(k.matches(&ev(KeyCode::Char('C'), mods)));
         // Some terminals send lowercase + SHIFT instead of uppercase.
         assert!(k.matches(&ev(KeyCode::Char('c'), mods)));
+    }
+
+    /// 1.2.8 regression test for the case that exposed the
+    /// `Ctrl+V Shift+P` ≡ `Ctrl+V p` bug: legacy terminals
+    /// without the kitty disambiguation send Shift+letter
+    /// as an uppercase Char WITHOUT the SHIFT modifier flag
+    /// — case carries the info instead. The chord matcher
+    /// has to treat that as implicit-Shift or the dispatch
+    /// table collapses the two chords onto whichever entry
+    /// is checked first.
+    #[test]
+    fn shift_letter_matches_uppercase_without_shift_flag() {
+        let k = KeyChord::parse("Shift+p").unwrap();
+        // The terminal-as-modern case: explicit SHIFT bit.
+        assert!(k.matches(&ev(KeyCode::Char('P'), KeyModifiers::SHIFT)));
+        // The legacy case: uppercase letter with no modifier.
+        assert!(k.matches(&ev(KeyCode::Char('P'), KeyModifiers::NONE)));
+        // Bare lowercase 'p' must NOT match — otherwise the
+        // distinct `p` chord can't be bound separately.
+        assert!(!k.matches(&ev(KeyCode::Char('p'), KeyModifiers::NONE)));
+    }
+
+    #[test]
+    fn plain_letter_chord_rejects_uppercase() {
+        // Symmetric guard: `p` chord must NOT match Shift+P.
+        let k = KeyChord::parse("p").unwrap();
+        assert!(k.matches(&ev(KeyCode::Char('p'), KeyModifiers::NONE)));
+        assert!(!k.matches(&ev(KeyCode::Char('P'), KeyModifiers::NONE)));
+        assert!(!k.matches(&ev(KeyCode::Char('P'), KeyModifiers::SHIFT)));
     }
 }
