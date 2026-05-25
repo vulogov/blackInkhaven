@@ -163,7 +163,7 @@ pub fn typst_to_markdown(input: &str) -> String {
             out.push_str("```\n");
             continue;
         }
-        if in_raw_block && (trimmed == ")" || trimmed == ")") {
+        if in_raw_block && trimmed == ")" {
             in_raw_block = false;
             out.push_str("```\n");
             continue;
