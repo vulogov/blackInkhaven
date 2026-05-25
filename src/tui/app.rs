@@ -1301,6 +1301,16 @@ pub(crate) struct App {
     /// picker is showing. Cleared on every send via push_back.
     /// 1.2.4+.
     ai_prompt_history: Vec<String>,
+    /// 1.2.8+ — F1 help-query history. Up/Down inside the
+    /// `Modal::HelpQuery` input walks this ring. Pushed on
+    /// every successful Enter (dedup against the immediate
+    /// predecessor); not persisted (session-only) to keep
+    /// stale "what did inkhaven 1.2.5 do for X" queries out
+    /// of long-running ring tails.
+    help_query_history: Vec<String>,
+    /// Cursor into `help_query_history`; same semantics as
+    /// `ai_prompt_history_cursor` — None = not navigating.
+    help_query_history_cursor: Option<usize>,
     /// Cursor into `ai_prompt_history`. None when not navigating;
     /// `Some(i)` when the user is stepping through history. Any
     /// edit (typing, backspace, etc.) clears it so the next Up
@@ -1636,6 +1646,8 @@ impl App {
             ai_input: TextInput::new(),
             ai_prompt_history: Vec::new(),
             ai_prompt_history_cursor: None,
+            help_query_history: Vec::new(),
+            help_query_history_cursor: None,
             opened: None,
             secondary: None,
             secondary_focused: false,
@@ -9726,9 +9738,63 @@ impl App {
                     Modal::HelpQuery { input } => input.as_str().to_string(),
                     _ => String::new(),
                 };
+                // 1.2.8+ — push onto history (dedup vs immediate
+                // predecessor); reset the navigation cursor.
+                let trimmed = query.trim();
+                if !trimmed.is_empty()
+                    && self.help_query_history.last().map(|s| s.as_str()) != Some(trimmed)
+                {
+                    self.help_query_history.push(trimmed.to_string());
+                }
+                self.help_query_history_cursor = None;
                 self.modal = Modal::None;
                 self.start_help_inference(&query);
                 return Ok(false);
+            }
+            // 1.2.8+ — Up / Down walks help_query_history.  Mirrors
+            // the AI-prompt history pattern: None on entry, Up goes
+            // to len-1, Down past newest clears.
+            match key.code {
+                KeyCode::Up => {
+                    if !self.help_query_history.is_empty() {
+                        let next = match self.help_query_history_cursor {
+                            Some(0) => 0,
+                            Some(i) => i - 1,
+                            None => self.help_query_history.len() - 1,
+                        };
+                        self.help_query_history_cursor = Some(next);
+                        let entry = self.help_query_history[next].clone();
+                        if let Modal::HelpQuery { input } = &mut self.modal {
+                            input.clear();
+                            for c in entry.chars() {
+                                input.insert_char(c);
+                            }
+                        }
+                    }
+                    return Ok(false);
+                }
+                KeyCode::Down => {
+                    if let Some(cur) = self.help_query_history_cursor {
+                        let next = cur + 1;
+                        if next >= self.help_query_history.len() {
+                            self.help_query_history_cursor = None;
+                            if let Modal::HelpQuery { input } = &mut self.modal {
+                                input.clear();
+                            }
+                        } else {
+                            self.help_query_history_cursor = Some(next);
+                            let entry = self.help_query_history[next].clone();
+                            if let Modal::HelpQuery { input } = &mut self.modal {
+                                input.clear();
+                                for c in entry.chars() {
+                                    input.insert_char(c);
+                                }
+                            }
+                        }
+                    }
+                    return Ok(false);
+                }
+                _ => {}
             }
             if let Modal::HelpQuery { input } = &mut self.modal {
                 handle_text_input_key(input, key);
