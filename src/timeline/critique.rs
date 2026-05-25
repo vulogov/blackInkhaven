@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::NodeKind;
 use crate::timeline::{Calendar, Precision, TimelinePoint};
-use crate::tui::app::TimelineEvent;
+use crate::tui::timeline_state::TimelineEvent;
 
 /// Build the prompt body for a timeline health check.
 ///

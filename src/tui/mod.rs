@@ -25,6 +25,7 @@ mod splash;
 mod status_helpers;
 mod text_utils;
 mod timeline_render;
+pub(crate) mod timeline_state;
 
 use std::path::Path;
 
