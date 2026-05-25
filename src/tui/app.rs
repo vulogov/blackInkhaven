@@ -47,6 +47,10 @@ use super::highlight::{
 use super::input::TextInput;
 use super::keymap::KeyChord;
 use super::search_results::SearchHit;
+use super::status_helpers::{
+    STATUS_CYCLE, display_status, next_status, prev_status, status_letter,
+    status_style,
+};
 use super::text_utils::{
     PARAGRAPH_PLACEHOLDER_TITLE, TITLE_MAX_DISPLAY, body_to_lines,
     extract_first_sentence, format_active_duration, format_age_humantime,
@@ -25092,28 +25096,6 @@ pub fn byte_offset_for_cursor(source: &str, row: usize, col: usize) -> usize {
     source.len()
 }
 
-/// Map digit chars '1'..'7' to a status label. Empty for any other
-/// char. 1 is the most-advanced status so the typical writer query —
-/// "what's actually ready to ship?" — is the lowest-effort chord.
-/// Map a digit chord (`1`..`7`) to its workflow-status string.
-/// Once used inline by the meta dispatcher; the dispatcher now
-/// resolves to `StatusFilter*` actions via the binding table, so
-/// this stays only as a unit-test helper for the digit→status
-/// mapping itself.
-#[cfg(test)]
-pub fn digit_to_status(c: char) -> Option<&'static str> {
-    match c {
-        '1' => Some("Ready"),
-        '2' => Some("Final"),
-        '3' => Some("Third"),
-        '4' => Some("Second"),
-        '5' => Some("First"),
-        '6' => Some("Napkin"),
-        '7' => Some("None"),
-        _ => None,
-    }
-}
-
 /// Apply an editor-style "search match" highlight to the first
 /// occurrence of `needle` (case-insensitive) inside a chat-history
 /// rendered line. The matched substring gets a dark foreground on a
@@ -25194,77 +25176,6 @@ pub fn highlight_substring_in_line(
     line.spans = new_spans;
 }
 
-/// Document-status workflow ring. `Ctrl+B R` advances through this
-/// sequence; the ring wraps back to "None" after "Ready". `None` is
-/// represented by both the absence of `status` on the Node and the
-/// literal "None" string in the ring — the helpers below collapse
-/// the two views.
-pub const STATUS_CYCLE: &[&str] = &[
-    "None", "Napkin", "First", "Second", "Third", "Final", "Ready",
-];
-
-pub fn next_status(current: Option<&str>) -> &'static str {
-    let cur = display_status(current);
-    let idx = STATUS_CYCLE
-        .iter()
-        .position(|s| *s == cur)
-        .unwrap_or(0);
-    STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.len()]
-}
-
-pub fn prev_status(current: Option<&str>) -> &'static str {
-    let cur = display_status(current);
-    let idx = STATUS_CYCLE
-        .iter()
-        .position(|s| *s == cur)
-        .unwrap_or(0);
-    STATUS_CYCLE[(idx + STATUS_CYCLE.len() - 1) % STATUS_CYCLE.len()]
-}
-
-pub fn display_status(current: Option<&str>) -> &str {
-    match current {
-        None => "None",
-        Some(s) if s.trim().is_empty() => "None",
-        Some(s) => s,
-    }
-}
-
-/// Compact one-character badge for the tree-pane row. The colour
-/// (from `status_style`) carries the meaning; the letter just gives
-/// the row a visual anchor so the user knows that column means
-/// status.
-pub fn status_letter(label: &str) -> &'static str {
-    match label {
-        "Napkin" => "n",
-        "First" => "1",
-        "Second" => "2",
-        "Third" => "3",
-        "Final" => "F",
-        "Ready" => "R",
-        _ => " ",
-    }
-}
-
-/// Colour the editor header uses for each status — picks from the
-/// existing theme palette so users with custom themes keep their
-/// preferred hues.
-pub fn status_style(label: &str, theme: &super::theme::Theme) -> Style {
-    let base = match label {
-        "None" => return Style::default().add_modifier(Modifier::DIM),
-        "Napkin" => theme.grammar_change_fg,           // red — "rough"
-        "First" => theme.ai_scope_fg,                  // peach
-        "Second" => theme.characters_fg,               // amber
-        "Third" => theme.places_fg,                    // cyan
-        "Final" => theme.border_saved,                 // green
-        "Ready" => theme.border_saved,                 // green + bold
-        _ => return Style::default(),
-    };
-    let mut style = Style::default().fg(base).add_modifier(Modifier::BOLD);
-    if label == "Ready" {
-        style = style.add_modifier(Modifier::REVERSED);
-    }
-    style
-}
 
 /// Open-bracket → matching close pair the auto-close logic emits.
 /// None for any character that isn't an opener we recognise.
