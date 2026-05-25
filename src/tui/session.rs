@@ -28,6 +28,40 @@ pub struct SessionState {
     /// left it, even after a full restart.
     #[serde(default)]
     pub paragraph_cursors: HashMap<String, ParagraphCursor>,
+    /// 1.2.7+ — visited-paragraph history (browser-style
+    /// back/forward via Alt+Left / Alt+Right). UUIDs in
+    /// visit order; cursor points at the current one.
+    #[serde(default)]
+    pub visited_history: Vec<String>,
+    #[serde(default)]
+    pub visited_cursor: usize,
+    /// 1.2.7+ — per-book timeline view state. Restored when
+    /// the user reopens the swim-lane view (Ctrl+V Shift+T)
+    /// for the same book, so collapsed tracks + expanded
+    /// track + zoom + scroll survive across opens AND
+    /// across restarts.
+    #[serde(default)]
+    pub timeline_views: HashMap<String, TimelineViewSnapshot>,
+}
+
+/// 1.2.7+ — serialisable snapshot of the swim-lane view's
+/// per-book state. Persisted in `.session.json` so the
+/// `Ctrl+V Shift+T` re-open lands on the same configuration
+/// the user left.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct TimelineViewSnapshot {
+    #[serde(default)]
+    pub collapsed_tracks: Vec<String>,
+    #[serde(default)]
+    pub expanded_track: Option<String>,
+    #[serde(default)]
+    pub track_highlight: Option<String>,
+    #[serde(default)]
+    pub ticks_per_cell: f64,
+    #[serde(default)]
+    pub scroll_ticks: i64,
+    #[serde(default)]
+    pub cursor_ticks: i64,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]

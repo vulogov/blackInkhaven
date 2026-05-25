@@ -1,14 +1,21 @@
 pub(crate) mod app;
+mod backup_ui;
 mod bund_highlight;
+mod credits;
+mod diff_utils;
 mod file_picker;
 mod focus;
 mod highlight;
+mod hjson_edit;
 mod hjson_highlight;
+mod inference;
 mod input;
 pub(crate) mod keybind;
 pub(crate) mod keymap;
 mod lexicon;
+mod lexicon_build;
 mod markdown;
+mod modal;
 mod quickref;
 mod sound;
 mod theme;
@@ -16,7 +23,12 @@ mod typst_funcs;
 mod search_replace;
 mod search_results;
 mod session;
+mod splash;
+mod state;
+mod status_helpers;
+mod text_utils;
 mod timeline_render;
+pub(crate) mod timeline_state;
 
 use std::path::Path;
 

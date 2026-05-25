@@ -425,15 +425,146 @@ timeline: {
 }
 ```
 
+## 1.2.7 polish
+
+The 1.2.7 cycle layered six refinements on top of the 1.2.6
+swim-lane base. None change the underlying data model — every
+new chord works on the same calendar / event / track shape.
+
+### Tree-style Tab / Enter navigation
+
+The 1.2.6 swim lanes had a single Tab-cycle through tracks. The
+1.2.7 model mirrors the **tree pane**: two focus levels, with
+Enter descending and Esc / Backspace popping back up.
+
+```
+Focus = Track          ←  default on open
+  Tab           cycle highlighted track
+  Shift+Tab     reverse cycle
+  Enter         expand the track (sub-rows show events as text)
+                + drop focus into Event mode
+
+Focus = Event
+  Tab           cycle events of the expanded track in time order
+  Shift+Tab     reverse cycle
+  Enter         open the linked-paragraphs picker for the focused
+                event (the LinkPicker modal, same one Ctrl+V L
+                surfaces on a paragraph)
+  Esc / Backspace   pop back to Track focus
+```
+
+The status bar shows the active focus level so you always know
+which Tab you're cycling.
+
+### Track collapse
+
+`Space` on a focused track collapses it to a single header row
+(`▸ track-name · 12 events`) and re-expands the same row.
+Glyphs:
+
+```
+▾ main · 8 events            ←  expanded swim lane
+▸ flashback · 3 events       ←  collapsed header
+```
+
+Collapsed state is **per-book persistent** — the next time you
+open the timeline for the same book you get the same collapsed
+set, the same expanded track, the same zoom + scroll + cursor
+tick. State lives in `.session.json` under `timeline_views`.
+
+### Up / Down event selection
+
+In the 1.2.6 model `↑` / `↓` walked the cursor to the previous /
+next event by start-tick. In 1.2.7 they additionally **select**
+the event by id: every cell carrying that event id renders in
+the selection colour, and the viewport auto-pans so both
+`start_ticks` and `end_ticks` are visible.
+
+This matters most for **duration events** (events that span
+multiple cells). Picking one shows the whole span — start, body,
+end — at once, even if the body extended off the right edge of
+the visible window.
+
+### Grid stripes
+
+Every Nth column gets a faint dotted backdrop, so the eye has
+something to register at when zoomed all the way out. The N
+follows the visible time span:
+
+```
+zoom > 1 day / cell        stripes every 7 cells (~weeks)
+zoom > 1 month / cell      stripes every 12 cells (~years)
+zoom < 1 day / cell        stripes every 24 cells (~days at hour scale)
+```
+
+The stripe colour comes from `theme.modal_subtle` — see
+[`11-theming.md`](11-theming.md).
+
+### F12 full-book critique
+
+Inside the swim-lane view, `F12` triggers a project-wide AI
+audit — the same payload as `Ctrl+Y` (book-wide critique) but
+opt-in via the more direct chord. Routes through
+`crate::timeline::critique::build_health_payload` which lists
+every event chronologically with linked paragraphs +
+characters + places, then prompts the model for travel-time
+conflicts, fuzzy-precision overlaps, orphan signals, and
+pacing outliers.
+
+### Quick-event from selection (any pane)
+
+`Ctrl+V Shift+E` adds a calendar event from any context. The
+new ergonomics:
+
+- **In the editor** with text selected: the selection becomes
+  the event title. The prompt pre-fills with it.
+- **In the tree pane** on a paragraph row: the paragraph's
+  title pre-fills.
+- **Inside the timeline view**: identical to the old `n` chord
+  in 1.2.6 — anchors the event at the cursor tick.
+
+This means the most common flow ("I'm writing a scene and want
+to drop the event on the timeline") is two chords: select the
+scene's anchor sentence, hit `Ctrl+V Shift+E`, type the date,
+done.
+
+### F8 from any pane
+
+`F8` (the typst-diagnostics list modal) previously required
+editor focus. In 1.2.7 it works from any pane, opening on the
+most-recently-active paragraph's diagnostics. Useful when
+you're navigating the tree and want to jump to a known error.
+
+### Book-slug prefix in project overlay
+
+When the project overlay is on (`p` chord in the timeline
+view, cross-book mode), track names get a book-slug prefix:
+
+```
+aerin-saga/main
+aerin-saga/flashback
+khaal-arc/main
+khaal-arc/back-story
+```
+
+So two tracks named "main" across different books no longer
+overlap into one ambiguous row.
+
 ## Recap
 
 - **HJSON gate**: `timeline.enabled: true` + a calendar preset.
 - **CLI**: `inkhaven event add/list/show`.
 - **TUI**: `Ctrl+V e` (picker) · `Ctrl+V Shift+T` (swim lanes).
-- **Swim lanes**: scroll / zoom / scope nav (u/d/b/p) / Tab
-  track / Enter open / `n` new.
-- **AI critique**: `y` track · `Y` scope · `Ctrl+Y` book-wide.
+- **Swim lanes**: Tab / Shift+Tab track cycle · Enter expand or
+  pick linked ¶ · Space collapse · ↑/↓ event-select with span
+  highlight · u/d/b/p scope nav · `n` new event · F12 full
+  critique.
+- **AI critique**: `y` track · `Y` scope · `Ctrl+Y` book-wide ·
+  `F12` book-wide (alternative chord, same payload).
+- **Quick event**: `Ctrl+V Shift+E` from any pane, selection-aware.
 - **Bund**: 7 `ink.event.*` words + `hook.on_event_added` +
   `hook.on_event_orphaned`.
 - **Orphans**: auto-tagged when an event has no outbound
   links; surfaced via `◌` glyphs across every UI.
+- **Session-restored** (1.2.7+): collapsed tracks, expanded
+  track, zoom, scroll, cursor tick — all per-book.

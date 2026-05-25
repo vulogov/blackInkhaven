@@ -21,7 +21,82 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.6 — Tools for the working novelist
+## Latest release · 1.2.7 — Polish + plumbing
+
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.7.md`](Documentation/RELEASE_NOTES/1.2.7.md)
+
+1.2.7 is a polish cycle on the timeline-heavy 1.2.6 release.
+Two themes carry the branch: **timeline + ergonomics
+refinements** on the user side, **a large architecture
+rework** on the source side (zero behavioural delta — verified
+post-hoc).
+
+User-facing highlights:
+
+- **Timeline polish.** Tree-style two-level Tab/Enter
+  navigation, `Space` track collapse with `▾`/`▸` glyphs,
+  span-aware `↑`/`↓` event selection with viewport auto-pan,
+  faint grid stripes, `F12` book-wide critique inside the
+  swim-lane view, per-book session persistence in
+  `.session.json`, book-slug prefix on cross-book tracks
+  (project overlay), and selection-aware `Ctrl+V Shift+E`
+  for one-chord quick-event creation from any pane.
+- **`Ctrl+B U` paragraph undelete.** Single-slot kill-ring
+  that round-trips body + tags + status + linked paragraphs
+  + event timing after a Ctrl+D delete. New uuid; incoming
+  wiki-links to the old id stay broken (status bar warns).
+- **`Alt+←` / `Alt+→` navigation history.** Browser-style
+  back / forward through every paragraph-open path —
+  tree Enter, fuzzy picker, wiki-link follow, snapshot
+  picker, timeline Enter, undelete. Plus `Ctrl+V Shift+P`
+  recent-paragraph picker (32 entries, deduped).
+- **`Ctrl+Shift+M` mouse-capture toggle.** Flip terminal-
+  native drag-select + system-clipboard copy on / off so
+  you can grab snippets to paste elsewhere without
+  routing through `Ctrl+C` chat-selection mode.
+- **External-change auto-reload.** Passive watcher on every
+  autosave tick: clean buffer → silent reload, dirty
+  buffer → red warning. CLI / `sed` / `git pull` / Bund
+  scripts that touch the open paragraph file no longer
+  leave stale text on screen.
+- **Snapshot dedupe + today-widget colour + F8 from any pane.**
+  Three smaller refinements: F5 / autosave skip
+  byte-identical snapshots, the today-words widget gets
+  colour by goal progress, the typst-diagnostics modal
+  works outside the editor pane.
+
+Around those: 4 new tutorials (32 — 34) plus a "1.2.7 polish"
+section on tutorial 31; updated keybinding reference.
+
+### Under the hood — architecture rework
+
+The TUI brain (`src/tui/app.rs`) went from a 26,605-LOC
+monolith to a 13,939-LOC central dispatcher with 21
+sibling / child modules hanging off it. Every commit on the
+branch was byte-equivalent modulo visibility downgrades and
+import-path rewrites, verified post-hoc by a programmatic
+per-method diff (561 method bodies pre vs post; exactly one
+differed, and that turned out to be a pre-existing
+`save_current` bug that I fixed). 255 → 260 tests passing;
+zero build warnings.
+
+The split makes the source navigable: render painters, modal
+state, AI orchestration, timeline navigation, tag picker,
+editor buffer methods, etc. each live in named files instead
+of being scattered across a single huge `impl App {}`. See
+`src/tui/` for the layout.
+
+### Bugfix worth flagging
+
+`Ctrl+S` in the editor was snapping the cursor to the
+beginning of the buffer on every save. Pre-existing since
+the 1.2.7 external-change auto-reload landed — save wrote
+the file but never restamped `loaded_mtime`, so the next
+tick saw the fresh mtime and reloaded the buffer (which
+resets the cursor). Fixed in this release. If you ever see
+that recurrence, file a bug.
+
+### Previous release · 1.2.6 — Tools for the working novelist
 
 Read the full notes: [`Documentation/RELEASE_NOTES/1.2.6.md`](Documentation/RELEASE_NOTES/1.2.6.md)
 
@@ -33,10 +108,8 @@ memory + diff modal), **labelled snapshots**, a **paragraph-
 mini story view**, and a brand-new **story timeline** with
 calendar-aware events.
 
-Read it here:
-
 ```hjson
-# Opt-in to the headline new feature.
+# Opt-in to the timeline (still 1.2.6+).
 timeline: {
   enabled: true
   calendar: { preset: "gregorian" }    # or "sols" or "custom"
@@ -49,7 +122,7 @@ ai: {
 }
 ```
 
-Headlines:
+Headlines from 1.2.6:
 
 - **Tagging stack.** `Ctrl+B ]` picker · `Ctrl+B }` project
   search · `R` rename project-wide · `inkhaven export --tag`
@@ -81,12 +154,9 @@ Headlines:
   words + two new hooks (`hook.on_event_added` /
   `hook.on_event_orphaned`). Opt-in via `timeline.enabled`.
 
-Around those: a new **Book of Inkhaven** at `Book/` —
-30 chapters + 3 appendices, designed for print, with a
-markdown mirror suitable for `inkhaven import-help`. Seven
-new tutorials (25 — 31) cover every theme above. The 1.2.5
-typst in-process work is still the foundation for the new
-diagnostic + render-zoom features.
+The companion **Book of Inkhaven** at `Book/` covers all of
+1.2.6 in print form. It stays synced to 1.2.6 until the next
+major release; 1.2.7 polish lives in the tutorials.
 
 ### Previous release · 1.2.5
 

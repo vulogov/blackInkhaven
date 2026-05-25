@@ -279,6 +279,12 @@ pub enum Action {
     /// Ctrl+V P — fuzzy paragraph picker (1.2.4+).
     #[serde(rename = "view.fuzzy_paragraph_picker")]
     ViewFuzzyParagraphPicker,
+    /// Ctrl+V Shift+P (1.2.7+) — same fuzzy paragraph
+    /// picker but entries are sorted by `modified_at` desc.
+    /// Answers "what did I work on most recently?" without
+    /// trawling the tree pane.
+    #[serde(rename = "view.recent_paragraph_picker")]
+    ViewRecentParagraphPicker,
     /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
     /// via typst-render and float a PNG preview on top of the
     /// editor. `Esc` closes, `S` opens a save-as picker for the
@@ -320,6 +326,34 @@ pub enum Action {
     /// `timeline.enabled`.
     #[serde(rename = "view.new_event_prompt")]
     ViewNewEventPrompt,
+    /// Ctrl+Shift+M (1.2.7+) — toggle TUI mouse capture.
+    /// Default ON (TUI sees click-to-focus, scroll wheel,
+    /// etc.). Toggle OFF to let the terminal handle mouse
+    /// natively: drag-to-select inside the editor / AI
+    /// pane, system-clipboard copy via Cmd+C (macOS) or
+    /// Ctrl+Shift+C (Linux/Windows). Status reports the
+    /// new state.
+    #[serde(rename = "global.toggle_mouse_capture")]
+    ToggleMouseCapture,
+    /// Alt+Left (1.2.7+) — browser-style "back" through
+    /// the visited-paragraph history. Doesn't push to the
+    /// history itself (so back/forward is reversible).
+    #[serde(rename = "global.visited_back")]
+    VisitedBack,
+    /// Alt+Right (1.2.7+) — browser-style "forward". Only
+    /// active when the user has gone back at least once.
+    #[serde(rename = "global.visited_forward")]
+    VisitedForward,
+    /// Ctrl+B U (1.2.7+) — undo the most recent paragraph
+    /// delete. Single-slot kill-ring; content + tags +
+    /// linked_paragraphs + event data restored. The
+    /// restored paragraph gets a NEW uuid — cross-refs
+    /// from elsewhere that pointed at the deleted id stay
+    /// broken (status hint flags this on each restore).
+    /// Only paragraph deletes are recoverable; branch
+    /// (chapter / book) deletes can't be undone.
+    #[serde(rename = "global.undo_last_delete")]
+    UndoLastDelete,
     /// Ctrl+V Shift+I (1.2.6+) — open a one-line edit prompt for
     /// the open event paragraph's start / end / track (pipe-
     /// separated). Precision is re-derived from the start
@@ -432,12 +466,17 @@ impl Action {
             Action::ViewToggleBookmark => "bookmark".into(),
             Action::ViewListBookmarks => "bookmarks".into(),
             Action::ViewFuzzyParagraphPicker => "find ¶".into(),
+            Action::ViewRecentParagraphPicker => "recent ¶".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
             Action::ViewStoryGraphParagraph => "story view (¶)".into(),
             Action::ViewEventPicker => "events".into(),
             Action::ViewNewEventPrompt => "new event".into(),
+            Action::ToggleMouseCapture => "mouse".into(),
+            Action::VisitedBack => "← back".into(),
+            Action::VisitedForward => "fwd →".into(),
+            Action::UndoLastDelete => "undo del".into(),
             Action::ViewEditEventMetadata => "edit event".into(),
             Action::ViewTimeline => "timeline".into(),
 
@@ -602,6 +641,8 @@ impl Action {
                 "Open the bookmark picker — every bookmarked paragraph in the project. Enter opens; D removes the bookmark.".into(),
             Action::ViewFuzzyParagraphPicker =>
                 "Fuzzy paragraph picker — type any substring of the title or slug path, Enter opens the highlighted hit.".into(),
+            Action::ViewRecentParagraphPicker =>
+                "Recent paragraph picker (1.2.7+) — same fuzzy picker as Ctrl+V P but sorted by modified_at desc. Answers \"what did I work on most recently?\" without trawling the tree.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -614,6 +655,14 @@ impl Action {
                 "Open the timeline event picker (1.2.6+). Lists every event in the project sorted by start time; Enter jumps to the event paragraph. Requires `timeline.enabled: true` in HJSON.".into(),
             Action::ViewNewEventPrompt =>
                 "Open the swim-lane timeline view and immediately prompt for a new event title (1.2.6+). Same flow as opening the timeline then pressing `n`. Requires `timeline.enabled: true`.".into(),
+            Action::ToggleMouseCapture =>
+                "Toggle TUI mouse capture (1.2.7+). Default ON. When OFF, the terminal handles mouse natively: drag-to-select text in the editor / AI pane, system-clipboard copy via Cmd+C (macOS) or Ctrl+Shift+C (Linux/Windows). Toggle back to re-enable click-to-focus + scroll-wheel inside the TUI.".into(),
+            Action::VisitedBack =>
+                "Browser-style back (1.2.7+) — re-open the previously-visited paragraph. Default chord: Alt+Left. History persists across sessions in .session.json.".into(),
+            Action::VisitedForward =>
+                "Browser-style forward (1.2.7+) — re-open the next paragraph in the visit history. Default chord: Alt+Right. Only active after at least one back-press.".into(),
+            Action::UndoLastDelete =>
+                "Undo the most-recent paragraph delete (1.2.7+) — single-slot kill-ring. Restores content + tags + linked_paragraphs + event data, but the restored ¶ gets a NEW uuid so wiki-links from elsewhere stay broken. Branch deletes (chapter / book) can't be undone. Default chord: Ctrl+B U.".into(),
             Action::ViewEditEventMetadata =>
                 "Edit the open event paragraph's start / end / track (pipe-separated, 1.2.6+). Pre-fills with current values; empty middle = no end; empty trailing = drop track. Precision re-derived from start on commit. No-op when the open paragraph isn't an event.".into(),
             Action::ViewTimeline =>
@@ -721,6 +770,9 @@ impl KeyBindings {
                 // because the matcher tracks SHIFT separately.
                 entry("Shift+b", Action::BackupNow, Scope::Any),
                 entry("o", Action::ScheduleTake, Scope::Any),
+                // 1.2.7+ — Ctrl+B U undoes the most-recent
+                // paragraph delete (single-slot kill-ring).
+                entry("u", Action::UndoLastDelete, Scope::Any),
                 entry("w", Action::ToggleTypewriter, Scope::Any),
                 entry("k", Action::ToggleAiFullscreen, Scope::Any),
                 entry("1", Action::StatusFilterReady, Scope::Any),
@@ -761,6 +813,8 @@ impl KeyBindings {
                 entry("b", Action::ViewToggleBookmark, Scope::Any),
                 entry("m", Action::ViewListBookmarks, Scope::Any),
                 entry("p", Action::ViewFuzzyParagraphPicker, Scope::Any),
+                // 1.2.7+ — same picker sorted by modified_at desc.
+                entry("Shift+p", Action::ViewRecentParagraphPicker, Scope::Any),
                 entry("r", Action::ViewRenderParagraph, Scope::Any),
                 entry("n", Action::ViewNextDiagnostic, Scope::Any),
                 // 1.2.6+: case differentiates view scope. Plain
@@ -810,7 +864,20 @@ impl KeyBindings {
                 // F7 — grammar check.
                 entry("F7", Action::GrammarCheck, Scope::Editor),
                 // F8 (1.2.6+) — typst diagnostics list modal.
-                entry("F8", Action::DiagnosticsList, Scope::Editor),
+                // 1.2.7+ — scope widened to `Any` so the chord
+                // fires from Tree / AI / Search panes too,
+                // not just from a focused editor. The handler
+                // re-focuses the editor when the modal opens.
+                entry("F8", Action::DiagnosticsList, Scope::Any),
+                // 1.2.7+ — Ctrl+Shift+M toggles mouse capture
+                // so the user can drag-select text in the
+                // editor / AI pane via the terminal's native
+                // selection model + system clipboard copy.
+                entry("Ctrl+Shift+m", Action::ToggleMouseCapture, Scope::Any),
+                // 1.2.7+ — Alt+Left / Alt+Right back/forward
+                // through visited-paragraph history.
+                entry("Alt+Left", Action::VisitedBack, Scope::Any),
+                entry("Alt+Right", Action::VisitedForward, Scope::Any),
                 // F9 / F10 — global AI mode + inference toggle.
                 entry("F9", Action::CycleAiMode, Scope::Any),
                 entry("F10", Action::ToggleInferenceMode, Scope::Any),

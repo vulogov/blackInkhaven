@@ -4,7 +4,7 @@
 
 use uuid::Uuid;
 
-use super::app::TimelineEvent;
+use super::timeline_state::TimelineEvent;
 
 /// One row in the swim lane = one track. Cells are
 /// width-aligned; `None` is whitespace.
@@ -44,15 +44,29 @@ pub(crate) fn layout_swim_lanes(
         return Vec::new();
     }
 
+    // 1.2.7+ — when an event's `book_prefix` is non-empty
+    // (set by `collect_book_events` in project-overlay mode),
+    // prepend it to the track label as `<book-slug>/<track>`.
+    // Otherwise the track key is the raw track name. Same
+    // value used for both row creation and per-event row
+    // lookup so the keys match.
+    let track_key = |e: &TimelineEvent| -> String {
+        let raw = e
+            .track
+            .clone()
+            .unwrap_or_else(|| default_track_label.to_owned());
+        if e.book_prefix.is_empty() {
+            raw
+        } else {
+            format!("{}/{}", e.book_prefix, raw)
+        }
+    };
+
     // Collect unique non-orphan tracks.
     let mut tracks: Vec<String> = events
         .iter()
         .filter(|e| !e.is_orphan)
-        .map(|e| {
-            e.track
-                .clone()
-                .unwrap_or_else(|| default_track_label.to_owned())
-        })
+        .map(&track_key)
         .collect();
     tracks.sort();
     tracks.dedup();
@@ -85,10 +99,7 @@ pub(crate) fn layout_swim_lanes(
             rows.iter()
                 .position(|r| r.is_orphan_row)
         } else {
-            let want = ev
-                .track
-                .clone()
-                .unwrap_or_else(|| default_track_label.to_owned());
+            let want = track_key(ev);
             rows.iter().position(|r| !r.is_orphan_row && r.label == want)
         };
         let Some(row_idx) = row_idx else { continue };
@@ -145,6 +156,43 @@ fn tick_to_col(ticks: i64, scroll_ticks: i64, ticks_per_cell: f64) -> isize {
 /// value.
 pub(crate) fn col_to_tick(col: usize, scroll_ticks: i64, ticks_per_cell: f64) -> i64 {
     scroll_ticks + (col as f64 * ticks_per_cell).round() as i64
+}
+
+/// 1.2.7+ — compute the column indices where a vertical grid
+/// stripe should land, given a per-day stride. Spacing is
+/// expressed in ticks (= days when `base_unit = "day"`, the
+/// default for all three calendar presets). `step_days == 0`
+/// disables the grid (returns an empty vec). Columns that
+/// don't fall inside `[0, width)` are skipped.
+pub(crate) fn grid_columns(
+    scroll_ticks: i64,
+    ticks_per_cell: f64,
+    width: usize,
+    step_days: u32,
+) -> Vec<usize> {
+    if width == 0 || ticks_per_cell <= 0.0 || step_days == 0 {
+        return Vec::new();
+    }
+    let step = step_days as i64;
+    // First grid tick at or before scroll_ticks (aligned to
+    // step boundaries).
+    let aligned = scroll_ticks - scroll_ticks.rem_euclid(step);
+    let span_ticks = (width as f64 * ticks_per_cell).ceil() as i64;
+    let mut out = Vec::new();
+    let mut t = aligned;
+    while t <= scroll_ticks + span_ticks {
+        let col = tick_to_col(t, scroll_ticks, ticks_per_cell);
+        if col >= 0 && (col as usize) < width {
+            out.push(col as usize);
+        }
+        t = t.saturating_add(step);
+        // Sanity guard — at huge zoom-outs the loop is bounded
+        // by span_ticks, but defensive cap keeps us safe.
+        if out.len() > width {
+            break;
+        }
+    }
+    out
 }
 
 /// Compute the tick stamps that should carry a label on the

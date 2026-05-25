@@ -1425,6 +1425,14 @@ pub struct TimelineDisplayConfig {
     pub show_orphans: bool,
     pub swim_lane_max_rows: u32,
     pub default_zoom: f32,
+    /// 1.2.7+ — paint a faint vertical bar every N days across
+    /// the swim-lane view (axis row + each track row, in cells
+    /// that aren't already covered by an event marker or by the
+    /// time cursor). Set to `0` to disable the grid entirely.
+    /// Default `7` — one stripe per week, useful for sols /
+    /// gregorian calendars. Custom calendars: assumes
+    /// `base_unit = "day"` (the typical case); 1 day == 1 tick.
+    pub grid_every_days: u32,
 }
 
 impl Default for TimelineDisplayConfig {
@@ -1433,6 +1441,7 @@ impl Default for TimelineDisplayConfig {
             show_orphans: true,
             swim_lane_max_rows: 12,
             default_zoom: 1.0,
+            grid_every_days: 7,
         }
     }
 }
