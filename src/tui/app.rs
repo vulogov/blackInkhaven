@@ -65,6 +65,9 @@ use super::hjson_edit::{
     set_key_in_hjson_block, set_llm_default_in_hjson,
     set_sound_enabled_in_hjson,
 };
+use super::inference::{
+    AiMode, Inference, InferenceAction, InferenceMode, InferenceStatus,
+};
 use super::status_helpers::{
     display_status, next_status, prev_status, status_letter, status_style,
 };
@@ -471,103 +474,6 @@ fn content_type_for(path: &std::path::Path) -> Option<String> {
     match ext.as_str() {
         "hjson" => Some("hjson".into()),
         _ => None,
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InferenceAction {
-    Replace,
-    Insert,
-    Top,
-    Bottom,
-    CopyOnly,
-    /// Grammar-check-aware replace: lifts ONLY the corrected paragraph
-    /// from the response (between `<<<CORRECTED>>>` / `<<<END>>>` markers,
-    /// or fenced code, or a "Corrected …" heading) and overwrites the
-    /// editor buffer with it. No markdown→typst conversion runs — the
-    /// grammar prompt instructs the model to keep Typst markup verbatim.
-    ReplaceCorrected,
-}
-
-/// Scope of context an AI prompt sweeps in along with the user's query.
-/// Cycled by F9: None → Selection → Paragraph → Subchapter → Chapter →
-/// Book → None. Each non-None scope prepends the relevant text to the
-/// query before sending; after a successful submission the mode auto-
-/// resets to None so a follow-up prompt isn't surprised by stale scope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AiMode {
-    None,
-    Selection,
-    Paragraph,
-    Subchapter,
-    Chapter,
-    Book,
-}
-
-impl AiMode {
-    fn label(self) -> &'static str {
-        match self {
-            AiMode::None => "None",
-            AiMode::Selection => "Selection",
-            AiMode::Paragraph => "Paragraph",
-            AiMode::Subchapter => "Subchapter",
-            AiMode::Chapter => "Chapter",
-            AiMode::Book => "Book",
-        }
-    }
-    fn next(self) -> Self {
-        match self {
-            AiMode::None => AiMode::Selection,
-            AiMode::Selection => AiMode::Paragraph,
-            AiMode::Paragraph => AiMode::Subchapter,
-            AiMode::Subchapter => AiMode::Chapter,
-            AiMode::Chapter => AiMode::Book,
-            AiMode::Book => AiMode::None,
-        }
-    }
-}
-
-/// How aggressively the model is allowed to draw on its own knowledge.
-/// F10 toggles between the two values. Help inferences always run as
-/// `Local` regardless of the user's current toggle — the Help book is the
-/// authoritative source and we don't want the model paraphrasing from
-/// general training data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InferenceMode {
-    /// Only the supplied RAG / scope context (and prior chat turns) may be
-    /// used. The system prompt instructs the model to refuse rather than
-    /// fall back on outside knowledge.
-    Local,
-    /// Context is treated as ground truth where present, but the model
-    /// may augment with general knowledge. Default for fresh chats.
-    Full,
-}
-
-impl InferenceMode {
-    fn label(self) -> &'static str {
-        match self {
-            InferenceMode::Local => "Local",
-            InferenceMode::Full => "Full",
-        }
-    }
-    fn toggle(self) -> Self {
-        match self {
-            InferenceMode::Local => InferenceMode::Full,
-            InferenceMode::Full => InferenceMode::Local,
-        }
-    }
-}
-
-impl InferenceAction {
-    fn label(&self) -> &'static str {
-        match self {
-            InferenceAction::Replace => "replaced",
-            InferenceAction::Insert => "inserted at cursor",
-            InferenceAction::Top => "prepended to top",
-            InferenceAction::Bottom => "appended to bottom",
-            InferenceAction::CopyOnly => "copied",
-            InferenceAction::ReplaceCorrected => "replaced with corrected text",
-        }
     }
 }
 
@@ -2196,25 +2102,6 @@ pub(crate) struct App {
     /// `C` copies the selected turn to the system clipboard, `T`
     /// inserts it into the editor buffer at the cursor.
     chat_selection: Option<ChatSelectionState>,
-}
-
-#[derive(Debug)]
-struct Inference {
-    provider: String,
-    /// Kept for diagnostics on the Debug impl; not displayed in the UI.
-    #[allow(dead_code)]
-    model: String,
-    response: String,
-    status: InferenceStatus,
-    rx: tokio::sync::mpsc::UnboundedReceiver<StreamMsg>,
-    started_at: std::time::Instant,
-}
-
-#[derive(Debug, Clone)]
-enum InferenceStatus {
-    Streaming,
-    Done,
-    Error(String),
 }
 
 /// One row in the `Ctrl+B P`-while-inside-`#image(...)` picker. The
