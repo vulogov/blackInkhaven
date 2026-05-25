@@ -43,7 +43,7 @@ use super::session::{
 use super::highlight::{
     BlockSelection, TypstHighlighter,
 };
-use super::backup_ui::{maybe_auto_backup, run_manual_backup};
+use super::backup_ui::maybe_auto_backup;
 use super::credits::embedded_logo_image;
 use super::input::TextInput;
 use super::lexicon_build::{LexiconKind, build_lexicon};
@@ -1503,6 +1503,7 @@ pub(crate) struct App {
     chat_selection: Option<ChatSelectionState>,
 }
 
+mod backup_impl;
 mod render;
 mod snapshot_impl;
 mod tag_impl;
@@ -9698,33 +9699,6 @@ impl App {
         };
         self.pending_build = Some(book_id);
         self.status = "Book build: assembling + compiling…".into();
-    }
-
-    /// Ctrl+B Shift+B — schedule an immediate project backup. The
-    /// next main-loop tick picks up the flag and runs
-    /// `run_pending_backup_now` against the live `terminal`.
-    fn schedule_backup_now(&mut self) {
-        self.pending_backup_now = true;
-        self.status = "Backup: zipping the project…".into();
-    }
-
-    /// Drain the `pending_backup_now` flag — runs the manual
-    /// backup with its own splash. Honours
-    /// `backup.wait_for_key_after_backup`. Status bar carries the
-    /// final outcome.
-    fn run_pending_backup_now<B: ratatui::backend::Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-    ) {
-        let layout = ProjectLayout::new(self.store.project_root());
-        match run_manual_backup(terminal, &layout, &self.cfg) {
-            Ok(path) => {
-                self.status = format!("Backup OK · {}", path.display());
-            }
-            Err(e) => {
-                self.status = format!("Backup failed: {e:#}");
-            }
-        }
     }
 
     /// Ctrl+B O — schedule a Book "take": build, then copy the PDF
