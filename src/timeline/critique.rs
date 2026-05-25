@@ -10,7 +10,6 @@
 use uuid::Uuid;
 
 use crate::store::hierarchy::Hierarchy;
-use crate::store::node::NodeKind;
 use crate::timeline::{Calendar, Precision, TimelinePoint};
 use crate::tui::timeline_state::TimelineEvent;
 
