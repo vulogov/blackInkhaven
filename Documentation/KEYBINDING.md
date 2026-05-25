@@ -1050,3 +1050,90 @@ Enter          open the event paragraph
 Esc            close
 ```
 
+## 1.2.7 — chord additions
+
+### Paragraph undelete (1.2.7+)
+
+```
+Ctrl+B U       restore the most recently deleted paragraph
+               (single-slot kill-ring; new uuid; wiki-links to
+                old id stay broken).  Cleared by any branch
+                delete or another single-¶ delete (the new one
+                takes the slot).
+```
+
+See [`Tutorials/32-paragraph-undelete.md`](Tutorials/32-paragraph-undelete.md).
+
+### Navigation history (1.2.7+)
+
+```
+Alt+←          step backward through visited paragraphs
+Alt+→          step forward (after stepping back)
+Ctrl+V Shift+P recent-paragraph picker (most-recent-first list,
+               up to 32 entries, deduped against the previous)
+```
+
+The ring is in-memory only — restart clears it.  Opening a
+new paragraph (via Enter / picker / wiki-link / undelete /
+similar / timeline-Enter) clears the forward stack.
+
+See [`Tutorials/33-navigation-history.md`](Tutorials/33-navigation-history.md).
+
+### Mouse + external-change behaviour (1.2.7+)
+
+```
+Ctrl+Shift+M   toggle mouse capture on / off
+               OFF lets the terminal handle drag-select +
+                   native clipboard (Cmd/Ctrl+Shift+C).
+               ON  restores click-to-focus + wheel-scroll
+                   for the active pane.  Session-only;
+                   defaults to ON.
+```
+
+External-change auto-reload has no chord — it runs passively
+on every autosave tick.  Status bar reads:
+
+```
+↻ reloaded `<title>` — file changed on disk   (clean buffer)
+⚠ `<title>` changed on disk while you have unsaved edits —
+  Ctrl+S to overwrite the external change      (dirty buffer)
+```
+
+See [`Tutorials/34-mouse-and-external-changes.md`](Tutorials/34-mouse-and-external-changes.md).
+
+### Timeline polish (1.2.7+)
+
+Inside `Ctrl+V Shift+T` (swim-lane view) the navigation model
+gained a second focus level mirroring the tree pane:
+
+```
+Focus = Track                         (default on open)
+  Tab / Shift+Tab    cycle highlighted track
+  Space              collapse / expand the focused track
+  Enter              expand + drop focus into Event mode
+
+Focus = Event
+  Tab / Shift+Tab    cycle events of the expanded track in time
+  Enter              open the linked-paragraphs picker for the
+                     focused event
+  Esc / Backspace    pop back to Track focus
+
+Anywhere in swim lanes:
+  ↑ / ↓              select previous / next event by start tick;
+                     viewport auto-pans to show whole span
+  F12                full-book AI health critique (same payload
+                     as Ctrl+Y; alternative chord)
+```
+
+Session-restored state (per book, in `.session.json`):
+collapsed tracks, expanded track, track highlight, zoom
+(`ticks_per_cell`), scroll tick, cursor tick.
+
+See [`Tutorials/31-story-timeline.md`](Tutorials/31-story-timeline.md) "1.2.7 polish".
+
+### F8 from any pane (1.2.7+)
+
+`F8` (typst-diagnostics list modal) now works from any pane,
+not just the editor.  Opens against the most-recently-active
+paragraph's cached diagnostics.
+
