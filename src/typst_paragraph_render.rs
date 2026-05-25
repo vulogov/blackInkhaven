@@ -131,10 +131,9 @@ fn format_errors(errors: &[typst::diag::SourceDiagnostic]) -> String {
 mod tests {
     use super::*;
 
-    /// `#[ignore]` for the same reason `check_semantic`'s smoke
-    /// is: rendering needs fonts loadable.
+    /// End-to-end render — needs system fonts loadable (typst's font
+    /// discovery). CI installs `fonts-dejavu-core`.
     #[test]
-    #[ignore]
     fn renders_a_simple_paragraph() {
         let source =
             "#set page(width: 10cm, height: 5cm, margin: 1cm)\n\
@@ -165,7 +164,6 @@ mod tests {
     /// Multi-page document — exercise both `render_all` returning
     /// every page and `render_page(idx)` returning the same page.
     #[test]
-    #[ignore]
     fn renders_each_page_consistently() {
         let source =
             "#set page(width: 10cm, height: 5cm, margin: 1cm)\n\

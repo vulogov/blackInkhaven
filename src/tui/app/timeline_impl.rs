@@ -21,8 +21,8 @@ use super::super::input::TextInput;
 use super::super::modal::Modal;
 use super::super::session::TimelineViewSnapshot;
 use super::super::timeline_state::{
-    cycle_track, timeline_step_event_cursor, TimelineDescentChoice, TimelineDescentState,
-    TimelineEvent, TimelineFocusLevel, TimelineViewState,
+    timeline_step_event_cursor, TimelineDescentChoice, TimelineDescentState, TimelineEvent,
+    TimelineFocusLevel, TimelineViewState,
 };
 
 impl super::App {
@@ -409,28 +409,6 @@ impl super::App {
             state.collapsed_tracks.insert(label.clone());
             self.status = format!("timeline · collapsed `{label}`");
         }
-    }
-
-    /// Cycle `track_highlight` through the tracks that
-    /// appear in the current event snapshot. None → first
-    /// track → next → … → None.
-    pub(super) fn timeline_cycle_track(&mut self) {
-        let Modal::TimelineView { state } = &mut self.modal else { return; };
-        let default_track = self.cfg.timeline.default_track.clone();
-        let mut tracks: Vec<String> = state
-            .events
-            .iter()
-            .filter(|e| !e.is_orphan)
-            .map(|e| e.track.clone().unwrap_or_else(|| default_track.clone()))
-            .collect();
-        tracks.sort();
-        tracks.dedup();
-        let next = cycle_track(state.track_highlight.as_deref(), &tracks);
-        state.track_highlight = next.clone();
-        self.status = match next {
-            Some(t) => format!("timeline · track highlight: `{t}`"),
-            None => "timeline · track highlight cleared".into(),
-        };
     }
 
     /// Find the event closest to `cursor_ticks` (preferring

@@ -370,13 +370,10 @@ mod tests {
     /// End-to-end smoke: spawn the worker, poll to completion,
     /// recover the outcome, and confirm we got *something
     /// sensible* — either a non-empty PDF on disk OR a structured
-    /// failure message. Marked `#[ignore]` because the test exercises
-    /// system-font discovery which is genuinely environmental;
-    /// CI boxes with zero fonts will surface a `font not found`
-    /// diagnostic that the test should not flag as a regression.
-    /// Run manually with `cargo test --ignored typst_inprocess`.
+    /// failure message. Exercises system-font discovery; CI installs
+    /// `fonts-dejavu-core` so typst's font detection has at least one
+    /// face available.
     #[test]
-    #[ignore]
     fn end_to_end_compile_smoke() {
         let (dir, path) = write_tmp(
             "#set page(width: 10cm, height: 5cm, margin: 1cm)\n\
@@ -423,12 +420,10 @@ mod tests {
 
     /// `check_semantic` against an obviously-broken paragraph
     /// (call to an undefined function) should produce at least
-    /// one diagnostic anchored at the bad call. Marked `#[ignore]`
-    /// because semantic checks need the font cache + library to
-    /// be loadable — same environmental dependency as the
-    /// end-to-end smoke.
+    /// one diagnostic anchored at the bad call. Needs the font
+    /// cache + library loadable — same environmental dependency
+    /// as the end-to-end smoke.
     #[test]
-    #[ignore]
     fn semantic_catches_undefined_function() {
         let source = "#this_function_does_not_exist()\n";
         let diags = check_semantic(

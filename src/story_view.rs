@@ -1297,11 +1297,10 @@ mod tests {
         assert!((br - ring).abs() < 1e-6);
     }
 
-    /// `#[ignore]` smoke — exercises the full SVG-build + resvg
+    /// End-to-end smoke — exercises the full SVG-build + resvg
     /// path on a hand-built mini-graph including a multi-line
-    /// label. Requires system fonts.
+    /// label. Requires system fonts; CI installs `fonts-dejavu-core`.
     #[test]
-    #[ignore]
     fn end_to_end_render_smoke() {
         let mk = |id: u128, x: f64, y: f64, lines: &[&str], shape, fill| {
             let label_lines: Vec<String> =
