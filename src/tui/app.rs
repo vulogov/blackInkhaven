@@ -37,7 +37,9 @@ use super::file_picker::{FilePicker, PickerContext};
 use super::focus::Focus;
 use super::quickref;
 use super::search_replace::{RowMatch, SearchState, row_matches};
-use super::session::{EditorSession, ParagraphCursor, SessionState, TreeSession};
+use super::session::{
+    EditorSession, ParagraphCursor, SessionState, TimelineViewSnapshot, TreeSession,
+};
 use super::highlight::{
     BlockSelection, RowHit, TypstHighlighter, build_row_spans, build_visual_row_spans,
     diff_added, wrap_line,
@@ -2844,6 +2846,12 @@ pub(crate) struct App {
     /// `Ctrl+Shift+M`.
     mouse_captured: bool,
 
+    /// 1.2.7+ — per-book swim-lane view state cache.
+    /// Captured when the timeline view closes (Esc), restored
+    /// on next `open_timeline_view` for the same book.
+    /// Survives restart via `.session.json`.
+    timeline_views: std::collections::HashMap<Uuid, TimelineViewSnapshot>,
+
     /// 1.2.7+ — visited-paragraph history (browser-style
     /// back/forward). Pushed on every `load_paragraph` that
     /// isn't itself a back/forward navigation; truncated
@@ -3436,6 +3444,14 @@ struct OpenedDoc {
     /// Snapshot of `textarea.lines()` at the most recent save / load. Used to
     /// bold characters added since then.
     saved_lines: Vec<String>,
+    /// 1.2.7+ — wall-clock mtime of the paragraph's file at
+    /// the moment we loaded it (or after the last save).
+    /// The idle ticker compares this to the current mtime;
+    /// if the file changed externally (CLI edit, sed, git
+    /// pull, …), we either silently reload (clean buffer)
+    /// or warn (dirty buffer). `None` when mtime isn't
+    /// available (e.g. virtual filesystem, race).
+    loaded_mtime: Option<std::time::SystemTime>,
     /// Set when split-edit mode is active. The lower pane shows a read-only
     /// copy of `snapshot_lines`, scrolled independently of the live editor.
     split: Option<SplitView>,
@@ -3578,6 +3594,7 @@ impl App {
             ai,
             prompts,
             mouse_captured: true,
+            timeline_views: std::collections::HashMap::new(),
             visited_history: Vec::new(),
             visited_cursor: 0,
             visited_skip_next_push: false,
@@ -3917,6 +3934,16 @@ impl App {
             }
         }
 
+        // 1.2.7+ — external-change watch. If the open
+        // paragraph's file mtime moved since we loaded it,
+        // someone else (CLI, sed, git pull) touched it.
+        // Clean buffer → silently reload + status hint;
+        // dirty buffer → red warning with a hint to use
+        // Ctrl+B Shift+R to reload (losing local changes)
+        // or Ctrl+S to overwrite. Cheap (one syscall per
+        // tick) so safe at the autosave cadence.
+        self.tick_external_change_check();
+
         // 1.2.5+: idle typst-syntax recheck. Independent of save
         // — runs whenever the user has paused for
         // `typst_compile.diagnostics_idle_seconds` and the buffer
@@ -3943,6 +3970,67 @@ impl App {
                 self.refresh_typst_diagnostics_for_opened();
             }
         }
+    }
+
+    /// 1.2.7+ — once per tick, check whether the open
+    /// paragraph's file changed on disk since we loaded it.
+    /// Three cases:
+    ///   1. mtime unchanged → no-op.
+    ///   2. mtime newer + buffer CLEAN → silent reload +
+    ///      stamp the new mtime. Status notes the reload.
+    ///   3. mtime newer + buffer DIRTY → red warning. We do
+    ///      NOT clobber the user's edits; they decide via
+    ///      Ctrl+S (overwrite the on-disk change) or by
+    ///      copying their text elsewhere + manually
+    ///      reloading.
+    fn tick_external_change_check(&mut self) {
+        let Some(doc) = self.opened.as_ref() else { return; };
+        let Some(loaded_mtime) = doc.loaded_mtime else { return; };
+        let abs = self.layout.root.join(&doc.rel_path);
+        let on_disk_mtime = match std::fs::metadata(&abs).and_then(|m| m.modified()) {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        if on_disk_mtime <= loaded_mtime {
+            return;
+        }
+        // File changed externally.
+        if doc.dirty {
+            // Status warning, don't touch the buffer.
+            self.status = format!(
+                "⚠ `{}` changed on disk while you have unsaved edits — Ctrl+S to overwrite the external change",
+                doc.title
+            );
+            return;
+        }
+        // Clean buffer → silent reload.
+        let body = match std::fs::read_to_string(&abs) {
+            Ok(b) => b,
+            Err(e) => {
+                self.status =
+                    format!("external reload failed: {}: {e}", abs.display());
+                return;
+            }
+        };
+        let lines = body_to_lines(&body);
+        let title = doc.title.clone();
+        let id = doc.id;
+        if let Some(doc) = self.opened.as_mut() {
+            let saved_lines = lines.clone();
+            doc.textarea = TextArea::new(lines);
+            doc.saved_lines = saved_lines;
+            doc.dirty = false;
+            doc.loaded_mtime = Some(on_disk_mtime);
+            // Move cursor to (0, 0) — the previous
+            // position may no longer make sense after an
+            // external rewrite.
+            doc.textarea.move_cursor(CursorMove::Jump(0, 0));
+        }
+        let _ = id;
+        self.refresh_typst_diagnostics_for_opened();
+        self.status = format!(
+            "↻ reloaded `{title}` — file changed on disk"
+        );
     }
 
     fn is_streaming(&self) -> bool {
@@ -5583,6 +5671,18 @@ impl App {
             .iter()
             .map(|u| u.to_string())
             .collect();
+        // 1.2.7+ — also serialise any open timeline view's
+        // state into the cache so the snapshot we persist
+        // includes the user's CURRENT layout, not just the
+        // last one they closed.
+        if matches!(self.modal, Modal::TimelineView { .. }) {
+            self.timeline_capture_view_state();
+        }
+        let timeline_views: std::collections::HashMap<String, TimelineViewSnapshot> =
+            self.timeline_views
+                .iter()
+                .map(|(id, snap)| (id.to_string(), snap.clone()))
+                .collect();
         let state = SessionState {
             tree: TreeSession {
                 cursor_id,
@@ -5593,6 +5693,7 @@ impl App {
             paragraph_cursors,
             visited_history,
             visited_cursor: self.visited_cursor,
+            timeline_views,
         };
         state.save(&self.layout.root)
     }
@@ -5647,6 +5748,14 @@ impl App {
             let max_idx = history.len().saturating_sub(1);
             self.visited_cursor = state.visited_cursor.min(max_idx);
             self.visited_history = history;
+        }
+        // 1.2.7+ — per-book timeline view snapshots.
+        for (key, snap) in &state.timeline_views {
+            if let Ok(id) = Uuid::parse_str(key) {
+                if self.hierarchy.get(id).is_some() {
+                    self.timeline_views.insert(id, snap.clone());
+                }
+            }
         }
 
         // Collapsed branches.
@@ -8964,6 +9073,13 @@ impl App {
             .map_err(|e| format!("store update: {e}"))?;
         doc.dirty = false;
         doc.saved_lines = doc.textarea.lines().to_vec();
+        // 1.2.7+ — restamp loaded_mtime so the external-
+        // change watcher doesn't see our OWN save as a
+        // "file changed under us" event.
+        let abs = self.layout.root.join(&doc.rel_path);
+        doc.loaded_mtime = std::fs::metadata(&abs)
+            .and_then(|m| m.modified())
+            .ok();
         let new_words = crate::progress::count_words(&body);
         let book_id = self.book_of_node(doc.id);
         crate::progress::record_save(doc.id, book_id, prev_words, new_words);
@@ -10299,6 +10415,50 @@ impl App {
             "LLM provider switched to `{chosen}` · saved to {}",
             config_path.display()
         );
+    }
+
+    /// 1.2.7+ — snapshot the open swim-lane view's state
+    /// into the per-book cache. Called from the Esc handler
+    /// just before the timeline modal closes so the next
+    /// open of the same book restores it.
+    fn timeline_capture_view_state(&mut self) {
+        let Modal::TimelineView { state } = &self.modal else { return; };
+        let snap = TimelineViewSnapshot {
+            collapsed_tracks: state.collapsed_tracks.iter().cloned().collect(),
+            expanded_track: state.expanded_track.clone(),
+            track_highlight: state.track_highlight.clone(),
+            ticks_per_cell: state.ticks_per_cell,
+            scroll_ticks: state.scroll_ticks,
+            cursor_ticks: state.cursor_ticks,
+        };
+        let book_id = state.book_id;
+        self.timeline_views.insert(book_id, snap);
+    }
+
+    /// 1.2.7+ — apply a cached snapshot onto a freshly-opened
+    /// `Modal::TimelineView` state. Skipped silently when no
+    /// cache entry exists or when the cached zoom is
+    /// non-positive (corrupt session). All-or-nothing — we
+    /// keep auto-fit defaults when restoring fails.
+    fn timeline_restore_view_state(&mut self) {
+        let Modal::TimelineView { state } = &mut self.modal else { return; };
+        let Some(snap) = self.timeline_views.get(&state.book_id).cloned() else {
+            return;
+        };
+        if snap.ticks_per_cell <= 0.0 {
+            return;
+        }
+        state.collapsed_tracks = snap.collapsed_tracks.into_iter().collect();
+        state.expanded_track = snap.expanded_track;
+        state.track_highlight = snap.track_highlight;
+        state.ticks_per_cell = snap.ticks_per_cell;
+        state.scroll_ticks = snap.scroll_ticks;
+        state.cursor_ticks = snap.cursor_ticks;
+        // focus_level: keep the open-time default (Track).
+        // Restoring Event focus from the previous session
+        // would also require validating that
+        // `expanded_track` still maps to events that exist
+        // — too much for a UX nicety. The user re-Enters.
     }
 
     /// 1.2.7+ — Alt+Left. Browser-style back through the
@@ -14109,6 +14269,13 @@ impl App {
                 self.status = "edit event: cancelled".into();
                 return Ok(false);
             }
+            // 1.2.7+ — timeline view: snapshot the per-book
+            // state (collapsed tracks, expanded track, zoom,
+            // scroll, cursor) into the session cache so the
+            // next Ctrl+V Shift+T for this book restores it.
+            if matches!(self.modal, Modal::TimelineView { .. }) {
+                self.timeline_capture_view_state();
+            }
             self.modal = Modal::None;
             return Ok(false);
         }
@@ -15139,6 +15306,9 @@ impl App {
             block_anchor: None,
             last_activity: std::time::Instant::now(),
             saved_lines,
+            loaded_mtime: std::fs::metadata(&abs)
+                .and_then(|m| m.modified())
+                .ok(),
             split: None,
             search: None,
             read_only,
@@ -17270,6 +17440,11 @@ impl App {
         };
         let crumb = self.timeline_scope_crumb(&state);
         self.modal = Modal::TimelineView { state };
+        // 1.2.7+ — apply any cached per-book view state
+        // (collapsed tracks, expanded track, zoom, scroll).
+        // No-op on a fresh book or a session.json without an
+        // entry — auto-fit defaults from above stay.
+        self.timeline_restore_view_state();
         self.status = if is_empty {
             format!("timeline {crumb} · empty — press `n` to add the first event · Esc closes")
         } else {
@@ -20387,6 +20562,9 @@ impl App {
             block_anchor: None,
             last_activity: std::time::Instant::now(),
             saved_lines,
+            loaded_mtime: std::fs::metadata(&abs)
+                .and_then(|m| m.modified())
+                .ok(),
             split: None,
             search: None,
             read_only,
