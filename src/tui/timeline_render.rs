@@ -4,7 +4,7 @@
 
 use uuid::Uuid;
 
-use super::app::TimelineEvent;
+use super::timeline_state::TimelineEvent;
 
 /// One row in the swim lane = one track. Cells are
 /// width-aligned; `None` is whitespace.
