@@ -344,6 +344,16 @@ pub enum Action {
     /// active when the user has gone back at least once.
     #[serde(rename = "global.visited_forward")]
     VisitedForward,
+    /// Ctrl+B U (1.2.7+) — undo the most recent paragraph
+    /// delete. Single-slot kill-ring; content + tags +
+    /// linked_paragraphs + event data restored. The
+    /// restored paragraph gets a NEW uuid — cross-refs
+    /// from elsewhere that pointed at the deleted id stay
+    /// broken (status hint flags this on each restore).
+    /// Only paragraph deletes are recoverable; branch
+    /// (chapter / book) deletes can't be undone.
+    #[serde(rename = "global.undo_last_delete")]
+    UndoLastDelete,
     /// Ctrl+V Shift+I (1.2.6+) — open a one-line edit prompt for
     /// the open event paragraph's start / end / track (pipe-
     /// separated). Precision is re-derived from the start
@@ -466,6 +476,7 @@ impl Action {
             Action::ToggleMouseCapture => "mouse".into(),
             Action::VisitedBack => "← back".into(),
             Action::VisitedForward => "fwd →".into(),
+            Action::UndoLastDelete => "undo del".into(),
             Action::ViewEditEventMetadata => "edit event".into(),
             Action::ViewTimeline => "timeline".into(),
 
@@ -650,6 +661,8 @@ impl Action {
                 "Browser-style back (1.2.7+) — re-open the previously-visited paragraph. Default chord: Alt+Left. History persists across sessions in .session.json.".into(),
             Action::VisitedForward =>
                 "Browser-style forward (1.2.7+) — re-open the next paragraph in the visit history. Default chord: Alt+Right. Only active after at least one back-press.".into(),
+            Action::UndoLastDelete =>
+                "Undo the most-recent paragraph delete (1.2.7+) — single-slot kill-ring. Restores content + tags + linked_paragraphs + event data, but the restored ¶ gets a NEW uuid so wiki-links from elsewhere stay broken. Branch deletes (chapter / book) can't be undone. Default chord: Ctrl+B U.".into(),
             Action::ViewEditEventMetadata =>
                 "Edit the open event paragraph's start / end / track (pipe-separated, 1.2.6+). Pre-fills with current values; empty middle = no end; empty trailing = drop track. Precision re-derived from start on commit. No-op when the open paragraph isn't an event.".into(),
             Action::ViewTimeline =>
@@ -757,6 +770,9 @@ impl KeyBindings {
                 // because the matcher tracks SHIFT separately.
                 entry("Shift+b", Action::BackupNow, Scope::Any),
                 entry("o", Action::ScheduleTake, Scope::Any),
+                // 1.2.7+ — Ctrl+B U undoes the most-recent
+                // paragraph delete (single-slot kill-ring).
+                entry("u", Action::UndoLastDelete, Scope::Any),
                 entry("w", Action::ToggleTypewriter, Scope::Any),
                 entry("k", Action::ToggleAiFullscreen, Scope::Any),
                 entry("1", Action::StatusFilterReady, Scope::Any),
