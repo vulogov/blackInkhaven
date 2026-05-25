@@ -674,7 +674,7 @@ fn default_display_format(cfg: &CalendarConfig) -> String {
     // Pick a format that covers every defined unit. If only
     // a base unit exists ("sols"-style), emit just that.
     let mut parts: Vec<&str> = Vec::new();
-    let mut has = |name: &str| cfg.units.iter().any(|u| u.name == name);
+    let has = |name: &str| cfg.units.iter().any(|u| u.name == name);
     if has("year") {
         parts.push("{year}{epoch_label}");
     } else if has("day") {

@@ -26,5 +26,5 @@ pub mod calendar;
 pub mod critique;
 pub mod presets;
 
-pub use calendar::{Calendar, ParseError, TimelinePoint};
+pub use calendar::{Calendar, TimelinePoint};
 pub use presets::{Precision};
