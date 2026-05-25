@@ -47,6 +47,12 @@ use super::highlight::{
 use super::input::TextInput;
 use super::keymap::KeyChord;
 use super::search_results::SearchHit;
+use super::text_utils::{
+    PARAGRAPH_PLACEHOLDER_TITLE, TITLE_MAX_DISPLAY, body_to_lines,
+    extract_first_sentence, format_active_duration, format_age_humantime,
+    format_reading_time, pad_or_trim, truncate_label, truncate_to_chars,
+    wrap_words_or_chars,
+};
 
 enum StartupError {
     UserAborted,
@@ -24725,90 +24731,6 @@ fn find_cursor_visual(
     (0, 0)
 }
 
-/// Placeholder title for paragraphs added without one. The next save replaces
-/// it with the first sentence of the body.
-const PARAGRAPH_PLACEHOLDER_TITLE: &str = "Untitled paragraph";
-
-/// Maximum number of characters a node title is allowed to occupy in the
-/// tree pane. Beyond that, the title is truncated with an ellipsis so the
-/// `Nw` word-count suffix stays visible on a single row.
-const TITLE_MAX_DISPLAY: usize = 60;
-
-/// Greedy word-wrap (`text` over a `width`-wide column),
-/// falling back to char-break when a single word doesn't fit.
-/// Empty input returns one empty line; zero width returns the
-/// original (no useful wrap available). Used by
-/// `tree_row_lines` to wrap long node titles with a hanging
-/// indent.
-fn wrap_words_or_chars(text: &str, width: usize) -> Vec<String> {
-    if width == 0 {
-        return vec![text.to_owned()];
-    }
-    if text.is_empty() {
-        return vec![String::new()];
-    }
-    let mut lines: Vec<String> = Vec::new();
-    let mut current = String::new();
-    let mut current_w = 0usize;
-    for word in text.split_whitespace() {
-        let word_w = word.chars().count();
-        if word_w > width {
-            // Word doesn't fit even on a line of its own —
-            // flush whatever's pending, then hard-break by
-            // character.
-            if !current.is_empty() {
-                lines.push(std::mem::take(&mut current));
-            }
-            let mut buf = String::new();
-            let mut bw = 0;
-            for c in word.chars() {
-                if bw == width {
-                    lines.push(std::mem::take(&mut buf));
-                    bw = 0;
-                }
-                buf.push(c);
-                bw += 1;
-            }
-            current = buf;
-            current_w = bw;
-        } else {
-            let needed = if current.is_empty() {
-                word_w
-            } else {
-                current_w + 1 + word_w
-            };
-            if needed > width {
-                lines.push(std::mem::take(&mut current));
-                current = word.to_owned();
-                current_w = word_w;
-            } else {
-                if !current.is_empty() {
-                    current.push(' ');
-                    current_w += 1;
-                }
-                current.push_str(word);
-                current_w += word_w;
-            }
-        }
-    }
-    if !current.is_empty() || lines.is_empty() {
-        lines.push(current);
-    }
-    lines
-}
-
-/// 1.2.6+ — truncate a track label to `max_chars`, appending
-/// `…` when the value was actually shortened. Returns the
-/// original on short strings.
-fn truncate_label(label: &str, max_chars: usize) -> String {
-    if label.chars().count() <= max_chars {
-        return label.to_owned();
-    }
-    let take = max_chars.saturating_sub(1);
-    let mut s: String = label.chars().take(take).collect();
-    s.push('…');
-    s
-}
 
 
 /// Render a 4-cell Unicode gauge + percent for a per-paragraph
@@ -25042,49 +24964,6 @@ fn fuzzy_filter_entries(
     // (slug-path-sorted) order within each tier.
     scored.sort_by(|a, b| b.0.cmp(&a.0));
     scored.into_iter().map(|(_, i)| i).collect()
-}
-
-/// Render an active-time count in shorthand:
-///   <60s   → "0m"
-///   <60m   → "Nm"
-///   else   → "Hh Mm" (zero-padded minutes)
-/// Used by the status-bar widget + Ctrl+V G modal.
-fn format_active_duration(seconds: i64) -> String {
-    let s = seconds.max(0);
-    if s < 60 {
-        return "0m".to_string();
-    }
-    let minutes = s / 60;
-    if minutes < 60 {
-        return format!("{minutes}m");
-    }
-    let h = minutes / 60;
-    let m = minutes % 60;
-    format!("{h}h {m:02}m")
-}
-
-#[cfg(test)]
-mod tests_active_duration {
-    use super::format_active_duration;
-
-    #[test]
-    fn under_a_minute_is_zero() {
-        assert_eq!(format_active_duration(0), "0m");
-        assert_eq!(format_active_duration(45), "0m");
-    }
-
-    #[test]
-    fn minutes_only() {
-        assert_eq!(format_active_duration(60), "1m");
-        assert_eq!(format_active_duration(3540), "59m");
-    }
-
-    #[test]
-    fn hours_with_minutes() {
-        assert_eq!(format_active_duration(3600), "1h 00m");
-        assert_eq!(format_active_duration(3660), "1h 01m");
-        assert_eq!(format_active_duration(7325), "2h 02m");
-    }
 }
 
 fn format_progress_gauge(current: i64, target: i64) -> (String, i64, Style) {
@@ -25621,57 +25500,6 @@ fn count_sentences(content: &str) -> usize {
     count
 }
 
-/// Compact reading-time estimate for the editor header. 250 wpm
-/// (educational adult silent-reading baseline) rounded up to whole
-/// minutes; short paragraphs collapse to `<1m`. Matches the per-book
-/// figure in the Ctrl+B I info panel — same constant, same rounding.
-fn format_reading_time(words: usize) -> String {
-    if words == 0 {
-        return "<1m".to_string();
-    }
-    let minutes = ((words as f64) / 250.0).ceil() as u64;
-    if minutes < 60 {
-        format!("~{minutes}m")
-    } else {
-        let h = minutes / 60;
-        let m = minutes % 60;
-        if m == 0 {
-            format!("~{h}h")
-        } else {
-            format!("~{h}h {m}m")
-        }
-    }
-}
-
-/// Format a `Duration` as a coarse "N units ago" string using only the
-/// largest two units (days+hours, hours+minutes, etc.). humantime's
-/// default formatter prints every non-zero unit down to nanoseconds,
-/// which is too noisy for a "how old is this PDF" read-out.
-fn format_age_humantime(dur: std::time::Duration) -> String {
-    let total_secs = dur.as_secs();
-    if total_secs < 60 {
-        return format!("{total_secs}s");
-    }
-    let days = total_secs / 86_400;
-    let hours = (total_secs % 86_400) / 3600;
-    let minutes = (total_secs % 3600) / 60;
-    if days > 0 {
-        if hours > 0 {
-            format!("{days}d {hours}h")
-        } else {
-            format!("{days}d")
-        }
-    } else if hours > 0 {
-        if minutes > 0 {
-            format!("{hours}h {minutes}m")
-        } else {
-            format!("{hours}h")
-        }
-    } else {
-        format!("{minutes}m")
-    }
-}
-
 /// Rewrite `<block>.<key> = <value_lit>` in an existing HJSON config
 /// file in place, preserving every other byte — comments, key
 /// ordering, indentation, trailing comments on the rewritten line.
@@ -25899,66 +25727,6 @@ fn insert_sound_block_before_root_close(raw: &str, value_lit: &str) -> Result<St
     Ok(out)
 }
 
-/// Split a file body into editor lines, normalising CRLF (`\r\n`) and
-/// bare CR (`\r`) line endings to LF first so trailing `\r` bytes never
-/// survive into the textarea (where ratatui would render them as
-/// control glyphs that look like vertical bars and visually offset the
-/// following characters). Triggered by Windows / DOS / old-Mac text
-/// dumps the user might import (e.g. the RFC corpus).
-fn body_to_lines(body: &str) -> Vec<String> {
-    if body.is_empty() {
-        return vec![String::new()];
-    }
-    // CRLF first so we don't double-split, then any remaining bare CR
-    // (pre-OS-X Mac files). After this every line break is one `\n`.
-    let normalised = body.replace("\r\n", "\n").replace('\r', "\n");
-    normalised.split('\n').map(String::from).collect()
-}
-
-fn extract_first_sentence(content: &str) -> Option<String> {
-    let prose: String = content
-        .lines()
-        .filter_map(|l| {
-            let t = l.trim();
-            if t.is_empty() || t.starts_with("=") || t.starts_with("//") {
-                None
-            } else {
-                Some(t.to_string())
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    if prose.is_empty() {
-        return None;
-    }
-
-    let chars: Vec<char> = prose.chars().collect();
-    let mut end = chars.len();
-    for (i, c) in chars.iter().enumerate() {
-        if matches!(*c, '.' | '!' | '?') {
-            let next_is_space_or_end = i + 1 >= chars.len() || chars[i + 1].is_whitespace();
-            if next_is_space_or_end {
-                end = i + 1;
-                break;
-            }
-        }
-    }
-    let sentence: String = chars.iter().take(end).collect();
-    let sentence = sentence.trim();
-    if sentence.is_empty() {
-        return None;
-    }
-
-    let s_chars: Vec<char> = sentence.chars().collect();
-    if s_chars.len() > TITLE_MAX_DISPLAY {
-        let mut out: String = s_chars.iter().take(TITLE_MAX_DISPLAY - 1).collect();
-        out.push('…');
-        Some(out)
-    } else {
-        Some(sentence.to_string())
-    }
-}
 
 /// Render one Quick reference entry as a single Line, sized to fit
 /// `col_w` terminal cells. Headers get cyan-bold styling; regular entries
@@ -26012,31 +25780,6 @@ impl OkOrElseUnused for Line<'static> {
     }
 }
 
-fn pad_or_trim(s: &str, width: usize) -> String {
-    let cs: Vec<char> = s.chars().collect();
-    if cs.len() >= width {
-        cs.iter().take(width).collect()
-    } else {
-        let mut out: String = cs.iter().collect();
-        while out.chars().count() < width {
-            out.push(' ');
-        }
-        out
-    }
-}
-
-fn truncate_to_chars(s: &str, max: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        s.to_string()
-    } else if max == 0 {
-        String::new()
-    } else {
-        let mut out: String = chars.iter().take(max.saturating_sub(1)).collect();
-        out.push('…');
-        out
-    }
-}
 
 /// Locate the Places and Characters system books in the loaded hierarchy
 /// and compile a fresh `Lexicon` from their nested paragraph titles. Called
