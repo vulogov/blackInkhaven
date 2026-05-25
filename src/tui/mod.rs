@@ -3,6 +3,7 @@ mod bund_highlight;
 mod file_picker;
 mod focus;
 mod highlight;
+mod hjson_edit;
 mod hjson_highlight;
 mod input;
 pub(crate) mod keybind;
