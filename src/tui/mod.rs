@@ -23,6 +23,7 @@ mod search_replace;
 mod search_results;
 mod session;
 mod splash;
+mod state;
 mod status_helpers;
 mod text_utils;
 mod timeline_render;
