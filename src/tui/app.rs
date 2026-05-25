@@ -44,6 +44,7 @@ use super::highlight::{
     BlockSelection, RowHit, TypstHighlighter, build_row_spans, build_visual_row_spans,
     diff_added, wrap_line,
 };
+use super::diff_utils::{SnapshotDiffKind, SnapshotDiffRow, compute_line_diff};
 use super::input::TextInput;
 use super::keymap::KeyChord;
 use super::search_results::SearchHit;
@@ -56,10 +57,9 @@ use super::status_helpers::{
     status_style,
 };
 use super::text_utils::{
-    PARAGRAPH_PLACEHOLDER_TITLE, TITLE_MAX_DISPLAY, body_to_lines,
-    extract_first_sentence, format_active_duration, format_age_humantime,
-    format_reading_time, pad_or_trim, truncate_label, truncate_to_chars,
-    wrap_words_or_chars,
+    PARAGRAPH_PLACEHOLDER_TITLE, body_to_lines, extract_first_sentence,
+    format_active_duration, format_age_humantime, format_reading_time,
+    pad_or_trim, truncate_label, truncate_to_chars, wrap_words_or_chars,
 };
 
 enum StartupError {
@@ -1818,68 +1818,6 @@ mod book_info_tests {
     }
 
     #[test]
-    fn digit_to_status_mapping() {
-        assert_eq!(digit_to_status('1'), Some("Ready"));
-        assert_eq!(digit_to_status('2'), Some("Final"));
-        assert_eq!(digit_to_status('3'), Some("Third"));
-        assert_eq!(digit_to_status('4'), Some("Second"));
-        assert_eq!(digit_to_status('5'), Some("First"));
-        assert_eq!(digit_to_status('6'), Some("Napkin"));
-        assert_eq!(digit_to_status('7'), Some("None"));
-        // 0, 8, 9 and letters don't map.
-        assert_eq!(digit_to_status('0'), None);
-        assert_eq!(digit_to_status('8'), None);
-        assert_eq!(digit_to_status('a'), None);
-    }
-
-    #[test]
-    fn status_letter_returns_one_char_or_space() {
-        assert_eq!(status_letter("Napkin"), "n");
-        assert_eq!(status_letter("First"), "1");
-        assert_eq!(status_letter("Second"), "2");
-        assert_eq!(status_letter("Third"), "3");
-        assert_eq!(status_letter("Final"), "F");
-        assert_eq!(status_letter("Ready"), "R");
-        assert_eq!(status_letter("None"), " ");
-        assert_eq!(status_letter("Unknown"), " ");
-    }
-
-    #[test]
-    fn next_status_walks_the_ring() {
-        assert_eq!(next_status(None), "Napkin");
-        assert_eq!(next_status(Some("Napkin")), "First");
-        assert_eq!(next_status(Some("First")), "Second");
-        assert_eq!(next_status(Some("Second")), "Third");
-        assert_eq!(next_status(Some("Third")), "Final");
-        assert_eq!(next_status(Some("Final")), "Ready");
-        // Wrap.
-        assert_eq!(next_status(Some("Ready")), "None");
-        // Empty string = same as None.
-        assert_eq!(next_status(Some("")), "Napkin");
-    }
-
-    #[test]
-    fn prev_status_walks_backwards_and_wraps() {
-        assert_eq!(prev_status(Some("Napkin")), "None");
-        assert_eq!(prev_status(Some("Ready")), "Final");
-        assert_eq!(prev_status(Some("Final")), "Third");
-        assert_eq!(prev_status(None), "Ready"); // wrap from None backwards
-    }
-
-    #[test]
-    fn next_status_unknown_value_treated_as_none() {
-        assert_eq!(next_status(Some("WeirdCustom")), "Napkin");
-    }
-
-    #[test]
-    fn display_status_collapses_none_variants() {
-        assert_eq!(display_status(None), "None");
-        assert_eq!(display_status(Some("")), "None");
-        assert_eq!(display_status(Some("   ")), "None");
-        assert_eq!(display_status(Some("Napkin")), "Napkin");
-    }
-
-    #[test]
     fn byte_offset_for_cursor_basic() {
         let src = "abc\ndef\nghi";
         // Row 0, col 0 → byte 0.
@@ -2347,28 +2285,6 @@ pub(crate) struct SimilarPickerEntry {
     pub slug_path: String,
     pub score: f64,
     pub snippet: String,
-}
-
-/// One aligned row in the snapshot-diff view. `left_*` holds the
-/// snapshot side (or `None` for an addition); `right_*` holds the
-/// current-buffer side (or `None` for a deletion).
-#[derive(Debug, Clone)]
-pub(crate) struct SnapshotDiffRow {
-    pub left: Option<String>,
-    pub right: Option<String>,
-    pub kind: SnapshotDiffKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SnapshotDiffKind {
-    /// Same line on both sides.
-    Equal,
-    /// Snapshot had it, buffer dropped it.
-    Removed,
-    /// Buffer added it.
-    Added,
-    /// Both sides have a line at this position but they differ.
-    Changed,
 }
 
 /// One page of a rendered paragraph kept in the preview modal —
@@ -24740,84 +24656,6 @@ fn find_cursor_visual(
 }
 
 
-
-/// Render a 4-cell Unicode gauge + percent for a per-paragraph
-/// word-count goal. Each cell represents 25% of progress; the
-/// last partial cell uses a medium-shade glyph when the gauge
-/// is between thresholds. Colour buckets:
-///   <25% red, <50% yellow, <75% light-green, ≥100% green-bold,
-///   between 75 and 100 green-dim. Returns `(gauge_str, percent_int, style)`.
-/// Compute aligned line-by-line diff rows for the F6 → V
-/// snapshot-diff modal. Uses `similar`'s `TextDiff::from_lines`
-/// (Myers algorithm) to get a sequence of `(tag, line)` chunks,
-/// then aligns them into side-by-side rows.
-///
-/// Heuristic for `Changed` rows: when a Delete is immediately
-/// followed by an Insert, fuse the pair into one Changed row
-/// rather than rendering them as a removal + an addition on
-/// different lines. This is what most diff viewers do.
-fn compute_line_diff(left: &str, right: &str) -> Vec<SnapshotDiffRow> {
-    use similar::{ChangeTag, TextDiff};
-    let diff = TextDiff::from_lines(left, right);
-    let mut out: Vec<SnapshotDiffRow> = Vec::new();
-    // Walk the change list; on a Delete, peek to see if the
-    // next change is an Insert and fuse them.
-    let changes: Vec<_> = diff.iter_all_changes().collect();
-    let mut i = 0;
-    while i < changes.len() {
-        let c = &changes[i];
-        let text = c
-            .value()
-            .strip_suffix('\n')
-            .unwrap_or(c.value())
-            .to_string();
-        match c.tag() {
-            ChangeTag::Equal => {
-                out.push(SnapshotDiffRow {
-                    left: Some(text.clone()),
-                    right: Some(text),
-                    kind: SnapshotDiffKind::Equal,
-                });
-                i += 1;
-            }
-            ChangeTag::Delete => {
-                // Look ahead for a paired Insert to fuse.
-                if let Some(next) = changes.get(i + 1) {
-                    if next.tag() == ChangeTag::Insert {
-                        let next_text = next
-                            .value()
-                            .strip_suffix('\n')
-                            .unwrap_or(next.value())
-                            .to_string();
-                        out.push(SnapshotDiffRow {
-                            left: Some(text),
-                            right: Some(next_text),
-                            kind: SnapshotDiffKind::Changed,
-                        });
-                        i += 2;
-                        continue;
-                    }
-                }
-                out.push(SnapshotDiffRow {
-                    left: Some(text),
-                    right: None,
-                    kind: SnapshotDiffKind::Removed,
-                });
-                i += 1;
-            }
-            ChangeTag::Insert => {
-                out.push(SnapshotDiffRow {
-                    left: None,
-                    right: Some(text),
-                    kind: SnapshotDiffKind::Added,
-                });
-                i += 1;
-            }
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod event_picker_helpers {
     use super::*;
@@ -24872,46 +24710,6 @@ mod event_picker_helpers {
         assert_eq!(cycle_track(Some("anything"), &[]), None);
     }
 }
-
-#[cfg(test)]
-mod tests_diff {
-    use super::*;
-
-    #[test]
-    fn identical() {
-        let r = compute_line_diff("a\nb\nc\n", "a\nb\nc\n");
-        assert_eq!(r.len(), 3);
-        assert!(r.iter().all(|x| x.kind == SnapshotDiffKind::Equal));
-    }
-
-    #[test]
-    fn pure_add() {
-        let r = compute_line_diff("a\n", "a\nb\n");
-        assert_eq!(r.len(), 2);
-        assert_eq!(r[0].kind, SnapshotDiffKind::Equal);
-        assert_eq!(r[1].kind, SnapshotDiffKind::Added);
-        assert_eq!(r[1].right.as_deref(), Some("b"));
-    }
-
-    #[test]
-    fn pure_remove() {
-        let r = compute_line_diff("a\nb\n", "a\n");
-        assert_eq!(r.len(), 2);
-        assert_eq!(r[1].kind, SnapshotDiffKind::Removed);
-        assert_eq!(r[1].left.as_deref(), Some("b"));
-    }
-
-    #[test]
-    fn fused_change() {
-        // Single-line rewrite fuses to Changed.
-        let r = compute_line_diff("foo\n", "bar\n");
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].kind, SnapshotDiffKind::Changed);
-        assert_eq!(r[0].left.as_deref(), Some("foo"));
-        assert_eq!(r[0].right.as_deref(), Some("bar"));
-    }
-}
-
 /// Fuzzy-rank `entries` against `query`. Returns indices into
 /// the original Vec, ordered by score (descending). Scoring:
 ///   3 — title starts with query (case-insensitive)
