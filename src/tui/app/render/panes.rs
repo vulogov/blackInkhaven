@@ -977,7 +977,10 @@ impl super::super::App {
     pub(in crate::tui::app) fn draw_ai(&self, f: &mut ratatui::Frame, area: Rect) {
         // Title carries the inference state plus mode chips so the user
         // can see at a glance:
-        //   - provider + streaming/done/error status
+        //   - bound LLM default (Ctrl+B L picker target) — always shown
+        //     so swap-effect from Ctrl+B L is visible without opening
+        //     Ctrl+B I
+        //   - in-flight provider + streaming/done/error status
         //   - chat history depth (N turns) when non-empty
         //   - active AI scope (Selection/Paragraph/...) when non-None
         //   - active InferenceMode (Local/Full) — always shown so F10's
@@ -988,11 +991,32 @@ impl super::super::App {
         // visible at a glance).
         let mut spans: Vec<Span<'static>> = Vec::new();
         spans.push(Span::raw(" AI".to_string()));
+        // 1.2.8+ — bound LLM chip. Always visible; in-flight provider
+        // appears below as a separate fragment when inference != None.
+        spans.push(Span::raw(" · llm="));
+        spans.push(Span::styled(
+            self.cfg.llm.default.clone(),
+            Style::default()
+                .fg(self.theme.ai_infer_fg)
+                .add_modifier(Modifier::BOLD),
+        ));
         if let Some(inf) = &self.inference {
-            let status_text = match &inf.status {
-                InferenceStatus::Streaming => format!(" — {} · streaming…", inf.provider),
-                InferenceStatus::Done => format!(" — {} · done", inf.provider),
-                InferenceStatus::Error(_) => format!(" — {} · error", inf.provider),
+            // Suppress the redundant provider tag when the in-flight
+            // run is on the bound default — the chip already shows it.
+            // When the user fired the request and THEN swapped default
+            // (Ctrl+B L) the two diverge — show both.
+            let status_text = if inf.provider == self.cfg.llm.default {
+                match &inf.status {
+                    InferenceStatus::Streaming => " · streaming…".to_string(),
+                    InferenceStatus::Done => " · done".to_string(),
+                    InferenceStatus::Error(_) => " · error".to_string(),
+                }
+            } else {
+                match &inf.status {
+                    InferenceStatus::Streaming => format!(" — {} · streaming…", inf.provider),
+                    InferenceStatus::Done => format!(" — {} · done", inf.provider),
+                    InferenceStatus::Error(_) => format!(" — {} · error", inf.provider),
+                }
             };
             spans.push(Span::raw(status_text));
         }
