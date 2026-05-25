@@ -49,6 +49,7 @@ use super::credits::{build_credits_lines, embedded_logo_image};
 use super::diff_utils::{SnapshotDiffKind, SnapshotDiffRow, compute_line_diff};
 use super::input::TextInput;
 use super::keymap::KeyChord;
+use super::lexicon_build::{LexiconKind, build_lexicon};
 use super::search_results::SearchHit;
 use super::splash::{
     StartupError, TYPST_COMPILE_SPINNER, draw_assembly_splash, draw_backup_splash,
@@ -24405,78 +24406,6 @@ impl OkOrElseUnused for Line<'static> {
 }
 
 
-/// Locate the Places and Characters system books in the loaded hierarchy
-/// and compile a fresh `Lexicon` from their nested paragraph titles. Called
-/// at startup and after every successful save. Stemmer languages come from
-/// `editor.stemming.languages` in the project config. Unknown language
-/// names are skipped silently (with a tracing warning) so a typo doesn't
-/// break the editor.
-fn build_lexicon(hierarchy: &Hierarchy, cfg: &Config) -> super::lexicon::Lexicon {
-    use super::lexicon::LexCategory;
-    let mut places: Option<Uuid> = None;
-    let mut characters: Option<Uuid> = None;
-    let mut notes: Option<Uuid> = None;
-    let mut artefacts: Option<Uuid> = None;
-    for node in hierarchy.iter() {
-        match node.system_tag.as_deref() {
-            Some(crate::store::SYSTEM_TAG_PLACES) => places = Some(node.id),
-            Some(crate::store::SYSTEM_TAG_CHARACTERS) => characters = Some(node.id),
-            Some(crate::store::SYSTEM_TAG_NOTES) => notes = Some(node.id),
-            Some(crate::store::SYSTEM_TAG_ARTEFACTS) => artefacts = Some(node.id),
-            _ => {}
-        }
-    }
-    // Precedence: top-level `language` (when non-empty) wins over the
-    // legacy `editor.stemming.languages` list. The former is the one-knob
-    // primary setting; the latter stays for power users who want to
-    // stem across multiple languages simultaneously.
-    let algos: Vec<rust_stemmers::Algorithm> = if !cfg.language.trim().is_empty() {
-        match crate::config::parse_stemmer_language(&cfg.language) {
-            Some(a) => vec![a],
-            None => {
-                tracing::warn!(
-                    "language `{}` is not a known Snowball algorithm — \
-                     stemmer disabled (falling back to exact-phrase matching)",
-                    cfg.language
-                );
-                Vec::new()
-            }
-        }
-    } else {
-        cfg.editor
-            .stemming
-            .languages
-            .iter()
-            .filter_map(|name| match crate::config::parse_stemmer_language(name) {
-                Some(a) => Some(a),
-                None => {
-                    tracing::warn!(
-                        "editor.stemming.languages: unknown language `{name}` — skipped"
-                    );
-                    None
-                }
-            })
-            .collect()
-    };
-    // Higher-priority first: Place > Character > Artefact > Note —
-    // matches the renderer's overlap precedence so the build-time
-    // dedupe and the per-column style picker agree.
-    let mut books: Vec<(Uuid, LexCategory)> = Vec::new();
-    if let Some(id) = places {
-        books.push((id, LexCategory::Place));
-    }
-    if let Some(id) = characters {
-        books.push((id, LexCategory::Character));
-    }
-    if let Some(id) = artefacts {
-        books.push((id, LexCategory::Artefact));
-    }
-    if let Some(id) = notes {
-        books.push((id, LexCategory::Note));
-    }
-    super::lexicon::Lexicon::build(hierarchy, &books, algos)
-}
-
 /// Standard text-input key dispatch: typing, navigation, deletion. Shared
 /// helper so new modals don't have to re-implement the pattern that older
 /// modals (Add, Rename, FindReplace) inline.
@@ -24527,36 +24456,6 @@ fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) {
             }
         }
         _ => {}
-    }
-}
-
-/// Which system book a lexicon-RAG inference draws context from.
-/// Picked by the editor-meta chords (`P` Places, `C` Characters,
-/// `G` Notes, `Y` Artefacts).
-#[derive(Debug, Clone, Copy)]
-enum LexiconKind {
-    Places,
-    Characters,
-    Notes,
-    Artefacts,
-}
-
-impl LexiconKind {
-    fn label(self) -> &'static str {
-        match self {
-            LexiconKind::Places => "Place",
-            LexiconKind::Characters => "Character",
-            LexiconKind::Notes => "Note",
-            LexiconKind::Artefacts => "Artefact",
-        }
-    }
-    fn system_tag(self) -> &'static str {
-        match self {
-            LexiconKind::Places => crate::store::SYSTEM_TAG_PLACES,
-            LexiconKind::Characters => crate::store::SYSTEM_TAG_CHARACTERS,
-            LexiconKind::Notes => crate::store::SYSTEM_TAG_NOTES,
-            LexiconKind::Artefacts => crate::store::SYSTEM_TAG_ARTEFACTS,
-        }
     }
 }
 
