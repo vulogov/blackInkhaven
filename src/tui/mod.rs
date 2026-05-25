@@ -1,4 +1,5 @@
 pub(crate) mod app;
+mod backup_ui;
 mod bund_highlight;
 mod diff_utils;
 mod file_picker;
