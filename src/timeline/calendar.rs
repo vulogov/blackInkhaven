@@ -202,6 +202,11 @@ impl Calendar {
     /// validates names up-front. Special-case `"season"`
     /// resolves against `seasons[]` (which sit between
     /// months and years in user mental model).
+    ///
+    /// Intentional API surface even though the binary has no
+    /// current caller — the timeline domain's public arithmetic.
+    /// Unit-tested below.
+    #[allow(dead_code)]
     pub fn add_units(&self, p: TimelinePoint, n: i64, unit: &str) -> TimelinePoint {
         let unit_lower = unit.to_ascii_lowercase();
         if unit_lower == "season" {
@@ -223,7 +228,9 @@ impl Calendar {
     }
 
     /// Inclusive start, exclusive end of the precision's
-    /// containing window.
+    /// containing window. Intentional API surface; unit-tested
+    /// below. No production caller yet.
+    #[allow(dead_code)]
     pub fn fuzz_window(
         &self,
         p: TimelinePoint,
@@ -246,6 +253,7 @@ impl Calendar {
         )
     }
 
+    #[allow(dead_code)]
     fn span_for_precision(&self, prec: Precision) -> i64 {
         match prec {
             Precision::Tick => 1,

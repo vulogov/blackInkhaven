@@ -922,12 +922,8 @@ impl super::App {
         }
     }
 
-    pub(super) fn editor_block<'a>(&self, title: &'a str) -> Block<'a> {
-        self.editor_block_line(Line::from(title))
-    }
-
-    /// Variant of `editor_block` that takes a pre-built styled `Line` for
-    /// the title. Lets the renderer mix theme colours into the header
+    /// Editor pane block builder. Takes a pre-built styled `Line` for
+    /// the title so the renderer can mix theme colours into the header
     /// (used for the `L… C…` cursor read-out chip).
     pub(super) fn editor_block_line<'a>(&self, title: Line<'a>) -> Block<'a> {
         let border_color = if self.focus == Focus::Editor {

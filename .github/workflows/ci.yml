@@ -28,6 +28,8 @@ jobs:
 
       # System libs for bdslib's transitive native deps on Ubuntu.
       # See `release.yml` for the rationale; CI mirrors the same set.
+      # `fonts-dejavu-core` is for the typst / story_view end-to-end
+      # tests — they need at least one OS-discoverable font face.
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -39,7 +41,8 @@ jobs:
             libxcb-render0-dev \
             libxcb-shape0-dev \
             libxcb-xfixes0-dev \
-            libasound2-dev
+            libasound2-dev \
+            fonts-dejavu-core
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
