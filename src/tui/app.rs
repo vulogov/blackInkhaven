@@ -13247,7 +13247,7 @@ mod tests_gauge {
 /// Dispatch the per-line highlight call based on `content_type` —
 /// typst (default) goes through the cached tree-sitter highlighter;
 /// "hjson" runs the lightweight hand-rolled lexer.
-pub fn highlight_for_content(
+pub(super) fn highlight_for_content(
     highlighter: &mut super::highlight::TypstHighlighter,
     source: &str,
     theme: &super::theme::Theme,
@@ -13263,7 +13263,7 @@ pub fn highlight_for_content(
 /// Convert a tui-textarea (row, char-col) cursor into a byte offset
 /// inside `source = lines.join("\n")`. Used by the mode detector to
 /// query tree-sitter at the cursor's position.
-pub fn byte_offset_for_cursor(source: &str, row: usize, col: usize) -> usize {
+fn byte_offset_for_cursor(source: &str, row: usize, col: usize) -> usize {
     let mut byte: usize = 0;
     let mut current_row = 0;
     for line in source.split_inclusive('\n') {
@@ -13293,7 +13293,7 @@ pub fn byte_offset_for_cursor(source: &str, row: usize, col: usize) -> usize {
 /// Only the FIRST occurrence per line is highlighted — multiple
 /// matches on the same line is a UX corner case; the user can hit
 /// Ctrl+X to walk to the next line's match either way.
-pub fn highlight_substring_in_line(
+pub(super) fn highlight_substring_in_line(
     line: &mut ratatui::text::Line<'static>,
     needle_lower: &str,
     is_current: bool,
@@ -13385,7 +13385,7 @@ fn is_close_pair_char(c: char) -> bool {
 /// Case-insensitive substring filter over the baked-in typst function
 /// table. Results are returned sorted alphabetically (the table is
 /// already sorted; we just preserve order across filter steps).
-pub fn filter_functions(filter: &str) -> Vec<super::typst_funcs::TypstFn> {
+pub(super) fn filter_functions(filter: &str) -> Vec<super::typst_funcs::TypstFn> {
     let needle = filter.trim().to_lowercase();
     if needle.is_empty() {
         return super::typst_funcs::all();
@@ -13412,7 +13412,7 @@ pub fn filter_functions(filter: &str) -> Vec<super::typst_funcs::TypstFn> {
 /// detected. The line-local scope makes this a 50-line function and
 /// the failure mode is "Ctrl+B P falls through to Places RAG" rather
 /// than a bug.
-pub fn detect_image_call_context(line: &str, cursor_col: usize) -> Option<ImageCallContext> {
+fn detect_image_call_context(line: &str, cursor_col: usize) -> Option<ImageCallContext> {
     let cursor_byte = char_offset_to_byte(line, cursor_col);
     let prefix = &line[..cursor_byte];
     // Walk backward to find the last `#image(`. Allow whitespace
