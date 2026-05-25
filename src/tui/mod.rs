@@ -15,6 +15,7 @@ pub(crate) mod keymap;
 mod lexicon;
 mod lexicon_build;
 mod markdown;
+mod modal;
 mod quickref;
 mod sound;
 mod theme;

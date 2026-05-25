@@ -217,3 +217,25 @@ pub(crate) fn cycle_track(current: Option<&str>, tracks: &[String]) -> Option<St
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::cycle_track;
+
+    #[test]
+    fn cycle_through_tracks_then_back_to_none() {
+        let tracks = vec!["flashback".to_string(), "main".to_string()];
+        assert_eq!(cycle_track(None, &tracks).as_deref(), Some("flashback"));
+        assert_eq!(
+            cycle_track(Some("flashback"), &tracks).as_deref(),
+            Some("main")
+        );
+        assert_eq!(cycle_track(Some("main"), &tracks), None);
+    }
+
+    #[test]
+    fn cycle_empty_tracks_returns_none() {
+        assert_eq!(cycle_track(None, &[]), None);
+        assert_eq!(cycle_track(Some("anything"), &[]), None);
+    }
+}
