@@ -264,6 +264,16 @@ pub fn run(project: &Path) -> Result<()> {
     app.restore_session();
     app.install_progress();
 
+    // 1.2.8+ — `editor.mouse_captured = false` in HJSON
+    // asks the launcher to start with native terminal
+    // drag-select instead of the TUI mouse-capture default.
+    // `run` above already enabled capture unconditionally —
+    // sync to App's initial state so the two agree before
+    // first paint.
+    if !app.mouse_captured {
+        let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+    }
+
     // 1.2.4+: project-pulse startup splash. Renders today /
     // streak / active-time / by-status counts; auto-closes
     // after 7 seconds or on any key press. Disabled via
@@ -1619,6 +1629,7 @@ impl App {
         } else {
             None
         };
+        let initial_mouse_captured = cfg.editor.mouse_captured;
         Ok(Self {
             layout,
             store,
@@ -1626,7 +1637,7 @@ impl App {
             cfg,
             ai,
             prompts,
-            mouse_captured: true,
+            mouse_captured: initial_mouse_captured,
             timeline_views: std::collections::HashMap::new(),
             kill_ring: std::collections::VecDeque::new(),
             visited_history: Vec::new(),

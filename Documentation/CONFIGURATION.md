@@ -183,6 +183,7 @@ editor: {
 | `wrap` | bool | `true` | Soft word-wrap inside the editor. `false` → horizontal scroll on long lines. |
 | `autosave_seconds` | int | `5` | Seconds of editor inactivity after which a dirty paragraph is auto-saved. `0` disables idle autosave (Ctrl+S, paragraph-switch and quit-time autosaves still fire). Suspended while a grammar-correction highlight is active. |
 | `startup_splash` | bool | `true` | 1.2.4+. Show a 7-second floating splash at launch with today's words / active minutes / streak / project shape. Any key dismisses early. Set `false` to skip. |
+| `mouse_captured` | bool | `true` | 1.2.8+. Initial mouse-capture state on launch. `true` hands every mouse event to the TUI (click-to-focus, scroll-wheel per pane, in-TUI drag-select). `false` releases capture at startup so the terminal's native drag-select + system-clipboard copy (Cmd/Ctrl+Shift+C) work without pressing `Ctrl+Shift+M` first. The runtime toggle still flips state regardless. |
 | `stemming.languages` | list of strings | `["english", "russian"]` | **Legacy** — superseded by top-level `language` when that is non-empty. See [`language`](#prompts_file-and-language). |
 
 The grammar-correction-highlight interaction: while you have an active

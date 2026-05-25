@@ -1120,9 +1120,23 @@ pub struct EditorConfig {
     /// Set false to skip directly into the editor.
     #[serde(default = "default_startup_splash")]
     pub startup_splash: bool,
+    /// 1.2.8+ — initial mouse-capture state on launch.
+    /// `true` (the default) hands every mouse event to the
+    /// TUI: click-to-focus, scroll-wheel scrolling per pane,
+    /// in-TUI drag-select. `false` releases capture at
+    /// startup so the terminal's native drag-select +
+    /// system-clipboard copy (Cmd/Ctrl+Shift+C) work without
+    /// pressing `Ctrl+Shift+M` first. The toggle still
+    /// flips state at runtime regardless of this knob.
+    #[serde(default = "default_mouse_captured")]
+    pub mouse_captured: bool,
 }
 
 fn default_startup_splash() -> bool {
+    true
+}
+
+fn default_mouse_captured() -> bool {
     true
 }
 
@@ -1136,6 +1150,7 @@ impl Default for EditorConfig {
             auto_close_pairs: true,
             stemming: StemmingConfig::default(),
             startup_splash: default_startup_splash(),
+            mouse_captured: default_mouse_captured(),
         }
     }
 }
