@@ -107,6 +107,10 @@ impl super::App {
             self.draw_fuzzy_paragraph_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::KillRingPicker { .. }) {
+            self.draw_kill_ring_picker_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::RenderedPreview { .. }) {
             self.draw_rendered_preview_modal(f, area);
             return;
@@ -176,6 +180,8 @@ impl super::App {
             Modal::BookmarkPicker { .. } => unreachable!("bookmark picker handled above"),
             Modal::FuzzyParagraphPicker { .. } =>
                 unreachable!("fuzzy paragraph picker handled above"),
+            Modal::KillRingPicker { .. } =>
+                unreachable!("kill-ring picker handled above"),
             Modal::RenderedPreview { .. } =>
                 unreachable!("rendered preview handled above"),
             Modal::SaveRenderedPng { .. } =>

@@ -1204,6 +1204,13 @@ fn strip_leading_typst_heading(body: &str) -> String {
     lines.join("\n")
 }
 
+/// 1.2.8+ — maximum number of recently-deleted paragraphs held
+/// in `App.kill_ring`. Picked to be large enough that an
+/// accidental burst of single-¶ deletes doesn't clobber an
+/// earlier recovery, small enough that the picker fits on a
+/// 24-row terminal without scrolling.
+const KILL_RING_CAP: usize = 10;
+
 pub(crate) struct App {
     layout: ProjectLayout,
     store: Store,
@@ -1231,13 +1238,19 @@ pub(crate) struct App {
     /// PARAGRAPH delete. Captured in `commit_delete` just
     /// before `delete_subtree` fires (single-paragraph only;
     /// subtree deletes are too risky to undo without store
-    /// API support). Restored by Ctrl+B U via
-    /// `create_node` at the original position — content,
-    /// tags, linked_paragraphs, event data preserved; the
-    /// uuid changes (so wiki-links from elsewhere pointing
-    /// at the deleted id stay broken). Single-shot — taking
-    /// undo clears the slot.
-    last_deleted: Option<DeletedParagraphStash>,
+    /// API support). Restored by Ctrl+B U (pops the front =
+    /// most-recent) or Ctrl+V Shift+U (picker over the
+    /// whole ring) via `create_node` at the original
+    /// position — content, tags, linked_paragraphs, event
+    /// data preserved; the uuid changes (so wiki-links from
+    /// elsewhere pointing at the deleted id stay broken).
+    ///
+    /// 1.2.8+ — was `Option<DeletedParagraphStash>` (single
+    /// slot) in 1.2.7; widened to a VecDeque so accidental
+    /// burst-deletes don't clobber an earlier recovery.
+    /// Capped at `KILL_RING_CAP`; oldest entries drop off
+    /// the back as the front fills.
+    kill_ring: std::collections::VecDeque<DeletedParagraphStash>,
 
     /// 1.2.7+ — visited-paragraph history (browser-style
     /// back/forward). Pushed on every `load_paragraph` that
@@ -1605,7 +1618,7 @@ impl App {
             prompts,
             mouse_captured: true,
             timeline_views: std::collections::HashMap::new(),
-            last_deleted: None,
+            kill_ring: std::collections::VecDeque::new(),
             visited_history: Vec::new(),
             visited_cursor: 0,
             visited_skip_next_push: false,
@@ -6102,6 +6115,7 @@ impl App {
             A::ViewListBookmarks => self.open_bookmark_picker_modal(),
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
             A::ViewRecentParagraphPicker => self.open_recent_paragraph_picker(),
+            A::ViewKillRingPicker => self.open_kill_ring_picker(),
             A::ViewRenderParagraph => self.open_rendered_paragraph_preview(),
             A::ViewNextDiagnostic => self.jump_to_next_diagnostic(),
             A::ViewStoryGraph => self.open_story_view(),
@@ -6879,9 +6893,10 @@ impl App {
     }
 
     /// 1.2.7+ — capture a paragraph's full state into the
-    /// single-slot kill-ring before delete_subtree drops it.
-    /// Skipped silently when the file body can't be read
-    /// (which still permits the delete to proceed).
+    /// kill-ring before delete_subtree drops it. Pushes to
+    /// the front; trims to KILL_RING_CAP. Skipped silently
+    /// when the file body can't be read (which still permits
+    /// the delete to proceed).
     fn stash_deleted_paragraph(&mut self, node: &Node) {
         // Find the sibling that comes immediately BEFORE the
         // about-to-be-deleted node so we can re-insert at
@@ -6899,7 +6914,7 @@ impl App {
             .map(|rel| self.layout.root.join(rel))
             .and_then(|abs| std::fs::read(&abs).ok())
             .unwrap_or_default();
-        self.last_deleted = Some(DeletedParagraphStash {
+        self.kill_ring.push_front(DeletedParagraphStash {
             parent_id: node.parent_id,
             anchor_id,
             title: node.title.clone(),
@@ -6912,13 +6927,18 @@ impl App {
             content_type: node.content_type.clone(),
             event: node.event.clone(),
         });
+        while self.kill_ring.len() > KILL_RING_CAP {
+            self.kill_ring.pop_back();
+        }
     }
 
-    /// 1.2.7+ — Ctrl+B U. Pop the kill-ring; re-create the
-    /// paragraph at its original position; restore body +
-    /// metadata. Single-shot (slot is cleared after).
+    /// 1.2.7+ — Ctrl+B U. Pop the front of the kill-ring
+    /// (= most-recent delete); re-create the paragraph at
+    /// its original position; restore body + metadata. The
+    /// entry is consumed on success; on failure it's
+    /// reinserted so the user can retry.
     fn undo_last_delete(&mut self) {
-        let Some(stash) = self.last_deleted.take() else {
+        let Some(stash) = self.kill_ring.pop_front() else {
             self.status = "undo: kill-ring is empty".into();
             return;
         };
@@ -6942,9 +6962,10 @@ impl App {
         ) {
             Ok(n) => n,
             Err(e) => {
-                // Re-stash so the user can retry after
-                // fixing whatever rejected the create.
-                self.last_deleted = Some(stash);
+                // Re-stash to the front so the user can
+                // retry after fixing whatever rejected the
+                // create.
+                self.kill_ring.push_front(stash);
                 self.status = format!("undo: create_node failed: {e}");
                 return;
             }
@@ -6985,6 +7006,133 @@ impl App {
         self.reload_hierarchy();
         self.status = format!(
             "↺ restored `{}` (new uuid {} — cross-refs to old uuid stay broken)",
+            updated.title,
+            updated.id.simple()
+        );
+    }
+
+    /// 1.2.8+ — Ctrl+V Shift+U. Open the kill-ring picker.
+    /// Empty ring → status message and no modal.
+    fn open_kill_ring_picker(&mut self) {
+        if self.kill_ring.is_empty() {
+            self.status = "kill-ring: empty (nothing to restore)".into();
+            return;
+        }
+        self.modal = Modal::KillRingPicker { cursor: 0 };
+        self.status = format!(
+            "kill-ring: {} entr{} · ↑↓ select · Enter restore · Esc cancel",
+            self.kill_ring.len(),
+            if self.kill_ring.len() == 1 { "y" } else { "ies" }
+        );
+    }
+
+    /// 1.2.8+ — handle keystrokes inside `Modal::KillRingPicker`.
+    fn kill_ring_picker_handle_key(&mut self, key: KeyEvent) {
+        let Modal::KillRingPicker { cursor } = &mut self.modal else { return; };
+        let len = self.kill_ring.len();
+        if len == 0 {
+            self.modal = Modal::None;
+            return;
+        }
+        match key.code {
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < len {
+                    *cursor += 1;
+                }
+            }
+            KeyCode::Home => *cursor = 0,
+            KeyCode::End => *cursor = len.saturating_sub(1),
+            KeyCode::Enter => {
+                let idx = *cursor;
+                self.modal = Modal::None;
+                self.restore_kill_ring_entry(idx);
+            }
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "kill-ring: cancelled".into();
+            }
+            _ => {}
+        }
+    }
+
+    /// 1.2.8+ — restore the kill-ring entry at `idx`. Removes
+    /// it from the ring (whether or not the restore succeeds —
+    /// failure cases reinsert on the error path, mirroring
+    /// `undo_last_delete`'s semantics).
+    fn restore_kill_ring_entry(&mut self, idx: usize) {
+        if idx >= self.kill_ring.len() {
+            self.status = "kill-ring: index out of range".into();
+            return;
+        }
+        let stash = self.kill_ring.remove(idx).expect("idx checked");
+        let parent = stash
+            .parent_id
+            .and_then(|id| self.hierarchy.get(id).cloned());
+        let position = match stash.anchor_id {
+            Some(id) if self.hierarchy.get(id).is_some() => {
+                crate::store::InsertPosition::After(id)
+            }
+            _ => crate::store::InsertPosition::End,
+        };
+        let created = match self.store.create_node(
+            &self.cfg,
+            &self.hierarchy,
+            NodeKind::Paragraph,
+            &stash.title,
+            parent.as_ref(),
+            Some(&stash.slug),
+            position,
+        ) {
+            Ok(n) => n,
+            Err(e) => {
+                // Reinsert at the same index so the user can
+                // retry; status names the failure.
+                self.kill_ring.insert(idx, stash);
+                self.status = format!("kill-ring restore: create_node failed: {e}");
+                return;
+            }
+        };
+        if let Some(rel) = created.file.as_ref() {
+            let abs = self.layout.root.join(rel);
+            if let Err(e) = std::fs::write(&abs, &stash.content) {
+                self.status = format!(
+                    "kill-ring restore: paragraph created at `{}` but body write failed: {e}",
+                    created.slug
+                );
+                self.reload_hierarchy();
+                return;
+            }
+        }
+        let mut updated = created.clone();
+        updated.tags = stash.tags;
+        updated.linked_paragraphs = stash.linked_paragraphs;
+        updated.status = stash.status;
+        updated.target_words = stash.target_words;
+        if stash.content_type.is_some() {
+            updated.content_type = stash.content_type;
+        }
+        updated.event = stash.event;
+        updated.modified_at = chrono::Utc::now();
+        crate::store::reconcile_event_orphan_tag(&mut updated);
+        if let Err(e) = self
+            .store
+            .raw()
+            .update_metadata(updated.id, updated.to_json())
+        {
+            tracing::warn!(
+                target: "inkhaven::undo",
+                "kill-ring metadata restore failed for {}: {e}",
+                updated.id
+            );
+        }
+        self.reload_hierarchy();
+        self.status = format!(
+            "↺ restored `{}` from kill-ring (new uuid {} — cross-refs to old uuid stay broken)",
             updated.title,
             updated.id.simple()
         );
@@ -9523,6 +9671,7 @@ impl App {
         let is_backlink_picker = matches!(self.modal, Modal::BacklinkPicker { .. });
         let is_bookmark_picker = matches!(self.modal, Modal::BookmarkPicker { .. });
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
+        let is_kill_ring_picker = matches!(self.modal, Modal::KillRingPicker { .. });
         let is_rendered_preview = matches!(self.modal, Modal::RenderedPreview { .. });
         let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
@@ -9649,6 +9798,11 @@ impl App {
 
         if is_fuzzy_paragraph_picker {
             self.fuzzy_paragraph_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_kill_ring_picker {
+            self.kill_ring_picker_handle_key(key);
             return Ok(false);
         }
 
@@ -10332,17 +10486,25 @@ impl App {
         // API support.
         if root_kind == NodeKind::Paragraph && ids.len() == 1 {
             self.stash_deleted_paragraph(&root_node);
-        } else {
-            // Different delete shape — clear any stale stash
-            // so Ctrl+B U doesn't surprise the user with an
-            // older recoverable that no longer matches the
-            // most-recent action.
-            self.last_deleted = None;
         }
+        // 1.2.8+: branch deletes no longer clear the
+        // kill-ring. Older single-¶ entries in the ring
+        // are still valid recoveries — they reference paths
+        // that may or may not exist after the branch went,
+        // but the restore flow handles "parent gone" by
+        // falling back to InsertPosition::End. Keeping the
+        // entries is strictly more useful than dropping them.
 
         if let Err(e) = self.store.delete_subtree(&fs_rel, &ids) {
             self.status = format!("delete failed: {e}");
-            self.last_deleted = None;
+            // The push-front above already happened for a
+            // single-¶ stash; drop it again since the delete
+            // didn't actually fire — the on-disk paragraph
+            // still exists and the front-stash would create
+            // a duplicate on the next Ctrl+B U.
+            if root_kind == NodeKind::Paragraph && ids.len() == 1 {
+                self.kill_ring.pop_front();
+            }
             return;
         }
 
@@ -10354,10 +10516,20 @@ impl App {
         }
 
         self.modal = Modal::None;
-        let undo_hint = if self.last_deleted.is_some() {
-            " · Ctrl+B U to restore (new uuid — wiki-links to old id stay broken)"
+        let ring_len = self.kill_ring.len();
+        let undo_hint = if root_kind == NodeKind::Paragraph
+            && ids.len() == 1
+            && ring_len > 0
+        {
+            if ring_len == 1 {
+                " · Ctrl+B U to restore (new uuid — wiki-links to old id stay broken)".to_string()
+            } else {
+                format!(
+                    " · Ctrl+B U restore · Ctrl+V Shift+U picker ({ring_len} in ring)",
+                )
+            }
         } else {
-            ""
+            String::new()
         };
         self.status = format!(
             "deleted {} `{}` ({} other node{} removed){undo_hint}",
