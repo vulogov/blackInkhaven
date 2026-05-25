@@ -48,7 +48,6 @@ use super::backup_ui::{maybe_auto_backup, run_manual_backup};
 use super::credits::{build_credits_lines, embedded_logo_image};
 use super::diff_utils::{SnapshotDiffKind, SnapshotDiffRow, compute_line_diff};
 use super::input::TextInput;
-use super::keymap::KeyChord;
 use super::lexicon_build::{LexiconKind, build_lexicon};
 use super::timeline_state::{
     TimelineDescentChoice, TimelineDescentState, TimelineEvent, TimelineFocusLevel,
@@ -56,10 +55,9 @@ use super::timeline_state::{
 };
 use super::search_results::SearchHit;
 use super::splash::{
-    StartupError, TYPST_COMPILE_SPINNER, draw_assembly_splash, draw_backup_splash,
-    draw_import_splash, draw_pulse_splash, draw_take_extras_splash,
-    draw_typst_compile_splash, open_store_with_splash,
-    wait_for_any_key_on_backup_splash,
+    StartupError, TYPST_COMPILE_SPINNER, draw_assembly_splash, draw_import_splash,
+    draw_pulse_splash, draw_take_extras_splash, draw_typst_compile_splash,
+    open_store_with_splash,
 };
 use super::hjson_edit::{
     set_key_in_hjson_block, set_llm_default_in_hjson,
@@ -67,6 +65,11 @@ use super::hjson_edit::{
 };
 use super::inference::{
     AiMode, Inference, InferenceAction, InferenceMode, InferenceStatus,
+};
+use super::state::{
+    BookStats, ChatSearchState, ChatSelectionState, DeletedParagraphStash,
+    ImageCallContext, ImportCounts, Keymap, LinkPickDirection, MoveDir, OpenedDoc,
+    SplitView, ViewMdScope,
 };
 use super::status_helpers::{
     display_status, next_status, prev_status, status_letter, status_style,
@@ -318,89 +321,6 @@ fn count_importable_files(root: &Path) -> usize {
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
         .count()
-}
-
-struct Keymap {
-    next_pane: KeyChord,
-    prev_pane: KeyChord,
-    search: KeyChord,
-    ai_prompt: KeyChord,
-    save: KeyChord,
-    page_up: KeyChord,
-    page_down: KeyChord,
-    meta_prefix: KeyChord,
-    /// Bund-meta prefix. `None` when the config sets
-    /// `keys.bund_prefix = ""` to disable the chord (some users
-    /// reserve Ctrl+Z for their terminal multiplexer).
-    bund_prefix: Option<KeyChord>,
-    /// View-meta prefix (1.2.4+, default `Ctrl+V`). `None`
-    /// disables the layer (some terminals bind Ctrl+V to "verbatim
-    /// next" and the user might want it back).
-    view_prefix: Option<KeyChord>,
-}
-
-impl Keymap {
-    fn from_config(cfg: &Config) -> InkResult<Self> {
-        let parse = |label: &str, s: &str| -> InkResult<KeyChord> {
-            KeyChord::parse(s).map_err(|e| Error::Config(format!("keys.{label}: {e}")))
-        };
-        let bund_prefix = if cfg.keys.bund_prefix.trim().is_empty() {
-            None
-        } else {
-            Some(parse("bund_prefix", &cfg.keys.bund_prefix)?)
-        };
-        let view_prefix = if cfg.keys.view_prefix.trim().is_empty() {
-            None
-        } else {
-            Some(parse("view_prefix", &cfg.keys.view_prefix)?)
-        };
-        Ok(Self {
-            next_pane: parse("next_pane", &cfg.keys.next_pane)?,
-            prev_pane: parse("prev_pane", &cfg.keys.prev_pane)?,
-            search: parse("search", &cfg.keys.search)?,
-            ai_prompt: parse("ai_prompt", &cfg.keys.ai_prompt)?,
-            save: parse("save", &cfg.keys.save)?,
-            page_up: parse("page_up", &cfg.keys.page_up)?,
-            page_down: parse("page_down", &cfg.keys.page_down)?,
-            meta_prefix: parse("meta_prefix", &cfg.keys.meta_prefix)?,
-            bund_prefix,
-            view_prefix,
-        })
-    }
-}
-
-/// Which scope the Ctrl+V markdown export targets. Used by
-/// `view_export_markdown` to route through the existing
-/// per-scope helpers from one binding-table arm.
-#[derive(Debug, Clone, Copy)]
-enum ViewMdScope {
-    Buffer,
-    Subchapter,
-    Subtree,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum MoveDir {
-    Up,
-    Down,
-}
-
-/// Direction of a link-pick flow (Ctrl+V A vs Ctrl+V I).
-/// `Outgoing` adds the picked target to the open paragraph's
-/// outgoing links; `Incoming` adds the open paragraph to the
-/// picked target's outgoing links (== an incoming link for
-/// current).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LinkPickDirection {
-    Outgoing,
-    Incoming,
-}
-
-#[derive(Default)]
-struct ImportCounts {
-    /// Any branch created during import: chapter, subchapter, or book.
-    branches: usize,
-    paragraphs: usize,
 }
 
 /// Read a directory's immediate children, filter hidden entries, sort dirs
@@ -2114,31 +2034,6 @@ struct ImagePickerEntry {
     size_bytes: u64,
 }
 
-/// Active search session inside the AI-fullscreen chat-history pane.
-/// `matches` is recomputed lazily by `draw_chat_history` whenever the
-/// rendered line count changes (terminal resize) — we just track the
-/// query + which match we're currently centred on.
-#[derive(Debug, Clone)]
-struct ChatSearchState {
-    query: String,
-    /// Index into `matches`. The render hook clamps this against the
-    /// freshly-computed match count each frame so terminal resize +
-    /// streaming-token arrival can't push it out of range.
-    current: usize,
-}
-
-/// "Chat selection mode" (Ctrl+C in AI-fullscreen). The cursor
-/// points at a single turn in `chat_history`; Up / Down step through
-/// turns, `c` / `C` copies the turn text to the clipboard, `t` / `T`
-/// inserts it at the editor cursor.
-#[derive(Debug, Clone, Copy)]
-struct ChatSelectionState {
-    /// Index into `chat_history`. Always points at a valid turn —
-    /// reset / clamped if the history shrinks while selection is
-    /// active.
-    turn: usize,
-}
-
 /// One row in the `Ctrl+B 1..7` status-filter list. Carries the
 /// paragraph id (for opening on Enter) plus a pre-rendered
 /// breadcrumb so the user can disambiguate same-titled paragraphs
@@ -2183,104 +2078,6 @@ pub(crate) fn visible_event_entries<'a>(
             .collect(),
         None => entries.iter().collect(),
     }
-}
-
-/// 1.2.7+ — stash for the most-recent paragraph delete. Used
-/// by `Ctrl+B U` to recover content + metadata after a
-/// confirmed delete. Stores everything needed to call
-/// `create_node` + restore body + restore tags / linked
-/// paragraphs / event data. Note: the restored node gets a
-/// fresh uuid; cross-refs from other paragraphs (wiki-links,
-/// event.linked_paragraphs) pointing at the OLD uuid stay
-/// broken — flagged in the post-undo status.
-#[derive(Debug, Clone)]
-pub(crate) struct DeletedParagraphStash {
-    pub parent_id: Option<Uuid>,
-    pub anchor_id: Option<Uuid>, // sibling to insert after; None = end of parent
-    pub title: String,
-    pub slug: String,
-    pub content: Vec<u8>,
-    pub tags: Vec<String>,
-    pub linked_paragraphs: Vec<Uuid>,
-    pub status: Option<String>,
-    pub target_words: Option<i32>,
-    pub content_type: Option<String>,
-    pub event: Option<crate::store::node::EventData>,
-}
-
-struct OpenedDoc {
-    id: Uuid,
-    title: String,
-    rel_path: String,
-    textarea: TextArea<'static>,
-    dirty: bool,
-    /// Custom scroll state. tui-textarea v0.7 does not expose its viewport, so
-    /// we maintain our own and never call `textarea.scroll()`.
-    scroll_row: usize,
-    scroll_col: usize,
-    /// Anchor of a vertical-block selection (entered with Alt+arrows).
-    /// While Some, the cursor's current position plus this anchor define a
-    /// rectangular selection drawn with REVERSED style.
-    block_anchor: Option<(usize, usize)>,
-    /// Wall-clock of the last key event handled by the editor. Idle autosave
-    /// fires when (now - last_activity) >= editor.autosave_seconds.
-    last_activity: std::time::Instant,
-    /// Snapshot of `textarea.lines()` at the most recent save / load. Used to
-    /// bold characters added since then.
-    saved_lines: Vec<String>,
-    /// 1.2.7+ — wall-clock mtime of the paragraph's file at
-    /// the moment we loaded it (or after the last save).
-    /// The idle ticker compares this to the current mtime;
-    /// if the file changed externally (CLI edit, sed, git
-    /// pull, …), we either silently reload (clean buffer)
-    /// or warn (dirty buffer). `None` when mtime isn't
-    /// available (e.g. virtual filesystem, race).
-    loaded_mtime: Option<std::time::SystemTime>,
-    /// Set when split-edit mode is active. The lower pane shows a read-only
-    /// copy of `snapshot_lines`, scrolled independently of the live editor.
-    split: Option<SplitView>,
-    /// Active find / replace session (Ctrl+F / Ctrl+R). While Some, matches
-    /// are highlighted red and Ctrl+G advances or replaces.
-    search: Option<SearchState>,
-    /// True when this paragraph lives inside the Help book. The editor still
-    /// renders it normally (so the user can read it, scroll, search), but
-    /// every mutating keystroke is intercepted with a status message.
-    read_only: bool,
-    /// Picked from the Node's `content_type` at open time. Drives
-    /// which syntax highlighter the editor uses (`"hjson"` → the
-    /// hand-rolled HJSON lexer; anything else → tree-sitter-typst).
-    /// Also reported in the editor header so the user can tell at a
-    /// glance which language they're editing.
-    content_type: Option<String>,
-    /// Pre-correction baseline captured when the AI pane's `T` (grammar-
-    /// check apply) overwrites the buffer with the model's corrected text.
-    /// Lines that differ from this baseline render in `theme.grammar_change_fg`
-    /// so the user can eyeball what changed. Cleared on the next save
-    /// (implicit "accept the corrections") or when the user opens a
-    /// different paragraph.
-    correction_baseline: Option<Vec<String>>,
-    /// Cached typst parse-time diagnostics (1.2.5+). Recomputed on
-    /// save and on idle when `typst_compile.diagnostics` is on and
-    /// the buffer's content type is `None` (default = typst) or
-    /// `Some("typst")`. Empty when the buffer parses cleanly OR
-    /// when diagnostics are disabled in HJSON. See
-    /// `crate::typst_check`.
-    typst_diagnostics: Vec<crate::typst_check::TypstDiagnostic>,
-    /// Wall-clock of the last typst-syntax recheck. Throttles the
-    /// idle re-check against `typst_compile.diagnostics_idle_seconds`.
-    typst_diagnostics_checked_at: std::time::Instant,
-    /// 1.2.6+ — snapshot of the last diagnostic state we fired
-    /// `hook.on_diagnostic` for: `(count, first-message)`. Used
-    /// to debounce the hook so it only re-fires on actual state
-    /// transitions (clean → errored, count change, top-message
-    /// change). `None` means we've never fired or the doc is
-    /// freshly opened.
-    typst_diag_last_fired: Option<(usize, String)>,
-}
-
-struct SplitView {
-    snapshot_lines: Vec<String>,
-    scroll_row: usize,
 }
 
 impl App {
@@ -23829,16 +23626,6 @@ pub fn filter_functions(filter: &str) -> Vec<super::typst_funcs::TypstFn> {
         .collect()
 }
 
-/// Detection result for "is the cursor sitting inside the first
-/// string argument of a `#image(...)` call on this line".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ImageCallContext {
-    /// True when the open `"` has a matching close `"` further along
-    /// the same line. The picker uses this to decide whether to
-    /// insert a closing quote after the filename or not.
-    pub closing_quote_present: bool,
-}
-
 /// Inspect the editor line up to the cursor and decide whether we're
 /// inside `#image("…<cursor>…")`. Returns `None` when not, so the
 /// caller can fall back to the regular `Ctrl+B P` (Places RAG) path.
@@ -23951,22 +23738,6 @@ fn current_word_or_selection(doc: &OpenedDoc) -> String {
         }
     }
     String::new()
-}
-
-/// Aggregate counts for one root Book, computed by walking its subtree.
-/// Words come from each Paragraph's stored `word_count` (kept up to date
-/// at save time); sentences are derived by re-reading paragraph bodies
-/// from disk, which is fine for literary-scale projects (hundreds of
-/// short files) but should be reconsidered if a project ever grows past
-/// many thousands of paragraphs.
-#[derive(Debug, Default)]
-struct BookStats {
-    chapters: usize,
-    subchapters: usize,
-    paragraphs: usize,
-    images: usize,
-    sentences: usize,
-    words: u64,
 }
 
 fn compute_book_stats(
