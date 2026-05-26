@@ -9243,9 +9243,9 @@ impl App {
             // immediately; the search bar / AI prompt are hidden
             // anyway, so leaving focus on them would be confusing.
             self.change_focus(Focus::Editor);
-            self.status = "typewriter mode · Ctrl+B W to exit".into();
+            self.status = "focus mode · Ctrl+B W to exit".into();
         } else {
-            self.status = "typewriter mode off".into();
+            self.status = "focus mode off".into();
         }
     }
 
