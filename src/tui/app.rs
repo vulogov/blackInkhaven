@@ -7233,15 +7233,28 @@ impl App {
     }
 
     /// 1.2.8+ — route a keystroke through the HJSON editor
-    /// modal.  Restart-required overlay swallows every key
-    /// (and clears itself).  Otherwise: Ctrl+S saves, Esc
-    /// closes (with a dirty-buffer warning when applicable),
-    /// PgUp/PgDn scroll, and everything else forwards into
-    /// tui-textarea's input handler — so all of the
-    /// textarea's built-in editing chords (cursor motion,
-    /// selection, kill / yank, undo, redo) work verbatim
-    /// the same as the main editor.
+    /// modal.  Mirrors the main paragraph editor's key set
+    /// so muscle memory carries over verbatim.  Handles:
+    ///   - Restart overlay: any key dismisses.
+    ///   - Ctrl+S save; Esc close (with unsaved-edit warn).
+    ///   - Arrows / Home / End / PgUp / PgDn (Shift extends
+    ///     selection, plain cancels it) — routed via
+    ///     CursorMove because tui-textarea's
+    ///     `input_without_shortcuts` drops those keys.
+    ///   - Ctrl+Home/End → top/bottom of buffer.
+    ///   - Ctrl+Left/Right → word back / forward.
+    ///   - Ctrl+Backspace → delete word.
+    ///   - Ctrl+U undo, Ctrl+Y redo.
+    ///   - Ctrl+K cut, Ctrl+C copy, Ctrl+P paste, Ctrl+A
+    ///     select-all.
+    ///   - Ctrl+D delete-line, Ctrl+E delete-to-EOL,
+    ///     Ctrl+W delete-to-BOL.
+    ///   - Everything else: textarea.input_without_shortcuts
+    ///     (so plain typing + Tab + Enter + Backspace work,
+    ///     but no emacs-style ctrl chord interception).
     fn hjson_editor_handle_key(&mut self, key: KeyEvent) {
+        use tui_textarea::CursorMove;
+
         // Restart overlay is sticky-modal: any key clears it.
         if matches!(
             self.modal,
@@ -7255,6 +7268,8 @@ impl App {
         }
 
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
 
         // Ctrl+S — save.
         if ctrl
@@ -7264,9 +7279,7 @@ impl App {
             return;
         }
 
-        // Esc — close.  Warn (status line only) when there
-        // are unsaved edits so the user doesn't lose work
-        // silently.  Second Esc actually closes.
+        // Esc — close (with dirty warn).
         if matches!(key.code, KeyCode::Esc) {
             let dirty = matches!(
                 &self.modal,
@@ -7274,15 +7287,8 @@ impl App {
                     if textarea.lines().join("\n") != *original_content
             );
             if dirty {
-                // Trigger a flag so a second Esc closes,
-                // mirroring the F6 filter pattern.  We
-                // reuse the existing `bund_pending` ?
-                // Actually no — store on the modal itself.
-                // For simplicity here, status-only warn and
-                // close on the same Esc — the user can
-                // always Ctrl+S beforehand.
                 self.status =
-                    "hjson: closed with unsaved edits — re-open with Ctrl+B | to recover from disk".into();
+                    "hjson: closed with unsaved edits — re-open with Ctrl+B 0 to recover from disk".into();
             } else {
                 self.status = "hjson: closed".into();
             }
@@ -7290,13 +7296,140 @@ impl App {
             return;
         }
 
-        // Forward everything else to tui-textarea — same
-        // editing semantics as the paragraph editor (which
-        // includes all the readline-style chord set, undo
-        // ring, selection mode via Shift, etc.).
+        // Plain arrows + Home/End/PgUp/PgDn.  Shift extends
+        // selection, plain cancels.  Routed explicitly
+        // because input_without_shortcuts drops them.
+        if !alt && !ctrl {
+            let cmove = match key.code {
+                KeyCode::Up => Some(CursorMove::Up),
+                KeyCode::Down => Some(CursorMove::Down),
+                KeyCode::Left => Some(CursorMove::Back),
+                KeyCode::Right => Some(CursorMove::Forward),
+                KeyCode::Home => Some(CursorMove::Head),
+                KeyCode::End => Some(CursorMove::End),
+                KeyCode::PageUp => Some(CursorMove::ParagraphBack),
+                KeyCode::PageDown => Some(CursorMove::ParagraphForward),
+                _ => None,
+            };
+            if let Some(cmove) = cmove {
+                if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                    if shift {
+                        if textarea.selection_range().is_none() {
+                            textarea.start_selection();
+                        }
+                    } else {
+                        textarea.cancel_selection();
+                    }
+                    textarea.move_cursor(cmove);
+                }
+                return;
+            }
+        }
+
+        // Ctrl+modified motion + edit chords.  Mirror the
+        // main editor (Ctrl+U undo, Ctrl+Y redo, Ctrl+K/C/P
+        // cut/copy/paste, Ctrl+A select-all, Ctrl+D/E/W
+        // line-targeted deletes, Ctrl+Home/End top/bottom,
+        // Ctrl+Left/Right word jumps, Ctrl+Backspace
+        // delete-word).
+        if ctrl {
+            match key.code {
+                KeyCode::Char('u') | KeyCode::Char('U') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.undo();
+                    }
+                    return;
+                }
+                KeyCode::Char('y') | KeyCode::Char('Y') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.redo();
+                    }
+                    return;
+                }
+                KeyCode::Char('k') | KeyCode::Char('K') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.cut();
+                    }
+                    return;
+                }
+                KeyCode::Char('c') | KeyCode::Char('C') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.copy();
+                    }
+                    return;
+                }
+                KeyCode::Char('p') | KeyCode::Char('P') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.paste();
+                    }
+                    return;
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.select_all();
+                    }
+                    return;
+                }
+                KeyCode::Char('d') | KeyCode::Char('D') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.delete_line_by_end();
+                        textarea.delete_line_by_head();
+                    }
+                    return;
+                }
+                KeyCode::Char('e') | KeyCode::Char('E') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.delete_line_by_end();
+                    }
+                    return;
+                }
+                KeyCode::Char('w') | KeyCode::Char('W') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.delete_line_by_head();
+                    }
+                    return;
+                }
+                KeyCode::Home => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.move_cursor(CursorMove::Top);
+                    }
+                    return;
+                }
+                KeyCode::End => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.move_cursor(CursorMove::Bottom);
+                    }
+                    return;
+                }
+                KeyCode::Left => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.move_cursor(CursorMove::WordBack);
+                    }
+                    return;
+                }
+                KeyCode::Right => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.move_cursor(CursorMove::WordForward);
+                    }
+                    return;
+                }
+                KeyCode::Backspace => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.delete_word();
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        // Everything else: pass to textarea WITHOUT its
+        // emacs-style defaults (matches the main editor).
+        // This handles plain typing, Tab, Enter, Backspace,
+        // Delete, and any other key not caught above.
         if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
             let input: tui_textarea::Input = key.into();
-            textarea.input(input);
+            textarea.input_without_shortcuts(input);
         }
     }
 
