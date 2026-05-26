@@ -1264,7 +1264,11 @@ Inside the pane (normal mode):
   Enter          run the line through the embedded
                  nu_engine; output + stderr land as a new
                  turn in the buffer.  Scroll is reset so
-                 the new output is auto-visible.
+                 the new output is auto-visible.  Typing
+                 `exit` (or `quit`) closes the pane
+                 instead of forwarding to nu (whose
+                 built-in `exit` would kill inkhaven
+                 itself).
   ↑ / ↓          walk the per-project command history
                  ring (shell-style; Down past newest
                  clears the input).
