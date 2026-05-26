@@ -7302,6 +7302,106 @@ impl App {
         }
     }
 
+    /// 1.2.8+ — Tab completion inside the OS Shell pane.
+    /// Routes the current token through `Engine::complete`
+    /// (which decides command vs path context) and folds
+    /// the result into the input:
+    ///   - 0 matches → status "no matches"
+    ///   - 1 match    → replace token with match (+ trailing
+    ///                  space for commands, kept-`/` for dirs)
+    ///   - N matches  → replace token with longest common
+    ///                  prefix when it advances; status line
+    ///                  shows up to 6 candidates
+    /// No-op outside the pane (the Tab key only reaches this
+    /// method via `shell_pane_handle_key`).
+    fn shell_tab_complete(&mut self) {
+        let (input_str, cursor_chars) = match &self.modal {
+            Modal::ShellPane { input, .. } => {
+                (input.as_str().to_string(), input.cursor())
+            }
+            _ => return,
+        };
+        let completion = match self.shell_engine.as_ref() {
+            Some(eng) => eng.complete(&input_str, cursor_chars),
+            None => return,
+        };
+        if completion.matches.is_empty() {
+            self.status = format!(
+                "shell: no matches for `{}`",
+                completion.token
+            );
+            return;
+        }
+
+        // Decide what text to splice into the input.  For a
+        // single match: the whole match.  For multiple: the
+        // longest common prefix — but only if it ACTUALLY
+        // advances past what the user has already typed
+        // (otherwise we'd produce a no-op edit and the user
+        // would think Tab is broken).
+        let replacement: String = if completion.matches.len() == 1 {
+            let mut r = completion.matches[0].clone();
+            // Append a trailing space for completed command
+            // names so the next token can start typing
+            // immediately.  Directories already have a
+            // trailing `/` from complete_path.
+            if !r.ends_with('/') {
+                r.push(' ');
+            }
+            r
+        } else {
+            let lcp = super::shell::longest_common_prefix(&completion.matches);
+            if lcp.chars().count() > completion.token.chars().count() {
+                lcp
+            } else {
+                // No advance possible — keep token unchanged,
+                // just show the matches.
+                completion.token.clone()
+            }
+        };
+
+        // Splice the replacement into the input:
+        //   prefix = input[..token_start] (chars)
+        //   suffix = input[cursor..]      (chars)
+        let chars: Vec<char> = input_str.chars().collect();
+        let prefix: String =
+            chars[..completion.token_start].iter().collect();
+        let suffix: String = chars[cursor_chars..].iter().collect();
+        let new_cursor_chars = prefix.chars().count()
+            + replacement.chars().count();
+        let new_buffer = format!("{prefix}{replacement}{suffix}");
+
+        if let Modal::ShellPane { input, .. } = &mut self.modal {
+            input.set_with_cursor(new_buffer, new_cursor_chars);
+        }
+
+        // Surface the candidate list when there are several,
+        // so the user can see what else matches.
+        if completion.matches.len() > 1 {
+            const SHOW_CAP: usize = 6;
+            let preview: Vec<&str> = completion
+                .matches
+                .iter()
+                .take(SHOW_CAP)
+                .map(String::as_str)
+                .collect();
+            let more = completion.matches.len().saturating_sub(SHOW_CAP);
+            let suffix = if more > 0 {
+                format!(" … (+{more} more)")
+            } else {
+                String::new()
+            };
+            self.status = format!(
+                "shell: {} matches — {}{}",
+                completion.matches.len(),
+                preview.join("  "),
+                suffix,
+            );
+        } else {
+            self.status = "shell: completed".into();
+        }
+    }
+
     /// 1.2.8+ — `Ctrl+Z h` toggle history-selection mode
     /// from inside the shell pane.  No-op when invoked
     /// outside the pane (the chord lives in the bund-
@@ -7708,6 +7808,16 @@ impl App {
                         }
                     }
                 }
+            }
+            KeyCode::Tab => {
+                // 1.2.8+ — autocomplete commands, externals,
+                // and filesystem paths.  Replace the token
+                // under the cursor with either the single
+                // match or the longest common prefix of all
+                // matches.  Multiple matches surface as a
+                // status-line list so the user can see what
+                // else exists.
+                self.shell_tab_complete();
             }
             KeyCode::Esc => {
                 // Esc closes the pane; engine + history

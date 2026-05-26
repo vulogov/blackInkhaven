@@ -281,6 +281,57 @@ impl Engine {
         self.interrupt.clone()
     }
 
+    /// 1.2.8+ — read the engine's effective working directory
+    /// (`$env.PWD`), falling back to `/` if the env var is
+    /// missing or non-string.  Used by Tab completion's path
+    /// search so completions track `cd` mutations.
+    pub(super) fn cwd(&self) -> PathBuf {
+        let v = self.stack.get_env_var(&self.state, "PWD");
+        if let Some(val) = v {
+            if let Ok(s) = val.coerce_str() {
+                return PathBuf::from(s.into_owned());
+            }
+        }
+        PathBuf::from("/")
+    }
+
+    /// 1.2.8+ — Tab autocomplete.  Given the full input line
+    /// and the cursor's char-index, returns:
+    ///   - matches: sorted, deduped candidates
+    ///   - token_start: char-index where the current token begins
+    ///     (used by the caller to replace `[token_start..cursor]`)
+    ///   - token: the prefix being completed
+    /// Position-aware: command-position tokens match nu's
+    /// declared command names plus `$PATH` binaries; argument
+    /// tokens (and any command-position token containing `/`)
+    /// match the filesystem under the engine's `$env.PWD`.
+    /// Filesystem entries that are directories come back with
+    /// a trailing `/` so the user can keep typing.
+    pub(super) fn complete(
+        &self,
+        input: &str,
+        cursor_chars: usize,
+    ) -> Completion {
+        let (token_start, token, is_command_pos) =
+            extract_token_for_completion(input, cursor_chars);
+        let mut matches: Vec<String> = Vec::new();
+        if is_command_pos && !token.contains('/') {
+            for (bytes, _id) in self.state.get_decls_sorted(false) {
+                if let Ok(name) = std::str::from_utf8(&bytes) {
+                    if name.starts_with(&token) {
+                        matches.push(name.to_string());
+                    }
+                }
+            }
+            matches.extend(complete_external_on_path(&token));
+        } else {
+            matches.extend(complete_path(&self.cwd(), &token));
+        }
+        matches.sort();
+        matches.dedup();
+        Completion { matches, token_start, token }
+    }
+
     /// Parse + evaluate one input line.  Never panics —
     /// parse errors and ShellErrors come back in `stderr`
     /// with `success = false`.
@@ -563,6 +614,169 @@ fn style_for_shape(shape: &FlatShape) -> Style {
 /// designators (`ESC ( X`, `ESC ) X`), and bare `ESC X`
 /// fallthrough.  Unknown sequences drop only the `ESC` +
 /// next char to stay conservative.
+/// 1.2.8+ — outcome of `Engine::complete`.  Caller replaces
+/// `input[token_start..cursor]` with a chosen entry from
+/// `matches` (or with the longest common prefix when there
+/// are multiple).  `token` echoes the prefix the user typed
+/// so the caller can compute the LCP without re-tokenising.
+pub(super) struct Completion {
+    pub matches: Vec<String>,
+    pub token_start: usize,
+    pub token: String,
+}
+
+/// 1.2.8+ — find the boundaries and context of the token
+/// the cursor is in.  Tokens are whitespace-delimited; a
+/// `|`, `;`, or `(` immediately before the token (modulo
+/// whitespace) indicates **command position** — the start
+/// of a new pipeline stage.  Otherwise it's an argument.
+///
+/// Returns (token_char_start, token_text, is_command_pos).
+/// Single-quoted, double-quoted, and backtick-quoted regions
+/// are treated as opaque single tokens (a basic shell-like
+/// scan) — quoting inside the user's input doesn't trip the
+/// tokeniser.  The cursor is in char units; the function
+/// works at char granularity throughout.
+fn extract_token_for_completion(
+    input: &str,
+    cursor_chars: usize,
+) -> (usize, String, bool) {
+    let chars: Vec<char> = input.chars().collect();
+    let cursor = cursor_chars.min(chars.len());
+
+    // Walk backward from cursor until we hit a token boundary.
+    let mut start = cursor;
+    while start > 0 {
+        let c = chars[start - 1];
+        if c.is_whitespace() || c == '|' || c == ';' || c == '(' {
+            break;
+        }
+        start -= 1;
+    }
+    let token: String = chars[start..cursor].iter().collect();
+
+    // Walk backward past whitespace; whatever non-WS we hit
+    // (if any) decides command-vs-arg position.
+    let mut p = start;
+    while p > 0 && chars[p - 1].is_whitespace() {
+        p -= 1;
+    }
+    let is_command_pos = p == 0
+        || matches!(chars[p - 1], '|' | ';' | '(');
+    (start, token, is_command_pos)
+}
+
+/// 1.2.8+ — enumerate executables on `$PATH` whose name
+/// starts with `prefix`.  Walks every directory in the
+/// process's `PATH`, lists each, and keeps names that match.
+/// Does NOT check the executable bit on every entry —
+/// `read_dir` is fast, `stat` per file would dominate the
+/// pause.  False positives (a non-executable file matching
+/// the name of a real binary) are acceptable in a UI hint.
+fn complete_external_on_path(prefix: &str) -> Vec<String> {
+    use std::collections::BTreeSet;
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    let path = match std::env::var_os("PATH") {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+    for dir in std::env::split_paths(&path) {
+        let read_dir = match std::fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for entry in read_dir.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with(prefix) {
+                out.insert(name);
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// 1.2.8+ — filesystem completion relative to `cwd`.
+/// Splits `prefix` at the LAST `/` into (directory, name);
+/// scans the directory for entries whose name starts with
+/// the partial name.  Returns each match prefixed back with
+/// the user-typed directory part, so the caller can replace
+/// the whole prefix verbatim.  Directories are returned with
+/// a trailing `/` so the user can immediately keep typing.
+/// `~/` is expanded to `$HOME`; absolute prefixes
+/// short-circuit the cwd.
+fn complete_path(cwd: &Path, prefix: &str) -> Vec<String> {
+    let (dir_part, name_prefix): (String, &str) = if let Some(idx) = prefix.rfind('/') {
+        let head = &prefix[..idx + 1];
+        let name = &prefix[idx + 1..];
+        (head.to_string(), name)
+    } else {
+        (String::new(), prefix)
+    };
+
+    let search_dir = if dir_part.is_empty() {
+        cwd.to_path_buf()
+    } else if dir_part.starts_with('/') {
+        PathBuf::from(&dir_part)
+    } else if dir_part.starts_with("~/") {
+        match std::env::var_os("HOME") {
+            Some(h) => PathBuf::from(h).join(&dir_part[2..]),
+            None => cwd.join(&dir_part),
+        }
+    } else {
+        cwd.join(&dir_part)
+    };
+
+    let mut matches: Vec<String> = Vec::new();
+    let read_dir = match std::fs::read_dir(&search_dir) {
+        Ok(r) => r,
+        Err(_) => return matches,
+    };
+    for entry in read_dir.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with(name_prefix) {
+            continue;
+        }
+        let is_dir = entry
+            .file_type()
+            .map(|t| t.is_dir())
+            .unwrap_or(false);
+        let mut full = format!("{dir_part}{name}");
+        if is_dir {
+            full.push('/');
+        }
+        matches.push(full);
+    }
+    matches.sort();
+    matches
+}
+
+/// 1.2.8+ — longest common prefix of a slice of strings.
+/// Used by Tab completion to advance the input by the
+/// safely-deterministic part when multiple matches exist.
+/// Operates on chars, not bytes, so multibyte boundaries
+/// stay aligned.
+pub(super) fn longest_common_prefix(items: &[String]) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    let first: Vec<char> = items[0].chars().collect();
+    let mut max_len = first.len();
+    for s in &items[1..] {
+        let mut i = 0;
+        for (a, b) in first.iter().zip(s.chars()) {
+            if *a != b {
+                break;
+            }
+            i += 1;
+        }
+        max_len = max_len.min(i);
+        if max_len == 0 {
+            break;
+        }
+    }
+    first[..max_len].iter().collect()
+}
+
 /// 1.2.8+ — reduce a command token to its lowercased
 /// basename for blocklist matching.  Strips a leading `^`
 /// (nu's explicit-external sigil) and everything up to the
@@ -948,6 +1162,115 @@ mod tests {
             "engine should either honour interrupt or complete cleanly; got success={} stderr={:?}",
             out.success, out.stderr
         );
+    }
+
+    #[test]
+    fn extract_token_command_position() {
+        // Empty input → command position, empty token.
+        let (s, t, c) = extract_token_for_completion("", 0);
+        assert_eq!((s, t.as_str(), c), (0, "", true));
+        // Single token at start.
+        let (s, t, c) = extract_token_for_completion("ls", 2);
+        assert_eq!((s, t.as_str(), c), (0, "ls", true));
+        // After whitespace at start.
+        let (s, t, c) = extract_token_for_completion("  ls", 4);
+        assert_eq!((s, t.as_str(), c), (2, "ls", true));
+        // After `|`.
+        let (s, t, c) = extract_token_for_completion("ls | wh", 7);
+        assert_eq!((s, t.as_str(), c), (5, "wh", true));
+        // After `;`.
+        let (s, t, c) = extract_token_for_completion("a; b", 4);
+        assert_eq!((s, t.as_str(), c), (3, "b", true));
+    }
+
+    #[test]
+    fn extract_token_argument_position() {
+        // After command, a token is an argument.
+        let (s, t, c) = extract_token_for_completion("ls Doc", 6);
+        assert_eq!((s, t.as_str(), c), (3, "Doc", false));
+        // Path-shaped argument keeps its slashes.
+        let (s, t, c) = extract_token_for_completion("cd src/li", 9);
+        assert_eq!((s, t.as_str(), c), (3, "src/li", false));
+    }
+
+    #[test]
+    fn longest_common_prefix_works() {
+        assert_eq!(
+            longest_common_prefix(&[
+                "stream".into(),
+                "string".into(),
+                "str".into(),
+            ]),
+            "str"
+        );
+        assert_eq!(
+            longest_common_prefix(&["abc".into(), "abc".into()]),
+            "abc"
+        );
+        assert_eq!(
+            longest_common_prefix(&["abc".into(), "xyz".into()]),
+            ""
+        );
+        assert_eq!(longest_common_prefix(&[]), "");
+    }
+
+    #[test]
+    fn complete_path_returns_local_entries() {
+        // Create a tempdir with predictable contents.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(tmp.path().join("subdir")).unwrap();
+        std::fs::write(tmp.path().join("file.txt"), b"x").unwrap();
+        std::fs::write(tmp.path().join("file2.txt"), b"y").unwrap();
+        std::fs::write(tmp.path().join("other"), b"z").unwrap();
+
+        // Empty prefix → all entries.
+        let m = complete_path(tmp.path(), "");
+        let names: Vec<&str> = m.iter().map(String::as_str).collect();
+        assert!(names.contains(&"file.txt"));
+        assert!(names.contains(&"file2.txt"));
+        assert!(names.contains(&"other"));
+        assert!(names.contains(&"subdir/"), "dir entry must trail with /");
+
+        // Prefix `file` → exactly two matches.
+        let m = complete_path(tmp.path(), "file");
+        assert_eq!(m, vec!["file.txt".to_string(), "file2.txt".to_string()]);
+
+        // Sub-path prefix `subdir/` → empty subdir lists empty.
+        let m = complete_path(tmp.path(), "subdir/");
+        assert!(m.is_empty());
+    }
+
+    #[test]
+    fn complete_command_finds_nu_builtins() {
+        let e = engine();
+        // `where` is a core nu built-in; expect it to come back
+        // for prefix `wh`.
+        let c = e.complete("wh", 2);
+        assert!(c.token_start == 0);
+        assert_eq!(c.token, "wh");
+        assert!(
+            c.matches.iter().any(|m| m == "where"),
+            "expected `where` in matches, got {:?}",
+            c.matches
+        );
+    }
+
+    #[test]
+    fn complete_argument_uses_engine_cwd() {
+        // Build an engine rooted at a tempdir with known entries.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join("alpha.txt"), b"a").unwrap();
+        std::fs::write(tmp.path().join("alphax.txt"), b"b").unwrap();
+        std::fs::write(tmp.path().join("beta.txt"), b"c").unwrap();
+        let e = Engine::new(tmp.path());
+
+        // Cursor after `ls al` → completes against the cwd.
+        let c = e.complete("ls al", 5);
+        assert_eq!(c.token, "al");
+        let names: Vec<&str> = c.matches.iter().map(String::as_str).collect();
+        assert!(names.contains(&"alpha.txt"));
+        assert!(names.contains(&"alphax.txt"));
+        assert!(!names.contains(&"beta.txt"));
     }
 
     #[test]
