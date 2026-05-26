@@ -861,6 +861,12 @@ impl KeyBindings {
                 // tag picker; `}` opens the search-by-tag picker.
                 entry("]", Action::TagParagraph, Scope::Any),
                 entry("}", Action::TagSearch, Scope::Any),
+                // 1.2.8+ — Ctrl+B 0 → full-screen HJSON config
+                // editor for `<project>/inkhaven.hjson`.  Digit
+                // row, no modifier — unambiguous on every
+                // terminal layout (previous `|` binding was
+                // dropped on some terminals' chord state).
+                entry("0", Action::BundEditProjectHjson, Scope::Any),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),
@@ -871,14 +877,6 @@ impl KeyBindings {
                 entry("o", Action::BundOpenShell, Scope::Any),
                 entry("Shift+o", Action::BundOpenShellFresh, Scope::Any),
                 entry("h", Action::BundShellSelection, Scope::Any),
-                // 1.2.8+ — full-screen HJSON config editor.
-                // Bound on `0` (the digit row): `|` was the
-                // original choice but some terminals refuse
-                // to forward Shift+\ through the bund-prefix
-                // chord state machine.  `0` is unambiguous,
-                // unmodified, and the only Ctrl+B digit
-                // chord, so no collision risk.
-                entry("0", Action::BundEditProjectHjson, Scope::Any),
             ],
             view_sub: vec![
                 // Editor / AI-prompt: 1 = buffer markdown, 2 =
