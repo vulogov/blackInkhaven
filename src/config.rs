@@ -1318,6 +1318,22 @@ pub struct TtsConfig {
     pub enabled: bool,
     pub voice: String,
     pub speed: f32,
+    /// 1.2.9+ — text spoken at TUI startup, just after the
+    /// daily-progress splash finishes.  Empty string (the
+    /// default) skips the greeting entirely.  Use this for
+    /// a personal welcome — "Welcome back, captain", "Доброе
+    /// утро, Владимир", etc.  Honoured only when
+    /// `enabled = true`.  Non-blocking: speech starts and
+    /// the editor lands on the cursor while audio plays
+    /// in parallel.
+    pub greeting: String,
+    /// 1.2.9+ — text spoken at TUI shutdown, just before
+    /// the terminal tears down.  Empty string (the default)
+    /// skips it.  Blocking: inkhaven waits up to 5 seconds
+    /// for the speech to complete before returning, so the
+    /// shell doesn't truncate the audio mid-word.  Keep it
+    /// short (a few words).
+    pub goodbye: String,
 }
 
 impl Default for TtsConfig {
@@ -1326,6 +1342,8 @@ impl Default for TtsConfig {
             enabled: false,
             voice: "Milena".into(),
             speed: 1.0,
+            greeting: String::new(),
+            goodbye: String::new(),
         }
     }
 }
