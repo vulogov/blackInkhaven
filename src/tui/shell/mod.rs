@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 
 use nu_parser::FlatShape;
 use nu_protocol::engine::{EngineState, Redirection, Stack, StateWorkingSet};
-use nu_protocol::{OutDest, PipelineData, Span, Value};
+use nu_protocol::{ByteStreamSource, OutDest, PipelineData, Span, Value};
 use nu_protocol::debugger::WithoutDebug;
 use ratatui::style::{Color, Modifier, Style};
 use rusqlite::Connection;
@@ -280,7 +280,35 @@ impl Engine {
         );
         drop(guard);
         match exec_result {
-            Ok(exec) => {
+            Ok(mut exec) => {
+                // 1.2.8+ — when the pipeline ends in an external
+                // command that exited non-zero (`^/bin/ls
+                // /nonexistent`, `^false`, …), nu's
+                // `ChildProcess::into_bytes` DRAINS the merged
+                // stdout pipe into a Vec<u8>, then runs
+                // `check_ok(exit_status, ignore_error, span)?`
+                // and PROPAGATES Err on non-zero — discarding
+                // the bytes we just drained.  format_via_table
+                // then sees that Err in into_value and returns
+                // empty stdout: silent loss of stderr (the bug
+                // from the screenshot — `^/bin/ls /missing`
+                // exits 2 and the "No such file" message
+                // vanishes).
+                //
+                // Fix: reach into the ByteStream, set
+                // `ignore_error = true` on the wrapped
+                // ChildProcess so `check_ok` returns Ok for any
+                // exit status.  The bytes (merged stdout +
+                // stderr) are now returned regardless and land
+                // in the pane.  We don't surface the non-zero
+                // exit anywhere — keeping the interface simple;
+                // users who care about exit status can pipe
+                // through `| complete` explicitly.
+                if let PipelineData::ByteStream(stream, _) = &mut exec.body {
+                    if let ByteStreamSource::Child(child) = stream.source_mut() {
+                        child.ignore_error(true);
+                    }
+                }
                 // 1.2.8+ — pipe the result through nu's `table`
                 // command so List<Record> renders as a column-
                 // aligned table instead of `{name: ..., type:
@@ -619,6 +647,69 @@ mod tests {
         let h = History::open(tmp.path());
         let loaded = h.load(10);
         assert_eq!(loaded, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn external_command_path_without_caret_is_captured() {
+        // Nu lets `/bin/echo args` resolve as an external
+        // even without the `^` prefix (path-shaped tokens).
+        // The user's bug report was about externals run
+        // this way — verify it captures stderr the same as
+        // the explicit `^` form.
+        let mut e = engine();
+        let out = e.eval(r#"/bin/sh -c "echo nocaret-stderr 1>&2; echo nocaret-stdout""#);
+        let combined = format!("{}\n{}", out.stdout, out.stderr);
+        assert!(
+            combined.contains("nocaret-stderr"),
+            "expected stderr captured for path-shaped external, got stdout={:?} stderr={:?}",
+            out.stdout, out.stderr,
+        );
+        assert!(
+            combined.contains("nocaret-stdout"),
+            "expected stdout captured for path-shaped external, got stdout={:?} stderr={:?}",
+            out.stdout, out.stderr,
+        );
+    }
+
+    #[test]
+    fn external_command_failed_exit_stderr_captured() {
+        // Failure case: external exits non-zero AND prints
+        // to stderr.  `ls /nonexistent` is the canonical
+        // example.
+        let mut e = engine();
+        let out = e.eval(r#"^/bin/ls /this/path/should/not/exist/13579"#);
+        let combined = format!("{}\n{}", out.stdout, out.stderr);
+        assert!(
+            combined.to_lowercase().contains("no such")
+                || combined.to_lowercase().contains("not found")
+                || combined.to_lowercase().contains("cannot access")
+                || combined.contains("13579"),
+            "expected /bin/ls failure stderr captured, got stdout={:?} stderr={:?}",
+            out.stdout, out.stderr,
+        );
+    }
+
+    #[test]
+    fn external_command_stderr_is_captured_not_inherited() {
+        // Regression: `^/bin/sh -c "echo oops 1>&2"` would leak
+        // `oops` to the host TTY if stderr wasn't redirected.
+        // With Pipe-on-both, nu merges stderr INTO stdout, so
+        // the probe appears in `out.stdout`.  Some shell
+        // command runners might split it back into `out.stderr`
+        // depending on framing — accept either, since either
+        // way means the bytes were CAPTURED (didn't leak).
+        let mut e = engine();
+        let out = e.eval(r#"^/bin/sh -c "echo stderr-probe-13579 1>&2""#);
+        // The eval itself can be Ok or it can mark success
+        // false depending on how nu classifies an exit-zero
+        // command that wrote to stderr — but the bytes MUST
+        // appear somewhere in the capture.
+        let combined = format!("{}\n{}", out.stdout, out.stderr);
+        assert!(
+            combined.contains("stderr-probe-13579"),
+            "expected stderr bytes captured (stdout or stderr), got stdout={:?} stderr={:?}",
+            out.stdout, out.stderr,
+        );
     }
 
     #[test]
