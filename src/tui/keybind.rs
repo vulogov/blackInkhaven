@@ -328,6 +328,14 @@ pub enum Action {
     /// Re-press exits selection mode.
     #[serde(rename = "bund.shell_selection")]
     BundShellSelection,
+    /// Ctrl+B | (1.2.8+) — open the project's
+    /// `inkhaven.hjson` in a full-screen editor modal.
+    /// Syntax-highlighted via `hjson_highlight`.  Save
+    /// with Ctrl+S; if the saved bytes differ from the
+    /// loaded bytes, a "restart inkhaven" overlay pops
+    /// (config changes apply on next launch).
+    #[serde(rename = "bund.edit_project_hjson")]
+    BundEditProjectHjson,
     /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
     /// via typst-render and float a PNG preview on top of the
     /// editor. `Esc` closes, `S` opens a save-as picker for the
@@ -516,6 +524,7 @@ impl Action {
             Action::BundOpenShell => "shell".into(),
             Action::BundOpenShellFresh => "shell fresh".into(),
             Action::BundShellSelection => "shell select".into(),
+            Action::BundEditProjectHjson => "edit hjson".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -704,6 +713,8 @@ impl Action {
                 "Drop the cached shell engine + turn buffer and open a fresh shell (1.2.8+). Use when env / scope has drifted into a confusing state.".into(),
             Action::BundShellSelection =>
                 "Inside the shell pane, toggle history-selection mode (1.2.8+) — ↑↓ walks turn-by-turn, `c` copies output to clipboard, `i` inserts wrapped in the configured typst-box template. Re-press exits.".into(),
+            Action::BundEditProjectHjson =>
+                "Open `<project>/inkhaven.hjson` in a full-screen editor (1.2.8+). Syntax-highlighted via the hand-rolled HJSON lexer. Ctrl+S saves; when saved bytes differ from the loaded bytes, a restart-required overlay pops up (config applies on next launch). Esc closes; unsaved-edit warnings fire on close.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -857,6 +868,12 @@ impl KeyBindings {
                 entry("o", Action::BundOpenShell, Scope::Any),
                 entry("Shift+o", Action::BundOpenShellFresh, Scope::Any),
                 entry("h", Action::BundShellSelection, Scope::Any),
+                // 1.2.8+ — full-screen HJSON config editor.
+                // Bound on `|` (Shift+\ on US layout) so it
+                // sits visually with the other "pipeline /
+                // config" chords without colliding with the
+                // alphabetic Ctrl+B chords.
+                entry("|", Action::BundEditProjectHjson, Scope::Any),
             ],
             view_sub: vec![
                 // Editor / AI-prompt: 1 = buffer markdown, 2 =
