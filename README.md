@@ -21,7 +21,75 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.7 — Polish + plumbing
+## Latest release · 1.2.8 — Shell, config editor, and the surface gets sharper
+
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.8.md`](Documentation/RELEASE_NOTES/1.2.8.md)
+
+1.2.8 picks up the items 1.2.7 left on the table and adds two
+significant new surfaces.  The headline features:
+
+- **Embedded nushell pane** (`Ctrl+Z o`). A floating shell
+  runs **real nushell in-process** via `nu_engine` +
+  `nu_command` — the full default command set (`ls`,
+  `where`, `str`, `path`, `into`, pipelines, env
+  mutations) without shelling out.  External commands
+  get their stdout + stderr captured into the pane;
+  full-screen TUI apps (vim, less, top, tmux, …) are
+  refused before spawn via a configurable blocklist.
+  Per-project SQLite history, Tab autocomplete (commands
+  + `$PATH` binaries + filesystem), readline-style line
+  editing, `Ctrl+B H` help overlay, wall-clock watchdog
+  for wedged externals.
+- **HJSON config editor** (`Ctrl+B 0`).  Edit
+  `<project>/inkhaven.hjson` from inside the TUI without
+  dropping to an external editor.  Syntax-highlighted,
+  mirrors the paragraph editor's chord set; saves flag a
+  *Restart required* overlay when the config actually
+  changed.
+- **Help book as rendered-markdown viewer**.  Paragraphs
+  under the Help system book render via pulldown-cmark —
+  headings, lists, emphasis, code fences, blockquotes,
+  links shown as real document presentation rather than
+  source.  Read-only viewer, scroll-only keys, mouse
+  wheel works.  Scope deliberately limited to the Help
+  book; every other book keeps the Typst default.
+- **`export-timeline` CLI + SVG / PNG renderers**.  Same
+  swim-lane layout that the TUI shows, written to disk
+  in three formats (`typst`, `svg`, `png`).  Optional
+  `--track <name>` filter; canvas auto-sizes with track
+  count.  Useful for query letters, pitch docs, private
+  wiki pages.
+- **Scrivener `<CustomMeta>` date import.**  Field names
+  matching `scrivener.date_fields` (default `Date`,
+  `Story Date`, `Event Date`) parse against the project's
+  calendar; successful parses attach `EventData` to the
+  imported paragraph.  Bad values become non-fatal
+  warnings on the import report.
+- **Mouse wheel everywhere.**  Tree, Editor, AI chat, OS
+  Shell modal, HJSON editor, kill-ring picker, fuzzy
+  paragraph picker.
+- **Ctrl+Q confirmation modal** (opt-in via
+  `editor.confirm_quit: true`).  For terminals where
+  Ctrl+Q triggers software flow-control.
+
+Smaller refinements:
+
+- **Multi-slot kill-ring + Shift-letter chord fix.**
+  `App.last_deleted` widened to a 10-entry ring; new
+  `Ctrl+V Shift+U` picker.  Same commit fixes a
+  pre-existing chord-matcher bug that collapsed
+  `Ctrl+V Shift+P` onto `Ctrl+V p` on terminals without
+  Kitty disambiguation.
+- **Surface polish.** Active-LLM chip in the AI pane
+  title, F1 query history, Tab autocomplete in the
+  add-new-tag prompt, hidden-character report
+  (`Ctrl+V h`), breadcrumb on the status bar
+  (`Ctrl+V Shift+S`), F6 snapshot annotation filter.
+
+Plus 2 new tutorials (36, 37); updated KEYBINDING,
+CONFIGURATION, and the Bund tutorial.
+
+### Previous release · 1.2.7 — Polish + plumbing
 
 Read the full notes: [`Documentation/RELEASE_NOTES/1.2.7.md`](Documentation/RELEASE_NOTES/1.2.7.md)
 

@@ -225,13 +225,38 @@ impl super::App {
             return_to: Box::new(taken),
         };
         self.status =
-            "new tag: type a name, Enter adds it · Esc cancels".into();
+            "new tag: type a name · Tab completes from existing tags · Enter adds · Esc cancels".into();
     }
 
     pub(super) fn tag_add_prompt_handle_key(&mut self, key: KeyEvent) {
         // Esc is handled at the top of handle_modal_key. Here we
-        // only act on Enter (commit) and forward everything else
-        // to the input box.
+        // act on Tab (autocomplete from existing tags), Enter
+        // (commit), and forward everything else to the input box.
+        // 1.2.8+ — Tab autocompletes to the first existing
+        // project tag whose name starts with the typed prefix
+        // (case-insensitive). No-op when no match or the input
+        // already names an existing tag.
+        if matches!(key.code, KeyCode::Tab) {
+            if let Modal::TagAddPrompt { input, return_to } = &mut self.modal {
+                let prefix = input.as_str().to_string();
+                if !prefix.is_empty() {
+                    let lower_prefix = prefix.to_lowercase();
+                    if let Modal::TagPicker { all_tags, .. } = return_to.as_ref() {
+                        if let Some(hit) = all_tags.iter().find(|t| {
+                            t.as_str() != prefix.as_str()
+                                && t.to_lowercase().starts_with(&lower_prefix)
+                        }) {
+                            let hit = hit.clone();
+                            input.clear();
+                            for c in hit.chars() {
+                                input.insert_char(c);
+                            }
+                        }
+                    }
+                }
+            }
+            return;
+        }
         if matches!(key.code, KeyCode::Enter) {
             let taken = std::mem::replace(&mut self.modal, Modal::None);
             if let Modal::TagAddPrompt { input, return_to } = taken {

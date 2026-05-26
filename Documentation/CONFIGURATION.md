@@ -183,6 +183,8 @@ editor: {
 | `wrap` | bool | `true` | Soft word-wrap inside the editor. `false` → horizontal scroll on long lines. |
 | `autosave_seconds` | int | `5` | Seconds of editor inactivity after which a dirty paragraph is auto-saved. `0` disables idle autosave (Ctrl+S, paragraph-switch and quit-time autosaves still fire). Suspended while a grammar-correction highlight is active. |
 | `startup_splash` | bool | `true` | 1.2.4+. Show a 7-second floating splash at launch with today's words / active minutes / streak / project shape. Any key dismisses early. Set `false` to skip. |
+| `mouse_captured` | bool | `true` | 1.2.8+. Initial mouse-capture state on launch. `true` hands every mouse event to the TUI (click-to-focus, scroll-wheel per pane, in-TUI drag-select). `false` releases capture at startup so the terminal's native drag-select + system-clipboard copy (Cmd/Ctrl+Shift+C) work without pressing `Ctrl+Shift+M` first. The runtime toggle still flips state regardless. |
+| `confirm_quit`   | bool | `false` | 1.2.8+. Pop a confirmation modal when the user presses `Ctrl+Q`. `Y` / `Enter` confirms and quits (with the usual autosave-first behaviour); `N` / `Esc` cancels. Useful when `Ctrl+Q` triggers terminal software flow-control or when the chord lands by accident. Default `false` — `Ctrl+Q` quits immediately as it always has. Ctrl+Q inside an already-open modal still quits unconditionally (intended as an escape hatch). |
 | `stemming.languages` | list of strings | `["english", "russian"]` | **Legacy** — superseded by top-level `language` when that is non-empty. See [`language`](#prompts_file-and-language). |
 
 The grammar-correction-highlight interaction: while you have an active
@@ -787,3 +789,140 @@ ticks are absolute). Useful for real-world dates.
 
 Both stanzas are additive. Removing them restores the
 pre-1.2.6 behaviour exactly.
+
+## 1.2.8 — new HJSON blocks
+
+### `scrivener` (1.2.8+) — Scrivener-importer behaviour
+
+```hjson
+scrivener: {
+  // List of CustomMeta field names (case-insensitive) that
+  // `inkhaven import-scrivener` interprets as event dates.
+  // For each matching field on an imported paragraph, the
+  // value is fed through the project's HJSON-configured
+  // calendar; a successful parse attaches `EventData` to the
+  // resulting node (event landed at the parsed start tick,
+  // no end, no track override).  Bad values are not fatal —
+  // they land on the report's error list with the source
+  // field name + raw value.
+  //
+  // Defaults cover the most common English-language
+  // Scrivener templates ("Date" / "Story Date" / "Event
+  // Date").  Non-English templates customise this list.
+  date_fields: ["Date", "Story Date", "Event Date"]
+}
+```
+
+The pass is gated on `timeline.enabled = true` — Scrivener
+date import is a no-op when the project hasn't opted into
+the timeline feature, even if the .scriv file carries
+CustomMeta dates.  Scrivener field IDs in
+`<CustomMetaDataSettings>` are resolved against the
+project-level registry; unknown IDs (referenced by an item
+but missing from the registry) are silently skipped.
+
+### `editor.mouse_captured` (1.2.8+)
+
+Already documented inline in the `editor` table above.
+Sets the initial mouse-capture state on launch; runtime
+`Ctrl+Shift+M` still flips it regardless.
+
+### `shell` (1.2.8+) — embedded nushell pane
+
+```hjson
+shell: {
+  // Whether `Ctrl+Z o` opens the embedded shell pane.
+  // Set false to make the chord a status-hint no-op
+  // (the engine + nu deps stay linked into the binary
+  // either way — saving binary size requires a custom
+  // cargo build with --no-default-features once we add
+  // a feature flag, currently not gated).
+  enabled: true
+
+  // In-memory cap on (command, output) turn pairs the
+  // pane retains across the session.  Older pairs roll
+  // off the front.  The SQLite history at
+  // `.inkhaven/shell_history.db` is uncapped — this
+  // bounds working memory + seeds the Up-arrow recall
+  // ring on first open of each session.
+  max_buffered_turns: 50
+
+  // Per-turn cap on the number of output lines retained
+  // from a single command's stdout (and stderr separately).
+  // A `cat /var/log/system.log` or `git log` can emit
+  // tens of thousands of lines; without this cap they
+  // bloat the in-memory ring and slow PgUp/PgDn scroll
+  // rendering.  Excess tail is replaced with a
+  // "… (N more lines truncated)" marker — output is
+  // capped but never silently dropped.  Raise this if
+  // you want to retain the full output of large commands
+  // (cost: memory + render time grow linearly).
+  max_output_lines: 1000
+
+  // 1.2.8+ — basenames of external programs refused
+  // before spawn.  Full-screen TUI apps (vim, less, top,
+  // tmux, …) cannot run inside the embedded pane: they
+  // open `/dev/tty` directly and write escape sequences
+  // past the editor's piped stdio, corrupting ratatui's
+  // alt-screen surface.  Match is case-insensitive
+  // against the program's basename, so `^vim`,
+  // `^/usr/bin/vim`, and `^VIM` all hit a `"vim"` entry.
+  // The default list covers common editors, pagers,
+  // monitors, multiplexers, remote shells, debuggers,
+  // fuzzy finders, TTY-needing REPLs, DB clients, and
+  // privileged binaries.  Override to add internal tools
+  // or to *allow* something the default rejects:
+  //   blocked_externals: ["less", "top", "vim"]   // shorter list
+  //   blocked_externals: []                       // disable entirely
+  blocked_externals: [
+    "vim", "nvim", "vi", "view", "ex",
+    "emacs", "emacsclient", "nano", "pico", "joe", "jed",
+    "mc", "mcedit", "ranger", "nnn", "lf", "yazi",
+    "less", "more", "most", "pg",
+    "top", "htop", "btop", "atop", "iotop", "iftop", "nethogs", "glances",
+    "tmux", "screen", "byobu", "dtach", "abduco",
+    "ssh", "telnet", "mosh", "rlogin",
+    "gdb", "lldb",
+    "fzf", "peco", "sk", "skim",
+    "ipython", "irb", "pry",
+    "psql", "mysql", "sqlite3", "redis-cli",
+    "sudo", "su", "passwd"
+  ]
+
+  // 1.2.8+ — wall-clock budget for a single command's
+  // evaluation.  After this many seconds the watchdog
+  // raises a nu interrupt; if the worker doesn't respond
+  // within a 2-second grace window, the engine is
+  // restarted (env vars + `def` declarations + `cd`
+  // state are lost) and the user sees a friendly
+  // explanation.  Set high (e.g. 600) if you legitimately
+  // run long-baked pipelines like remote pulls; lower for
+  // a tighter "this should be quick" SLA.
+  external_timeout_secs: 30
+
+  // Typst markup wrapping a `Ctrl+Z h` → `i` insert.
+  // `{output}` is substituted verbatim — the default
+  // uses a backtick-delimited typst raw block which
+  // bounds the literal without escaping, so embedded
+  // quotes / backslashes / pipes survive intact.
+  insert_template: "#raw(block: true, lang: \"shell\", `{output}`)"
+}
+```
+
+The embedded shell loads nushell's full default command
+set (`ls`, `where`, `str`, `path`, `into`, …) and runs
+in the same process as the editor — no subprocess, no
+PTY.  Long-running TTY apps (`vim`, `top`, `less`) are
+explicitly out of scope; use a separate terminal for
+those.
+
+Per-project history lives at
+`<project>/.inkhaven/shell_history.db` (bundled SQLite,
+no system dependency).  Survives TUI restart.
+
+`Ctrl+Z O` (Shift) drops the engine + in-memory ring but
+leaves the on-disk DB alone.  Full reset is manual:
+`rm .inkhaven/shell_history.db` from another terminal.
+
+See [`Tutorials/35-embedded-shell.md`](Tutorials/35-embedded-shell.md)
+for the full chord ladder + use-case walkthrough.

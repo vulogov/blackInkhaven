@@ -2536,6 +2536,666 @@ impl super::super::App {
         );
     }
 
+    /// 1.2.8+ — embedded shell pane.  Renders the turn
+    /// buffer as alternating prompt+output blocks; input
+    /// line pinned to the bottom.  In selection mode the
+    /// cursor-highlighted turn gets reversed styling so the
+    /// user knows which output `c` / `i` will act on.
+    pub(in crate::tui::app) fn draw_shell_pane_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::ShellPane {
+            input,
+            selection_mode,
+            selection_cursor,
+            scroll,
+            ..
+        } = &self.modal
+        else {
+            return;
+        };
+        let scroll = *scroll;
+
+        // Fullscreen-floating: leave a 1-cell margin so the
+        // editor pane's borders are still visible.
+        let rect = Rect {
+            x: area.x + 1,
+            y: area.y + 1,
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header_base = if *selection_mode {
+            " OS Shell · selection mode"
+        } else {
+            " OS Shell"
+        };
+        let header_owned;
+        let header = if scroll > 0 {
+            header_owned = format!("{header_base} · ↑ scrolled (End→bottom) ");
+            header_owned.as_str()
+        } else {
+            header_owned = format!("{header_base} ");
+            header_owned.as_str()
+        };
+        let border_color = if *selection_mode {
+            Color::Yellow
+        } else {
+            self.theme.modal_border
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Reserve last 2 rows for the input prompt + a
+        // status hint.  Body gets the rest.
+        let prompt_h: u16 = 2;
+        let body_h = inner.height.saturating_sub(prompt_h);
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: body_h,
+        };
+        let prompt_rect = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: prompt_h,
+        };
+
+        // Build the body lines from the turn buffer.  Each
+        // turn renders as:
+        //   $ <command>
+        //   <stdout>
+        //   [error: <stderr>]   (only when failure)
+        //   <blank>
+        // The newest turn anchors to the BOTTOM of body_rect
+        // so the most-recent output is visible.
+        let mut lines: Vec<Line<'_>> = Vec::with_capacity(
+            self.shell_history.len() * 4 + 2,
+        );
+        // Track the starting `lines` index of each turn so
+        // we can isolate the LATEST turn from older
+        // scrollback at render time (see start-clamping
+        // logic below).
+        let mut turn_starts: Vec<usize> = Vec::with_capacity(self.shell_history.len());
+        if self.shell_history.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "(no commands yet — type a nu command and press Enter)",
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        }
+        for (i, turn) in self.shell_history.iter().enumerate() {
+            turn_starts.push(lines.len());
+            let is_selected_turn = *selection_mode && i == *selection_cursor;
+            let prompt_style = if is_selected_turn {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+                    .fg(Color::Cyan)
+            } else {
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Cyan)
+            };
+            lines.push(Line::from(Span::styled(
+                format!("$ {}", turn.command),
+                prompt_style,
+            )));
+            for ln in turn.stdout.lines() {
+                let s = if is_selected_turn {
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                lines.push(Line::from(Span::styled(ln.to_string(), s)));
+            }
+            if !turn.success && !turn.stderr.is_empty() {
+                for ln in turn.stderr.lines() {
+                    lines.push(Line::from(Span::styled(
+                        ln.to_string(),
+                        Style::default().fg(Color::Red),
+                    )));
+                }
+            }
+            lines.push(Line::from(""));
+        }
+        // Anchor to bottom: render the last body_h lines.
+        // `scroll` shifts the visible window UP by N logical
+        // lines so older content comes into view.  Render
+        // clamps to the valid range — if the handler advanced
+        // scroll past total_lines, we silently cap at the top
+        // of the buffer.  The field itself isn't rewritten;
+        // PgDown will gradually bring it back into range.
+        let visible_n = body_h as usize;
+        let total = lines.len();
+        let max_scroll = total.saturating_sub(visible_n);
+        let effective_scroll = scroll.min(max_scroll);
+        let end = total.saturating_sub(effective_scroll);
+        let naive_start = end.saturating_sub(visible_n);
+        // "Latest-turn isolation": when the user is NOT
+        // scrolled (effective_scroll == 0), clamp the
+        // visible-window start to the beginning of the
+        // most-recent turn.  Without this clamp, after a
+        // huge `help commands` (truncated to 1000 lines)
+        // followed by a short `ls` (9 lines), the tail of
+        // the help output would sit above the new `ls`
+        // turn — visually masking it as "help still
+        // showing" (the user-reported bug).  With the
+        // clamp, only `ls`'s 9 lines render at the bottom
+        // and the empty space above is genuinely empty.
+        // PgUp brings the older content back into view
+        // (scroll > 0 disables the clamp).
+        let start = if effective_scroll == 0 {
+            naive_start.max(turn_starts.last().copied().unwrap_or(0))
+        } else {
+            naive_start
+        };
+        let visible: Vec<Line<'_>> = lines[start..end].to_vec();
+        // 1.2.8+ — anchor short content to the BOTTOM of the
+        // body rect, not the top.  Without this, a fresh
+        // session (one `ls` turn = ~9 lines) renders flush
+        // against the top of a 60-row pane and the prompt
+        // sits at the bottom with a huge empty gap in
+        // between.  Terminal users expect the most-recent
+        // output to be near the prompt (where the eyes
+        // already are after pressing Enter), so we render
+        // the visible lines in a sub-rect anchored to the
+        // bottom edge of body_rect.  When visible.len() >=
+        // body_h (long output, normal scrolling case),
+        // sub_rect == body_rect — no behavioural change.
+        //
+        // `Wrap { trim: false }` is critical here.  Without
+        // it, lines wider than the pane width get arbitrarily
+        // truncated AND nu's table output (which sometimes
+        // runs ~120 cols) clips on narrow terminals.  Wrap
+        // also implicitly guards against ANSI bytes that
+        // slip past `shell::strip_ansi`.
+        let used_h = (visible.len() as u16).min(body_h);
+        let render_rect = Rect {
+            x: body_rect.x,
+            y: body_rect.y + body_h.saturating_sub(used_h),
+            width: body_rect.width,
+            height: used_h,
+        };
+        f.render_widget(
+            Paragraph::new(visible).wrap(Wrap { trim: false }),
+            render_rect,
+        );
+
+        // Prompt + hint.
+        let prompt_line_rect = Rect {
+            x: prompt_rect.x,
+            y: prompt_rect.y,
+            width: prompt_rect.width,
+            height: 1,
+        };
+        if *selection_mode {
+            let s = format!(
+                " (selection · turn {}/{})",
+                selection_cursor + 1,
+                self.shell_history.len().max(1)
+            );
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    s,
+                    Style::default().fg(Color::Yellow),
+                ))),
+                prompt_line_rect,
+            );
+        } else {
+            // 1.2.8+ — colored prompt:
+            //   "[ " white   <cwd> blue   " > " red   <input>
+            // The cwd reflects `$env.PWD` so `cd` mutations
+            // surface immediately.  Long paths under $HOME
+            // are abbreviated to `~/...` for legibility; the
+            // path is otherwise rendered verbatim and the
+            // terminal will let it run off-screen if absurdly
+            // long (acceptable — the user can resize or
+            // `cd` to a shorter location).
+            let cwd_display: String = self
+                .shell_engine
+                .as_ref()
+                .map(|e| {
+                    let p = e.cwd();
+                    let raw = p.to_string_lossy().into_owned();
+                    if let Some(home) = std::env::var_os("HOME") {
+                        let home = home.to_string_lossy().into_owned();
+                        if raw == home {
+                            "~".to_string()
+                        } else if raw.starts_with(&format!("{home}/")) {
+                            format!("~{}", &raw[home.len()..])
+                        } else {
+                            raw
+                        }
+                    } else {
+                        raw
+                    }
+                })
+                .unwrap_or_else(|| ".".to_string());
+            let mut spans: Vec<Span<'_>> = vec![
+                Span::styled(
+                    "[ ",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    cwd_display.clone(),
+                    Style::default()
+                        .fg(Color::Blue)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    " > ",
+                    Style::default()
+                        .fg(Color::Red)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ];
+            // Width of the prompt prefix, in display columns
+            // — used to position the cursor after the typed
+            // text.  Assumes 1 col / char, which is correct
+            // for ASCII paths; non-ASCII cwd chars would
+            // slightly off-set the cursor but that's a niche
+            // issue we'll fix when it appears.
+            let prefix_cols = "[ ".chars().count()
+                + cwd_display.chars().count()
+                + " > ".chars().count();
+
+            let line_text = input.as_str().to_string();
+            if let Some(eng) = self.shell_engine.as_ref() {
+                for (chunk, style) in eng.highlight(&line_text) {
+                    spans.push(Span::styled(chunk, style));
+                }
+            } else {
+                spans.push(Span::raw(line_text));
+            }
+            f.render_widget(
+                Paragraph::new(Line::from(spans)),
+                prompt_line_rect,
+            );
+            let cursor_col = prefix_cols + input.cursor();
+            let max_col = prompt_line_rect.width.saturating_sub(1) as usize;
+            let x = prompt_line_rect.x
+                + cursor_col.min(max_col) as u16;
+            f.set_cursor_position((x, prompt_line_rect.y));
+        }
+        let hint = if *selection_mode {
+            " ↑↓ turn · PgUp/PgDn scroll · c copy · i insert · Ctrl+Z h exit · Esc exit "
+        } else {
+            " Enter run · Tab complete · Ctrl+B H help · ↑↓ cmd history · Esc close "
+        };
+        let hint_rect = Rect {
+            x: prompt_rect.x,
+            y: prompt_rect.y + 1,
+            width: prompt_rect.width,
+            height: 1,
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            hint_rect,
+        );
+
+        // 1.2.8+ — help overlay.  Renders ON TOP of the
+        // pane, centered, with chord + command basics.  Any
+        // key dismisses it (handled in shell_pane_handle_key
+        // before falling into the normal key dispatcher).
+        let show_help = matches!(
+            self.modal,
+            Modal::ShellPane { show_help: true, .. }
+        );
+        if show_help {
+            draw_shell_help_overlay(f, rect);
+        }
+    }
+
+    /// 1.2.8+ — full-screen HJSON editor for the project's
+    /// `inkhaven.hjson`.  Renders the textarea's lines
+    /// manually so per-line `hjson_highlight` styling
+    /// (keys / strings / comments / numbers / keywords) can
+    /// be applied — tui-textarea's built-in widget supports
+    /// only line-level + cursor-level styling, not per-token.
+    /// Pops a centered "config changed, restart inkhaven"
+    /// overlay when `restart_required = true`.  Status hint
+    /// at the bottom row.
+    pub(in crate::tui::app) fn draw_hjson_editor_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let (lines, cursor_pos, restart_required, path_display, scroll_row, scroll_col) =
+            match &self.modal {
+                Modal::HjsonEditor {
+                    textarea,
+                    restart_required,
+                    path,
+                    scroll_row,
+                    scroll_col,
+                    ..
+                } => (
+                    textarea.lines().to_vec(),
+                    textarea.cursor(),
+                    *restart_required,
+                    path.to_string_lossy().into_owned(),
+                    *scroll_row,
+                    *scroll_col,
+                ),
+                _ => return,
+            };
+
+        // Fullscreen-floating with a 1-cell margin so the
+        // editor pane borders stay visible underneath.
+        let rect = Rect {
+            x: area.x + 1,
+            y: area.y + 1,
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let dirty = matches!(
+            &self.modal,
+            Modal::HjsonEditor { textarea, original_content, .. }
+                if textarea.lines().join("\n") != *original_content
+        );
+        let title = if dirty {
+            format!(" {} • [modified] ", path_display)
+        } else {
+            format!(" {} ", path_display)
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Reserve last row for the status hint.
+        let body_h = inner.height.saturating_sub(1);
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: body_h,
+        };
+        let hint_rect = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: 1,
+        };
+
+        // Recompute scroll to keep the cursor visible.  We
+        // can't mutate scroll on `&self.modal` (we only have
+        // a borrow here), so capture the new values and
+        // write back at the end.
+        let body_h_us = body_h as usize;
+        let body_w_us = body_rect.width as usize;
+        let (cur_row, cur_col) = cursor_pos;
+        let mut new_scroll_row = scroll_row;
+        let mut new_scroll_col = scroll_col;
+        if body_h_us > 0 {
+            if cur_row < new_scroll_row {
+                new_scroll_row = cur_row;
+            } else if cur_row >= new_scroll_row + body_h_us {
+                new_scroll_row = cur_row + 1 - body_h_us;
+            }
+        }
+        // Reserve 4 cells for the line-number gutter when
+        // computing visible width.
+        let gutter_w: usize = 5;
+        let editable_w = body_w_us.saturating_sub(gutter_w);
+        if editable_w > 0 {
+            if cur_col < new_scroll_col {
+                new_scroll_col = cur_col;
+            } else if cur_col >= new_scroll_col + editable_w {
+                new_scroll_col = cur_col + 1 - editable_w;
+            }
+        }
+
+        // Highlight the entire source (all lines) so cross-
+        // line `/* … */` / `''' … '''` constructs colour
+        // correctly even when the user scrolls into the
+        // middle of one.
+        let source: String = lines.join("\n");
+        let highlighted =
+            super::super::super::hjson_highlight::highlight_hjson_lines(
+                &source,
+                &self.theme,
+            );
+
+        let total_lines = highlighted.len().max(1);
+        let row_end = (new_scroll_row + body_h_us).min(total_lines);
+        let mut painted: Vec<Line<'_>> = Vec::with_capacity(body_h_us);
+        for row in new_scroll_row..row_end {
+            let lineno_text = format!("{:>4} ", row + 1);
+            let mut spans: Vec<Span<'_>> = vec![Span::styled(
+                lineno_text,
+                Style::default().fg(self.theme.line_number_fg),
+            )];
+            // Concat the highlighted runs into a single
+            // string + parallel style list so we can slice
+            // by column for horizontal scroll.
+            let runs = &highlighted[row];
+            let mut cells: Vec<(char, Style)> = Vec::new();
+            for run in runs {
+                for ch in run.text.chars() {
+                    cells.push((ch, run.style));
+                }
+            }
+            // Slice by horizontal scroll.
+            let start = new_scroll_col.min(cells.len());
+            let end = (new_scroll_col + editable_w).min(cells.len());
+            // Pack consecutive same-style runs back into Spans.
+            let mut i = start;
+            while i < end {
+                let style = cells[i].1;
+                let run_start = i;
+                while i < end && cells[i].1 == style {
+                    i += 1;
+                }
+                let text: String = cells[run_start..i].iter().map(|(c, _)| *c).collect();
+                spans.push(Span::styled(text, style));
+            }
+            painted.push(Line::from(spans));
+        }
+        f.render_widget(
+            Paragraph::new(painted),
+            body_rect,
+        );
+
+        // Place the terminal cursor for visual feedback —
+        // gutter (5 cells) + column relative to scroll.
+        let cursor_screen_col = gutter_w + cur_col.saturating_sub(new_scroll_col);
+        let cursor_screen_row = cur_row.saturating_sub(new_scroll_row);
+        if cursor_screen_row < body_h_us && cursor_screen_col < body_w_us {
+            f.set_cursor_position((
+                body_rect.x + cursor_screen_col as u16,
+                body_rect.y + cursor_screen_row as u16,
+            ));
+        }
+
+        // Hint line.
+        let hint = if dirty {
+            " Ctrl+S save · Esc close · arrows / Page navigate · [unsaved] "
+        } else {
+            " Ctrl+S save · Esc close · arrows / Page navigate "
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            hint_rect,
+        );
+
+        // Write scroll changes back into the modal state
+        // for the next render frame.
+        if let Modal::HjsonEditor {
+            scroll_row,
+            scroll_col,
+            ..
+        } = &mut self.modal
+        {
+            *scroll_row = new_scroll_row;
+            *scroll_col = new_scroll_col;
+        }
+
+        // Restart-required overlay (drawn last so it's on top).
+        if restart_required {
+            draw_hjson_restart_overlay(f, rect);
+        }
+    }
+
+    /// 1.2.8+ — kill-ring picker. Renders each deleted-
+    /// paragraph stash as title + original parent breadcrumb
+    /// + first-non-empty-line preview.  Cursor selection
+    /// reversed-highlight; D not supported (Enter is the
+    /// only mutator).
+    pub(in crate::tui::app) fn draw_kill_ring_picker_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::KillRingPicker { cursor } = &self.modal else {
+            return;
+        };
+        let len = self.kill_ring.len();
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Kill-ring ({}/{}) ", len, super::super::KILL_RING_CAP);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+
+        // Each entry consumes TWO lines: a title row + a dim
+        // breadcrumb+preview row.  Cap visible entries to
+        // body_h / 2 to keep the layout stable.
+        let per_entry = 2usize;
+        let visible = (body_h / per_entry).max(1);
+        let lines: Vec<Line<'_>> = self
+            .kill_ring
+            .iter()
+            .enumerate()
+            .take(visible)
+            .flat_map(|(i, stash)| {
+                let parent_label = stash
+                    .parent_id
+                    .and_then(|pid| self.hierarchy.get(pid))
+                    .map(|p| p.title.clone())
+                    .unwrap_or_else(|| "(parent gone)".into());
+                let body_text = std::str::from_utf8(&stash.content).unwrap_or("");
+                let first_line = body_text
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("(empty)");
+                let preview_budget = inner.width.saturating_sub(8) as usize;
+                let preview = if first_line.chars().count() > preview_budget {
+                    let mut s: String = first_line
+                        .chars()
+                        .take(preview_budget.saturating_sub(1))
+                        .collect();
+                    s.push('…');
+                    s
+                } else {
+                    first_line.to_string()
+                };
+                let head_text = format!(" ⌫ {}", stash.title);
+                let dim_text = format!("    in `{}`  ·  {}", parent_label, preview);
+                let mut head_line = Line::from(Span::raw(head_text));
+                let mut dim_line = Line::from(Span::styled(
+                    dim_text,
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+                if i == *cursor {
+                    head_line = head_line.style(
+                        Style::default().add_modifier(Modifier::REVERSED),
+                    );
+                    dim_line = dim_line.style(
+                        Style::default().add_modifier(Modifier::REVERSED),
+                    );
+                }
+                vec![head_line, dim_line]
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = if len == 0 {
+            " (empty — Ctrl+B delete pushes onto this ring) · Esc close ".to_string()
+        } else {
+            format!(
+                " ↑↓ select · Enter restore · Esc cancel    ({}/{}) ",
+                cursor + 1,
+                len
+            )
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     pub(in crate::tui::app) fn draw_backlink_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
         let Modal::BacklinkPicker { entries, cursor, scroll, .. } = &self.modal else {
             return;
@@ -3113,4 +3773,168 @@ impl super::super::App {
         );
     }
 
+}
+
+/// 1.2.8+ — restart-required overlay painted on top of
+/// the HJSON editor modal after a Ctrl+S save whose
+/// written bytes differ from the pre-open original.
+/// Informational only; the user dismisses with any key
+/// (handled at the App level) and continues editing.
+/// Restart is on the next manual relaunch — the modal
+/// can't restart the process itself.
+fn draw_hjson_restart_overlay(f: &mut ratatui::Frame, host: Rect) {
+    let lines: Vec<Line<'_>> = vec![
+        Line::from(Span::styled(
+            "Config changed",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::raw(
+            "inkhaven.hjson has been written to disk.",
+        )),
+        Line::from(Span::raw(
+            "The running editor is still using the OLD config —",
+        )),
+        Line::from(Span::raw(
+            "restart inkhaven to apply your changes.",
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press any key to dismiss",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )),
+    ];
+
+    let content_w = 56u16.min(host.width.saturating_sub(4));
+    let content_h = (lines.len() as u16 + 2).min(host.height.saturating_sub(2));
+    let x = host.x + host.width.saturating_sub(content_w) / 2;
+    let y = host.y + host.height.saturating_sub(content_h) / 2;
+    let overlay = Rect { x, y, width: content_w, height: content_h };
+    f.render_widget(ratatui::widgets::Clear, overlay);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Restart required ")
+        .border_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(overlay);
+    f.render_widget(block, overlay);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        inner,
+    );
+}
+
+/// 1.2.8+ — `Ctrl+B H` help overlay painted on top of the
+/// OS Shell pane.  Centered box, ~70% of the pane width,
+/// listing chord shortcuts + a one-paragraph introduction
+/// to what the embedded shell does.  Dismissed by any key
+/// (handler-level), preserves the underlying pane state.
+fn draw_shell_help_overlay(f: &mut ratatui::Frame, host: Rect) {
+    let lines: Vec<Line<'_>> = vec![
+        Line::from(Span::styled(
+            "OS Shell — quick reference",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::raw(
+            "Embedded nushell in-process.  Pipelines, env vars,",
+        )),
+        Line::from(Span::raw(
+            "and `def` declarations persist while the pane is open.",
+        )),
+        Line::from(Span::raw(
+            "Externals are spawned with stdin=null and a captured",
+        )),
+        Line::from(Span::raw(
+            "stdout/stderr pipe — not a real TTY, so full-screen",
+        )),
+        Line::from(Span::raw(
+            "apps (vim, less, top, tmux, …) are refused before spawn.",
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Line editing",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw(" Ctrl+A / Ctrl+E    home / end of line")),
+        Line::from(Span::raw(" Ctrl+U / Ctrl+K    kill to start / end")),
+        Line::from(Span::raw(" Ctrl+W             kill word backward")),
+        Line::from(Span::raw(" Alt+B / Alt+F      word back / forward")),
+        Line::from(Span::raw(" Ctrl+Left/Right    word back / forward")),
+        Line::from(Span::raw(" Ctrl+L             clear scrollback")),
+        Line::from(Span::raw(" Ctrl+D             clear input (or close if empty)")),
+        Line::from(Span::raw(" Tab                autocomplete commands / paths")),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Pane chords",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw(" Enter              run the line")),
+        Line::from(Span::raw(" ↑ / ↓              walk command history")),
+        Line::from(Span::raw(" PgUp / PgDn        scroll turn buffer")),
+        Line::from(Span::raw(" Shift+Home / End   jump scrollback top/bottom")),
+        Line::from(Span::raw(" Ctrl+Z h           selection mode (copy/insert turns)")),
+        Line::from(Span::raw(" Ctrl+Z o           close pane (state preserved)")),
+        Line::from(Span::raw(" Ctrl+Z O           close + drop engine (fresh on reopen)")),
+        Line::from(Span::raw(" Ctrl+B H           this help")),
+        Line::from(Span::raw(" exit / quit / Esc  close pane")),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Sample nu commands",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw(" ls                       list files as a table")),
+        Line::from(Span::raw(" ls | where size > 1MB    filter the table")),
+        Line::from(Span::raw(" cd subdir                change cwd (env persists)")),
+        Line::from(Span::raw(" let x = 42              bind a variable")),
+        Line::from(Span::raw(" help commands           every built-in command")),
+        Line::from(Span::raw(" ^/bin/echo hello        run an external explicitly")),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press any key to close",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )),
+    ];
+
+    // Center the overlay inside the host rect.  Width fixed
+    // at 64 (or 90% of host, whichever is smaller); height
+    // matches the content line count plus borders.
+    let content_w = 64u16.min(host.width.saturating_sub(4));
+    let content_h = (lines.len() as u16 + 2).min(host.height.saturating_sub(2));
+    let x = host.x + host.width.saturating_sub(content_w) / 2;
+    let y = host.y + host.height.saturating_sub(content_h) / 2;
+    let overlay = Rect { x, y, width: content_w, height: content_h };
+
+    f.render_widget(ratatui::widgets::Clear, overlay);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" OS Shell help ")
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(overlay);
+    f.render_widget(block, overlay);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        inner,
+    );
 }

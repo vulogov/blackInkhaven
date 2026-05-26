@@ -933,6 +933,71 @@ impl super::App {
         }
     }
 
+    /// 1.2.8+ — Ctrl+V h. Scan the open paragraph's buffer
+    /// for "hidden" characters (tabs, trailing whitespace
+    /// lines, CRs) and stamp a status-bar summary. Useful
+    /// for spotting import noise from Scrivener / web paste
+    /// before it lands in the final manuscript. No buffer
+    /// rewrite — visual editor overlay scheduled for 1.2.9.
+    pub(super) fn report_hidden_chars(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "hidden chars: no paragraph open".into();
+            return;
+        };
+        let lines = doc.textarea.lines();
+        let mut tab_count = 0usize;
+        let mut trailing_ws_lines = 0usize;
+        let mut cr_count = 0usize;
+        for line in lines {
+            tab_count += line.chars().filter(|c| *c == '\t').count();
+            cr_count += line.chars().filter(|c| *c == '\r').count();
+            // Trailing whitespace = ends with space or tab, and is
+            // not just an entirely-blank line (those are usually
+            // intentional paragraph breaks in typst).
+            let trimmed = line.trim_end_matches(|c: char| c == ' ' || c == '\t');
+            if !line.is_empty() && trimmed.len() < line.len() && !trimmed.is_empty() {
+                trailing_ws_lines += 1;
+            }
+        }
+        if tab_count == 0 && trailing_ws_lines == 0 && cr_count == 0 {
+            self.status =
+                "hidden chars: clean — no tabs, trailing whitespace, or CRs".into();
+        } else {
+            self.status = format!(
+                "hidden chars: {tab_count} tab(s), {trailing_ws_lines} line(s) with trailing whitespace, {cr_count} CR(s)",
+            );
+        }
+    }
+
+    /// 1.2.8+ — Ctrl+V Shift+S. Print the hierarchy path
+    /// from project root to the cursor on the status bar
+    /// ("Book ▸ Chapter ▸ Subchapter ▸ Paragraph").  Pane-
+    /// aware: in tree pane walks from `rows[tree_cursor]`;
+    /// in editor pane walks from `opened.id`; falls through
+    /// to the tree row when no doc is open.
+    pub(super) fn show_cursor_breadcrumb(&mut self) {
+        let cursor_id = match self.focus {
+            Focus::Editor => self.opened.as_ref().map(|d| d.id),
+            _ => self.rows.get(self.tree_cursor).map(|(id, _)| *id),
+        };
+        let Some(id) = cursor_id else {
+            self.status = "breadcrumb: nothing under cursor".into();
+            return;
+        };
+        let Some(node) = self.hierarchy.get(id) else {
+            self.status = "breadcrumb: cursor row missing from hierarchy".into();
+            return;
+        };
+        let mut chain: Vec<&str> = self
+            .hierarchy
+            .ancestors(node)
+            .into_iter()
+            .map(|n| n.title.as_str())
+            .collect();
+        chain.push(node.title.as_str());
+        self.status = chain.join(" ▸ ");
+    }
+
     /// Editor pane block builder. Takes a pre-built styled `Line` for
     /// the title so the renderer can mix theme colours into the header
     /// (used for the `L… C…` cursor read-out chip).

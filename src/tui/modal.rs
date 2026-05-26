@@ -12,6 +12,9 @@
 //! row filters (`visible_event_entries`) used by both the modal
 //! lifecycle and its draw helpers.
 
+use std::path::PathBuf;
+
+use tui_textarea::TextArea;
 use uuid::Uuid;
 
 use crate::store::node::NodeKind;
@@ -603,6 +606,108 @@ pub(super) enum Modal {
         snapshots: Vec<Snapshot>,
         cursor: usize,
     },
+    /// 1.2.8+ — `Ctrl+V Shift+U` picker over the deleted-
+    /// paragraph kill-ring. Renders each entry as title +
+    /// original parent breadcrumb + first-line preview.
+    /// Enter restores the cursor selection (removes from
+    /// ring); Esc cancels. State carries only the cursor
+    /// index — the entries live on `App.kill_ring`, read
+    /// fresh each frame.
+    KillRingPicker {
+        cursor: usize,
+    },
+    /// 1.2.8+ — `Ctrl+Z o` floating shell pane.  Hosts an
+    /// embedded nushell engine living on `App.shell_engine`;
+    /// renders the turn buffer from `App.shell_history` +
+    /// reads typed input from `input`.  `selection_mode`
+    /// flips the pane into history-selection (Phase 6)
+    /// where `↑↓` walks turns and `c` / `i` copy / insert.
+    /// `scroll` is the line offset into the rendered turn
+    /// buffer (anchored to the bottom by default so the
+    /// most-recent output is visible).
+    ShellPane {
+        input: TextInput,
+        /// Index into `App.shell_command_history` while the
+        /// user is walking with Up/Down.  `None` when the
+        /// user has typed something fresh (Down past the
+        /// newest entry resets this to None and clears the
+        /// input — same as the AI prompt history pattern).
+        command_history_cursor: Option<usize>,
+        /// Selection mode: false = normal shell, true =
+        /// "history selection mode" where `↑↓` walks turns,
+        /// `c` copies, `i` inserts the selected output into
+        /// the editor as a typst raw block.  Toggled by
+        /// `Ctrl+Z h`.
+        selection_mode: bool,
+        /// Cursor index into `App.shell_history` while in
+        /// selection mode.  Ignored when `selection_mode =
+        /// false`.
+        selection_cursor: usize,
+        /// Scroll position into the turn-list rendering
+        /// (lines from the bottom).  `0` keeps the newest
+        /// output flush with the bottom of the pane.
+        /// PgUp / PgDown bump this in 10-line steps; Home
+        /// jumps to the top of the buffer, End back to the
+        /// newest output.  Reset to `0` whenever a new turn
+        /// is appended (so fresh output is auto-visible).
+        /// Render clamps to the valid range; the field
+        /// itself is allowed to grow past max_scroll without
+        /// being written back.
+        scroll: usize,
+        /// 1.2.8+ — when `true`, an overlay renders on top
+        /// of the pane listing chord + command basics.
+        /// Toggled by `Ctrl+B H` while inside the pane.
+        /// Other keys (Esc, any key) dismiss the overlay.
+        /// Engine + history + scroll + input cursor all
+        /// preserve underneath.
+        show_help: bool,
+    },
+    /// 1.2.8+ — full-screen HJSON config editor for
+    /// `<project_root>/inkhaven.hjson`.  Reuses the same
+    /// `tui-textarea` widget as the paragraph editor, but
+    /// stripped of all per-paragraph chrome (no gutter
+    /// markers, no typst diagnostics, no lexicon hits, no
+    /// match overlays).  Saving writes the buffer to disk
+    /// and — when the saved bytes differ from the bytes
+    /// loaded on open — flips `restart_required` so the
+    /// renderer pops a "config changed; restart inkhaven"
+    /// overlay on top.  The overlay is informational
+    /// only; closing the modal returns to the main editor
+    /// (which keeps running with the OLD config until the
+    /// user actually quits + relaunches).  Esc closes the
+    /// modal; a status-line warning fires when closing with
+    /// unsaved edits.
+    HjsonEditor {
+        textarea: TextArea<'static>,
+        /// Bytes loaded from disk at open time.  Used to
+        /// (a) detect "buffer dirty since open" for Esc
+        /// warnings and (b) decide whether the restart
+        /// overlay fires after Ctrl+S.
+        original_content: String,
+        /// Absolute path to the HJSON file.  Captured at
+        /// open time so a `cd` in another modal doesn't
+        /// re-target the save.
+        path: PathBuf,
+        /// Set after a save whose written bytes != the
+        /// pre-open original.  Render uses this to draw
+        /// the centered restart-required overlay.  Any key
+        /// dismisses the overlay (keeping the modal open).
+        restart_required: bool,
+        /// Vertical scroll into the editor lines (in rows).
+        /// tui-textarea handles cursor + selection state
+        /// internally; we own scroll because the editor's
+        /// `widget()` path doesn't fit the custom-render
+        /// styling we apply.
+        scroll_row: usize,
+        /// Horizontal scroll into the editor lines.
+        scroll_col: usize,
+    },
+    /// 1.2.8+ — Ctrl+Q confirmation modal.  Opened only
+    /// when `editor.confirm_quit = true` in HJSON.
+    /// Y / Enter proceeds with the existing
+    /// `request_quit` flow; N / Esc cancels.  No fields —
+    /// the modal is fully transient.
+    ConfirmQuit,
 }
 
 #[cfg(test)]

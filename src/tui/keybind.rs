@@ -285,6 +285,60 @@ pub enum Action {
     /// trawling the tree pane.
     #[serde(rename = "view.recent_paragraph_picker")]
     ViewRecentParagraphPicker,
+    /// Ctrl+V Shift+U (1.2.8+) — picker over the deleted-
+    /// paragraph kill-ring. Ctrl+B U restores the most-
+    /// recent entry; this chord opens a modal to choose
+    /// any of the (up to 10) buffered recoveries.
+    #[serde(rename = "view.kill_ring_picker")]
+    ViewKillRingPicker,
+    /// Ctrl+V h (1.2.8+) — one-shot report on the open
+    /// paragraph's "hidden" characters: tab count, trailing-
+    /// whitespace line count, CR count. Status-bar only;
+    /// no buffer rewrite. The visual editor overlay is
+    /// scheduled for 1.2.9 once the column-bookkeeping
+    /// integrates cleanly with the existing match /
+    /// lexicon highlight layers.
+    #[serde(rename = "view.hidden_chars_report")]
+    ViewHiddenCharsReport,
+    /// Ctrl+V Shift+S (1.2.8+) — show the cursor row's
+    /// breadcrumb path on the status bar: "Book ▸ Chapter
+    /// ▸ Subchapter ▸ Paragraph". Pane-aware: in the tree
+    /// it walks from the tree cursor; in the editor it
+    /// walks from the open paragraph.
+    #[serde(rename = "view.show_breadcrumb")]
+    ViewShowBreadcrumb,
+    /// Ctrl+Z o (1.2.8+) — open or close the embedded
+    /// nushell pane.  Closing preserves the engine state
+    /// (env vars, defs) and the turn buffer for the next
+    /// open.  No-op (with a status hint) when
+    /// `shell.enabled = false` in HJSON.
+    #[serde(rename = "bund.open_shell")]
+    BundOpenShell,
+    /// Ctrl+Z O (Shift, 1.2.8+) — drop the cached shell
+    /// engine + turn buffer and open a fresh shell.  Use
+    /// when the env / scope has drifted into a confusing
+    /// state.
+    #[serde(rename = "bund.open_shell_fresh")]
+    BundOpenShellFresh,
+    /// Ctrl+Z h (1.2.8+) — inside the shell pane, toggle
+    /// history-selection mode.  ↑↓ walks turn-by-turn,
+    /// `c` copies the highlighted turn's output to the
+    /// system clipboard, `i` inserts it into the editor
+    /// wrapped in the configured typst-box template.
+    /// Re-press exits selection mode.
+    #[serde(rename = "bund.shell_selection")]
+    BundShellSelection,
+    /// Ctrl+B 0 (1.2.8+) — open the project's
+    /// `inkhaven.hjson` in a full-screen editor modal.
+    /// Syntax-highlighted via `hjson_highlight`.  Save
+    /// with Ctrl+S; if the saved bytes differ from the
+    /// loaded bytes, a "restart inkhaven" overlay pops
+    /// (config changes apply on next launch).  Was bound
+    /// to `|` originally; reassigned to `0` because some
+    /// terminals don't forward Shift+\ through the
+    /// chord-prefix state machine.
+    #[serde(rename = "bund.edit_project_hjson")]
+    BundEditProjectHjson,
     /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
     /// via typst-render and float a PNG preview on top of the
     /// editor. `Esc` closes, `S` opens a save-as picker for the
@@ -467,6 +521,13 @@ impl Action {
             Action::ViewListBookmarks => "bookmarks".into(),
             Action::ViewFuzzyParagraphPicker => "find ¶".into(),
             Action::ViewRecentParagraphPicker => "recent ¶".into(),
+            Action::ViewKillRingPicker => "kill-ring".into(),
+            Action::ViewHiddenCharsReport => "hidden chars".into(),
+            Action::ViewShowBreadcrumb => "breadcrumb".into(),
+            Action::BundOpenShell => "shell".into(),
+            Action::BundOpenShellFresh => "shell fresh".into(),
+            Action::BundShellSelection => "shell select".into(),
+            Action::BundEditProjectHjson => "edit hjson".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -643,6 +704,20 @@ impl Action {
                 "Fuzzy paragraph picker — type any substring of the title or slug path, Enter opens the highlighted hit.".into(),
             Action::ViewRecentParagraphPicker =>
                 "Recent paragraph picker (1.2.7+) — same fuzzy picker as Ctrl+V P but sorted by modified_at desc. Answers \"what did I work on most recently?\" without trawling the tree.".into(),
+            Action::ViewKillRingPicker =>
+                "Kill-ring picker (1.2.8+) — list of recently-deleted paragraphs (up to 10). Enter restores the highlighted entry at its original position; Esc cancels. Ctrl+B U alone restores the most-recent without opening the picker.".into(),
+            Action::ViewHiddenCharsReport =>
+                "Hidden-character report (1.2.8+) — status-bar summary of the open paragraph's tabs / trailing-whitespace lines / CR characters. Useful for spotting import noise (Scrivener / web paste). Visual editor overlay scheduled for 1.2.9.".into(),
+            Action::ViewShowBreadcrumb =>
+                "Show breadcrumb (1.2.8+) — print the hierarchy path from project root to the cursor on the status bar (Book ▸ Chapter ▸ Subchapter ▸ Paragraph). Pane-aware: in tree walks from the tree cursor, in editor walks from the open paragraph.".into(),
+            Action::BundOpenShell =>
+                "Open / close the embedded nushell pane (1.2.8+). Floating fullscreen; engine state and turn buffer preserved across close+reopen. No-op when shell.enabled = false in HJSON.".into(),
+            Action::BundOpenShellFresh =>
+                "Drop the cached shell engine + turn buffer and open a fresh shell (1.2.8+). Use when env / scope has drifted into a confusing state.".into(),
+            Action::BundShellSelection =>
+                "Inside the shell pane, toggle history-selection mode (1.2.8+) — ↑↓ walks turn-by-turn, `c` copies output to clipboard, `i` inserts wrapped in the configured typst-box template. Re-press exits.".into(),
+            Action::BundEditProjectHjson =>
+                "Open `<project>/inkhaven.hjson` in a full-screen editor (1.2.8+, Ctrl+B 0). Syntax-highlighted via the hand-rolled HJSON lexer. Ctrl+S saves; when saved bytes differ from the loaded bytes, a restart-required overlay pops up (config applies on next launch). Esc closes; unsaved-edit warnings fire on close.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -786,12 +861,22 @@ impl KeyBindings {
                 // tag picker; `}` opens the search-by-tag picker.
                 entry("]", Action::TagParagraph, Scope::Any),
                 entry("}", Action::TagSearch, Scope::Any),
+                // 1.2.8+ — Ctrl+B 0 → full-screen HJSON config
+                // editor for `<project>/inkhaven.hjson`.  Digit
+                // row, no modifier — unambiguous on every
+                // terminal layout (previous `|` binding was
+                // dropped on some terminals' chord state).
+                entry("0", Action::BundEditProjectHjson, Scope::Any),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),
                 entry("n", Action::BundNewScript, Scope::Any),
                 entry("e", Action::BundOpenEvalModal, Scope::Any),
                 entry("?", Action::BundOpenScriptPicker, Scope::Any),
+                // 1.2.8+ — embedded nushell pane.
+                entry("o", Action::BundOpenShell, Scope::Any),
+                entry("Shift+o", Action::BundOpenShellFresh, Scope::Any),
+                entry("h", Action::BundShellSelection, Scope::Any),
             ],
             view_sub: vec![
                 // Editor / AI-prompt: 1 = buffer markdown, 2 =
@@ -815,6 +900,12 @@ impl KeyBindings {
                 entry("p", Action::ViewFuzzyParagraphPicker, Scope::Any),
                 // 1.2.7+ — same picker sorted by modified_at desc.
                 entry("Shift+p", Action::ViewRecentParagraphPicker, Scope::Any),
+                // 1.2.8+ — kill-ring picker (paragraph undelete history).
+                entry("Shift+u", Action::ViewKillRingPicker, Scope::Any),
+                // 1.2.8+ — hidden-character report on the open paragraph.
+                entry("h", Action::ViewHiddenCharsReport, Scope::Any),
+                // 1.2.8+ — show cursor breadcrumb on the status bar.
+                entry("Shift+s", Action::ViewShowBreadcrumb, Scope::Any),
                 entry("r", Action::ViewRenderParagraph, Scope::Any),
                 entry("n", Action::ViewNextDiagnostic, Scope::Any),
                 // 1.2.6+: case differentiates view scope. Plain
