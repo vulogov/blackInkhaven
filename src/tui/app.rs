@@ -1321,6 +1321,15 @@ pub(crate) struct App {
     /// Cursor into `help_query_history`; same semantics as
     /// `ai_prompt_history_cursor` — None = not navigating.
     help_query_history_cursor: Option<usize>,
+    /// 1.2.8+ — F6 snapshot-picker annotation filter.
+    /// Substring-match (case-insensitive) against the
+    /// snapshot's annotation text; empty = show all.
+    /// `/` toggles `snapshot_filter_focused`; while focused,
+    /// typed chars edit the filter (D/V/Enter chord keys
+    /// route into the filter instead of firing actions).
+    /// Reset to defaults each `open_snapshot_picker`.
+    snapshot_filter: String,
+    snapshot_filter_focused: bool,
     /// Cursor into `ai_prompt_history`. None when not navigating;
     /// `Some(i)` when the user is stepping through history. Any
     /// edit (typing, backspace, etc.) clears it so the next Up
@@ -1659,6 +1668,8 @@ impl App {
             ai_prompt_history_cursor: None,
             help_query_history: Vec::new(),
             help_query_history_cursor: None,
+            snapshot_filter: String::new(),
+            snapshot_filter_focused: false,
             opened: None,
             secondary: None,
             secondary_focused: false,
@@ -6139,6 +6150,8 @@ impl App {
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
             A::ViewRecentParagraphPicker => self.open_recent_paragraph_picker(),
             A::ViewKillRingPicker => self.open_kill_ring_picker(),
+            A::ViewHiddenCharsReport => self.report_hidden_chars(),
+            A::ViewShowBreadcrumb => self.show_cursor_breadcrumb(),
             A::ViewRenderParagraph => self.open_rendered_paragraph_preview(),
             A::ViewNextDiagnostic => self.jump_to_next_diagnostic(),
             A::ViewStoryGraph => self.open_story_view(),
@@ -10361,10 +10374,58 @@ impl App {
             let mut commit = false;
             let mut delete = false;
             let mut view_diff = false;
-            if let Modal::SnapshotPicker {
-                snapshots, cursor, ..
-            } = &mut self.modal
-            {
+            // 1.2.8+ — filter-focus mode: typed chars edit the
+            // annotation filter, Backspace edits, Esc exits
+            // filter focus.  Picker chords (Up/Down/Enter/D/V/
+            // Delete) only fire when filter mode is OFF.
+            if self.snapshot_filter_focused {
+                match key.code {
+                    KeyCode::Esc => {
+                        // Exit filter mode but keep the query so
+                        // the cursor stays on the narrowed list.
+                        self.snapshot_filter_focused = false;
+                        // Force the outer Esc handler to NOT close
+                        // the modal.  We've already handled this key.
+                        return Ok(false);
+                    }
+                    KeyCode::Enter => {
+                        // Enter inside filter mode commits the
+                        // filter (exits filter mode) but does not
+                        // load the snapshot — second Enter does
+                        // that.  Mirrors browser address-bar UX.
+                        self.snapshot_filter_focused = false;
+                    }
+                    KeyCode::Backspace => {
+                        self.snapshot_filter.pop();
+                        // Reset cursor — visible list shrunk/grew.
+                        if let Modal::SnapshotPicker { cursor, .. } = &mut self.modal {
+                            *cursor = 0;
+                        }
+                    }
+                    KeyCode::Char(c) => {
+                        self.snapshot_filter.push(c);
+                        if let Modal::SnapshotPicker { cursor, .. } = &mut self.modal {
+                            *cursor = 0;
+                        }
+                    }
+                    _ => {}
+                }
+                return Ok(false);
+            }
+            // `/` from chord mode enters filter focus.
+            if matches!(key.code, KeyCode::Char('/')) {
+                self.snapshot_filter_focused = true;
+                return Ok(false);
+            }
+            // Compute visible length up-front so cursor clamps to
+            // the FILTERED list, not the absolute snapshots Vec.
+            let visible_len = match &self.modal {
+                Modal::SnapshotPicker { snapshots, .. } => {
+                    self.visible_snapshot_indices(snapshots).len()
+                }
+                _ => 0,
+            };
+            if let Modal::SnapshotPicker { cursor, .. } = &mut self.modal {
                 match key.code {
                     KeyCode::Up => {
                         if *cursor > 0 {
@@ -10372,13 +10433,13 @@ impl App {
                         }
                     }
                     KeyCode::Down => {
-                        if *cursor + 1 < snapshots.len() {
+                        if *cursor + 1 < visible_len {
                             *cursor += 1;
                         }
                     }
                     KeyCode::Home => *cursor = 0,
                     KeyCode::End => {
-                        *cursor = snapshots.len().saturating_sub(1);
+                        *cursor = visible_len.saturating_sub(1);
                     }
                     KeyCode::Enter => commit = true,
                     // D (case-insensitive) or the Delete key removes
