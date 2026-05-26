@@ -23,9 +23,20 @@ its visual focus state but does not see input until the overlay closes.
 Inkhaven captures mouse input on startup. Left-click moves focus to the
 clicked pane; in the Tree pane the click positions the row cursor, in the
 Editor it positions the character cursor (clicks in the gutter are
-ignored). The scroll wheel scrolls Tree and Editor under the pointer.
-Floating overlays (search results, prompt picker, modal stack) swallow
-mouse input so a stray click can't focus a hidden pane.
+ignored).
+
+**Scroll wheel** (1.2.8+):
+
+* **Tree pane** — moves the tree cursor up / down 3 rows per tick.
+* **Editor pane** — scrolls the viewport up / down 3 lines per tick.
+* **AI pane** — scrolls the chat history (older messages on wheel up).
+* **OS Shell pane modal** — scrolls the turn buffer (older turns on wheel up).
+* **HJSON editor modal** — moves the textarea cursor up / down 3 lines.
+* **Kill-ring picker / Fuzzy paragraph picker** — moves the cursor through entries.
+* Other modals ignore the wheel (silent no-op).
+
+Floating overlays (search results, prompt picker) still swallow mouse
+input so a stray click can't focus a hidden pane.
 
 Terminal-side text selection still works while the alternate screen is
 up — hold **Shift** (or Option, depending on the terminal) while
@@ -60,6 +71,7 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+B C`           | Clear the AI chat history + currently displayed inference. (F9's old behaviour; F9 now drives the scope cycle.) | no |
 | `Ctrl+B ]`           | (1.2.5) **Tag the open paragraph** — open the floating tag picker scoped to the editor buffer. Inside the picker: `↑↓` select, `Space` multi-selects, `T` applies selected tags (or the cursor tag if none selected), `A` adds a new tag (prompt), `D` deletes a tag project-wide (y/n confirm), `Enter` applies, `Esc` closes. | no |
 | `Ctrl+B }`           | (1.2.5) **Search by tag** — open the floating tag picker in read-only mode. `Enter` on a tag lists every paragraph that carries it with a typeable filter input; `Enter` on a paragraph row opens it in the editor. `A` / `D` still work (tag management is project-wide). | no |
+| `Ctrl+B 0`           | (1.2.8) **Edit project HJSON** — open `<project>/inkhaven.hjson` in a full-screen modal editor with HJSON syntax highlighting. `Ctrl+S` saves; when the saved bytes differ from the loaded bytes, a *Restart required* overlay pops up (config applies on next launch). `Esc` closes (status-line warning fires if there are unsaved edits). The editor mirrors the main paragraph editor's chord set: arrows / Home / End / PgUp / PgDn / Shift+arrows for selection / Ctrl+Home,End top/bottom / Ctrl+Left,Right word jumps / Ctrl+Backspace delete-word / Ctrl+U undo / Ctrl+Y redo / Ctrl+K cut / Ctrl+C copy / Ctrl+P paste / Ctrl+A select-all / Ctrl+D delete-line / Ctrl+E delete-to-EOL / Ctrl+W delete-to-BOL. | `bund.edit_project_hjson` |
 
 ### 1.1 Meta mode (Ctrl+B prefix)
 
@@ -1136,4 +1148,191 @@ See [`Tutorials/31-story-timeline.md`](Tutorials/31-story-timeline.md) "1.2.7 po
 `F8` (typst-diagnostics list modal) now works from any pane,
 not just the editor.  Opens against the most-recently-active
 paragraph's cached diagnostics.
+
+## 1.2.8 — chord additions
+
+### Kill-ring picker (1.2.8+)
+
+```
+Ctrl+V Shift+U   open the kill-ring picker — list of the most
+                 recent (up to 10) deleted paragraphs.  Enter
+                 restores the cursor selection at its original
+                 position.  Esc cancels.
+
+Ctrl+B U         (existing) restores the front of the ring
+                 without opening the picker.  Branch deletes
+                 (chapter/book) no longer clear the ring —
+                 older single-¶ entries remain valid recoveries.
+```
+
+### Hidden-character report (1.2.8+)
+
+```
+Ctrl+V h         one-shot scan of the open paragraph; status
+                 bar reads e.g. "hidden chars: 3 tab(s), 5
+                 line(s) with trailing whitespace, 0 CR(s)".
+                 Clean buffers report "no tabs, trailing
+                 whitespace, or CRs".  No buffer rewrite —
+                 visual editor overlay is 1.2.9 work.
+```
+
+### Breadcrumb status-line chord (1.2.8+)
+
+```
+Ctrl+V Shift+S   print the cursor's hierarchy path on the
+                 status bar (`Book ▸ Chapter ▸ Subchapter
+                 ▸ Paragraph`).  Pane-aware: tree pane walks
+                 from the tree cursor, editor pane walks from
+                 the open paragraph.
+```
+
+### F1 query history (1.2.8+)
+
+```
+Inside the F1 Help-query input:
+  Up             previous query (newest first); shell-style.
+  Down           next; past the newest entry clears the input.
+  Enter          submit; pushes the query onto the ring
+                 (dedup against the immediate predecessor).
+```
+
+Session-only; F1 history is intentionally not persisted.
+
+### Tag autocomplete (1.2.8+)
+
+Inside the `A` (add-new-tag) prompt opened from `Ctrl+B ]`:
+
+```
+Tab              completes to the first existing project
+                 tag whose name starts with the typed prefix
+                 (case-insensitive).  No-op when no match.
+```
+
+### F6 annotation filter (1.2.8+)
+
+Inside the F6 snapshot picker:
+
+```
+/                enter filter-focus mode — typed characters
+                 narrow the visible list to snapshots whose
+                 annotation contains the substring (case-
+                 insensitive).
+Esc (in filter)  exit filter focus (keeps the query).  Picker
+                 returns to chord mode — Up/Down/Enter/D/V
+                 again.
+Backspace        edit the filter (in focus mode only).
+Enter (in filter) commit filter (exits focus) — second Enter
+                 loads the snapshot.
+```
+
+Filter resets each `F6` open — previous session's filter
+doesn't haunt the next picker.
+
+### Active-LLM chip in AI pane (1.2.8+)
+
+The AI pane title always shows `· llm=<provider>` (the bound
+`llm.default` from HJSON) so `Ctrl+B L` swap effect is visible
+without opening `Ctrl+B I`.  In-flight provider fragment is
+suppressed when it matches the bound default; surfaces only
+when they diverge (user swapped default mid-stream).
+
+### Shift+letter chord fix (1.2.8+)
+
+Pre-existing bug — `Ctrl+V Shift+P` (recent-¶ picker) collapsed
+onto `Ctrl+V p` (fuzzy picker) on terminals without the kitty
+disambiguation protocol because the chord matcher required the
+SHIFT modifier flag.  Now uppercase letters arriving without
+SHIFT are treated as implicit-Shift — `Ctrl+V Shift+P`,
+`Ctrl+V Shift+U`, `Ctrl+V Shift+S` all route to their distinct
+actions.
+
+### Mouse-capture default knob (1.2.8+)
+
+```hjson
+editor: {
+  mouse_captured: true    // 1.2.8+ default
+}
+```
+
+Setting `false` releases mouse capture at startup so the
+terminal's native drag-select + system-clipboard copy work
+without pressing `Ctrl+Shift+M` first.  The runtime
+`Ctrl+Shift+M` toggle still flips state regardless.
+
+### Embedded nushell pane (1.2.8+)
+
+```
+Ctrl+Z o         open / close the floating shell pane.
+                 Engine state (env vars, defs) + turn
+                 buffer + on-disk history all preserved
+                 across close+reopen.
+Ctrl+Z O         (Shift) drop the cached engine + in-
+                 memory turn buffer and open fresh.  Does
+                 NOT wipe `.inkhaven/shell_history.db`.
+Ctrl+Z h         (inside the pane) toggle history-
+                 selection mode.
+
+Inside the pane (normal mode):
+  Enter          run the line through the embedded
+                 nu_engine; output + stderr land as a new
+                 turn in the buffer.  Scroll is reset so
+                 the new output is auto-visible.  Typing
+                 `exit` (or `quit`) closes the pane
+                 instead of forwarding to nu (whose
+                 built-in `exit` would kill inkhaven
+                 itself).
+  Tab            autocomplete the token under the cursor.
+                 In command position (start of line or
+                 after `|` / `;`) matches against nu's
+                 declared command set + executables on
+                 $PATH; otherwise filesystem entries
+                 under `$env.PWD`.  Single match →
+                 splice + trailing space; multiple →
+                 splice the longest common prefix and
+                 surface the candidates on the status
+                 line.
+
+Line editing (readline-style):
+  Ctrl+A / Ctrl+E    move cursor to start / end of line
+  Ctrl+U             kill from cursor to start
+  Ctrl+K             kill from cursor to end
+  Ctrl+W             kill the word before the cursor
+  Ctrl+Left/Right    move cursor by word
+  Alt+B / Alt+F      move cursor by word (readline alias)
+  Alt+Backspace      kill word backward
+  Ctrl+L             clear scrollback (engine + history kept)
+  Ctrl+D             clear input; if input is empty, close pane
+
+Pane help:
+  Ctrl+B H           open the OS Shell help overlay.
+                     Any key dismisses it; pane state
+                     (input, scroll, history) is preserved
+                     unchanged underneath.
+  ↑ / ↓          walk the per-project command history
+                 ring (shell-style; Down past newest
+                 clears the input).
+  PgUp / PgDn    scroll the turn buffer up / down by 10
+                 logical lines.  Title bar shows
+                 `↑ scrolled` while above the newest turn.
+  Shift+Home     jump to the top of the buffer.
+  Shift+End      jump back to the newest output.
+  Esc            close the pane (state preserved).
+
+Inside selection mode:
+  ↑ / ↓               walk the turn cursor.
+  Home / End          jump to first / last turn AND scroll
+                      the buffer to match.
+  PgUp / PgDn         scroll independently of the cursor.
+  c                   copy the highlighted turn's output
+                      (stderr appended when failed).
+  i                   insert the output into the editor
+                      at cursor, wrapped in
+                      `shell.insert_template`.  Pane
+                      closes + editor refocuses.
+  Esc                 exit selection (keep pane open).
+  Ctrl+Z h            same — toggle back.
+```
+
+Pane gated on `shell.enabled = true` in HJSON (default
+true).  See [`Tutorials/35-embedded-shell.md`](Tutorials/35-embedded-shell.md).
 

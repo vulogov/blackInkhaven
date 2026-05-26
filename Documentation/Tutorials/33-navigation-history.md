@@ -84,16 +84,28 @@ matches: top = most recent, bottom = oldest within the ring's
 
 ## Where the ring lives
 
-In-memory only — `App.visited_history: VecDeque<Uuid>` and
-`App.forward_history: VecDeque<Uuid>`. Not persisted to
-`.session.json`; restarting the TUI starts with an empty
-ring.
+`App.visited_history: Vec<Uuid>` + `App.visited_cursor: usize`.
+The ring **is persisted** to `.session.json` and restored on
+launch — entries for paragraphs that no longer exist drop
+out silently during restore, the cursor clamps to the
+trimmed length. So `Alt+←` works across TUI restarts on the
+same project.
 
-If you want the ring across sessions, that's a future task
-(probably 1.3+) — the trade-off is that a long-running history
-can drift out of date if paragraphs get deleted, and clamping
-it on every reload would be more state than the feature is
-worth.
+Restart hygiene:
+- Forward stack persists too — if you Alt+← back to A on
+  Monday and quit, Tuesday's `Alt+→` returns to B (unless
+  B was deleted Monday night).
+- Per-project — the ring lives in the project's
+  `.session.json`, so two different projects keep
+  independent histories.
+- Capped at the in-memory ring's natural depth; no
+  separate disk-side cap to tune.
+
+Last-active position also restores: the tree cursor row and
+(if a paragraph was open at exit) the opened paragraph + its
+cursor row/col all come back. The combined effect is "the
+TUI opens where I left it" — no manual hunt through the tree
+to resume work in a multi-book project.
 
 ## Use cases
 

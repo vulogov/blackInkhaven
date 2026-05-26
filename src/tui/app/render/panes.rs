@@ -589,7 +589,72 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines), content_rect);
     }
 
+    /// 1.2.8+ — Help-book paragraph render path.  The
+    /// Help book is read-only documentation, so instead of
+    /// showing colored source we run the buffer through
+    /// `tui::markdown::render` (the same pulldown-cmark
+    /// pipeline the AI pane uses) and paint the resulting
+    /// styled `Line`s anchored to the doc's scroll
+    /// position.  No gutter, no cursor — purely a viewer.
+    /// `Wrap { trim: false }` so long lines wrap inside the
+    /// pane.  Scrolling is driven by `opened.scroll_row`
+    /// (set by the same arrow / PgUp / PgDn handlers the
+    /// source view uses); horizontal scroll is unused
+    /// because the renderer hard-wraps long lines.
+    pub(in crate::tui::app) fn draw_help_paragraph_rendered(
+        &mut self,
+        f: &mut ratatui::Frame,
+        inner: Rect,
+    ) {
+        // `inner` is already the inside-border rect — the
+        // editor border is painted up the stack in
+        // `draw_editor`.  We just paint the rendered
+        // markdown lines here.
+        let opened = self.opened.as_mut().expect("opened checked above");
+        let source: String = opened.textarea.lines().join("\n");
+        let rendered: Vec<ratatui::text::Line<'static>> =
+            super::super::super::markdown::render(&source);
+
+        let total = rendered.len();
+        let height = inner.height as usize;
+        // Clamp scroll: don't allow scrolling past the
+        // bottom — bottom = total - height when total >
+        // height, else 0.
+        let max_scroll = total.saturating_sub(height);
+        if opened.scroll_row > max_scroll {
+            opened.scroll_row = max_scroll;
+        }
+        // Take a generous window so wrapping doesn't truncate
+        // mid-render.  Paragraph then handles its own clipping.
+        let end = total.min(opened.scroll_row + height + 32);
+        let visible_slice: Vec<ratatui::text::Line<'static>> =
+            rendered[opened.scroll_row..end].to_vec();
+
+        f.render_widget(
+            Paragraph::new(visible_slice).wrap(Wrap { trim: false }),
+            inner,
+        );
+    }
+
     pub(in crate::tui::app) fn draw_editor_unwrapped(&mut self, f: &mut ratatui::Frame, inner: Rect) {
+        // 1.2.8+ — Help-book paragraphs render as fully-
+        // rendered markdown (headings, lists, emphasis,
+        // code fences, blockquotes…) instead of the
+        // colored source.  Detection: the paragraph carries
+        // both `read_only = true` (set at open time when
+        // the Help-tag is in the ancestor chain) AND
+        // `content_type = "markdown"`.  Both conditions
+        // together identify the Help book without false
+        // positives — other read-only views (snapshots,
+        // diffs) keep the existing source view.
+        let opened_ref = self.opened.as_ref().expect("opened checked above");
+        let is_help_rendered = opened_ref.read_only
+            && opened_ref.content_type.as_deref() == Some("markdown");
+        if is_help_rendered {
+            self.draw_help_paragraph_rendered(f, inner);
+            return;
+        }
+
         let block = self.current_block();
         let lexicon = &self.lexicon;
         let theme = &self.theme;
@@ -782,6 +847,17 @@ impl super::super::App {
     }
 
     pub(in crate::tui::app) fn draw_editor_wrapped(&mut self, f: &mut ratatui::Frame, inner: Rect) {
+        // Same Help-paragraph rendered-markdown short-
+        // circuit as `draw_editor_unwrapped` — keep both
+        // entry points consistent.
+        let opened_ref = self.opened.as_ref().expect("opened checked above");
+        let is_help_rendered = opened_ref.read_only
+            && opened_ref.content_type.as_deref() == Some("markdown");
+        if is_help_rendered {
+            self.draw_help_paragraph_rendered(f, inner);
+            return;
+        }
+
         let block = self.current_block();
         let lexicon = &self.lexicon;
         let theme = &self.theme;
@@ -977,7 +1053,10 @@ impl super::super::App {
     pub(in crate::tui::app) fn draw_ai(&self, f: &mut ratatui::Frame, area: Rect) {
         // Title carries the inference state plus mode chips so the user
         // can see at a glance:
-        //   - provider + streaming/done/error status
+        //   - bound LLM default (Ctrl+B L picker target) — always shown
+        //     so swap-effect from Ctrl+B L is visible without opening
+        //     Ctrl+B I
+        //   - in-flight provider + streaming/done/error status
         //   - chat history depth (N turns) when non-empty
         //   - active AI scope (Selection/Paragraph/...) when non-None
         //   - active InferenceMode (Local/Full) — always shown so F10's
@@ -988,11 +1067,32 @@ impl super::super::App {
         // visible at a glance).
         let mut spans: Vec<Span<'static>> = Vec::new();
         spans.push(Span::raw(" AI".to_string()));
+        // 1.2.8+ — bound LLM chip. Always visible; in-flight provider
+        // appears below as a separate fragment when inference != None.
+        spans.push(Span::raw(" · llm="));
+        spans.push(Span::styled(
+            self.cfg.llm.default.clone(),
+            Style::default()
+                .fg(self.theme.ai_infer_fg)
+                .add_modifier(Modifier::BOLD),
+        ));
         if let Some(inf) = &self.inference {
-            let status_text = match &inf.status {
-                InferenceStatus::Streaming => format!(" — {} · streaming…", inf.provider),
-                InferenceStatus::Done => format!(" — {} · done", inf.provider),
-                InferenceStatus::Error(_) => format!(" — {} · error", inf.provider),
+            // Suppress the redundant provider tag when the in-flight
+            // run is on the bound default — the chip already shows it.
+            // When the user fired the request and THEN swapped default
+            // (Ctrl+B L) the two diverge — show both.
+            let status_text = if inf.provider == self.cfg.llm.default {
+                match &inf.status {
+                    InferenceStatus::Streaming => " · streaming…".to_string(),
+                    InferenceStatus::Done => " · done".to_string(),
+                    InferenceStatus::Error(_) => " · error".to_string(),
+                }
+            } else {
+                match &inf.status {
+                    InferenceStatus::Streaming => format!(" — {} · streaming…", inf.provider),
+                    InferenceStatus::Done => format!(" — {} · done", inf.provider),
+                    InferenceStatus::Error(_) => format!(" — {} · error", inf.provider),
+                }
             };
             spans.push(Span::raw(status_text));
         }

@@ -264,6 +264,16 @@ pub fn run(project: &Path) -> Result<()> {
     app.restore_session();
     app.install_progress();
 
+    // 1.2.8+ — `editor.mouse_captured = false` in HJSON
+    // asks the launcher to start with native terminal
+    // drag-select instead of the TUI mouse-capture default.
+    // `run` above already enabled capture unconditionally —
+    // sync to App's initial state so the two agree before
+    // first paint.
+    if !app.mouse_captured {
+        let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+    }
+
     // 1.2.4+: project-pulse startup splash. Renders today /
     // streak / active-time / by-status counts; auto-closes
     // after 7 seconds or on any key press. Disabled via
@@ -1204,6 +1214,48 @@ fn strip_leading_typst_heading(body: &str) -> String {
     lines.join("\n")
 }
 
+/// 1.2.8+ — maximum number of recently-deleted paragraphs held
+/// in `App.kill_ring`. Picked to be large enough that an
+/// accidental burst of single-¶ deletes doesn't clobber an
+/// earlier recovery, small enough that the picker fits on a
+/// 24-row terminal without scrolling.
+const KILL_RING_CAP: usize = 10;
+
+/// 1.2.8+ — truncate a captured shell-output blob to at most
+/// `max_lines` lines.  Returns the input unchanged if it
+/// already fits.  When truncated, the last kept line is
+/// replaced with `… (N more lines truncated)` so the user
+/// sees that something was dropped and how much.  The marker
+/// itself counts toward `max_lines`, so the visible line
+/// count never exceeds the configured cap.
+///
+/// Used at the App level (post-eval) rather than inside
+/// `shell::Engine::eval` so the engine stays config-free —
+/// it always returns whatever nu produced, and the UI layer
+/// decides what to retain.
+fn truncate_to_lines(text: String, max_lines: usize) -> String {
+    if text.is_empty() {
+        return text;
+    }
+    let cap = max_lines.max(1);
+    let total: usize = text.lines().count();
+    if total <= cap {
+        return text;
+    }
+    // Keep cap-1 head lines, replace the rest with the marker.
+    let keep = cap.saturating_sub(1);
+    let head: String = text
+        .lines()
+        .take(keep)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let dropped = total - keep;
+    let marker = format!(
+        "… ({dropped} more lines truncated · raise shell.max_output_lines to keep more)"
+    );
+    if head.is_empty() { marker } else { format!("{head}\n{marker}") }
+}
+
 pub(crate) struct App {
     layout: ProjectLayout,
     store: Store,
@@ -1231,13 +1283,19 @@ pub(crate) struct App {
     /// PARAGRAPH delete. Captured in `commit_delete` just
     /// before `delete_subtree` fires (single-paragraph only;
     /// subtree deletes are too risky to undo without store
-    /// API support). Restored by Ctrl+B U via
-    /// `create_node` at the original position — content,
-    /// tags, linked_paragraphs, event data preserved; the
-    /// uuid changes (so wiki-links from elsewhere pointing
-    /// at the deleted id stay broken). Single-shot — taking
-    /// undo clears the slot.
-    last_deleted: Option<DeletedParagraphStash>,
+    /// API support). Restored by Ctrl+B U (pops the front =
+    /// most-recent) or Ctrl+V Shift+U (picker over the
+    /// whole ring) via `create_node` at the original
+    /// position — content, tags, linked_paragraphs, event
+    /// data preserved; the uuid changes (so wiki-links from
+    /// elsewhere pointing at the deleted id stay broken).
+    ///
+    /// 1.2.8+ — was `Option<DeletedParagraphStash>` (single
+    /// slot) in 1.2.7; widened to a VecDeque so accidental
+    /// burst-deletes don't clobber an earlier recovery.
+    /// Capped at `KILL_RING_CAP`; oldest entries drop off
+    /// the back as the front fills.
+    kill_ring: std::collections::VecDeque<DeletedParagraphStash>,
 
     /// 1.2.7+ — visited-paragraph history (browser-style
     /// back/forward). Pushed on every `load_paragraph` that
@@ -1288,6 +1346,59 @@ pub(crate) struct App {
     /// picker is showing. Cleared on every send via push_back.
     /// 1.2.4+.
     ai_prompt_history: Vec<String>,
+    /// 1.2.8+ — F1 help-query history. Up/Down inside the
+    /// `Modal::HelpQuery` input walks this ring. Pushed on
+    /// every successful Enter (dedup against the immediate
+    /// predecessor); not persisted (session-only) to keep
+    /// stale "what did inkhaven 1.2.5 do for X" queries out
+    /// of long-running ring tails.
+    help_query_history: Vec<String>,
+    /// Cursor into `help_query_history`; same semantics as
+    /// `ai_prompt_history_cursor` — None = not navigating.
+    help_query_history_cursor: Option<usize>,
+    /// 1.2.8+ — F6 snapshot-picker annotation filter.
+    /// Substring-match (case-insensitive) against the
+    /// snapshot's annotation text; empty = show all.
+    /// `/` toggles `snapshot_filter_focused`; while focused,
+    /// typed chars edit the filter (D/V/Enter chord keys
+    /// route into the filter instead of firing actions).
+    /// Reset to defaults each `open_snapshot_picker`.
+    snapshot_filter: String,
+    snapshot_filter_focused: bool,
+    /// 1.2.8+ — embedded nushell.  `None` until first
+    /// `Ctrl+Z o` opens the pane (lazy init); persists
+    /// across close + reopen so env-var mutations (`$env.X
+    /// = ...`) and the engine state stay alive between
+    /// sessions of the pane.  `Ctrl+Z O` (Shift) destroys
+    /// this and rebuilds fresh.
+    shell_engine: Option<super::shell::Engine>,
+    /// 1.2.8+ — turn buffer for the shell pane.  Capped at
+    /// `cfg.shell.max_buffered_turns`; oldest entries roll
+    /// off the front as the back fills.  Lives on `App`
+    /// rather than on `Modal::ShellPane` so it survives
+    /// modal close/reopen — selection mode (Phase 6) and
+    /// the typst-box insert read from this Vec.
+    shell_history: Vec<super::shell::ShellTurn>,
+    /// 1.2.8+ — command-only history ring for Up/Down
+    /// arrow recall inside the shell input.  Pushed on each
+    /// non-empty Enter; deduped against the immediate
+    /// predecessor.  Persisted to
+    /// `.inkhaven/shell_history.db` (1.2.8+ — see
+    /// `shell_history_db`).
+    shell_command_history: Vec<String>,
+    /// 1.2.8+ — SQLite-backed history at
+    /// `<project>/.inkhaven/shell_history.db`.  Loaded
+    /// lazily on first `open_shell_pane`; appended on
+    /// every non-empty Enter.  `None` until the first
+    /// open.
+    shell_history_db: Option<super::shell::History>,
+    /// 1.2.8+ — pane-local Ctrl+B chord prefix.  Kept
+    /// separate from the global `bund_pending` so the
+    /// shell pane's `Ctrl+B H` doesn't clash with the
+    /// global Ctrl+B chord ladder (Quit, Load, …).
+    /// `true` after Ctrl+B inside the pane, consumed by
+    /// the next keystroke.
+    shell_ctrlb_pending: bool,
     /// Cursor into `ai_prompt_history`. None when not navigating;
     /// `Some(i)` when the user is stepping through history. Any
     /// edit (typing, backspace, etc.) clears it so the next Up
@@ -1596,6 +1707,7 @@ impl App {
         } else {
             None
         };
+        let initial_mouse_captured = cfg.editor.mouse_captured;
         Ok(Self {
             layout,
             store,
@@ -1603,9 +1715,9 @@ impl App {
             cfg,
             ai,
             prompts,
-            mouse_captured: true,
+            mouse_captured: initial_mouse_captured,
             timeline_views: std::collections::HashMap::new(),
-            last_deleted: None,
+            kill_ring: std::collections::VecDeque::new(),
             visited_history: Vec::new(),
             visited_cursor: 0,
             visited_skip_next_push: false,
@@ -1623,6 +1735,15 @@ impl App {
             ai_input: TextInput::new(),
             ai_prompt_history: Vec::new(),
             ai_prompt_history_cursor: None,
+            help_query_history: Vec::new(),
+            help_query_history_cursor: None,
+            snapshot_filter: String::new(),
+            snapshot_filter_focused: false,
+            shell_engine: None,
+            shell_history: Vec::new(),
+            shell_command_history: Vec::new(),
+            shell_history_db: None,
+            shell_ctrlb_pending: false,
             opened: None,
             secondary: None,
             secondary_focused: false,
@@ -2206,10 +2327,17 @@ impl App {
     /// modal is up so the click can't accidentally focus a pane that's
     /// hidden behind the floating panel.
     fn handle_mouse(&mut self, ev: MouseEvent) {
-        if !matches!(self.modal, Modal::None) {
+        // 1.2.8+ — modal dispatch FIRST.  Previously
+        // returned early for any modal; now route the
+        // wheel into modals that have meaningful scroll
+        // state (shell pane turn buffer, HJSON editor
+        // cursor, picker cursors).  Picker overlays still
+        // dominate — handle them inline.
+        if self.show_results_overlay || self.show_prompt_picker {
             return;
         }
-        if self.show_results_overlay || self.show_prompt_picker {
+        if !matches!(self.modal, Modal::None) {
+            self.handle_mouse_in_modal(ev);
             return;
         }
         let (col, row) = (ev.column, ev.row);
@@ -2230,13 +2358,104 @@ impl App {
             MouseEventKind::ScrollUp => match pane {
                 Some(Focus::Tree) => self.move_cursor(-3),
                 Some(Focus::Editor) => self.mouse_scroll_editor(-3),
+                Some(Focus::Ai) => {
+                    // Wheel up = show older content
+                    // (chat_history_scroll grows backward).
+                    self.chat_history_scroll =
+                        self.chat_history_scroll.saturating_add(3);
+                }
                 _ => {}
             },
             MouseEventKind::ScrollDown => match pane {
                 Some(Focus::Tree) => self.move_cursor(3),
                 Some(Focus::Editor) => self.mouse_scroll_editor(3),
+                Some(Focus::Ai) => {
+                    self.chat_history_scroll =
+                        self.chat_history_scroll.saturating_sub(3);
+                }
                 _ => {}
             },
+            _ => {}
+        }
+    }
+
+    /// 1.2.8+ — mouse-wheel dispatcher for the active modal.
+    /// Tier-1 modals (shell pane, HJSON editor, kill-ring
+    /// picker, fuzzy paragraph picker) get explicit wheel
+    /// behaviour; everything else falls through silently.
+    /// Step is 3 entries / lines per wheel-tick, matching
+    /// the main UI panes.
+    fn handle_mouse_in_modal(&mut self, ev: MouseEvent) {
+        use tui_textarea::CursorMove;
+        let dir: i32 = match ev.kind {
+            MouseEventKind::ScrollUp => -1,
+            MouseEventKind::ScrollDown => 1,
+            _ => return,
+        };
+        const STEP: usize = 3;
+        match &mut self.modal {
+            // Shell pane: wheel adjusts the turn-buffer
+            // scroll directly.  Up wheel = scroll back =
+            // increase the offset; down wheel = forward =
+            // decrease.
+            Modal::ShellPane { scroll, .. } => {
+                if dir < 0 {
+                    *scroll = scroll.saturating_add(STEP);
+                } else {
+                    *scroll = scroll.saturating_sub(STEP);
+                }
+            }
+            // HJSON editor: walk the textarea cursor up /
+            // down N lines.  Selection state is preserved
+            // (no cancel_selection here — wheel scrolling
+            // shouldn't dump an in-progress selection).
+            Modal::HjsonEditor { textarea, .. } => {
+                let cmove = if dir < 0 {
+                    CursorMove::Up
+                } else {
+                    CursorMove::Down
+                };
+                for _ in 0..STEP {
+                    textarea.move_cursor(cmove);
+                }
+            }
+            // Kill-ring picker: move the cursor up/down
+            // within the ring.  Clamp to [0, len-1].
+            Modal::KillRingPicker { cursor } => {
+                let len = self.kill_ring.len();
+                if len == 0 {
+                    return;
+                }
+                let max = len - 1;
+                if dir < 0 {
+                    *cursor = cursor.saturating_sub(STEP);
+                } else {
+                    *cursor = (*cursor + STEP).min(max);
+                }
+            }
+            // Fuzzy paragraph picker: move cursor + keep
+            // it visible by adjusting scroll.  Same step.
+            Modal::FuzzyParagraphPicker {
+                cursor,
+                scroll,
+                entries,
+                ..
+            } => {
+                let len = entries.len();
+                if len == 0 {
+                    return;
+                }
+                let max = len - 1;
+                if dir < 0 {
+                    *cursor = cursor.saturating_sub(STEP);
+                } else {
+                    *cursor = (*cursor + STEP).min(max);
+                }
+                // Keep scroll roughly aligned with cursor.
+                if *cursor < *scroll {
+                    *scroll = *cursor;
+                }
+            }
             _ => {}
         }
     }
@@ -2344,10 +2563,43 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
+        // 1.2.8+ — ConfirmQuit modal swallows its own keys:
+        // Y / Enter proceed with the existing quit flow;
+        // N / Esc cancel + close the modal.  Anything else
+        // is ignored (so a misclick on the keyboard doesn't
+        // dismiss the modal).
+        if matches!(self.modal, Modal::ConfirmQuit) {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    self.modal = Modal::None;
+                    return Ok(self.request_quit());
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    self.modal = Modal::None;
+                    self.status = "quit cancelled".into();
+                    return Ok(false);
+                }
+                _ => return Ok(false),
+            }
+        }
+
         // Hard quit works from anywhere, including inside a modal.
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'))
         {
+            // 1.2.8+ — gate the quit behind a confirmation
+            // modal when `editor.confirm_quit = true`.
+            // Skip when a modal is already open (the user
+            // is mid-workflow; treat Ctrl+Q in-modal as the
+            // unconditional escape hatch it always was).
+            if self.cfg.editor.confirm_quit
+                && matches!(self.modal, Modal::None)
+            {
+                self.modal = Modal::ConfirmQuit;
+                self.status =
+                    "quit inkhaven? Y/Enter confirm · N/Esc cancel".into();
+                return Ok(false);
+            }
             return Ok(self.request_quit());
         }
 
@@ -2924,6 +3176,70 @@ impl App {
         {
             self.status = "Help is read-only".into();
             return Ok(false);
+        }
+
+        // 1.2.8+ — Help paragraphs render through
+        // `markdown::render` instead of the source view, so
+        // moving the textarea cursor (the default route for
+        // arrow / PageUp / PageDown / Home / End) is
+        // invisible to the user.  Intercept those keys
+        // BEFORE the textarea catches them and adjust
+        // `opened.scroll_row` directly so the rendered
+        // viewport actually moves.  Only fires for the
+        // exact read-only+markdown combo the renderer
+        // recognises; other read-only views (snapshots,
+        // diffs) keep the existing source-cursor behaviour.
+        let is_help_rendered = self.opened.as_ref().is_some_and(|d| {
+            d.read_only
+                && d.content_type.as_deref() == Some("markdown")
+        });
+        if is_help_rendered {
+            // The render path clamps scroll_row at draw
+            // time, so we don't need to know the rendered
+            // line count here.  Page step = visible
+            // editor height; line step = 1.
+            let page = self.layout_editor.height.saturating_sub(2) as usize;
+            let page = page.max(3);
+            let doc = self
+                .opened
+                .as_mut()
+                .expect("opened checked by is_help_rendered");
+            match key.code {
+                KeyCode::Up => {
+                    doc.scroll_row = doc.scroll_row.saturating_sub(1);
+                    return Ok(false);
+                }
+                KeyCode::Down => {
+                    doc.scroll_row = doc.scroll_row.saturating_add(1);
+                    return Ok(false);
+                }
+                KeyCode::PageUp => {
+                    doc.scroll_row = doc.scroll_row.saturating_sub(page);
+                    return Ok(false);
+                }
+                KeyCode::PageDown => {
+                    doc.scroll_row = doc.scroll_row.saturating_add(page);
+                    return Ok(false);
+                }
+                KeyCode::Home => {
+                    doc.scroll_row = 0;
+                    return Ok(false);
+                }
+                KeyCode::End => {
+                    // Set to a large value; the render-time
+                    // clamp drops it back to (total - height).
+                    doc.scroll_row = usize::MAX / 2;
+                    return Ok(false);
+                }
+                // Left/Right have no meaning in the rendered
+                // viewer (the renderer hard-wraps long
+                // lines).  Swallow them so they don't
+                // accidentally hit the textarea below.
+                KeyCode::Left | KeyCode::Right => {
+                    return Ok(false);
+                }
+                _ => {}
+            }
         }
 
         // Typewriter SFX — plain Enter (end-of-line click). Fires after
@@ -6086,6 +6402,10 @@ impl App {
             A::BundNewScript => self.bund_new_script(),
             A::BundOpenEvalModal => self.bund_open_eval_modal(),
             A::BundOpenScriptPicker => self.bund_open_script_picker(),
+            A::BundOpenShell => self.open_shell_pane(false),
+            A::BundOpenShellFresh => self.open_shell_pane(true),
+            A::BundShellSelection => self.toggle_shell_selection_mode(),
+            A::BundEditProjectHjson => self.open_hjson_editor(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
@@ -6102,6 +6422,9 @@ impl App {
             A::ViewListBookmarks => self.open_bookmark_picker_modal(),
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
             A::ViewRecentParagraphPicker => self.open_recent_paragraph_picker(),
+            A::ViewKillRingPicker => self.open_kill_ring_picker(),
+            A::ViewHiddenCharsReport => self.report_hidden_chars(),
+            A::ViewShowBreadcrumb => self.show_cursor_breadcrumb(),
             A::ViewRenderParagraph => self.open_rendered_paragraph_preview(),
             A::ViewNextDiagnostic => self.jump_to_next_diagnostic(),
             A::ViewStoryGraph => self.open_story_view(),
@@ -6879,9 +7202,10 @@ impl App {
     }
 
     /// 1.2.7+ — capture a paragraph's full state into the
-    /// single-slot kill-ring before delete_subtree drops it.
-    /// Skipped silently when the file body can't be read
-    /// (which still permits the delete to proceed).
+    /// kill-ring before delete_subtree drops it. Pushes to
+    /// the front; trims to KILL_RING_CAP. Skipped silently
+    /// when the file body can't be read (which still permits
+    /// the delete to proceed).
     fn stash_deleted_paragraph(&mut self, node: &Node) {
         // Find the sibling that comes immediately BEFORE the
         // about-to-be-deleted node so we can re-insert at
@@ -6899,7 +7223,7 @@ impl App {
             .map(|rel| self.layout.root.join(rel))
             .and_then(|abs| std::fs::read(&abs).ok())
             .unwrap_or_default();
-        self.last_deleted = Some(DeletedParagraphStash {
+        self.kill_ring.push_front(DeletedParagraphStash {
             parent_id: node.parent_id,
             anchor_id,
             title: node.title.clone(),
@@ -6912,13 +7236,18 @@ impl App {
             content_type: node.content_type.clone(),
             event: node.event.clone(),
         });
+        while self.kill_ring.len() > KILL_RING_CAP {
+            self.kill_ring.pop_back();
+        }
     }
 
-    /// 1.2.7+ — Ctrl+B U. Pop the kill-ring; re-create the
-    /// paragraph at its original position; restore body +
-    /// metadata. Single-shot (slot is cleared after).
+    /// 1.2.7+ — Ctrl+B U. Pop the front of the kill-ring
+    /// (= most-recent delete); re-create the paragraph at
+    /// its original position; restore body + metadata. The
+    /// entry is consumed on success; on failure it's
+    /// reinserted so the user can retry.
     fn undo_last_delete(&mut self) {
-        let Some(stash) = self.last_deleted.take() else {
+        let Some(stash) = self.kill_ring.pop_front() else {
             self.status = "undo: kill-ring is empty".into();
             return;
         };
@@ -6942,9 +7271,10 @@ impl App {
         ) {
             Ok(n) => n,
             Err(e) => {
-                // Re-stash so the user can retry after
-                // fixing whatever rejected the create.
-                self.last_deleted = Some(stash);
+                // Re-stash to the front so the user can
+                // retry after fixing whatever rejected the
+                // create.
+                self.kill_ring.push_front(stash);
                 self.status = format!("undo: create_node failed: {e}");
                 return;
             }
@@ -6985,6 +7315,1331 @@ impl App {
         self.reload_hierarchy();
         self.status = format!(
             "↺ restored `{}` (new uuid {} — cross-refs to old uuid stay broken)",
+            updated.title,
+            updated.id.simple()
+        );
+    }
+
+    /// 1.2.8+ — `Ctrl+Z o` / `Ctrl+Z O` toggle the shell
+    /// pane.  `fresh=true` drops the cached engine + turn
+    /// buffer first.  No-op (with status hint) when
+    /// `shell.enabled = false` in HJSON.
+    /// 1.2.8+ — open `<project>/inkhaven.hjson` in a
+    /// full-screen modal editor.  Reads the current file
+    /// from disk fresh on every open (so external edits
+    /// since process launch are visible), seeds a
+    /// `tui-textarea` with the bytes, and routes Ctrl+S,
+    /// Esc, and editing keys via `hjson_editor_handle_key`.
+    /// When the file is missing, we open with an empty
+    /// buffer + a status hint — saving will create the file.
+    fn open_hjson_editor(&mut self) {
+        let path = self.layout.config_path();
+        let original_content = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.status = format!(
+                    "hjson: `{}` not found — opening empty buffer (Ctrl+S to create)",
+                    path.display()
+                );
+                String::new()
+            }
+            Err(e) => {
+                self.status = format!(
+                    "hjson: cannot read `{}`: {e}",
+                    path.display()
+                );
+                return;
+            }
+        };
+
+        // Seed the textarea with the file's lines.  Setting
+        // line[0] via TextArea::new(vec!["".into()]) and then
+        // typing in lots of chars is much slower than passing
+        // the full Vec up-front; do the latter.
+        let lines: Vec<String> = if original_content.is_empty() {
+            vec![String::new()]
+        } else {
+            original_content.lines().map(String::from).collect()
+        };
+        let mut textarea = TextArea::new(lines);
+        textarea.set_line_number_style(
+            Style::default().fg(self.theme.line_number_fg),
+        );
+        // Reuse the editor's cursor style so the visual
+        // feedback feels consistent.
+        textarea.set_cursor_style(
+            Style::default().add_modifier(Modifier::REVERSED),
+        );
+        // No tabstop translation — the file is config, leave
+        // tabs verbatim.
+        textarea.set_hard_tab_indent(true);
+
+        self.modal = Modal::HjsonEditor {
+            textarea,
+            original_content,
+            path,
+            restart_required: false,
+            scroll_row: 0,
+            scroll_col: 0,
+        };
+        self.status =
+            "hjson: editing inkhaven.hjson · Ctrl+S save · Esc close".into();
+    }
+
+    /// 1.2.8+ — write the HJSON editor's buffer to its
+    /// captured path.  When the saved bytes differ from the
+    /// pre-open original, flip `restart_required` so the
+    /// renderer pops the warning overlay; otherwise just
+    /// surface "saved" on the status bar.
+    fn save_hjson_editor(&mut self) {
+        let Modal::HjsonEditor {
+            textarea,
+            original_content,
+            path,
+            restart_required,
+            ..
+        } = &mut self.modal
+        else {
+            return;
+        };
+        let bytes: String = textarea.lines().join("\n");
+        match std::fs::write(&path, &bytes) {
+            Ok(_) => {
+                let changed = bytes != *original_content;
+                if changed {
+                    *restart_required = true;
+                    // Update the baseline so a subsequent save
+                    // of unchanged-since-last-save bytes
+                    // doesn't keep re-firing the overlay.
+                    *original_content = bytes;
+                    self.status = format!(
+                        "hjson: saved · restart required (any key dismisses overlay)"
+                    );
+                } else {
+                    self.status =
+                        "hjson: saved (no changes since last save)".into();
+                }
+            }
+            Err(e) => {
+                self.status =
+                    format!("hjson: save failed: {e}");
+            }
+        }
+    }
+
+    /// 1.2.8+ — route a keystroke through the HJSON editor
+    /// modal.  Mirrors the main paragraph editor's key set
+    /// so muscle memory carries over verbatim.  Handles:
+    ///   - Restart overlay: any key dismisses.
+    ///   - Ctrl+S save; Esc close (with unsaved-edit warn).
+    ///   - Arrows / Home / End / PgUp / PgDn (Shift extends
+    ///     selection, plain cancels it) — routed via
+    ///     CursorMove because tui-textarea's
+    ///     `input_without_shortcuts` drops those keys.
+    ///   - Ctrl+Home/End → top/bottom of buffer.
+    ///   - Ctrl+Left/Right → word back / forward.
+    ///   - Ctrl+Backspace → delete word.
+    ///   - Ctrl+U undo, Ctrl+Y redo.
+    ///   - Ctrl+K cut, Ctrl+C copy, Ctrl+P paste, Ctrl+A
+    ///     select-all.
+    ///   - Ctrl+D delete-line, Ctrl+E delete-to-EOL,
+    ///     Ctrl+W delete-to-BOL.
+    ///   - Everything else: textarea.input_without_shortcuts
+    ///     (so plain typing + Tab + Enter + Backspace work,
+    ///     but no emacs-style ctrl chord interception).
+    fn hjson_editor_handle_key(&mut self, key: KeyEvent) {
+        use tui_textarea::CursorMove;
+
+        // Restart overlay is sticky-modal: any key clears it.
+        if matches!(
+            self.modal,
+            Modal::HjsonEditor { restart_required: true, .. }
+        ) {
+            if let Modal::HjsonEditor { restart_required, .. } = &mut self.modal {
+                *restart_required = false;
+            }
+            self.status = "hjson: overlay dismissed (modal still open)".into();
+            return;
+        }
+
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+
+        // Ctrl+S — save.
+        if ctrl
+            && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S'))
+        {
+            self.save_hjson_editor();
+            return;
+        }
+
+        // Esc — close (with dirty warn).
+        if matches!(key.code, KeyCode::Esc) {
+            let dirty = matches!(
+                &self.modal,
+                Modal::HjsonEditor { textarea, original_content, .. }
+                    if textarea.lines().join("\n") != *original_content
+            );
+            if dirty {
+                self.status =
+                    "hjson: closed with unsaved edits — re-open with Ctrl+B 0 to recover from disk".into();
+            } else {
+                self.status = "hjson: closed".into();
+            }
+            self.modal = Modal::None;
+            return;
+        }
+
+        // Plain arrows + Home/End/PgUp/PgDn.  Shift extends
+        // selection, plain cancels.  Routed explicitly
+        // because input_without_shortcuts drops them.
+        if !alt && !ctrl {
+            let cmove = match key.code {
+                KeyCode::Up => Some(CursorMove::Up),
+                KeyCode::Down => Some(CursorMove::Down),
+                KeyCode::Left => Some(CursorMove::Back),
+                KeyCode::Right => Some(CursorMove::Forward),
+                KeyCode::Home => Some(CursorMove::Head),
+                KeyCode::End => Some(CursorMove::End),
+                KeyCode::PageUp => Some(CursorMove::ParagraphBack),
+                KeyCode::PageDown => Some(CursorMove::ParagraphForward),
+                _ => None,
+            };
+            if let Some(cmove) = cmove {
+                if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                    if shift {
+                        if textarea.selection_range().is_none() {
+                            textarea.start_selection();
+                        }
+                    } else {
+                        textarea.cancel_selection();
+                    }
+                    textarea.move_cursor(cmove);
+                }
+                return;
+            }
+        }
+
+        // Ctrl+modified motion + edit chords.  Mirror the
+        // main editor (Ctrl+U undo, Ctrl+Y redo, Ctrl+K/C/P
+        // cut/copy/paste, Ctrl+A select-all, Ctrl+D/E/W
+        // line-targeted deletes, Ctrl+Home/End top/bottom,
+        // Ctrl+Left/Right word jumps, Ctrl+Backspace
+        // delete-word).
+        if ctrl {
+            match key.code {
+                KeyCode::Char('u') | KeyCode::Char('U') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.undo();
+                    }
+                    return;
+                }
+                KeyCode::Char('y') | KeyCode::Char('Y') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.redo();
+                    }
+                    return;
+                }
+                KeyCode::Char('k') | KeyCode::Char('K') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.cut();
+                    }
+                    return;
+                }
+                KeyCode::Char('c') | KeyCode::Char('C') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.copy();
+                    }
+                    return;
+                }
+                KeyCode::Char('p') | KeyCode::Char('P') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.paste();
+                    }
+                    return;
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.select_all();
+                    }
+                    return;
+                }
+                KeyCode::Char('d') | KeyCode::Char('D') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.delete_line_by_end();
+                        textarea.delete_line_by_head();
+                    }
+                    return;
+                }
+                KeyCode::Char('e') | KeyCode::Char('E') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.delete_line_by_end();
+                    }
+                    return;
+                }
+                KeyCode::Char('w') | KeyCode::Char('W') if !shift => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.delete_line_by_head();
+                    }
+                    return;
+                }
+                KeyCode::Home => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.move_cursor(CursorMove::Top);
+                    }
+                    return;
+                }
+                KeyCode::End => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.move_cursor(CursorMove::Bottom);
+                    }
+                    return;
+                }
+                KeyCode::Left => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.move_cursor(CursorMove::WordBack);
+                    }
+                    return;
+                }
+                KeyCode::Right => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.move_cursor(CursorMove::WordForward);
+                    }
+                    return;
+                }
+                KeyCode::Backspace => {
+                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+                        textarea.delete_word();
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        // Everything else: pass to textarea WITHOUT its
+        // emacs-style defaults (matches the main editor).
+        // This handles plain typing, Tab, Enter, Backspace,
+        // Delete, and any other key not caught above.
+        if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+            let input: tui_textarea::Input = key.into();
+            textarea.input_without_shortcuts(input);
+        }
+    }
+
+    fn open_shell_pane(&mut self, fresh: bool) {
+        if !self.cfg.shell.enabled {
+            self.status =
+                "shell: disabled (set `shell.enabled: true` in inkhaven.hjson)".into();
+            return;
+        }
+        // Toggle: if the pane is already open, close it
+        // (engine + history persist on App).
+        if matches!(self.modal, Modal::ShellPane { .. }) {
+            self.modal = Modal::None;
+            self.status = "shell: closed (state preserved · Ctrl+Z o to reopen)".into();
+            return;
+        }
+        // 1.2.8+ — autosave the open buffer before yielding
+        // control to the shell.  Common workflow is "write
+        // a paragraph → flip to shell to inspect / compute
+        // → flip back" and losing unsaved edits on shell-
+        // open would surprise the user.  Failures are
+        // non-fatal: save_current writes its own status
+        // line on disk error.
+        if self.opened.as_ref().is_some_and(|d| d.dirty) {
+            let _ = self.save_current();
+        }
+        if fresh {
+            self.shell_engine = None;
+            self.shell_history.clear();
+            self.shell_command_history.clear();
+            // `Ctrl+Z O` fresh-start: we DON'T wipe the
+            // on-disk history.  The user wants a fresh
+            // engine state, not amnesia about what they
+            // typed yesterday.  If they want full reset
+            // they can `rm .inkhaven/shell_history.db`.
+        }
+        // Lazy-init the engine on first open.
+        if self.shell_engine.is_none() {
+            self.shell_engine = Some(
+                super::shell::Engine::new(&self.layout.root)
+                    .with_blocked_externals(
+                        self.cfg.shell.blocked_externals.clone(),
+                    ),
+            );
+        }
+        // Lazy-init the per-project SQLite history.  Load
+        // the most-recent cap commands so Up-arrow recall
+        // works on the first open of every session.
+        if self.shell_history_db.is_none() {
+            let db = super::shell::History::open(&self.layout.root);
+            // Seed the in-memory ring from disk if the
+            // in-memory ring is empty (first open of this
+            // session — or fresh reset above).
+            if self.shell_command_history.is_empty() {
+                self.shell_command_history =
+                    db.load(self.cfg.shell.max_buffered_turns);
+            }
+            self.shell_history_db = Some(db);
+        }
+        self.modal = Modal::ShellPane {
+            input: TextInput::new(),
+            command_history_cursor: None,
+            selection_mode: false,
+            selection_cursor: 0,
+            scroll: 0,
+            show_help: false,
+        };
+        self.status = if fresh {
+            "shell: fresh engine · type a command, Enter runs it".into()
+        } else {
+            "shell: open · type a command, Enter runs it · Ctrl+Z o close · Ctrl+Z h selection".into()
+        };
+    }
+
+    /// 1.2.8+ — eval the user's line with a wall-clock
+    /// watchdog.  Moves the engine into a worker thread,
+    /// polls the result channel with the configured timeout,
+    /// and recovers a fresh engine when a wedged child
+    /// process (`vim` blocking on `/dev/tty`, an unknown TUI
+    /// app, an infinite loop) refuses to respond to the
+    /// nu-side interrupt signal.
+    ///
+    /// Three completion paths:
+    ///   1. Worker returns within `external_timeout_secs`
+    ///      → engine moved back, output forwarded verbatim.
+    ///   2. Worker doesn't return within budget but DOES
+    ///      respond to `signals().trigger()` within the
+    ///      2-second grace window → engine moved back, output
+    ///      replaced by a "timed out — engine recovered"
+    ///      ShellOutput so the user knows the command was cut.
+    ///   3. Worker still wedged after grace → spawn a fresh
+    ///      `Engine`, abandon the worker thread (Rust will
+    ///      keep it alive until it eventually exits, but it
+    ///      no longer interferes with the App).  Env vars,
+    ///      `def` declarations, and `cd`-mutated `$env.PWD`
+    ///      are lost; the user is told so.
+    fn shell_eval_with_watchdog(
+        &mut self,
+        line: String,
+    ) -> super::shell::ShellOutput {
+        let timeout_secs = self.cfg.shell.external_timeout_secs.max(1);
+        let timeout = std::time::Duration::from_secs(timeout_secs);
+        // Grace = how long we give the worker to honour the
+        // signal after the budget runs out.  Two seconds is
+        // enough for nu's tight inner loops to notice but
+        // short enough that a genuinely wedged external
+        // doesn't keep the user waiting forever.
+        let grace = std::time::Duration::from_secs(2);
+
+        let engine = match self.shell_engine.take() {
+            Some(e) => e,
+            None => {
+                return super::shell::ShellOutput {
+                    stdout: String::new(),
+                    stderr: "engine not initialised".into(),
+                    success: false,
+                };
+            }
+        };
+        // Reset the interrupt flag in case a prior watchdog
+        // event left it set (we cleared it on engine move-back,
+        // but a fresh engine has it set to false anyway).
+        engine.reset_interrupt();
+        let interrupt = engine.interrupt_handle();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _handle = std::thread::Builder::new()
+            .name("inkhaven-shell-eval".into())
+            .spawn(move || {
+                let mut eng = engine;
+                let out = eng.eval(&line);
+                // Send back the engine + output.  Receiver may
+                // have already given up (timeout path 3); the
+                // send fails silently and `eng` drops with the
+                // closure.
+                let _ = tx.send((eng, out));
+            });
+
+        match rx.recv_timeout(timeout) {
+            Ok((eng_back, out)) => {
+                self.shell_engine = Some(eng_back);
+                out
+            }
+            Err(_) => {
+                // Path 2: trigger interrupt and wait grace.
+                interrupt.store(true, std::sync::atomic::Ordering::Relaxed);
+                match rx.recv_timeout(grace) {
+                    Ok((eng_back, _stale_out)) => {
+                        eng_back.reset_interrupt();
+                        self.shell_engine = Some(eng_back);
+                        super::shell::ShellOutput {
+                            stdout: String::new(),
+                            stderr: format!(
+                                "timed out after {timeout_secs}s — \
+                                 command was interrupted.  Engine \
+                                 recovered cleanly."
+                            ),
+                            success: false,
+                        }
+                    }
+                    Err(_) => {
+                        // Path 3: hard timeout, worker leaked.
+                        let blocked =
+                            self.cfg.shell.blocked_externals.clone();
+                        self.shell_engine = Some(
+                            super::shell::Engine::new(&self.layout.root)
+                                .with_blocked_externals(blocked),
+                        );
+                        super::shell::ShellOutput {
+                            stdout: String::new(),
+                            stderr: format!(
+                                "timed out after {timeout_secs}s — \
+                                 command did not respond to interrupt. \
+                                 Engine has been restarted; env vars, \
+                                 def declarations, and `cd` state are \
+                                 lost.  Consider adding the offending \
+                                 binary to `shell.blocked_externals`."
+                            ),
+                            success: false,
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 1.2.8+ — Tab completion inside the OS Shell pane.
+    /// Routes the current token through `Engine::complete`
+    /// (which decides command vs path context) and folds
+    /// the result into the input:
+    ///   - 0 matches → status "no matches"
+    ///   - 1 match    → replace token with match (+ trailing
+    ///                  space for commands, kept-`/` for dirs)
+    ///   - N matches  → replace token with longest common
+    ///                  prefix when it advances; status line
+    ///                  shows up to 6 candidates
+    /// No-op outside the pane (the Tab key only reaches this
+    /// method via `shell_pane_handle_key`).
+    fn shell_tab_complete(&mut self) {
+        let (input_str, cursor_chars) = match &self.modal {
+            Modal::ShellPane { input, .. } => {
+                (input.as_str().to_string(), input.cursor())
+            }
+            _ => return,
+        };
+        let completion = match self.shell_engine.as_ref() {
+            Some(eng) => eng.complete(&input_str, cursor_chars),
+            None => return,
+        };
+        if completion.matches.is_empty() {
+            self.status = format!(
+                "shell: no matches for `{}`",
+                completion.token
+            );
+            return;
+        }
+
+        // Decide what text to splice into the input.  For a
+        // single match: the whole match.  For multiple: the
+        // longest common prefix — but only if it ACTUALLY
+        // advances past what the user has already typed
+        // (otherwise we'd produce a no-op edit and the user
+        // would think Tab is broken).
+        let replacement: String = if completion.matches.len() == 1 {
+            let mut r = completion.matches[0].clone();
+            // Append a trailing space for completed command
+            // names so the next token can start typing
+            // immediately.  Directories already have a
+            // trailing `/` from complete_path.
+            if !r.ends_with('/') {
+                r.push(' ');
+            }
+            r
+        } else {
+            let lcp = super::shell::longest_common_prefix(&completion.matches);
+            if lcp.chars().count() > completion.token.chars().count() {
+                lcp
+            } else {
+                // No advance possible — keep token unchanged,
+                // just show the matches.
+                completion.token.clone()
+            }
+        };
+
+        // Splice the replacement into the input:
+        //   prefix = input[..token_start] (chars)
+        //   suffix = input[cursor..]      (chars)
+        let chars: Vec<char> = input_str.chars().collect();
+        let prefix: String =
+            chars[..completion.token_start].iter().collect();
+        let suffix: String = chars[cursor_chars..].iter().collect();
+        let new_cursor_chars = prefix.chars().count()
+            + replacement.chars().count();
+        let new_buffer = format!("{prefix}{replacement}{suffix}");
+
+        if let Modal::ShellPane { input, .. } = &mut self.modal {
+            input.set_with_cursor(new_buffer, new_cursor_chars);
+        }
+
+        // Surface the candidate list when there are several,
+        // so the user can see what else matches.
+        if completion.matches.len() > 1 {
+            const SHOW_CAP: usize = 6;
+            let preview: Vec<&str> = completion
+                .matches
+                .iter()
+                .take(SHOW_CAP)
+                .map(String::as_str)
+                .collect();
+            let more = completion.matches.len().saturating_sub(SHOW_CAP);
+            let suffix = if more > 0 {
+                format!(" … (+{more} more)")
+            } else {
+                String::new()
+            };
+            self.status = format!(
+                "shell: {} matches — {}{}",
+                completion.matches.len(),
+                preview.join("  "),
+                suffix,
+            );
+        } else {
+            self.status = "shell: completed".into();
+        }
+    }
+
+    /// 1.2.8+ — `Ctrl+Z h` toggle history-selection mode
+    /// from inside the shell pane.  No-op when invoked
+    /// outside the pane (the chord lives in the bund-
+    /// prefix and dispatcher routes unconditionally).
+    fn toggle_shell_selection_mode(&mut self) {
+        let Modal::ShellPane {
+            selection_mode,
+            selection_cursor,
+            ..
+        } = &mut self.modal
+        else {
+            self.status = "shell selection: only available inside the shell pane".into();
+            return;
+        };
+        if *selection_mode {
+            *selection_mode = false;
+            self.status = "shell: back to normal mode".into();
+        } else {
+            if self.shell_history.is_empty() {
+                self.status = "shell selection: nothing to select yet".into();
+                return;
+            }
+            *selection_mode = true;
+            // Land on the most-recent turn — same default as
+            // AI chat selection mode.
+            *selection_cursor = self.shell_history.len() - 1;
+            self.status =
+                "shell selection · ↑↓ pick turn · c copy · i insert · Ctrl+Z h exit".into();
+        }
+    }
+
+    /// 1.2.8+ — selection-mode `c`: copy the highlighted
+    /// turn's output to the system clipboard.  Includes
+    /// stderr below stdout when the command failed, so the
+    /// user gets full context if they paste into a bug
+    /// report.  No-op when no clipboard is available
+    /// (rare — usually only on minimal Linux + no X / no
+    /// wayland).
+    fn shell_selection_copy(&mut self) {
+        let cursor = match &self.modal {
+            Modal::ShellPane { selection_cursor, .. } => *selection_cursor,
+            _ => return,
+        };
+        let Some(turn) = self.shell_history.get(cursor) else {
+            self.status = "shell copy: cursor out of range".into();
+            return;
+        };
+        let mut text = turn.stdout.clone();
+        if !turn.success && !turn.stderr.is_empty() {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str("[stderr]\n");
+            text.push_str(&turn.stderr);
+        }
+        match self.clipboard.as_mut() {
+            Some(cb) => match cb.set_text(text.clone()) {
+                Ok(()) => {
+                    self.status = format!(
+                        "shell: copied turn `{}` output ({} chars)",
+                        truncate_to_chars(&turn.command, 30),
+                        text.chars().count()
+                    );
+                }
+                Err(e) => {
+                    self.status =
+                        format!("shell copy: clipboard error: {e}");
+                }
+            },
+            None => {
+                self.status =
+                    "shell copy: no system clipboard available".into();
+            }
+        }
+    }
+
+    /// 1.2.8+ — selection-mode `i`: insert the highlighted
+    /// turn's stdout into the editor at cursor, wrapped in
+    /// `cfg.shell.insert_template`.  `{output}` in the
+    /// template is replaced with the raw output verbatim;
+    /// no escaping (the default template uses a typst raw
+    /// block where backticks bound the literal, so embedded
+    /// quotes / backslashes survive).  Closes the shell
+    /// pane after insert + refocuses the editor — same UX
+    /// as AI chat selection `t`.
+    fn shell_selection_insert(&mut self) {
+        let cursor = match &self.modal {
+            Modal::ShellPane { selection_cursor, .. } => *selection_cursor,
+            _ => return,
+        };
+        let Some(turn) = self.shell_history.get(cursor).cloned() else {
+            self.status = "shell insert: cursor out of range".into();
+            return;
+        };
+        if self.opened.is_none() {
+            self.status =
+                "shell insert: no paragraph open — open one first".into();
+            return;
+        }
+        let template = self.cfg.shell.insert_template.clone();
+        let wrapped = template.replace("{output}", &turn.stdout);
+        let chars = wrapped.chars().count();
+        if let Some(doc) = self.opened.as_mut() {
+            doc.textarea.insert_str(&wrapped);
+            doc.dirty = true;
+            doc.last_activity = std::time::Instant::now();
+        }
+        // Close the pane (engine + history persist on App).
+        self.modal = Modal::None;
+        self.change_focus(Focus::Editor);
+        self.status = format!(
+            "shell: inserted output of `{}` ({} chars wrapped)",
+            truncate_to_chars(&turn.command, 30),
+            chars,
+        );
+    }
+
+    /// 1.2.8+ — key handler for `Modal::ShellPane`.  Routes
+    /// by `selection_mode`: false → line-editor + Up/Down
+    /// command-history recall + Enter eval + Esc close;
+    /// true → ↑↓ turn cursor + c / i actions.
+    ///
+    /// Ctrl+Z chords (`o` / `O` / `h`) are handled locally
+    /// because the modal-key dispatcher intercepts keys
+    /// before the global bund-prefix resolver runs — without
+    /// this branch a user pressing `Ctrl+Z o` inside the
+    /// pane sees no effect.
+    fn shell_pane_handle_key(&mut self, key: KeyEvent) {
+        // 1.2.8+ — Help overlay swallows EVERY key.  Any
+        // press dismisses the overlay; the underlying pane
+        // state is preserved unchanged.
+        if matches!(self.modal, Modal::ShellPane { show_help: true, .. }) {
+            if let Modal::ShellPane { show_help, .. } = &mut self.modal {
+                *show_help = false;
+            }
+            self.status = "shell help: closed".into();
+            return;
+        }
+
+        // 1.2.8+ — Ctrl+B chord prefix (pane-local).  Kept
+        // separate from the global `bund_pending` so we
+        // don't fire global chords (Q quit, L load, …) from
+        // inside the pane and so the suffix matching here
+        // doesn't have to disambiguate by prefix.  Only
+        // chord we currently honour is `Ctrl+B H` → help.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('b') | KeyCode::Char('B'))
+        {
+            self.shell_ctrlb_pending = true;
+            self.status = "Ctrl+B … (H help)".into();
+            return;
+        }
+        if self.shell_ctrlb_pending {
+            self.shell_ctrlb_pending = false;
+            if matches!(
+                key.code,
+                KeyCode::Char('h') | KeyCode::Char('H')
+            ) {
+                if let Modal::ShellPane { show_help, .. } = &mut self.modal {
+                    *show_help = true;
+                }
+                self.status = "shell help: any key to close".into();
+                return;
+            }
+            // Any other suffix: clear pending state and fall
+            // through to normal handling.
+        }
+
+        // Two-key Ctrl+Z chord, handled in-place.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('z') | KeyCode::Char('Z'))
+        {
+            self.bund_pending = true;
+            self.status =
+                "Ctrl+Z … (o close · O reset · h selection)".into();
+            return;
+        }
+        if self.bund_pending {
+            self.bund_pending = false;
+            // Translate the suffix into the appropriate
+            // action.  Anything else clears the pending
+            // state and falls through to normal handling so
+            // a stray Ctrl+Z followed by a real keystroke
+            // doesn't get stuck.
+            match (key.code, key.modifiers.contains(KeyModifiers::SHIFT)) {
+                (KeyCode::Char('o'), false) | (KeyCode::Char('O'), false) => {
+                    self.open_shell_pane(false);
+                    return;
+                }
+                (KeyCode::Char('O'), true) | (KeyCode::Char('o'), true) => {
+                    self.open_shell_pane(true);
+                    return;
+                }
+                (KeyCode::Char('h'), _) | (KeyCode::Char('H'), _) => {
+                    self.toggle_shell_selection_mode();
+                    return;
+                }
+                _ => {
+                    // Fall through to normal handling.  No
+                    // status update — the user sees the
+                    // suffix appear / not-appear in the input
+                    // and figures it out.
+                }
+            }
+        }
+        // PgUp/PgDown/Home/End scroll the turn-buffer in BOTH
+        // selection and normal modes — they don't conflict
+        // with command-history recall (↑↓) or selection-mode
+        // turn navigation (↑↓).  Home/End are special:
+        //   - In selection mode they ALSO move the turn cursor
+        //     to the first / last turn (existing behaviour).
+        //   - In normal mode they only affect scroll.
+        // Step = 10 logical lines per Page key — render clamps
+        // if the user scrolls past the top of the buffer.
+        const SCROLL_PAGE: usize = 10;
+        if matches!(
+            key.code,
+            KeyCode::PageUp | KeyCode::PageDown
+        ) {
+            if let Modal::ShellPane { scroll, .. } = &mut self.modal {
+                match key.code {
+                    KeyCode::PageUp => *scroll = scroll.saturating_add(SCROLL_PAGE),
+                    KeyCode::PageDown => *scroll = scroll.saturating_sub(SCROLL_PAGE),
+                    _ => unreachable!(),
+                }
+            }
+            return;
+        }
+
+        // Selection mode first — narrower keyspace.
+        let in_selection = matches!(
+            self.modal,
+            Modal::ShellPane { selection_mode: true, .. }
+        );
+        if in_selection {
+            let history_len = self.shell_history.len();
+            if let Modal::ShellPane {
+                selection_cursor,
+                scroll,
+                ..
+            } = &mut self.modal
+            {
+                match key.code {
+                    KeyCode::Up => {
+                        if *selection_cursor > 0 {
+                            *selection_cursor -= 1;
+                        }
+                    }
+                    KeyCode::Down => {
+                        if *selection_cursor + 1 < history_len {
+                            *selection_cursor += 1;
+                        }
+                    }
+                    KeyCode::Home => {
+                        *selection_cursor = 0;
+                        // Match: walking to the first turn
+                        // exposes the head of the buffer.
+                        *scroll = usize::MAX / 2;
+                    }
+                    KeyCode::End => {
+                        *selection_cursor = history_len.saturating_sub(1);
+                        *scroll = 0;
+                    }
+                    KeyCode::Char('c') | KeyCode::Char('C') => {
+                        self.shell_selection_copy();
+                    }
+                    KeyCode::Char('i') | KeyCode::Char('I') => {
+                        self.shell_selection_insert();
+                    }
+                    KeyCode::Esc => {
+                        // Esc inside selection mode just exits
+                        // selection — second Esc closes the pane
+                        // (matches the F6 filter ergonomics).
+                        if let Modal::ShellPane { selection_mode, .. } =
+                            &mut self.modal
+                        {
+                            *selection_mode = false;
+                        }
+                        self.status = "shell: back to normal mode".into();
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
+
+        // Normal shell mode.
+        match key.code {
+            KeyCode::Enter => {
+                let line = match &self.modal {
+                    Modal::ShellPane { input, .. } => {
+                        input.as_str().to_string()
+                    }
+                    _ => return,
+                };
+                let trimmed = line.trim().to_string();
+                if trimmed.is_empty() {
+                    return;
+                }
+                // Block `exit` / `quit` from reaching nu.  Nu's
+                // built-in `exit` calls `std::process::exit()`
+                // unconditionally — if it ran, the entire
+                // inkhaven process would die, taking unsaved
+                // editor buffers with it.  Users typing `exit`
+                // intend to close the SHELL pane (terminal
+                // muscle memory), so we intercept and do
+                // exactly that.  Also handles `exit 1`,
+                // `quit 0`, etc. — any line whose first token
+                // is `exit` or `quit`.  Engine + history are
+                // preserved; reopen with `Ctrl+Z o`.
+                let first_tok = trimmed
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+                if matches!(first_tok, "exit" | "quit") {
+                    if let Modal::ShellPane { input, .. } = &mut self.modal {
+                        input.clear();
+                    }
+                    self.modal = Modal::None;
+                    self.status =
+                        "shell: closed via `exit` (state preserved · Ctrl+Z o to reopen)".into();
+                    return;
+                }
+                // Reset input + history cursor; eval; push turn.
+                // Also reset scroll so the new turn lands
+                // visible at the bottom — anything else would
+                // be confusing (user runs `ls`, expects to
+                // see its output, but stays scrolled to old
+                // content).
+                if let Modal::ShellPane {
+                    input,
+                    command_history_cursor,
+                    scroll,
+                    ..
+                } = &mut self.modal
+                {
+                    input.clear();
+                    *command_history_cursor = None;
+                    *scroll = 0;
+                }
+                // Command-history ring: dedup vs immediate
+                // predecessor.  Push to both the in-memory
+                // ring (Up-arrow recall) AND the per-project
+                // SQLite (survives restart).
+                if self.shell_command_history.last().map(String::as_str)
+                    != Some(trimmed.as_str())
+                {
+                    self.shell_command_history.push(trimmed.clone());
+                    if let Some(db) = self.shell_history_db.as_ref() {
+                        db.push(&trimmed);
+                    }
+                }
+                // Eval with the watchdog (1.2.8+).  Moves the
+                // engine into a worker thread, polls main
+                // thread with a wall-clock budget, recovers a
+                // fresh engine on hard timeout.
+                let out = self.shell_eval_with_watchdog(trimmed.clone());
+                // Per-turn output truncation: a single `cat`
+                // / `git log` can drop tens of thousands of
+                // lines into stdout, which bloats memory and
+                // makes ratatui rendering crawl.  Cap at
+                // configured max_output_lines, replacing the
+                // tail with a "(N more lines truncated)"
+                // marker so the user knows.
+                let max_lines = self.cfg.shell.max_output_lines.max(1);
+                let stdout = truncate_to_lines(out.stdout, max_lines);
+                let stderr = truncate_to_lines(out.stderr, max_lines);
+                let turn = super::shell::ShellTurn {
+                    command: trimmed,
+                    stdout,
+                    stderr,
+                    success: out.success,
+                };
+                self.shell_history.push(turn);
+                let cap = self.cfg.shell.max_buffered_turns.max(1);
+                while self.shell_history.len() > cap {
+                    self.shell_history.remove(0);
+                }
+            }
+            KeyCode::Up => {
+                if !self.shell_command_history.is_empty() {
+                    let next_cursor = match self.modal {
+                        Modal::ShellPane {
+                            command_history_cursor: Some(0),
+                            ..
+                        } => 0,
+                        Modal::ShellPane {
+                            command_history_cursor: Some(i),
+                            ..
+                        } => i - 1,
+                        Modal::ShellPane {
+                            command_history_cursor: None,
+                            ..
+                        } => self.shell_command_history.len() - 1,
+                        _ => return,
+                    };
+                    let entry =
+                        self.shell_command_history[next_cursor].clone();
+                    if let Modal::ShellPane {
+                        input,
+                        command_history_cursor,
+                        ..
+                    } = &mut self.modal
+                    {
+                        *command_history_cursor = Some(next_cursor);
+                        input.clear();
+                        for c in entry.chars() {
+                            input.insert_char(c);
+                        }
+                    }
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::ShellPane {
+                    command_history_cursor: Some(cur),
+                    ..
+                } = self.modal
+                {
+                    let next = cur + 1;
+                    if next >= self.shell_command_history.len() {
+                        if let Modal::ShellPane {
+                            input,
+                            command_history_cursor,
+                            ..
+                        } = &mut self.modal
+                        {
+                            *command_history_cursor = None;
+                            input.clear();
+                        }
+                    } else {
+                        let entry =
+                            self.shell_command_history[next].clone();
+                        if let Modal::ShellPane {
+                            input,
+                            command_history_cursor,
+                            ..
+                        } = &mut self.modal
+                        {
+                            *command_history_cursor = Some(next);
+                            input.clear();
+                            for c in entry.chars() {
+                                input.insert_char(c);
+                            }
+                        }
+                    }
+                }
+            }
+            KeyCode::Tab => {
+                // 1.2.8+ — autocomplete commands, externals,
+                // and filesystem paths.  Replace the token
+                // under the cursor with either the single
+                // match or the longest common prefix of all
+                // matches.  Multiple matches surface as a
+                // status-line list so the user can see what
+                // else exists.
+                self.shell_tab_complete();
+            }
+            // 1.2.8+ — readline-style line editing.  Single-
+            // line prompt so we omit Ctrl+A=select-all,
+            // Ctrl+U=undo, Ctrl+Y=redo from the editor's
+            // textarea bindings (no selection model, no
+            // undo history on the input ring).  Instead
+            // bind the chords the way bash / zsh / readline
+            // users expect:
+            //   Ctrl+A   → start of line
+            //   Ctrl+E   → end of line
+            //   Ctrl+U   → kill from cursor to start
+            //   Ctrl+K   → kill from cursor to end
+            //   Ctrl+W   → kill the word before the cursor
+            //   Ctrl+L   → clear scrollback
+            //   Ctrl+D   → clear input if non-empty, close
+            //              pane if empty (terminal idiom)
+            //   Alt+B / Alt+F / Ctrl+Left / Ctrl+Right
+            //            → word back / word forward
+            //   Alt+Backspace → kill word back
+            KeyCode::Char('a') | KeyCode::Char('A')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.move_home();
+                }
+            }
+            KeyCode::Char('e') | KeyCode::Char('E')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.move_end();
+                }
+            }
+            KeyCode::Char('u') | KeyCode::Char('U')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.kill_to_start();
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Char('K')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.kill_to_end();
+                }
+            }
+            KeyCode::Char('w') | KeyCode::Char('W')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.kill_word_left();
+                }
+            }
+            KeyCode::Char('l') | KeyCode::Char('L')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                // Clear scrollback (terminal idiom).  Engine
+                // state and command history are preserved —
+                // this is purely a visual reset of the turn
+                // buffer.
+                self.shell_history.clear();
+                if let Modal::ShellPane { scroll, .. } = &mut self.modal {
+                    *scroll = 0;
+                }
+                self.status = "shell: scrollback cleared".into();
+            }
+            KeyCode::Char('d') | KeyCode::Char('D')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                let input_empty = matches!(
+                    &self.modal,
+                    Modal::ShellPane { input, .. } if input.is_empty()
+                );
+                if input_empty {
+                    self.modal = Modal::None;
+                    self.status =
+                        "shell: closed via Ctrl+D (state preserved · Ctrl+Z o to reopen)".into();
+                } else if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.clear();
+                }
+            }
+            KeyCode::Char('b') | KeyCode::Char('B')
+                if key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.move_word_left();
+                }
+            }
+            KeyCode::Char('f') | KeyCode::Char('F')
+                if key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.move_word_right();
+                }
+            }
+            KeyCode::Left
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.move_word_left();
+                }
+            }
+            KeyCode::Right
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.move_word_right();
+                }
+            }
+            KeyCode::Backspace
+                if key.modifiers.contains(KeyModifiers::ALT)
+                    || key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.kill_word_left();
+                }
+            }
+            KeyCode::Esc => {
+                // Esc closes the pane; engine + history
+                // persist on App.
+                self.modal = Modal::None;
+                self.status =
+                    "shell: closed (state preserved · Ctrl+Z o to reopen)".into();
+            }
+            // Home/End in normal mode go to the prompt's
+            // beginning/end (text-input native behaviour),
+            // BUT modified Home/End — Shift+Home / Shift+End —
+            // jump scrollback to top/bottom.  Without the
+            // modifier, the text-input handler picks them up
+            // via the `_` arm below.
+            KeyCode::Home if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                if let Modal::ShellPane { scroll, .. } = &mut self.modal {
+                    *scroll = usize::MAX / 2;
+                }
+            }
+            KeyCode::End if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                if let Modal::ShellPane { scroll, .. } = &mut self.modal {
+                    *scroll = 0;
+                }
+            }
+            _ => {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    handle_text_input_key(input, key);
+                }
+            }
+        }
+    }
+
+    /// 1.2.8+ — Ctrl+V Shift+U. Open the kill-ring picker.
+    /// Empty ring → status message and no modal.
+    fn open_kill_ring_picker(&mut self) {
+        if self.kill_ring.is_empty() {
+            self.status = "kill-ring: empty (nothing to restore)".into();
+            return;
+        }
+        self.modal = Modal::KillRingPicker { cursor: 0 };
+        self.status = format!(
+            "kill-ring: {} entr{} · ↑↓ select · Enter restore · Esc cancel",
+            self.kill_ring.len(),
+            if self.kill_ring.len() == 1 { "y" } else { "ies" }
+        );
+    }
+
+    /// 1.2.8+ — handle keystrokes inside `Modal::KillRingPicker`.
+    fn kill_ring_picker_handle_key(&mut self, key: KeyEvent) {
+        let Modal::KillRingPicker { cursor } = &mut self.modal else { return; };
+        let len = self.kill_ring.len();
+        if len == 0 {
+            self.modal = Modal::None;
+            return;
+        }
+        match key.code {
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < len {
+                    *cursor += 1;
+                }
+            }
+            KeyCode::Home => *cursor = 0,
+            KeyCode::End => *cursor = len.saturating_sub(1),
+            KeyCode::Enter => {
+                let idx = *cursor;
+                self.modal = Modal::None;
+                self.restore_kill_ring_entry(idx);
+            }
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "kill-ring: cancelled".into();
+            }
+            _ => {}
+        }
+    }
+
+    /// 1.2.8+ — restore the kill-ring entry at `idx`. Removes
+    /// it from the ring (whether or not the restore succeeds —
+    /// failure cases reinsert on the error path, mirroring
+    /// `undo_last_delete`'s semantics).
+    fn restore_kill_ring_entry(&mut self, idx: usize) {
+        if idx >= self.kill_ring.len() {
+            self.status = "kill-ring: index out of range".into();
+            return;
+        }
+        let stash = self.kill_ring.remove(idx).expect("idx checked");
+        let parent = stash
+            .parent_id
+            .and_then(|id| self.hierarchy.get(id).cloned());
+        let position = match stash.anchor_id {
+            Some(id) if self.hierarchy.get(id).is_some() => {
+                crate::store::InsertPosition::After(id)
+            }
+            _ => crate::store::InsertPosition::End,
+        };
+        let created = match self.store.create_node(
+            &self.cfg,
+            &self.hierarchy,
+            NodeKind::Paragraph,
+            &stash.title,
+            parent.as_ref(),
+            Some(&stash.slug),
+            position,
+        ) {
+            Ok(n) => n,
+            Err(e) => {
+                // Reinsert at the same index so the user can
+                // retry; status names the failure.
+                self.kill_ring.insert(idx, stash);
+                self.status = format!("kill-ring restore: create_node failed: {e}");
+                return;
+            }
+        };
+        if let Some(rel) = created.file.as_ref() {
+            let abs = self.layout.root.join(rel);
+            if let Err(e) = std::fs::write(&abs, &stash.content) {
+                self.status = format!(
+                    "kill-ring restore: paragraph created at `{}` but body write failed: {e}",
+                    created.slug
+                );
+                self.reload_hierarchy();
+                return;
+            }
+        }
+        let mut updated = created.clone();
+        updated.tags = stash.tags;
+        updated.linked_paragraphs = stash.linked_paragraphs;
+        updated.status = stash.status;
+        updated.target_words = stash.target_words;
+        if stash.content_type.is_some() {
+            updated.content_type = stash.content_type;
+        }
+        updated.event = stash.event;
+        updated.modified_at = chrono::Utc::now();
+        crate::store::reconcile_event_orphan_tag(&mut updated);
+        if let Err(e) = self
+            .store
+            .raw()
+            .update_metadata(updated.id, updated.to_json())
+        {
+            tracing::warn!(
+                target: "inkhaven::undo",
+                "kill-ring metadata restore failed for {}: {e}",
+                updated.id
+            );
+        }
+        self.reload_hierarchy();
+        self.status = format!(
+            "↺ restored `{}` from kill-ring (new uuid {} — cross-refs to old uuid stay broken)",
             updated.title,
             updated.id.simple()
         );
@@ -9523,6 +11178,9 @@ impl App {
         let is_backlink_picker = matches!(self.modal, Modal::BacklinkPicker { .. });
         let is_bookmark_picker = matches!(self.modal, Modal::BookmarkPicker { .. });
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
+        let is_kill_ring_picker = matches!(self.modal, Modal::KillRingPicker { .. });
+        let is_shell_pane = matches!(self.modal, Modal::ShellPane { .. });
+        let is_hjson_editor = matches!(self.modal, Modal::HjsonEditor { .. });
         let is_rendered_preview = matches!(self.modal, Modal::RenderedPreview { .. });
         let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
@@ -9577,9 +11235,63 @@ impl App {
                     Modal::HelpQuery { input } => input.as_str().to_string(),
                     _ => String::new(),
                 };
+                // 1.2.8+ — push onto history (dedup vs immediate
+                // predecessor); reset the navigation cursor.
+                let trimmed = query.trim();
+                if !trimmed.is_empty()
+                    && self.help_query_history.last().map(|s| s.as_str()) != Some(trimmed)
+                {
+                    self.help_query_history.push(trimmed.to_string());
+                }
+                self.help_query_history_cursor = None;
                 self.modal = Modal::None;
                 self.start_help_inference(&query);
                 return Ok(false);
+            }
+            // 1.2.8+ — Up / Down walks help_query_history.  Mirrors
+            // the AI-prompt history pattern: None on entry, Up goes
+            // to len-1, Down past newest clears.
+            match key.code {
+                KeyCode::Up => {
+                    if !self.help_query_history.is_empty() {
+                        let next = match self.help_query_history_cursor {
+                            Some(0) => 0,
+                            Some(i) => i - 1,
+                            None => self.help_query_history.len() - 1,
+                        };
+                        self.help_query_history_cursor = Some(next);
+                        let entry = self.help_query_history[next].clone();
+                        if let Modal::HelpQuery { input } = &mut self.modal {
+                            input.clear();
+                            for c in entry.chars() {
+                                input.insert_char(c);
+                            }
+                        }
+                    }
+                    return Ok(false);
+                }
+                KeyCode::Down => {
+                    if let Some(cur) = self.help_query_history_cursor {
+                        let next = cur + 1;
+                        if next >= self.help_query_history.len() {
+                            self.help_query_history_cursor = None;
+                            if let Modal::HelpQuery { input } = &mut self.modal {
+                                input.clear();
+                            }
+                        } else {
+                            self.help_query_history_cursor = Some(next);
+                            let entry = self.help_query_history[next].clone();
+                            if let Modal::HelpQuery { input } = &mut self.modal {
+                                input.clear();
+                                for c in entry.chars() {
+                                    input.insert_char(c);
+                                }
+                            }
+                        }
+                    }
+                    return Ok(false);
+                }
+                _ => {}
             }
             if let Modal::HelpQuery { input } = &mut self.modal {
                 handle_text_input_key(input, key);
@@ -9649,6 +11361,21 @@ impl App {
 
         if is_fuzzy_paragraph_picker {
             self.fuzzy_paragraph_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_kill_ring_picker {
+            self.kill_ring_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_shell_pane {
+            self.shell_pane_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_hjson_editor {
+            self.hjson_editor_handle_key(key);
             return Ok(false);
         }
 
@@ -10130,10 +11857,58 @@ impl App {
             let mut commit = false;
             let mut delete = false;
             let mut view_diff = false;
-            if let Modal::SnapshotPicker {
-                snapshots, cursor, ..
-            } = &mut self.modal
-            {
+            // 1.2.8+ — filter-focus mode: typed chars edit the
+            // annotation filter, Backspace edits, Esc exits
+            // filter focus.  Picker chords (Up/Down/Enter/D/V/
+            // Delete) only fire when filter mode is OFF.
+            if self.snapshot_filter_focused {
+                match key.code {
+                    KeyCode::Esc => {
+                        // Exit filter mode but keep the query so
+                        // the cursor stays on the narrowed list.
+                        self.snapshot_filter_focused = false;
+                        // Force the outer Esc handler to NOT close
+                        // the modal.  We've already handled this key.
+                        return Ok(false);
+                    }
+                    KeyCode::Enter => {
+                        // Enter inside filter mode commits the
+                        // filter (exits filter mode) but does not
+                        // load the snapshot — second Enter does
+                        // that.  Mirrors browser address-bar UX.
+                        self.snapshot_filter_focused = false;
+                    }
+                    KeyCode::Backspace => {
+                        self.snapshot_filter.pop();
+                        // Reset cursor — visible list shrunk/grew.
+                        if let Modal::SnapshotPicker { cursor, .. } = &mut self.modal {
+                            *cursor = 0;
+                        }
+                    }
+                    KeyCode::Char(c) => {
+                        self.snapshot_filter.push(c);
+                        if let Modal::SnapshotPicker { cursor, .. } = &mut self.modal {
+                            *cursor = 0;
+                        }
+                    }
+                    _ => {}
+                }
+                return Ok(false);
+            }
+            // `/` from chord mode enters filter focus.
+            if matches!(key.code, KeyCode::Char('/')) {
+                self.snapshot_filter_focused = true;
+                return Ok(false);
+            }
+            // Compute visible length up-front so cursor clamps to
+            // the FILTERED list, not the absolute snapshots Vec.
+            let visible_len = match &self.modal {
+                Modal::SnapshotPicker { snapshots, .. } => {
+                    self.visible_snapshot_indices(snapshots).len()
+                }
+                _ => 0,
+            };
+            if let Modal::SnapshotPicker { cursor, .. } = &mut self.modal {
                 match key.code {
                     KeyCode::Up => {
                         if *cursor > 0 {
@@ -10141,13 +11916,13 @@ impl App {
                         }
                     }
                     KeyCode::Down => {
-                        if *cursor + 1 < snapshots.len() {
+                        if *cursor + 1 < visible_len {
                             *cursor += 1;
                         }
                     }
                     KeyCode::Home => *cursor = 0,
                     KeyCode::End => {
-                        *cursor = snapshots.len().saturating_sub(1);
+                        *cursor = visible_len.saturating_sub(1);
                     }
                     KeyCode::Enter => commit = true,
                     // D (case-insensitive) or the Delete key removes
@@ -10332,17 +12107,25 @@ impl App {
         // API support.
         if root_kind == NodeKind::Paragraph && ids.len() == 1 {
             self.stash_deleted_paragraph(&root_node);
-        } else {
-            // Different delete shape — clear any stale stash
-            // so Ctrl+B U doesn't surprise the user with an
-            // older recoverable that no longer matches the
-            // most-recent action.
-            self.last_deleted = None;
         }
+        // 1.2.8+: branch deletes no longer clear the
+        // kill-ring. Older single-¶ entries in the ring
+        // are still valid recoveries — they reference paths
+        // that may or may not exist after the branch went,
+        // but the restore flow handles "parent gone" by
+        // falling back to InsertPosition::End. Keeping the
+        // entries is strictly more useful than dropping them.
 
         if let Err(e) = self.store.delete_subtree(&fs_rel, &ids) {
             self.status = format!("delete failed: {e}");
-            self.last_deleted = None;
+            // The push-front above already happened for a
+            // single-¶ stash; drop it again since the delete
+            // didn't actually fire — the on-disk paragraph
+            // still exists and the front-stash would create
+            // a duplicate on the next Ctrl+B U.
+            if root_kind == NodeKind::Paragraph && ids.len() == 1 {
+                self.kill_ring.pop_front();
+            }
             return;
         }
 
@@ -10354,10 +12137,20 @@ impl App {
         }
 
         self.modal = Modal::None;
-        let undo_hint = if self.last_deleted.is_some() {
-            " · Ctrl+B U to restore (new uuid — wiki-links to old id stay broken)"
+        let ring_len = self.kill_ring.len();
+        let undo_hint = if root_kind == NodeKind::Paragraph
+            && ids.len() == 1
+            && ring_len > 0
+        {
+            if ring_len == 1 {
+                " · Ctrl+B U to restore (new uuid — wiki-links to old id stay broken)".to_string()
+            } else {
+                format!(
+                    " · Ctrl+B U restore · Ctrl+V Shift+U picker ({ring_len} in ring)",
+                )
+            }
         } else {
-            ""
+            String::new()
         };
         self.status = format!(
             "deleted {} `{}` ({} other node{} removed){undo_hint}",
@@ -13202,6 +14995,63 @@ pub(super) fn format_progress_gauge(current: i64, target: i64) -> (String, i64, 
 }
 
 #[cfg(test)]
+mod tests_truncate {
+    use super::*;
+
+    #[test]
+    fn under_cap_returns_unchanged() {
+        let s = "a\nb\nc".to_string();
+        assert_eq!(truncate_to_lines(s.clone(), 10), s);
+    }
+
+    #[test]
+    fn empty_string_returns_empty() {
+        assert_eq!(truncate_to_lines(String::new(), 10), "");
+    }
+
+    #[test]
+    fn exact_cap_returns_unchanged() {
+        let s = "a\nb\nc".to_string();
+        assert_eq!(truncate_to_lines(s.clone(), 3), s);
+    }
+
+    #[test]
+    fn over_cap_truncates_and_appends_marker() {
+        // 10 lines, cap 3 → keep 2 + marker; marker mentions 8.
+        let s: String =
+            (1..=10).map(|i| format!("l{i}")).collect::<Vec<_>>().join("\n");
+        let out = truncate_to_lines(s, 3);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3, "must respect cap, got: {out:?}");
+        assert_eq!(lines[0], "l1");
+        assert_eq!(lines[1], "l2");
+        assert!(
+            lines[2].contains("8 more lines truncated"),
+            "expected marker for 8 dropped, got {:?}",
+            lines[2]
+        );
+    }
+
+    #[test]
+    fn cap_one_yields_just_the_marker() {
+        // cap=1 → keep=0 head, marker reports all N as dropped.
+        let s = "x\ny\nz".to_string();
+        let out = truncate_to_lines(s, 1);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("3 more lines truncated"));
+    }
+
+    #[test]
+    fn cap_zero_treated_as_one() {
+        // Defensive: 0-cap shouldn't divide-by-zero or panic.
+        let s = "a\nb".to_string();
+        let out = truncate_to_lines(s, 0);
+        assert!(out.contains("more lines truncated"));
+    }
+}
+
+#[cfg(test)]
 mod tests_gauge {
     use super::*;
 
@@ -13256,6 +15106,11 @@ pub(super) fn highlight_for_content(
     match content_type {
         Some("hjson") => super::hjson_highlight::highlight_hjson_lines(source, theme),
         Some("bund") => super::bund_highlight::highlight_bund_lines(source, theme),
+        // 1.2.8+ — Help-book paragraphs default to markdown
+        // and use the hand-rolled CommonMark-subset lexer
+        // (headings, fences, emphasis, links, lists, HRs).
+        Some("markdown") | Some("md") =>
+            super::markdown_highlight::highlight_markdown_lines(source, theme),
         _ => highlighter.highlight_lines(source, theme),
     }
 }

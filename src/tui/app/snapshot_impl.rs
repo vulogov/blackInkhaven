@@ -168,6 +168,10 @@ impl super::App {
                         format!("no snapshots yet for `{title}` — press F5 to create one");
                     return;
                 }
+                // 1.2.8+ — reset the annotation filter; previous
+                // session's filter shouldn't haunt a fresh picker.
+                self.snapshot_filter.clear();
+                self.snapshot_filter_focused = false;
                 self.modal = Modal::SnapshotPicker {
                     paragraph_id: id,
                     paragraph_title: title,
@@ -181,12 +185,42 @@ impl super::App {
         }
     }
 
+    /// 1.2.8+ — return indices into `snaps` that match the
+    /// current annotation filter (case-insensitive substring
+    /// against annotation text). Empty filter returns every
+    /// index in order. The picker uses these via
+    /// `visible[cursor]` to look up the absolute snapshot the
+    /// cursor refers to.
+    pub(super) fn visible_snapshot_indices(
+        &self,
+        snaps: &[crate::store::Snapshot],
+    ) -> Vec<usize> {
+        if self.snapshot_filter.is_empty() {
+            return (0..snaps.len()).collect();
+        }
+        let needle = self.snapshot_filter.to_lowercase();
+        snaps
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.annotation.to_lowercase().contains(&needle))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     pub(super) fn commit_snapshot_load(&mut self) {
+        // 1.2.8+ — when the annotation filter is non-empty,
+        // `cursor` indexes the FILTERED visible list, not the
+        // absolute snapshots Vec.  Translate before reading.
         let (snap_id, when) = match &self.modal {
             Modal::SnapshotPicker {
                 snapshots, cursor, ..
             } => {
-                let Some(snap) = snapshots.get(*cursor) else {
+                let visible = self.visible_snapshot_indices(snapshots);
+                let Some(abs_idx) = visible.get(*cursor) else {
+                    self.modal = Modal::None;
+                    return;
+                };
+                let Some(snap) = snapshots.get(*abs_idx) else {
                     self.modal = Modal::None;
                     return;
                 };
@@ -281,7 +315,12 @@ impl super::App {
                 paragraph_title,
                 ..
             } => {
-                let Some(snap) = snapshots.get(*cursor) else {
+                // 1.2.8+ — translate visible cursor → absolute index.
+                let visible = self.visible_snapshot_indices(snapshots);
+                let Some(abs_idx) = visible.get(*cursor) else {
+                    return;
+                };
+                let Some(snap) = snapshots.get(*abs_idx) else {
                     return;
                 };
                 (snap.id, snap.created_at, paragraph_title.clone())
@@ -322,6 +361,9 @@ impl super::App {
     }
 
     pub(super) fn delete_current_snapshot(&mut self) {
+        // 1.2.8+ — translate visible cursor → absolute index
+        // via the annotation-filter helper, same as the load
+        // path.
         let (snap_id, when, paragraph_id, paragraph_title) = match &self.modal {
             Modal::SnapshotPicker {
                 snapshots,
@@ -329,7 +371,11 @@ impl super::App {
                 paragraph_id,
                 paragraph_title,
             } => {
-                let Some(snap) = snapshots.get(*cursor).cloned() else {
+                let visible = self.visible_snapshot_indices(snapshots);
+                let Some(abs_idx) = visible.get(*cursor) else {
+                    return;
+                };
+                let Some(snap) = snapshots.get(*abs_idx).cloned() else {
                     return;
                 };
                 (snap.id, snap.created_at, *paragraph_id, paragraph_title.clone())

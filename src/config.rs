@@ -58,6 +58,18 @@ pub struct Config {
     /// `crate::timeline::calendar::CalendarConfig`.
     #[serde(default)]
     pub timeline: TimelineConfig,
+    /// 1.2.8+ — Scrivener-importer behaviour. Currently
+    /// scopes the CustomMeta date-field detection — which
+    /// field names in a Scrivener project's
+    /// `<CustomMetaDataSettings>` map to events on import.
+    #[serde(default)]
+    pub scrivener: ScrivenerConfig,
+    /// 1.2.8+ — embedded nushell pane (`Ctrl+Z o`). Enabled
+    /// by default; disable via `shell.enabled: false` to
+    /// strip the chord entirely (the modal action becomes
+    /// a no-op with a status hint).
+    #[serde(default)]
+    pub shell: ShellConfig,
     /// Bund scripting sandbox policy. Defaults deny destructive
     /// categories (fs_write, net, shell, code_eval); writers opt
     /// in by listing the categories or words they want to allow.
@@ -138,6 +150,8 @@ impl Default for Config {
             goals: GoalsConfig::default(),
             ai: AiConfig::default(),
             timeline: TimelineConfig::default(),
+            scrivener: ScrivenerConfig::default(),
+            shell: ShellConfig::default(),
             scripting: crate::scripting::policy::Policy::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
@@ -216,6 +230,146 @@ impl Default for SoundConfig {
             volume: 0.6,
         }
     }
+}
+
+/// 1.2.8+ — Scrivener-importer behaviour.
+///
+/// `date_fields`: which Scrivener CustomMeta field names (case-
+/// insensitive) should be interpreted as event dates during
+/// `inkhaven import-scrivener`. When a matching field's value
+/// parses against the project's HJSON calendar, the imported
+/// paragraph gets `EventData` attached automatically (anchored
+/// at the parsed start tick, no end, the project's
+/// `timeline.default_track`). When `timeline.enabled = false`
+/// the whole pass is a no-op.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScrivenerConfig {
+    pub date_fields: Vec<String>,
+}
+
+impl Default for ScrivenerConfig {
+    fn default() -> Self {
+        Self {
+            // Common English-language Scrivener templates: "Date"
+            // (default text field on the Novel template), "Story Date"
+            // (Novel-with-Parts), "Event Date" (custom but widely
+            // recommended in the Scrivener forum threads on timeline
+            // workflows). Users with non-English templates extend or
+            // replace this list in HJSON.
+            date_fields: vec![
+                "Date".into(),
+                "Story Date".into(),
+                "Event Date".into(),
+            ],
+        }
+    }
+}
+
+/// 1.2.8+ — embedded nushell pane.
+///
+/// `enabled`: ship the `Ctrl+Z o` chord at all. `false`
+/// makes the action a status-hint no-op, useful for users
+/// who prefer to keep their writing app shell-free.
+///
+/// `max_buffered_turns`: how many command/output pairs the
+/// pane retains. Older turns roll off the bottom. Picked to
+/// fit the working-memory needs of a writing session
+/// without growing unbounded across long-lived sessions.
+///
+/// `insert_template`: the typst markup `Ctrl+Z h` → `i`
+/// wraps a selected output in when inserting into the
+/// editor. The placeholder `{output}` is replaced with the
+/// raw command output verbatim. Default uses a typst `raw`
+/// block with `lang: "shell"` for monospace, no markdown
+/// reinterpretation. Customise for a framed or themed
+/// presentation.
+///
+/// `max_output_lines`: per-turn cap on stdout (and stderr).
+/// A single command (`git log`, `cat very_big_file`, …) can
+/// emit thousands of lines and bloat the in-memory turn
+/// buffer + slow ratatui rendering.  When a turn's stdout
+/// exceeds this many lines, the head is kept and the tail
+/// is replaced with `… (N more lines truncated)`.  Same
+/// rule applies to stderr.  Independent of
+/// `max_buffered_turns` (which caps the number of *turns*).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ShellConfig {
+    pub enabled: bool,
+    pub max_buffered_turns: usize,
+    pub max_output_lines: usize,
+    pub insert_template: String,
+    /// 1.2.8+ — basenames of external programs that are
+    /// **refused before spawn**.  Full-screen TUI apps
+    /// (vim, less, top, tmux, …) cannot run inside the
+    /// embedded pane: they open `/dev/tty` directly and
+    /// write escape sequences past our piped stdio,
+    /// corrupting ratatui's alt-screen surface.  Match is
+    /// case-insensitive against the program basename, so
+    /// `^/usr/bin/vim` and `^vim` both hit.  Override per
+    /// project to add internal tools.
+    pub blocked_externals: Vec<String>,
+    /// 1.2.8+ — wall-clock budget for a single command's
+    /// evaluation.  After this many seconds the engine
+    /// triggers its interrupt signal, waits a short grace
+    /// period, and (if the command is still wedged) spins
+    /// up a fresh engine and abandons the worker — losing
+    /// any env-var / def state the user accumulated but
+    /// keeping the TUI responsive.  Catches TUI apps that
+    /// slip past `blocked_externals`.  Set high (e.g.
+    /// 600) if you legitimately run long-baked pipelines.
+    pub external_timeout_secs: u64,
+}
+
+impl Default for ShellConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_buffered_turns: 50,
+            max_output_lines: 1000,
+            insert_template:
+                "#raw(block: true, lang: \"shell\", `{output}`)".into(),
+            blocked_externals: default_blocked_externals(),
+            external_timeout_secs: 30,
+        }
+    }
+}
+
+/// 1.2.8+ — default list of basenames refused before
+/// spawn.  See `ShellConfig::blocked_externals` for the
+/// rationale.  Grouped by category for editability:
+///
+///   editors        — vim/nvim/vi/view/emacs/nano/pico/joe
+///   file managers  — mc/mcedit/ranger/nnn/lf/yazi
+///   pagers         — less/more/most/pg
+///   monitors       — top/htop/btop/atop/iotop/iftop
+///   multiplexers   — tmux/screen/byobu/dtach
+///   remote shells  — ssh/telnet/mosh
+///   debuggers      — gdb/lldb
+///   fuzzy finders  — fzf/peco/sk
+///   REPLs (TTY)    — ipython/irb/pry
+///   db clients     — psql/mysql/sqlite3
+///   privileged     — sudo/su/passwd
+pub fn default_blocked_externals() -> Vec<String> {
+    [
+        "vim", "nvim", "vi", "view", "ex",
+        "emacs", "emacsclient",
+        "nano", "pico", "joe", "jed",
+        "mc", "mcedit", "ranger", "nnn", "lf", "yazi",
+        "less", "more", "most", "pg",
+        "top", "htop", "btop", "atop", "iotop", "iftop", "nethogs", "glances",
+        "tmux", "screen", "byobu", "dtach", "abduco",
+        "ssh", "telnet", "mosh", "rlogin",
+        "gdb", "lldb",
+        "fzf", "peco", "sk", "skim",
+        "ipython", "irb", "pry",
+        "psql", "mysql", "sqlite3", "redis-cli",
+        "sudo", "su", "passwd",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
 }
 
 /// Typst function templates used during Book assembly (Ctrl+B A).
@@ -1120,10 +1274,38 @@ pub struct EditorConfig {
     /// Set false to skip directly into the editor.
     #[serde(default = "default_startup_splash")]
     pub startup_splash: bool,
+    /// 1.2.8+ — initial mouse-capture state on launch.
+    /// `true` (the default) hands every mouse event to the
+    /// TUI: click-to-focus, scroll-wheel scrolling per pane,
+    /// in-TUI drag-select. `false` releases capture at
+    /// startup so the terminal's native drag-select +
+    /// system-clipboard copy (Cmd/Ctrl+Shift+C) work without
+    /// pressing `Ctrl+Shift+M` first. The toggle still
+    /// flips state at runtime regardless of this knob.
+    #[serde(default = "default_mouse_captured")]
+    pub mouse_captured: bool,
+    /// 1.2.8+ — pop a confirmation modal on Ctrl+Q before
+    /// quitting.  Default `false` — Ctrl+Q quits
+    /// immediately (auto-saving any dirty buffer first, as
+    /// always).  Set `true` to require a Y / Enter
+    /// confirmation; N / Esc cancels and returns to the
+    /// editor.  Useful for users who hit Ctrl+Q by accident
+    /// (terminals with Ctrl+Q as a software-flow-control
+    /// chord especially).
+    #[serde(default = "default_confirm_quit")]
+    pub confirm_quit: bool,
 }
 
 fn default_startup_splash() -> bool {
     true
+}
+
+fn default_mouse_captured() -> bool {
+    true
+}
+
+fn default_confirm_quit() -> bool {
+    false
 }
 
 impl Default for EditorConfig {
@@ -1136,6 +1318,8 @@ impl Default for EditorConfig {
             auto_close_pairs: true,
             stemming: StemmingConfig::default(),
             startup_splash: default_startup_splash(),
+            mouse_captured: default_mouse_captured(),
+            confirm_quit: default_confirm_quit(),
         }
     }
 }

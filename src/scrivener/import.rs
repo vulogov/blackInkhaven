@@ -21,8 +21,9 @@ use crate::scrivener::binder::{parse_project, BinderItem};
 use crate::scrivener::mapping::{classify, node_kind_for, Classification};
 use crate::scrivener::rtf::rtf_to_typst;
 use crate::store::hierarchy::Hierarchy;
-use crate::store::node::{Node, NodeKind};
-use crate::store::{InsertPosition, Store, SYSTEM_TAG_NOTES, SYSTEM_TAG_PLACES, SYSTEM_TAG_CHARACTERS, SYSTEM_TAG_ARTEFACTS};
+use crate::store::node::{EventData, Node, NodeKind};
+use crate::store::{InsertPosition, Store, reconcile_event_orphan_tag, SYSTEM_TAG_NOTES, SYSTEM_TAG_PLACES, SYSTEM_TAG_CHARACTERS, SYSTEM_TAG_ARTEFACTS};
+use crate::timeline::Calendar;
 
 #[derive(Debug, Clone, Default)]
 pub struct ImportOpts {
@@ -59,12 +60,24 @@ pub fn import_scrivener_project(
         .with_context(|| format!("parse .scrivx in {}", scriv_root.display()))?;
     let docs_dir = scriv_root.join("Files").join("Docs");
     let mut report = ImportReport::default();
+    // 1.2.8+ — when the timeline is opted-in, pre-build the
+    // project's Calendar once. The importer feeds CustomMeta
+    // date-field values to it during paragraph creation;
+    // values that parse become `EventData` on the resulting
+    // node. When the timeline is disabled we skip the whole
+    // pass even if the .scrivx carries CustomMeta dates.
+    let calendar = if cfg.timeline.enabled {
+        Some(Calendar::from_config(cfg.timeline.calendar.clone()))
+    } else {
+        None
+    };
     let mut ctx = WalkCtx {
         docs_dir,
         store,
         cfg,
         opts,
         report: &mut report,
+        calendar: calendar.as_ref(),
     };
     // Each top-level item is either the Draft, a system-book-
     // mappable folder, or skip. Walk them in order.
@@ -80,6 +93,10 @@ struct WalkCtx<'a> {
     cfg: &'a Config,
     opts: &'a ImportOpts,
     report: &'a mut ImportReport,
+    /// 1.2.8+ — present when `timeline.enabled = true`. The
+    /// CustomMeta date-extract pass in `create_paragraph` only
+    /// runs when this is `Some`.
+    calendar: Option<&'a Calendar>,
 }
 
 impl<'a> WalkCtx<'a> {
@@ -323,6 +340,69 @@ impl<'a> WalkCtx<'a> {
                 self.report.errors.push(format!(
                     "tags persist for `{title}`: {e}"
                 ));
+            }
+        }
+
+        // 1.2.8+ — propagate Scrivener CustomMeta date fields
+        // → inkhaven `EventData`. The mapping table is
+        // `cfg.scrivener.date_fields` (case-insensitive title
+        // match); the value is parsed by the project's
+        // Calendar. Only runs when `timeline.enabled = true`.
+        // Errors are warnings — bad date values do NOT abort
+        // the import of the rest of the paragraph; they land
+        // on `ImportReport.errors` for the user to chase.
+        // The first matching field on the item wins; multiple
+        // date fields with conflicting values would be a user
+        // setup bug rather than something the importer should
+        // try to resolve.
+        if let Some(calendar) = self.calendar {
+            if !item.custom_meta.is_empty() {
+                let date_fields: Vec<String> = self
+                    .cfg
+                    .scrivener
+                    .date_fields
+                    .iter()
+                    .map(|s| s.to_lowercase())
+                    .collect();
+                let event_opt = item.custom_meta.iter().find_map(|(field, value)| {
+                    let f_lower = field.to_lowercase();
+                    if !date_fields.iter().any(|d| d == &f_lower) {
+                        return None;
+                    }
+                    match calendar.parse(value) {
+                        Ok((point, precision)) => Some((field.clone(), value.clone(), point, precision)),
+                        Err(e) => {
+                            self.report.errors.push(format!(
+                                "date `{title}` (Scrivener field `{field}` = `{value}`): {e}"
+                            ));
+                            None
+                        }
+                    }
+                });
+                if let Some((field, _value, point, precision)) = event_opt {
+                    node.event = Some(EventData {
+                        start_ticks: point.ticks(),
+                        end_ticks: None,
+                        precision,
+                        characters: Vec::new(),
+                        places: Vec::new(),
+                        // No track override — Scrivener CustomMeta
+                        // has no equivalent concept; the timeline
+                        // view's `default_track` carries it.
+                        track: None,
+                    });
+                    reconcile_event_orphan_tag(&mut node);
+                    node.modified_at = chrono::Utc::now();
+                    if let Err(e) = self
+                        .store
+                        .raw()
+                        .update_metadata(node.id, node.to_json())
+                    {
+                        self.report.errors.push(format!(
+                            "event persist for `{title}` from `{field}`: {e}"
+                        ));
+                    }
+                }
             }
         }
         Ok(())

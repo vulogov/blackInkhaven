@@ -50,6 +50,16 @@ impl TextInput {
         self.cursor = 0;
     }
 
+    /// 1.2.8+ — replace the full buffer and set the cursor
+    /// in one step (char-index).  Used by the shell pane's
+    /// Tab autocomplete to swap a token for its completion.
+    /// Clamps cursor to the new buffer's char length.
+    pub fn set_with_cursor(&mut self, text: String, cursor_chars: usize) {
+        let len = text.chars().count();
+        self.buffer = text;
+        self.cursor = cursor_chars.min(len);
+    }
+
     pub fn insert_char(&mut self, c: char) {
         let byte_idx = self.byte_offset(self.cursor);
         self.buffer.insert(byte_idx, c);
@@ -97,6 +107,70 @@ impl TextInput {
         self.cursor = self.buffer.chars().count();
     }
 
+    /// 1.2.8+ — kill from the cursor to the start of the
+    /// buffer (readline Ctrl+U).  The deleted text is NOT
+    /// captured into a yank ring — single-line prompts don't
+    /// have the multi-stash workflow that justifies one.
+    pub fn kill_to_start(&mut self) {
+        let cur_byte = self.byte_offset(self.cursor);
+        self.buffer.replace_range(0..cur_byte, "");
+        self.cursor = 0;
+    }
+
+    /// 1.2.8+ — kill from the cursor to the end of the buffer
+    /// (readline Ctrl+K).
+    pub fn kill_to_end(&mut self) {
+        let cur_byte = self.byte_offset(self.cursor);
+        self.buffer.truncate(cur_byte);
+    }
+
+    /// 1.2.8+ — move the cursor backward to the start of the
+    /// previous word.  Words are defined as runs of
+    /// non-whitespace, non-punctuation chars (same convention
+    /// as readline's `\b` / Alt+B).
+    pub fn move_word_left(&mut self) {
+        let chars: Vec<char> = self.buffer.chars().collect();
+        let mut i = self.cursor;
+        // Skip any whitespace immediately before the cursor.
+        while i > 0 && is_word_separator(chars[i - 1]) {
+            i -= 1;
+        }
+        // Walk back through word chars.
+        while i > 0 && !is_word_separator(chars[i - 1]) {
+            i -= 1;
+        }
+        self.cursor = i;
+    }
+
+    /// 1.2.8+ — move the cursor forward to the end of the
+    /// next word.  Mirrors `move_word_left`.
+    pub fn move_word_right(&mut self) {
+        let chars: Vec<char> = self.buffer.chars().collect();
+        let len = chars.len();
+        let mut i = self.cursor;
+        // Walk forward through word chars first.
+        while i < len && !is_word_separator(chars[i]) {
+            i += 1;
+        }
+        // Then skip trailing separator(s) to land at the next
+        // word's start.
+        while i < len && is_word_separator(chars[i]) {
+            i += 1;
+        }
+        self.cursor = i;
+    }
+
+    /// 1.2.8+ — kill the word immediately before the cursor
+    /// (readline Ctrl+W / Alt+Backspace).  Uses the same word
+    /// definition as `move_word_left`.
+    pub fn kill_word_left(&mut self) {
+        let start_cursor = self.cursor;
+        self.move_word_left();
+        let kill_start_byte = self.byte_offset(self.cursor);
+        let kill_end_byte = self.byte_offset(start_cursor);
+        self.buffer.replace_range(kill_start_byte..kill_end_byte, "");
+    }
+
     fn byte_offset(&self, char_idx: usize) -> usize {
         self.buffer
             .char_indices()
@@ -104,6 +178,23 @@ impl TextInput {
             .map(|(b, _)| b)
             .unwrap_or(self.buffer.len())
     }
+}
+
+/// 1.2.8+ — predicate used by `move_word_*` / `kill_word_*`.
+/// Whitespace and ASCII punctuation chars break word runs;
+/// everything else (letters, digits, underscores, non-ASCII
+/// letters) is part of a word.  Matches readline + most
+/// editors so Ctrl+W jumps to the start of the identifier
+/// the cursor sits in, regardless of language.
+fn is_word_separator(c: char) -> bool {
+    c.is_whitespace()
+        || matches!(
+            c,
+            '|' | ';' | '(' | ')' | '[' | ']' | '{' | '}'
+            | ',' | '.' | ':' | '/' | '\\' | '"' | '\''
+            | '`' | '<' | '>' | '!' | '?' | '*' | '&'
+            | '=' | '+' | '~'
+        )
 }
 
 #[cfg(test)]
@@ -192,6 +283,61 @@ mod tests {
         t.delete(); // removes 'b'
         assert_eq!(t.as_str(), "acde");
         assert_eq!(t.cursor(), 1);
+    }
+
+    #[test]
+    fn kill_to_start_and_end() {
+        let mut t = TextInput::new();
+        for c in "hello world".chars() {
+            t.insert_char(c);
+        }
+        // cursor at end → kill_to_start clears everything.
+        t.kill_to_start();
+        assert_eq!(t.as_str(), "");
+        assert_eq!(t.cursor(), 0);
+
+        for c in "hello world".chars() {
+            t.insert_char(c);
+        }
+        // cursor between 'hello ' and 'world' → kill_to_end
+        // leaves "hello ".
+        t.move_home();
+        for _ in 0..6 {
+            t.move_right();
+        }
+        t.kill_to_end();
+        assert_eq!(t.as_str(), "hello ");
+        assert_eq!(t.cursor(), 6);
+    }
+
+    #[test]
+    fn word_navigation_and_kill() {
+        let mut t = TextInput::new();
+        for c in "git status --short".chars() {
+            t.insert_char(c);
+        }
+        // Hyphen is intentionally NOT a separator so `--short`
+        // counts as one logical word (a CLI flag).  From the
+        // end, three move_word_left jumps land on:
+        //   `--short` start, `status` start, `git` start.
+        t.move_word_left();
+        assert_eq!(t.cursor(), "git status ".len());
+        t.move_word_left();
+        assert_eq!(t.cursor(), "git ".len());
+        t.move_word_left();
+        assert_eq!(t.cursor(), 0);
+
+        // Forward: from start, jump past `git`, land on `status`.
+        t.move_word_right();
+        assert_eq!(t.cursor(), "git ".len());
+
+        // Kill word left at end of buffer.
+        let mut t2 = TextInput::new();
+        for c in "git status".chars() {
+            t2.insert_char(c);
+        }
+        t2.kill_word_left();
+        assert_eq!(t2.as_str(), "git ");
     }
 
     #[test]
