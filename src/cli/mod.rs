@@ -242,7 +242,19 @@ pub enum Command {
     /// initialised project: hierarchy shape + word counts), and
     /// notes (actionable warnings like "typst not on PATH"). No
     /// questions asked, pipe-friendly plain-text output.
-    Doctor,
+    ///
+    /// 1.2.9+ — `--voices` swaps the default report for a
+    /// pipe-friendly list of TTS voices visible to the host
+    /// OS (`tts-rs`).  Useful for picking a value for
+    /// `editor.tts.voice` in HJSON without leaving the
+    /// terminal.
+    Doctor {
+        /// List every TTS voice the host OS exposes through
+        /// `tts-rs`, one per line: `<name>  ·  <locale>`.
+        /// Skips the rest of the health report when set.
+        #[arg(long)]
+        voices: bool,
+    },
 
     /// 1.2.6+ — story-timeline event management. Requires
     /// `timeline.enabled: true` in HJSON.
@@ -495,7 +507,13 @@ impl Cli {
             Command::Stats { book_name } => {
                 stats::run(&project, book_name.as_deref()).map_err(Into::into)
             }
-            Command::Doctor => doctor::run(&project).map_err(Into::into),
+            Command::Doctor { voices } => {
+                if voices {
+                    doctor::run_voices().map_err(Into::into)
+                } else {
+                    doctor::run(&project).map_err(Into::into)
+                }
+            }
             Command::Build { book_name, compile } => {
                 build::run(&project, book_name.as_deref(), compile).map_err(Into::into)
             }
