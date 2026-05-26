@@ -2683,18 +2683,35 @@ impl super::super::App {
         let end = total.saturating_sub(effective_scroll);
         let start = end.saturating_sub(visible_n);
         let visible: Vec<Line<'_>> = lines[start..end].to_vec();
-        // 1.2.8+ — `Wrap { trim: false }` is critical here.
-        // Without it, lines wider than the pane width get
-        // arbitrarily truncated AND nu's table output (which
-        // sometimes runs ~120 cols) clips on narrow terminals.
-        // Wrap also implicitly guards against ANSI bytes in
-        // captured external-command output — they get stripped
-        // upstream in shell::strip_ansi but the wrap belt-and-
-        // braces ensures rendering stays sane if something
-        // slips through.
+        // 1.2.8+ — anchor short content to the BOTTOM of the
+        // body rect, not the top.  Without this, a fresh
+        // session (one `ls` turn = ~9 lines) renders flush
+        // against the top of a 60-row pane and the prompt
+        // sits at the bottom with a huge empty gap in
+        // between.  Terminal users expect the most-recent
+        // output to be near the prompt (where the eyes
+        // already are after pressing Enter), so we render
+        // the visible lines in a sub-rect anchored to the
+        // bottom edge of body_rect.  When visible.len() >=
+        // body_h (long output, normal scrolling case),
+        // sub_rect == body_rect — no behavioural change.
+        //
+        // `Wrap { trim: false }` is critical here.  Without
+        // it, lines wider than the pane width get arbitrarily
+        // truncated AND nu's table output (which sometimes
+        // runs ~120 cols) clips on narrow terminals.  Wrap
+        // also implicitly guards against ANSI bytes that
+        // slip past `shell::strip_ansi`.
+        let used_h = (visible.len() as u16).min(body_h);
+        let render_rect = Rect {
+            x: body_rect.x,
+            y: body_rect.y + body_h.saturating_sub(used_h),
+            width: body_rect.width,
+            height: used_h,
+        };
         f.render_widget(
             Paragraph::new(visible).wrap(Wrap { trim: false }),
-            body_rect,
+            render_rect,
         );
 
         // Prompt + hint.
