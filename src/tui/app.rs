@@ -7434,19 +7434,20 @@ impl App {
             return;
         }
 
-        // ── 4 — engine init (fresh each call) ──
-        // Drop any prior engine before re-init.  Verified
-        // via `inkhaven doctor --tts-test`: reusing a Tts
-        // instance for back-to-back speak() calls on
-        // macOS AVFoundation silently drops audio on the
-        // second+ utterance (Ok return + fresh utterance
-        // id, but no sound).  Drop-and-recreate adds
-        // ~100-200ms init latency, which is invisible vs.
-        // a Ctrl+B S that doesn't play.
-        self.tts_engine = None;
-        let attempt: Result<tts::Tts, String> = tts::Tts::default()
-            .map_err(|e| format!("{e}"));
-        self.tts_engine = Some(attempt);
+        // ── 4 — engine init (cached, with soft reset) ──
+        // Lazy-init on first use, reused thereafter.  The
+        // AVFoundation reuse bug (where the second
+        // speak(text, true) returns Ok but produces no
+        // audio) is worked around by stop() + 80ms sleep
+        // + speak(text, false) at the call site below.
+        // Drop-and-recreate was tried first but breaks
+        // AVFoundation engine re-init outright on some
+        // macOS versions ("Operation failed").
+        if self.tts_engine.is_none() {
+            let attempt: Result<tts::Tts, String> = tts::Tts::default()
+                .map_err(|e| format!("{e}"));
+            self.tts_engine = Some(attempt);
+        }
         let engine = match self.tts_engine.as_mut().unwrap() {
             Ok(e) => e,
             Err(err) => {
@@ -7509,8 +7510,16 @@ impl App {
             .clamp(engine.min_rate(), engine.max_rate());
         let _ = engine.set_rate(target);
 
-        // ── 6 — start speech (interrupt any prior) ──
-        if let Err(e) = engine.speak(body.clone(), true) {
+        // ── 6 — start speech ──────────────────────
+        // Soft reset before speak (workaround for the
+        // AVFoundation reuse bug where back-to-back
+        // speak() calls silently drop audio on
+        // utterance 2+).  Then speak with
+        // `interrupt: false` — the queue is already
+        // drained by stop().
+        let _ = engine.stop();
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        if let Err(e) = engine.speak(body.clone(), false) {
             self.modal = Modal::TtsUnavailable {
                 title: " TTS error ".into(),
                 reason: format!(
@@ -7593,32 +7602,39 @@ impl App {
     /// In both cases the caller silently skips speech —
     /// no modal, no status nag.
     ///
-    /// **Always builds a fresh engine.**  On macOS
-    /// AVFoundation, reusing a `Tts` instance for
-    /// back-to-back `speak()` calls has been observed to
-    /// produce audio for the first utterance and silently
-    /// drop subsequent ones (the call returns Ok with a
-    /// fresh utterance id but no sound plays).  Verified
-    /// via `inkhaven doctor --tts-test`: round 2 on the
-    /// reused engine plays no audio, round 3 on a fresh
-    /// engine plays cleanly.  Drop-and-recreate adds
-    /// ~100-200ms latency per Ctrl+B S, which is barely
-    /// perceptible vs. the bug it eliminates.
+    /// Lazy-init on first call; reused thereafter.  Each
+    /// call calls `stop()` on the engine BEFORE returning
+    /// it, then sleeps 80ms — this is the workaround for
+    /// the AVFoundation reuse bug where a second
+    /// `speak(text, true)` on the same engine silently
+    /// dropped audio.  The user-visible spec stays
+    /// "interrupt prior speech and play the new one";
+    /// the call site uses `interrupt: false` because the
+    /// `stop()` above has already drained the queue.
     fn tts_engine_ready(&mut self) -> Option<&mut tts::Tts> {
         if !self.cfg.editor.tts.enabled {
             return None;
         }
-        // Drop any prior engine before re-init.  The Drop
-        // impl tears down AVFoundation's AVSpeechSynthesizer
-        // / SAPI handle / speechd connection cleanly so
-        // the fresh instance starts from a known state.
-        self.tts_engine = None;
-        let attempt = tts::Tts::default().map_err(|e| format!("{e}"));
-        self.tts_engine = Some(attempt);
+        if self.tts_engine.is_none() {
+            let attempt = tts::Tts::default().map_err(|e| format!("{e}"));
+            self.tts_engine = Some(attempt);
+        }
         let engine = match self.tts_engine.as_mut().unwrap() {
             Ok(e) => e,
             Err(_) => return None,
         };
+        // Clear any in-flight speech and pending queue.
+        // This is the workaround for the AVFoundation
+        // reuse bug: `interrupt: true` on speak() returns
+        // Ok but silently produces no audio on subsequent
+        // calls.  An explicit stop() + brief sleep
+        // followed by `interrupt: false` speak() gets the
+        // engine into a clean state every time.  80ms is
+        // enough for the previous audio thread to release
+        // the audio device on macOS without being
+        // noticeable to the user.
+        let _ = engine.stop();
+        std::thread::sleep(std::time::Duration::from_millis(80));
         // Voice + speed (cheap operations; applying them
         // every call keeps a runtime HJSON reload in
         // sync without extra plumbing).
@@ -7660,10 +7676,13 @@ impl App {
             return;
         }
         if let Some(engine) = self.tts_engine_ready() {
-            // `interrupt = true` so any leftover speech
-            // (defensive — unlikely on a fresh launch)
-            // doesn't queue up.
-            let _ = engine.speak(text, true);
+            // `tts_engine_ready` already did stop() + 80ms
+            // soft reset, so the queue is empty — speak
+            // with `interrupt: false` (queue an utterance
+            // on the cleared queue).  Workaround for the
+            // AVFoundation reuse bug, see
+            // `tts_engine_ready` doc.
+            let _ = engine.speak(text, false);
         }
     }
 
@@ -7682,7 +7701,10 @@ impl App {
             return;
         }
         let Some(engine) = self.tts_engine_ready() else { return; };
-        if engine.speak(text.clone(), true).is_err() {
+        // `tts_engine_ready` did stop() + 80ms soft reset
+        // so the queue is empty — use `interrupt: false`.
+        // Workaround for the AVFoundation reuse bug.
+        if engine.speak(text.clone(), false).is_err() {
             return;
         }
         // Two-phase wait.  Phase 1 is a minimum hold to

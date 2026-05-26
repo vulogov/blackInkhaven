@@ -221,7 +221,10 @@ pub fn run_tts_test(project: &Path, text: &str) -> Result<()> {
      -> bool {
         let start = std::time::Instant::now();
         print!("         {label}: speak ... ");
-        let result = engine.speak(payload.to_string(), true);
+        // Soft-reset then speak (matches the TUI path).
+        let _ = engine.stop();
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        let result = engine.speak(payload.to_string(), false);
         match &result {
             Ok(id) => println!("Ok({:?})", id),
             Err(e) => {
