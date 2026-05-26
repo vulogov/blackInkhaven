@@ -2327,10 +2327,17 @@ impl App {
     /// modal is up so the click can't accidentally focus a pane that's
     /// hidden behind the floating panel.
     fn handle_mouse(&mut self, ev: MouseEvent) {
-        if !matches!(self.modal, Modal::None) {
+        // 1.2.8+ — modal dispatch FIRST.  Previously
+        // returned early for any modal; now route the
+        // wheel into modals that have meaningful scroll
+        // state (shell pane turn buffer, HJSON editor
+        // cursor, picker cursors).  Picker overlays still
+        // dominate — handle them inline.
+        if self.show_results_overlay || self.show_prompt_picker {
             return;
         }
-        if self.show_results_overlay || self.show_prompt_picker {
+        if !matches!(self.modal, Modal::None) {
+            self.handle_mouse_in_modal(ev);
             return;
         }
         let (col, row) = (ev.column, ev.row);
@@ -2351,13 +2358,104 @@ impl App {
             MouseEventKind::ScrollUp => match pane {
                 Some(Focus::Tree) => self.move_cursor(-3),
                 Some(Focus::Editor) => self.mouse_scroll_editor(-3),
+                Some(Focus::Ai) => {
+                    // Wheel up = show older content
+                    // (chat_history_scroll grows backward).
+                    self.chat_history_scroll =
+                        self.chat_history_scroll.saturating_add(3);
+                }
                 _ => {}
             },
             MouseEventKind::ScrollDown => match pane {
                 Some(Focus::Tree) => self.move_cursor(3),
                 Some(Focus::Editor) => self.mouse_scroll_editor(3),
+                Some(Focus::Ai) => {
+                    self.chat_history_scroll =
+                        self.chat_history_scroll.saturating_sub(3);
+                }
                 _ => {}
             },
+            _ => {}
+        }
+    }
+
+    /// 1.2.8+ — mouse-wheel dispatcher for the active modal.
+    /// Tier-1 modals (shell pane, HJSON editor, kill-ring
+    /// picker, fuzzy paragraph picker) get explicit wheel
+    /// behaviour; everything else falls through silently.
+    /// Step is 3 entries / lines per wheel-tick, matching
+    /// the main UI panes.
+    fn handle_mouse_in_modal(&mut self, ev: MouseEvent) {
+        use tui_textarea::CursorMove;
+        let dir: i32 = match ev.kind {
+            MouseEventKind::ScrollUp => -1,
+            MouseEventKind::ScrollDown => 1,
+            _ => return,
+        };
+        const STEP: usize = 3;
+        match &mut self.modal {
+            // Shell pane: wheel adjusts the turn-buffer
+            // scroll directly.  Up wheel = scroll back =
+            // increase the offset; down wheel = forward =
+            // decrease.
+            Modal::ShellPane { scroll, .. } => {
+                if dir < 0 {
+                    *scroll = scroll.saturating_add(STEP);
+                } else {
+                    *scroll = scroll.saturating_sub(STEP);
+                }
+            }
+            // HJSON editor: walk the textarea cursor up /
+            // down N lines.  Selection state is preserved
+            // (no cancel_selection here — wheel scrolling
+            // shouldn't dump an in-progress selection).
+            Modal::HjsonEditor { textarea, .. } => {
+                let cmove = if dir < 0 {
+                    CursorMove::Up
+                } else {
+                    CursorMove::Down
+                };
+                for _ in 0..STEP {
+                    textarea.move_cursor(cmove);
+                }
+            }
+            // Kill-ring picker: move the cursor up/down
+            // within the ring.  Clamp to [0, len-1].
+            Modal::KillRingPicker { cursor } => {
+                let len = self.kill_ring.len();
+                if len == 0 {
+                    return;
+                }
+                let max = len - 1;
+                if dir < 0 {
+                    *cursor = cursor.saturating_sub(STEP);
+                } else {
+                    *cursor = (*cursor + STEP).min(max);
+                }
+            }
+            // Fuzzy paragraph picker: move cursor + keep
+            // it visible by adjusting scroll.  Same step.
+            Modal::FuzzyParagraphPicker {
+                cursor,
+                scroll,
+                entries,
+                ..
+            } => {
+                let len = entries.len();
+                if len == 0 {
+                    return;
+                }
+                let max = len - 1;
+                if dir < 0 {
+                    *cursor = cursor.saturating_sub(STEP);
+                } else {
+                    *cursor = (*cursor + STEP).min(max);
+                }
+                // Keep scroll roughly aligned with cursor.
+                if *cursor < *scroll {
+                    *scroll = *cursor;
+                }
+            }
             _ => {}
         }
     }
