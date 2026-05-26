@@ -23,9 +23,20 @@ its visual focus state but does not see input until the overlay closes.
 Inkhaven captures mouse input on startup. Left-click moves focus to the
 clicked pane; in the Tree pane the click positions the row cursor, in the
 Editor it positions the character cursor (clicks in the gutter are
-ignored). The scroll wheel scrolls Tree and Editor under the pointer.
-Floating overlays (search results, prompt picker, modal stack) swallow
-mouse input so a stray click can't focus a hidden pane.
+ignored).
+
+**Scroll wheel** (1.2.8+):
+
+* **Tree pane** — moves the tree cursor up / down 3 rows per tick.
+* **Editor pane** — scrolls the viewport up / down 3 lines per tick.
+* **AI pane** — scrolls the chat history (older messages on wheel up).
+* **OS Shell pane modal** — scrolls the turn buffer (older turns on wheel up).
+* **HJSON editor modal** — moves the textarea cursor up / down 3 lines.
+* **Kill-ring picker / Fuzzy paragraph picker** — moves the cursor through entries.
+* Other modals ignore the wheel (silent no-op).
+
+Floating overlays (search results, prompt picker) still swallow mouse
+input so a stray click can't focus a hidden pane.
 
 Terminal-side text selection still works while the alternate screen is
 up — hold **Shift** (or Option, depending on the terminal) while
