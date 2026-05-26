@@ -664,12 +664,41 @@ impl Store {
         };
         let abs_path = self.layout.root.join(&rel_path);
 
+        // 1.2.8+ — paragraphs under the Help book default to
+        // markdown content_type.  Doc content is mostly MD,
+        // so this turns on the markdown syntax highlighter
+        // for new Help paragraphs and gives them a `# Title`
+        // template instead of typst's `= Title`.  Detection
+        // is by walking the parent chain looking for a node
+        // tagged with the system `help` tag (the well-known
+        // root for the Help book — survives renames because
+        // the tag is sticky).  Limited to the Help book ON
+        // PURPOSE: every other book stays on the typst
+        // default.
+        let in_help_book = parent
+            .map(|p| {
+                let mut cur: Option<&Node> = Some(p);
+                while let Some(n) = cur {
+                    if n.system_tag.as_deref() == Some(SYSTEM_TAG_HELP) {
+                        return true;
+                    }
+                    cur = n.parent_id.and_then(|id| hierarchy.get(id));
+                }
+                false
+            })
+            .unwrap_or(false);
+
         let content: Vec<u8> = match kind {
             NK::Paragraph => {
                 if let Some(parent_dir) = abs_path.parent() {
                     std::fs::create_dir_all(parent_dir)?;
                 }
-                let template = format!("= {}\n\n", node.title);
+                let template = if in_help_book {
+                    node.content_type = Some("markdown".to_string());
+                    format!("# {}\n\n", node.title)
+                } else {
+                    format!("= {}\n\n", node.title)
+                };
                 std::fs::write(&abs_path, &template)?;
                 node.file = Some(rel_path.to_string_lossy().into_owned());
                 node.word_count = template.split_whitespace().count() as u64;

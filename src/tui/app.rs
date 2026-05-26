@@ -15009,6 +15009,11 @@ pub(super) fn highlight_for_content(
     match content_type {
         Some("hjson") => super::hjson_highlight::highlight_hjson_lines(source, theme),
         Some("bund") => super::bund_highlight::highlight_bund_lines(source, theme),
+        // 1.2.8+ — Help-book paragraphs default to markdown
+        // and use the hand-rolled CommonMark-subset lexer
+        // (headings, fences, emphasis, links, lists, HRs).
+        Some("markdown") | Some("md") =>
+            super::markdown_highlight::highlight_markdown_lines(source, theme),
         _ => highlighter.highlight_lines(source, theme),
     }
 }
