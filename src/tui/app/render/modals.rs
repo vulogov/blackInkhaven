@@ -2666,26 +2666,51 @@ impl super::super::App {
         f.render_widget(Paragraph::new(visible), body_rect);
 
         // Prompt + hint.
-        let prompt_str = if *selection_mode {
-            format!(" (selection · turn {}/{})", selection_cursor + 1, self.shell_history.len().max(1))
-        } else {
-            format!("$ {}", input.as_str())
-        };
-        let prompt_style = if *selection_mode {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-        };
         let prompt_line_rect = Rect {
             x: prompt_rect.x,
             y: prompt_rect.y,
             width: prompt_rect.width,
             height: 1,
         };
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(prompt_str, prompt_style))),
-            prompt_line_rect,
-        );
+        if *selection_mode {
+            let s = format!(
+                " (selection · turn {}/{})",
+                selection_cursor + 1,
+                self.shell_history.len().max(1)
+            );
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    s,
+                    Style::default().fg(Color::Yellow),
+                ))),
+                prompt_line_rect,
+            );
+        } else {
+            // 1.2.8+ — syntax-highlight the live input via
+            // nu-parser tokens.  Engine is lazily-init'd by
+            // open_shell_pane before the modal opens, so
+            // shell_engine.as_ref() is Some here; the unwrap
+            // is logically infallible but we guard for
+            // future refactors.
+            let mut spans: Vec<Span<'_>> = vec![Span::styled(
+                "$ ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )];
+            let line_text = input.as_str().to_string();
+            if let Some(eng) = self.shell_engine.as_ref() {
+                for (chunk, style) in eng.highlight(&line_text) {
+                    spans.push(Span::styled(chunk, style));
+                }
+            } else {
+                spans.push(Span::raw(line_text));
+            }
+            f.render_widget(
+                Paragraph::new(Line::from(spans)),
+                prompt_line_rect,
+            );
+        }
         let hint = if *selection_mode {
             " ↑↓ select turn · c copy · i insert · Ctrl+Z h exit · Esc exit "
         } else {

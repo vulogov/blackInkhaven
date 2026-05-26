@@ -33,9 +33,11 @@
 
 use std::path::{Path, PathBuf};
 
+use nu_parser::FlatShape;
 use nu_protocol::engine::{EngineState, Stack, StateWorkingSet};
 use nu_protocol::{PipelineData, Span, Value};
 use nu_protocol::debugger::WithoutDebug;
+use ratatui::style::{Color, Modifier, Style};
 use rusqlite::Connection;
 
 /// Single nu instance bound to a project.  Holds the engine
@@ -261,6 +263,109 @@ impl Engine {
             },
         }
     }
+
+    /// 1.2.8+ — tokenise `line` against the current engine
+    /// state and return styled (text, Style) spans suitable
+    /// for ratatui rendering.  Empty input returns a single
+    /// empty span.  Pure read against the engine — no
+    /// declarations land in `engine_state` afterwards
+    /// (the working_set's delta is discarded).
+    pub(super) fn highlight(&self, line: &str) -> Vec<(String, Style)> {
+        if line.is_empty() {
+            return vec![(String::new(), Style::default())];
+        }
+        let mut working_set = StateWorkingSet::new(&self.state);
+        let block = nu_parser::parse(
+            &mut working_set,
+            None,
+            line.as_bytes(),
+            false,
+        );
+        let flat = nu_parser::flatten_block(&working_set, &block);
+        // The block's span covers the freshly-added file in
+        // the workspace's global byte counter.  Subtract its
+        // start to get offsets into `line.as_bytes()`.  When
+        // the block has no span (degenerate input) we fall
+        // back to first-token offset = 0.
+        let block_start = block
+            .span
+            .map(|s| s.start)
+            .or_else(|| flat.first().map(|(span, _)| span.start))
+            .unwrap_or(0);
+        let bytes = line.as_bytes();
+        let mut out: Vec<(String, Style)> = Vec::new();
+        let mut cursor = 0usize;
+        for (span, shape) in &flat {
+            let local_start = span
+                .start
+                .saturating_sub(block_start)
+                .min(bytes.len());
+            let local_end = span
+                .end
+                .saturating_sub(block_start)
+                .min(bytes.len());
+            if local_start > cursor {
+                let gap = String::from_utf8_lossy(
+                    &bytes[cursor..local_start],
+                )
+                .into_owned();
+                out.push((gap, Style::default()));
+            }
+            if local_end > local_start {
+                let text = String::from_utf8_lossy(
+                    &bytes[local_start..local_end],
+                )
+                .into_owned();
+                out.push((text, style_for_shape(shape)));
+                cursor = local_end;
+            }
+        }
+        if cursor < bytes.len() {
+            let tail =
+                String::from_utf8_lossy(&bytes[cursor..]).into_owned();
+            out.push((tail, Style::default()));
+        }
+        out
+    }
+}
+
+/// 1.2.8+ — map a `nu_parser::FlatShape` to a ratatui
+/// `Style`.  Loosely follows nushell's default theme:
+/// keywords + builtins in cyan, variables in magenta,
+/// strings in green, numbers + flags in yellow, errors
+/// in red.  Unrecognised shapes (newly-added FlatShape
+/// variants in future nu versions) fall through to plain
+/// foreground so highlighting degrades gracefully.
+fn style_for_shape(shape: &FlatShape) -> Style {
+    match shape {
+        FlatShape::Keyword => Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+        FlatShape::InternalCall(_)
+        | FlatShape::External(_)
+        | FlatShape::ExternalResolved => Style::default().fg(Color::Cyan),
+        FlatShape::Variable(_) | FlatShape::VarDecl(_) => {
+            Style::default().fg(Color::Magenta)
+        }
+        FlatShape::String
+        | FlatShape::RawString
+        | FlatShape::StringInterpolation
+        | FlatShape::GlobInterpolation => Style::default().fg(Color::Green),
+        FlatShape::Int
+        | FlatShape::Float
+        | FlatShape::Bool
+        | FlatShape::DateTime => Style::default().fg(Color::Yellow),
+        FlatShape::Flag => Style::default().fg(Color::Yellow),
+        FlatShape::Operator
+        | FlatShape::Pipe
+        | FlatShape::Redirection => Style::default().fg(Color::Gray),
+        FlatShape::Filepath
+        | FlatShape::Directory
+        | FlatShape::GlobPattern => Style::default().fg(Color::Blue),
+        FlatShape::Garbage => Style::default().fg(Color::Red),
+        FlatShape::Custom(_) => Style::default().fg(Color::Cyan),
+        _ => Style::default(),
+    }
 }
 
 #[cfg(test)]
@@ -360,6 +465,46 @@ mod tests {
         let h = History::open(tmp.path());
         let loaded = h.load(10);
         assert_eq!(loaded, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn highlight_reconstructs_input_byte_for_byte() {
+        // The styled spans must concatenate back to the
+        // original input verbatim — no characters dropped,
+        // no extra whitespace inserted by gap-handling.
+        let e = engine();
+        let cases = [
+            "1 + 1",
+            "ls",
+            r#"echo "hello world""#,
+            "let x = 42",
+            "",
+            "   ",
+        ];
+        for input in cases {
+            let spans = e.highlight(input);
+            let rebuilt: String = spans.iter().map(|(s, _)| s.as_str()).collect();
+            assert_eq!(rebuilt, input, "round-trip failed for {:?}", input);
+        }
+    }
+
+    #[test]
+    fn highlight_produces_some_styling() {
+        // Loose assertion: the highlighter must distinguish
+        // at least one token from plain text on a normal
+        // shell command.  Avoids pinning to a specific
+        // FlatShape that nu's grammar may reclassify
+        // between minor versions.  The round-trip test
+        // above covers byte-exact reconstruction.
+        let e = engine();
+        let spans = e.highlight("ls --long");
+        let any_styled = spans
+            .iter()
+            .any(|(_, style)| style.fg.is_some() || !style.add_modifier.is_empty());
+        assert!(
+            any_styled,
+            "expected at least one styled token, got {spans:?}",
+        );
     }
 
     #[test]
