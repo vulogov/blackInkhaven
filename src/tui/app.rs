@@ -1330,6 +1330,26 @@ pub(crate) struct App {
     /// Reset to defaults each `open_snapshot_picker`.
     snapshot_filter: String,
     snapshot_filter_focused: bool,
+    /// 1.2.8+ — embedded nushell.  `None` until first
+    /// `Ctrl+Z o` opens the pane (lazy init); persists
+    /// across close + reopen so env-var mutations (`$env.X
+    /// = ...`) and the engine state stay alive between
+    /// sessions of the pane.  `Ctrl+Z O` (Shift) destroys
+    /// this and rebuilds fresh.
+    shell_engine: Option<super::shell::Engine>,
+    /// 1.2.8+ — turn buffer for the shell pane.  Capped at
+    /// `cfg.shell.max_buffered_turns`; oldest entries roll
+    /// off the front as the back fills.  Lives on `App`
+    /// rather than on `Modal::ShellPane` so it survives
+    /// modal close/reopen — selection mode (Phase 6) and
+    /// the typst-box insert read from this Vec.
+    shell_history: Vec<super::shell::ShellTurn>,
+    /// 1.2.8+ — command-only history ring for Up/Down
+    /// arrow recall inside the shell input.  Pushed on each
+    /// non-empty Enter; deduped against the immediate
+    /// predecessor.  Persisted to
+    /// `.inkhaven/shell_history.db` in Phase 4.
+    shell_command_history: Vec<String>,
     /// Cursor into `ai_prompt_history`. None when not navigating;
     /// `Some(i)` when the user is stepping through history. Any
     /// edit (typing, backspace, etc.) clears it so the next Up
@@ -1670,6 +1690,9 @@ impl App {
             help_query_history_cursor: None,
             snapshot_filter: String::new(),
             snapshot_filter_focused: false,
+            shell_engine: None,
+            shell_history: Vec::new(),
+            shell_command_history: Vec::new(),
             opened: None,
             secondary: None,
             secondary_focused: false,
@@ -6133,6 +6156,9 @@ impl App {
             A::BundNewScript => self.bund_new_script(),
             A::BundOpenEvalModal => self.bund_open_eval_modal(),
             A::BundOpenScriptPicker => self.bund_open_script_picker(),
+            A::BundOpenShell => self.open_shell_pane(false),
+            A::BundOpenShellFresh => self.open_shell_pane(true),
+            A::BundShellSelection => self.toggle_shell_selection_mode(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
@@ -7045,6 +7071,274 @@ impl App {
             updated.title,
             updated.id.simple()
         );
+    }
+
+    /// 1.2.8+ — `Ctrl+Z o` / `Ctrl+Z O` toggle the shell
+    /// pane.  `fresh=true` drops the cached engine + turn
+    /// buffer first.  No-op (with status hint) when
+    /// `shell.enabled = false` in HJSON.
+    fn open_shell_pane(&mut self, fresh: bool) {
+        if !self.cfg.shell.enabled {
+            self.status =
+                "shell: disabled (set `shell.enabled: true` in inkhaven.hjson)".into();
+            return;
+        }
+        // Toggle: if the pane is already open, close it
+        // (engine + history persist on App).
+        if matches!(self.modal, Modal::ShellPane { .. }) {
+            self.modal = Modal::None;
+            self.status = "shell: closed (state preserved · Ctrl+Z o to reopen)".into();
+            return;
+        }
+        if fresh {
+            self.shell_engine = None;
+            self.shell_history.clear();
+            self.shell_command_history.clear();
+        }
+        // Lazy-init the engine on first open.
+        if self.shell_engine.is_none() {
+            self.shell_engine =
+                Some(super::shell::Engine::new(&self.layout.root));
+        }
+        self.modal = Modal::ShellPane {
+            input: TextInput::new(),
+            command_history_cursor: None,
+            selection_mode: false,
+            selection_cursor: 0,
+            scroll: 0,
+        };
+        self.status = if fresh {
+            "shell: fresh engine · type a command, Enter runs it".into()
+        } else {
+            "shell: open · type a command, Enter runs it · Ctrl+Z o close · Ctrl+Z h selection".into()
+        };
+    }
+
+    /// 1.2.8+ — `Ctrl+Z h` toggle history-selection mode
+    /// from inside the shell pane.  No-op when invoked
+    /// outside the pane (the chord lives in the bund-
+    /// prefix and dispatcher routes unconditionally).
+    fn toggle_shell_selection_mode(&mut self) {
+        let Modal::ShellPane {
+            selection_mode,
+            selection_cursor,
+            ..
+        } = &mut self.modal
+        else {
+            self.status = "shell selection: only available inside the shell pane".into();
+            return;
+        };
+        if *selection_mode {
+            *selection_mode = false;
+            self.status = "shell: back to normal mode".into();
+        } else {
+            if self.shell_history.is_empty() {
+                self.status = "shell selection: nothing to select yet".into();
+                return;
+            }
+            *selection_mode = true;
+            // Land on the most-recent turn — same default as
+            // AI chat selection mode.
+            *selection_cursor = self.shell_history.len() - 1;
+            self.status =
+                "shell selection · ↑↓ pick turn · c copy · i insert · Ctrl+Z h exit".into();
+        }
+    }
+
+    /// 1.2.8+ — key handler for `Modal::ShellPane`.  Routes
+    /// by `selection_mode`: false → line-editor + Up/Down
+    /// command-history recall + Enter eval + Esc close;
+    /// true → ↑↓ turn cursor + c / i actions.
+    fn shell_pane_handle_key(&mut self, key: KeyEvent) {
+        // Selection mode first — narrower keyspace.
+        let in_selection = matches!(
+            self.modal,
+            Modal::ShellPane { selection_mode: true, .. }
+        );
+        if in_selection {
+            let history_len = self.shell_history.len();
+            if let Modal::ShellPane {
+                selection_cursor, ..
+            } = &mut self.modal
+            {
+                match key.code {
+                    KeyCode::Up => {
+                        if *selection_cursor > 0 {
+                            *selection_cursor -= 1;
+                        }
+                    }
+                    KeyCode::Down => {
+                        if *selection_cursor + 1 < history_len {
+                            *selection_cursor += 1;
+                        }
+                    }
+                    KeyCode::Home => *selection_cursor = 0,
+                    KeyCode::End => {
+                        *selection_cursor = history_len.saturating_sub(1);
+                    }
+                    KeyCode::Char('c') | KeyCode::Char('C') => {
+                        // Phase 6 fills in clipboard + insert.
+                        self.status =
+                            "shell selection: copy lands in Phase 6".into();
+                    }
+                    KeyCode::Char('i') | KeyCode::Char('I') => {
+                        self.status =
+                            "shell selection: insert lands in Phase 6".into();
+                    }
+                    KeyCode::Esc => {
+                        // Esc inside selection mode just exits
+                        // selection — second Esc closes the pane
+                        // (matches the F6 filter ergonomics).
+                        if let Modal::ShellPane { selection_mode, .. } =
+                            &mut self.modal
+                        {
+                            *selection_mode = false;
+                        }
+                        self.status = "shell: back to normal mode".into();
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
+
+        // Normal shell mode.
+        match key.code {
+            KeyCode::Enter => {
+                let line = match &self.modal {
+                    Modal::ShellPane { input, .. } => {
+                        input.as_str().to_string()
+                    }
+                    _ => return,
+                };
+                let trimmed = line.trim().to_string();
+                if trimmed.is_empty() {
+                    return;
+                }
+                // Reset input + history cursor; eval; push turn.
+                if let Modal::ShellPane {
+                    input,
+                    command_history_cursor,
+                    ..
+                } = &mut self.modal
+                {
+                    input.clear();
+                    *command_history_cursor = None;
+                }
+                // Command-history ring: dedup vs immediate
+                // predecessor.
+                if self.shell_command_history.last().map(String::as_str)
+                    != Some(trimmed.as_str())
+                {
+                    self.shell_command_history.push(trimmed.clone());
+                }
+                // Eval through the cached engine.
+                let out = match self.shell_engine.as_mut() {
+                    Some(eng) => eng.eval(&trimmed),
+                    None => {
+                        // Shouldn't happen — open_shell_pane
+                        // always lazy-inits before opening
+                        // the modal — but guard anyway.
+                        super::shell::ShellOutput {
+                            stdout: String::new(),
+                            stderr: "engine not initialised".into(),
+                            success: false,
+                        }
+                    }
+                };
+                let turn = super::shell::ShellTurn {
+                    command: trimmed,
+                    stdout: out.stdout,
+                    stderr: out.stderr,
+                    success: out.success,
+                };
+                self.shell_history.push(turn);
+                let cap = self.cfg.shell.max_buffered_turns.max(1);
+                while self.shell_history.len() > cap {
+                    self.shell_history.remove(0);
+                }
+            }
+            KeyCode::Up => {
+                if !self.shell_command_history.is_empty() {
+                    let next_cursor = match self.modal {
+                        Modal::ShellPane {
+                            command_history_cursor: Some(0),
+                            ..
+                        } => 0,
+                        Modal::ShellPane {
+                            command_history_cursor: Some(i),
+                            ..
+                        } => i - 1,
+                        Modal::ShellPane {
+                            command_history_cursor: None,
+                            ..
+                        } => self.shell_command_history.len() - 1,
+                        _ => return,
+                    };
+                    let entry =
+                        self.shell_command_history[next_cursor].clone();
+                    if let Modal::ShellPane {
+                        input,
+                        command_history_cursor,
+                        ..
+                    } = &mut self.modal
+                    {
+                        *command_history_cursor = Some(next_cursor);
+                        input.clear();
+                        for c in entry.chars() {
+                            input.insert_char(c);
+                        }
+                    }
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::ShellPane {
+                    command_history_cursor: Some(cur),
+                    ..
+                } = self.modal
+                {
+                    let next = cur + 1;
+                    if next >= self.shell_command_history.len() {
+                        if let Modal::ShellPane {
+                            input,
+                            command_history_cursor,
+                            ..
+                        } = &mut self.modal
+                        {
+                            *command_history_cursor = None;
+                            input.clear();
+                        }
+                    } else {
+                        let entry =
+                            self.shell_command_history[next].clone();
+                        if let Modal::ShellPane {
+                            input,
+                            command_history_cursor,
+                            ..
+                        } = &mut self.modal
+                        {
+                            *command_history_cursor = Some(next);
+                            input.clear();
+                            for c in entry.chars() {
+                                input.insert_char(c);
+                            }
+                        }
+                    }
+                }
+            }
+            KeyCode::Esc => {
+                // Esc closes the pane; engine + history
+                // persist on App.
+                self.modal = Modal::None;
+                self.status =
+                    "shell: closed (state preserved · Ctrl+Z o to reopen)".into();
+            }
+            _ => {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    handle_text_input_key(input, key);
+                }
+            }
+        }
     }
 
     /// 1.2.8+ — Ctrl+V Shift+U. Open the kill-ring picker.
@@ -9708,6 +10002,7 @@ impl App {
         let is_bookmark_picker = matches!(self.modal, Modal::BookmarkPicker { .. });
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
         let is_kill_ring_picker = matches!(self.modal, Modal::KillRingPicker { .. });
+        let is_shell_pane = matches!(self.modal, Modal::ShellPane { .. });
         let is_rendered_preview = matches!(self.modal, Modal::RenderedPreview { .. });
         let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
@@ -9893,6 +10188,11 @@ impl App {
 
         if is_kill_ring_picker {
             self.kill_ring_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_shell_pane {
+            self.shell_pane_handle_key(key);
             return Ok(false);
         }
 

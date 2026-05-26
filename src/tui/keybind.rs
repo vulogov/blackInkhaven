@@ -307,6 +307,27 @@ pub enum Action {
     /// walks from the open paragraph.
     #[serde(rename = "view.show_breadcrumb")]
     ViewShowBreadcrumb,
+    /// Ctrl+Z o (1.2.8+) — open or close the embedded
+    /// nushell pane.  Closing preserves the engine state
+    /// (env vars, defs) and the turn buffer for the next
+    /// open.  No-op (with a status hint) when
+    /// `shell.enabled = false` in HJSON.
+    #[serde(rename = "bund.open_shell")]
+    BundOpenShell,
+    /// Ctrl+Z O (Shift, 1.2.8+) — drop the cached shell
+    /// engine + turn buffer and open a fresh shell.  Use
+    /// when the env / scope has drifted into a confusing
+    /// state.
+    #[serde(rename = "bund.open_shell_fresh")]
+    BundOpenShellFresh,
+    /// Ctrl+Z h (1.2.8+) — inside the shell pane, toggle
+    /// history-selection mode.  ↑↓ walks turn-by-turn,
+    /// `c` copies the highlighted turn's output to the
+    /// system clipboard, `i` inserts it into the editor
+    /// wrapped in the configured typst-box template.
+    /// Re-press exits selection mode.
+    #[serde(rename = "bund.shell_selection")]
+    BundShellSelection,
     /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
     /// via typst-render and float a PNG preview on top of the
     /// editor. `Esc` closes, `S` opens a save-as picker for the
@@ -492,6 +513,9 @@ impl Action {
             Action::ViewKillRingPicker => "kill-ring".into(),
             Action::ViewHiddenCharsReport => "hidden chars".into(),
             Action::ViewShowBreadcrumb => "breadcrumb".into(),
+            Action::BundOpenShell => "shell".into(),
+            Action::BundOpenShellFresh => "shell fresh".into(),
+            Action::BundShellSelection => "shell select".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -674,6 +698,12 @@ impl Action {
                 "Hidden-character report (1.2.8+) — status-bar summary of the open paragraph's tabs / trailing-whitespace lines / CR characters. Useful for spotting import noise (Scrivener / web paste). Visual editor overlay scheduled for 1.2.9.".into(),
             Action::ViewShowBreadcrumb =>
                 "Show breadcrumb (1.2.8+) — print the hierarchy path from project root to the cursor on the status bar (Book ▸ Chapter ▸ Subchapter ▸ Paragraph). Pane-aware: in tree walks from the tree cursor, in editor walks from the open paragraph.".into(),
+            Action::BundOpenShell =>
+                "Open / close the embedded nushell pane (1.2.8+). Floating fullscreen; engine state and turn buffer preserved across close+reopen. No-op when shell.enabled = false in HJSON.".into(),
+            Action::BundOpenShellFresh =>
+                "Drop the cached shell engine + turn buffer and open a fresh shell (1.2.8+). Use when env / scope has drifted into a confusing state.".into(),
+            Action::BundShellSelection =>
+                "Inside the shell pane, toggle history-selection mode (1.2.8+) — ↑↓ walks turn-by-turn, `c` copies output to clipboard, `i` inserts wrapped in the configured typst-box template. Re-press exits.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -823,6 +853,10 @@ impl KeyBindings {
                 entry("n", Action::BundNewScript, Scope::Any),
                 entry("e", Action::BundOpenEvalModal, Scope::Any),
                 entry("?", Action::BundOpenScriptPicker, Scope::Any),
+                // 1.2.8+ — embedded nushell pane.
+                entry("o", Action::BundOpenShell, Scope::Any),
+                entry("Shift+o", Action::BundOpenShellFresh, Scope::Any),
+                entry("h", Action::BundShellSelection, Scope::Any),
             ],
             view_sub: vec![
                 // Editor / AI-prompt: 1 = buffer markdown, 2 =
