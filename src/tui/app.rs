@@ -7172,6 +7172,92 @@ impl App {
         }
     }
 
+    /// 1.2.8+ — selection-mode `c`: copy the highlighted
+    /// turn's output to the system clipboard.  Includes
+    /// stderr below stdout when the command failed, so the
+    /// user gets full context if they paste into a bug
+    /// report.  No-op when no clipboard is available
+    /// (rare — usually only on minimal Linux + no X / no
+    /// wayland).
+    fn shell_selection_copy(&mut self) {
+        let cursor = match &self.modal {
+            Modal::ShellPane { selection_cursor, .. } => *selection_cursor,
+            _ => return,
+        };
+        let Some(turn) = self.shell_history.get(cursor) else {
+            self.status = "shell copy: cursor out of range".into();
+            return;
+        };
+        let mut text = turn.stdout.clone();
+        if !turn.success && !turn.stderr.is_empty() {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str("[stderr]\n");
+            text.push_str(&turn.stderr);
+        }
+        match self.clipboard.as_mut() {
+            Some(cb) => match cb.set_text(text.clone()) {
+                Ok(()) => {
+                    self.status = format!(
+                        "shell: copied turn `{}` output ({} chars)",
+                        truncate_to_chars(&turn.command, 30),
+                        text.chars().count()
+                    );
+                }
+                Err(e) => {
+                    self.status =
+                        format!("shell copy: clipboard error: {e}");
+                }
+            },
+            None => {
+                self.status =
+                    "shell copy: no system clipboard available".into();
+            }
+        }
+    }
+
+    /// 1.2.8+ — selection-mode `i`: insert the highlighted
+    /// turn's stdout into the editor at cursor, wrapped in
+    /// `cfg.shell.insert_template`.  `{output}` in the
+    /// template is replaced with the raw output verbatim;
+    /// no escaping (the default template uses a typst raw
+    /// block where backticks bound the literal, so embedded
+    /// quotes / backslashes survive).  Closes the shell
+    /// pane after insert + refocuses the editor — same UX
+    /// as AI chat selection `t`.
+    fn shell_selection_insert(&mut self) {
+        let cursor = match &self.modal {
+            Modal::ShellPane { selection_cursor, .. } => *selection_cursor,
+            _ => return,
+        };
+        let Some(turn) = self.shell_history.get(cursor).cloned() else {
+            self.status = "shell insert: cursor out of range".into();
+            return;
+        };
+        if self.opened.is_none() {
+            self.status =
+                "shell insert: no paragraph open — open one first".into();
+            return;
+        }
+        let template = self.cfg.shell.insert_template.clone();
+        let wrapped = template.replace("{output}", &turn.stdout);
+        let chars = wrapped.chars().count();
+        if let Some(doc) = self.opened.as_mut() {
+            doc.textarea.insert_str(&wrapped);
+            doc.dirty = true;
+            doc.last_activity = std::time::Instant::now();
+        }
+        // Close the pane (engine + history persist on App).
+        self.modal = Modal::None;
+        self.change_focus(Focus::Editor);
+        self.status = format!(
+            "shell: inserted output of `{}` ({} chars wrapped)",
+            truncate_to_chars(&turn.command, 30),
+            chars,
+        );
+    }
+
     /// 1.2.8+ — key handler for `Modal::ShellPane`.  Routes
     /// by `selection_mode`: false → line-editor + Up/Down
     /// command-history recall + Enter eval + Esc close;
@@ -7204,13 +7290,10 @@ impl App {
                         *selection_cursor = history_len.saturating_sub(1);
                     }
                     KeyCode::Char('c') | KeyCode::Char('C') => {
-                        // Phase 6 fills in clipboard + insert.
-                        self.status =
-                            "shell selection: copy lands in Phase 6".into();
+                        self.shell_selection_copy();
                     }
                     KeyCode::Char('i') | KeyCode::Char('I') => {
-                        self.status =
-                            "shell selection: insert lands in Phase 6".into();
+                        self.shell_selection_insert();
                     }
                     KeyCode::Esc => {
                         // Esc inside selection mode just exits
