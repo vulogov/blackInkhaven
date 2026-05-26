@@ -262,6 +262,21 @@ typst-kit = { version = "0.14", default-features = false, features = [
   "packages",
 ] }
 
+# 1.2.8+ — embedded nushell as a library, powering the
+# `Ctrl+Z o` floating shell pane.  We pull the minimum
+# practical set: protocol types, the eval engine, the parser
+# (also used for syntax highlight of the input line), and
+# nu-command's default declarations so built-ins like `ls`,
+# `where`, `str`, `path` are available.  No nu-cli (it owns
+# reedline + the REPL, both of which conflict with ratatui).
+# No nu-plugin (IPC; out of scope).  Versions pinned to 0.113
+# — nu's API moves between minor releases, so we'll re-pin
+# deliberately during dependency review.
+nu-protocol = "0.112"
+nu-engine   = "0.112"
+nu-parser   = "0.112"
+nu-command  = "0.112"
+
 [build-dependencies]
 # Compiles the in-tree Typst tree-sitter grammar (`src/grammar/`)
 # during `cargo build`. See `build.rs`.

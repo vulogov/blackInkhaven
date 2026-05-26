@@ -23,6 +23,7 @@ mod typst_funcs;
 mod search_replace;
 mod search_results;
 mod session;
+mod shell;
 mod splash;
 mod state;
 mod status_helpers;
