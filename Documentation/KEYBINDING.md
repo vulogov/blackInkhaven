@@ -1263,14 +1263,23 @@ Ctrl+Z h         (inside the pane) toggle history-
 Inside the pane (normal mode):
   Enter          run the line through the embedded
                  nu_engine; output + stderr land as a new
-                 turn in the buffer.
+                 turn in the buffer.  Scroll is reset so
+                 the new output is auto-visible.
   ↑ / ↓          walk the per-project command history
                  ring (shell-style; Down past newest
                  clears the input).
+  PgUp / PgDn    scroll the turn buffer up / down by 10
+                 logical lines.  Title bar shows
+                 `↑ scrolled` while above the newest turn.
+  Shift+Home     jump to the top of the buffer.
+  Shift+End      jump back to the newest output.
   Esc            close the pane (state preserved).
 
 Inside selection mode:
-  ↑ / ↓ / Home / End  walk the turn cursor.
+  ↑ / ↓               walk the turn cursor.
+  Home / End          jump to first / last turn AND scroll
+                      the buffer to match.
+  PgUp / PgDn         scroll independently of the cursor.
   c                   copy the highlighted turn's output
                       (stderr appended when failed).
   i                   insert the output into the editor
