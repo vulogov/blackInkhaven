@@ -254,6 +254,14 @@ pub enum Command {
         /// Skips the rest of the health report when set.
         #[arg(long)]
         voices: bool,
+        /// 1.2.9+ — diagnostic: init the TTS engine, set
+        /// the configured voice + rate, speak the given
+        /// text synchronously (block until audio drains),
+        /// then exit.  Use when `Ctrl+B S` shows the
+        /// modal but no audio plays — isolates the engine
+        /// path from the rest of inkhaven's runtime.
+        #[arg(long, value_name = "TEXT")]
+        tts_test: Option<String>,
     },
 
     /// 1.2.6+ — story-timeline event management. Requires
@@ -507,8 +515,10 @@ impl Cli {
             Command::Stats { book_name } => {
                 stats::run(&project, book_name.as_deref()).map_err(Into::into)
             }
-            Command::Doctor { voices } => {
-                if voices {
+            Command::Doctor { voices, tts_test } => {
+                if let Some(text) = tts_test {
+                    doctor::run_tts_test(&project, &text).map_err(Into::into)
+                } else if voices {
                     doctor::run_voices().map_err(Into::into)
                 } else {
                     doctor::run(&project).map_err(Into::into)

@@ -119,6 +119,168 @@ pub fn run_voices() -> Result<()> {
     Ok(())
 }
 
+/// 1.2.9+ — `inkhaven doctor --tts-test "<text>"`.
+/// Diagnostic for the TTS pipeline.  Initialises the
+/// engine, applies the project's configured voice +
+/// speed, speaks the given text synchronously, and
+/// reports each step on stdout so a user-reported
+/// "modal flickers but no audio" can be triaged
+/// without instrumenting the TUI.  Exits 0 on success.
+/// Loads HJSON config if the path looks like a project;
+/// falls back to defaults (Milena, speed 1.0) when no
+/// inkhaven.hjson is present at `project`.
+pub fn run_tts_test(project: &Path, text: &str) -> Result<()> {
+    println!("inkhaven TTS test — v{}", env!("CARGO_PKG_VERSION"));
+    println!("project: {}", project.display());
+    println!("text:    {text:?}");
+
+    // Load config (best-effort — we want the test to
+    // work outside a real project too).  Config::load
+    // takes the FILE PATH (inkhaven.hjson), not the
+    // project root, so we resolve here.
+    let cfg_path = project.join("inkhaven.hjson");
+    let cfg = match Config::load(&cfg_path) {
+        Ok(c) => {
+            println!("config:  loaded from {}", cfg_path.display());
+            c
+        }
+        Err(e) => {
+            println!(
+                "config:  {} (using defaults: {})",
+                e,
+                cfg_path.display()
+            );
+            Config::default()
+        }
+    };
+    let tts_cfg = &cfg.editor.tts;
+    println!(
+        "config:  enabled={} voice={:?} speed={}",
+        tts_cfg.enabled, tts_cfg.voice, tts_cfg.speed,
+    );
+
+    // Engine init.
+    print!("[1/4] init engine ... ");
+    let mut engine = match tts::Tts::default() {
+        Ok(e) => {
+            println!("OK");
+            e
+        }
+        Err(err) => {
+            println!("FAIL");
+            eprintln!("\nEngine init error: {err}");
+            return Err(crate::error::Error::Config(
+                "TTS engine init failed".into(),
+            ));
+        }
+    };
+
+    // Voice selection.
+    print!("[2/4] pick voice ... ");
+    let voices = engine.voices().unwrap_or_default();
+    let needle = tts_cfg.voice.to_lowercase();
+    let picked = voices
+        .iter()
+        .filter(|v| v.name().to_lowercase().contains(&needle))
+        .max_by_key(|v| {
+            let n = v.name().to_lowercase();
+            let enhanced = n.contains("enhanced") || n.contains("premium");
+            (enhanced as u8, v.name().len() as isize)
+        });
+    match picked {
+        Some(v) => {
+            print!("{} — set_voice ... ", v.name());
+            match engine.set_voice(v) {
+                Ok(_) => println!("OK"),
+                Err(e) => println!("set_voice FAIL: {e:?}"),
+            }
+        }
+        None => {
+            println!("no match for {:?} — using engine default", tts_cfg.voice);
+        }
+    }
+
+    // Rate.
+    print!("[3/4] set rate ... ");
+    let speed = tts_cfg.speed.max(0.1);
+    let target = (engine.normal_rate() * speed)
+        .clamp(engine.min_rate(), engine.max_rate());
+    println!(
+        "normal={:.3} target={:.3} (clamped to [{:.3}, {:.3}])",
+        engine.normal_rate(),
+        target,
+        engine.min_rate(),
+        engine.max_rate(),
+    );
+    let _ = engine.set_rate(target);
+
+    // Helper closure: speak, wait min_hold, poll until idle.
+    let speak_and_wait = |engine: &mut tts::Tts,
+                          label: &str,
+                          payload: &str|
+     -> bool {
+        let start = std::time::Instant::now();
+        print!("         {label}: speak ... ");
+        let result = engine.speak(payload.to_string(), true);
+        match &result {
+            Ok(id) => println!("Ok({:?})", id),
+            Err(e) => {
+                println!("FAIL: {e:?}");
+                return false;
+            }
+        }
+        let chars = payload.chars().count() as u64;
+        let min_hold_ms = (400 + chars * 80).min(10_000);
+        std::thread::sleep(std::time::Duration::from_millis(min_hold_ms));
+        let hard = start + std::time::Duration::from_secs(10);
+        let mut polls = 0;
+        while std::time::Instant::now() < hard {
+            polls += 1;
+            match engine.is_speaking() {
+                Ok(false) => break,
+                Ok(true) => {}
+                Err(_) => break,
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        println!(
+            "         {label}: elapsed={:.2}s polls={polls}",
+            start.elapsed().as_secs_f32(),
+        );
+        true
+    };
+
+    // [4/4] First speak — fresh engine.
+    println!("[4/4] speak (fresh engine):");
+    if !speak_and_wait(&mut engine, "round 1", text) {
+        return Err(crate::error::Error::Config(
+            "TTS speak failed".into(),
+        ));
+    }
+
+    // [5/5] Second speak — REUSE the same engine.  This
+    // mirrors what the TUI does: greeting at startup
+    // uses the engine, then Ctrl+B S / goodbye reuse it.
+    // If audio plays on round 1 but not round 2, the
+    // bug is engine reuse on this platform.
+    println!("[5/5] speak (reused engine):");
+    let _ = speak_and_wait(&mut engine, "round 2", text);
+    println!();
+    println!("If you heard NO audio during the run above, the engine");
+    println!("path is broken on this host.  Common causes:");
+    println!("  - macOS: voice not yet downloaded.  Open System Settings");
+    println!("    → Accessibility → Spoken Content → System Voice → Manage");
+    println!("    Voices and ensure the language for {:?} is installed.",
+        tts_cfg.voice,
+    );
+    println!("  - macOS: audio output muted or routed to a sink that's");
+    println!("    not playing (HDMI, headphones unplugged but still");
+    println!("    selected, etc.).");
+    println!("  - Linux: speech-dispatcher running but no audio output");
+    println!("    backend configured.");
+    Ok(())
+}
+
 pub fn run(project: &Path) -> Result<()> {
     println!("inkhaven doctor — v{}", env!("CARGO_PKG_VERSION"));
     println!("================================================================");
