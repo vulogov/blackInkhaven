@@ -788,3 +788,40 @@ ticks are absolute). Useful for real-world dates.
 
 Both stanzas are additive. Removing them restores the
 pre-1.2.6 behaviour exactly.
+
+## 1.2.8 — new HJSON blocks
+
+### `scrivener` (1.2.8+) — Scrivener-importer behaviour
+
+```hjson
+scrivener: {
+  // List of CustomMeta field names (case-insensitive) that
+  // `inkhaven import-scrivener` interprets as event dates.
+  // For each matching field on an imported paragraph, the
+  // value is fed through the project's HJSON-configured
+  // calendar; a successful parse attaches `EventData` to the
+  // resulting node (event landed at the parsed start tick,
+  // no end, no track override).  Bad values are not fatal —
+  // they land on the report's error list with the source
+  // field name + raw value.
+  //
+  // Defaults cover the most common English-language
+  // Scrivener templates ("Date" / "Story Date" / "Event
+  // Date").  Non-English templates customise this list.
+  date_fields: ["Date", "Story Date", "Event Date"]
+}
+```
+
+The pass is gated on `timeline.enabled = true` — Scrivener
+date import is a no-op when the project hasn't opted into
+the timeline feature, even if the .scriv file carries
+CustomMeta dates.  Scrivener field IDs in
+`<CustomMetaDataSettings>` are resolved against the
+project-level registry; unknown IDs (referenced by an item
+but missing from the registry) are silently skipped.
+
+### `editor.mouse_captured` (1.2.8+)
+
+Already documented inline in the `editor` table above.
+Sets the initial mouse-capture state on launch; runtime
+`Ctrl+Shift+M` still flips it regardless.
