@@ -651,6 +651,13 @@ pub(super) enum Modal {
         /// itself is allowed to grow past max_scroll without
         /// being written back.
         scroll: usize,
+        /// 1.2.8+ — when `true`, an overlay renders on top
+        /// of the pane listing chord + command basics.
+        /// Toggled by `Ctrl+B H` while inside the pane.
+        /// Other keys (Esc, any key) dismiss the overlay.
+        /// Engine + history + scroll + input cursor all
+        /// preserve underneath.
+        show_help: bool,
     },
 }
 

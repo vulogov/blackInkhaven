@@ -2759,18 +2759,65 @@ impl super::super::App {
                 prompt_line_rect,
             );
         } else {
-            // 1.2.8+ — syntax-highlight the live input via
-            // nu-parser tokens.  Engine is lazily-init'd by
-            // open_shell_pane before the modal opens, so
-            // shell_engine.as_ref() is Some here; the unwrap
-            // is logically infallible but we guard for
-            // future refactors.
-            let mut spans: Vec<Span<'_>> = vec![Span::styled(
-                "$ ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )];
+            // 1.2.8+ — colored prompt:
+            //   "[ " white   <cwd> blue   " > " red   <input>
+            // The cwd reflects `$env.PWD` so `cd` mutations
+            // surface immediately.  Long paths under $HOME
+            // are abbreviated to `~/...` for legibility; the
+            // path is otherwise rendered verbatim and the
+            // terminal will let it run off-screen if absurdly
+            // long (acceptable — the user can resize or
+            // `cd` to a shorter location).
+            let cwd_display: String = self
+                .shell_engine
+                .as_ref()
+                .map(|e| {
+                    let p = e.cwd();
+                    let raw = p.to_string_lossy().into_owned();
+                    if let Some(home) = std::env::var_os("HOME") {
+                        let home = home.to_string_lossy().into_owned();
+                        if raw == home {
+                            "~".to_string()
+                        } else if raw.starts_with(&format!("{home}/")) {
+                            format!("~{}", &raw[home.len()..])
+                        } else {
+                            raw
+                        }
+                    } else {
+                        raw
+                    }
+                })
+                .unwrap_or_else(|| ".".to_string());
+            let mut spans: Vec<Span<'_>> = vec![
+                Span::styled(
+                    "[ ",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    cwd_display.clone(),
+                    Style::default()
+                        .fg(Color::Blue)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    " > ",
+                    Style::default()
+                        .fg(Color::Red)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ];
+            // Width of the prompt prefix, in display columns
+            // — used to position the cursor after the typed
+            // text.  Assumes 1 col / char, which is correct
+            // for ASCII paths; non-ASCII cwd chars would
+            // slightly off-set the cursor but that's a niche
+            // issue we'll fix when it appears.
+            let prefix_cols = "[ ".chars().count()
+                + cwd_display.chars().count()
+                + " > ".chars().count();
+
             let line_text = input.as_str().to_string();
             if let Some(eng) = self.shell_engine.as_ref() {
                 for (chunk, style) in eng.highlight(&line_text) {
@@ -2783,10 +2830,7 @@ impl super::super::App {
                 Paragraph::new(Line::from(spans)),
                 prompt_line_rect,
             );
-            // Place the terminal cursor at the end of the
-            // typed text.  TextInput::cursor() returns the
-            // char index; `"$ "` prefix consumes 2 cells.
-            let cursor_col = 2usize + input.cursor();
+            let cursor_col = prefix_cols + input.cursor();
             let max_col = prompt_line_rect.width.saturating_sub(1) as usize;
             let x = prompt_line_rect.x
                 + cursor_col.min(max_col) as u16;
@@ -2795,7 +2839,7 @@ impl super::super::App {
         let hint = if *selection_mode {
             " ↑↓ turn · PgUp/PgDn scroll · c copy · i insert · Ctrl+Z h exit · Esc exit "
         } else {
-            " Enter run · Tab complete · ↑↓ cmd history · PgUp/PgDn scroll · Ctrl+Z h selection · Esc close "
+            " Enter run · Tab complete · Ctrl+B H help · ↑↓ cmd history · Esc close "
         };
         let hint_rect = Rect {
             x: prompt_rect.x,
@@ -2810,6 +2854,18 @@ impl super::super::App {
             ))),
             hint_rect,
         );
+
+        // 1.2.8+ — help overlay.  Renders ON TOP of the
+        // pane, centered, with chord + command basics.  Any
+        // key dismisses it (handled in shell_pane_handle_key
+        // before falling into the normal key dispatcher).
+        let show_help = matches!(
+            self.modal,
+            Modal::ShellPane { show_help: true, .. }
+        );
+        if show_help {
+            draw_shell_help_overlay(f, rect);
+        }
     }
 
     /// 1.2.8+ — kill-ring picker. Renders each deleted-
@@ -3511,4 +3567,112 @@ impl super::super::App {
         );
     }
 
+}
+
+/// 1.2.8+ — `Ctrl+B H` help overlay painted on top of the
+/// OS Shell pane.  Centered box, ~70% of the pane width,
+/// listing chord shortcuts + a one-paragraph introduction
+/// to what the embedded shell does.  Dismissed by any key
+/// (handler-level), preserves the underlying pane state.
+fn draw_shell_help_overlay(f: &mut ratatui::Frame, host: Rect) {
+    let lines: Vec<Line<'_>> = vec![
+        Line::from(Span::styled(
+            "OS Shell — quick reference",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::raw(
+            "Embedded nushell in-process.  Pipelines, env vars,",
+        )),
+        Line::from(Span::raw(
+            "and `def` declarations persist while the pane is open.",
+        )),
+        Line::from(Span::raw(
+            "Externals are spawned with stdin=null and a captured",
+        )),
+        Line::from(Span::raw(
+            "stdout/stderr pipe — not a real TTY, so full-screen",
+        )),
+        Line::from(Span::raw(
+            "apps (vim, less, top, tmux, …) are refused before spawn.",
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Line editing",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw(" Ctrl+A / Ctrl+E    home / end of line")),
+        Line::from(Span::raw(" Ctrl+U / Ctrl+K    kill to start / end")),
+        Line::from(Span::raw(" Ctrl+W             kill word backward")),
+        Line::from(Span::raw(" Alt+B / Alt+F      word back / forward")),
+        Line::from(Span::raw(" Ctrl+Left/Right    word back / forward")),
+        Line::from(Span::raw(" Ctrl+L             clear scrollback")),
+        Line::from(Span::raw(" Ctrl+D             clear input (or close if empty)")),
+        Line::from(Span::raw(" Tab                autocomplete commands / paths")),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Pane chords",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw(" Enter              run the line")),
+        Line::from(Span::raw(" ↑ / ↓              walk command history")),
+        Line::from(Span::raw(" PgUp / PgDn        scroll turn buffer")),
+        Line::from(Span::raw(" Shift+Home / End   jump scrollback top/bottom")),
+        Line::from(Span::raw(" Ctrl+Z h           selection mode (copy/insert turns)")),
+        Line::from(Span::raw(" Ctrl+Z o           close pane (state preserved)")),
+        Line::from(Span::raw(" Ctrl+Z O           close + drop engine (fresh on reopen)")),
+        Line::from(Span::raw(" Ctrl+B H           this help")),
+        Line::from(Span::raw(" exit / quit / Esc  close pane")),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Sample nu commands",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw(" ls                       list files as a table")),
+        Line::from(Span::raw(" ls | where size > 1MB    filter the table")),
+        Line::from(Span::raw(" cd subdir                change cwd (env persists)")),
+        Line::from(Span::raw(" let x = 42              bind a variable")),
+        Line::from(Span::raw(" help commands           every built-in command")),
+        Line::from(Span::raw(" ^/bin/echo hello        run an external explicitly")),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press any key to close",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )),
+    ];
+
+    // Center the overlay inside the host rect.  Width fixed
+    // at 64 (or 90% of host, whichever is smaller); height
+    // matches the content line count plus borders.
+    let content_w = 64u16.min(host.width.saturating_sub(4));
+    let content_h = (lines.len() as u16 + 2).min(host.height.saturating_sub(2));
+    let x = host.x + host.width.saturating_sub(content_w) / 2;
+    let y = host.y + host.height.saturating_sub(content_h) / 2;
+    let overlay = Rect { x, y, width: content_w, height: content_h };
+
+    f.render_widget(ratatui::widgets::Clear, overlay);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" OS Shell help ")
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(overlay);
+    f.render_widget(block, overlay);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        inner,
+    );
 }
