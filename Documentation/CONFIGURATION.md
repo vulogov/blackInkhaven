@@ -376,7 +376,7 @@ keys: {
 | `page_down`   | `PageDown`   | PageDown. |
 | `meta_prefix` | `Ctrl+b`     | The Meta prefix chord. The action table is pane-specific — see [`KEYBINDING.md`](KEYBINDING.md) §1.1. |
 | `bund_prefix` | `Ctrl+z`     | The Bund prefix chord (1.2+). |
-| `view_prefix` | `Ctrl+v`     | The View prefix chord (1.2.4+) — markdown export, similar-paragraph mode, progress modal, wiki-links, bookmarks, fuzzy picker. |
+| `view_prefix` | `Ctrl+v`     | The View prefix chord (1.2.4+) — markdown export, similar-paragraph mode, progress modal, paragraph links, bookmarks, fuzzy picker. |
 | `bindings`    | `[]`         | User overlay rebinding sub-chords. Supports `layer: "meta_sub" | "bund_sub" | "view_sub" | "top_level"`. See [`KEYS_REASSIGNMENT.md`](KEYS_REASSIGNMENT.md). |
 
 If your terminal multiplexer eats `Ctrl+B` (tmux uses it as the default

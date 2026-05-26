@@ -112,10 +112,10 @@ User-facing highlights:
 - **`Ctrl+B U` paragraph undelete.** Single-slot kill-ring
   that round-trips body + tags + status + linked paragraphs
   + event timing after a Ctrl+D delete. New uuid; incoming
-  wiki-links to the old id stay broken (status bar warns).
+  paragraph links to the old id stay broken (status bar warns).
 - **`Alt+←` / `Alt+→` navigation history.** Browser-style
   back / forward through every paragraph-open path —
-  tree Enter, fuzzy picker, wiki-link follow, snapshot
+  tree Enter, fuzzy picker, paragraph-link follow, snapshot
   picker, timeline Enter, undelete. Plus `Ctrl+V Shift+P`
   recent-paragraph picker (32 entries, deduped).
 - **`Ctrl+Shift+M` mouse-capture toggle.** Flip terminal-
@@ -308,7 +308,7 @@ Around that one switch:
   chevron / egg / diamond / hexagon); long titles wrap to
   multiple lines and node boxes scale to fit. Solid grey
   edges for the structural skeleton, dashed purple for
-  `linked_paragraphs` wiki-links, dashed green from
+  `linked_paragraphs` paragraph links, dashed green from
   Characters / Places / Artefacts to the paragraphs that
   mention them. Rasterised via `resvg` + `tiny-skia`,
   displayed via ratatui-image. `S` saves the PNG.
