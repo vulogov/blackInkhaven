@@ -7445,6 +7445,30 @@ impl App {
                 if trimmed.is_empty() {
                     return;
                 }
+                // Block `exit` / `quit` from reaching nu.  Nu's
+                // built-in `exit` calls `std::process::exit()`
+                // unconditionally — if it ran, the entire
+                // inkhaven process would die, taking unsaved
+                // editor buffers with it.  Users typing `exit`
+                // intend to close the SHELL pane (terminal
+                // muscle memory), so we intercept and do
+                // exactly that.  Also handles `exit 1`,
+                // `quit 0`, etc. — any line whose first token
+                // is `exit` or `quit`.  Engine + history are
+                // preserved; reopen with `Ctrl+Z o`.
+                let first_tok = trimmed
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+                if matches!(first_tok, "exit" | "quit") {
+                    if let Modal::ShellPane { input, .. } = &mut self.modal {
+                        input.clear();
+                    }
+                    self.modal = Modal::None;
+                    self.status =
+                        "shell: closed via `exit` (state preserved · Ctrl+Z o to reopen)".into();
+                    return;
+                }
                 // Reset input + history cursor; eval; push turn.
                 // Also reset scroll so the new turn lands
                 // visible at the bottom — anything else would

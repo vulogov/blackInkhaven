@@ -690,6 +690,74 @@ mod tests {
     }
 
     #[test]
+    fn engine_state_isolated_across_evals_after_huge_output() {
+        // Regression: user reported "after `help commands`,
+        // consecutive commands appear to re-issue the help
+        // output."  The engine itself is clean (each eval
+        // produces its own bytes) — the user is reading
+        // visual scrollback as engine state.  This test
+        // pins the engine-clean half of the contract so
+        // we'd catch a future regression of the OTHER
+        // possible cause (huge output poisoning state).
+        let mut e = engine();
+        let h = e.eval("help commands");
+        assert!(h.success);
+        assert!(
+            h.stdout.len() > 10_000,
+            "help commands should produce a lot of output, got {} bytes",
+            h.stdout.len()
+        );
+        let a = e.eval("1 + 1");
+        let b = e.eval(r#""xyz" | str length"#);
+        let c = e.eval("ls");
+        assert_eq!(a.stdout.trim(), "2", "1+1 broken after help");
+        assert_eq!(b.stdout.trim(), "3", "str length broken after help");
+        assert!(c.success, "ls broken after help: {c:?}", c=c.stderr);
+        // ls output must be its own — not a fragment of
+        // help-commands.  `help commands` always lists
+        // `each` (a fundamental built-in) and `zip-build`
+        // (a less common one); `ls` output never does.
+        assert!(
+            !c.stdout.contains("zip-build"),
+            "ls leaked help-commands content"
+        );
+    }
+
+    #[test]
+    fn consecutive_evals_dont_replay_each_other() {
+        // Regression: user reported that after running
+        // `help commands`, every subsequent command replayed
+        // the help output instead of doing its own thing.
+        // Likely candidates: stale block reference, parser
+        // file-id collision, leftover ByteStream bytes.
+        // Reproduce: eval a high-output command, then eval
+        // something distinct, and verify the second result
+        // doesn't contain the first.
+        let mut e = engine();
+        let first = e.eval("help commands");
+        assert!(first.success, "help commands failed: {:?}", first.stderr);
+        let first_marker = "Commands"; // help output's header
+        assert!(
+            first.stdout.contains(first_marker) || !first.stdout.is_empty(),
+            "expected SOME help output, got {:?}",
+            first.stdout
+        );
+
+        let second = e.eval("1 + 1");
+        assert_eq!(
+            second.stdout.trim(),
+            "2",
+            "second eval (1+1) should return 2, got {:?} — likely replay bug",
+            second.stdout,
+        );
+        assert!(
+            !second.stdout.contains(first_marker),
+            "second eval leaked help-commands output: {:?}",
+            second.stdout
+        );
+    }
+
+    #[test]
     fn external_command_stderr_is_captured_not_inherited() {
         // Regression: `^/bin/sh -c "echo oops 1>&2"` would leak
         // `oops` to the host TTY if stderr wasn't redirected.

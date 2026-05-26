@@ -2630,6 +2630,11 @@ impl super::super::App {
         let mut lines: Vec<Line<'_>> = Vec::with_capacity(
             self.shell_history.len() * 4 + 2,
         );
+        // Track the starting `lines` index of each turn so
+        // we can isolate the LATEST turn from older
+        // scrollback at render time (see start-clamping
+        // logic below).
+        let mut turn_starts: Vec<usize> = Vec::with_capacity(self.shell_history.len());
         if self.shell_history.is_empty() {
             lines.push(Line::from(Span::styled(
                 "(no commands yet — type a nu command and press Enter)",
@@ -2637,6 +2642,7 @@ impl super::super::App {
             )));
         }
         for (i, turn) in self.shell_history.iter().enumerate() {
+            turn_starts.push(lines.len());
             let is_selected_turn = *selection_mode && i == *selection_cursor;
             let prompt_style = if is_selected_turn {
                 Style::default()
@@ -2681,7 +2687,25 @@ impl super::super::App {
         let max_scroll = total.saturating_sub(visible_n);
         let effective_scroll = scroll.min(max_scroll);
         let end = total.saturating_sub(effective_scroll);
-        let start = end.saturating_sub(visible_n);
+        let naive_start = end.saturating_sub(visible_n);
+        // "Latest-turn isolation": when the user is NOT
+        // scrolled (effective_scroll == 0), clamp the
+        // visible-window start to the beginning of the
+        // most-recent turn.  Without this clamp, after a
+        // huge `help commands` (truncated to 1000 lines)
+        // followed by a short `ls` (9 lines), the tail of
+        // the help output would sit above the new `ls`
+        // turn — visually masking it as "help still
+        // showing" (the user-reported bug).  With the
+        // clamp, only `ls`'s 9 lines render at the bottom
+        // and the empty space above is genuinely empty.
+        // PgUp brings the older content back into view
+        // (scroll > 0 disables the clamp).
+        let start = if effective_scroll == 0 {
+            naive_start.max(turn_starts.last().copied().unwrap_or(0))
+        } else {
+            naive_start
+        };
         let visible: Vec<Line<'_>> = lines[start..end].to_vec();
         // 1.2.8+ — anchor short content to the BOTTOM of the
         // body rect, not the top.  Without this, a fresh
