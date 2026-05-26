@@ -7155,8 +7155,12 @@ impl App {
         }
         // Lazy-init the engine on first open.
         if self.shell_engine.is_none() {
-            self.shell_engine =
-                Some(super::shell::Engine::new(&self.layout.root));
+            self.shell_engine = Some(
+                super::shell::Engine::new(&self.layout.root)
+                    .with_blocked_externals(
+                        self.cfg.shell.blocked_externals.clone(),
+                    ),
+            );
         }
         // Lazy-init the per-project SQLite history.  Load
         // the most-recent cap commands so Up-arrow recall
@@ -7184,6 +7188,118 @@ impl App {
         } else {
             "shell: open · type a command, Enter runs it · Ctrl+Z o close · Ctrl+Z h selection".into()
         };
+    }
+
+    /// 1.2.8+ — eval the user's line with a wall-clock
+    /// watchdog.  Moves the engine into a worker thread,
+    /// polls the result channel with the configured timeout,
+    /// and recovers a fresh engine when a wedged child
+    /// process (`vim` blocking on `/dev/tty`, an unknown TUI
+    /// app, an infinite loop) refuses to respond to the
+    /// nu-side interrupt signal.
+    ///
+    /// Three completion paths:
+    ///   1. Worker returns within `external_timeout_secs`
+    ///      → engine moved back, output forwarded verbatim.
+    ///   2. Worker doesn't return within budget but DOES
+    ///      respond to `signals().trigger()` within the
+    ///      2-second grace window → engine moved back, output
+    ///      replaced by a "timed out — engine recovered"
+    ///      ShellOutput so the user knows the command was cut.
+    ///   3. Worker still wedged after grace → spawn a fresh
+    ///      `Engine`, abandon the worker thread (Rust will
+    ///      keep it alive until it eventually exits, but it
+    ///      no longer interferes with the App).  Env vars,
+    ///      `def` declarations, and `cd`-mutated `$env.PWD`
+    ///      are lost; the user is told so.
+    fn shell_eval_with_watchdog(
+        &mut self,
+        line: String,
+    ) -> super::shell::ShellOutput {
+        let timeout_secs = self.cfg.shell.external_timeout_secs.max(1);
+        let timeout = std::time::Duration::from_secs(timeout_secs);
+        // Grace = how long we give the worker to honour the
+        // signal after the budget runs out.  Two seconds is
+        // enough for nu's tight inner loops to notice but
+        // short enough that a genuinely wedged external
+        // doesn't keep the user waiting forever.
+        let grace = std::time::Duration::from_secs(2);
+
+        let engine = match self.shell_engine.take() {
+            Some(e) => e,
+            None => {
+                return super::shell::ShellOutput {
+                    stdout: String::new(),
+                    stderr: "engine not initialised".into(),
+                    success: false,
+                };
+            }
+        };
+        // Reset the interrupt flag in case a prior watchdog
+        // event left it set (we cleared it on engine move-back,
+        // but a fresh engine has it set to false anyway).
+        engine.reset_interrupt();
+        let interrupt = engine.interrupt_handle();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _handle = std::thread::Builder::new()
+            .name("inkhaven-shell-eval".into())
+            .spawn(move || {
+                let mut eng = engine;
+                let out = eng.eval(&line);
+                // Send back the engine + output.  Receiver may
+                // have already given up (timeout path 3); the
+                // send fails silently and `eng` drops with the
+                // closure.
+                let _ = tx.send((eng, out));
+            });
+
+        match rx.recv_timeout(timeout) {
+            Ok((eng_back, out)) => {
+                self.shell_engine = Some(eng_back);
+                out
+            }
+            Err(_) => {
+                // Path 2: trigger interrupt and wait grace.
+                interrupt.store(true, std::sync::atomic::Ordering::Relaxed);
+                match rx.recv_timeout(grace) {
+                    Ok((eng_back, _stale_out)) => {
+                        eng_back.reset_interrupt();
+                        self.shell_engine = Some(eng_back);
+                        super::shell::ShellOutput {
+                            stdout: String::new(),
+                            stderr: format!(
+                                "timed out after {timeout_secs}s — \
+                                 command was interrupted.  Engine \
+                                 recovered cleanly."
+                            ),
+                            success: false,
+                        }
+                    }
+                    Err(_) => {
+                        // Path 3: hard timeout, worker leaked.
+                        let blocked =
+                            self.cfg.shell.blocked_externals.clone();
+                        self.shell_engine = Some(
+                            super::shell::Engine::new(&self.layout.root)
+                                .with_blocked_externals(blocked),
+                        );
+                        super::shell::ShellOutput {
+                            stdout: String::new(),
+                            stderr: format!(
+                                "timed out after {timeout_secs}s — \
+                                 command did not respond to interrupt. \
+                                 Engine has been restarted; env vars, \
+                                 def declarations, and `cd` state are \
+                                 lost.  Consider adding the offending \
+                                 binary to `shell.blocked_externals`."
+                            ),
+                            success: false,
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// 1.2.8+ — `Ctrl+Z h` toggle history-selection mode
@@ -7498,20 +7614,11 @@ impl App {
                         db.push(&trimmed);
                     }
                 }
-                // Eval through the cached engine.
-                let out = match self.shell_engine.as_mut() {
-                    Some(eng) => eng.eval(&trimmed),
-                    None => {
-                        // Shouldn't happen — open_shell_pane
-                        // always lazy-inits before opening
-                        // the modal — but guard anyway.
-                        super::shell::ShellOutput {
-                            stdout: String::new(),
-                            stderr: "engine not initialised".into(),
-                            success: false,
-                        }
-                    }
-                };
+                // Eval with the watchdog (1.2.8+).  Moves the
+                // engine into a worker thread, polls main
+                // thread with a wall-clock budget, recovers a
+                // fresh engine on hard timeout.
+                let out = self.shell_eval_with_watchdog(trimmed.clone());
                 // Per-turn output truncation: a single `cat`
                 // / `git log` can drop tens of thousands of
                 // lines into stdout, which bloats memory and
