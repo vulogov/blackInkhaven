@@ -7434,12 +7434,19 @@ impl App {
             return;
         }
 
-        // ── 4 — engine init (cached after first try) ──
-        if self.tts_engine.is_none() {
-            let attempt: Result<tts::Tts, String> = tts::Tts::default()
-                .map_err(|e| format!("{e}"));
-            self.tts_engine = Some(attempt);
-        }
+        // ── 4 — engine init (fresh each call) ──
+        // Drop any prior engine before re-init.  Verified
+        // via `inkhaven doctor --tts-test`: reusing a Tts
+        // instance for back-to-back speak() calls on
+        // macOS AVFoundation silently drops audio on the
+        // second+ utterance (Ok return + fresh utterance
+        // id, but no sound).  Drop-and-recreate adds
+        // ~100-200ms init latency, which is invisible vs.
+        // a Ctrl+B S that doesn't play.
+        self.tts_engine = None;
+        let attempt: Result<tts::Tts, String> = tts::Tts::default()
+            .map_err(|e| format!("{e}"));
+        self.tts_engine = Some(attempt);
         let engine = match self.tts_engine.as_mut().unwrap() {
             Ok(e) => e,
             Err(err) => {
@@ -7584,19 +7591,30 @@ impl App {
     ///   * the engine couldn't initialise on this host
     ///     (Linux without speech-dispatcher, etc.)
     /// In both cases the caller silently skips speech —
-    /// no modal, no status nag.  The `tts_read_paragraph`
-    /// chord handler keeps its own dedicated error paths
-    /// (modals + HJSON guidance) for the interactive
-    /// flow; this helper is the headless backend used
-    /// by startup / shutdown.
+    /// no modal, no status nag.
+    ///
+    /// **Always builds a fresh engine.**  On macOS
+    /// AVFoundation, reusing a `Tts` instance for
+    /// back-to-back `speak()` calls has been observed to
+    /// produce audio for the first utterance and silently
+    /// drop subsequent ones (the call returns Ok with a
+    /// fresh utterance id but no sound plays).  Verified
+    /// via `inkhaven doctor --tts-test`: round 2 on the
+    /// reused engine plays no audio, round 3 on a fresh
+    /// engine plays cleanly.  Drop-and-recreate adds
+    /// ~100-200ms latency per Ctrl+B S, which is barely
+    /// perceptible vs. the bug it eliminates.
     fn tts_engine_ready(&mut self) -> Option<&mut tts::Tts> {
         if !self.cfg.editor.tts.enabled {
             return None;
         }
-        if self.tts_engine.is_none() {
-            let attempt = tts::Tts::default().map_err(|e| format!("{e}"));
-            self.tts_engine = Some(attempt);
-        }
+        // Drop any prior engine before re-init.  The Drop
+        // impl tears down AVFoundation's AVSpeechSynthesizer
+        // / SAPI handle / speechd connection cleanly so
+        // the fresh instance starts from a known state.
+        self.tts_engine = None;
+        let attempt = tts::Tts::default().map_err(|e| format!("{e}"));
+        self.tts_engine = Some(attempt);
         let engine = match self.tts_engine.as_mut().unwrap() {
             Ok(e) => e,
             Err(_) => return None,
