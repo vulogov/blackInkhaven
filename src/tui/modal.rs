@@ -12,6 +12,9 @@
 //! row filters (`visible_event_entries`) used by both the modal
 //! lifecycle and its draw helpers.
 
+use std::path::PathBuf;
+
+use tui_textarea::TextArea;
 use uuid::Uuid;
 
 use crate::store::node::NodeKind;
@@ -658,6 +661,46 @@ pub(super) enum Modal {
         /// Engine + history + scroll + input cursor all
         /// preserve underneath.
         show_help: bool,
+    },
+    /// 1.2.8+ — full-screen HJSON config editor for
+    /// `<project_root>/inkhaven.hjson`.  Reuses the same
+    /// `tui-textarea` widget as the paragraph editor, but
+    /// stripped of all per-paragraph chrome (no gutter
+    /// markers, no typst diagnostics, no lexicon hits, no
+    /// match overlays).  Saving writes the buffer to disk
+    /// and — when the saved bytes differ from the bytes
+    /// loaded on open — flips `restart_required` so the
+    /// renderer pops a "config changed; restart inkhaven"
+    /// overlay on top.  The overlay is informational
+    /// only; closing the modal returns to the main editor
+    /// (which keeps running with the OLD config until the
+    /// user actually quits + relaunches).  Esc closes the
+    /// modal; a status-line warning fires when closing with
+    /// unsaved edits.
+    HjsonEditor {
+        textarea: TextArea<'static>,
+        /// Bytes loaded from disk at open time.  Used to
+        /// (a) detect "buffer dirty since open" for Esc
+        /// warnings and (b) decide whether the restart
+        /// overlay fires after Ctrl+S.
+        original_content: String,
+        /// Absolute path to the HJSON file.  Captured at
+        /// open time so a `cd` in another modal doesn't
+        /// re-target the save.
+        path: PathBuf,
+        /// Set after a save whose written bytes != the
+        /// pre-open original.  Render uses this to draw
+        /// the centered restart-required overlay.  Any key
+        /// dismisses the overlay (keeping the modal open).
+        restart_required: bool,
+        /// Vertical scroll into the editor lines (in rows).
+        /// tui-textarea handles cursor + selection state
+        /// internally; we own scroll because the editor's
+        /// `widget()` path doesn't fit the custom-render
+        /// styling we apply.
+        scroll_row: usize,
+        /// Horizontal scroll into the editor lines.
+        scroll_col: usize,
     },
 }
 

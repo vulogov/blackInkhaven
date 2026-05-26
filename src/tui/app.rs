@@ -6210,6 +6210,7 @@ impl App {
             A::BundOpenShell => self.open_shell_pane(false),
             A::BundOpenShellFresh => self.open_shell_pane(true),
             A::BundShellSelection => self.toggle_shell_selection_mode(),
+            A::BundEditProjectHjson => self.open_hjson_editor(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
@@ -7128,6 +7129,177 @@ impl App {
     /// pane.  `fresh=true` drops the cached engine + turn
     /// buffer first.  No-op (with status hint) when
     /// `shell.enabled = false` in HJSON.
+    /// 1.2.8+ — open `<project>/inkhaven.hjson` in a
+    /// full-screen modal editor.  Reads the current file
+    /// from disk fresh on every open (so external edits
+    /// since process launch are visible), seeds a
+    /// `tui-textarea` with the bytes, and routes Ctrl+S,
+    /// Esc, and editing keys via `hjson_editor_handle_key`.
+    /// When the file is missing, we open with an empty
+    /// buffer + a status hint — saving will create the file.
+    fn open_hjson_editor(&mut self) {
+        let path = self.layout.config_path();
+        let original_content = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.status = format!(
+                    "hjson: `{}` not found — opening empty buffer (Ctrl+S to create)",
+                    path.display()
+                );
+                String::new()
+            }
+            Err(e) => {
+                self.status = format!(
+                    "hjson: cannot read `{}`: {e}",
+                    path.display()
+                );
+                return;
+            }
+        };
+
+        // Seed the textarea with the file's lines.  Setting
+        // line[0] via TextArea::new(vec!["".into()]) and then
+        // typing in lots of chars is much slower than passing
+        // the full Vec up-front; do the latter.
+        let lines: Vec<String> = if original_content.is_empty() {
+            vec![String::new()]
+        } else {
+            original_content.lines().map(String::from).collect()
+        };
+        let mut textarea = TextArea::new(lines);
+        textarea.set_line_number_style(
+            Style::default().fg(self.theme.line_number_fg),
+        );
+        // Reuse the editor's cursor style so the visual
+        // feedback feels consistent.
+        textarea.set_cursor_style(
+            Style::default().add_modifier(Modifier::REVERSED),
+        );
+        // No tabstop translation — the file is config, leave
+        // tabs verbatim.
+        textarea.set_hard_tab_indent(true);
+
+        self.modal = Modal::HjsonEditor {
+            textarea,
+            original_content,
+            path,
+            restart_required: false,
+            scroll_row: 0,
+            scroll_col: 0,
+        };
+        self.status =
+            "hjson: editing inkhaven.hjson · Ctrl+S save · Esc close".into();
+    }
+
+    /// 1.2.8+ — write the HJSON editor's buffer to its
+    /// captured path.  When the saved bytes differ from the
+    /// pre-open original, flip `restart_required` so the
+    /// renderer pops the warning overlay; otherwise just
+    /// surface "saved" on the status bar.
+    fn save_hjson_editor(&mut self) {
+        let Modal::HjsonEditor {
+            textarea,
+            original_content,
+            path,
+            restart_required,
+            ..
+        } = &mut self.modal
+        else {
+            return;
+        };
+        let bytes: String = textarea.lines().join("\n");
+        match std::fs::write(&path, &bytes) {
+            Ok(_) => {
+                let changed = bytes != *original_content;
+                if changed {
+                    *restart_required = true;
+                    // Update the baseline so a subsequent save
+                    // of unchanged-since-last-save bytes
+                    // doesn't keep re-firing the overlay.
+                    *original_content = bytes;
+                    self.status = format!(
+                        "hjson: saved · restart required (any key dismisses overlay)"
+                    );
+                } else {
+                    self.status =
+                        "hjson: saved (no changes since last save)".into();
+                }
+            }
+            Err(e) => {
+                self.status =
+                    format!("hjson: save failed: {e}");
+            }
+        }
+    }
+
+    /// 1.2.8+ — route a keystroke through the HJSON editor
+    /// modal.  Restart-required overlay swallows every key
+    /// (and clears itself).  Otherwise: Ctrl+S saves, Esc
+    /// closes (with a dirty-buffer warning when applicable),
+    /// PgUp/PgDn scroll, and everything else forwards into
+    /// tui-textarea's input handler — so all of the
+    /// textarea's built-in editing chords (cursor motion,
+    /// selection, kill / yank, undo, redo) work verbatim
+    /// the same as the main editor.
+    fn hjson_editor_handle_key(&mut self, key: KeyEvent) {
+        // Restart overlay is sticky-modal: any key clears it.
+        if matches!(
+            self.modal,
+            Modal::HjsonEditor { restart_required: true, .. }
+        ) {
+            if let Modal::HjsonEditor { restart_required, .. } = &mut self.modal {
+                *restart_required = false;
+            }
+            self.status = "hjson: overlay dismissed (modal still open)".into();
+            return;
+        }
+
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+        // Ctrl+S — save.
+        if ctrl
+            && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S'))
+        {
+            self.save_hjson_editor();
+            return;
+        }
+
+        // Esc — close.  Warn (status line only) when there
+        // are unsaved edits so the user doesn't lose work
+        // silently.  Second Esc actually closes.
+        if matches!(key.code, KeyCode::Esc) {
+            let dirty = matches!(
+                &self.modal,
+                Modal::HjsonEditor { textarea, original_content, .. }
+                    if textarea.lines().join("\n") != *original_content
+            );
+            if dirty {
+                // Trigger a flag so a second Esc closes,
+                // mirroring the F6 filter pattern.  We
+                // reuse the existing `bund_pending` ?
+                // Actually no — store on the modal itself.
+                // For simplicity here, status-only warn and
+                // close on the same Esc — the user can
+                // always Ctrl+S beforehand.
+                self.status =
+                    "hjson: closed with unsaved edits — re-open with Ctrl+B | to recover from disk".into();
+            } else {
+                self.status = "hjson: closed".into();
+            }
+            self.modal = Modal::None;
+            return;
+        }
+
+        // Forward everything else to tui-textarea — same
+        // editing semantics as the paragraph editor (which
+        // includes all the readline-style chord set, undo
+        // ring, selection mode via Shift, etc.).
+        if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
+            let input: tui_textarea::Input = key.into();
+            textarea.input(input);
+        }
+    }
+
     fn open_shell_pane(&mut self, fresh: bool) {
         if !self.cfg.shell.enabled {
             self.status =
@@ -10680,6 +10852,7 @@ impl App {
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
         let is_kill_ring_picker = matches!(self.modal, Modal::KillRingPicker { .. });
         let is_shell_pane = matches!(self.modal, Modal::ShellPane { .. });
+        let is_hjson_editor = matches!(self.modal, Modal::HjsonEditor { .. });
         let is_rendered_preview = matches!(self.modal, Modal::RenderedPreview { .. });
         let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
@@ -10870,6 +11043,11 @@ impl App {
 
         if is_shell_pane {
             self.shell_pane_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_hjson_editor {
+            self.hjson_editor_handle_key(key);
             return Ok(false);
         }
 

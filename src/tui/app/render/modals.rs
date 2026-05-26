@@ -2868,6 +2868,212 @@ impl super::super::App {
         }
     }
 
+    /// 1.2.8+ — full-screen HJSON editor for the project's
+    /// `inkhaven.hjson`.  Renders the textarea's lines
+    /// manually so per-line `hjson_highlight` styling
+    /// (keys / strings / comments / numbers / keywords) can
+    /// be applied — tui-textarea's built-in widget supports
+    /// only line-level + cursor-level styling, not per-token.
+    /// Pops a centered "config changed, restart inkhaven"
+    /// overlay when `restart_required = true`.  Status hint
+    /// at the bottom row.
+    pub(in crate::tui::app) fn draw_hjson_editor_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let (lines, cursor_pos, restart_required, path_display, scroll_row, scroll_col) =
+            match &self.modal {
+                Modal::HjsonEditor {
+                    textarea,
+                    restart_required,
+                    path,
+                    scroll_row,
+                    scroll_col,
+                    ..
+                } => (
+                    textarea.lines().to_vec(),
+                    textarea.cursor(),
+                    *restart_required,
+                    path.to_string_lossy().into_owned(),
+                    *scroll_row,
+                    *scroll_col,
+                ),
+                _ => return,
+            };
+
+        // Fullscreen-floating with a 1-cell margin so the
+        // editor pane borders stay visible underneath.
+        let rect = Rect {
+            x: area.x + 1,
+            y: area.y + 1,
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let dirty = matches!(
+            &self.modal,
+            Modal::HjsonEditor { textarea, original_content, .. }
+                if textarea.lines().join("\n") != *original_content
+        );
+        let title = if dirty {
+            format!(" {} • [modified] ", path_display)
+        } else {
+            format!(" {} ", path_display)
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Reserve last row for the status hint.
+        let body_h = inner.height.saturating_sub(1);
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: body_h,
+        };
+        let hint_rect = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: 1,
+        };
+
+        // Recompute scroll to keep the cursor visible.  We
+        // can't mutate scroll on `&self.modal` (we only have
+        // a borrow here), so capture the new values and
+        // write back at the end.
+        let body_h_us = body_h as usize;
+        let body_w_us = body_rect.width as usize;
+        let (cur_row, cur_col) = cursor_pos;
+        let mut new_scroll_row = scroll_row;
+        let mut new_scroll_col = scroll_col;
+        if body_h_us > 0 {
+            if cur_row < new_scroll_row {
+                new_scroll_row = cur_row;
+            } else if cur_row >= new_scroll_row + body_h_us {
+                new_scroll_row = cur_row + 1 - body_h_us;
+            }
+        }
+        // Reserve 4 cells for the line-number gutter when
+        // computing visible width.
+        let gutter_w: usize = 5;
+        let editable_w = body_w_us.saturating_sub(gutter_w);
+        if editable_w > 0 {
+            if cur_col < new_scroll_col {
+                new_scroll_col = cur_col;
+            } else if cur_col >= new_scroll_col + editable_w {
+                new_scroll_col = cur_col + 1 - editable_w;
+            }
+        }
+
+        // Highlight the entire source (all lines) so cross-
+        // line `/* … */` / `''' … '''` constructs colour
+        // correctly even when the user scrolls into the
+        // middle of one.
+        let source: String = lines.join("\n");
+        let highlighted =
+            super::super::super::hjson_highlight::highlight_hjson_lines(
+                &source,
+                &self.theme,
+            );
+
+        let total_lines = highlighted.len().max(1);
+        let row_end = (new_scroll_row + body_h_us).min(total_lines);
+        let mut painted: Vec<Line<'_>> = Vec::with_capacity(body_h_us);
+        for row in new_scroll_row..row_end {
+            let lineno_text = format!("{:>4} ", row + 1);
+            let mut spans: Vec<Span<'_>> = vec![Span::styled(
+                lineno_text,
+                Style::default().fg(self.theme.line_number_fg),
+            )];
+            // Concat the highlighted runs into a single
+            // string + parallel style list so we can slice
+            // by column for horizontal scroll.
+            let runs = &highlighted[row];
+            let mut cells: Vec<(char, Style)> = Vec::new();
+            for run in runs {
+                for ch in run.text.chars() {
+                    cells.push((ch, run.style));
+                }
+            }
+            // Slice by horizontal scroll.
+            let start = new_scroll_col.min(cells.len());
+            let end = (new_scroll_col + editable_w).min(cells.len());
+            // Pack consecutive same-style runs back into Spans.
+            let mut i = start;
+            while i < end {
+                let style = cells[i].1;
+                let run_start = i;
+                while i < end && cells[i].1 == style {
+                    i += 1;
+                }
+                let text: String = cells[run_start..i].iter().map(|(c, _)| *c).collect();
+                spans.push(Span::styled(text, style));
+            }
+            painted.push(Line::from(spans));
+        }
+        f.render_widget(
+            Paragraph::new(painted),
+            body_rect,
+        );
+
+        // Place the terminal cursor for visual feedback —
+        // gutter (5 cells) + column relative to scroll.
+        let cursor_screen_col = gutter_w + cur_col.saturating_sub(new_scroll_col);
+        let cursor_screen_row = cur_row.saturating_sub(new_scroll_row);
+        if cursor_screen_row < body_h_us && cursor_screen_col < body_w_us {
+            f.set_cursor_position((
+                body_rect.x + cursor_screen_col as u16,
+                body_rect.y + cursor_screen_row as u16,
+            ));
+        }
+
+        // Hint line.
+        let hint = if dirty {
+            " Ctrl+S save · Esc close · arrows / Page navigate · [unsaved] "
+        } else {
+            " Ctrl+S save · Esc close · arrows / Page navigate "
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            hint_rect,
+        );
+
+        // Write scroll changes back into the modal state
+        // for the next render frame.
+        if let Modal::HjsonEditor {
+            scroll_row,
+            scroll_col,
+            ..
+        } = &mut self.modal
+        {
+            *scroll_row = new_scroll_row;
+            *scroll_col = new_scroll_col;
+        }
+
+        // Restart-required overlay (drawn last so it's on top).
+        if restart_required {
+            draw_hjson_restart_overlay(f, rect);
+        }
+    }
+
     /// 1.2.8+ — kill-ring picker. Renders each deleted-
     /// paragraph stash as title + original parent breadcrumb
     /// + first-non-empty-line preview.  Cursor selection
@@ -3567,6 +3773,62 @@ impl super::super::App {
         );
     }
 
+}
+
+/// 1.2.8+ — restart-required overlay painted on top of
+/// the HJSON editor modal after a Ctrl+S save whose
+/// written bytes differ from the pre-open original.
+/// Informational only; the user dismisses with any key
+/// (handled at the App level) and continues editing.
+/// Restart is on the next manual relaunch — the modal
+/// can't restart the process itself.
+fn draw_hjson_restart_overlay(f: &mut ratatui::Frame, host: Rect) {
+    let lines: Vec<Line<'_>> = vec![
+        Line::from(Span::styled(
+            "Config changed",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::raw(
+            "inkhaven.hjson has been written to disk.",
+        )),
+        Line::from(Span::raw(
+            "The running editor is still using the OLD config —",
+        )),
+        Line::from(Span::raw(
+            "restart inkhaven to apply your changes.",
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press any key to dismiss",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )),
+    ];
+
+    let content_w = 56u16.min(host.width.saturating_sub(4));
+    let content_h = (lines.len() as u16 + 2).min(host.height.saturating_sub(2));
+    let x = host.x + host.width.saturating_sub(content_w) / 2;
+    let y = host.y + host.height.saturating_sub(content_h) / 2;
+    let overlay = Rect { x, y, width: content_w, height: content_h };
+    f.render_widget(ratatui::widgets::Clear, overlay);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Restart required ")
+        .border_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(overlay);
+    f.render_widget(block, overlay);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        inner,
+    );
 }
 
 /// 1.2.8+ — `Ctrl+B H` help overlay painted on top of the
