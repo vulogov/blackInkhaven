@@ -1399,6 +1399,15 @@ pub(crate) struct App {
     /// `true` after Ctrl+B inside the pane, consumed by
     /// the next keystroke.
     shell_ctrlb_pending: bool,
+    /// 1.2.9+ — lazy-init TTS engine (`tts-rs`).  Built
+    /// on first `Ctrl+B S`; reused across playbacks so
+    /// the second + Nth invocations skip the engine
+    /// startup cost.  `None` until the first attempt.
+    /// `Err` after a failed init carries the engine
+    /// error string for the unavailable-modal — we keep
+    /// the failure cached so we don't retry on every
+    /// keystroke.
+    tts_engine: Option<Result<tts::Tts, String>>,
     /// Cursor into `ai_prompt_history`. None when not navigating;
     /// `Some(i)` when the user is stepping through history. Any
     /// edit (typing, backspace, etc.) clears it so the next Up
@@ -1744,6 +1753,7 @@ impl App {
             shell_command_history: Vec::new(),
             shell_history_db: None,
             shell_ctrlb_pending: false,
+            tts_engine: None,
             opened: None,
             secondary: None,
             secondary_focused: false,
@@ -1974,6 +1984,13 @@ impl App {
         loop {
             self.pump_inference();
             self.tick_autosave();
+            // 1.2.9+ — close the TTS playback modal as
+            // soon as the engine reports it's idle, so
+            // the modal disappears when the paragraph
+            // finishes naturally (no user keystroke
+            // needed).  Cheap call — single FFI
+            // boolean.
+            self.tts_poll_playback();
             // Drive any deferred directory import — `commit_file_pick`
             // sets `pending_import` so the splash can be drawn directly
             // via the terminal handle (which `commit_file_pick` doesn't
@@ -2581,6 +2598,19 @@ impl App {
                 }
                 _ => return Ok(false),
             }
+        }
+
+        // 1.2.9+ — TtsUnavailable: any key dismisses.
+        if matches!(self.modal, Modal::TtsUnavailable { .. }) {
+            self.modal = Modal::None;
+            return Ok(false);
+        }
+        // 1.2.9+ — TtsPlayback: any key stops the engine
+        // and closes the modal.  The render loop polls
+        // for natural end-of-speech in `tts_poll_playback`.
+        if matches!(self.modal, Modal::TtsPlayback { .. }) {
+            self.tts_stop_playback();
+            return Ok(false);
         }
 
         // Hard quit works from anywhere, including inside a modal.
@@ -6406,6 +6436,7 @@ impl App {
             A::BundOpenShellFresh => self.open_shell_pane(true),
             A::BundShellSelection => self.toggle_shell_selection_mode(),
             A::BundEditProjectHjson => self.open_hjson_editor(),
+            A::TtsReadParagraph => self.tts_read_paragraph(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
@@ -7332,6 +7363,188 @@ impl App {
     /// Esc, and editing keys via `hjson_editor_handle_key`.
     /// When the file is missing, we open with an empty
     /// buffer + a status hint — saving will create the file.
+    /// 1.2.9+ — Ctrl+B S action: read the open paragraph
+    /// aloud via the OS TTS engine.  Dispatch order:
+    ///
+    ///   1. No paragraph open → status hint.
+    ///   2. Empty / whitespace-only body → status hint.
+    ///   3. `editor.tts.enabled = false` → friendly
+    ///      "TTS disabled" modal pointing at HJSON.
+    ///   4. Lazy-init the engine.  On failure, cache the
+    ///      error string and show the "TTS unavailable"
+    ///      modal so we don't pay engine-init cost on
+    ///      every keystroke.
+    ///   5. Apply HJSON voice (substring match against
+    ///      installed voices; prefer "Enhanced" /
+    ///      "Premium" variants when present) and speed
+    ///      (multiplier over `normal_rate`, clamped to
+    ///      engine bounds).
+    ///   6. Spawn speech with `interrupt = true` so a
+    ///      second Ctrl+B S during playback restarts on
+    ///      the new paragraph cleanly.
+    ///   7. Open the playback modal.  The render loop
+    ///      polls `is_speaking()` each frame and closes
+    ///      the modal when speech ends.
+    fn tts_read_paragraph(&mut self) {
+        // ── 1+2 — open paragraph + non-empty body ────
+        let source: String = match self.opened.as_ref() {
+            Some(doc) => doc.textarea.lines().join("\n"),
+            None => {
+                self.status = "TTS: no paragraph open".into();
+                return;
+            }
+        };
+        // Strip a leading typst heading line (`= Title`)
+        // so the spoken text is just the prose body.
+        let body = strip_leading_typst_heading(&source);
+        let body = body.trim().to_string();
+        if body.is_empty() {
+            self.status = "TTS: paragraph is empty".into();
+            return;
+        }
+
+        // ── 3 — feature gate ────────────────────────
+        if !self.cfg.editor.tts.enabled {
+            self.modal = Modal::TtsUnavailable {
+                title: " TTS disabled ".into(),
+                reason: format!(
+                    "Read-aloud (Ctrl+B S) is disabled in this project.\n\n\
+                     Enable it by adding to inkhaven.hjson:\n\n  \
+                     editor: {{ tts: {{ enabled: true }} }}\n\n\
+                     Default voice is `Milena` (Russian female; ships free \
+                     with macOS + Windows after the language download).  See \
+                     Documentation/CONFIGURATION.md → editor.tts for the \
+                     full knob list."
+                ),
+            };
+            return;
+        }
+
+        // ── 4 — engine init (cached after first try) ──
+        if self.tts_engine.is_none() {
+            let attempt: Result<tts::Tts, String> = tts::Tts::default()
+                .map_err(|e| format!("{e}"));
+            self.tts_engine = Some(attempt);
+        }
+        let engine = match self.tts_engine.as_mut().unwrap() {
+            Ok(e) => e,
+            Err(err) => {
+                let reason = format!(
+                    "The OS text-to-speech engine couldn't initialise:\n\n  \
+                     {err}\n\n\
+                     Platform notes:\n  \
+                     · macOS: voices ship with the OS but Russian needs a \
+                     one-time download via System Settings → Accessibility \
+                     → Spoken Content → Russian.\n  \
+                     · Linux: install `speech-dispatcher` system-wide \
+                     (`apt install speech-dispatcher`).  For natural \
+                     Russian, configure speechd to use RHVoice or piper \
+                     instead of the default espeak-ng.\n  \
+                     · Windows: voices ship with the OS; nothing to do.\n  \
+                     · Other platforms: TTS is not currently supported."
+                );
+                self.modal = Modal::TtsUnavailable {
+                    title: " TTS unavailable ".into(),
+                    reason,
+                };
+                return;
+            }
+        };
+
+        // ── 5 — voice + speed ──────────────────────
+        let cfg = &self.cfg.editor.tts;
+        let mut voice_label = "system default".to_string();
+        if !cfg.voice.is_empty() {
+            let needle = cfg.voice.to_lowercase();
+            let voices = engine.voices().ok().unwrap_or_default();
+            // Substring match; prefer entries that ALSO
+            // contain "enhanced" or "premium" so e.g.
+            // "Milena" picks "Milena (Enhanced)" when
+            // available.
+            let pick = voices
+                .iter()
+                .filter(|v| v.name().to_lowercase().contains(&needle))
+                .max_by_key(|v| {
+                    let n = v.name().to_lowercase();
+                    let enhanced =
+                        n.contains("enhanced") || n.contains("premium");
+                    (enhanced as u8, v.name().len() as isize)
+                });
+            if let Some(v) = pick {
+                voice_label = v.name();
+                let _ = engine.set_voice(v);
+            } else {
+                // Fall through with system default; warn
+                // the user on the status bar so they know
+                // the HJSON voice value didn't match.
+                self.status = format!(
+                    "TTS: no installed voice matches `{}` — using system default",
+                    cfg.voice
+                );
+            }
+        }
+        let speed = cfg.speed.max(0.1);
+        let target = (engine.normal_rate() * speed)
+            .clamp(engine.min_rate(), engine.max_rate());
+        let _ = engine.set_rate(target);
+
+        // ── 6 — start speech (interrupt any prior) ──
+        if let Err(e) = engine.speak(body.clone(), true) {
+            self.modal = Modal::TtsUnavailable {
+                title: " TTS error ".into(),
+                reason: format!(
+                    "Couldn't start speech:\n\n  {e}\n\n\
+                     The engine initialised but rejected the request.  \
+                     Check that the chosen voice supports the paragraph's \
+                     language."
+                ),
+            };
+            return;
+        }
+
+        // ── 7 — playback modal ─────────────────────
+        let preview: String = body.chars().take(80).collect();
+        self.modal = Modal::TtsPlayback {
+            started_at: std::time::Instant::now(),
+            preview,
+            voice_label,
+        };
+    }
+
+    /// 1.2.9+ — close the playback modal when the TTS
+    /// engine reports `is_speaking() == false`.  Called
+    /// each render frame so playback ending naturally
+    /// (the engine ran out of text) closes the modal
+    /// without the user pressing anything.  Idempotent;
+    /// no-op when the modal isn't `TtsPlayback`.
+    pub(super) fn tts_poll_playback(&mut self) {
+        if !matches!(self.modal, Modal::TtsPlayback { .. }) {
+            return;
+        }
+        let still_speaking = match self.tts_engine.as_ref() {
+            Some(Ok(engine)) => engine.is_speaking().unwrap_or(false),
+            _ => false,
+        };
+        if !still_speaking {
+            self.modal = Modal::None;
+            self.status = "TTS: finished".into();
+        }
+    }
+
+    /// 1.2.9+ — stop in-flight playback + close the
+    /// playback modal.  Called when the user hits any
+    /// key while the playback modal is open (Esc, space,
+    /// etc.).  Errors from `stop()` are swallowed —
+    /// the engine might already be done; we just want to
+    /// be sure no further audio plays.
+    fn tts_stop_playback(&mut self) {
+        if let Some(Ok(engine)) = self.tts_engine.as_mut() {
+            let _ = engine.stop();
+        }
+        self.modal = Modal::None;
+        self.status = "TTS: stopped".into();
+    }
+
     fn open_hjson_editor(&mut self) {
         let path = self.layout.config_path();
         let original_content = match std::fs::read_to_string(&path) {

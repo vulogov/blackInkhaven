@@ -1294,6 +1294,40 @@ pub struct EditorConfig {
     /// chord especially).
     #[serde(default = "default_confirm_quit")]
     pub confirm_quit: bool,
+    /// 1.2.9+ — text-to-speech read-aloud (`Ctrl+B S`).
+    /// See `TtsConfig` below for per-knob detail.
+    #[serde(default)]
+    pub tts: TtsConfig,
+}
+
+/// 1.2.9+ — `editor.tts.*` HJSON stanza.  `Ctrl+B S` in
+/// the editor pane reads the open paragraph aloud via
+/// the host OS's TTS engine.  Default voice is `Milena`
+/// (Russian female, ships free with macOS + Windows
+/// after a one-time language download).  The match is a
+/// case-insensitive substring search against installed
+/// voice names — "Milena" picks the standard or the
+/// "Milena (Enhanced)" / "Milena (Premium)" variant
+/// when available.  `speed` is a multiplier over the
+/// engine's "normal" rate (0.8 = 80%, 1.2 = 120%).
+/// Clamped to the engine's `[min_rate, max_rate]` at
+/// playback time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TtsConfig {
+    pub enabled: bool,
+    pub voice: String,
+    pub speed: f32,
+}
+
+impl Default for TtsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            voice: "Milena".into(),
+            speed: 1.0,
+        }
+    }
 }
 
 fn default_startup_splash() -> bool {
@@ -1320,6 +1354,7 @@ impl Default for EditorConfig {
             startup_splash: default_startup_splash(),
             mouse_captured: default_mouse_captured(),
             confirm_quit: default_confirm_quit(),
+            tts: TtsConfig::default(),
         }
     }
 }

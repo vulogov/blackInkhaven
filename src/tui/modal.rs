@@ -708,6 +708,33 @@ pub(super) enum Modal {
     /// `request_quit` flow; N / Esc cancels.  No fields —
     /// the modal is fully transient.
     ConfirmQuit,
+    /// 1.2.9+ — TTS unavailable / disabled modal.  Opens
+    /// when `Ctrl+B S` fires while either the feature is
+    /// disabled in HJSON (`editor.tts.enabled = false`)
+    /// or the TTS engine couldn't initialise on this
+    /// platform.  `reason` is the user-facing text;
+    /// `title` distinguishes "TTS disabled" from
+    /// "TTS unavailable" in the modal header.  Any key
+    /// dismisses.
+    TtsUnavailable {
+        title: String,
+        reason: String,
+    },
+    /// 1.2.9+ — TTS playback modal.  Opens when
+    /// `Ctrl+B S` successfully kicks off speech via
+    /// `tts-rs`.  The actual TTS engine handle lives on
+    /// `App.tts_engine` (lazy-init, reused across
+    /// playbacks).  `started_at` drives the elapsed-time
+    /// counter; `preview` is the first ~80 chars of the
+    /// paragraph for the modal title.  The render loop
+    /// polls `tts.is_speaking()` each frame and closes
+    /// the modal automatically when playback ends.  Any
+    /// key calls `tts.stop()` and closes the modal.
+    TtsPlayback {
+        started_at: std::time::Instant,
+        preview: String,
+        voice_label: String,
+    },
 }
 
 #[cfg(test)]
