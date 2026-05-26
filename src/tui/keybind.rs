@@ -328,12 +328,15 @@ pub enum Action {
     /// Re-press exits selection mode.
     #[serde(rename = "bund.shell_selection")]
     BundShellSelection,
-    /// Ctrl+B | (1.2.8+) — open the project's
+    /// Ctrl+B 0 (1.2.8+) — open the project's
     /// `inkhaven.hjson` in a full-screen editor modal.
     /// Syntax-highlighted via `hjson_highlight`.  Save
     /// with Ctrl+S; if the saved bytes differ from the
     /// loaded bytes, a "restart inkhaven" overlay pops
-    /// (config changes apply on next launch).
+    /// (config changes apply on next launch).  Was bound
+    /// to `|` originally; reassigned to `0` because some
+    /// terminals don't forward Shift+\ through the
+    /// chord-prefix state machine.
     #[serde(rename = "bund.edit_project_hjson")]
     BundEditProjectHjson,
     /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
@@ -714,7 +717,7 @@ impl Action {
             Action::BundShellSelection =>
                 "Inside the shell pane, toggle history-selection mode (1.2.8+) — ↑↓ walks turn-by-turn, `c` copies output to clipboard, `i` inserts wrapped in the configured typst-box template. Re-press exits.".into(),
             Action::BundEditProjectHjson =>
-                "Open `<project>/inkhaven.hjson` in a full-screen editor (1.2.8+). Syntax-highlighted via the hand-rolled HJSON lexer. Ctrl+S saves; when saved bytes differ from the loaded bytes, a restart-required overlay pops up (config applies on next launch). Esc closes; unsaved-edit warnings fire on close.".into(),
+                "Open `<project>/inkhaven.hjson` in a full-screen editor (1.2.8+, Ctrl+B 0). Syntax-highlighted via the hand-rolled HJSON lexer. Ctrl+S saves; when saved bytes differ from the loaded bytes, a restart-required overlay pops up (config applies on next launch). Esc closes; unsaved-edit warnings fire on close.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -869,11 +872,13 @@ impl KeyBindings {
                 entry("Shift+o", Action::BundOpenShellFresh, Scope::Any),
                 entry("h", Action::BundShellSelection, Scope::Any),
                 // 1.2.8+ — full-screen HJSON config editor.
-                // Bound on `|` (Shift+\ on US layout) so it
-                // sits visually with the other "pipeline /
-                // config" chords without colliding with the
-                // alphabetic Ctrl+B chords.
-                entry("|", Action::BundEditProjectHjson, Scope::Any),
+                // Bound on `0` (the digit row): `|` was the
+                // original choice but some terminals refuse
+                // to forward Shift+\ through the bund-prefix
+                // chord state machine.  `0` is unambiguous,
+                // unmodified, and the only Ctrl+B digit
+                // chord, so no collision risk.
+                entry("0", Action::BundEditProjectHjson, Scope::Any),
             ],
             view_sub: vec![
                 // Editor / AI-prompt: 1 = buffer markdown, 2 =
