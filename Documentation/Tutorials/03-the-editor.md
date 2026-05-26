@@ -145,6 +145,22 @@ You can leave them all on; conflicts resolve in a deterministic order
 so the most actionable cue wins (selection > search match > grammar
 diff > lexicon > syntax).
 
+## Focus mode (distraction-free)
+
+`Ctrl+B W` hides every other pane — Tree, AI, Search, AI-prompt —
+and gives the editor the full window. Useful for long drafting
+sessions where the cross-pane chrome is more distraction than
+help. Re-press to restore the four-pane layout. The chord is
+internally still called "typewriter mode" in some log strings
+and the HJSON serde key (`global.toggle_typewriter`); the chord
+binding has been there since early 1.2 but the documentation
+calls it "focus mode" from 1.2.9 onward because that's what it
+actually does.
+
+Mutually exclusive with `Ctrl+B K` (AI-fullscreen). Toggling
+either turns the other off — there's no "AI + editor split with
+everything else hidden" mode by design.
+
 ## Find and replace (regex)
 
 `Ctrl+F` opens the Find overlay:

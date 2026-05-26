@@ -473,7 +473,7 @@ impl Action {
             Action::ScheduleBuild => "build".into(),
             Action::ScheduleTake => "take".into(),
             Action::BackupNow => "backup".into(),
-            Action::ToggleTypewriter => "typewriter".into(),
+            Action::ToggleTypewriter => "focus mode".into(),
             Action::ToggleAiFullscreen => "AI-full".into(),
             Action::StatusFilterReady => "Ready".into(),
             Action::StatusFilterFinal => "Final".into(),
@@ -610,7 +610,7 @@ impl Action {
             Action::BackupNow =>
                 "Run a project backup now (Ctrl+B Shift+B). Always fires — ignores the exit-hook recency cooldown.".into(),
             Action::ToggleTypewriter =>
-                "Toggle full-screen typewriter mode — hides every other pane for focused writing.".into(),
+                "Toggle distraction-free / focus mode — hides every other pane (Tree, AI, Search, AI prompt) and gives the editor the full window. Re-press to restore the four-pane layout. Internally still called \"typewriter mode\" in some log strings + the HJSON config field; the chord serde key is `global.toggle_typewriter` for backward-compat.".into(),
             Action::ToggleAiFullscreen =>
                 "Toggle full-screen AI mode — AI pane | chat history + AI prompt.".into(),
             Action::StatusFilterReady =>
