@@ -250,11 +250,12 @@ pub enum Command {
     Event(EventCommand),
 
     /// 1.2.8+ — export a book's timeline (events grouped
-    /// chronologically per track) to a file. The first
-    /// format shipped is `typst` — a text listing typst
-    /// users can include via `#include` in a query letter
-    /// or wiki page. SVG and PNG formats are scheduled for
-    /// 1.2.9 once the data shape settles.
+    /// chronologically per track) to a file. Three formats:
+    /// `typst` (a text listing typst users `#include`),
+    /// `svg` (a self-contained swim-lane render — circles
+    /// for instant events, bars for duration events, a
+    /// date axis at the top), and `png` (the same SVG
+    /// rasterised through resvg + tiny-skia).
     ExportTimeline {
         /// User-book name (case-insensitive title or slug).
         /// Optional when the project has exactly one user
@@ -262,8 +263,9 @@ pub enum Command {
         /// chapter is read.
         #[arg(long)]
         book_name: Option<String>,
-        /// Output format. Only `typst` is supported in
-        /// 1.2.8; further formats land in 1.2.9.
+        /// Output format. Choose one of `typst` (text
+        /// listing, default), `svg` (vector swim lane),
+        /// or `png` (rasterised SVG).
         #[arg(value_enum, default_value_t = TimelineExportFormat::Typst)]
         format: TimelineExportFormat,
         /// Output path. Required.
@@ -393,8 +395,6 @@ pub enum ExportFormat {
 }
 
 /// 1.2.8+ — output formats for `inkhaven export-timeline`.
-/// Only `typst` ships in 1.2.8; SVG (vector swim-lane render)
-/// and PNG (rasterised via resvg) are scheduled for 1.2.9.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum TimelineExportFormat {
     /// Typst-source listing — chronological events per track,
@@ -402,6 +402,17 @@ pub enum TimelineExportFormat {
     /// document. Compile through `typst compile <file>` to
     /// get PDF / SVG / PNG via typst's own pipeline.
     Typst,
+    /// Vector swim-lane render — one row per track, events
+    /// positioned by start tick (instant = circle, duration
+    /// = bar), date axis at the top. Self-contained SVG;
+    /// drop directly into an HTML page or open in any
+    /// browser.
+    Svg,
+    /// Same swim-lane render as SVG, then rasterised through
+    /// `resvg` + `tiny-skia` to a PNG. Pixel-density follows
+    /// the SVG's intrinsic size (no extra DPI flag in 1.2.8 —
+    /// add `--width` to taste in a follow-up).
+    Png,
 }
 
 impl Cli {
