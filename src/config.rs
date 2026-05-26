@@ -300,6 +300,26 @@ pub struct ShellConfig {
     pub max_buffered_turns: usize,
     pub max_output_lines: usize,
     pub insert_template: String,
+    /// 1.2.8+ — basenames of external programs that are
+    /// **refused before spawn**.  Full-screen TUI apps
+    /// (vim, less, top, tmux, …) cannot run inside the
+    /// embedded pane: they open `/dev/tty` directly and
+    /// write escape sequences past our piped stdio,
+    /// corrupting ratatui's alt-screen surface.  Match is
+    /// case-insensitive against the program basename, so
+    /// `^/usr/bin/vim` and `^vim` both hit.  Override per
+    /// project to add internal tools.
+    pub blocked_externals: Vec<String>,
+    /// 1.2.8+ — wall-clock budget for a single command's
+    /// evaluation.  After this many seconds the engine
+    /// triggers its interrupt signal, waits a short grace
+    /// period, and (if the command is still wedged) spins
+    /// up a fresh engine and abandons the worker — losing
+    /// any env-var / def state the user accumulated but
+    /// keeping the TUI responsive.  Catches TUI apps that
+    /// slip past `blocked_externals`.  Set high (e.g.
+    /// 600) if you legitimately run long-baked pipelines.
+    pub external_timeout_secs: u64,
 }
 
 impl Default for ShellConfig {
@@ -310,8 +330,46 @@ impl Default for ShellConfig {
             max_output_lines: 1000,
             insert_template:
                 "#raw(block: true, lang: \"shell\", `{output}`)".into(),
+            blocked_externals: default_blocked_externals(),
+            external_timeout_secs: 30,
         }
     }
+}
+
+/// 1.2.8+ — default list of basenames refused before
+/// spawn.  See `ShellConfig::blocked_externals` for the
+/// rationale.  Grouped by category for editability:
+///
+///   editors        — vim/nvim/vi/view/emacs/nano/pico/joe
+///   file managers  — mc/mcedit/ranger/nnn/lf/yazi
+///   pagers         — less/more/most/pg
+///   monitors       — top/htop/btop/atop/iotop/iftop
+///   multiplexers   — tmux/screen/byobu/dtach
+///   remote shells  — ssh/telnet/mosh
+///   debuggers      — gdb/lldb
+///   fuzzy finders  — fzf/peco/sk
+///   REPLs (TTY)    — ipython/irb/pry
+///   db clients     — psql/mysql/sqlite3
+///   privileged     — sudo/su/passwd
+pub fn default_blocked_externals() -> Vec<String> {
+    [
+        "vim", "nvim", "vi", "view", "ex",
+        "emacs", "emacsclient",
+        "nano", "pico", "joe", "jed",
+        "mc", "mcedit", "ranger", "nnn", "lf", "yazi",
+        "less", "more", "most", "pg",
+        "top", "htop", "btop", "atop", "iotop", "iftop", "nethogs", "glances",
+        "tmux", "screen", "byobu", "dtach", "abduco",
+        "ssh", "telnet", "mosh", "rlogin",
+        "gdb", "lldb",
+        "fzf", "peco", "sk", "skim",
+        "ipython", "irb", "pry",
+        "psql", "mysql", "sqlite3", "redis-cli",
+        "sudo", "su", "passwd",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
 }
 
 /// Typst function templates used during Book assembly (Ctrl+B A).

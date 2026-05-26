@@ -153,6 +153,17 @@ shell: {
   // `git log` showing in full; lower to keep memory and
   // PgUp/PgDn responsiveness tight on slow machines.
   max_output_lines: 1000
+  // 1.2.8+ — full-screen TUI apps refused before
+  // spawn.  vim/less/top/tmux/… would otherwise open
+  // /dev/tty and corrupt ratatui's alt-screen.  Default
+  // list covers ~45 common offenders; HJSON override
+  // adds/removes by basename (case-insensitive).
+  blocked_externals: ["vim", "nvim", "less", "top", "tmux", ...]
+  // 1.2.8+ — wall-clock budget per eval.  After timeout,
+  // nu interrupt fires; if the worker stays wedged
+  // through the 2-second grace window, the engine is
+  // rebuilt (lose env/defs/cd, keep TUI alive).
+  external_timeout_secs: 30
   // The typst markup wrapping a Ctrl+Z h → i insert.
   // `{output}` is substituted verbatim.  Default uses
   // a typst raw block with `lang: "shell"` for

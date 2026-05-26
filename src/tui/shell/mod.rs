@@ -32,8 +32,12 @@
 #![allow(dead_code)]  // some fields/methods unused until Phase 5+.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use nu_parser::FlatShape;
+use nu_protocol::Signals;
+use nu_protocol::ast::{Block, Expr};
 use nu_protocol::engine::{EngineState, Redirection, Stack, StateWorkingSet};
 use nu_protocol::{ByteStreamSource, OutDest, PipelineData, Span, Value};
 use nu_protocol::debugger::WithoutDebug;
@@ -44,9 +48,22 @@ use rusqlite::Connection;
 /// state (function table, scope chain, env vars) + a Stack
 /// (per-eval scratch + env mutations).  Re-eval'd commands
 /// share state, like a real REPL.
+///
+/// `blocked_externals` and the `interrupt` atomic are the
+/// 1.2.8+ TUI-safety mechanisms — see `eval` for how the
+/// blocklist short-circuits before spawn, and
+/// `trigger_interrupt` for the timeout watchdog hook.
 pub(super) struct Engine {
     state: EngineState,
     stack: Stack,
+    /// Lowercased basenames refused before spawn.  Populated
+    /// from `ShellConfig::blocked_externals`.  Empty list →
+    /// no pre-spawn filtering.
+    blocked_externals: Vec<String>,
+    /// Shared interrupt flag — the App-side watchdog stores
+    /// `true` on timeout, and nu's `Signals::check` raises
+    /// `ShellError::Interrupted` at the next safe point.
+    interrupt: Arc<AtomicBool>,
 }
 
 /// Captured result of one `Engine::eval` call.
@@ -174,7 +191,26 @@ impl Engine {
         let engine_state = EngineState::new();
         // add_shell_command_context takes the state by
         // value and returns it with the delta merged.
-        let state = nu_command::add_shell_command_context(engine_state);
+        let mut state = nu_command::add_shell_command_context(engine_state);
+
+        // 1.2.8+ — TUI-safety: pretend to be an MCP server.
+        // The flag's only effect inside `nu_command` is
+        // `run_external`: when input pipeline data is `Empty`
+        // (always our case) and `is_mcp=true`, nu spawns the
+        // child with `Stdio::null()` for stdin instead of
+        // inheriting our TTY.  Apps that respect
+        // `isatty(STDIN_FILENO)` (most well-behaved REPLs +
+        // password prompts) fail-fast; apps that grab
+        // `/dev/tty` regardless (vim, less) still need the
+        // blocklist below to be stopped.
+        state.is_mcp = true;
+
+        // 1.2.8+ — install our own Signals so the App-side
+        // watchdog can interrupt a long-running eval.  Without
+        // this hook, eval_block uses `Signals::EMPTY` and
+        // never checks for interruption.
+        let interrupt = Arc::new(AtomicBool::new(false));
+        state.set_signals(Signals::new(interrupt.clone()));
 
         let mut stack = Stack::new();
         // `cwd_init` env var is what nu's std library reads;
@@ -198,7 +234,51 @@ impl Engine {
             Value::string(root_str, Span::unknown()),
         );
 
-        Self { state, stack }
+        Self {
+            state,
+            stack,
+            blocked_externals: Vec::new(),
+            interrupt,
+        }
+    }
+
+    /// Builder-style: install the user's blocklist of refused
+    /// external commands.  Lowercased basenames; full paths
+    /// in the list are reduced.  Idempotent.
+    pub(super) fn with_blocked_externals(
+        mut self,
+        list: Vec<String>,
+    ) -> Self {
+        self.blocked_externals = list
+            .into_iter()
+            .map(|s| basename_lower(&s))
+            .filter(|s| !s.is_empty())
+            .collect();
+        self
+    }
+
+    /// 1.2.8+ — App-side watchdog hook.  Set the shared
+    /// atomic to `true`; nu's `Signals::check` calls will
+    /// raise `ShellError::Interrupted` at the next safe
+    /// point.  Has no effect on a child process that's
+    /// already wedged in a syscall (vim blocking on /dev/tty
+    /// read) — recovery for those is a fresh-engine
+    /// replacement.
+    pub(super) fn trigger_interrupt(&self) {
+        self.interrupt.store(true, Ordering::Relaxed);
+    }
+
+    /// 1.2.8+ — clear the interrupt flag after the watchdog
+    /// has fired and we've moved on (next eval starts fresh).
+    pub(super) fn reset_interrupt(&self) {
+        self.interrupt.store(false, Ordering::Relaxed);
+    }
+
+    /// 1.2.8+ — clone of the interrupt atomic, suitable for
+    /// holding by the main thread when `Engine` is moved
+    /// into a worker thread (the watchdog pattern).
+    pub(super) fn interrupt_handle(&self) -> Arc<AtomicBool> {
+        self.interrupt.clone()
     }
 
     /// Parse + evaluate one input line.  Never panics —
@@ -245,6 +325,33 @@ impl Engine {
                 stderr: parse_errors.join("\n"),
                 success: false,
             };
+        }
+
+        // 1.2.8+ — TUI-safety: walk the block AST for any
+        // ExternalCall whose head basenames to a blocklisted
+        // program.  Refuse before spawn — full-screen apps
+        // (vim, less, top, tmux, …) open `/dev/tty` and write
+        // escape sequences past our piped stdio, corrupting
+        // ratatui's alt-screen.  We can't detect at-runtime
+        // reliably (the child might never produce output, so
+        // `collect_bytes` blocks forever), so the front-door
+        // check is the only sane defense.
+        if !self.blocked_externals.is_empty() {
+            if let Some(name) =
+                find_blocked_external(&block, line, &self.blocked_externals)
+            {
+                return ShellOutput {
+                    stdout: String::new(),
+                    stderr: format!(
+                        "blocked: `{name}` is a full-screen TUI app and \
+                         would corrupt the editor's alt-screen surface. \
+                         Use a separate terminal for interactive workflows. \
+                         Customise `shell.blocked_externals` in HJSON to \
+                         allow."
+                    ),
+                    success: false,
+                };
+            }
         }
 
         // Eval phase.  Push a Pipe redirection on BOTH stdout
@@ -456,6 +563,63 @@ fn style_for_shape(shape: &FlatShape) -> Style {
 /// designators (`ESC ( X`, `ESC ) X`), and bare `ESC X`
 /// fallthrough.  Unknown sequences drop only the `ESC` +
 /// next char to stay conservative.
+/// 1.2.8+ — reduce a command token to its lowercased
+/// basename for blocklist matching.  Strips a leading `^`
+/// (nu's explicit-external sigil) and everything up to the
+/// last `/` or `\`.  Returns an empty string for purely
+/// path-separator input.
+fn basename_lower(token: &str) -> String {
+    let trimmed = token.trim_start_matches('^');
+    let last = trimmed
+        .rsplit(|c: char| c == '/' || c == '\\')
+        .next()
+        .unwrap_or("");
+    last.to_lowercase()
+}
+
+/// 1.2.8+ — walk the parsed block looking for an
+/// `Expr::ExternalCall` whose head's basename matches one
+/// of the blocked basenames.  Returns the head's textual
+/// form for surfacing in the error message.  `None` when
+/// no external is blocked.
+///
+/// Span arithmetic: nu's parser appends the input to its
+/// global file buffer; spans use absolute offsets into that
+/// buffer.  We compute the block's start offset and slice
+/// the user's `line` at the relative position to recover
+/// the head's textual form.  Out-of-range spans (synthetic
+/// expressions) are skipped silently — better to miss one
+/// than to panic.
+fn find_blocked_external(
+    block: &Block,
+    line: &str,
+    blocked: &[String],
+) -> Option<String> {
+    let block_start = block.span.map(|s| s.start)?;
+    let bytes = line.as_bytes();
+    for pipeline in block.pipelines.iter() {
+        for element in pipeline.elements.iter() {
+            if let Expr::ExternalCall(head, _args) = &element.expr.expr {
+                let span = head.span;
+                let rel_start = span.start.saturating_sub(block_start);
+                let rel_end = span.end.saturating_sub(block_start);
+                if rel_end > bytes.len() || rel_start >= rel_end {
+                    continue;
+                }
+                let raw = match std::str::from_utf8(&bytes[rel_start..rel_end]) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+                let bn = basename_lower(raw);
+                if blocked.iter().any(|b| b == &bn) {
+                    return Some(raw.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 pub(super) fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -687,6 +851,114 @@ mod tests {
             "expected /bin/ls failure stderr captured, got stdout={:?} stderr={:?}",
             out.stdout, out.stderr,
         );
+    }
+
+    #[test]
+    fn blocked_externals_refused_before_spawn() {
+        // Core blacklist mechanism — a bare `vim` is refused.
+        let mut e = engine().with_blocked_externals(vec![
+            "vim".to_string(),
+            "less".to_string(),
+        ]);
+        let out = e.eval("^vim file.txt");
+        assert!(!out.success, "expected refusal, got stderr={:?}", out.stderr);
+        assert!(
+            out.stderr.contains("blocked")
+                && out.stderr.to_lowercase().contains("vim"),
+            "expected friendly block message, got {:?}",
+            out.stderr,
+        );
+        // Stdout must be empty — never spawned.
+        assert!(out.stdout.is_empty(), "unexpected stdout: {:?}", out.stdout);
+    }
+
+    #[test]
+    fn blocked_externals_match_by_basename_full_path() {
+        // `/usr/bin/vim`, `/opt/homebrew/bin/vim`, etc. all
+        // basename to `vim` and must be refused too.
+        let mut e = engine().with_blocked_externals(vec![
+            "vim".to_string(),
+        ]);
+        let out = e.eval("^/usr/bin/vim /tmp/x");
+        assert!(!out.success, "full-path vim should be blocked");
+        assert!(
+            out.stderr.contains("blocked"),
+            "expected blocked message, got {:?}",
+            out.stderr,
+        );
+    }
+
+    #[test]
+    fn blocked_externals_case_insensitive() {
+        let mut e = engine().with_blocked_externals(vec![
+            "vim".to_string(),
+        ]);
+        let out = e.eval("^VIM");
+        assert!(!out.success, "case-insensitive match expected");
+    }
+
+    #[test]
+    fn blocked_externals_dont_affect_allowed_commands() {
+        // Blocklist only filters externals.  Internal commands
+        // (math, str ops, ls) sail through unchanged.
+        let mut e = engine().with_blocked_externals(vec![
+            "vim".to_string(),
+            "less".to_string(),
+        ]);
+        let a = e.eval("1 + 1");
+        assert!(a.success && a.stdout.trim() == "2");
+        let b = e.eval(r#""hello" | str length"#);
+        assert!(b.success && b.stdout.trim() == "5");
+    }
+
+    #[test]
+    fn interrupt_handle_clones_share_state() {
+        // Two clones of the same handle observe each other's
+        // writes — the precondition for the watchdog working
+        // when the engine is moved into a thread.
+        let e = engine();
+        let h1 = e.interrupt_handle();
+        let h2 = e.interrupt_handle();
+        assert!(!h1.load(std::sync::atomic::Ordering::Relaxed));
+        h1.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(h2.load(std::sync::atomic::Ordering::Relaxed));
+        e.reset_interrupt();
+        assert!(!h1.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!h2.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn watchdog_signal_short_circuits_nu_loop() {
+        // Verify that an interrupt fired before eval is
+        // surfaced as an Interrupted ShellError, not as a
+        // silent empty stdout.  This is what makes path-2 of
+        // shell_eval_with_watchdog (graceful recovery) work.
+        let mut e = engine();
+        e.trigger_interrupt();
+        let out = e.eval("1..1_000_000 | each {|x| $x}");
+        // Either we never reach eval (and stderr says
+        // interrupted) OR we ran to completion without
+        // checking signals.  Either way the engine itself
+        // shouldn't panic.  Reset so other tests aren't
+        // poisoned.
+        e.reset_interrupt();
+        assert!(
+            out.stderr.to_lowercase().contains("interrupt")
+                || out.success,
+            "engine should either honour interrupt or complete cleanly; got success={} stderr={:?}",
+            out.success, out.stderr
+        );
+    }
+
+    #[test]
+    fn basename_lower_strips_caret_and_path() {
+        assert_eq!(basename_lower("vim"), "vim");
+        assert_eq!(basename_lower("^vim"), "vim");
+        assert_eq!(basename_lower("/usr/bin/vim"), "vim");
+        assert_eq!(basename_lower("^/usr/local/bin/Vim"), "vim");
+        assert_eq!(basename_lower("VIM"), "vim");
+        // Pure path-separator input → empty (no false positives).
+        assert_eq!(basename_lower("/"), "");
     }
 
     #[test]

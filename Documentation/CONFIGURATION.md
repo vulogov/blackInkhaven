@@ -858,6 +858,47 @@ shell: {
   // (cost: memory + render time grow linearly).
   max_output_lines: 1000
 
+  // 1.2.8+ — basenames of external programs refused
+  // before spawn.  Full-screen TUI apps (vim, less, top,
+  // tmux, …) cannot run inside the embedded pane: they
+  // open `/dev/tty` directly and write escape sequences
+  // past the editor's piped stdio, corrupting ratatui's
+  // alt-screen surface.  Match is case-insensitive
+  // against the program's basename, so `^vim`,
+  // `^/usr/bin/vim`, and `^VIM` all hit a `"vim"` entry.
+  // The default list covers common editors, pagers,
+  // monitors, multiplexers, remote shells, debuggers,
+  // fuzzy finders, TTY-needing REPLs, DB clients, and
+  // privileged binaries.  Override to add internal tools
+  // or to *allow* something the default rejects:
+  //   blocked_externals: ["less", "top", "vim"]   // shorter list
+  //   blocked_externals: []                       // disable entirely
+  blocked_externals: [
+    "vim", "nvim", "vi", "view", "ex",
+    "emacs", "emacsclient", "nano", "pico", "joe", "jed",
+    "mc", "mcedit", "ranger", "nnn", "lf", "yazi",
+    "less", "more", "most", "pg",
+    "top", "htop", "btop", "atop", "iotop", "iftop", "nethogs", "glances",
+    "tmux", "screen", "byobu", "dtach", "abduco",
+    "ssh", "telnet", "mosh", "rlogin",
+    "gdb", "lldb",
+    "fzf", "peco", "sk", "skim",
+    "ipython", "irb", "pry",
+    "psql", "mysql", "sqlite3", "redis-cli",
+    "sudo", "su", "passwd"
+  ]
+
+  // 1.2.8+ — wall-clock budget for a single command's
+  // evaluation.  After this many seconds the watchdog
+  // raises a nu interrupt; if the worker doesn't respond
+  // within a 2-second grace window, the engine is
+  // restarted (env vars + `def` declarations + `cd`
+  // state are lost) and the user sees a friendly
+  // explanation.  Set high (e.g. 600) if you legitimately
+  // run long-baked pipelines like remote pulls; lower for
+  // a tighter "this should be quick" SLA.
+  external_timeout_secs: 30
+
   // Typst markup wrapping a `Ctrl+Z h` → `i` insert.
   // `{output}` is substituted verbatim — the default
   // uses a backtick-delimited typst raw block which
