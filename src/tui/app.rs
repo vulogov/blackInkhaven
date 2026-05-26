@@ -7518,7 +7518,23 @@ impl App {
     /// without the user pressing anything.  Idempotent;
     /// no-op when the modal isn't `TtsPlayback`.
     pub(super) fn tts_poll_playback(&mut self) {
-        if !matches!(self.modal, Modal::TtsPlayback { .. }) {
+        // Race-condition guard: `tts.speak()` returns
+        // immediately and starts audio asynchronously.  On
+        // the first one or two render frames after the
+        // call, `is_speaking()` can return `false` because
+        // the OS audio thread hasn't actually begun
+        // playback yet.  Without this guard the modal opens
+        // and closes within a single frame and the user
+        // sees nothing.  Wait at least 600ms before
+        // auto-closing — long enough for any reasonable
+        // engine to engage, short enough that a quick
+        // "yes." doesn't keep the modal up after speech
+        // ends.
+        let started_at = match &self.modal {
+            Modal::TtsPlayback { started_at, .. } => *started_at,
+            _ => return,
+        };
+        if started_at.elapsed() < std::time::Duration::from_millis(600) {
             return;
         }
         let still_speaking = match self.tts_engine.as_ref() {

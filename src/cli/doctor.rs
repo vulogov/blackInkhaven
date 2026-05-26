@@ -29,6 +29,96 @@ use crate::store::hierarchy::Hierarchy;
 use crate::store::node::NodeKind;
 use crate::store::Store;
 
+/// 1.2.9+ — `inkhaven doctor --voices` — pipe-friendly
+/// list of every TTS voice visible through `tts-rs`.  No
+/// project context needed (this is a host-OS query),
+/// hence no `project: &Path` argument.  Output format
+/// for each voice (one per line):
+///
+///   <name>  ·  <language>  ·  <gender>
+///
+/// On engine-init failure (Linux without speech-dispatcher,
+/// etc.) prints the error to stderr and exits with a
+/// non-zero code so a wrapping shell pipeline can branch
+/// on the result.
+pub fn run_voices() -> Result<()> {
+    println!("inkhaven TTS voices — v{}", env!("CARGO_PKG_VERSION"));
+    println!("================================================================");
+    let engine = match tts::Tts::default() {
+        Ok(e) => e,
+        Err(err) => {
+            eprintln!(
+                "TTS engine unavailable on this host: {err}\n\
+                 \n\
+                 Platform notes:\n  \
+                 · macOS:   voices ship with the OS; ensure System Settings → Accessibility → Spoken Content has voices downloaded.\n  \
+                 · Linux:   install `speech-dispatcher` (`apt install speech-dispatcher`); configure speechd to use RHVoice / piper for natural Russian.\n  \
+                 · Windows: voices ship with the OS; nothing to do."
+            );
+            return Err(crate::error::Error::Config(
+                "TTS engine init failed".into(),
+            ));
+        }
+    };
+    let voices = engine.voices().unwrap_or_default();
+    if voices.is_empty() {
+        eprintln!(
+            "No TTS voices installed.  On macOS / Windows, install voices through System Settings.  On Linux, ensure your speech-dispatcher backend has voices configured."
+        );
+        return Ok(());
+    }
+    // Stable ordering for diff-friendly output: by language
+    // then by name.  Each voice ID is platform-specific so
+    // we skip it from the rendered output; users pick by
+    // name (substring match against `editor.tts.voice`).
+    let mut rows: Vec<(String, String, String)> = voices
+        .iter()
+        .map(|v| {
+            let lang = v.language().to_string();
+            let gender = match v.gender() {
+                Some(tts::Gender::Male) => "male".to_string(),
+                Some(tts::Gender::Female) => "female".to_string(),
+                None => "—".to_string(),
+            };
+            (v.name(), lang, gender)
+        })
+        .collect();
+    rows.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+    let max_name = rows.iter().map(|(n, _, _)| n.chars().count()).max().unwrap_or(0);
+    let max_lang = rows.iter().map(|(_, l, _)| l.chars().count()).max().unwrap_or(0);
+    println!(
+        "{:name_w$}  {:lang_w$}  gender",
+        "name",
+        "language",
+        name_w = max_name,
+        lang_w = max_lang,
+    );
+    println!(
+        "{}  {}  ------",
+        "-".repeat(max_name),
+        "-".repeat(max_lang),
+    );
+    for (name, lang, gender) in &rows {
+        println!(
+            "{:name_w$}  {:lang_w$}  {}",
+            name,
+            lang,
+            gender,
+            name_w = max_name,
+            lang_w = max_lang,
+        );
+    }
+    println!();
+    println!("{} voice(s) total.", rows.len());
+    println!();
+    println!("Set in inkhaven.hjson:");
+    println!("  editor: {{ tts: {{ enabled: true, voice: \"<name fragment>\" }} }}");
+    println!("The name field accepts a case-insensitive substring; entries");
+    println!("with `Enhanced` or `Premium` in the name are preferred when");
+    println!("multiple voices match.");
+    Ok(())
+}
+
 pub fn run(project: &Path) -> Result<()> {
     println!("inkhaven doctor — v{}", env!("CARGO_PKG_VERSION"));
     println!("================================================================");

@@ -208,8 +208,10 @@ the matcher prefers entries that also contain
 picked automatically when installed.
 
 Other voices: `"Yuri"`, `"Katya"`, `"Daniel"`, `"Karen"`,
-etc. — run `say -v "?"` on macOS or check the Speech
-panel in Windows to see what's installed.
+etc.  Run **`inkhaven doctor --voices`** to print every
+voice visible to the TTS engine on this machine —
+name, language, gender, one per line.  Works on every
+platform `tts-rs` supports.
 
 ### Playback UI
 
