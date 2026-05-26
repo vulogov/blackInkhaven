@@ -645,11 +645,50 @@ impl super::App {
                 cursor,
                 ..
             } => {
+                // 1.2.8+ — filter snapshots by annotation
+                // substring.  Index `cursor` walks visible
+                // entries only; the actions resolve via
+                // `visible_snapshot_indices` (snapshot_impl).
+                let visible = self.visible_snapshot_indices(snapshots);
                 let header = format!(" Snapshots — {} ", paragraph_title);
-                let mut body: Vec<Line> = Vec::with_capacity(snapshots.len() + 2);
+                let mut body: Vec<Line> = Vec::with_capacity(visible.len() + 4);
+                // Filter input row.  Always shown so the affordance
+                // is discoverable.  Highlighted when focused.
+                let filter_text = if self.snapshot_filter.is_empty() {
+                    "/ (filter annotations)".to_string()
+                } else {
+                    format!("/ {}", self.snapshot_filter)
+                };
+                let filter_style = if self.snapshot_filter_focused {
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .fg(Color::Yellow)
+                } else if self.snapshot_filter.is_empty() {
+                    Style::default().add_modifier(Modifier::DIM)
+                } else {
+                    Style::default().fg(Color::Yellow)
+                };
+                body.push(Line::from(Span::styled(filter_text, filter_style)));
+                if !self.snapshot_filter.is_empty() {
+                    body.push(Line::from(Span::styled(
+                        format!(
+                            " ({} of {} snapshots match)",
+                            visible.len(),
+                            snapshots.len()
+                        ),
+                        Style::default().add_modifier(Modifier::DIM),
+                    )));
+                }
                 body.push(Line::from(""));
-                for (i, snap) in snapshots.iter().enumerate() {
-                    let selected = i == *cursor;
+                if visible.is_empty() {
+                    body.push(Line::from(Span::styled(
+                        "  (no snapshots match — clear with Esc)",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )));
+                }
+                for (visible_i, abs_i) in visible.iter().enumerate() {
+                    let snap = &snapshots[*abs_i];
+                    let selected = visible_i == *cursor;
                     let ts = snap
                         .created_at
                         .with_timezone(&chrono::Local)
@@ -692,8 +731,13 @@ impl super::App {
                     }
                 }
                 body.push(Line::from(""));
+                let hint = if self.snapshot_filter_focused {
+                    " filter mode: type to narrow · Backspace edits · Esc exits filter "
+                } else {
+                    " ↑↓ navigate · Enter loads · V diff vs current · D / Del delete · / filter · Esc cancel "
+                };
                 body.push(Line::from(Span::styled(
-                    " ↑↓ navigate · Enter loads · V diff vs current · D / Del delete · Esc cancel ",
+                    hint,
                     Style::default().add_modifier(Modifier::DIM),
                 )));
                 (header, Color::Cyan, body)

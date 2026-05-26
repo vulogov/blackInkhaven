@@ -291,6 +291,22 @@ pub enum Action {
     /// any of the (up to 10) buffered recoveries.
     #[serde(rename = "view.kill_ring_picker")]
     ViewKillRingPicker,
+    /// Ctrl+V h (1.2.8+) — one-shot report on the open
+    /// paragraph's "hidden" characters: tab count, trailing-
+    /// whitespace line count, CR count. Status-bar only;
+    /// no buffer rewrite. The visual editor overlay is
+    /// scheduled for 1.2.9 once the column-bookkeeping
+    /// integrates cleanly with the existing match /
+    /// lexicon highlight layers.
+    #[serde(rename = "view.hidden_chars_report")]
+    ViewHiddenCharsReport,
+    /// Ctrl+V Shift+S (1.2.8+) — show the cursor row's
+    /// breadcrumb path on the status bar: "Book ▸ Chapter
+    /// ▸ Subchapter ▸ Paragraph". Pane-aware: in the tree
+    /// it walks from the tree cursor; in the editor it
+    /// walks from the open paragraph.
+    #[serde(rename = "view.show_breadcrumb")]
+    ViewShowBreadcrumb,
     /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
     /// via typst-render and float a PNG preview on top of the
     /// editor. `Esc` closes, `S` opens a save-as picker for the
@@ -474,6 +490,8 @@ impl Action {
             Action::ViewFuzzyParagraphPicker => "find ¶".into(),
             Action::ViewRecentParagraphPicker => "recent ¶".into(),
             Action::ViewKillRingPicker => "kill-ring".into(),
+            Action::ViewHiddenCharsReport => "hidden chars".into(),
+            Action::ViewShowBreadcrumb => "breadcrumb".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -652,6 +670,10 @@ impl Action {
                 "Recent paragraph picker (1.2.7+) — same fuzzy picker as Ctrl+V P but sorted by modified_at desc. Answers \"what did I work on most recently?\" without trawling the tree.".into(),
             Action::ViewKillRingPicker =>
                 "Kill-ring picker (1.2.8+) — list of recently-deleted paragraphs (up to 10). Enter restores the highlighted entry at its original position; Esc cancels. Ctrl+B U alone restores the most-recent without opening the picker.".into(),
+            Action::ViewHiddenCharsReport =>
+                "Hidden-character report (1.2.8+) — status-bar summary of the open paragraph's tabs / trailing-whitespace lines / CR characters. Useful for spotting import noise (Scrivener / web paste). Visual editor overlay scheduled for 1.2.9.".into(),
+            Action::ViewShowBreadcrumb =>
+                "Show breadcrumb (1.2.8+) — print the hierarchy path from project root to the cursor on the status bar (Book ▸ Chapter ▸ Subchapter ▸ Paragraph). Pane-aware: in tree walks from the tree cursor, in editor walks from the open paragraph.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -826,6 +848,10 @@ impl KeyBindings {
                 entry("Shift+p", Action::ViewRecentParagraphPicker, Scope::Any),
                 // 1.2.8+ — kill-ring picker (paragraph undelete history).
                 entry("Shift+u", Action::ViewKillRingPicker, Scope::Any),
+                // 1.2.8+ — hidden-character report on the open paragraph.
+                entry("h", Action::ViewHiddenCharsReport, Scope::Any),
+                // 1.2.8+ — show cursor breadcrumb on the status bar.
+                entry("Shift+s", Action::ViewShowBreadcrumb, Scope::Any),
                 entry("r", Action::ViewRenderParagraph, Scope::Any),
                 entry("n", Action::ViewNextDiagnostic, Scope::Any),
                 // 1.2.6+: case differentiates view scope. Plain

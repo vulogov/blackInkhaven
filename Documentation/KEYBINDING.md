@@ -1137,3 +1137,113 @@ See [`Tutorials/31-story-timeline.md`](Tutorials/31-story-timeline.md) "1.2.7 po
 not just the editor.  Opens against the most-recently-active
 paragraph's cached diagnostics.
 
+## 1.2.8 — chord additions
+
+### Kill-ring picker (1.2.8+)
+
+```
+Ctrl+V Shift+U   open the kill-ring picker — list of the most
+                 recent (up to 10) deleted paragraphs.  Enter
+                 restores the cursor selection at its original
+                 position.  Esc cancels.
+
+Ctrl+B U         (existing) restores the front of the ring
+                 without opening the picker.  Branch deletes
+                 (chapter/book) no longer clear the ring —
+                 older single-¶ entries remain valid recoveries.
+```
+
+### Hidden-character report (1.2.8+)
+
+```
+Ctrl+V h         one-shot scan of the open paragraph; status
+                 bar reads e.g. "hidden chars: 3 tab(s), 5
+                 line(s) with trailing whitespace, 0 CR(s)".
+                 Clean buffers report "no tabs, trailing
+                 whitespace, or CRs".  No buffer rewrite —
+                 visual editor overlay is 1.2.9 work.
+```
+
+### Breadcrumb status-line chord (1.2.8+)
+
+```
+Ctrl+V Shift+S   print the cursor's hierarchy path on the
+                 status bar (`Book ▸ Chapter ▸ Subchapter
+                 ▸ Paragraph`).  Pane-aware: tree pane walks
+                 from the tree cursor, editor pane walks from
+                 the open paragraph.
+```
+
+### F1 query history (1.2.8+)
+
+```
+Inside the F1 Help-query input:
+  Up             previous query (newest first); shell-style.
+  Down           next; past the newest entry clears the input.
+  Enter          submit; pushes the query onto the ring
+                 (dedup against the immediate predecessor).
+```
+
+Session-only; F1 history is intentionally not persisted.
+
+### Tag autocomplete (1.2.8+)
+
+Inside the `A` (add-new-tag) prompt opened from `Ctrl+B ]`:
+
+```
+Tab              completes to the first existing project
+                 tag whose name starts with the typed prefix
+                 (case-insensitive).  No-op when no match.
+```
+
+### F6 annotation filter (1.2.8+)
+
+Inside the F6 snapshot picker:
+
+```
+/                enter filter-focus mode — typed characters
+                 narrow the visible list to snapshots whose
+                 annotation contains the substring (case-
+                 insensitive).
+Esc (in filter)  exit filter focus (keeps the query).  Picker
+                 returns to chord mode — Up/Down/Enter/D/V
+                 again.
+Backspace        edit the filter (in focus mode only).
+Enter (in filter) commit filter (exits focus) — second Enter
+                 loads the snapshot.
+```
+
+Filter resets each `F6` open — previous session's filter
+doesn't haunt the next picker.
+
+### Active-LLM chip in AI pane (1.2.8+)
+
+The AI pane title always shows `· llm=<provider>` (the bound
+`llm.default` from HJSON) so `Ctrl+B L` swap effect is visible
+without opening `Ctrl+B I`.  In-flight provider fragment is
+suppressed when it matches the bound default; surfaces only
+when they diverge (user swapped default mid-stream).
+
+### Shift+letter chord fix (1.2.8+)
+
+Pre-existing bug — `Ctrl+V Shift+P` (recent-¶ picker) collapsed
+onto `Ctrl+V p` (fuzzy picker) on terminals without the kitty
+disambiguation protocol because the chord matcher required the
+SHIFT modifier flag.  Now uppercase letters arriving without
+SHIFT are treated as implicit-Shift — `Ctrl+V Shift+P`,
+`Ctrl+V Shift+U`, `Ctrl+V Shift+S` all route to their distinct
+actions.
+
+### Mouse-capture default knob (1.2.8+)
+
+```hjson
+editor: {
+  mouse_captured: true    // 1.2.8+ default
+}
+```
+
+Setting `false` releases mouse capture at startup so the
+terminal's native drag-select + system-clipboard copy work
+without pressing `Ctrl+Shift+M` first.  The runtime
+`Ctrl+Shift+M` toggle still flips state regardless.
+
