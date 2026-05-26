@@ -7664,19 +7664,34 @@ impl App {
             return;
         }
         let Some(engine) = self.tts_engine_ready() else { return; };
-        if engine.speak(text, true).is_err() {
+        if engine.speak(text.clone(), true).is_err() {
             return;
         }
-        // Wait for speech to drain.  Cap at 5 seconds so a
-        // pathological goodbye (the user typed an entire
-        // novel into the field) doesn't keep the shell
-        // hanging.  Most goodbyes are 2-3 words and finish
-        // in under a second.
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
-            let still = engine.is_speaking().unwrap_or(false);
-            if !still {
+        // Two-phase wait.  Phase 1 is a minimum hold to
+        // sidestep the race where `is_speaking()` returns
+        // false on the very next call after `speak()`
+        // because the OS audio thread hasn't actually
+        // started playback yet — without this, a "polite
+        // poll-until-idle" loop exits in zero time and the
+        // process tears down before any audio plays.
+        //
+        // The minimum is 400ms baseline (engine startup
+        // latency on the slowest backend we've seen) plus
+        // ~80ms per character (rough heuristic for actual
+        // speech duration), capped at the same 5-second
+        // safety bound as the hard deadline.  Phase 2
+        // polls `is_speaking()` past the minimum, breaking
+        // out as soon as the engine reports idle so a
+        // legitimately-short goodbye doesn't make quit
+        // feel slow.
+        let chars = text.chars().count() as u64;
+        let min_hold_ms = (400 + chars * 80).min(5000);
+        let started = std::time::Instant::now();
+        let hard_deadline = started + std::time::Duration::from_secs(5);
+
+        std::thread::sleep(std::time::Duration::from_millis(min_hold_ms));
+        while std::time::Instant::now() < hard_deadline {
+            if !engine.is_speaking().unwrap_or(false) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
