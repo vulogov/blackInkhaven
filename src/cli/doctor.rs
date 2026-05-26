@@ -265,6 +265,41 @@ pub fn run_tts_test(project: &Path, text: &str) -> Result<()> {
     // bug is engine reuse on this platform.
     println!("[5/5] speak (reused engine):");
     let _ = speak_and_wait(&mut engine, "round 2", text);
+
+    // Round 3 — drop the previous engine, init fresh,
+    // speak again.  If audio plays here when round 2
+    // didn't, the platform's AVFoundation backend doesn't
+    // tolerate back-to-back speak() calls on the same Tts
+    // instance — fix is to drop+recreate the engine per
+    // call in the TUI path.
+    drop(engine);
+    println!("[6/6] speak (fresh engine, third try):");
+    let mut engine3 = match tts::Tts::default() {
+        Ok(e) => e,
+        Err(err) => {
+            println!("         re-init FAIL: {err}");
+            return Ok(());
+        }
+    };
+    if let Some(v) = engine3
+        .voices()
+        .unwrap_or_default()
+        .iter()
+        .filter(|v| {
+            v.name()
+                .to_lowercase()
+                .contains(&tts_cfg.voice.to_lowercase())
+        })
+        .max_by_key(|v| {
+            let n = v.name().to_lowercase();
+            let enhanced = n.contains("enhanced") || n.contains("premium");
+            (enhanced as u8, v.name().len() as isize)
+        })
+    {
+        let _ = engine3.set_voice(v);
+    }
+    let _ = engine3.set_rate(target);
+    let _ = speak_and_wait(&mut engine3, "round 3", text);
     println!();
     println!("If you heard NO audio during the run above, the engine");
     println!("path is broken on this host.  Common causes:");
