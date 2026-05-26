@@ -5,6 +5,7 @@ pub mod build;
 pub mod bund;
 pub mod delete;
 pub mod export;
+pub mod export_timeline;
 pub mod import_help;
 pub mod import_scrivener;
 pub mod import_typst_help;
@@ -248,6 +249,33 @@ pub enum Command {
     #[command(subcommand)]
     Event(EventCommand),
 
+    /// 1.2.8+ — export a book's timeline (events grouped
+    /// chronologically per track) to a file. The first
+    /// format shipped is `typst` — a text listing typst
+    /// users can include via `#include` in a query letter
+    /// or wiki page. SVG and PNG formats are scheduled for
+    /// 1.2.9 once the data shape settles.
+    ExportTimeline {
+        /// User-book name (case-insensitive title or slug).
+        /// Optional when the project has exactly one user
+        /// book; required otherwise. The book's Timeline
+        /// chapter is read.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Output format. Only `typst` is supported in
+        /// 1.2.8; further formats land in 1.2.9.
+        #[arg(value_enum, default_value_t = TimelineExportFormat::Typst)]
+        format: TimelineExportFormat,
+        /// Output path. Required.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Optional track filter (case-insensitive). When
+        /// set, only events on that track land in the
+        /// output. Omit to include every track.
+        #[arg(long)]
+        track: Option<String>,
+    },
+
     /// 1.2.6+ — run the same flow as the TUI's Ctrl+B B
     /// without launching the TUI. Assembles the named user
     /// book into the artefacts directory and (with
@@ -364,6 +392,18 @@ pub enum ExportFormat {
     Epub,
 }
 
+/// 1.2.8+ — output formats for `inkhaven export-timeline`.
+/// Only `typst` ships in 1.2.8; SVG (vector swim-lane render)
+/// and PNG (rasterised via resvg) are scheduled for 1.2.9.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum TimelineExportFormat {
+    /// Typst-source listing — chronological events per track,
+    /// calendar-formatted, ready to `#include` in a longer
+    /// document. Compile through `typst compile <file>` to
+    /// get PDF / SVG / PNG via typst's own pipeline.
+    Typst,
+}
+
 impl Cli {
     pub fn run(self) -> Result<()> {
         let project = self
@@ -449,6 +489,18 @@ impl Cli {
                 build::run(&project, book_name.as_deref(), compile).map_err(Into::into)
             }
             Command::Event(cmd) => event::run(&project, cmd).map_err(Into::into),
+            Command::ExportTimeline {
+                book_name,
+                format,
+                output,
+                track,
+            } => export_timeline::run(
+                &project,
+                book_name.as_deref(),
+                format,
+                &output,
+                track.as_deref(),
+            ).map_err(Into::into),
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
         }
     }
