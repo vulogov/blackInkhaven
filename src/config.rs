@@ -64,6 +64,12 @@ pub struct Config {
     /// `<CustomMetaDataSettings>` map to events on import.
     #[serde(default)]
     pub scrivener: ScrivenerConfig,
+    /// 1.2.8+ — embedded nushell pane (`Ctrl+Z o`). Enabled
+    /// by default; disable via `shell.enabled: false` to
+    /// strip the chord entirely (the modal action becomes
+    /// a no-op with a status hint).
+    #[serde(default)]
+    pub shell: ShellConfig,
     /// Bund scripting sandbox policy. Defaults deny destructive
     /// categories (fs_write, net, shell, code_eval); writers opt
     /// in by listing the categories or words they want to allow.
@@ -145,6 +151,7 @@ impl Default for Config {
             ai: AiConfig::default(),
             timeline: TimelineConfig::default(),
             scrivener: ScrivenerConfig::default(),
+            shell: ShellConfig::default(),
             scripting: crate::scripting::policy::Policy::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
@@ -255,6 +262,43 @@ impl Default for ScrivenerConfig {
                 "Story Date".into(),
                 "Event Date".into(),
             ],
+        }
+    }
+}
+
+/// 1.2.8+ — embedded nushell pane.
+///
+/// `enabled`: ship the `Ctrl+Z o` chord at all. `false`
+/// makes the action a status-hint no-op, useful for users
+/// who prefer to keep their writing app shell-free.
+///
+/// `max_buffered_turns`: how many command/output pairs the
+/// pane retains. Older turns roll off the bottom. Picked to
+/// fit the working-memory needs of a writing session
+/// without growing unbounded across long-lived sessions.
+///
+/// `insert_template`: the typst markup `Ctrl+Z h` → `i`
+/// wraps a selected output in when inserting into the
+/// editor. The placeholder `{output}` is replaced with the
+/// raw command output verbatim. Default uses a typst `raw`
+/// block with `lang: "shell"` for monospace, no markdown
+/// reinterpretation. Customise for a framed or themed
+/// presentation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ShellConfig {
+    pub enabled: bool,
+    pub max_buffered_turns: usize,
+    pub insert_template: String,
+}
+
+impl Default for ShellConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_buffered_turns: 50,
+            insert_template:
+                "#raw(block: true, lang: \"shell\", `{output}`)".into(),
         }
     }
 }
