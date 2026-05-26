@@ -29,13 +29,14 @@
 //! history connection (Phase 4) and a configurable output-
 //! buffer cap (already in `ShellConfig`).
 
-#![allow(dead_code)]  // some fields/methods unused until Phase 3+.
+#![allow(dead_code)]  // some fields/methods unused until Phase 5+.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use nu_protocol::engine::{EngineState, Stack, StateWorkingSet};
 use nu_protocol::{PipelineData, Span, Value};
 use nu_protocol::debugger::WithoutDebug;
+use rusqlite::Connection;
 
 /// Single nu instance bound to a project.  Holds the engine
 /// state (function table, scope chain, env vars) + a Stack
@@ -75,6 +76,90 @@ pub(crate) struct ShellTurn {
     pub stdout: String,
     pub stderr: String,
     pub success: bool,
+}
+
+/// 1.2.8+ — per-project SQLite-backed command history for
+/// the shell pane's Up/Down recall ring.
+///
+/// File: `<project_root>/.inkhaven/shell_history.db`.  A
+/// single `history` table with `(id, command, ts)`; no
+/// schema migrations needed — additive only.  Load returns
+/// the most-recent `cap` commands in chronological order
+/// (oldest first) so the recall cursor lands naturally on
+/// the newest on first Up-arrow.
+///
+/// SQL failures are non-fatal: a corrupt or unwritable
+/// `.db` falls through to an in-memory-only ring, with the
+/// error stamped on the status bar once.  The shell still
+/// works; just history doesn't survive restart.
+pub(crate) struct History {
+    conn: Option<Connection>,
+    path: PathBuf,
+}
+
+impl History {
+    /// Open (or lazily create) the history DB under the
+    /// project's `.inkhaven/` directory.  The directory is
+    /// created if missing.  All errors are swallowed at
+    /// open-time and surface later via `last_error()`.
+    pub(crate) fn open(project_root: &Path) -> Self {
+        let mut path = project_root.to_path_buf();
+        path.push(".inkhaven");
+        let _ = std::fs::create_dir_all(&path);
+        path.push("shell_history.db");
+        let conn = Connection::open(&path).ok();
+        if let Some(c) = conn.as_ref() {
+            let _ = c.execute_batch(
+                r#"CREATE TABLE IF NOT EXISTS history (
+                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                       command TEXT NOT NULL,
+                       ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                   );
+                   CREATE INDEX IF NOT EXISTS history_ts_idx
+                     ON history(ts DESC);"#,
+            );
+        }
+        Self { conn, path }
+    }
+
+    /// Return the most-recent `cap` commands in
+    /// chronological order (oldest → newest) — same order
+    /// the in-memory ring expects.  Empty list on any
+    /// error.
+    pub(crate) fn load(&self, cap: usize) -> Vec<String> {
+        let Some(conn) = self.conn.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut stmt) = conn.prepare(
+            "SELECT command FROM (
+                 SELECT command, id FROM history ORDER BY id DESC LIMIT ?
+             ) sub ORDER BY id ASC",
+        ) else {
+            return Vec::new();
+        };
+        let cap_i = cap as i64;
+        match stmt.query_map([cap_i], |row| row.get::<_, String>(0)) {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Append a command to history.  Silently no-op on
+    /// SQL error so the user's session isn't disrupted by
+    /// a transient disk problem.
+    pub(crate) fn push(&self, command: &str) {
+        let Some(conn) = self.conn.as_ref() else { return };
+        let _ = conn.execute(
+            "INSERT INTO history (command) VALUES (?1)",
+            [command],
+        );
+    }
+
+    /// Path the DB lives at — exposed for status messages /
+    /// the audit hooks.  Returns even when the open failed.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
 impl Engine {
@@ -241,6 +326,40 @@ mod tests {
         let out = e.eval("let x = ");  // missing rhs
         assert!(!out.success);
         assert!(!out.stderr.is_empty());
+    }
+
+    #[test]
+    fn history_roundtrips_commands() {
+        // Use a unique tempdir per test so parallel test
+        // runs don't share state.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let h = History::open(tmp.path());
+        h.push("ls");
+        h.push("pwd");
+        h.push("date");
+        // Cap larger than count → all three back, in
+        // chronological order.
+        let loaded = h.load(10);
+        assert_eq!(loaded, vec!["ls", "pwd", "date"]);
+        // Cap smaller than count → most-recent only,
+        // still in chronological order.
+        let loaded2 = h.load(2);
+        assert_eq!(loaded2, vec!["pwd", "date"]);
+    }
+
+    #[test]
+    fn history_survives_reopen() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        {
+            let h = History::open(tmp.path());
+            h.push("first");
+            h.push("second");
+        }
+        // New History from the same root re-opens the same
+        // file — that's the restart simulation.
+        let h = History::open(tmp.path());
+        let loaded = h.load(10);
+        assert_eq!(loaded, vec!["first", "second"]);
     }
 
     #[test]

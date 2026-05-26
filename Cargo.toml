@@ -276,6 +276,9 @@ nu-protocol = "0.112"
 nu-engine   = "0.112"
 nu-parser   = "0.112"
 nu-command  = "0.112"
+# Per-project shell command history (`.inkhaven/shell_history.db`).
+# Bundled SQLite — no system dependency.  Tiny (~1 MB linked).
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [build-dependencies]
 # Compiles the in-tree Typst tree-sitter grammar (`src/grammar/`)
