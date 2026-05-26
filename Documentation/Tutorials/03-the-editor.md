@@ -178,9 +178,34 @@ editor: {
     enabled: true
     voice: "Milena"   // Russian female; the default
     speed: 1.0        // multiplier over the engine's "normal" rate
+    greeting: ""      // spoken at startup; empty skips
+    goodbye: ""       // spoken at shutdown; empty skips
   }
 }
 ```
+
+### Greeting + goodbye
+
+When `enabled = true` and either field is non-empty,
+inkhaven speaks the configured text at startup
+(non-blocking, plays in parallel with the editor
+coming up) and at shutdown (blocking, up to 5
+seconds, so the shell doesn't truncate it).
+
+Examples:
+
+```hjson
+greeting: "Welcome back"
+goodbye:  "See you tomorrow"
+
+# or, with voice: "Katya (Enhanced)":
+greeting: "Доброе утро, Владимир"
+goodbye:  "До скорого"
+```
+
+Keep the goodbye short — under five seconds of audio
+— so quit doesn't feel slow.  The greeting can be
+longer; it overlaps with the editor's startup work.
 
 ### Platform support
 

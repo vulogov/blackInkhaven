@@ -282,7 +282,21 @@ pub fn run(project: &Path) -> Result<()> {
         run_startup_pulse_splash(&mut terminal, &app);
     }
 
+    // 1.2.9+: TTS greeting fires here, after the splash
+    // (so the user has seen the daily-progress numbers)
+    // and just before the main render loop starts.  Non-
+    // blocking — speech plays in parallel with the
+    // editor coming up.  No-op when `editor.tts.enabled
+    // = false` or the greeting field is empty.
+    app.tts_speak_greeting();
+
     let result = app.run(&mut terminal);
+
+    // 1.2.9+: TTS goodbye fires after the main loop
+    // returns but BEFORE shutdown_flush + terminal
+    // teardown.  Blocks up to 5 seconds for the audio
+    // to drain so the shell doesn't truncate it.
+    app.tts_speak_goodbye_blocking();
 
     // Explicit final flush — HNSW save + DuckDB CHECKPOINT — while the
     // App still holds the Store. The pool's Drop impl would checkpoint
@@ -7559,6 +7573,117 @@ impl App {
         }
         self.modal = Modal::None;
         self.status = "TTS: stopped".into();
+    }
+
+    /// 1.2.9+ — shared engine-init + voice + rate setup.
+    /// Centralises what `tts_read_paragraph` was doing
+    /// inline so the greeting / goodbye helpers don't
+    /// duplicate the code.  Returns `&mut tts::Tts` on
+    /// success, None when:
+    ///   * the feature is disabled in HJSON, OR
+    ///   * the engine couldn't initialise on this host
+    ///     (Linux without speech-dispatcher, etc.)
+    /// In both cases the caller silently skips speech —
+    /// no modal, no status nag.  The `tts_read_paragraph`
+    /// chord handler keeps its own dedicated error paths
+    /// (modals + HJSON guidance) for the interactive
+    /// flow; this helper is the headless backend used
+    /// by startup / shutdown.
+    fn tts_engine_ready(&mut self) -> Option<&mut tts::Tts> {
+        if !self.cfg.editor.tts.enabled {
+            return None;
+        }
+        if self.tts_engine.is_none() {
+            let attempt = tts::Tts::default().map_err(|e| format!("{e}"));
+            self.tts_engine = Some(attempt);
+        }
+        let engine = match self.tts_engine.as_mut().unwrap() {
+            Ok(e) => e,
+            Err(_) => return None,
+        };
+        // Voice + speed (cheap operations; applying them
+        // every call keeps a runtime HJSON reload in
+        // sync without extra plumbing).
+        let cfg = &self.cfg.editor.tts;
+        if !cfg.voice.is_empty() {
+            let needle = cfg.voice.to_lowercase();
+            let voices = engine.voices().ok().unwrap_or_default();
+            let pick = voices
+                .iter()
+                .filter(|v| v.name().to_lowercase().contains(&needle))
+                .max_by_key(|v| {
+                    let n = v.name().to_lowercase();
+                    let enhanced =
+                        n.contains("enhanced") || n.contains("premium");
+                    (enhanced as u8, v.name().len() as isize)
+                });
+            if let Some(v) = pick {
+                let _ = engine.set_voice(v);
+            }
+        }
+        let speed = cfg.speed.max(0.1);
+        let target = (engine.normal_rate() * speed)
+            .clamp(engine.min_rate(), engine.max_rate());
+        let _ = engine.set_rate(target);
+        Some(engine)
+    }
+
+    /// 1.2.9+ — speak `editor.tts.greeting` at startup.
+    /// Called once after the daily-progress splash
+    /// finishes and the main editor frame is about to
+    /// render.  Non-blocking: speech starts and inkhaven
+    /// continues to the cursor while audio plays in
+    /// parallel.  Silently no-op when the greeting is
+    /// empty or the TTS engine can't initialise — startup
+    /// path is not the place to nag the user with modals.
+    pub(super) fn tts_speak_greeting(&mut self) {
+        let text = self.cfg.editor.tts.greeting.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        if let Some(engine) = self.tts_engine_ready() {
+            // `interrupt = true` so any leftover speech
+            // (defensive — unlikely on a fresh launch)
+            // doesn't queue up.
+            let _ = engine.speak(text, true);
+        }
+    }
+
+    /// 1.2.9+ — speak `editor.tts.goodbye` at shutdown
+    /// and BLOCK until audio finishes (or 5-second
+    /// safety cap, whichever comes first).  Without the
+    /// block, the process would exit and the OS audio
+    /// thread would be torn down mid-word.  Polled in
+    /// 50ms increments to keep the wait responsive
+    /// without busy-spinning.  Silently no-op when the
+    /// goodbye is empty.  Errors swallowed — at quit
+    /// time the user can't act on a TTS failure.
+    pub(super) fn tts_speak_goodbye_blocking(&mut self) {
+        let text = self.cfg.editor.tts.goodbye.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        let Some(engine) = self.tts_engine_ready() else { return; };
+        if engine.speak(text, true).is_err() {
+            return;
+        }
+        // Wait for speech to drain.  Cap at 5 seconds so a
+        // pathological goodbye (the user typed an entire
+        // novel into the field) doesn't keep the shell
+        // hanging.  Most goodbyes are 2-3 words and finish
+        // in under a second.
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            let still = engine.is_speaking().unwrap_or(false);
+            if !still {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        // Ensure clean teardown on the engine side.  No-op
+        // when the engine is already idle.
+        let _ = engine.stop();
     }
 
     fn open_hjson_editor(&mut self) {
