@@ -44,6 +44,7 @@ covers.
 | 32 | [`32-paragraph-undelete.md`](32-paragraph-undelete.md) | `Ctrl+B U` restores the most recently deleted paragraph — body, tags, status, wiki-links, event data round-trip. Single-slot kill-ring (1.2.7+). |
 | 33 | [`33-navigation-history.md`](33-navigation-history.md) | `Alt+←` / `Alt+→` step through visited paragraphs; `Ctrl+V Shift+P` recent-paragraph picker (1.2.7+). Browser-style back/forward across every pane that opens a paragraph. |
 | 34 | [`34-mouse-and-external-changes.md`](34-mouse-and-external-changes.md) | `Ctrl+Shift+M` toggles mouse capture so the terminal's native text-select + copy works; passive watcher reloads the open paragraph when the on-disk file changes (CLI / sed / git pull / Bund script). (1.2.7+) |
+| 35 | [`35-embedded-shell.md`](35-embedded-shell.md) | Embedded **nushell** pane (1.2.8+) — `Ctrl+Z o` opens a floating shell inside the TUI; `Ctrl+Z h` selection mode lets you `c` copy a command's output to clipboard or `i` insert it into the editor wrapped as a typst raw block. Per-project SQLite history; HJSON-configurable insert template. |
 
 ## Scripting + chord customisation
 
