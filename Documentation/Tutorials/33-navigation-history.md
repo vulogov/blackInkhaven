@@ -21,7 +21,7 @@ Any of these actions push an entry onto the visited stack:
 - **Click** on a tree row (with mouse capture on).
 - **Ctrl+V P** fuzzy paragraph picker → Enter.
 - **Ctrl+V B / M** bookmark picker → Enter.
-- **Wiki-link follow** via `Ctrl+V K` backlinks / `L` outgoing.
+- **Paragraph link follow** via `Ctrl+V K` backlinks / `L` outgoing.
 - **F6 snapshot picker** → Enter (snapshot restore).
 - **Ctrl+V S** similar-paragraph picker → primary pane.
 - **Ctrl+V t** timeline view → Enter on event → linked paragraph.
@@ -50,7 +50,7 @@ Alt+←                              reading A again.   forward: [B]
 Alt+→                              reading B again.   visited: [A]
 ```
 
-Opening a NEW paragraph (via Enter / picker / wiki-link)
+Opening a NEW paragraph (via Enter / picker / paragraph link)
 **clears the forward stack** — same as in a web browser. If
 you Alt+← back to A and then Enter on C, the path is now
 `A → C` and B is gone from history.
@@ -109,7 +109,7 @@ to resume work in a multi-book project.
 
 ## Use cases
 
-- **Wiki-link bounce**. You're editing prose, follow a
+- **Paragraph link bounce**. You're editing prose, follow a
   `[[Khaal's wedding day]]` link to its page, scan, want to
   go back: `Alt+←`.
 - **Compare two paragraphs without losing your place**.
@@ -123,7 +123,7 @@ to resume work in a multi-book project.
 ## See also
 
 - [`19-wiki-links.md`](19-wiki-links.md) — outgoing /
-  incoming wiki-link chords (the most common reason the ring
+  incoming paragraph link chords (the most common reason the ring
   fills up).
 - [`21-navigation.md`](21-navigation.md) — fuzzy paragraph
   picker (Ctrl+V P), bookmarks (Ctrl+V B / M).

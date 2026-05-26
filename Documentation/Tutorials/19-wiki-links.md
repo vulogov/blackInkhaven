@@ -1,12 +1,21 @@
-# 19 — Wiki-links and backlinks
+# 19 — Paragraph links and backlinks
 
-Inkhaven 1.2.4 adds typed references between paragraphs as
+> Earlier docs and release notes called these "paragraph links".
+> That name is misleading — there's no `[[X]]` inline
+> syntax, no parser scanning prose, no MediaWiki-style
+> resolution.  These are **paragraph cross-references**
+> stored purely as metadata.  1.2.9+ uses the name
+> "paragraph links" throughout; the chords (`Ctrl+V A` /
+> `I` / `L` / `K`) and the underlying `linked_paragraphs`
+> field are unchanged.
+
+Inkhaven 1.2.4 added typed references between paragraphs as
 **metadata**, not as embedded markers in the typst source. The
 link never leaks into your PDF / EPUB; it lives in the
 paragraph's metadata next to `status`, `target_words`, etc.,
 and surfaces through dedicated chords + the AI inference path.
 
-The metadata-only choice is deliberate: nothing about `[[X]]`
+The metadata-only choice is deliberate: no inline `[[X]]`
 syntax leaks into export; renaming a paragraph never breaks
 the link (UUIDs are stable); and the AI inference path can
 read structured references without parsing markup.

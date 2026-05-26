@@ -130,7 +130,7 @@ before tui-textarea sees them, so they never insert a literal tab.
 ### 1.2 View mode (Ctrl+V prefix)
 
 The third meta prefix. Routes to in-process exporters, pickers,
-the writing-progress modal, wiki-links, and bookmarks. In
+the writing-progress modal, paragraph links, and bookmarks. In
 1.2.4+ all view-sub chords are rebindable through HJSON
 `keys.bindings.view_sub` and `ink.key.bind_view_sub`; the
 prefix itself is rebindable via `keys.view_prefix` (default
@@ -145,8 +145,8 @@ full workflows.
 | `S` / `s`              | any                      | Toggle **similar-paragraph mode** — saves the buffer, picks via vector search, opens a second editor side-by-side. Re-press to save both and exit. Both editors autosave on idle (1.2.4). |
 | `G` / `g`              | any                      | Open the **writing-progress modal** (today / streak / per-book pace / 30-day sparkline / status-ladder counts / per-book bar chart). |
 | `T` / `t`              | any (needs open paragraph) | Set / clear the **per-paragraph word-count target** (1.2.4+). Empty / `0` clears. Saves that cross the target auto-promote status one ladder step when `goals.auto_promote_on_target` is true. |
-| `A` / `a`              | any (needs open paragraph) | **Add outgoing wiki-link** (1.2.4) — tree pane enters select-paragraph-to-link mode; Enter confirms. Self-link / duplicate / cycle are rejected with a status-bar message. |
-| `I` / `i`              | any (needs open paragraph) | **Add incoming wiki-link** (1.2.4) — tree pane enters select-paragraph-that-will-link-to-current mode. Reverse of `A`. |
+| `A` / `a`              | any (needs open paragraph) | **Add outgoing paragraph link** (1.2.4) — tree pane enters select-paragraph-to-link mode; Enter confirms. Self-link / duplicate / cycle are rejected with a status-bar message. |
+| `I` / `i`              | any (needs open paragraph) | **Add incoming paragraph link** (1.2.4) — tree pane enters select-paragraph-that-will-link-to-current mode. Reverse of `A`. |
 | `L` / `l`              | any (needs open paragraph) | **List outgoing links** (1.2.4) — floating picker. Enter opens (autosaves prev); D removes the link. |
 | `K` / `k`              | any (needs open paragraph) | **List backlinks** (1.2.4) — paragraphs that link TO the open one. D removes the source's outgoing link. |
 | `B` / `b`              | any (needs open paragraph) | Toggle **bookmark** on the open paragraph (1.2.4). |
@@ -154,7 +154,7 @@ full workflows.
 | `P` / `p`              | any                      | **Fuzzy paragraph picker** (1.2.4) — type-to-filter modal over every user-book paragraph. Three-tier ranking (title-starts > title-contains > slug-contains). |
 | `R` / `r`              | any (needs open paragraph) | (1.2.5) **Render paragraph** — save the buffer, compile it in-process via `typst-render`, float a PNG preview on top of the editor. Inside the preview: `←` / `→` navigate pages (multi-page documents), `Home` / `End` jump to first / last; `Esc` closes; `S` opens a save-as picker for the **current page** at full DPI (288 dpi); `A` opens the picker for **all pages** at full DPI (writes `<base>-page-NNN.png` per page). Cancelling the save picker restores the preview with navigation state intact. |
 | `N` / `n`              | any (needs open paragraph) | (1.2.5) **Next typst diagnostic** — move the editor cursor to the next parse or semantic diagnostic in the buffer. Wraps at the end. Refreshes the diagnostic cache up-front so navigation reflects the current buffer state, not the last save. Status bar reports `diag N/M  line L:C  — <message>`. |
-| `W` / `w`              | any (needs current user book) | (1.2.5) **Story view** — build a twopi-style radial graph of the current book (book at centre, each depth on a concentric ring) with the hierarchy (chapters / subchapters / paragraphs / scripts / images / json) plus wiki-links (dashed purple) and Characters / Places / Artefacts mentions on an outer ring (dashed green). Rasterised via `resvg` and floated on top of the editor. Inside the modal: `Esc` closes, `S` opens a save-as picker (default `<book-slug>-story-YYYYDDMM-HHMM.png`). |
+| `W` / `w`              | any (needs current user book) | (1.2.5) **Story view** — build a twopi-style radial graph of the current book (book at centre, each depth on a concentric ring) with the hierarchy (chapters / subchapters / paragraphs / scripts / images / json) plus paragraph links (dashed purple) and Characters / Places / Artefacts mentions on an outer ring (dashed green). Rasterised via `resvg` and floated on top of the editor. Inside the modal: `Esc` closes, `S` opens a save-as picker (default `<book-slug>-story-YYYYDDMM-HHMM.png`). |
 | `Esc`                  | any                      | Cancel the chord without acting.                                       |
 
 While in similar-paragraph mode, `Tab` inside the editor toggles
@@ -1068,7 +1068,7 @@ Esc            close
 
 ```
 Ctrl+B U       restore the most recently deleted paragraph
-               (single-slot kill-ring; new uuid; wiki-links to
+               (single-slot kill-ring; new uuid; paragraph links to
                 old id stay broken).  Cleared by any branch
                 delete or another single-¶ delete (the new one
                 takes the slot).
@@ -1086,7 +1086,7 @@ Ctrl+V Shift+P recent-paragraph picker (most-recent-first list,
 ```
 
 The ring is in-memory only — restart clears it.  Opening a
-new paragraph (via Enter / picker / wiki-link / undelete /
+new paragraph (via Enter / picker / paragraph link / undelete /
 similar / timeline-Enter) clears the forward stack.
 
 See [`Tutorials/33-navigation-history.md`](Tutorials/33-navigation-history.md).

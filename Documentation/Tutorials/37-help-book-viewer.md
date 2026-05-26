@@ -157,7 +157,7 @@ The viewer is the right surface for:
 - Running `F1` queries against the Help book — results
   open in the rendered view.
 - Linking to a known-good runbook from a paragraph
-  (`Ctrl+B P` add-paragraph + paste a wiki link →
+  (`Ctrl+B P` add-paragraph + paste a paragraph link →
   follow the link → land on a clean rendered page).
 
 If you need to *edit* a Help paragraph, drop to your

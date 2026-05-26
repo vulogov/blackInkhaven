@@ -1287,7 +1287,7 @@ pub(crate) struct App {
     /// most-recent) or Ctrl+V Shift+U (picker over the
     /// whole ring) via `create_node` at the original
     /// position — content, tags, linked_paragraphs, event
-    /// data preserved; the uuid changes (so wiki-links from
+    /// data preserved; the uuid changes (so paragraph links from
     /// elsewhere pointing at the deleted id stay broken).
     ///
     /// 1.2.8+ — was `Option<DeletedParagraphStash>` (single
@@ -4692,7 +4692,7 @@ impl App {
         self.change_focus(Focus::Editor);
     }
 
-    // ── Wiki-links (1.2.4+) ────────────────────────────────
+    // ── Paragraph links (1.2.4+) ────────────────────────────────
 
     /// Enter "select paragraph to link" mode. Tree pane gets a
     /// custom title; Enter on a paragraph adds it to the open
@@ -12143,7 +12143,7 @@ impl App {
             && ring_len > 0
         {
             if ring_len == 1 {
-                " · Ctrl+B U to restore (new uuid — wiki-links to old id stay broken)".to_string()
+                " · Ctrl+B U to restore (new uuid — paragraph links to old id stay broken)".to_string()
             } else {
                 format!(
                     " · Ctrl+B U restore · Ctrl+V Shift+U picker ({ring_len} in ring)",

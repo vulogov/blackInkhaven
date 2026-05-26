@@ -353,13 +353,13 @@ pub enum Action {
     ViewNextDiagnostic,
     /// Ctrl+V Shift+W (1.2.5+) — story view of the current
     /// book: book at the centre, every chapter / subchapter /
-    /// paragraph + wiki-links + lexicon mentions on
+    /// paragraph + paragraph links + lexicon mentions on
     /// concentric rings. Rendered to PNG and floated on top
     /// of the editor; `S` saves, `Esc` closes.
     #[serde(rename = "view.story_graph")]
     ViewStoryGraph,
     /// Ctrl+V w (1.2.6+) — paragraph mini story view: the
-    /// open paragraph at the centre, its wiki-link neighbours
+    /// open paragraph at the centre, its paragraph link neighbours
     /// (one hop out + one hop in) on the first ring, and any
     /// Characters / Places / Artefacts it mentions on the
     /// outer ring. Same render pipeline + save flow as the
@@ -693,7 +693,7 @@ impl Action {
             Action::ViewAddIncomingLink =>
                 "Add an incoming link — tree pane picker; Enter on a paragraph adds the OPEN paragraph to THAT paragraph's outgoing links (reverse of Ctrl+V A).".into(),
             Action::ViewListLinks =>
-                "Open the linked-paragraphs modal — list outgoing wiki-links for the open paragraph; press D on a row to remove.".into(),
+                "Open the linked-paragraphs modal — list outgoing paragraph links for the open paragraph; press D on a row to remove.".into(),
             Action::ViewListBacklinks =>
                 "Open the backlinks modal — list paragraphs that link to the open paragraph (reverse of Ctrl+V L). Enter opens; D removes the source's outgoing link to current.".into(),
             Action::ViewToggleBookmark =>
@@ -723,9 +723,9 @@ impl Action {
             Action::ViewNextDiagnostic =>
                 "Jump the editor cursor to the next typst diagnostic (parse or semantic) in the open buffer. Wraps around at the end; no-op when there are no diagnostics.".into(),
             Action::ViewStoryGraph =>
-                "Story view of the current user book — book at the centre, every chapter / subchapter / paragraph + wiki-links + lexicon mentions on concentric rings. Float a PNG on top of the editor; S saves, Esc closes.".into(),
+                "Story view of the current user book — book at the centre, every chapter / subchapter / paragraph + paragraph links + lexicon mentions on concentric rings. Float a PNG on top of the editor; S saves, Esc closes.".into(),
             Action::ViewStoryGraphParagraph =>
-                "Paragraph mini story view — the open paragraph at the centre, its wiki-link neighbours (one hop out + one hop in) on the first ring, and any Characters / Places / Artefacts it mentions on the outer ring. Same render + save flow as the book view.".into(),
+                "Paragraph mini story view — the open paragraph at the centre, its paragraph link neighbours (one hop out + one hop in) on the first ring, and any Characters / Places / Artefacts it mentions on the outer ring. Same render + save flow as the book view.".into(),
             Action::ViewEventPicker =>
                 "Open the timeline event picker (1.2.6+). Lists every event in the project sorted by start time; Enter jumps to the event paragraph. Requires `timeline.enabled: true` in HJSON.".into(),
             Action::ViewNewEventPrompt =>
@@ -737,7 +737,7 @@ impl Action {
             Action::VisitedForward =>
                 "Browser-style forward (1.2.7+) — re-open the next paragraph in the visit history. Default chord: Alt+Right. Only active after at least one back-press.".into(),
             Action::UndoLastDelete =>
-                "Undo the most-recent paragraph delete (1.2.7+) — single-slot kill-ring. Restores content + tags + linked_paragraphs + event data, but the restored ¶ gets a NEW uuid so wiki-links from elsewhere stay broken. Branch deletes (chapter / book) can't be undone. Default chord: Ctrl+B U.".into(),
+                "Undo the most-recent paragraph delete (1.2.7+) — single-slot kill-ring. Restores content + tags + linked_paragraphs + event data, but the restored ¶ gets a NEW uuid so paragraph links from elsewhere stay broken. Branch deletes (chapter / book) can't be undone. Default chord: Ctrl+B U.".into(),
             Action::ViewEditEventMetadata =>
                 "Edit the open event paragraph's start / end / track (pipe-separated, 1.2.6+). Pre-fills with current values; empty middle = no end; empty trailing = drop track. Precision re-derived from start on commit. No-op when the open paragraph isn't an event.".into(),
             Action::ViewTimeline =>
@@ -926,7 +926,7 @@ impl KeyBindings {
                 // 1.2.6+ — swim-lane timeline view. Bound to
                 // Shift+T so the lowercase `t` chord stays free
                 // for `ViewOpenParagraphTarget` (open the
-                // wiki-link target under the cursor) — the two
+                // paragraph link target under the cursor) — the two
                 // used to collide on plain `t`, with the
                 // earlier-listed `ViewOpenParagraphTarget`
                 // shadowing this entry entirely.
@@ -1373,7 +1373,7 @@ mod tests {
 
     #[test]
     fn view_sub_t_and_shift_t_route_to_distinct_actions() {
-        // 1.2.6+ — `Ctrl+V t` opens the wiki-link target,
+        // 1.2.6+ — `Ctrl+V t` opens the paragraph link target,
         // `Ctrl+V Shift+T` opens the timeline. They used to
         // collide on plain `t` (the second binding was shadowed
         // and dead).
