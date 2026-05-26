@@ -3145,6 +3145,70 @@ impl App {
             return Ok(false);
         }
 
+        // 1.2.8+ — Help paragraphs render through
+        // `markdown::render` instead of the source view, so
+        // moving the textarea cursor (the default route for
+        // arrow / PageUp / PageDown / Home / End) is
+        // invisible to the user.  Intercept those keys
+        // BEFORE the textarea catches them and adjust
+        // `opened.scroll_row` directly so the rendered
+        // viewport actually moves.  Only fires for the
+        // exact read-only+markdown combo the renderer
+        // recognises; other read-only views (snapshots,
+        // diffs) keep the existing source-cursor behaviour.
+        let is_help_rendered = self.opened.as_ref().is_some_and(|d| {
+            d.read_only
+                && d.content_type.as_deref() == Some("markdown")
+        });
+        if is_help_rendered {
+            // The render path clamps scroll_row at draw
+            // time, so we don't need to know the rendered
+            // line count here.  Page step = visible
+            // editor height; line step = 1.
+            let page = self.layout_editor.height.saturating_sub(2) as usize;
+            let page = page.max(3);
+            let doc = self
+                .opened
+                .as_mut()
+                .expect("opened checked by is_help_rendered");
+            match key.code {
+                KeyCode::Up => {
+                    doc.scroll_row = doc.scroll_row.saturating_sub(1);
+                    return Ok(false);
+                }
+                KeyCode::Down => {
+                    doc.scroll_row = doc.scroll_row.saturating_add(1);
+                    return Ok(false);
+                }
+                KeyCode::PageUp => {
+                    doc.scroll_row = doc.scroll_row.saturating_sub(page);
+                    return Ok(false);
+                }
+                KeyCode::PageDown => {
+                    doc.scroll_row = doc.scroll_row.saturating_add(page);
+                    return Ok(false);
+                }
+                KeyCode::Home => {
+                    doc.scroll_row = 0;
+                    return Ok(false);
+                }
+                KeyCode::End => {
+                    // Set to a large value; the render-time
+                    // clamp drops it back to (total - height).
+                    doc.scroll_row = usize::MAX / 2;
+                    return Ok(false);
+                }
+                // Left/Right have no meaning in the rendered
+                // viewer (the renderer hard-wraps long
+                // lines).  Swallow them so they don't
+                // accidentally hit the textarea below.
+                KeyCode::Left | KeyCode::Right => {
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
+
         // Typewriter SFX — plain Enter (end-of-line click). Fires after
         // the read-only gate so refused keystrokes in Help don't click.
         // No-op when sound is disabled or the host has no audio device.
