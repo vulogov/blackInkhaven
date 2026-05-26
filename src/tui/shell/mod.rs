@@ -34,8 +34,8 @@
 use std::path::{Path, PathBuf};
 
 use nu_parser::FlatShape;
-use nu_protocol::engine::{EngineState, Stack, StateWorkingSet};
-use nu_protocol::{PipelineData, Span, Value};
+use nu_protocol::engine::{EngineState, Redirection, Stack, StateWorkingSet};
+use nu_protocol::{OutDest, PipelineData, Span, Value};
 use nu_protocol::debugger::WithoutDebug;
 use ratatui::style::{Color, Modifier, Style};
 use rusqlite::Connection;
@@ -180,7 +180,15 @@ impl Engine {
         // `cwd_init` env var is what nu's std library reads;
         // PWD is what most commands consult.  Set both to
         // the project root so `ls`, `glob`, etc. behave.
-        let root_str = project_root.to_string_lossy().to_string();
+        // Strip trailing slashes: nu's engine_state refuses
+        // to spawn externals when $env.PWD has them, but it
+        // doesn't normalise on its own — and tempdir() on
+        // macOS happens to return paths with a trailing /.
+        let root_str = {
+            let raw = project_root.to_string_lossy().to_string();
+            let trimmed = raw.trim_end_matches('/');
+            if trimmed.is_empty() { "/".to_string() } else { trimmed.to_string() }
+        };
         stack.add_env_var(
             "PWD".to_string(),
             Value::string(root_str.clone(), Span::unknown()),
@@ -239,13 +247,39 @@ impl Engine {
             };
         }
 
-        // Eval phase.
-        match nu_engine::eval_block::<WithoutDebug>(
+        // Eval phase.  Push a Pipe redirection on BOTH stdout
+        // and stderr so external commands (`^/bin/ls -l`,
+        // `^git status`, …) get captured into the resulting
+        // PipelineData instead of inheriting nu's stdout — which
+        // would be our process's TTY and corrupt the ratatui
+        // alternate-screen surface.
+        //
+        // Why `OutDest::Pipe` and not `OutDest::Value`:
+        //   - `Value` keeps stdout + stderr as *separate*
+        //     pipes on the spawned `ChildProcess`.  When we
+        //     later call `pipeline.into_value(...)`,
+        //     `ChildProcess::into_bytes` asserts
+        //     `stderr.is_none()` and returns an "internal
+        //     error: stderr should not exist" ShellError.
+        //   - `Pipe` is documented to *merge* stderr into the
+        //     single stdout pipe when both descriptors are set
+        //     to it — so the child has stderr=None and
+        //     into_bytes drains the combined stream cleanly.
+        // Net effect: the user sees external command stdout
+        // and stderr interleaved in turn order in the pane,
+        // same way a real terminal would render them.
+        let mut guard = self.stack.push_redirection(
+            Some(Redirection::Pipe(OutDest::Pipe)),
+            Some(Redirection::Pipe(OutDest::Pipe)),
+        );
+        let exec_result = nu_engine::eval_block::<WithoutDebug>(
             &self.state,
-            &mut self.stack,
+            &mut *guard,
             &block,
             PipelineData::empty(),
-        ) {
+        );
+        drop(guard);
+        match exec_result {
             Ok(exec) => {
                 // 1.2.8+ — pipe the result through nu's `table`
                 // command so List<Record> renders as a column-
@@ -588,6 +622,32 @@ mod tests {
     }
 
     #[test]
+    fn external_command_output_is_captured_not_inherited() {
+        // Regression: `/bin/ls -l` (or any external) used to
+        // leak its bytes directly to the host TTY, corrupting
+        // ratatui's alternate-screen surface.  Fixed by
+        // push_redirection(Pipe(Value), …) around eval_block.
+        // We can't observe the host TTY from a unit test, but
+        // we CAN observe the captured stdout: if the
+        // redirection guard is doing its job, the bytes from
+        // /bin/echo land in `out.stdout`.  If it isn't, stdout
+        // comes back empty and the bytes are gone (printed by
+        // the test runner instead).
+        let mut e = engine();
+        let out = e.eval("^/bin/echo inkhaven-shell-capture-probe");
+        assert!(
+            out.success,
+            "echo exit !=0: stdout={:?} stderr={:?}",
+            out.stdout, out.stderr,
+        );
+        assert!(
+            out.stdout.contains("inkhaven-shell-capture-probe"),
+            "expected captured stdout to contain probe, got {:?}",
+            out.stdout,
+        );
+    }
+
+    #[test]
     fn strip_ansi_clears_csi_sequences() {
         // SGR colour codes around a word.
         assert_eq!(
@@ -659,9 +719,12 @@ mod tests {
         let out = e.eval("$env.PWD");
         assert!(out.success, "stderr was: {}", out.stderr);
         // tempdir on macOS comes back via /var/folders/..., on
-        // Linux via /tmp.  Just check we got *something* and
-        // that the path roughly matches what we set.
-        let expected = dir.to_string_lossy().to_string();
-        assert_eq!(out.stdout.trim(), expected.trim());
+        // Linux via /tmp.  Engine::new strips trailing slashes
+        // (nu rejects PWD with trailing /), so compare against
+        // the trimmed form.
+        let raw = dir.to_string_lossy().to_string();
+        let expected = raw.trim_end_matches('/').to_string();
+        let expected = if expected.is_empty() { "/" } else { &expected };
+        assert_eq!(out.stdout.trim(), expected);
     }
 }
