@@ -7098,6 +7098,16 @@ impl App {
             self.status = "shell: closed (state preserved · Ctrl+Z o to reopen)".into();
             return;
         }
+        // 1.2.8+ — autosave the open buffer before yielding
+        // control to the shell.  Common workflow is "write
+        // a paragraph → flip to shell to inspect / compute
+        // → flip back" and losing unsaved edits on shell-
+        // open would surprise the user.  Failures are
+        // non-fatal: save_current writes its own status
+        // line on disk error.
+        if self.opened.as_ref().is_some_and(|d| d.dirty) {
+            let _ = self.save_current();
+        }
         if fresh {
             self.shell_engine = None;
             self.shell_history.clear();
@@ -7262,7 +7272,50 @@ impl App {
     /// by `selection_mode`: false → line-editor + Up/Down
     /// command-history recall + Enter eval + Esc close;
     /// true → ↑↓ turn cursor + c / i actions.
+    ///
+    /// Ctrl+Z chords (`o` / `O` / `h`) are handled locally
+    /// because the modal-key dispatcher intercepts keys
+    /// before the global bund-prefix resolver runs — without
+    /// this branch a user pressing `Ctrl+Z o` inside the
+    /// pane sees no effect.
     fn shell_pane_handle_key(&mut self, key: KeyEvent) {
+        // Two-key Ctrl+Z chord, handled in-place.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('z') | KeyCode::Char('Z'))
+        {
+            self.bund_pending = true;
+            self.status =
+                "Ctrl+Z … (o close · O reset · h selection)".into();
+            return;
+        }
+        if self.bund_pending {
+            self.bund_pending = false;
+            // Translate the suffix into the appropriate
+            // action.  Anything else clears the pending
+            // state and falls through to normal handling so
+            // a stray Ctrl+Z followed by a real keystroke
+            // doesn't get stuck.
+            match (key.code, key.modifiers.contains(KeyModifiers::SHIFT)) {
+                (KeyCode::Char('o'), false) | (KeyCode::Char('O'), false) => {
+                    self.open_shell_pane(false);
+                    return;
+                }
+                (KeyCode::Char('O'), true) | (KeyCode::Char('o'), true) => {
+                    self.open_shell_pane(true);
+                    return;
+                }
+                (KeyCode::Char('h'), _) | (KeyCode::Char('H'), _) => {
+                    self.toggle_shell_selection_mode();
+                    return;
+                }
+                _ => {
+                    // Fall through to normal handling.  No
+                    // status update — the user sees the
+                    // suffix appear / not-appear in the input
+                    // and figures it out.
+                }
+            }
+        }
         // Selection mode first — narrower keyspace.
         let in_selection = matches!(
             self.modal,

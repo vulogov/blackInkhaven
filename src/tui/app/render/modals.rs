@@ -2567,9 +2567,9 @@ impl super::super::App {
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = if *selection_mode {
-            " nushell · selection mode "
+            " OS Shell · selection mode "
         } else {
-            " nushell "
+            " OS Shell "
         };
         let border_color = if *selection_mode {
             Color::Yellow
@@ -2663,7 +2663,19 @@ impl super::super::App {
         let visible_n = body_h as usize;
         let start = lines.len().saturating_sub(visible_n);
         let visible: Vec<Line<'_>> = lines[start..].to_vec();
-        f.render_widget(Paragraph::new(visible), body_rect);
+        // 1.2.8+ — `Wrap { trim: false }` is critical here.
+        // Without it, lines wider than the pane width get
+        // arbitrarily truncated AND nu's table output (which
+        // sometimes runs ~120 cols) clips on narrow terminals.
+        // Wrap also implicitly guards against ANSI bytes in
+        // captured external-command output — they get stripped
+        // upstream in shell::strip_ansi but the wrap belt-and-
+        // braces ensures rendering stays sane if something
+        // slips through.
+        f.render_widget(
+            Paragraph::new(visible).wrap(Wrap { trim: false }),
+            body_rect,
+        );
 
         // Prompt + hint.
         let prompt_line_rect = Rect {
@@ -2710,6 +2722,14 @@ impl super::super::App {
                 Paragraph::new(Line::from(spans)),
                 prompt_line_rect,
             );
+            // Place the terminal cursor at the end of the
+            // typed text.  TextInput::cursor() returns the
+            // char index; `"$ "` prefix consumes 2 cells.
+            let cursor_col = 2usize + input.cursor();
+            let max_col = prompt_line_rect.width.saturating_sub(1) as usize;
+            let x = prompt_line_rect.x
+                + cursor_col.min(max_col) as u16;
+            f.set_cursor_position((x, prompt_line_rect.y));
         }
         let hint = if *selection_mode {
             " ↑↓ select turn · c copy · i insert · Ctrl+Z h exit · Esc exit "

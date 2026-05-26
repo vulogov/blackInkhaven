@@ -247,18 +247,32 @@ impl Engine {
             PipelineData::empty(),
         ) {
             Ok(exec) => {
+                // 1.2.8+ — pipe the result through nu's `table`
+                // command so List<Record> renders as a column-
+                // aligned table instead of `{name: ..., type:
+                // ...}` debug dumps.  Falls back to plain
+                // collect_string when the table decl isn't
+                // registered (shouldn't happen with
+                // nu-command's default context) or when the
+                // pipeline type isn't tabular (let / cd /
+                // strings — collect_string gets the right
+                // answer for those anyway).
                 let cfg = nu_protocol::Config::default();
-                let stdout =
-                    exec.body.collect_string("\n", &cfg).unwrap_or_default();
+                let raw = format_via_table(
+                    &self.state,
+                    &mut self.stack,
+                    exec.body,
+                    &cfg,
+                );
                 ShellOutput {
-                    stdout,
+                    stdout: strip_ansi(&raw),
                     stderr: String::new(),
                     success: true,
                 }
             }
             Err(e) => ShellOutput {
                 stdout: String::new(),
-                stderr: format!("{e:?}"),
+                stderr: strip_ansi(&format!("{e:?}")),
                 success: false,
             },
         }
@@ -368,6 +382,112 @@ fn style_for_shape(shape: &FlatShape) -> Style {
     }
 }
 
+/// 1.2.8+ — strip ANSI escape sequences from text before
+/// it lands in ratatui's display.  External commands
+/// (`/bin/ls`, `git`, …) emit cursor-positioning + colour
+/// SGR codes which would otherwise mangle the TUI's render
+/// (literal ANSI bytes pass through ratatui to the host
+/// terminal and reposition the cursor mid-paint, hence the
+/// overlapped-text bug seen in 1.2.8 phases 3-6).
+///
+/// State machine handles CSI (`ESC [ … <final>`), G0/G1
+/// designators (`ESC ( X`, `ESC ) X`), and bare `ESC X`
+/// fallthrough.  Unknown sequences drop only the `ESC` +
+/// next char to stay conservative.
+pub(super) fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            match chars.next() {
+                Some('[') => {
+                    // CSI: drain until final byte in
+                    // 0x40..=0x7E (uppercase + lowercase
+                    // ASCII letters + a few punctuation).
+                    while let Some(d) = chars.next() {
+                        if matches!(d, '@'..='~') {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    // OSC: drain until ST (ESC \\) or BEL.
+                    while let Some(d) = chars.next() {
+                        if d == '\x07' {
+                            break;
+                        }
+                        if d == '\x1b' {
+                            let _ = chars.next();
+                            break;
+                        }
+                    }
+                }
+                Some('(') | Some(')') => {
+                    let _ = chars.next();
+                }
+                Some(_) | None => {}
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// 1.2.8+ — run a `PipelineData` through nu's built-in
+/// `table` command, then collect the resulting bytes /
+/// values as a UTF-8 String.  This is what nu's REPL does
+/// for normal output: List<Record> becomes a column-aligned
+/// table, naked Values become their default string repr,
+/// Empty / Nothing yields an empty string.
+///
+/// Errors from `table` (rare — usually only for pipelines
+/// that can't render) fall through to plain
+/// `collect_string`, so the caller always gets *some*
+/// stdout text rather than a panic or a hidden failure.
+fn format_via_table(
+    engine_state: &EngineState,
+    stack: &mut Stack,
+    pipeline: PipelineData,
+    cfg: &nu_protocol::Config,
+) -> String {
+    // Materialise the pipeline to a single `Value` so we
+    // can branch on shape.  Scalar values (Int, String,
+    // Bool, Float, Date, Filesize, Duration) format
+    // cleanly via `to_expanded_string`; List<Record> /
+    // Record / List<Value> deserve the `table` command's
+    // column-aligned rendering; Nothing yields an empty
+    // string.
+    let value = match pipeline.into_value(Span::unknown()) {
+        Ok(v) => v,
+        Err(_) => return String::new(),
+    };
+    if matches!(value, Value::Nothing { .. }) {
+        return String::new();
+    }
+    let is_tabular =
+        matches!(value, Value::List { .. } | Value::Record { .. });
+    if is_tabular {
+        if let Some(table_id) = engine_state.table_decl_id {
+            let cmd = engine_state.get_decl(table_id);
+            let ast_call = nu_protocol::ast::Call::new(Span::unknown());
+            let call_ref: nu_protocol::engine::Call<'_> =
+                (&ast_call).into();
+            let pd = PipelineData::Value(value.clone(), None);
+            if let Ok(formatted) =
+                cmd.run(engine_state, stack, &call_ref, pd)
+            {
+                if let Ok(s) = formatted.collect_string("\n", cfg) {
+                    return s;
+                }
+            }
+        }
+        // `table` decl missing or table-call errored —
+        // fall through to the value's own expander.
+    }
+    value.to_expanded_string("\n", cfg)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,6 +585,31 @@ mod tests {
         let h = History::open(tmp.path());
         let loaded = h.load(10);
         assert_eq!(loaded, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn strip_ansi_clears_csi_sequences() {
+        // SGR colour codes around a word.
+        assert_eq!(
+            strip_ansi("\x1b[31mred\x1b[0m"),
+            "red",
+        );
+        // Cursor positioning + clear-line — what tripped
+        // the visual-overlap bug.
+        assert_eq!(
+            strip_ansi("a\x1b[1;1Hb\x1b[2Kc"),
+            "abc",
+        );
+        // Mixed: SGR + plain + SGR.
+        assert_eq!(
+            strip_ansi("\x1b[33;1mwarn:\x1b[0m message"),
+            "warn: message",
+        );
+        // No escapes: byte-identical pass-through.
+        assert_eq!(
+            strip_ansi("plain ascii\nand a newline"),
+            "plain ascii\nand a newline",
+        );
     }
 
     #[test]
