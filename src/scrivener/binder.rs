@@ -37,6 +37,14 @@ pub struct BinderItem {
     /// keywords. The importer copies these to `Node.tags` on
     /// the corresponding inkhaven paragraph.
     pub keywords: Vec<String>,
+    /// 1.2.8+ — Scrivener custom-metadata values resolved
+    /// against the project-level `<CustomMetaDataSettings>`
+    /// registry. Pairs of `(field_title, value)`. Empty when
+    /// the item carries no `<CustomMetaData>`. The importer
+    /// scans this list against `scrivener.date_fields` and
+    /// attaches `EventData` to the paragraph for any matching
+    /// pair whose value parses against the project's calendar.
+    pub custom_meta: Vec<(String, String)>,
 }
 
 #[cfg(test)]
@@ -93,6 +101,12 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
     // in phase 2.
     let registry = parse_keyword_registry(bytes)?;
 
+    // Phase 1.5 — build the custom-metadata-field registry so
+    // per-item `<MetaDataItem ID=X>` references can resolve to a
+    // field title (e.g. "Story Date"). Empty when the project
+    // declared no CustomMeta fields.
+    let custom_meta_registry = parse_custom_meta_registry(bytes)?;
+
     // Phase 2 — walk the binder tree.
     let mut reader = Reader::from_reader(bytes);
     reader.config_mut().trim_text(true);
@@ -109,6 +123,15 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
     // enter a BinderItem's MetaData/Keywords element, cleared
     // on close.
     let mut in_metadata: usize = 0;
+    // 1.2.8+ — per-item CustomMeta state.
+    //   in_custom_meta = depth of <CustomMetaData> nesting.
+    //   current_custom_meta_id = ID attr of the current
+    //     <MetaDataItem>, lookup-key into custom_meta_registry.
+    //   current_custom_meta_value = text accumulator for the
+    //     current <Value> child.
+    let mut in_custom_meta: usize = 0;
+    let mut current_custom_meta_id: Option<String> = None;
+    let mut current_custom_meta_value = String::new();
     let mut buf: Vec<u8> = Vec::new();
 
     loop {
@@ -159,6 +182,7 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
                             title: String::new(),
                             children: Vec::new(),
                             keywords: Vec::new(),
+                            custom_meta: Vec::new(),
                         });
                     }
                     "Title" => {
@@ -188,6 +212,31 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
                     // handled in phase 1 and skipped here.
                     "Keywords" if in_metadata > 0 && !stack.is_empty() => {
                         current_text = Some(TextBuf::InlineKeywords);
+                    }
+                    // 1.2.8+ — open a <CustomMetaData> block.
+                    // Only inside an open BinderItem's <MetaData>
+                    // does this counter need to climb — the
+                    // top-level <CustomMetaDataSettings> registry
+                    // is handled in phase 1.5 and ignored here.
+                    "CustomMetaData" if in_metadata > 0 && !stack.is_empty() => {
+                        in_custom_meta += 1;
+                    }
+                    // 1.2.8+ — open a <MetaDataItem ID="X">
+                    // inside the open <CustomMetaData>. Stash
+                    // the ID; the inner <Value> text will be
+                    // resolved against it on close.
+                    "MetaDataItem" if in_custom_meta > 0 && !stack.is_empty() => {
+                        current_custom_meta_id = extract_attr(&e, "ID");
+                        current_custom_meta_value.clear();
+                    }
+                    // 1.2.8+ — open the <Value> child of the
+                    // current <MetaDataItem>. Accumulates text
+                    // into current_custom_meta_value until close.
+                    "Value" if in_custom_meta > 0
+                        && current_custom_meta_id.is_some()
+                        && !stack.is_empty() =>
+                    {
+                        current_text = Some(TextBuf::CustomMetaValue);
                     }
                     _ => {}
                 }
@@ -227,6 +276,12 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
                                 }
                             }
                         }
+                        Some(TextBuf::CustomMetaValue) => {
+                            let txt = e.unescape().map_err(|err| {
+                                anyhow!("custom-meta value decode: {err}")
+                            })?;
+                            current_custom_meta_value.push_str(&txt);
+                        }
                         None => {}
                     }
                 }
@@ -249,6 +304,36 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
                     "MetaData" => {
                         in_metadata = in_metadata.saturating_sub(1);
                     }
+                    // 1.2.8+ — close of the current <Value>.
+                    // Resolve current_custom_meta_id → field
+                    // title via the project-level registry and
+                    // push the (title, value) pair onto the
+                    // top-of-stack item's custom_meta list. The
+                    // value's surrounding whitespace is trimmed
+                    // so calendar parsing on import doesn't have
+                    // to deal with leading newlines.
+                    "Value" if matches!(current_text, Some(TextBuf::CustomMetaValue)) => {
+                        current_text = None;
+                        if let Some(id) = current_custom_meta_id.as_ref() {
+                            if let Some(title) = custom_meta_registry.get(id) {
+                                let value = current_custom_meta_value.trim().to_string();
+                                if !value.is_empty() {
+                                    if let Some(top) = stack.last_mut() {
+                                        top.custom_meta
+                                            .push((title.clone(), value));
+                                    }
+                                }
+                            }
+                        }
+                        current_custom_meta_value.clear();
+                    }
+                    "MetaDataItem" if in_custom_meta > 0 => {
+                        current_custom_meta_id = None;
+                        current_custom_meta_value.clear();
+                    }
+                    "CustomMetaData" => {
+                        in_custom_meta = in_custom_meta.saturating_sub(1);
+                    }
                     "BinderItem" => {
                         if let Some(p) = stack.pop() {
                             let item = BinderItem {
@@ -257,6 +342,7 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
                                 title: p.title,
                                 children: p.children,
                                 keywords: p.keywords,
+                                custom_meta: p.custom_meta,
                             };
                             if let Some(parent) = stack.last_mut() {
                                 parent.children.push(item);
@@ -347,6 +433,79 @@ fn parse_keyword_registry(bytes: &[u8]) -> Result<HashMap<String, String>> {
     Ok(out)
 }
 
+/// 1.2.8+ — walk the bytes once to extract the project-level
+/// custom-metadata registry: `<MetaDataField ID="N"><Title>X</Title></MetaDataField>`
+/// entries.  Modern Scrivener stores these under
+/// `<CustomMetaDataSettings>` but the parser is tolerant — any
+/// `<MetaDataField>` element with an `ID` attribute and a
+/// `<Title>` child counts.  Returns ID → field-title map.
+fn parse_custom_meta_registry(bytes: &[u8]) -> Result<HashMap<String, String>> {
+    let mut reader = Reader::from_reader(bytes);
+    reader.config_mut().trim_text(true);
+    let mut out: HashMap<String, String> = HashMap::new();
+    let mut current_id: Option<String> = None;
+    let mut in_field: usize = 0;
+    let mut in_field_title: bool = false;
+    let mut current_title = String::new();
+    let mut buf: Vec<u8> = Vec::new();
+
+    loop {
+        let event = reader
+            .read_event_into(&mut buf)
+            .with_context(|| ".scrivx custom-meta-registry parse error".to_string())?;
+        match event {
+            Event::Start(e) => {
+                let name = std::str::from_utf8(e.name().as_ref())
+                    .unwrap_or("")
+                    .to_string();
+                match name.as_str() {
+                    "MetaDataField" => {
+                        in_field += 1;
+                        current_id = extract_attr(&e, "ID");
+                        current_title.clear();
+                    }
+                    "Title" if in_field > 0 => {
+                        in_field_title = true;
+                    }
+                    _ => {}
+                }
+            }
+            Event::Text(e) => {
+                if in_field_title {
+                    let txt = e.unescape().map_err(|err| {
+                        anyhow!("metadata-field-title decode: {err}")
+                    })?;
+                    current_title.push_str(&txt);
+                }
+            }
+            Event::End(e) => {
+                let name = std::str::from_utf8(e.name().as_ref())
+                    .unwrap_or("")
+                    .to_string();
+                match name.as_str() {
+                    "Title" if in_field_title => {
+                        in_field_title = false;
+                    }
+                    "MetaDataField" => {
+                        if let Some(id) = current_id.take() {
+                            let title = current_title.trim();
+                            if !title.is_empty() {
+                                out.insert(id, title.to_owned());
+                            }
+                        }
+                        in_field = in_field.saturating_sub(1);
+                    }
+                    _ => {}
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(out)
+}
+
 fn extract_attr(e: &quick_xml::events::BytesStart, want: &str) -> Option<String> {
     for attr in e.attributes().with_checks(false).flatten() {
         let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
@@ -378,6 +537,8 @@ struct PartialItem {
     title: String,
     children: Vec<BinderItem>,
     keywords: Vec<String>,
+    /// 1.2.8+ — accumulated CustomMeta pairs for this item.
+    custom_meta: Vec<(String, String)>,
 }
 
 #[derive(Debug)]
@@ -387,6 +548,12 @@ enum TextBuf {
     /// inline text node (semicolon / comma / newline-separated
     /// keyword list).
     InlineKeywords,
+    /// 1.2.8+ — inside a `<MetaDataItem>` `<Value>` element,
+    /// nested inside `<MetaData><CustomMetaData>`. The
+    /// surrounding `MetaDataItem`'s `ID` attribute resolves
+    /// to a field title via the project-level
+    /// `<CustomMetaDataSettings>` registry built in Phase 1.5.
+    CustomMetaValue,
 }
 
 /// Synthesise a deterministic UUID from a string. Used for
@@ -549,5 +716,78 @@ character</Keywords>
             item.walk(0, &mut |_d, i| titles.push(i.title.clone()));
         }
         assert_eq!(titles, vec!["Root", "A", "B"]);
+    }
+
+    /// 1.2.8+ — CustomMeta extraction: project-level
+    /// `<CustomMetaDataSettings>` defines fields; per-item
+    /// `<MetaData><CustomMetaData><MetaDataItem ID=X>` carries
+    /// values. The parser resolves IDs against the registry
+    /// and attaches `(title, value)` pairs on the right item.
+    #[test]
+    fn custom_meta_resolves_field_titles() {
+        let xml = br#"<ScrivenerProject>
+          <CustomMetaDataSettings>
+            <MetaDataField ID="field-1" FieldType="text">
+              <Title>Story Date</Title>
+            </MetaDataField>
+            <MetaDataField ID="field-2" FieldType="text">
+              <Title>POV</Title>
+            </MetaDataField>
+          </CustomMetaDataSettings>
+          <Binder>
+            <BinderItem UUID="00000000-0000-0000-0000-000000000001" Type="DraftFolder">
+              <Title>Root</Title>
+              <Children>
+                <BinderItem UUID="00000000-0000-0000-0000-000000000002" Type="Text">
+                  <Title>The Storm</Title>
+                  <MetaData>
+                    <CustomMetaData>
+                      <MetaDataItem ID="field-1"><Value>1980-05-15</Value></MetaDataItem>
+                      <MetaDataItem ID="field-2"><Value>Aerin</Value></MetaDataItem>
+                    </CustomMetaData>
+                  </MetaData>
+                </BinderItem>
+              </Children>
+            </BinderItem>
+          </Binder>
+        </ScrivenerProject>"#;
+        let items = parse_scrivx(xml).unwrap();
+        let storm = &items[0].children[0];
+        assert_eq!(storm.title, "The Storm");
+        assert_eq!(
+            storm.custom_meta,
+            vec![
+                ("Story Date".to_owned(), "1980-05-15".to_owned()),
+                ("POV".to_owned(), "Aerin".to_owned()),
+            ]
+        );
+    }
+
+    /// 1.2.8+ — an unknown CustomMeta ID (field referenced by
+    /// an item but missing from the project registry) should be
+    /// silently skipped, not error out.
+    #[test]
+    fn custom_meta_unknown_id_skipped() {
+        let xml = br#"<ScrivenerProject>
+          <CustomMetaDataSettings>
+            <MetaDataField ID="field-1"><Title>Date</Title></MetaDataField>
+          </CustomMetaDataSettings>
+          <Binder>
+            <BinderItem UUID="00000000-0000-0000-0000-000000000001" Type="Text">
+              <Title>Only known field is kept</Title>
+              <MetaData>
+                <CustomMetaData>
+                  <MetaDataItem ID="field-1"><Value>2026-01-01</Value></MetaDataItem>
+                  <MetaDataItem ID="field-99"><Value>orphan</Value></MetaDataItem>
+                </CustomMetaData>
+              </MetaData>
+            </BinderItem>
+          </Binder>
+        </ScrivenerProject>"#;
+        let items = parse_scrivx(xml).unwrap();
+        let only = &items[0];
+        assert_eq!(only.custom_meta.len(), 1);
+        assert_eq!(only.custom_meta[0].0, "Date");
+        assert_eq!(only.custom_meta[0].1, "2026-01-01");
     }
 }

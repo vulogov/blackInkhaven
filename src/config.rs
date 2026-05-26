@@ -58,6 +58,12 @@ pub struct Config {
     /// `crate::timeline::calendar::CalendarConfig`.
     #[serde(default)]
     pub timeline: TimelineConfig,
+    /// 1.2.8+ — Scrivener-importer behaviour. Currently
+    /// scopes the CustomMeta date-field detection — which
+    /// field names in a Scrivener project's
+    /// `<CustomMetaDataSettings>` map to events on import.
+    #[serde(default)]
+    pub scrivener: ScrivenerConfig,
     /// Bund scripting sandbox policy. Defaults deny destructive
     /// categories (fs_write, net, shell, code_eval); writers opt
     /// in by listing the categories or words they want to allow.
@@ -138,6 +144,7 @@ impl Default for Config {
             goals: GoalsConfig::default(),
             ai: AiConfig::default(),
             timeline: TimelineConfig::default(),
+            scrivener: ScrivenerConfig::default(),
             scripting: crate::scripting::policy::Policy::default(),
             language: default_language(),
             prompts_file: default_prompts_path(),
@@ -214,6 +221,40 @@ impl Default for SoundConfig {
             // launch. Ctrl+B E opts in once they're settled.
             enabled: false,
             volume: 0.6,
+        }
+    }
+}
+
+/// 1.2.8+ — Scrivener-importer behaviour.
+///
+/// `date_fields`: which Scrivener CustomMeta field names (case-
+/// insensitive) should be interpreted as event dates during
+/// `inkhaven import-scrivener`. When a matching field's value
+/// parses against the project's HJSON calendar, the imported
+/// paragraph gets `EventData` attached automatically (anchored
+/// at the parsed start tick, no end, the project's
+/// `timeline.default_track`). When `timeline.enabled = false`
+/// the whole pass is a no-op.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScrivenerConfig {
+    pub date_fields: Vec<String>,
+}
+
+impl Default for ScrivenerConfig {
+    fn default() -> Self {
+        Self {
+            // Common English-language Scrivener templates: "Date"
+            // (default text field on the Novel template), "Story Date"
+            // (Novel-with-Parts), "Event Date" (custom but widely
+            // recommended in the Scrivener forum threads on timeline
+            // workflows). Users with non-English templates extend or
+            // replace this list in HJSON.
+            date_fields: vec![
+                "Date".into(),
+                "Story Date".into(),
+                "Event Date".into(),
+            ],
         }
     }
 }

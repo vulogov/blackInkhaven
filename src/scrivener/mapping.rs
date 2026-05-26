@@ -110,6 +110,7 @@ mod tests {
             title: title.into(),
             children: Vec::new(),
             keywords: Vec::new(),
+            custom_meta: Vec::new(),
         }
     }
 
