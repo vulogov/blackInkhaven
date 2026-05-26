@@ -702,6 +702,12 @@ pub(super) enum Modal {
         /// Horizontal scroll into the editor lines.
         scroll_col: usize,
     },
+    /// 1.2.8+ — Ctrl+Q confirmation modal.  Opened only
+    /// when `editor.confirm_quit = true` in HJSON.
+    /// Y / Enter proceeds with the existing
+    /// `request_quit` flow; N / Esc cancels.  No fields —
+    /// the modal is fully transient.
+    ConfirmQuit,
 }
 
 #[cfg(test)]

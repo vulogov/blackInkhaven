@@ -1284,6 +1284,16 @@ pub struct EditorConfig {
     /// flips state at runtime regardless of this knob.
     #[serde(default = "default_mouse_captured")]
     pub mouse_captured: bool,
+    /// 1.2.8+ — pop a confirmation modal on Ctrl+Q before
+    /// quitting.  Default `false` — Ctrl+Q quits
+    /// immediately (auto-saving any dirty buffer first, as
+    /// always).  Set `true` to require a Y / Enter
+    /// confirmation; N / Esc cancels and returns to the
+    /// editor.  Useful for users who hit Ctrl+Q by accident
+    /// (terminals with Ctrl+Q as a software-flow-control
+    /// chord especially).
+    #[serde(default = "default_confirm_quit")]
+    pub confirm_quit: bool,
 }
 
 fn default_startup_splash() -> bool {
@@ -1292,6 +1302,10 @@ fn default_startup_splash() -> bool {
 
 fn default_mouse_captured() -> bool {
     true
+}
+
+fn default_confirm_quit() -> bool {
+    false
 }
 
 impl Default for EditorConfig {
@@ -1305,6 +1319,7 @@ impl Default for EditorConfig {
             stemming: StemmingConfig::default(),
             startup_splash: default_startup_splash(),
             mouse_captured: default_mouse_captured(),
+            confirm_quit: default_confirm_quit(),
         }
     }
 }

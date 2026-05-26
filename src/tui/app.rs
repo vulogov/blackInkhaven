@@ -2563,10 +2563,43 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
+        // 1.2.8+ — ConfirmQuit modal swallows its own keys:
+        // Y / Enter proceed with the existing quit flow;
+        // N / Esc cancel + close the modal.  Anything else
+        // is ignored (so a misclick on the keyboard doesn't
+        // dismiss the modal).
+        if matches!(self.modal, Modal::ConfirmQuit) {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    self.modal = Modal::None;
+                    return Ok(self.request_quit());
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    self.modal = Modal::None;
+                    self.status = "quit cancelled".into();
+                    return Ok(false);
+                }
+                _ => return Ok(false),
+            }
+        }
+
         // Hard quit works from anywhere, including inside a modal.
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'))
         {
+            // 1.2.8+ — gate the quit behind a confirmation
+            // modal when `editor.confirm_quit = true`.
+            // Skip when a modal is already open (the user
+            // is mid-workflow; treat Ctrl+Q in-modal as the
+            // unconditional escape hatch it always was).
+            if self.cfg.editor.confirm_quit
+                && matches!(self.modal, Modal::None)
+            {
+                self.modal = Modal::ConfirmQuit;
+                self.status =
+                    "quit inkhaven? Y/Enter confirm · N/Esc cancel".into();
+                return Ok(false);
+            }
             return Ok(self.request_quit());
         }
 
