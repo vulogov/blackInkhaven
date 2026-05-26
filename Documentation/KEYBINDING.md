@@ -1269,6 +1269,16 @@ Inside the pane (normal mode):
                  instead of forwarding to nu (whose
                  built-in `exit` would kill inkhaven
                  itself).
+  Tab            autocomplete the token under the cursor.
+                 In command position (start of line or
+                 after `|` / `;`) matches against nu's
+                 declared command set + executables on
+                 $PATH; otherwise filesystem entries
+                 under `$env.PWD`.  Single match →
+                 splice + trailing space; multiple →
+                 splice the longest common prefix and
+                 surface the candidates on the status
+                 line.
   ↑ / ↓          walk the per-project command history
                  ring (shell-style; Down past newest
                  clears the input).

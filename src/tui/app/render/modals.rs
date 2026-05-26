@@ -2795,7 +2795,7 @@ impl super::super::App {
         let hint = if *selection_mode {
             " ↑↓ turn · PgUp/PgDn scroll · c copy · i insert · Ctrl+Z h exit · Esc exit "
         } else {
-            " Enter run · ↑↓ cmd history · PgUp/PgDn scroll · Ctrl+Z h selection · Esc close "
+            " Enter run · Tab complete · ↑↓ cmd history · PgUp/PgDn scroll · Ctrl+Z h selection · Esc close "
         };
         let hint_rect = Rect {
             x: prompt_rect.x,

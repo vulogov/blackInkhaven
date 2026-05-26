@@ -172,6 +172,31 @@ shell: {
 }
 ```
 
+## Tab autocomplete
+
+`Tab` inside the prompt completes the token under the
+cursor.  Two contexts are recognised automatically:
+
+- **Command position** — start of the input, or right
+  after a `|`, `;`, or `(`.  Completions are nu's
+  declared command set (every built-in plus any
+  user-defined `def`) merged with `$PATH` binaries.
+- **Argument position** — anywhere else.  Completions
+  are filesystem entries under the engine's current
+  working directory (`$env.PWD`, which `cd` updates).
+  Directories come back with a trailing `/` so a
+  second `Tab` walks into them.
+
+If the token contains a `/`, completion is filesystem-
+only regardless of position (`Tab` after `^/usr/bi`
+completes paths in `/usr/bin/`).
+
+Behaviour with multiple matches: the input is advanced
+by the longest common prefix, and the status bar lists
+up to six candidates (`shell: 17 matches — str  str-pos  str-replace  …`).
+Press `Tab` again after typing one more character to
+narrow further.
+
 ## Scrolling the pane
 
 The turn buffer scrolls when its accumulated lines exceed

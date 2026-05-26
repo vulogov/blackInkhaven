@@ -50,6 +50,16 @@ impl TextInput {
         self.cursor = 0;
     }
 
+    /// 1.2.8+ — replace the full buffer and set the cursor
+    /// in one step (char-index).  Used by the shell pane's
+    /// Tab autocomplete to swap a token for its completion.
+    /// Clamps cursor to the new buffer's char length.
+    pub fn set_with_cursor(&mut self, text: String, cursor_chars: usize) {
+        let len = text.chars().count();
+        self.buffer = text;
+        self.cursor = cursor_chars.min(len);
+    }
+
     pub fn insert_char(&mut self, c: char) {
         let byte_idx = self.byte_offset(self.cursor);
         self.buffer.insert(byte_idx, c);
