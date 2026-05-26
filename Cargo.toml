@@ -202,6 +202,14 @@ humantime-serde = "1"
 # headless build (CI, SSH session without audio forwarding) still works.
 # Linux release builds need `libasound2-dev` at build time.
 rodio = { version = "0.20", default-features = false }
+# 1.2.9+ — text-to-speech for the Ctrl+B S paragraph-read-aloud
+# feature. Cross-platform: AVFoundation on macOS (Milena / Yuri /
+# Katya Russian voices), SAPI / WinRT on Windows (Pavel / Irina),
+# Speech Dispatcher on Linux (needs `apt install speech-dispatcher`
+# at runtime; default backend is robotic espeak-ng, RHVoice
+# recommended for natural Russian). Engine init fails gracefully
+# on platforms without TTS — we open an explanatory modal.
+tts = "0.26"
 # Image preview in the editor pane. The Picker is created lazily by
 # querying the host terminal's graphics-protocol support; on terminals
 # that don't speak kitty / sixel / iterm2 the half-block backend is the

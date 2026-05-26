@@ -161,6 +161,86 @@ Mutually exclusive with `Ctrl+B K` (AI-fullscreen). Toggling
 either turns the other off — there's no "AI + editor split with
 everything else hidden" mode by design.
 
+## Read aloud (TTS)
+
+`Ctrl+B S` (in the editor pane) speaks the open paragraph
+through the host OS's text-to-speech engine.  Useful for
+catching awkward phrasing that the eye glosses over —
+reading prose aloud is the single best self-edit
+technique that doesn't need another person.
+
+The feature is **off by default**.  Enable it by adding
+to `inkhaven.hjson`:
+
+```hjson
+editor: {
+  tts: {
+    enabled: true
+    voice: "Milena"   // Russian female; the default
+    speed: 1.0        // multiplier over the engine's "normal" rate
+  }
+}
+```
+
+### Platform support
+
+| Platform | Backend                 | Russian voices                                                      |
+| -------- | ----------------------- | ------------------------------------------------------------------- |
+| macOS    | AVFoundation            | Milena (default), Yuri.  Katya (Enhanced) for premium quality.       |
+| Windows  | SAPI / WinRT            | Pavel (male), Irina (female).  Pre-installed on Windows 10+.        |
+| Linux    | Speech Dispatcher       | Depends on the configured speechd backend (espeak-ng default = robotic; install RHVoice or piper for natural Russian). |
+
+On macOS and Windows, voices ship with the OS — only a
+one-time download via system settings is needed for
+non-English languages.  On Linux you also need to
+install the speech-dispatcher daemon (`apt install
+speech-dispatcher` or distro equivalent) and may want
+to swap its default backend for natural Russian
+output.
+
+### Voice selection
+
+`tts.voice` is a case-insensitive substring match
+against installed voice names.  `"Milena"` matches both
+`Milena` and `Milena (Enhanced)` / `Milena (Premium)`;
+the matcher prefers entries that also contain
+`Enhanced` or `Premium`, so the premium variant is
+picked automatically when installed.
+
+Other voices: `"Yuri"`, `"Katya"`, `"Daniel"`, `"Karen"`,
+etc. — run `say -v "?"` on macOS or check the Speech
+panel in Windows to see what's installed.
+
+### Playback UI
+
+While speech is in progress, a `Read aloud` modal floats
+over the editor showing:
+
+- A spinner + the elapsed time
+- The chosen voice
+- The first 80 chars of the paragraph as a reminder of
+  what's being read
+
+Any key (Esc / Space / anything) stops playback
+immediately.  The modal also closes automatically when
+the paragraph finishes naturally.
+
+### What gets read
+
+The full paragraph body, with the leading typst heading
+line (`= Title`) stripped — it's structural, not prose.
+Empty / whitespace-only paragraphs surface a status
+warning and don't open the modal.
+
+### Performance
+
+The TTS engine is lazily initialised on the first
+`Ctrl+B S` and cached for the rest of the session —
+subsequent reads skip the init cost.  Engine init
+failures (Linux without speech-dispatcher, etc.) are
+cached too, so a missing-engine modal doesn't pay the
+init cost on every keystroke.
+
 ## Find and replace (regex)
 
 `Ctrl+F` opens the Find overlay:

@@ -616,6 +616,66 @@ impl super::App {
                 ];
                 (" Confirm quit ".into(), Color::Yellow, body)
             }
+            Modal::TtsUnavailable { title, reason } => {
+                let mut body: Vec<Line<'_>> = vec![Line::from("")];
+                for line in reason.lines() {
+                    body.push(Line::from(Span::raw(format!(" {line}"))));
+                }
+                body.push(Line::from(""));
+                body.push(Line::from(Span::styled(
+                    " Press any key to dismiss ",
+                    Style::default().add_modifier(Modifier::DIM),
+                )));
+                (title.clone(), Color::Yellow, body)
+            }
+            Modal::TtsPlayback { started_at, preview, voice_label } => {
+                let elapsed = started_at.elapsed();
+                let elapsed_str = format!(
+                    "{:02}:{:02}",
+                    elapsed.as_secs() / 60,
+                    elapsed.as_secs() % 60,
+                );
+                // Spinner driven by tenths-of-seconds so it
+                // moves on every render frame.  Real progress
+                // is unknowable (the TTS engine doesn't
+                // expose per-word callbacks), so honesty
+                // beats a fake percentage.
+                let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+                let idx = (elapsed.as_millis() / 100) as usize
+                    % spinner_frames.len();
+                let spinner = spinner_frames[idx];
+                let mut preview_show = preview.clone();
+                if preview_show.chars().count() >= 80 {
+                    preview_show.push('…');
+                }
+                let body = vec![
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::raw(" "),
+                        Span::styled(
+                            spinner,
+                            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("  "),
+                        Span::styled(
+                            "reading aloud",
+                            Style::default().add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(format!("  ·  voice: {voice_label}  ·  elapsed: {elapsed_str}")),
+                    ]),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(" \"{preview_show}\""),
+                        Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Press any key (Esc / Space) to stop ",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (" Read aloud ".into(), Color::Cyan, body)
+            }
             Modal::Deleting {
                 root_kind,
                 title,

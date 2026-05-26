@@ -339,6 +339,19 @@ pub enum Action {
     /// chord-prefix state machine.
     #[serde(rename = "bund.edit_project_hjson")]
     BundEditProjectHjson,
+    /// Ctrl+B S in editor scope (1.2.9+) — read the open
+    /// paragraph aloud via the OS TTS engine (`tts-rs`).
+    /// Replaces the pre-1.2.9 editor-scope `Ctrl+B S =
+    /// Save` binding which was a redundant duplicate of
+    /// plain `Ctrl+S`.  Gated on
+    /// `editor.tts.enabled = true` in HJSON; when
+    /// disabled, fires a "TTS disabled" explanation
+    /// modal.  On platforms where the TTS engine can't
+    /// initialise (Linux without `speech-dispatcher`,
+    /// containers, …), a similar explanation modal
+    /// fires with the engine-level error string.
+    #[serde(rename = "editor.tts_read_paragraph")]
+    TtsReadParagraph,
     /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
     /// via typst-render and float a PNG preview on top of the
     /// editor. `Esc` closes, `S` opens a save-as picker for the
@@ -528,6 +541,7 @@ impl Action {
             Action::BundOpenShellFresh => "shell fresh".into(),
             Action::BundShellSelection => "shell select".into(),
             Action::BundEditProjectHjson => "edit hjson".into(),
+            Action::TtsReadParagraph => "read aloud".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -718,6 +732,8 @@ impl Action {
                 "Inside the shell pane, toggle history-selection mode (1.2.8+) — ↑↓ walks turn-by-turn, `c` copies output to clipboard, `i` inserts wrapped in the configured typst-box template. Re-press exits.".into(),
             Action::BundEditProjectHjson =>
                 "Open `<project>/inkhaven.hjson` in a full-screen editor (1.2.8+, Ctrl+B 0). Syntax-highlighted via the hand-rolled HJSON lexer. Ctrl+S saves; when saved bytes differ from the loaded bytes, a restart-required overlay pops up (config applies on next launch). Esc closes; unsaved-edit warnings fire on close.".into(),
+            Action::TtsReadParagraph =>
+                "Read the open paragraph aloud via the OS TTS engine (1.2.9+, Ctrl+B S in editor scope). Cross-platform via `tts-rs`: AVFoundation on macOS, SAPI / WinRT on Windows, Speech Dispatcher on Linux. Gated by `editor.tts.enabled = true` in HJSON; default is off. Default voice is `Milena` (Russian female; ships free with macOS + Windows). When TTS is disabled, or the engine fails to initialise (Linux without speech-dispatcher, missing voices, etc.), a friendly explanation modal fires instead.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -815,7 +831,11 @@ impl KeyBindings {
                 entry("j", Action::ReorderDown, Scope::Tree),
 
                 // ── Editor pane ───────────────────────────────
-                entry("s", Action::Save, Scope::Editor),
+                // 1.2.9+ — editor-scope Ctrl+B S was a redundant
+                // duplicate of plain Ctrl+S; reclaimed for the new
+                // TTS read-aloud action.  Tree-scope Ctrl+B S =
+                // AddSubchapter stays.
+                entry("s", Action::TtsReadParagraph, Scope::Editor),
                 entry("n", Action::CreateSnapshot, Scope::Editor),
                 entry("r", Action::CycleStatus, Scope::Editor),
                 entry("f", Action::OpenFunctionPicker, Scope::Editor),
