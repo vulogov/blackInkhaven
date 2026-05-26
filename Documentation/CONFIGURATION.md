@@ -825,3 +825,50 @@ but missing from the registry) are silently skipped.
 Already documented inline in the `editor` table above.
 Sets the initial mouse-capture state on launch; runtime
 `Ctrl+Shift+M` still flips it regardless.
+
+### `shell` (1.2.8+) — embedded nushell pane
+
+```hjson
+shell: {
+  // Whether `Ctrl+Z o` opens the embedded shell pane.
+  // Set false to make the chord a status-hint no-op
+  // (the engine + nu deps stay linked into the binary
+  // either way — saving binary size requires a custom
+  // cargo build with --no-default-features once we add
+  // a feature flag, currently not gated).
+  enabled: true
+
+  // In-memory cap on (command, output) turn pairs the
+  // pane retains across the session.  Older pairs roll
+  // off the front.  The SQLite history at
+  // `.inkhaven/shell_history.db` is uncapped — this
+  // bounds working memory + seeds the Up-arrow recall
+  // ring on first open of each session.
+  max_buffered_turns: 50
+
+  // Typst markup wrapping a `Ctrl+Z h` → `i` insert.
+  // `{output}` is substituted verbatim — the default
+  // uses a backtick-delimited typst raw block which
+  // bounds the literal without escaping, so embedded
+  // quotes / backslashes / pipes survive intact.
+  insert_template: "#raw(block: true, lang: \"shell\", `{output}`)"
+}
+```
+
+The embedded shell loads nushell's full default command
+set (`ls`, `where`, `str`, `path`, `into`, …) and runs
+in the same process as the editor — no subprocess, no
+PTY.  Long-running TTY apps (`vim`, `top`, `less`) are
+explicitly out of scope; use a separate terminal for
+those.
+
+Per-project history lives at
+`<project>/.inkhaven/shell_history.db` (bundled SQLite,
+no system dependency).  Survives TUI restart.
+
+`Ctrl+Z O` (Shift) drops the engine + in-memory ring but
+leaves the on-disk DB alone.  Full reset is manual:
+`rm .inkhaven/shell_history.db` from another terminal.
+
+See [`Tutorials/35-embedded-shell.md`](Tutorials/35-embedded-shell.md)
+for the full chord ladder + use-case walkthrough.

@@ -1247,3 +1247,40 @@ terminal's native drag-select + system-clipboard copy work
 without pressing `Ctrl+Shift+M` first.  The runtime
 `Ctrl+Shift+M` toggle still flips state regardless.
 
+### Embedded nushell pane (1.2.8+)
+
+```
+Ctrl+Z o         open / close the floating shell pane.
+                 Engine state (env vars, defs) + turn
+                 buffer + on-disk history all preserved
+                 across close+reopen.
+Ctrl+Z O         (Shift) drop the cached engine + in-
+                 memory turn buffer and open fresh.  Does
+                 NOT wipe `.inkhaven/shell_history.db`.
+Ctrl+Z h         (inside the pane) toggle history-
+                 selection mode.
+
+Inside the pane (normal mode):
+  Enter          run the line through the embedded
+                 nu_engine; output + stderr land as a new
+                 turn in the buffer.
+  ↑ / ↓          walk the per-project command history
+                 ring (shell-style; Down past newest
+                 clears the input).
+  Esc            close the pane (state preserved).
+
+Inside selection mode:
+  ↑ / ↓ / Home / End  walk the turn cursor.
+  c                   copy the highlighted turn's output
+                      (stderr appended when failed).
+  i                   insert the output into the editor
+                      at cursor, wrapped in
+                      `shell.insert_template`.  Pane
+                      closes + editor refocuses.
+  Esc                 exit selection (keep pane open).
+  Ctrl+Z h            same — toggle back.
+```
+
+Pane gated on `shell.enabled = true` in HJSON (default
+true).  See [`Tutorials/35-embedded-shell.md`](Tutorials/35-embedded-shell.md).
+
