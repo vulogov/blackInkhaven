@@ -85,10 +85,23 @@ impl KeyChord {
         // many terminals, while "Ctrl+Shift+a" stores Char('a') with both
         // CONTROL and SHIFT. Make matching predictable by always upper-casing
         // a Char when Shift is part of the chord and lower-casing otherwise.
+        //
+        // Non-alphabetic Char codes (`|`, `}`, `?`, `>`, …) need different
+        // handling: the glyph itself encodes the Shift on US-layout
+        // keyboards, and modern terminals (Kitty / iTerm2 disambiguation)
+        // report `Shift+\` as `Char('|') + SHIFT` while legacy terminals
+        // send `Char('|')` without SHIFT.  Storing SHIFT in the chord
+        // would lock the binding to one terminal mode; strip it so both
+        // styles normalise onto the same canonical `Char(glyph)` without
+        // a SHIFT modifier.  `matches()` mirrors the strip on the event
+        // side.
         if let KeyCode::Char(c) = code {
             if shift_present {
-                mods.insert(KeyModifiers::SHIFT);
-                code = KeyCode::Char(c.to_ascii_uppercase());
+                if c.is_ascii_alphabetic() {
+                    mods.insert(KeyModifiers::SHIFT);
+                    code = KeyCode::Char(c.to_ascii_uppercase());
+                }
+                // Non-alphabetic + Shift: SHIFT is implicit; drop.
             } else if c.is_ascii_alphabetic() {
                 code = KeyCode::Char(c.to_ascii_lowercase());
             }
@@ -128,6 +141,20 @@ impl KeyChord {
                 } else {
                     KeyCode::Char(c.to_ascii_lowercase())
                 }
+            }
+            KeyCode::Char(c) => {
+                // Non-alphabetic glyph (`|`, `}`, `?`, `>`, `:`, …).
+                // Modern terminals report `Shift+\` as
+                // `Char('|') + SHIFT`; legacy terminals send
+                // `Char('|')` without SHIFT.  The glyph itself
+                // already encodes the Shift on US-layout keyboards,
+                // so strip the SHIFT bit when comparing — `parse()`
+                // does the same for chord registration, so both
+                // styles meet on the canonical "Char(glyph) without
+                // SHIFT" form.  Ctrl / Alt stay as-is so `Ctrl+|`
+                // remains distinguishable from `|`.
+                ev_mods.remove(KeyModifiers::SHIFT);
+                KeyCode::Char(c)
             }
             other => other,
         };
@@ -204,6 +231,40 @@ mod tests {
         let k = KeyChord::parse("Shift+Tab").unwrap();
         assert!(k.matches(&ev(KeyCode::Tab, KeyModifiers::SHIFT)));
         assert!(k.matches(&ev(KeyCode::BackTab, KeyModifiers::NONE)));
+    }
+
+    #[test]
+    fn shifted_symbol_matches_in_modern_and_legacy_terminals() {
+        // `|` is `Shift+\` on US layout.  Modern terminals
+        // (Kitty / iTerm2 disambiguation) send `Char('|') +
+        // SHIFT`; legacy terminals send `Char('|')` without
+        // SHIFT.  A chord written as just `"|"` must match
+        // both.  Same for `}`, `?`, `>`, `:`, `"`.
+        let pipe = KeyChord::parse("|").unwrap();
+        assert!(pipe.matches(&ev(KeyCode::Char('|'), KeyModifiers::SHIFT)));
+        assert!(pipe.matches(&ev(KeyCode::Char('|'), KeyModifiers::NONE)));
+
+        // Writing `"Shift+|"` should normalize to the same
+        // canonical chord — both forms accept both event
+        // shapes.  This is what the Ctrl+B | binding for the
+        // HJSON editor uses.
+        let pipe_shift = KeyChord::parse("Shift+|").unwrap();
+        assert_eq!(pipe, pipe_shift);
+
+        // Other shifted glyphs.
+        let q = KeyChord::parse("?").unwrap();
+        assert!(q.matches(&ev(KeyCode::Char('?'), KeyModifiers::SHIFT)));
+        assert!(q.matches(&ev(KeyCode::Char('?'), KeyModifiers::NONE)));
+
+        // Ctrl+| stays distinguishable from `|` even when
+        // SHIFT is auto-stripped.
+        let ctrl_pipe = KeyChord::parse("Ctrl+|").unwrap();
+        assert!(ctrl_pipe.matches(&ev(
+            KeyCode::Char('|'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )));
+        assert!(ctrl_pipe.matches(&ev(KeyCode::Char('|'), KeyModifiers::CONTROL)));
+        assert!(!ctrl_pipe.matches(&ev(KeyCode::Char('|'), KeyModifiers::NONE)));
     }
 
     #[test]
