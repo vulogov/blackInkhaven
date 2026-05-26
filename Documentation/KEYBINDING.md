@@ -1279,6 +1279,23 @@ Inside the pane (normal mode):
                  splice the longest common prefix and
                  surface the candidates on the status
                  line.
+
+Line editing (readline-style):
+  Ctrl+A / Ctrl+E    move cursor to start / end of line
+  Ctrl+U             kill from cursor to start
+  Ctrl+K             kill from cursor to end
+  Ctrl+W             kill the word before the cursor
+  Ctrl+Left/Right    move cursor by word
+  Alt+B / Alt+F      move cursor by word (readline alias)
+  Alt+Backspace      kill word backward
+  Ctrl+L             clear scrollback (engine + history kept)
+  Ctrl+D             clear input; if input is empty, close pane
+
+Pane help:
+  Ctrl+B H           open the OS Shell help overlay.
+                     Any key dismisses it; pane state
+                     (input, scroll, history) is preserved
+                     unchanged underneath.
   ↑ / ↓          walk the per-project command history
                  ring (shell-style; Down past newest
                  clears the input).

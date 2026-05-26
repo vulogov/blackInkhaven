@@ -1392,6 +1392,13 @@ pub(crate) struct App {
     /// every non-empty Enter.  `None` until the first
     /// open.
     shell_history_db: Option<super::shell::History>,
+    /// 1.2.8+ — pane-local Ctrl+B chord prefix.  Kept
+    /// separate from the global `bund_pending` so the
+    /// shell pane's `Ctrl+B H` doesn't clash with the
+    /// global Ctrl+B chord ladder (Quit, Load, …).
+    /// `true` after Ctrl+B inside the pane, consumed by
+    /// the next keystroke.
+    shell_ctrlb_pending: bool,
     /// Cursor into `ai_prompt_history`. None when not navigating;
     /// `Some(i)` when the user is stepping through history. Any
     /// edit (typing, backspace, etc.) clears it so the next Up
@@ -1736,6 +1743,7 @@ impl App {
             shell_history: Vec::new(),
             shell_command_history: Vec::new(),
             shell_history_db: None,
+            shell_ctrlb_pending: false,
             opened: None,
             secondary: None,
             secondary_focused: false,
@@ -7182,6 +7190,7 @@ impl App {
             selection_mode: false,
             selection_cursor: 0,
             scroll: 0,
+            show_help: false,
         };
         self.status = if fresh {
             "shell: fresh engine · type a command, Enter runs it".into()
@@ -7530,6 +7539,46 @@ impl App {
     /// this branch a user pressing `Ctrl+Z o` inside the
     /// pane sees no effect.
     fn shell_pane_handle_key(&mut self, key: KeyEvent) {
+        // 1.2.8+ — Help overlay swallows EVERY key.  Any
+        // press dismisses the overlay; the underlying pane
+        // state is preserved unchanged.
+        if matches!(self.modal, Modal::ShellPane { show_help: true, .. }) {
+            if let Modal::ShellPane { show_help, .. } = &mut self.modal {
+                *show_help = false;
+            }
+            self.status = "shell help: closed".into();
+            return;
+        }
+
+        // 1.2.8+ — Ctrl+B chord prefix (pane-local).  Kept
+        // separate from the global `bund_pending` so we
+        // don't fire global chords (Q quit, L load, …) from
+        // inside the pane and so the suffix matching here
+        // doesn't have to disambiguate by prefix.  Only
+        // chord we currently honour is `Ctrl+B H` → help.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('b') | KeyCode::Char('B'))
+        {
+            self.shell_ctrlb_pending = true;
+            self.status = "Ctrl+B … (H help)".into();
+            return;
+        }
+        if self.shell_ctrlb_pending {
+            self.shell_ctrlb_pending = false;
+            if matches!(
+                key.code,
+                KeyCode::Char('h') | KeyCode::Char('H')
+            ) {
+                if let Modal::ShellPane { show_help, .. } = &mut self.modal {
+                    *show_help = true;
+                }
+                self.status = "shell help: any key to close".into();
+                return;
+            }
+            // Any other suffix: clear pending state and fall
+            // through to normal handling.
+        }
+
         // Two-key Ctrl+Z chord, handled in-place.
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('z') | KeyCode::Char('Z'))
@@ -7818,6 +7867,125 @@ impl App {
                 // status-line list so the user can see what
                 // else exists.
                 self.shell_tab_complete();
+            }
+            // 1.2.8+ — readline-style line editing.  Single-
+            // line prompt so we omit Ctrl+A=select-all,
+            // Ctrl+U=undo, Ctrl+Y=redo from the editor's
+            // textarea bindings (no selection model, no
+            // undo history on the input ring).  Instead
+            // bind the chords the way bash / zsh / readline
+            // users expect:
+            //   Ctrl+A   → start of line
+            //   Ctrl+E   → end of line
+            //   Ctrl+U   → kill from cursor to start
+            //   Ctrl+K   → kill from cursor to end
+            //   Ctrl+W   → kill the word before the cursor
+            //   Ctrl+L   → clear scrollback
+            //   Ctrl+D   → clear input if non-empty, close
+            //              pane if empty (terminal idiom)
+            //   Alt+B / Alt+F / Ctrl+Left / Ctrl+Right
+            //            → word back / word forward
+            //   Alt+Backspace → kill word back
+            KeyCode::Char('a') | KeyCode::Char('A')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.move_home();
+                }
+            }
+            KeyCode::Char('e') | KeyCode::Char('E')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.move_end();
+                }
+            }
+            KeyCode::Char('u') | KeyCode::Char('U')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.kill_to_start();
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Char('K')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.kill_to_end();
+                }
+            }
+            KeyCode::Char('w') | KeyCode::Char('W')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.kill_word_left();
+                }
+            }
+            KeyCode::Char('l') | KeyCode::Char('L')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                // Clear scrollback (terminal idiom).  Engine
+                // state and command history are preserved —
+                // this is purely a visual reset of the turn
+                // buffer.
+                self.shell_history.clear();
+                if let Modal::ShellPane { scroll, .. } = &mut self.modal {
+                    *scroll = 0;
+                }
+                self.status = "shell: scrollback cleared".into();
+            }
+            KeyCode::Char('d') | KeyCode::Char('D')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                let input_empty = matches!(
+                    &self.modal,
+                    Modal::ShellPane { input, .. } if input.is_empty()
+                );
+                if input_empty {
+                    self.modal = Modal::None;
+                    self.status =
+                        "shell: closed via Ctrl+D (state preserved · Ctrl+Z o to reopen)".into();
+                } else if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.clear();
+                }
+            }
+            KeyCode::Char('b') | KeyCode::Char('B')
+                if key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.move_word_left();
+                }
+            }
+            KeyCode::Char('f') | KeyCode::Char('F')
+                if key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.move_word_right();
+                }
+            }
+            KeyCode::Left
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.move_word_left();
+                }
+            }
+            KeyCode::Right
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.move_word_right();
+                }
+            }
+            KeyCode::Backspace
+                if key.modifiers.contains(KeyModifiers::ALT)
+                    || key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Modal::ShellPane { input, .. } = &mut self.modal {
+                    input.kill_word_left();
+                }
             }
             KeyCode::Esc => {
                 // Esc closes the pane; engine + history
