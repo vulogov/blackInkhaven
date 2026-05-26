@@ -643,9 +643,13 @@ pub(super) enum Modal {
         /// Scroll position into the turn-list rendering
         /// (lines from the bottom).  `0` keeps the newest
         /// output flush with the bottom of the pane.
-        /// Phase 4 will wire PgUp/PgDn to walk this; for
-        /// now it's set on push but not read.
-        #[allow(dead_code)]
+        /// PgUp / PgDown bump this in 10-line steps; Home
+        /// jumps to the top of the buffer, End back to the
+        /// newest output.  Reset to `0` whenever a new turn
+        /// is appended (so fresh output is auto-visible).
+        /// Render clamps to the valid range; the field
+        /// itself is allowed to grow past max_scroll without
+        /// being written back.
         scroll: usize,
     },
 }

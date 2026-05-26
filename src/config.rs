@@ -284,11 +284,21 @@ impl Default for ScrivenerConfig {
 /// block with `lang: "shell"` for monospace, no markdown
 /// reinterpretation. Customise for a framed or themed
 /// presentation.
+///
+/// `max_output_lines`: per-turn cap on stdout (and stderr).
+/// A single command (`git log`, `cat very_big_file`, …) can
+/// emit thousands of lines and bloat the in-memory turn
+/// buffer + slow ratatui rendering.  When a turn's stdout
+/// exceeds this many lines, the head is kept and the tail
+/// is replaced with `… (N more lines truncated)`.  Same
+/// rule applies to stderr.  Independent of
+/// `max_buffered_turns` (which caps the number of *turns*).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ShellConfig {
     pub enabled: bool,
     pub max_buffered_turns: usize,
+    pub max_output_lines: usize,
     pub insert_template: String,
 }
 
@@ -297,6 +307,7 @@ impl Default for ShellConfig {
         Self {
             enabled: true,
             max_buffered_turns: 50,
+            max_output_lines: 1000,
             insert_template:
                 "#raw(block: true, lang: \"shell\", `{output}`)".into(),
         }

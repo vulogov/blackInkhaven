@@ -2550,11 +2550,13 @@ impl super::super::App {
             input,
             selection_mode,
             selection_cursor,
+            scroll,
             ..
         } = &self.modal
         else {
             return;
         };
+        let scroll = *scroll;
 
         // Fullscreen-floating: leave a 1-cell margin so the
         // editor pane's borders are still visible.
@@ -2566,10 +2568,18 @@ impl super::super::App {
         };
         f.render_widget(ratatui::widgets::Clear, rect);
 
-        let header = if *selection_mode {
-            " OS Shell · selection mode "
+        let header_base = if *selection_mode {
+            " OS Shell · selection mode"
         } else {
-            " OS Shell "
+            " OS Shell"
+        };
+        let header_owned;
+        let header = if scroll > 0 {
+            header_owned = format!("{header_base} · ↑ scrolled (End→bottom) ");
+            header_owned.as_str()
+        } else {
+            header_owned = format!("{header_base} ");
+            header_owned.as_str()
         };
         let border_color = if *selection_mode {
             Color::Yellow
@@ -2660,9 +2670,19 @@ impl super::super::App {
             lines.push(Line::from(""));
         }
         // Anchor to bottom: render the last body_h lines.
+        // `scroll` shifts the visible window UP by N logical
+        // lines so older content comes into view.  Render
+        // clamps to the valid range — if the handler advanced
+        // scroll past total_lines, we silently cap at the top
+        // of the buffer.  The field itself isn't rewritten;
+        // PgDown will gradually bring it back into range.
         let visible_n = body_h as usize;
-        let start = lines.len().saturating_sub(visible_n);
-        let visible: Vec<Line<'_>> = lines[start..].to_vec();
+        let total = lines.len();
+        let max_scroll = total.saturating_sub(visible_n);
+        let effective_scroll = scroll.min(max_scroll);
+        let end = total.saturating_sub(effective_scroll);
+        let start = end.saturating_sub(visible_n);
+        let visible: Vec<Line<'_>> = lines[start..end].to_vec();
         // 1.2.8+ — `Wrap { trim: false }` is critical here.
         // Without it, lines wider than the pane width get
         // arbitrarily truncated AND nu's table output (which
@@ -2732,9 +2752,9 @@ impl super::super::App {
             f.set_cursor_position((x, prompt_line_rect.y));
         }
         let hint = if *selection_mode {
-            " ↑↓ select turn · c copy · i insert · Ctrl+Z h exit · Esc exit "
+            " ↑↓ turn · PgUp/PgDn scroll · c copy · i insert · Ctrl+Z h exit · Esc exit "
         } else {
-            " Enter run · ↑↓ command history · Ctrl+Z h selection · Esc close (state preserved) "
+            " Enter run · ↑↓ cmd history · PgUp/PgDn scroll · Ctrl+Z h selection · Esc close "
         };
         let hint_rect = Rect {
             x: prompt_rect.x,

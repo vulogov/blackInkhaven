@@ -846,6 +846,18 @@ shell: {
   // ring on first open of each session.
   max_buffered_turns: 50
 
+  // Per-turn cap on the number of output lines retained
+  // from a single command's stdout (and stderr separately).
+  // A `cat /var/log/system.log` or `git log` can emit
+  // tens of thousands of lines; without this cap they
+  // bloat the in-memory ring and slow PgUp/PgDn scroll
+  // rendering.  Excess tail is replaced with a
+  // "… (N more lines truncated)" marker — output is
+  // capped but never silently dropped.  Raise this if
+  // you want to retain the full output of large commands
+  // (cost: memory + render time grow linearly).
+  max_output_lines: 1000
+
   // Typst markup wrapping a `Ctrl+Z h` → `i` insert.
   // `{output}` is substituted verbatim — the default
   // uses a backtick-delimited typst raw block which

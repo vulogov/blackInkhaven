@@ -145,6 +145,14 @@ shell: {
   // SQLite history is uncapped — this only bounds
   // working-memory + the Up-arrow recall ring's seed.
   max_buffered_turns: 50
+  // Per-command cap on captured output lines.  A single
+  // command that emits more than this many stdout lines
+  // is truncated with a "(N more lines truncated)"
+  // marker on the last kept line.  Same rule applied to
+  // stderr.  Raise if you rely on `cat large_file` or
+  // `git log` showing in full; lower to keep memory and
+  // PgUp/PgDn responsiveness tight on slow machines.
+  max_output_lines: 1000
   // The typst markup wrapping a Ctrl+Z h → i insert.
   // `{output}` is substituted verbatim.  Default uses
   // a typst raw block with `lang: "shell"` for
@@ -152,6 +160,28 @@ shell: {
   insert_template: "#raw(block: true, lang: \"shell\", `{output}`)"
 }
 ```
+
+## Scrolling the pane
+
+The turn buffer scrolls when its accumulated lines exceed
+the pane height.  By default the newest output is anchored
+flush against the bottom; older content lives just above
+the viewport.
+
+| Key            | Effect                                       |
+| -------------- | -------------------------------------------- |
+| `PgUp`         | Scroll backward by 10 lines                  |
+| `PgDown`       | Scroll forward by 10 lines (toward newest)   |
+| `Shift+Home`   | Jump to the top of the buffer                |
+| `Shift+End`    | Jump back to the newest output (bottom)      |
+
+Running a new command via `Enter` automatically resets the
+scroll position so fresh output is always visible.  Entering
+or leaving `Ctrl+Z h` selection mode preserves scroll.
+
+The title bar displays `· ↑ scrolled (End→bottom)` while you
+are above the newest turn — a reminder that more recent
+output exists below.
 
 Custom template examples:
 

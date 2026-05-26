@@ -1221,6 +1221,41 @@ fn strip_leading_typst_heading(body: &str) -> String {
 /// 24-row terminal without scrolling.
 const KILL_RING_CAP: usize = 10;
 
+/// 1.2.8+ — truncate a captured shell-output blob to at most
+/// `max_lines` lines.  Returns the input unchanged if it
+/// already fits.  When truncated, the last kept line is
+/// replaced with `… (N more lines truncated)` so the user
+/// sees that something was dropped and how much.  The marker
+/// itself counts toward `max_lines`, so the visible line
+/// count never exceeds the configured cap.
+///
+/// Used at the App level (post-eval) rather than inside
+/// `shell::Engine::eval` so the engine stays config-free —
+/// it always returns whatever nu produced, and the UI layer
+/// decides what to retain.
+fn truncate_to_lines(text: String, max_lines: usize) -> String {
+    if text.is_empty() {
+        return text;
+    }
+    let cap = max_lines.max(1);
+    let total: usize = text.lines().count();
+    if total <= cap {
+        return text;
+    }
+    // Keep cap-1 head lines, replace the rest with the marker.
+    let keep = cap.saturating_sub(1);
+    let head: String = text
+        .lines()
+        .take(keep)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let dropped = total - keep;
+    let marker = format!(
+        "… ({dropped} more lines truncated · raise shell.max_output_lines to keep more)"
+    );
+    if head.is_empty() { marker } else { format!("{head}\n{marker}") }
+}
+
 pub(crate) struct App {
     layout: ProjectLayout,
     store: Store,
@@ -7316,6 +7351,30 @@ impl App {
                 }
             }
         }
+        // PgUp/PgDown/Home/End scroll the turn-buffer in BOTH
+        // selection and normal modes — they don't conflict
+        // with command-history recall (↑↓) or selection-mode
+        // turn navigation (↑↓).  Home/End are special:
+        //   - In selection mode they ALSO move the turn cursor
+        //     to the first / last turn (existing behaviour).
+        //   - In normal mode they only affect scroll.
+        // Step = 10 logical lines per Page key — render clamps
+        // if the user scrolls past the top of the buffer.
+        const SCROLL_PAGE: usize = 10;
+        if matches!(
+            key.code,
+            KeyCode::PageUp | KeyCode::PageDown
+        ) {
+            if let Modal::ShellPane { scroll, .. } = &mut self.modal {
+                match key.code {
+                    KeyCode::PageUp => *scroll = scroll.saturating_add(SCROLL_PAGE),
+                    KeyCode::PageDown => *scroll = scroll.saturating_sub(SCROLL_PAGE),
+                    _ => unreachable!(),
+                }
+            }
+            return;
+        }
+
         // Selection mode first — narrower keyspace.
         let in_selection = matches!(
             self.modal,
@@ -7324,7 +7383,9 @@ impl App {
         if in_selection {
             let history_len = self.shell_history.len();
             if let Modal::ShellPane {
-                selection_cursor, ..
+                selection_cursor,
+                scroll,
+                ..
             } = &mut self.modal
             {
                 match key.code {
@@ -7338,9 +7399,15 @@ impl App {
                             *selection_cursor += 1;
                         }
                     }
-                    KeyCode::Home => *selection_cursor = 0,
+                    KeyCode::Home => {
+                        *selection_cursor = 0;
+                        // Match: walking to the first turn
+                        // exposes the head of the buffer.
+                        *scroll = usize::MAX / 2;
+                    }
                     KeyCode::End => {
                         *selection_cursor = history_len.saturating_sub(1);
+                        *scroll = 0;
                     }
                     KeyCode::Char('c') | KeyCode::Char('C') => {
                         self.shell_selection_copy();
@@ -7379,14 +7446,21 @@ impl App {
                     return;
                 }
                 // Reset input + history cursor; eval; push turn.
+                // Also reset scroll so the new turn lands
+                // visible at the bottom — anything else would
+                // be confusing (user runs `ls`, expects to
+                // see its output, but stays scrolled to old
+                // content).
                 if let Modal::ShellPane {
                     input,
                     command_history_cursor,
+                    scroll,
                     ..
                 } = &mut self.modal
                 {
                     input.clear();
                     *command_history_cursor = None;
+                    *scroll = 0;
                 }
                 // Command-history ring: dedup vs immediate
                 // predecessor.  Push to both the in-memory
@@ -7414,10 +7488,20 @@ impl App {
                         }
                     }
                 };
+                // Per-turn output truncation: a single `cat`
+                // / `git log` can drop tens of thousands of
+                // lines into stdout, which bloats memory and
+                // makes ratatui rendering crawl.  Cap at
+                // configured max_output_lines, replacing the
+                // tail with a "(N more lines truncated)"
+                // marker so the user knows.
+                let max_lines = self.cfg.shell.max_output_lines.max(1);
+                let stdout = truncate_to_lines(out.stdout, max_lines);
+                let stderr = truncate_to_lines(out.stderr, max_lines);
                 let turn = super::shell::ShellTurn {
                     command: trimmed,
-                    stdout: out.stdout,
-                    stderr: out.stderr,
+                    stdout,
+                    stderr,
                     success: out.success,
                 };
                 self.shell_history.push(turn);
@@ -7500,6 +7584,22 @@ impl App {
                 self.modal = Modal::None;
                 self.status =
                     "shell: closed (state preserved · Ctrl+Z o to reopen)".into();
+            }
+            // Home/End in normal mode go to the prompt's
+            // beginning/end (text-input native behaviour),
+            // BUT modified Home/End — Shift+Home / Shift+End —
+            // jump scrollback to top/bottom.  Without the
+            // modifier, the text-input handler picks them up
+            // via the `_` arm below.
+            KeyCode::Home if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                if let Modal::ShellPane { scroll, .. } = &mut self.modal {
+                    *scroll = usize::MAX / 2;
+                }
+            }
+            KeyCode::End if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                if let Modal::ShellPane { scroll, .. } = &mut self.modal {
+                    *scroll = 0;
+                }
             }
             _ => {
                 if let Modal::ShellPane { input, .. } = &mut self.modal {
@@ -13977,6 +14077,63 @@ pub(super) fn format_progress_gauge(current: i64, target: i64) -> (String, i64, 
             .add_modifier(Modifier::DIM)
     };
     (gauge, pct, style)
+}
+
+#[cfg(test)]
+mod tests_truncate {
+    use super::*;
+
+    #[test]
+    fn under_cap_returns_unchanged() {
+        let s = "a\nb\nc".to_string();
+        assert_eq!(truncate_to_lines(s.clone(), 10), s);
+    }
+
+    #[test]
+    fn empty_string_returns_empty() {
+        assert_eq!(truncate_to_lines(String::new(), 10), "");
+    }
+
+    #[test]
+    fn exact_cap_returns_unchanged() {
+        let s = "a\nb\nc".to_string();
+        assert_eq!(truncate_to_lines(s.clone(), 3), s);
+    }
+
+    #[test]
+    fn over_cap_truncates_and_appends_marker() {
+        // 10 lines, cap 3 → keep 2 + marker; marker mentions 8.
+        let s: String =
+            (1..=10).map(|i| format!("l{i}")).collect::<Vec<_>>().join("\n");
+        let out = truncate_to_lines(s, 3);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3, "must respect cap, got: {out:?}");
+        assert_eq!(lines[0], "l1");
+        assert_eq!(lines[1], "l2");
+        assert!(
+            lines[2].contains("8 more lines truncated"),
+            "expected marker for 8 dropped, got {:?}",
+            lines[2]
+        );
+    }
+
+    #[test]
+    fn cap_one_yields_just_the_marker() {
+        // cap=1 → keep=0 head, marker reports all N as dropped.
+        let s = "x\ny\nz".to_string();
+        let out = truncate_to_lines(s, 1);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("3 more lines truncated"));
+    }
+
+    #[test]
+    fn cap_zero_treated_as_one() {
+        // Defensive: 0-cap shouldn't divide-by-zero or panic.
+        let s = "a\nb".to_string();
+        let out = truncate_to_lines(s, 0);
+        assert!(out.contains("more lines truncated"));
+    }
 }
 
 #[cfg(test)]
