@@ -595,6 +595,27 @@ impl super::App {
                 ];
                 (header, Color::Green, body)
             }
+            Modal::ConfirmQuit => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Quit inkhaven?",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Open paragraph will autosave first.",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                    Line::from(Span::styled(
+                        " y / Enter to confirm · n / Esc to cancel ",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (" Confirm quit ".into(), Color::Yellow, body)
+            }
             Modal::Deleting {
                 root_kind,
                 title,
