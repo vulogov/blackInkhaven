@@ -613,6 +613,41 @@ pub(super) enum Modal {
     KillRingPicker {
         cursor: usize,
     },
+    /// 1.2.8+ — `Ctrl+Z o` floating shell pane.  Hosts an
+    /// embedded nushell engine living on `App.shell_engine`;
+    /// renders the turn buffer from `App.shell_history` +
+    /// reads typed input from `input`.  `selection_mode`
+    /// flips the pane into history-selection (Phase 6)
+    /// where `↑↓` walks turns and `c` / `i` copy / insert.
+    /// `scroll` is the line offset into the rendered turn
+    /// buffer (anchored to the bottom by default so the
+    /// most-recent output is visible).
+    ShellPane {
+        input: TextInput,
+        /// Index into `App.shell_command_history` while the
+        /// user is walking with Up/Down.  `None` when the
+        /// user has typed something fresh (Down past the
+        /// newest entry resets this to None and clears the
+        /// input — same as the AI prompt history pattern).
+        command_history_cursor: Option<usize>,
+        /// Selection mode: false = normal shell, true =
+        /// "history selection mode" where `↑↓` walks turns,
+        /// `c` copies, `i` inserts the selected output into
+        /// the editor as a typst raw block.  Toggled by
+        /// `Ctrl+Z h`.
+        selection_mode: bool,
+        /// Cursor index into `App.shell_history` while in
+        /// selection mode.  Ignored when `selection_mode =
+        /// false`.
+        selection_cursor: usize,
+        /// Scroll position into the turn-list rendering
+        /// (lines from the bottom).  `0` keeps the newest
+        /// output flush with the bottom of the pane.
+        /// Phase 4 will wire PgUp/PgDn to walk this; for
+        /// now it's set on push but not read.
+        #[allow(dead_code)]
+        scroll: usize,
+    },
 }
 
 #[cfg(test)]

@@ -2536,6 +2536,176 @@ impl super::super::App {
         );
     }
 
+    /// 1.2.8+ — embedded shell pane.  Renders the turn
+    /// buffer as alternating prompt+output blocks; input
+    /// line pinned to the bottom.  In selection mode the
+    /// cursor-highlighted turn gets reversed styling so the
+    /// user knows which output `c` / `i` will act on.
+    pub(in crate::tui::app) fn draw_shell_pane_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::ShellPane {
+            input,
+            selection_mode,
+            selection_cursor,
+            ..
+        } = &self.modal
+        else {
+            return;
+        };
+
+        // Fullscreen-floating: leave a 1-cell margin so the
+        // editor pane's borders are still visible.
+        let rect = Rect {
+            x: area.x + 1,
+            y: area.y + 1,
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = if *selection_mode {
+            " nushell · selection mode "
+        } else {
+            " nushell "
+        };
+        let border_color = if *selection_mode {
+            Color::Yellow
+        } else {
+            self.theme.modal_border
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Reserve last 2 rows for the input prompt + a
+        // status hint.  Body gets the rest.
+        let prompt_h: u16 = 2;
+        let body_h = inner.height.saturating_sub(prompt_h);
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: body_h,
+        };
+        let prompt_rect = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: prompt_h,
+        };
+
+        // Build the body lines from the turn buffer.  Each
+        // turn renders as:
+        //   $ <command>
+        //   <stdout>
+        //   [error: <stderr>]   (only when failure)
+        //   <blank>
+        // The newest turn anchors to the BOTTOM of body_rect
+        // so the most-recent output is visible.
+        let mut lines: Vec<Line<'_>> = Vec::with_capacity(
+            self.shell_history.len() * 4 + 2,
+        );
+        if self.shell_history.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "(no commands yet — type a nu command and press Enter)",
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        }
+        for (i, turn) in self.shell_history.iter().enumerate() {
+            let is_selected_turn = *selection_mode && i == *selection_cursor;
+            let prompt_style = if is_selected_turn {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+                    .fg(Color::Cyan)
+            } else {
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Cyan)
+            };
+            lines.push(Line::from(Span::styled(
+                format!("$ {}", turn.command),
+                prompt_style,
+            )));
+            for ln in turn.stdout.lines() {
+                let s = if is_selected_turn {
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                lines.push(Line::from(Span::styled(ln.to_string(), s)));
+            }
+            if !turn.success && !turn.stderr.is_empty() {
+                for ln in turn.stderr.lines() {
+                    lines.push(Line::from(Span::styled(
+                        ln.to_string(),
+                        Style::default().fg(Color::Red),
+                    )));
+                }
+            }
+            lines.push(Line::from(""));
+        }
+        // Anchor to bottom: render the last body_h lines.
+        let visible_n = body_h as usize;
+        let start = lines.len().saturating_sub(visible_n);
+        let visible: Vec<Line<'_>> = lines[start..].to_vec();
+        f.render_widget(Paragraph::new(visible), body_rect);
+
+        // Prompt + hint.
+        let prompt_str = if *selection_mode {
+            format!(" (selection · turn {}/{})", selection_cursor + 1, self.shell_history.len().max(1))
+        } else {
+            format!("$ {}", input.as_str())
+        };
+        let prompt_style = if *selection_mode {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        };
+        let prompt_line_rect = Rect {
+            x: prompt_rect.x,
+            y: prompt_rect.y,
+            width: prompt_rect.width,
+            height: 1,
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(prompt_str, prompt_style))),
+            prompt_line_rect,
+        );
+        let hint = if *selection_mode {
+            " ↑↓ select turn · c copy · i insert · Ctrl+Z h exit · Esc exit "
+        } else {
+            " Enter run · ↑↓ command history · Ctrl+Z h selection · Esc close (state preserved) "
+        };
+        let hint_rect = Rect {
+            x: prompt_rect.x,
+            y: prompt_rect.y + 1,
+            width: prompt_rect.width,
+            height: 1,
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            hint_rect,
+        );
+    }
+
     /// 1.2.8+ — kill-ring picker. Renders each deleted-
     /// paragraph stash as title + original parent breadcrumb
     /// + first-non-empty-line preview.  Cursor selection

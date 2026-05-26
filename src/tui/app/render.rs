@@ -111,6 +111,10 @@ impl super::App {
             self.draw_kill_ring_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::ShellPane { .. }) {
+            self.draw_shell_pane_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::RenderedPreview { .. }) {
             self.draw_rendered_preview_modal(f, area);
             return;
@@ -182,6 +186,8 @@ impl super::App {
                 unreachable!("fuzzy paragraph picker handled above"),
             Modal::KillRingPicker { .. } =>
                 unreachable!("kill-ring picker handled above"),
+            Modal::ShellPane { .. } =>
+                unreachable!("shell pane handled above"),
             Modal::RenderedPreview { .. } =>
                 unreachable!("rendered preview handled above"),
             Modal::SaveRenderedPng { .. } =>

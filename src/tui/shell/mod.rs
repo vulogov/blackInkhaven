@@ -65,6 +65,18 @@ pub(super) struct ShellOutput {
     pub success: bool,
 }
 
+/// One command + its captured output.  The shell pane
+/// renders an interleaved list of these as scrollback;
+/// selection mode (Phase 6) navigates between them
+/// turn-by-turn (same model as AI chat selection).
+#[derive(Debug, Clone)]
+pub(crate) struct ShellTurn {
+    pub command: String,
+    pub stdout: String,
+    pub stderr: String,
+    pub success: bool,
+}
+
 impl Engine {
     /// Build a fresh nu engine bound to `project_root`.
     /// Loads nu-command's default declarations (`ls`, `cd`,
