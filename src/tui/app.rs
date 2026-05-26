@@ -1348,8 +1348,15 @@ pub(crate) struct App {
     /// arrow recall inside the shell input.  Pushed on each
     /// non-empty Enter; deduped against the immediate
     /// predecessor.  Persisted to
-    /// `.inkhaven/shell_history.db` in Phase 4.
+    /// `.inkhaven/shell_history.db` (1.2.8+ — see
+    /// `shell_history_db`).
     shell_command_history: Vec<String>,
+    /// 1.2.8+ — SQLite-backed history at
+    /// `<project>/.inkhaven/shell_history.db`.  Loaded
+    /// lazily on first `open_shell_pane`; appended on
+    /// every non-empty Enter.  `None` until the first
+    /// open.
+    shell_history_db: Option<super::shell::History>,
     /// Cursor into `ai_prompt_history`. None when not navigating;
     /// `Some(i)` when the user is stepping through history. Any
     /// edit (typing, backspace, etc.) clears it so the next Up
@@ -1693,6 +1700,7 @@ impl App {
             shell_engine: None,
             shell_history: Vec::new(),
             shell_command_history: Vec::new(),
+            shell_history_db: None,
             opened: None,
             secondary: None,
             secondary_focused: false,
@@ -7094,11 +7102,30 @@ impl App {
             self.shell_engine = None;
             self.shell_history.clear();
             self.shell_command_history.clear();
+            // `Ctrl+Z O` fresh-start: we DON'T wipe the
+            // on-disk history.  The user wants a fresh
+            // engine state, not amnesia about what they
+            // typed yesterday.  If they want full reset
+            // they can `rm .inkhaven/shell_history.db`.
         }
         // Lazy-init the engine on first open.
         if self.shell_engine.is_none() {
             self.shell_engine =
                 Some(super::shell::Engine::new(&self.layout.root));
+        }
+        // Lazy-init the per-project SQLite history.  Load
+        // the most-recent cap commands so Up-arrow recall
+        // works on the first open of every session.
+        if self.shell_history_db.is_none() {
+            let db = super::shell::History::open(&self.layout.root);
+            // Seed the in-memory ring from disk if the
+            // in-memory ring is empty (first open of this
+            // session — or fresh reset above).
+            if self.shell_command_history.is_empty() {
+                self.shell_command_history =
+                    db.load(self.cfg.shell.max_buffered_turns);
+            }
+            self.shell_history_db = Some(db);
         }
         self.modal = Modal::ShellPane {
             input: TextInput::new(),
@@ -7226,11 +7253,16 @@ impl App {
                     *command_history_cursor = None;
                 }
                 // Command-history ring: dedup vs immediate
-                // predecessor.
+                // predecessor.  Push to both the in-memory
+                // ring (Up-arrow recall) AND the per-project
+                // SQLite (survives restart).
                 if self.shell_command_history.last().map(String::as_str)
                     != Some(trimmed.as_str())
                 {
                     self.shell_command_history.push(trimmed.clone());
+                    if let Some(db) = self.shell_history_db.as_ref() {
+                        db.push(&trimmed);
+                    }
                 }
                 // Eval through the cached engine.
                 let out = match self.shell_engine.as_mut() {
