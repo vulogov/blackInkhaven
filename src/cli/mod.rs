@@ -342,6 +342,16 @@ pub enum Command {
     /// The existing `Ctrl+B 0` in-app HJSON editor stays
     /// as the power-user fallback for raw text editing.
     Config,
+
+    /// 1.2.11+ — launch the standalone TUI prompts
+    /// editor for `<project>/prompts.hjson`.  Four-pane
+    /// workbench: prompts list (left), prompt editor
+    /// (centre, same chord set as the main inkhaven
+    /// editor), AI response (right), AI prompt input
+    /// (bottom).  Phase 1 ships read-only; editing +
+    /// save + AI integration in subsequent phases.
+    /// See `Documentation/PROPOSALS/PROMPTS_EDITOR_TUI.md`.
+    PromptsEditor,
 }
 
 /// Sub-subcommands under `inkhaven event …`.
@@ -565,6 +575,7 @@ impl Cli {
             ).map_err(Into::into),
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
             Command::Config => crate::config_tui::run(&project).map_err(Into::into),
+            Command::PromptsEditor => crate::prompts_tui::run(&project).map_err(Into::into),
         }
     }
 }
