@@ -1235,6 +1235,44 @@ fn strip_leading_typst_heading(body: &str) -> String {
 /// 24-row terminal without scrolling.
 const KILL_RING_CAP: usize = 10;
 
+/// 1.2.9+ — true when `line` is a typographic scene-
+/// break line.  Recognised forms (case-insensitive,
+/// after trimming whitespace + collapsing internal
+/// spaces):
+///   * 3+ copies of any one of `*`, `-`, `_`, `~`, `#`
+///     (optionally separated by single spaces — so
+///     `* * *` and `***` both match).
+///   * A single `§` (typographic section sign).
+/// Reject everything else.  Notably does NOT match
+/// typst headings (`= Foo`, `== Foo`) — those are
+/// structural section markers, not scene breaks.
+/// Doesn't match `**` (2 chars, below threshold) or
+/// `***bold***` (mixed-content), avoiding common
+/// false positives.
+fn is_scene_break(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed == "§" {
+        return true;
+    }
+    // Strip internal whitespace; the remaining chars must
+    // be 3+ copies of one of the marker characters.
+    let chars: Vec<char> = trimmed
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    if chars.len() < 3 {
+        return false;
+    }
+    let first = chars[0];
+    if !"*-_~#".contains(first) {
+        return false;
+    }
+    chars.iter().all(|c| *c == first)
+}
+
 /// 1.2.9+ — sanitise a paragraph title into a
 /// filesystem-safe slug for the default audio path.
 /// Lowercased, ASCII-alphanumeric kept verbatim, every
@@ -6493,6 +6531,8 @@ impl App {
             A::TtsReadParagraph => self.tts_read_paragraph(),
             A::TtsSaveAsAudio => self.tts_open_save_as_audio_picker(),
             A::OpenWritingStreakHeatmap => self.open_writing_streak_heatmap(),
+            A::SceneBreakPrev => self.scene_break_jump(-1),
+            A::SceneBreakNext => self.scene_break_jump(1),
             A::ToggleStyleWarnings => self.toggle_style_warnings(),
 
             // ── View prefix ───────────────────────────────────
@@ -7577,6 +7617,50 @@ impl App {
         } else {
             "style warnings: OFF".into()
         };
+    }
+
+    /// 1.2.9+ — Ctrl+B < / Ctrl+B > scene-break
+    /// navigation.  `dir = -1` walks backward to the
+    /// previous scene-break line; `dir = 1` walks
+    /// forward to the next.  Moves the textarea
+    /// cursor to column 0 of the matching line and
+    /// recenters the viewport via the existing
+    /// CursorMove::Jump machinery.
+    fn scene_break_jump(&mut self, dir: i32) {
+        let Some(doc) = self.opened.as_mut() else {
+            self.status = "scene break: no paragraph open".into();
+            return;
+        };
+        let (cur_row, _cur_col) = doc.textarea.cursor();
+        let lines = doc.textarea.lines();
+        let n = lines.len();
+        let target: Option<usize> = if dir > 0 {
+            // Walk forward from cur_row + 1.
+            (cur_row + 1..n).find(|&r| is_scene_break(&lines[r]))
+        } else {
+            // Walk backward from cur_row - 1.
+            (0..cur_row).rev().find(|&r| is_scene_break(&lines[r]))
+        };
+        match target {
+            Some(row) => {
+                doc.textarea.move_cursor(
+                    tui_textarea::CursorMove::Jump(row as u16, 0),
+                );
+                self.status = format!(
+                    "scene break: line {} of {}",
+                    row + 1,
+                    n,
+                );
+            }
+            None => {
+                self.status = if dir > 0 {
+                    "scene break: no break below"
+                } else {
+                    "scene break: no break above"
+                }
+                .into();
+            }
+        }
     }
 
     /// 1.2.9+ — Ctrl+B Shift+G action: open the
@@ -15630,6 +15714,72 @@ pub(super) fn format_progress_gauge(current: i64, target: i64) -> (String, i64, 
             .add_modifier(Modifier::DIM)
     };
     (gauge, pct, style)
+}
+
+#[cfg(test)]
+mod tests_scene_break {
+    use super::*;
+
+    #[test]
+    fn classic_asterisks_match() {
+        assert!(is_scene_break("***"));
+        assert!(is_scene_break("* * *"));
+        assert!(is_scene_break("  * * *  "));
+        assert!(is_scene_break("*****"));
+    }
+
+    #[test]
+    fn dashes_underscores_tildes_hashes_match() {
+        assert!(is_scene_break("---"));
+        assert!(is_scene_break("___"));
+        assert!(is_scene_break("~~~"));
+        assert!(is_scene_break("###"));
+        assert!(is_scene_break("- - -"));
+        assert!(is_scene_break("#####"));
+    }
+
+    #[test]
+    fn section_sign_alone_matches() {
+        assert!(is_scene_break("§"));
+        assert!(is_scene_break("  §  "));
+    }
+
+    #[test]
+    fn below_threshold_does_not_match() {
+        assert!(!is_scene_break("**"));
+        assert!(!is_scene_break("--"));
+        assert!(!is_scene_break("*"));
+    }
+
+    #[test]
+    fn empty_or_whitespace_no_match() {
+        assert!(!is_scene_break(""));
+        assert!(!is_scene_break("   "));
+        assert!(!is_scene_break("\t\t"));
+    }
+
+    #[test]
+    fn mixed_chars_dont_match() {
+        // Three different markers in a row — not a
+        // clean break pattern.
+        assert!(!is_scene_break("*-*"));
+        assert!(!is_scene_break("***foo"));
+        assert!(!is_scene_break("foo***"));
+        assert!(!is_scene_break("***bold***"));
+    }
+
+    #[test]
+    fn typst_headings_dont_match() {
+        assert!(!is_scene_break("= Chapter"));
+        assert!(!is_scene_break("== Section"));
+        assert!(!is_scene_break("=== Subsection"));
+    }
+
+    #[test]
+    fn prose_does_not_match() {
+        assert!(!is_scene_break("The morning was cold."));
+        assert!(!is_scene_break("She lifted her shoulders."));
+    }
 }
 
 #[cfg(test)]
