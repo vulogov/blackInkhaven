@@ -1017,6 +1017,9 @@ pub struct ThemeConfig {
     /// 1.2.9+ — colour for repeated-phrase warnings.
     #[serde(default)]
     pub style_warning_repeated_phrase_fg: String,
+    /// 1.2.9+ — colour for show-don't-tell warnings.
+    #[serde(default)]
+    pub style_warning_show_dont_tell_fg: String,
 
     // Search-match overlay in the editor.
     pub search_match_bg: String,
@@ -1092,6 +1095,7 @@ impl Default for ThemeConfig {
             notes_underline_fg: "#cdd6f4".into(),
             style_warning_filter_word_fg: "#f9c44e".into(),
             style_warning_repeated_phrase_fg: "#eb6f92".into(),
+            style_warning_show_dont_tell_fg: "#94e2d5".into(),
 
             search_match_bg: "#f38ba8".into(),
             search_current_bg: "#f5c2e7".into(),
@@ -1363,6 +1367,197 @@ pub struct StyleWarningsConfig {
     /// filter-words — no language-specific tuning
     /// needed beyond setting the top-level `language`.
     pub repeated_phrases: RepeatedPhrasesConfig,
+    /// 1.2.9+ — show-don't-tell detector.  Flags
+    /// "telling" prose patterns: copula + emotion-
+    /// adjective (`she was angry`, `Il était triste`),
+    /// manner-of-emotion adverbs (`angrily`,
+    /// `sadly`), and direct cognition verbs that label
+    /// internal state for the reader (`realised`,
+    /// `understood`, `knew`).  Inline overlay shares
+    /// the master toggle.  See `ShowDontTellConfig`
+    /// for per-language knobs.
+    pub show_dont_tell: ShowDontTellConfig,
+}
+
+/// 1.2.9+ — `editor.style_warnings.show_dont_tell.*`
+/// HJSON stanza.  Three lists per language:
+///   * `*_linking_verbs` — `be`, `seem`, `feel`,
+///     `look`, `appear`, `become`.  Used as
+///     pattern-anchor in the 2-gram `(verb)(adj)`
+///     detector.  Snowball-stemmed at init time so
+///     `was` / `is` / `were` all key on `be`.
+///   * `*_emotion_adjectives` — `angry`, `sad`,
+///     `happy`, `afraid`, …  Triggered as the
+///     second token of the 2-gram pattern.
+///   * `*_manner_adverbs` — `angrily`, `sadly`,
+///     `nervously`, …  Flagged on their own — these
+///     adverbs almost always label emotion outright.
+///   * `*_cognition_verbs` — `realised`, `knew`,
+///     `understood`, `wondered`, `decided`, …
+///     Flagged on their own.
+///
+/// Empty configured list = use built-in default for
+/// that language; non-empty = REPLACE the default.
+/// Same rule as `filter_words`.  English ships with
+/// curated lists; the other languages start empty so
+/// users can fill them in for their corpus.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ShowDontTellConfig {
+    pub enabled: bool,
+    /// Apply Snowball stemming before matching so
+    /// inflections collapse (e.g. `was` / `is` /
+    /// `were` all match a single `be` entry).
+    /// Disable for exact-form matching.
+    pub use_stemming: bool,
+    // English defaults populated via `built_in_*` —
+    // configured lists override.
+    pub english_linking_verbs: Vec<String>,
+    pub english_emotion_adjectives: Vec<String>,
+    pub english_manner_adverbs: Vec<String>,
+    pub english_cognition_verbs: Vec<String>,
+    pub russian_linking_verbs: Vec<String>,
+    pub russian_emotion_adjectives: Vec<String>,
+    pub russian_manner_adverbs: Vec<String>,
+    pub russian_cognition_verbs: Vec<String>,
+    pub french_linking_verbs: Vec<String>,
+    pub french_emotion_adjectives: Vec<String>,
+    pub french_manner_adverbs: Vec<String>,
+    pub french_cognition_verbs: Vec<String>,
+    pub german_linking_verbs: Vec<String>,
+    pub german_emotion_adjectives: Vec<String>,
+    pub german_manner_adverbs: Vec<String>,
+    pub german_cognition_verbs: Vec<String>,
+    pub spanish_linking_verbs: Vec<String>,
+    pub spanish_emotion_adjectives: Vec<String>,
+    pub spanish_manner_adverbs: Vec<String>,
+    pub spanish_cognition_verbs: Vec<String>,
+}
+
+impl Default for ShowDontTellConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            use_stemming: true,
+            english_linking_verbs: Vec::new(),
+            english_emotion_adjectives: Vec::new(),
+            english_manner_adverbs: Vec::new(),
+            english_cognition_verbs: Vec::new(),
+            russian_linking_verbs: Vec::new(),
+            russian_emotion_adjectives: Vec::new(),
+            russian_manner_adverbs: Vec::new(),
+            russian_cognition_verbs: Vec::new(),
+            french_linking_verbs: Vec::new(),
+            french_emotion_adjectives: Vec::new(),
+            french_manner_adverbs: Vec::new(),
+            french_cognition_verbs: Vec::new(),
+            german_linking_verbs: Vec::new(),
+            german_emotion_adjectives: Vec::new(),
+            german_manner_adverbs: Vec::new(),
+            german_cognition_verbs: Vec::new(),
+            spanish_linking_verbs: Vec::new(),
+            spanish_emotion_adjectives: Vec::new(),
+            spanish_manner_adverbs: Vec::new(),
+            spanish_cognition_verbs: Vec::new(),
+        }
+    }
+}
+
+/// 1.2.9+ — built-in show-don't-tell lists per
+/// language.  English ships with curated lists drawn
+/// from common writing-craft references; other
+/// languages return empty slices so the user can fill
+/// them in for their corpus (Russian / French /
+/// German / Spanish emotion vocabulary varies enough
+/// per genre that defaults would mislead more than
+/// help).
+pub fn built_in_linking_verbs(language: &str) -> &'static [&'static str] {
+    match language.to_lowercase().as_str() {
+        "english" | "" => &[
+            "be", "is", "am", "are", "was", "were", "been", "being",
+            "seem", "seems", "seemed", "seeming",
+            "feel", "feels", "felt", "feeling",
+            "appear", "appears", "appeared", "appearing",
+            "look", "looks", "looked", "looking",
+            "become", "becomes", "became", "becoming",
+            "remain", "remains", "remained", "remaining",
+            "grow", "grows", "grew", "growing",
+            "sound", "sounds", "sounded",
+        ],
+        _ => &[],
+    }
+}
+
+pub fn built_in_emotion_adjectives(language: &str) -> &'static [&'static str] {
+    match language.to_lowercase().as_str() {
+        "english" | "" => &[
+            // Anger family
+            "angry", "mad", "furious", "livid", "irate", "enraged",
+            "annoyed", "irritated", "agitated",
+            // Sadness family
+            "sad", "depressed", "melancholy", "gloomy", "miserable",
+            "unhappy", "dejected", "downcast", "forlorn",
+            // Fear family
+            "afraid", "scared", "frightened", "terrified", "anxious",
+            "nervous", "worried", "uneasy", "panicked", "apprehensive",
+            // Joy family
+            "happy", "joyful", "glad", "content", "pleased", "delighted",
+            "thrilled", "elated", "ecstatic", "cheerful",
+            // Fatigue family
+            "tired", "exhausted", "weary", "drained", "spent",
+            // Confusion family
+            "confused", "puzzled", "perplexed", "baffled",
+            // Surprise family
+            "surprised", "shocked", "stunned", "astonished", "amazed",
+            // Shame family
+            "embarrassed", "ashamed", "humiliated", "mortified",
+            // Pride / envy / loneliness
+            "proud", "smug",
+            "jealous", "envious",
+            "lonely", "isolated",
+            // Boredom
+            "bored", "listless", "restless",
+            // Excitement (low intensity)
+            "excited", "eager", "enthusiastic",
+            // Determination / despair
+            "determined", "resolute",
+            "hopeless", "helpless", "defeated",
+        ],
+        _ => &[],
+    }
+}
+
+pub fn built_in_manner_adverbs(language: &str) -> &'static [&'static str] {
+    match language.to_lowercase().as_str() {
+        "english" | "" => &[
+            "angrily", "sadly", "happily", "fearfully", "nervously",
+            "anxiously", "calmly", "frantically", "wearily", "tiredly",
+            "excitedly", "gleefully", "miserably", "joyfully",
+            "furiously", "irritably", "annoyedly", "bitterly",
+            "proudly", "smugly", "jealously", "enviously",
+            "lovingly", "tenderly", "coldly", "warmly",
+            "desperately", "hopelessly", "helplessly",
+            "embarrassedly", "shamefully", "guiltily",
+            "bored", "boredly", "listlessly",
+            "confusedly",
+        ],
+        _ => &[],
+    }
+}
+
+pub fn built_in_cognition_verbs(language: &str) -> &'static [&'static str] {
+    match language.to_lowercase().as_str() {
+        "english" | "" => &[
+            "realised", "realized",
+            "understood", "knew", "thought",
+            "wondered", "wished", "hoped",
+            "believed", "supposed", "decided",
+            "concluded", "discovered", "recognised", "recognized",
+            "remembered", "considered",
+            "assumed", "expected",
+        ],
+        _ => &[],
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1463,6 +1658,7 @@ impl Default for StyleWarningsConfig {
             enabled: false,
             filter_words: FilterWordsConfig::default(),
             repeated_phrases: RepeatedPhrasesConfig::default(),
+            show_dont_tell: ShowDontTellConfig::default(),
         }
     }
 }

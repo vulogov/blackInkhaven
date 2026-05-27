@@ -338,6 +338,9 @@ fn style_warning_style_at(
         StyleWarningKind::RepeatedPhrase => Style::default()
             .fg(theme.style_warning_repeated_phrase_fg)
             .add_modifier(Modifier::UNDERLINED),
+        StyleWarningKind::ShowDontTell => Style::default()
+            .fg(theme.style_warning_show_dont_tell_fg)
+            .add_modifier(Modifier::UNDERLINED),
     })
 }
 

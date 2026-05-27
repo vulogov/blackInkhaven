@@ -756,6 +756,17 @@ impl super::super::App {
             } else {
                 None
             };
+        let sdt_detector =
+            if style_enabled && style_cfg.show_dont_tell.enabled {
+                Some(
+                    super::super::super::style_warnings::ShowDontTellDetector::new(
+                        &style_cfg.show_dont_tell,
+                        style_lang,
+                    ),
+                )
+            } else {
+                None
+            };
         let style_per_row: Vec<Vec<super::super::super::style_warnings::StyleHit>> =
             current_lines
                 .iter()
@@ -770,6 +781,11 @@ impl super::super::App {
                     if let Some(d) = &phrase_detector {
                         if !d.is_empty() {
                             hits.extend(d.hits_for_row(row).iter().copied());
+                        }
+                    }
+                    if let Some(d) = &sdt_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.detect(line));
                         }
                     }
                     hits.sort_by_key(|h| h.col_start);
@@ -1011,6 +1027,17 @@ impl super::super::App {
             } else {
                 None
             };
+        let sdt_detector =
+            if style_enabled && style_cfg.show_dont_tell.enabled {
+                Some(
+                    super::super::super::style_warnings::ShowDontTellDetector::new(
+                        &style_cfg.show_dont_tell,
+                        style_lang,
+                    ),
+                )
+            } else {
+                None
+            };
         let style_per_row: Vec<Vec<super::super::super::style_warnings::StyleHit>> =
             current_lines
                 .iter()
@@ -1025,6 +1052,11 @@ impl super::super::App {
                     if let Some(d) = &phrase_detector {
                         if !d.is_empty() {
                             hits.extend(d.hits_for_row(row).iter().copied());
+                        }
+                    }
+                    if let Some(d) = &sdt_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.detect(line));
                         }
                     }
                     hits.sort_by_key(|h| h.col_start);

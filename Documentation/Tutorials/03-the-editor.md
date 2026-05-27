@@ -243,6 +243,57 @@ favourite turns of phrase you didn't realise had
 become reflexive.  Toggles with `Ctrl+B Shift+F`
 alongside filter-words.
 
+## Show-don't-tell (1.2.9+)
+
+`Show, don't tell` — the writing principle that says
+*"her knuckles whitened around the glass"* is better
+than *"she was angry"*.  Inkhaven gives you two
+layers for catching the second kind:
+
+### Inline overlay (always-on)
+
+Hooks under the same `Ctrl+B Shift+F` toggle as
+filter-words + repeated-phrases.  Underlines (in soft
+teal) three categories of telling:
+
+  * **`was angry`-style 2-grams** — a linking verb
+    (`be` / `seem` / `feel` / `appear` / `look` /
+    `become` / `remain` / `grow` / `sound`) followed
+    by an emotion adjective.
+  * **Manner-of-emotion adverbs** — `angrily`,
+    `sadly`, `nervously`, `wearily`, … (the `-ly`
+    adverbs that label the emotion outright).
+  * **Cognition verbs** — `realised`, `understood`,
+    `knew`, `wondered`, `decided`, … (verbs that
+    tell the reader what the character is thinking
+    rather than letting it come through).
+
+Stemmed, so `seemed` matches `seem`; `realises`
+matches `realised`.  Won't flag `was running` or
+`looks at the door` — the 2-gram requires both
+halves to match (linking verb + known emotion).
+
+### AI scan (`Ctrl+B Shift+T`)
+
+Sends the open paragraph to the configured LLM with
+a system prompt asking for telling passages and
+suggested rewrites.  Response streams into the AI
+pane — same plumbing as F12 critique.
+
+When to use which:
+
+  * Use the **inline overlay** while you're
+    drafting.  It nudges you to swap `she was nervous`
+    for something embodied as you type.
+  * Use the **AI scan** during revision passes.
+    It catches subtler telling — declarative
+    statements, narration that explains rather than
+    dramatises — and proposes concrete alternatives.
+
+The AI prompt name is `show-dont-tell`; override it
+via your project's prompts book or the global
+prompts.hjson, same as the critique prompts.
+
 ## Sentence-rhythm gauge (1.2.9+)
 
 `Ctrl+B Shift+H` opens a modal that quantifies the
