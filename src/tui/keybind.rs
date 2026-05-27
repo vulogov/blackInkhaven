@@ -391,6 +391,15 @@ pub enum Action {
     /// session without rewriting config.
     #[serde(rename = "editor.toggle_style_warnings")]
     ToggleStyleWarnings,
+    /// Ctrl+B Shift+L (1.2.9+) — open the project-wide
+    /// concordance modal.  Lists every distinct lexical
+    /// stem in the project with its total count + KWIC
+    /// samples.  Stop-words and digits are filtered out
+    /// so the list surfaces the words actually carrying
+    /// the prose's weight.  Type to filter, `s` to
+    /// toggle sort (count ↔ alphabetical), Esc closes.
+    #[serde(rename = "view.open_concordance")]
+    OpenConcordance,
     /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
     /// via typst-render and float a PNG preview on top of the
     /// editor. `Esc` closes, `S` opens a save-as picker for the
@@ -586,6 +595,7 @@ impl Action {
             Action::SceneBreakPrev => "prev scene break".into(),
             Action::SceneBreakNext => "next scene break".into(),
             Action::ToggleStyleWarnings => "style warnings".into(),
+            Action::OpenConcordance => "concordance".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -788,6 +798,8 @@ impl Action {
                 "Jump editor cursor to the next scene-break line (1.2.9+, Ctrl+B >). Same detector as `SceneBreakPrev`.".into(),
             Action::ToggleStyleWarnings =>
                 "Toggle the inline style-warning overlays (1.2.9+, Ctrl+B Shift+F). Currently flags filter words — intensifier crutches like `just`, `really`, `very`, `просто`, `очень` — drawn in amber + underlined. Session-local override on top of `editor.style_warnings.enabled` in HJSON. Per-language defaults ship for English, Russian, French, German, Spanish; the active list is keyed by the project's top-level `language` field. Add more via `editor.style_warnings.filter_words.extra_words`. Repeated-phrase / show-don't-tell / sentence-rhythm detectors will share this toggle as they land.".into(),
+            Action::OpenConcordance =>
+                "Open the project-wide concordance modal (1.2.9+, Ctrl+B Shift+L). Lists every distinct lexical stem in the project with its total count plus up to three KWIC samples. Stop-words, single-character tokens, and pure-digit runs are filtered out so the list surfaces the words actually carrying the prose's weight. Multilingual via the same Snowball stemmer + stop-list plumbing as the repeated-phrase detector — `language` in HJSON drives the algorithm choice. Type to filter (substring match); s toggles sort (count ↔ alphabetical); Esc closes.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -958,6 +970,9 @@ impl KeyBindings {
                 // and `>` are vim-style and free.
                 entry("<", Action::SceneBreakPrev, Scope::Editor),
                 entry(">", Action::SceneBreakNext, Scope::Editor),
+                // 1.2.9+ — Ctrl+B Shift+L opens the project-
+                // wide concordance modal.
+                entry("Shift+l", Action::OpenConcordance, Scope::Any),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),
