@@ -20,6 +20,7 @@ mod markdown_highlight;
 mod modal;
 mod pov_tracker;
 mod say;
+mod sentence_rhythm;
 mod style_warnings;
 mod quickref;
 mod sound;

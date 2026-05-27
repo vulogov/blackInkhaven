@@ -243,6 +243,48 @@ favourite turns of phrase you didn't realise had
 become reflexive.  Toggles with `Ctrl+B Shift+F`
 alongside filter-words.
 
+## Sentence-rhythm gauge (1.2.9+)
+
+`Ctrl+B Shift+H` opens a modal that quantifies the
+rhythm of the open paragraph — useful for noticing
+when your sentences have drifted into a monotone
+drone and need a short one to break the pattern.
+
+What it shows:
+
+  * A **verdict** colour-coded by how varied your
+    sentence lengths are: red MONOTONE, yellow
+    STEADY, green VARIED, cyan CHOPPY.  The verdict
+    is computed from the coefficient of variation
+    (CV = stdev / mean) so it stays meaningful
+    whether your average sentence is 8 words or 18.
+  * The **numbers**: N sentences, mean word count,
+    stdev, CV, min, max.
+  * A **per-sentence bar chart** where each row is
+    one sentence and the bar's length reflects its
+    word count (capped at 40 chars for display).
+    Tells you at a glance whether your paragraph
+    looks like a flat plateau or like jagged peaks.
+  * **Outlier callouts** — the three shortest and
+    three longest sentences with line numbers + a
+    preview, so you can jump to them and decide
+    whether the extreme is intentional.
+
+The split is intentionally simple: `.` / `!` / `?`
+followed by whitespace, with common abbreviations
+suppressed (Mr., Mrs., Dr., e.g., i.e., Ph.D., …)
+and `...` treated as a pause rather than a
+terminator.  Good enough for literary text — the
+goal is a gauge, not a parser.
+
+Inside the modal:
+
+  * `↑` / `↓` / `PgUp` / `PgDn` / `Home` / `End`
+    scroll the bar chart.
+  * Any other key closes.
+
+Mnemonic: `Shift+H` for *heartbeat*.
+
 ## POV / character chip (1.2.9+)
 
 The status bar gains a small magenta chip showing

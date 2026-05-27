@@ -4203,6 +4203,210 @@ impl super::super::App {
         f.render_widget(Paragraph::new(footer_lines), footer_rect);
     }
 
+    /// 1.2.9+ — sentence-rhythm gauge modal painter
+    /// (Ctrl+B Shift+H).  Three regions: header
+    /// (verdict + numeric stats), main list (per-
+    /// sentence bar chart), footer (outliers + key
+    /// hints).
+    pub(in crate::tui::app) fn draw_sentence_rhythm_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let w = area.width.saturating_sub(4).min(110).max(60);
+        let h = area.height.saturating_sub(2).min(36).max(18);
+        let x = area.x + (area.width.saturating_sub(w)) / 2;
+        let y = area.y + (area.height.saturating_sub(h)) / 2;
+        let rect = Rect { x, y, width: w, height: h };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Sentence rhythm — open paragraph ")
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let (stats, scroll) = match &self.modal {
+            Modal::SentenceRhythm { stats, scroll } => (stats.clone(), *scroll),
+            _ => return,
+        };
+
+        let header_h: u16 = 4;
+        let footer_h: u16 = 8;
+        let list_h: u16 = inner.height.saturating_sub(header_h + footer_h);
+        let header_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: header_h,
+        };
+        let list_rect = Rect {
+            x: inner.x,
+            y: inner.y + header_h,
+            width: inner.width,
+            height: list_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + header_h + list_h,
+            width: inner.width,
+            height: footer_h,
+        };
+
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let verdict_color = match stats.verdict {
+            crate::tui::sentence_rhythm::RhythmVerdict::TooShort => Color::DarkGray,
+            crate::tui::sentence_rhythm::RhythmVerdict::Monotone => Color::Red,
+            crate::tui::sentence_rhythm::RhythmVerdict::Steady => Color::Yellow,
+            crate::tui::sentence_rhythm::RhythmVerdict::Varied => Color::Green,
+            crate::tui::sentence_rhythm::RhythmVerdict::Choppy => Color::Cyan,
+        };
+
+        let header_lines = vec![
+            Line::from(vec![
+                Span::styled(" verdict: ", dim),
+                Span::styled(
+                    stats.verdict.label(),
+                    Style::default()
+                        .fg(verdict_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("   ({})", stats.verdict.note()),
+                    dim,
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    format!(
+                        " {} sentences · mean {:.1} · stdev {:.1} · CV {:.2} · min {} · max {}",
+                        stats.lengths.len(),
+                        stats.mean,
+                        stats.stdev,
+                        stats.cv,
+                        stats.min,
+                        stats.max,
+                    ),
+                    bold,
+                ),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  #     bar (each block = 1 word, capped at 40)            words   preview",
+                dim,
+            )),
+        ];
+        f.render_widget(Paragraph::new(header_lines), header_rect);
+
+        // Per-sentence list.  Each row: index, bar
+        // proportional to word count, count, short
+        // preview.  Cap the bar width so very long
+        // sentences don't blow up the layout —
+        // anything ≥ 40 words renders as `█████…`
+        // (cap glyph trails ellipsis).
+        let mut rows: Vec<Line<'_>> = Vec::new();
+        let viewport = list_h as usize;
+        let max_bar_chars: usize = 40;
+        for off in 0..viewport {
+            let idx = scroll + off;
+            if idx >= stats.samples.len() {
+                break;
+            }
+            let sample = &stats.samples[idx];
+            let bar_chars = sample.word_count.min(max_bar_chars);
+            let cap = if sample.word_count > max_bar_chars { "…" } else { "" };
+            let bar: String = "█".repeat(bar_chars);
+            let preview = truncate_label(
+                &sample.preview,
+                (inner.width as usize).saturating_sub(60),
+            );
+            let style = if idx == scroll {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            rows.push(Line::from(vec![
+                Span::styled(
+                    format!(" {:>3}  l{:<3} ", idx + 1, sample.line_no),
+                    dim,
+                ),
+                Span::styled(
+                    format!("{}{}", bar, cap),
+                    Style::default().fg(verdict_color),
+                ),
+                Span::styled(
+                    format!(
+                        "{:padding$}{:>3}   ",
+                        "",
+                        sample.word_count,
+                        padding = max_bar_chars + 2 - bar_chars - cap.chars().count(),
+                    ),
+                    style,
+                ),
+                Span::raw(preview),
+            ]));
+        }
+        if rows.is_empty() {
+            rows.push(Line::from(Span::styled(
+                "  (no sentences in this paragraph)",
+                dim,
+            )));
+        }
+        f.render_widget(Paragraph::new(rows), list_rect);
+
+        // Footer: outlier callouts (shortest +
+        // longest) + key hints.
+        let mut footer_lines: Vec<Line<'_>> = Vec::new();
+        footer_lines.push(Line::from(Span::styled(" shortest:", dim)));
+        for sample in stats.shortest.iter().take(3) {
+            let preview = truncate_label(
+                &sample.preview,
+                (inner.width as usize).saturating_sub(20),
+            );
+            footer_lines.push(Line::from(vec![
+                Span::styled(
+                    format!("   l{:<3} {:>3}w  ", sample.line_no, sample.word_count),
+                    dim,
+                ),
+                Span::raw(preview),
+            ]));
+        }
+        footer_lines.push(Line::from(Span::styled(" longest:", dim)));
+        for sample in stats.longest.iter().take(3) {
+            let preview = truncate_label(
+                &sample.preview,
+                (inner.width as usize).saturating_sub(20),
+            );
+            footer_lines.push(Line::from(vec![
+                Span::styled(
+                    format!("   l{:<3} {:>3}w  ", sample.line_no, sample.word_count),
+                    dim,
+                ),
+                Span::raw(preview),
+            ]));
+        }
+        // Pad to stable height so the hint sits at
+        // the bottom.
+        while footer_lines.len() + 1 < footer_h as usize {
+            footer_lines.push(Line::from(""));
+        }
+        footer_lines.push(Line::from(Span::styled(
+            " ↑↓ / PgUp/PgDn / Home / End scroll · any other key closes ",
+            dim,
+        )));
+        f.render_widget(Paragraph::new(footer_lines), footer_rect);
+    }
+
 }
 
 /// 1.2.8+ — restart-required overlay painted on top of

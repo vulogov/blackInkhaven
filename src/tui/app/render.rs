@@ -127,6 +127,10 @@ impl super::App {
             self.draw_concordance_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::SentenceRhythm { .. }) {
+            self.draw_sentence_rhythm_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::RenderedPreview { .. }) {
             self.draw_rendered_preview_modal(f, area);
             return;
@@ -206,6 +210,8 @@ impl super::App {
                 unreachable!("writing-streak heatmap handled above"),
             Modal::Concordance { .. } =>
                 unreachable!("concordance handled above"),
+            Modal::SentenceRhythm { .. } =>
+                unreachable!("sentence rhythm handled above"),
             Modal::RenderedPreview { .. } =>
                 unreachable!("rendered preview handled above"),
             Modal::SaveRenderedPng { .. } =>
