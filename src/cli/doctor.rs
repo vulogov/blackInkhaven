@@ -134,6 +134,50 @@ fn list_say_voices() -> Vec<(String, String, String)> {
     out
 }
 
+/// 1.2.9+ — emit a copy-paste-ready HJSON snippet of
+/// every built-in filter-word list so users can dump
+/// them into their `inkhaven.hjson` for visibility +
+/// editing.  Output goes under
+/// `editor.style_warnings.filter_words`.
+pub fn run_filter_words_snippet() -> Result<()> {
+    println!("// Paste under editor.style_warnings.filter_words:");
+    println!("// (existing values stay; empty arrays already use these built-ins).");
+    println!();
+    println!("filter_words: {{");
+    println!("  enabled: true");
+    println!("  use_stemming: true");
+    println!("  extra_words: []");
+    println!();
+    for lang in &["english", "russian", "french", "german", "spanish"] {
+        let words = crate::config::built_in_filter_words(lang);
+        println!("  // Lemmas — Snowball stemming catches inflections.");
+        println!("  {lang}: [");
+        // Two-per-line so the dump fits comfortably in a
+        // terminal column.  Each entry on its own line
+        // would balloon to 30+ rows per language.
+        let mut buf = String::from("    ");
+        for (i, w) in words.iter().enumerate() {
+            if i > 0 {
+                buf.push(' ');
+            }
+            buf.push('"');
+            buf.push_str(w);
+            buf.push('"');
+            if buf.chars().count() > 64 {
+                println!("{buf}");
+                buf = String::from("    ");
+            }
+        }
+        if buf.trim() != "" {
+            println!("{buf}");
+        }
+        println!("  ]");
+        println!();
+    }
+    println!("}}");
+    Ok(())
+}
+
 /// 1.2.9+ — `inkhaven doctor --tts-test "<text>"`.
 /// Diagnostic for the TTS pipeline.  Initialises the
 /// engine, applies the project's configured voice +
