@@ -909,6 +909,65 @@ impl super::App {
         );
     }
 
+    /// 1.2.9+ — Ctrl+B Shift+T action: AI-driven
+    /// show-don't-tell scan of the open paragraph.
+    /// Mirrors `start_critique` exactly — builds a
+    /// system prompt, spawns the streaming AI client,
+    /// routes the response into the AI pane.  Uses
+    /// the `show-dont-tell` prompt name; falls back
+    /// to the embedded template
+    /// (`show_dont_tell_default_prompt`) when the
+    /// project / global prompts library doesn't
+    /// provide one.
+    pub(super) fn start_show_dont_tell_scan(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "show↛tell scan: no paragraph open".into();
+            return;
+        };
+        let body = doc.textarea.lines().join("\n");
+        if body.trim().is_empty() {
+            self.status = "show↛tell scan: paragraph is empty".into();
+            return;
+        }
+        let title = doc.title.clone();
+        let template = self.resolve_prompt_template(
+            "show-dont-tell",
+            || super::super::app::show_dont_tell_default_prompt().to_string(),
+        );
+        let rendered = self.render_template(&template);
+        let prompt_text = format!(
+            "{rendered}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──",
+        );
+        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("show↛tell scan: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            None,
+            Vec::new(),
+            prompt_text,
+        );
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        self.change_focus(Focus::Ai);
+        self.status =
+            format!("show↛tell scan: streaming from {provider}…");
+    }
+
     pub(super) fn ai_diff_review_handle_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up => {

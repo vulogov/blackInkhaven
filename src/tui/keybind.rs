@@ -391,6 +391,17 @@ pub enum Action {
     /// session without rewriting config.
     #[serde(rename = "editor.toggle_style_warnings")]
     ToggleStyleWarnings,
+    /// Ctrl+B Shift+T (1.2.9+) — AI-driven show-
+    /// don't-tell scan of the open paragraph.  Sends
+    /// the paragraph to the configured LLM with a
+    /// system prompt asking for telling passages and
+    /// suggested rewrites.  The response streams
+    /// into the AI pane.  The mnemonic is `T` for
+    /// "tell".  Complements the always-on regex
+    /// overlay (`editor.style_warnings.show_dont_tell`)
+    /// with deeper analysis.
+    #[serde(rename = "ai.analyse_show_dont_tell")]
+    AnalyseShowDontTell,
     /// Ctrl+B Shift+H (1.2.9+) — open the sentence-
     /// rhythm gauge modal for the open paragraph.
     /// Splits prose into sentences, computes word-
@@ -617,6 +628,7 @@ impl Action {
             Action::OpenConcordance => "concordance".into(),
             Action::TogglePovChip => "pov chip".into(),
             Action::OpenSentenceRhythm => "rhythm".into(),
+            Action::AnalyseShowDontTell => "show↛tell AI".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -825,6 +837,8 @@ impl Action {
                 "Toggle the POV / character chip on the status bar (1.2.9+, Ctrl+B Shift+P). When enabled, the status bar shows the most-mentioned character in the open paragraph (the heuristic POV character) plus up to three additional named characters present. Driven by the project's existing `characters` lexicon — no separate tagging needed. Ties broken by first-mention order. Session-local override on top of `editor.pov_chip_enabled` in HJSON.".into(),
             Action::OpenSentenceRhythm =>
                 "Open the sentence-rhythm gauge modal for the open paragraph (1.2.9+, Ctrl+B Shift+H). Splits prose into sentences (hand-rolled walker with abbreviation suppression), tallies word counts, computes mean / stdev / coefficient of variation (CV), and maps CV to a verdict: Monotone (CV < 0.25 — drones), Steady (0.25-0.45 — workable), Varied (0.45-0.80 — strong prose rhythm), Choppy (≥ 0.80 — fragments + long sentences mixed). Shows a per-sentence bar list and the three shortest + three longest outliers. Mnemonic: H for heartbeat — the felt rhythm of the prose.".into(),
+            Action::AnalyseShowDontTell =>
+                "AI-driven show-don't-tell scan of the open paragraph (1.2.9+, Ctrl+B Shift+T). Sends the paragraph to the configured LLM with a system prompt asking for telling passages plus suggested rewrites. The response streams into the AI pane. Complements the always-on regex overlay (`editor.style_warnings.show_dont_tell`) with deeper analysis — the regex catches the obvious 2-grams (`was angry`, `realised`); the AI scan catches subtler instances and proposes alternatives. Mnemonic: T for tell.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -1004,6 +1018,10 @@ impl KeyBindings {
                 // 1.2.9+ — Ctrl+B Shift+H opens the
                 // sentence-rhythm gauge modal.
                 entry("Shift+h", Action::OpenSentenceRhythm, Scope::Editor),
+                // 1.2.9+ — Ctrl+B Shift+T sends the
+                // open paragraph to the LLM for a
+                // show-don't-tell scan.
+                entry("Shift+t", Action::AnalyseShowDontTell, Scope::Editor),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),

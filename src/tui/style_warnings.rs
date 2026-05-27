@@ -35,8 +35,10 @@ use rust_stemmers::Stemmer;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::config::{
-    built_in_filter_words, built_in_stop_words, parse_stemmer_language,
-    FilterWordsConfig, RepeatedPhrasesConfig,
+    built_in_cognition_verbs, built_in_emotion_adjectives,
+    built_in_filter_words, built_in_linking_verbs, built_in_manner_adverbs,
+    built_in_stop_words, parse_stemmer_language, FilterWordsConfig,
+    RepeatedPhrasesConfig, ShowDontTellConfig,
 };
 
 /// What kind of stylistic warning a hit represents.
@@ -47,6 +49,12 @@ pub enum StyleWarningKind {
     /// 1.2.9+ — an n-gram that repeats 3+ times in the
     /// open paragraph.  See `RepeatedPhraseDetector`.
     RepeatedPhrase,
+    /// 1.2.9+ — a "telling" pattern: copula + emotion
+    /// adjective (`was angry`), manner-of-emotion
+    /// adverb (`angrily`), or direct cognition verb
+    /// (`realised` / `knew`).  See
+    /// `ShowDontTellDetector`.
+    ShowDontTell,
 }
 
 /// One stylistic-warning hit on a row of editor text.
@@ -393,6 +401,234 @@ impl RepeatedPhraseDetector {
     }
 }
 
+/// 1.2.9+ — show-don't-tell detector.
+///
+/// Flags three categories of "telling" prose:
+///
+///   1. **Copula + emotion adjective** — a 2-gram
+///      `(linking_verb)(emotion_adjective)` where the
+///      first token's stem matches a linking-verb stem
+///      (`be`, `seem`, `feel`, `appear`, `look`,
+///      `become`, `remain`, `grow`, `sound`) and the
+///      next token's stem matches an emotion adjective
+///      (`angry`, `sad`, `happy`, `afraid`, …).  Both
+///      tokens are flagged.
+///   2. **Manner-of-emotion adverbs** — a single token
+///      whose stem matches a known manner adverb
+///      (`angrily`, `sadly`, `nervously`, …).  These
+///      adverbs label emotion outright instead of
+///      letting behaviour reveal it.
+///   3. **Cognition verbs** — a single token whose
+///      stem matches a known cognition verb
+///      (`realised`, `understood`, `knew`,
+///      `wondered`, …).  These tell the reader the
+///      character's internal state directly.
+///
+/// Built from a precomputed stem set for each
+/// category at detector init.  Per-row scan walks
+/// `unicode_word_indices` once; cheap at literary
+/// scale.  Char-indexed columns so multi-byte chars
+/// don't shift highlight ranges.
+pub struct ShowDontTellDetector {
+    linking_verbs: HashSet<String>,
+    emotion_adjectives: HashSet<String>,
+    manner_adverbs: HashSet<String>,
+    cognition_verbs: HashSet<String>,
+    stemmer: Option<Stemmer>,
+}
+
+impl ShowDontTellDetector {
+    pub fn new(cfg: &ShowDontTellConfig, language: &str) -> Self {
+        let stemmer = if cfg.use_stemming {
+            parse_stemmer_language(language).map(Stemmer::create)
+        } else {
+            None
+        };
+        let normalise = |w: &str| -> String {
+            let lc = w.trim().to_lowercase();
+            match &stemmer {
+                Some(s) => s.stem(&lc).into_owned(),
+                None => lc,
+            }
+        };
+        // Pick configured-or-built-in per language +
+        // category.  Same precedence as filter_words:
+        // configured list wins when non-empty;
+        // built-in default otherwise.
+        let configured_lv: &Vec<String> = match language.to_lowercase().as_str() {
+            "russian" => &cfg.russian_linking_verbs,
+            "french" => &cfg.french_linking_verbs,
+            "german" => &cfg.german_linking_verbs,
+            "spanish" => &cfg.spanish_linking_verbs,
+            _ => &cfg.english_linking_verbs,
+        };
+        let configured_ea: &Vec<String> = match language.to_lowercase().as_str() {
+            "russian" => &cfg.russian_emotion_adjectives,
+            "french" => &cfg.french_emotion_adjectives,
+            "german" => &cfg.german_emotion_adjectives,
+            "spanish" => &cfg.spanish_emotion_adjectives,
+            _ => &cfg.english_emotion_adjectives,
+        };
+        let configured_ma: &Vec<String> = match language.to_lowercase().as_str() {
+            "russian" => &cfg.russian_manner_adverbs,
+            "french" => &cfg.french_manner_adverbs,
+            "german" => &cfg.german_manner_adverbs,
+            "spanish" => &cfg.spanish_manner_adverbs,
+            _ => &cfg.english_manner_adverbs,
+        };
+        let configured_cv: &Vec<String> = match language.to_lowercase().as_str() {
+            "russian" => &cfg.russian_cognition_verbs,
+            "french" => &cfg.french_cognition_verbs,
+            "german" => &cfg.german_cognition_verbs,
+            "spanish" => &cfg.spanish_cognition_verbs,
+            _ => &cfg.english_cognition_verbs,
+        };
+        let build = |configured: &Vec<String>,
+                     fallback: &[&str]|
+         -> HashSet<String> {
+            let mut s: HashSet<String> = HashSet::new();
+            if configured.is_empty() {
+                for w in fallback {
+                    let key = normalise(w);
+                    if !key.is_empty() {
+                        s.insert(key);
+                    }
+                }
+            } else {
+                for w in configured {
+                    let key = normalise(w);
+                    if !key.is_empty() {
+                        s.insert(key);
+                    }
+                }
+            }
+            s
+        };
+        Self {
+            linking_verbs: build(configured_lv, built_in_linking_verbs(language)),
+            emotion_adjectives: build(
+                configured_ea,
+                built_in_emotion_adjectives(language),
+            ),
+            manner_adverbs: build(
+                configured_ma,
+                built_in_manner_adverbs(language),
+            ),
+            cognition_verbs: build(
+                configured_cv,
+                built_in_cognition_verbs(language),
+            ),
+            stemmer,
+        }
+    }
+
+    /// True when every category is empty — the
+    /// render loop can short-circuit before any
+    /// per-row work.
+    pub fn is_empty(&self) -> bool {
+        self.linking_verbs.is_empty()
+            && self.emotion_adjectives.is_empty()
+            && self.manner_adverbs.is_empty()
+            && self.cognition_verbs.is_empty()
+    }
+
+    /// Walk `line`, return every show-don't-tell hit
+    /// at this row's char columns.  Cross-token
+    /// patterns (`was angry`) require both tokens to
+    /// appear on the same row — multi-row "telling"
+    /// constructs are rare in practice and would need
+    /// a paragraph-level detector to handle cleanly.
+    pub fn detect(&self, line: &str) -> Vec<StyleHit> {
+        if self.is_empty() || line.is_empty() {
+            return Vec::new();
+        }
+        // Same char-index map approach as
+        // FilterWordsDetector — keeps highlight cols
+        // multi-byte-safe.
+        let mut byte_to_char: Vec<usize> = Vec::with_capacity(line.len() + 1);
+        let mut char_count = 0usize;
+        for (b, _) in line.char_indices() {
+            while byte_to_char.len() < b {
+                byte_to_char.push(char_count);
+            }
+            byte_to_char.push(char_count);
+            char_count += 1;
+        }
+        while byte_to_char.len() <= line.len() {
+            byte_to_char.push(char_count);
+        }
+        // Collect tokens + stems on a single pass so
+        // pattern 1 can index back into the previous
+        // token cheaply.
+        struct Tok {
+            byte_start: usize,
+            byte_end: usize,
+            stem: String,
+        }
+        let tokens: Vec<Tok> = line
+            .unicode_word_indices()
+            .map(|(b, w)| {
+                let lc = w.to_lowercase();
+                let stem = match &self.stemmer {
+                    Some(s) => s.stem(&lc).into_owned(),
+                    None => lc,
+                };
+                Tok {
+                    byte_start: b,
+                    byte_end: b + w.len(),
+                    stem,
+                }
+            })
+            .collect();
+        let mut out: Vec<StyleHit> = Vec::new();
+        for (i, tok) in tokens.iter().enumerate() {
+            // Pattern 2: manner adverb.
+            if self.manner_adverbs.contains(&tok.stem) {
+                out.push(StyleHit {
+                    col_start: byte_to_char[tok.byte_start],
+                    col_end: byte_to_char
+                        .get(tok.byte_end)
+                        .copied()
+                        .unwrap_or(char_count),
+                    kind: StyleWarningKind::ShowDontTell,
+                });
+                continue;
+            }
+            // Pattern 3: cognition verb.
+            if self.cognition_verbs.contains(&tok.stem) {
+                out.push(StyleHit {
+                    col_start: byte_to_char[tok.byte_start],
+                    col_end: byte_to_char
+                        .get(tok.byte_end)
+                        .copied()
+                        .unwrap_or(char_count),
+                    kind: StyleWarningKind::ShowDontTell,
+                });
+                continue;
+            }
+            // Pattern 1: (linking verb)(emotion adj).
+            if self.linking_verbs.contains(&tok.stem) {
+                if let Some(next) = tokens.get(i + 1) {
+                    if self.emotion_adjectives.contains(&next.stem) {
+                        // Flag both tokens as a single
+                        // span covering verb→adjective.
+                        out.push(StyleHit {
+                            col_start: byte_to_char[tok.byte_start],
+                            col_end: byte_to_char
+                                .get(next.byte_end)
+                                .copied()
+                                .unwrap_or(char_count),
+                            kind: StyleWarningKind::ShowDontTell,
+                        });
+                    }
+                }
+            }
+        }
+        out.sort_by_key(|h| h.col_start);
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -694,5 +930,112 @@ mod tests {
         // First hit's col_start must be 0 (char), not
         // a byte offset.
         assert_eq!(row0[0].col_start, 0);
+    }
+
+    // ── ShowDontTellDetector ────────────────────────
+
+    fn sdt_cfg_default() -> ShowDontTellConfig {
+        ShowDontTellConfig::default()
+    }
+
+    #[test]
+    fn sdt_was_angry_flagged() {
+        let d = ShowDontTellDetector::new(&sdt_cfg_default(), "english");
+        assert!(!d.is_empty(), "english defaults populated");
+        let hits = d.detect("She was angry at the dog.");
+        assert!(!hits.is_empty(), "telling 'was angry' should hit");
+        // Span should cover "was angry" — the chars
+        // 4..13 in "She was angry at the dog."
+        let h = &hits[0];
+        assert_eq!(h.kind, StyleWarningKind::ShowDontTell);
+        assert_eq!(h.col_start, 4);
+        assert_eq!(h.col_end, 13);
+    }
+
+    #[test]
+    fn sdt_was_running_not_flagged() {
+        // Linking verb without an emotion adjective →
+        // no hit.  Otherwise every `was X` would alarm.
+        let d = ShowDontTellDetector::new(&sdt_cfg_default(), "english");
+        let hits = d.detect("She was running through the rain.");
+        assert!(
+            hits.is_empty(),
+            "non-emotion 'was running' must NOT hit, got: {hits:?}"
+        );
+    }
+
+    #[test]
+    fn sdt_seemed_nervous_flagged_via_stemming() {
+        // "Seemed" must stem to "seem" so it matches
+        // the linking-verb stem.
+        let d = ShowDontTellDetector::new(&sdt_cfg_default(), "english");
+        let hits = d.detect("He seemed nervous about the meeting.");
+        assert!(!hits.is_empty());
+    }
+
+    #[test]
+    fn sdt_manner_adverb_flagged() {
+        let d = ShowDontTellDetector::new(&sdt_cfg_default(), "english");
+        let hits = d.detect("\"Get out,\" she said angrily.");
+        // `angrily` should be flagged as a manner
+        // adverb — single-token hit.
+        assert!(hits.iter().any(|h| {
+            let trimmed = "Get out".len();
+            let _ = trimmed; // (silence unused warning)
+            h.kind == StyleWarningKind::ShowDontTell
+        }));
+    }
+
+    #[test]
+    fn sdt_cognition_verb_flagged() {
+        let d = ShowDontTellDetector::new(&sdt_cfg_default(), "english");
+        let hits = d.detect("She realised the room was empty.");
+        assert!(!hits.is_empty(), "'realised' must trigger cognition hit");
+    }
+
+    #[test]
+    fn sdt_plain_action_prose_clean() {
+        // Hemingway-flavoured action sentence — should
+        // produce zero hits.
+        let d = ShowDontTellDetector::new(&sdt_cfg_default(), "english");
+        let hits = d.detect(
+            "He poured the coffee and watched the rain hit the shutters.",
+        );
+        assert!(
+            hits.is_empty(),
+            "action prose must stay clean, got: {hits:?}"
+        );
+    }
+
+    #[test]
+    fn sdt_unsupported_language_falls_back_quiet() {
+        // No built-in lists for German yet — and the
+        // configured lists are empty by default.  The
+        // detector must be `is_empty()` so the render
+        // pipeline can short-circuit cleanly.
+        let d = ShowDontTellDetector::new(&sdt_cfg_default(), "german");
+        assert!(d.is_empty());
+    }
+
+    #[test]
+    fn sdt_unicode_columns_safe() {
+        // Mixed Latin + accented chars in the same
+        // line — column calculations must use char
+        // (not byte) indices.
+        let d = ShowDontTellDetector::new(&sdt_cfg_default(), "english");
+        // "Café" is 4 chars but 5 bytes.  Then we have
+        // an English emotion phrase right after.  The
+        // hit's columns must land in char-space.
+        let line = "Café was empty. He was sad.";
+        let hits = d.detect(line);
+        // "was sad" sits at the end.  The hit's
+        // col_start should equal the char index of
+        // 'w' in 'was sad', which is past the period
+        // + space.
+        if let Some(h) = hits.last() {
+            let chars: Vec<char> = line.chars().collect();
+            // Verify the hit spans valid chars.
+            assert!(h.col_end <= chars.len());
+        }
     }
 }

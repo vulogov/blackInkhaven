@@ -6543,6 +6543,7 @@ impl App {
             A::OpenConcordance => self.open_concordance(),
             A::TogglePovChip => self.toggle_pov_chip(),
             A::OpenSentenceRhythm => self.open_sentence_rhythm(),
+            A::AnalyseShowDontTell => self.start_show_dont_tell_scan(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
@@ -16867,6 +16868,27 @@ sentences that lose the reader, rhythm that flattens, claims that wobble, \
 imagery that doesn't earn its place. Be specific — quote the exact phrase \
 and propose a tighter alternative. Do NOT rewrite the whole paragraph; \
 critique it. Be honest, not destructive."
+}
+
+/// 1.2.9+ — embedded fallback for the Ctrl+B Shift+T
+/// AI-driven show-don't-tell scan.  Written to nudge
+/// the model into specific, quotable callouts plus
+/// one actionable rewrite each, so the writer can
+/// triage rather than re-read a paragraph of advice.
+pub(crate) fn show_dont_tell_default_prompt() -> &'static str {
+    "Read the paragraph below as a fiction draft and find every place where the \
+writer is TELLING rather than SHOWING. Telling = directly labelling an emotion \
+or internal state instead of letting behaviour, sensory detail, or dialogue \
+reveal it (`she was angry` is telling; `her knuckles whitened around the glass` \
+is showing). For each telling instance: \
+(1) Quote the exact phrase. \
+(2) Name what's being told (the emotion / state). \
+(3) Propose one concrete show-rewrite — a body-language beat, a sensory \
+detail, an action, or a fragment of dialogue. Keep the rewrite the same \
+length as the telling line, not a paragraph. \
+Skip cases where telling is deliberately efficient (transition lines, \
+summary, established interiority in first-person POV). If the paragraph is \
+already strong, say so plainly and stop. Don't pad."
 }
 
 /// 1.2.6+ — embedded fallback for F12 critique in split-edit mode.
