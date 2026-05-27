@@ -794,20 +794,27 @@ fn dispatch_list_keys(app: &mut App, key: KeyEvent) {
 }
 
 fn dispatch_editor_keys(app: &mut App, key: KeyEvent) {
-    // Forward to tui-textarea without the emacs-
-    // style Ctrl shortcuts so global chords like
-    // Ctrl+S / Ctrl+Q stay live.  Matches the
-    // main TUI's `input_without_shortcuts`
-    // policy.
+    // Forward to tui-textarea with its default key
+    // map — arrows, Home/End, PgUp/PgDn, Shift+arrow
+    // selection, plus the emacs-style readline
+    // shortcuts (Ctrl+A start-of-line, Ctrl+E end-
+    // of-line, Ctrl+K kill-to-end, Ctrl+W
+    // delete-word-backward, Ctrl+U/Y undo/redo).
+    //
+    // The three Ctrl chords we DO reserve globally
+    // (Ctrl+S save, Ctrl+Q quit, Ctrl+H help) are
+    // intercepted by `handle_key` before this
+    // dispatcher runs, so there's no conflict
+    // letting tui-textarea handle everything else.
+    //
+    // `input()` returns true when the buffer
+    // mutated; navigation returns false but still
+    // moves the cursor — both cases are fine.  The
+    // dirty bookkeeping happens lazily in
+    // stash_editor at focus / cursor / save time.
     let input: tui_textarea::Input = key.into();
-    let changed = app.editor.input_without_shortcuts(input);
-    if changed {
-        // Don't compute dirty per keystroke; that
-        // happens lazily in stash_editor at focus-
-        // change / save / cursor-switch time.  Just
-        // surface that something happened.
-        app.first_launch = false;
-    }
+    let _ = app.editor.input(input);
+    app.first_launch = false;
 }
 
 fn dispatch_ai_prompt_keys(app: &mut App, key: KeyEvent) {
@@ -1148,17 +1155,24 @@ fn editor_help_body() -> String {
         " Prompt editor — chord summary",
         "",
         "   Arrows / Home / End / PgUp / PgDn",
-        "                     movement (tui-textarea defaults)",
+        "                     movement",
         "   Shift+arrows      extend selection",
         "   Backspace / Del   delete character",
+        "   Ctrl+A / Ctrl+E   start / end of line",
+        "   Ctrl+B / Ctrl+F   cursor left / right",
+        "   Ctrl+N / Ctrl+P   cursor down / up",
+        "   Ctrl+K            kill to end of line",
+        "   Ctrl+W            delete previous word",
+        "   Ctrl+U / Ctrl+Y   undo / redo",
         "   Type to insert.",
         "",
-        " Note: emacs-style Ctrl shortcuts are deliberately NOT",
-        " forwarded to tui-textarea — Ctrl+S / Ctrl+Q / Ctrl+H are",
-        " app-global chords.  Plain typing + Tab/Enter/Backspace",
-        " work as expected.",
+        " App-global chords (intercepted before the editor sees them):",
+        "   Ctrl+S            save library (confirm modal)",
+        "   Ctrl+H / ?        help (this pane)",
+        "   Ctrl+Q / Esc      quit (confirm if unsaved)",
+        "   Tab / Shift+Tab   cycle pane focus",
         "",
-        " Template variables (recognised in Phase 3's send pipeline):",
+        " Template variables (recognised by the send pipeline):",
         "   {{selection}}    replaced with the AI prompt input",
         "   {{context}}      replaced with empty (no hierarchical",
         "                    context inside this standalone editor)",
