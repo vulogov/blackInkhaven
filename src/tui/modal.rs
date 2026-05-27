@@ -720,6 +720,22 @@ pub(super) enum Modal {
         title: String,
         reason: String,
     },
+    /// 1.2.9+ — TTS save-as-audio path picker.  Opens
+    /// when the user presses Ctrl+B Shift+R; the
+    /// default path lands as `<project>/audio/<slug>.aiff`
+    /// pre-filled in the input.  Enter spawns
+    /// `say -o <path>` with the configured voice + rate;
+    /// Esc cancels.  `body` carries the paragraph text;
+    /// `voice` + `wpm` are captured at open time so a
+    /// subsequent HJSON edit doesn't change what gets
+    /// written.
+    TtsSaveAsAudio {
+        input: super::input::TextInput,
+        body: String,
+        voice: String,
+        wpm: u16,
+        voice_label: String,
+    },
     /// 1.2.9+ — TTS playback modal.  Opens when
     /// `Ctrl+B S` successfully kicks off speech via
     /// `tts-rs`.  The actual TTS engine handle lives on

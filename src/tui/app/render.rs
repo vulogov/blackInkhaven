@@ -595,6 +595,26 @@ impl super::App {
                 ];
                 (header, Color::Green, body)
             }
+            Modal::TtsSaveAsAudio { input, voice_label, .. } => {
+                let prompt = format!(
+                    " Path: {}",
+                    input.render_with_cursor('│'),
+                );
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::raw(prompt)),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(" voice: {voice_label}"),
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                    Line::from(Span::styled(
+                        " Enter writes; Esc cancels. Parent dir is created if missing.",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (" Save paragraph as audio ".into(), Color::Cyan, body)
+            }
             Modal::ConfirmQuit => {
                 let body = vec![
                     Line::from(""),

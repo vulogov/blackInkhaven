@@ -1235,6 +1235,40 @@ fn strip_leading_typst_heading(body: &str) -> String {
 /// 24-row terminal without scrolling.
 const KILL_RING_CAP: usize = 10;
 
+/// 1.2.9+ — sanitise a paragraph title into a
+/// filesystem-safe slug for the default audio path.
+/// Lowercased, ASCII-alphanumeric kept verbatim, every
+/// other char collapsed to a hyphen, runs of hyphens
+/// trimmed, empty result falls back to "paragraph".
+/// Cyrillic / non-Latin chars survive as hyphens
+/// because filesystem-portability is the goal here;
+/// users who want a localised name edit the path
+/// before pressing Enter.
+fn audio_filename_slug(title: &str) -> String {
+    let lc = title.to_lowercase();
+    let mut out = String::with_capacity(lc.len());
+    let mut last_was_dash = false;
+    for c in lc.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+            last_was_dash = false;
+        } else {
+            if !last_was_dash && !out.is_empty() {
+                out.push('-');
+                last_was_dash = true;
+            }
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "paragraph".to_string()
+    } else {
+        out
+    }
+}
+
 /// 1.2.8+ — truncate a captured shell-output blob to at most
 /// `max_lines` lines.  Returns the input unchanged if it
 /// already fits.  When truncated, the last kept line is
@@ -6457,6 +6491,7 @@ impl App {
             A::BundShellSelection => self.toggle_shell_selection_mode(),
             A::BundEditProjectHjson => self.open_hjson_editor(),
             A::TtsReadParagraph => self.tts_read_paragraph(),
+            A::TtsSaveAsAudio => self.tts_open_save_as_audio_picker(),
             A::ToggleStyleWarnings => self.toggle_style_warnings(),
 
             // ── View prefix ───────────────────────────────────
@@ -7541,6 +7576,191 @@ impl App {
         } else {
             "style warnings: OFF".into()
         };
+    }
+
+    /// 1.2.9+ — Ctrl+B Shift+R action: open a save-as
+    /// path picker pre-filled with
+    /// `<project>/audio/<paragraph-slug>.aiff`.  Enter
+    /// commits via `commit_tts_save_as_audio`; Esc
+    /// cancels.  Same enable + platform gates as the
+    /// chord-driven TTS — surfaces the `TtsUnavailable`
+    /// modal when TTS is disabled or the OS isn't
+    /// macOS.
+    fn tts_open_save_as_audio_picker(&mut self) {
+        // Reuse the same enable + platform gates as
+        // tts_read_paragraph.
+        let source: String = match self.opened.as_ref() {
+            Some(doc) => doc.textarea.lines().join("\n"),
+            None => {
+                self.status = "TTS save: no paragraph open".into();
+                return;
+            }
+        };
+        let body = strip_leading_typst_heading(&source);
+        let body = body.trim().to_string();
+        if body.is_empty() {
+            self.status = "TTS save: paragraph is empty".into();
+            return;
+        }
+        if !self.cfg.editor.tts.enabled {
+            self.modal = Modal::TtsUnavailable {
+                title: " TTS disabled ".into(),
+                reason: format!(
+                    "Read-aloud + save-as-audio are disabled in this \
+                     project.\n\n\
+                     Enable by adding to inkhaven.hjson:\n\n  \
+                     editor: {{ tts: {{ enabled: true }} }}"
+                ),
+            };
+            return;
+        }
+        if let Err(reason) = super::say::Say::available() {
+            self.modal = Modal::TtsUnavailable {
+                title: " TTS unavailable ".into(),
+                reason: format!(
+                    "{reason}\n\nSave-as-audio uses macOS `/usr/bin/say -o`. \
+                     Cross-platform support is on the 1.3+ roadmap."
+                ),
+            };
+            return;
+        }
+        // Default destination: <project>/audio/<slug>.aiff.
+        // Slug comes from the opened doc's title (sanitised
+        // for filesystem) so two paragraphs with similar
+        // titles get distinct files.
+        let title = self
+            .opened
+            .as_ref()
+            .map(|d| d.title.clone())
+            .unwrap_or_else(|| "paragraph".to_string());
+        let slug = audio_filename_slug(&title);
+        let dest = self.layout.root.join("audio").join(format!("{slug}.aiff"));
+        let mut input = TextInput::new();
+        for c in dest.to_string_lossy().chars() {
+            input.insert_char(c);
+        }
+        let cfg = &self.cfg.editor.tts;
+        let voice = super::say::Say::pick_voice(&cfg.voice).unwrap_or_default();
+        let voice_label = if voice.is_empty() {
+            "system default".to_string()
+        } else {
+            voice.clone()
+        };
+        let wpm = ((180.0 * cfg.speed.max(0.1)).round() as i32)
+            .clamp(80, 400) as u16;
+        let status_label = voice_label.clone();
+        self.modal = Modal::TtsSaveAsAudio {
+            input,
+            body,
+            voice,
+            wpm,
+            voice_label,
+        };
+        self.status = format!(
+            "TTS save: edit path or Enter to confirm · voice={status_label} · Esc cancels",
+        );
+    }
+
+    /// 1.2.9+ — commit the save-as-audio picker.  Creates
+    /// the parent directory if missing; spawns
+    /// `say -o <dest> -v <voice> -r <wpm>` with the
+    /// paragraph text on stdin.  Blocks until the
+    /// subprocess exits so the file is on disk by the
+    /// time the status bar reports success — the user
+    /// expects to see + open it immediately.  5-second
+    /// hard cap on the wait so a stuck `say` doesn't
+    /// hang the TUI.
+    fn commit_tts_save_as_audio(
+        &mut self,
+        dest_raw: &str,
+        body: &str,
+        voice: &str,
+        wpm: u16,
+        voice_label: &str,
+    ) {
+        let dest = std::path::PathBuf::from(dest_raw.trim());
+        if let Some(parent) = dest.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                self.status = format!(
+                    "TTS save: couldn't create {}: {e}",
+                    parent.display(),
+                );
+                return;
+            }
+        }
+        let mut cmd = std::process::Command::new("/usr/bin/say");
+        cmd.arg("-o").arg(&dest);
+        if !voice.is_empty() {
+            cmd.arg("-v").arg(voice);
+        }
+        cmd.arg("-r").arg(wpm.to_string());
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::piped());
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                self.status = format!("TTS save: spawn failed: {e}");
+                return;
+            }
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            if let Err(e) = stdin.write_all(body.as_bytes()) {
+                self.status = format!("TTS save: write stdin: {e}");
+                let _ = child.kill();
+                let _ = child.wait();
+                return;
+            }
+        }
+        // Bounded wait: 30 seconds.  `say -o` writes
+        // streaming so even a long paragraph fits.
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_secs(30);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if status.success() {
+                        let bytes = std::fs::metadata(&dest)
+                            .map(|m| m.len())
+                            .unwrap_or(0);
+                        self.status = format!(
+                            "TTS save: wrote {} ({} KB · voice={voice_label})",
+                            dest.display(),
+                            bytes / 1024,
+                        );
+                    } else {
+                        let mut stderr = String::new();
+                        if let Some(mut s) = child.stderr.take() {
+                            use std::io::Read;
+                            let _ = s.read_to_string(&mut stderr);
+                        }
+                        self.status = format!(
+                            "TTS save: `say` exited {} — {}",
+                            status.code().unwrap_or(-1),
+                            stderr.trim(),
+                        );
+                    }
+                    return;
+                }
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        self.status = format!(
+                            "TTS save: timed out after 30s — partial file at {}",
+                            dest.display(),
+                        );
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(e) => {
+                    self.status = format!("TTS save: wait failed: {e}");
+                    return;
+                }
+            }
+        }
     }
 
     /// 1.2.9+ — speak arbitrary text through the same
@@ -11490,6 +11710,7 @@ impl App {
         let is_hjson_editor = matches!(self.modal, Modal::HjsonEditor { .. });
         let is_rendered_preview = matches!(self.modal, Modal::RenderedPreview { .. });
         let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
+        let is_tts_save_as_audio = matches!(self.modal, Modal::TtsSaveAsAudio { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
         let is_ai_diff_review = matches!(self.modal, Modal::AiDiffReview { .. });
         let is_event_picker = matches!(self.modal, Modal::EventPicker { .. });
@@ -11955,6 +12176,39 @@ impl App {
                 return Ok(false);
             }
             if let Modal::SaveRenderedPng { input, .. } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
+            return Ok(false);
+        }
+
+        if is_tts_save_as_audio {
+            if matches!(key.code, KeyCode::Esc) {
+                self.modal = Modal::None;
+                self.status = "TTS save: cancelled".into();
+                return Ok(false);
+            }
+            if matches!(key.code, KeyCode::Enter) {
+                let taken = std::mem::replace(&mut self.modal, Modal::None);
+                if let Modal::TtsSaveAsAudio {
+                    input,
+                    body,
+                    voice,
+                    wpm,
+                    voice_label,
+                } = taken
+                {
+                    let raw = input.as_str().to_string();
+                    self.commit_tts_save_as_audio(
+                        &raw,
+                        &body,
+                        &voice,
+                        wpm,
+                        &voice_label,
+                    );
+                }
+                return Ok(false);
+            }
+            if let Modal::TtsSaveAsAudio { input, .. } = &mut self.modal {
                 handle_text_input_key(input, key);
             }
             return Ok(false);
@@ -15299,6 +15553,49 @@ pub(super) fn format_progress_gauge(current: i64, target: i64) -> (String, i64, 
             .add_modifier(Modifier::DIM)
     };
     (gauge, pct, style)
+}
+
+#[cfg(test)]
+mod tests_audio_slug {
+    use super::*;
+
+    #[test]
+    fn ascii_lowercased_with_hyphens() {
+        assert_eq!(audio_filename_slug("Morning Walk"), "morning-walk");
+    }
+
+    #[test]
+    fn punctuation_collapsed() {
+        assert_eq!(audio_filename_slug("She Said: \"Hello!\""), "she-said-hello");
+    }
+
+    #[test]
+    fn runs_collapsed_no_trailing_dash() {
+        assert_eq!(audio_filename_slug("  hello   world  "), "hello-world");
+    }
+
+    #[test]
+    fn cyrillic_falls_through_to_hyphen_separator() {
+        // Each Cyrillic char isn't ascii_alphanumeric, so
+        // the slug becomes empty + fallback.  Acceptable —
+        // user edits the path before pressing Enter when
+        // they want a localised filename.
+        assert_eq!(audio_filename_slug("Привет мир"), "paragraph");
+    }
+
+    #[test]
+    fn mixed_keeps_ascii_drops_others() {
+        assert_eq!(
+            audio_filename_slug("Chapter 3 — введение"),
+            "chapter-3"
+        );
+    }
+
+    #[test]
+    fn empty_falls_back() {
+        assert_eq!(audio_filename_slug(""), "paragraph");
+        assert_eq!(audio_filename_slug("___"), "paragraph");
+    }
 }
 
 #[cfg(test)]
