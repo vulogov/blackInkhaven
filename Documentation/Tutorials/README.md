@@ -47,6 +47,12 @@ covers.
 | 35 | [`35-embedded-shell.md`](35-embedded-shell.md) | Embedded **nushell** pane (1.2.8+) — `Ctrl+Z o` opens a floating shell inside the TUI; `Ctrl+Z h` selection mode lets you `c` copy a command's output to clipboard or `i` insert it into the editor wrapped as a typst raw block. Per-project SQLite history; HJSON-configurable insert template. |
 | 36 | [`36-config-editor.md`](36-config-editor.md) | Edit `<project>/inkhaven.hjson` from inside the TUI (1.2.8+) — `Ctrl+B 0` opens a full-screen modal editor with HJSON syntax highlighting. `Ctrl+S` saves; when bytes change a *Restart required* overlay pops up. Mirrors the paragraph editor's chord set. |
 | 37 | [`37-help-book-viewer.md`](37-help-book-viewer.md) | The Help book as a rendered-markdown viewer (1.2.8+) — paragraphs render via pulldown-cmark (headings, lists, emphasis, code fences, blockquotes, links) instead of showing source. Read-only; scroll keys + mouse wheel only. |
+| 38 | [`38-writing-streak-heatmap.md`](38-writing-streak-heatmap.md) | Ctrl+B Shift+G — GitHub-style 13×7 grid of the last 91 days of word activity; current streak + longest streak + 91-day total + active-day average; bucket colors (1.2.9+). |
+| 39 | [`39-scene-break-navigation.md`](39-scene-break-navigation.md) | Ctrl+B < / Ctrl+B > — jump the cursor between typographic scene-break lines (`* * *`, `***`, `---`, `___`, `###`, `~~~`, `§`) inside the open paragraph (1.2.9+). |
+| 40 | [`40-concordance.md`](40-concordance.md) | Ctrl+B Shift+L — project-wide concordance modal: every distinct lexical stem with count + KWIC samples; stop-word filtering; Snowball grouping; substring filter; count/alphabetical sort (1.2.9+). |
+| 41 | [`41-pov-character-chip.md`](41-pov-character-chip.md) | Ctrl+B Shift+P — status-bar POV / character chip; most-mentioned character surfaces as the heuristic POV, with up to three supporting characters; driven by the existing characters lexicon (1.2.9+). |
+| 42 | [`42-sentence-rhythm-gauge.md`](42-sentence-rhythm-gauge.md) | Ctrl+B Shift+H — sentence-rhythm gauge: word-count mean / stdev / CV → verdict (Monotone / Steady / Varied / Choppy); per-sentence bar chart + outlier callouts; the felt rhythm of the prose (1.2.9+). |
+| 43 | [`43-show-dont-tell.md`](43-show-dont-tell.md) | Inline overlay (under Ctrl+B Shift+F): copula+emotion-adj 2-grams, manner-of-emotion adverbs, cognition verbs. Plus Ctrl+B Shift+T — AI-driven scan with rewrite suggestions in the AI pane (1.2.9+). |
 
 ## Scripting + chord customisation
 

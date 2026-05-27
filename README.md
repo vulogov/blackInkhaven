@@ -21,302 +21,92 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.8 — Shell, config editor, and the surface gets sharper
+## Latest release · 1.2.9 — Prose-craft tools for novelists
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.8.md`](Documentation/RELEASE_NOTES/1.2.8.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.9.md`](Documentation/RELEASE_NOTES/1.2.9.md)
 
-1.2.8 picks up the items 1.2.7 left on the table and adds two
-significant new surfaces.  The headline features:
+1.2.9 turns inkhaven from a *book editor* into a *book editor
+that audits your prose while you write it*.  Nine new
+features, all keyed to the same writing-craft idea: catch
+the mechanical weaknesses (drone, telling, hedging, lexical
+ruts) inline, while the words are still soft, instead of
+discovering them at revision time.
 
-- **Embedded nushell pane** (`Ctrl+Z o`). A floating shell
-  runs **real nushell in-process** via `nu_engine` +
-  `nu_command` — the full default command set (`ls`,
-  `where`, `str`, `path`, `into`, pipelines, env
-  mutations) without shelling out.  External commands
-  get their stdout + stderr captured into the pane;
-  full-screen TUI apps (vim, less, top, tmux, …) are
-  refused before spawn via a configurable blocklist.
-  Per-project SQLite history, Tab autocomplete (commands
-  + `$PATH` binaries + filesystem), readline-style line
-  editing, `Ctrl+B H` help overlay, wall-clock watchdog
-  for wedged externals.
-- **HJSON config editor** (`Ctrl+B 0`).  Edit
-  `<project>/inkhaven.hjson` from inside the TUI without
-  dropping to an external editor.  Syntax-highlighted,
-  mirrors the paragraph editor's chord set; saves flag a
-  *Restart required* overlay when the config actually
-  changed.
-- **Help book as rendered-markdown viewer**.  Paragraphs
-  under the Help system book render via pulldown-cmark —
-  headings, lists, emphasis, code fences, blockquotes,
-  links shown as real document presentation rather than
-  source.  Read-only viewer, scroll-only keys, mouse
-  wheel works.  Scope deliberately limited to the Help
-  book; every other book keeps the Typst default.
-- **`export-timeline` CLI + SVG / PNG renderers**.  Same
-  swim-lane layout that the TUI shows, written to disk
-  in three formats (`typst`, `svg`, `png`).  Optional
-  `--track <name>` filter; canvas auto-sizes with track
-  count.  Useful for query letters, pitch docs, private
-  wiki pages.
-- **Scrivener `<CustomMeta>` date import.**  Field names
-  matching `scrivener.date_fields` (default `Date`,
-  `Story Date`, `Event Date`) parse against the project's
-  calendar; successful parses attach `EventData` to the
-  imported paragraph.  Bad values become non-fatal
-  warnings on the import report.
-- **Mouse wheel everywhere.**  Tree, Editor, AI chat, OS
-  Shell modal, HJSON editor, kill-ring picker, fuzzy
-  paragraph picker.
-- **Ctrl+Q confirmation modal** (opt-in via
-  `editor.confirm_quit: true`).  For terminals where
-  Ctrl+Q triggers software flow-control.
+The headline overlays — always-on, zero latency:
 
-Smaller refinements:
+- **Filter-word highlight** (`Ctrl+B Shift+F`).  Underlines
+  intensifier crutches and hedges: `just`, `really`, `very`,
+  `seemed`, `felt`, plus the Russian / French / German /
+  Spanish equivalents.  Snowball-stemmed so `seemed` /
+  `seems` / `seeming` all flag the same way; per-language
+  HJSON lists are user-extensible.  `inkhaven doctor
+  --filter-words-snippet` dumps the built-in lists ready to
+  paste.
+- **Repeated-phrase detector**.  Slides an `n`-word window
+  across the paragraph (default `n=4`, threshold `3`), stems
+  each window, flags every occurrence of any n-gram that
+  repeats — `lifted her shoulders` matches `lifting her
+  shoulders`.  Multilingual stop-word filtering keeps
+  closed-class noise out.  Shares the `Ctrl+B Shift+F`
+  toggle with filter-words.
+- **Show-don't-tell flag**.  Catches three telling patterns
+  (copula + emotion adjective, manner-of-emotion adverbs,
+  cognition verbs) in soft teal.  `was angry` flags both
+  tokens; `realised` flags itself; `was running` correctly
+  does *not* flag.  Stemmed.  Pairs with an **AI-driven
+  scan** (`Ctrl+B Shift+T`) that sends the paragraph to the
+  configured LLM and asks for telling phrases plus
+  concrete rewrites.
 
-- **Multi-slot kill-ring + Shift-letter chord fix.**
-  `App.last_deleted` widened to a 10-entry ring; new
-  `Ctrl+V Shift+U` picker.  Same commit fixes a
-  pre-existing chord-matcher bug that collapsed
-  `Ctrl+V Shift+P` onto `Ctrl+V p` on terminals without
-  Kitty disambiguation.
-- **Surface polish.** Active-LLM chip in the AI pane
-  title, F1 query history, Tab autocomplete in the
-  add-new-tag prompt, hidden-character report
-  (`Ctrl+V h`), breadcrumb on the status bar
-  (`Ctrl+V Shift+S`), F6 snapshot annotation filter.
+The headline modals + chips — on-demand prose audit:
 
-Plus 2 new tutorials (36, 37); updated KEYBINDING,
-CONFIGURATION, and the Bund tutorial.
+- **Concordance view** (`Ctrl+B Shift+L`).  Project-wide:
+  every distinct lexical stem ranked by occurrence, with
+  KWIC samples per row.  Snowball-grouped (so
+  `walk`/`walked`/`walking` collapse), stop-word filtered.
+  Type to filter; `Ctrl+S` toggles count ↔ alphabetical
+  sort.  Useful for noticing what your real voice
+  actually is.
+- **Sentence-rhythm gauge** (`Ctrl+B Shift+H`).  Splits the
+  open paragraph into sentences, computes word-count
+  mean / stdev / coefficient of variation, maps CV to a
+  verdict (`MONOTONE` red / `STEADY` yellow / `VARIED`
+  green / `CHOPPY` cyan).  Per-sentence bar chart +
+  three-shortest + three-longest outliers.  Inspired by
+  Gary Provost's "this sentence has five words" parable —
+  measures the drone, in numbers.
+- **POV / character chip** (`Ctrl+B Shift+P`).  Status-bar
+  chip showing the most-mentioned character in the open
+  paragraph (the heuristic POV) plus the supporting cast.
+  Driven by the existing characters lexicon — no separate
+  tagging.  Catches POV drift mid-scene.
+- **Writing-streak heatmap** (`Ctrl+B Shift+G`).  GitHub-
+  style 13×7 grid of the last 91 days of word activity,
+  with current streak + longest streak + active-day
+  average.  Tracks habit, not just total output.
+- **Scene-break navigation** (`Ctrl+B <` / `Ctrl+B >`).
+  Jump cursor between typographic dividers (`* * *`,
+  `***`, `---`, `___`, `###`, `~~~`, `§`) inside the open
+  paragraph.
 
-### Previous release · 1.2.7 — Polish + plumbing
+And the headline new accessibility surface:
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.7.md`](Documentation/RELEASE_NOTES/1.2.7.md)
+- **Text-to-speech read-aloud** (`Ctrl+B S`).  Speaks the
+  open paragraph through the host OS's TTS engine.
+  Provides the *ear* feedback that catches what the eye
+  glides over.  **`Ctrl+B Shift+R` saves the paragraph as
+  an audio file** (`.aiff` by default; macOS `say -o`
+  pipeline).  Configurable voice + speed + greeting +
+  goodbye in HJSON.
 
-1.2.7 is a polish cycle on the timeline-heavy 1.2.6 release.
-Two themes carry the branch: **timeline + ergonomics
-refinements** on the user side, **a large architecture
-rework** on the source side (zero behavioural delta — verified
-post-hoc).
+Plus six new tutorials (38–43); updated KEYBINDING,
+CONFIGURATION; `inkhaven doctor --voices` lists installed
+TTS voices, `--tts-test` exercises the pipeline end-to-end,
+`--filter-words-snippet` dumps the built-in style-warning
+lists.
 
-User-facing highlights:
-
-- **Timeline polish.** Tree-style two-level Tab/Enter
-  navigation, `Space` track collapse with `▾`/`▸` glyphs,
-  span-aware `↑`/`↓` event selection with viewport auto-pan,
-  faint grid stripes, `F12` book-wide critique inside the
-  swim-lane view, per-book session persistence in
-  `.session.json`, book-slug prefix on cross-book tracks
-  (project overlay), and selection-aware `Ctrl+V Shift+E`
-  for one-chord quick-event creation from any pane.
-- **`Ctrl+B U` paragraph undelete.** Single-slot kill-ring
-  that round-trips body + tags + status + linked paragraphs
-  + event timing after a Ctrl+D delete. New uuid; incoming
-  paragraph links to the old id stay broken (status bar warns).
-- **`Alt+←` / `Alt+→` navigation history.** Browser-style
-  back / forward through every paragraph-open path —
-  tree Enter, fuzzy picker, paragraph-link follow, snapshot
-  picker, timeline Enter, undelete. Plus `Ctrl+V Shift+P`
-  recent-paragraph picker (32 entries, deduped).
-- **`Ctrl+Shift+M` mouse-capture toggle.** Flip terminal-
-  native drag-select + system-clipboard copy on / off so
-  you can grab snippets to paste elsewhere without
-  routing through `Ctrl+C` chat-selection mode.
-- **External-change auto-reload.** Passive watcher on every
-  autosave tick: clean buffer → silent reload, dirty
-  buffer → red warning. CLI / `sed` / `git pull` / Bund
-  scripts that touch the open paragraph file no longer
-  leave stale text on screen.
-- **Snapshot dedupe + today-widget colour + F8 from any pane.**
-  Three smaller refinements: F5 / autosave skip
-  byte-identical snapshots, the today-words widget gets
-  colour by goal progress, the typst-diagnostics modal
-  works outside the editor pane.
-
-Around those: 4 new tutorials (32 — 34) plus a "1.2.7 polish"
-section on tutorial 31; updated keybinding reference.
-
-### Under the hood — architecture rework
-
-The TUI brain (`src/tui/app.rs`) went from a 26,605-LOC
-monolith to a 13,939-LOC central dispatcher with 21
-sibling / child modules hanging off it. Every commit on the
-branch was byte-equivalent modulo visibility downgrades and
-import-path rewrites, verified post-hoc by a programmatic
-per-method diff (561 method bodies pre vs post; exactly one
-differed, and that turned out to be a pre-existing
-`save_current` bug that I fixed). 255 → 260 tests passing;
-zero build warnings.
-
-The split makes the source navigable: render painters, modal
-state, AI orchestration, timeline navigation, tag picker,
-editor buffer methods, etc. each live in named files instead
-of being scattered across a single huge `impl App {}`. See
-`src/tui/` for the layout.
-
-### Bugfix worth flagging
-
-`Ctrl+S` in the editor was snapping the cursor to the
-beginning of the buffer on every save. Pre-existing since
-the 1.2.7 external-change auto-reload landed — save wrote
-the file but never restamped `loaded_mtime`, so the next
-tick saw the fresh mtime and reloaded the buffer (which
-resets the cursor). Fixed in this release. If you ever see
-that recurrence, file a bug.
-
-### Previous release · 1.2.6 — Tools for the working novelist
-
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.6.md`](Documentation/RELEASE_NOTES/1.2.6.md)
-
-1.2.6 is a wide-front release. Where 1.2.5 was one headline
-(in-process Typst), this one moves on six themes at once:
-**tagging as project-wide metadata**, **diagnostics with an
-editor surface**, **AI as a writing partner** (critique +
-memory + diff modal), **labelled snapshots**, a **paragraph-
-mini story view**, and a brand-new **story timeline** with
-calendar-aware events.
-
-```hjson
-# Opt-in to the timeline (still 1.2.6+).
-timeline: {
-  enabled: true
-  calendar: { preset: "gregorian" }    # or "sols" or "custom"
-}
-
-# Opt into the diff modal on AI rewrites (default already on).
-ai: {
-  per_paragraph_memory: true   # default false
-  diff_review_on_apply: true   # default true
-}
-```
-
-Headlines from 1.2.6:
-
-- **Tagging stack.** `Ctrl+B ]` picker · `Ctrl+B }` project
-  search · `R` rename project-wide · `inkhaven export --tag`
-  filter · tree-pane `#tag` pips · five `ink.tag.*` Bund
-  words · Scrivener keyword import.
-- **Diagnostic UX.** Red `●` in the gutter for every line
-  with a parse / semantic error · F8 diagnostics list ·
-  `Ctrl+V N` / Shift+N navigate · **Ctrl+F12** AI explain
-  the diagnostic at cursor (was F11; macOS grabs F11).
-- **AI as a partner.** `F12` mode-aware critique
-  (`critique-edit` plain / `critique-changes` split-edit) ·
-  per-paragraph memory (`ai.per_paragraph_memory: true`) ·
-  side-by-side diff modal before any `r` / `g` apply ·
-  smart marker extraction across model dialects.
-- **Snapshot annotations.** `F5` pops a one-line prompt;
-  `F6` picker shows annotations as italic-cyan `✎` lines
-  beneath each row.
-- **Story view split.** `Ctrl+V w` (lowercase) for the
-  paragraph mini view; `Ctrl+V Shift+W` for the book.
-  New Bund word `ink.story.render` writes the graph to PNG
-  from a script.
-- **Render preview live zoom.** `+ / -` zoom in Ctrl+V R;
-  `0` resets; cursor column anchored.
-- **🌟 Story timeline.** Calendar-aware events (`gregorian`
-  / `sols` / `custom`), `inkhaven event add/list/show` CLI,
-  `Ctrl+V e` picker, `Ctrl+V t` swim-lane view with
-  scope navigation (`u` / `d` / `b` / `p`), AI health
-  critique (`y` / `Y` / `Ctrl+Y`), seven `ink.event.*` Bund
-  words + two new hooks (`hook.on_event_added` /
-  `hook.on_event_orphaned`). Opt-in via `timeline.enabled`.
-
-The companion **Book of Inkhaven** at `Book/` covers all of
-1.2.6 in print form. It stays synced to 1.2.6 until the next
-major release; 1.2.7 polish lives in the tutorials.
-
-### Previous release · 1.2.5
-
-```hjson
-typst_compile: { engine: "inprocess" }
-```
-
-Flip it and Inkhaven stops shelling out to the host's `typst`
-binary for builds. The full compiler — `typst` + `typst-pdf` +
-`typst-kit` (fonts + `@preview` packages) — is linked into
-every 1.2.5+ binary and runs inside the inkhaven process. The
-external CLI stays the default; the switch is a runtime
-decision.
-
-Around that one switch:
-
-- **In-process compile engine.** `typst::compile +
-  typst-pdf` runs on a worker thread; the foreground TUI keeps
-  the spinner animated. Bundled Computer Modern + Linux
-  Libertine fonts ship in the binary; system fonts are also
-  searched. `@preview/<pkg>` imports fetch + cache via
-  `typst-kit`. Hermetic mode (no system fonts, no package
-  fetch) lives behind two HJSON booleans.
-- **Parse diagnostics on save / idle.** `typst-syntax` re-
-  parses the open paragraph on every save and every
-  `diagnostics_idle_seconds` of editor idle. First parse
-  error lands on the status bar with `line L:C — <message>`.
-  Engine-independent — works in both `external` and
-  `inprocess`.
-- **Semantic diagnostics (opt-in).** When
-  `semantic_diagnostics: true` AND `engine = "inprocess"`,
-  a full compile runs after parse passes. Surfaces unknown
-  functions, type errors, missing fonts. False positives
-  expected for paragraphs that depend on book-level
-  definitions — leave off for preamble-heavy manuscripts.
-- **Ctrl+V N — diagnostic navigation.** Jump the editor
-  cursor to the next typst diagnostic (parse or semantic).
-  Wraps. Status bar reports `diag 2/5 line 12:5 —
-  <message>`.
-- **Ctrl+V R — render paragraph preview.** Saves the buffer,
-  rasterises every page in-process via `typst-render`, floats
-  the PNG on top of the editor. `← / →` navigate pages,
-  `S` saves the current page at full DPI, `A` saves every
-  page as `<base>-page-NNN.png`. Esc closes back to the
-  editor (cancelling the save picker preserves navigation
-  state).
-- **TUI-friendly compiles.** Compile splash shows the active
-  engine line (`internal · fonts: bundled + system · @preview:
-  on` or `external · /usr/local/bin/typst`). **Esc** cancels
-  in-flight compiles — external sends SIGTERM, in-process
-  abandons the worker (it finishes in the background).
-  Ctrl+B A / B / O now autosave the primary editor (and the
-  secondary editor in similar-paragraph mode) before walking
-  `.typ` files.
-- **`inkhaven doctor`.** New CLI — prints a health report
-  with engine summary, typst path, font + package counts,
-  cache size, and (when run inside an initialised project)
-  hierarchy shape + word counts. Notes section calls out
-  actionable warnings like `typst NOT on PATH`. Pipe-
-  friendly.
-- **Embedded logo in credits pane.** `include_bytes!`
-  embeds `logo.png` in the binary; `Ctrl+B V` banners it
-  above the version + dependency list.
-- **Project-wide node tagging.** Three entry points,
-  one tag namespace stored as `Node.tags: Vec<String>`:
-  `Ctrl+B ]` opens the floating tag picker for the open
-  paragraph (Space multi-selects, `T` applies, `A` adds
-  a new tag, `D` deletes a tag project-wide with a blast-
-  radius confirm); `Ctrl+B }` opens the same picker in
-  search mode — Enter on a tag lists every paragraph that
-  carries it, with a typeable filter, and Enter on a hit
-  opens it; **`g`** in the tree pane runs the picker
-  against the marked set (or the cursor row), bulk-tagging
-  a whole selection in one go. Editor `T` returns focus
-  to the editor; tree `g` stays in the tree.
-- **Story view — Ctrl+V W.** Twopi-style radial graph of
-  the current book: book at the centre, each structural
-  depth on a concentric ring with sibling wedges sized by
-  subtree leaf count. Different SVG shape per node kind
-  (folder / box / octagon / ellipse / note / parallelogram /
-  chevron / egg / diamond / hexagon); long titles wrap to
-  multiple lines and node boxes scale to fit. Solid grey
-  edges for the structural skeleton, dashed purple for
-  `linked_paragraphs` paragraph links, dashed green from
-  Characters / Places / Artefacts to the paragraphs that
-  mention them. Rasterised via `resvg` + `tiny-skia`,
-  displayed via ratatui-image. `S` saves the PNG.
-- New tutorial: [Typst in-process](Documentation/Tutorials/24-typst-in-process.md)
-  — engine switch, fonts, packages, diagnostics, render
-  preview, doctor.
-
-Every prior release lives under [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
+Every prior release lives under
+[`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
 
 ## Why Inkhaven
 
