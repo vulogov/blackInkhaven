@@ -18,6 +18,7 @@ mod markdown;
 mod markdown_highlight;
 mod modal;
 mod say;
+mod style_warnings;
 mod quickref;
 mod sound;
 mod theme;

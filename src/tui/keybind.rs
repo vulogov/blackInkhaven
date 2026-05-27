@@ -352,6 +352,15 @@ pub enum Action {
     /// fires with the engine-level error string.
     #[serde(rename = "editor.tts_read_paragraph")]
     TtsReadParagraph,
+    /// Ctrl+B Shift+F (1.2.9+) — toggle the inline
+    /// style-warning overlays (filter words today;
+    /// repeated phrases / show-don't-tell / etc. as
+    /// they land).  Session-local toggle on top of the
+    /// HJSON `editor.style_warnings.enabled` master
+    /// switch — flip the chord during a writing
+    /// session without rewriting config.
+    #[serde(rename = "editor.toggle_style_warnings")]
+    ToggleStyleWarnings,
     /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
     /// via typst-render and float a PNG preview on top of the
     /// editor. `Esc` closes, `S` opens a save-as picker for the
@@ -542,6 +551,7 @@ impl Action {
             Action::BundShellSelection => "shell select".into(),
             Action::BundEditProjectHjson => "edit hjson".into(),
             Action::TtsReadParagraph => "read aloud".into(),
+            Action::ToggleStyleWarnings => "style warnings".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -734,6 +744,8 @@ impl Action {
                 "Open `<project>/inkhaven.hjson` in a full-screen editor (1.2.8+, Ctrl+B 0). Syntax-highlighted via the hand-rolled HJSON lexer. Ctrl+S saves; when saved bytes differ from the loaded bytes, a restart-required overlay pops up (config applies on next launch). Esc closes; unsaved-edit warnings fire on close.".into(),
             Action::TtsReadParagraph =>
                 "Read the open paragraph aloud via the OS TTS engine (1.2.9+, Ctrl+B S in editor scope). Cross-platform via `tts-rs`: AVFoundation on macOS, SAPI / WinRT on Windows, Speech Dispatcher on Linux. Gated by `editor.tts.enabled = true` in HJSON; default is off. Default voice is `Milena` (Russian female; ships free with macOS + Windows). When TTS is disabled, or the engine fails to initialise (Linux without speech-dispatcher, missing voices, etc.), a friendly explanation modal fires instead.".into(),
+            Action::ToggleStyleWarnings =>
+                "Toggle the inline style-warning overlays (1.2.9+, Ctrl+B Shift+F). Currently flags filter words — intensifier crutches like `just`, `really`, `very`, `просто`, `очень` — drawn in amber + underlined. Session-local override on top of `editor.style_warnings.enabled` in HJSON. Per-language defaults ship for English, Russian, French, German, Spanish; the active list is keyed by the project's top-level `language` field. Add more via `editor.style_warnings.filter_words.extra_words`. Repeated-phrase / show-don't-tell / sentence-rhythm detectors will share this toggle as they land.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -887,6 +899,9 @@ impl KeyBindings {
                 // terminal layout (previous `|` binding was
                 // dropped on some terminals' chord state).
                 entry("0", Action::BundEditProjectHjson, Scope::Any),
+                // 1.2.9+ — Ctrl+B Shift+F toggles inline
+                // style-warning overlays (filter words).
+                entry("Shift+f", Action::ToggleStyleWarnings, Scope::Any),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),
