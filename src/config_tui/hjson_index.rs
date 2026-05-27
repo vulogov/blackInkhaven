@@ -43,6 +43,10 @@ use std::ops::Range;
 
 #[derive(Debug, Clone)]
 pub struct LeafSpan {
+    /// Byte range of the key text (1.2.10+ — Phase 5
+    /// addition for map-entry deletion).  Empty
+    /// `Range` for synthetic root entries.
+    pub key_range: Range<usize>,
     /// Byte range of the value text (exclusive of any
     /// trailing whitespace / comma).
     pub value_range: Range<usize>,
@@ -59,6 +63,12 @@ pub struct LeafSpan {
 
 #[derive(Debug, Clone)]
 pub struct StanzaSpan {
+    /// Byte range of the stanza's key text in the
+    /// parent object.  `None` for the synthetic root
+    /// stanza (no key in source).  Phase 5+ — used by
+    /// the map-entry deletion path to find the start
+    /// of the splice-out range.
+    pub key_range: Option<Range<usize>>,
     /// Byte index of the `{` opening the stanza.
     /// Reserved for Phase 3's inspector pane.
     #[allow(dead_code)]
@@ -181,8 +191,12 @@ impl<'a> Walker<'a> {
                 _ => {}
             }
             let leading = self.pending_leading_comments.take();
-            // Parse key.
+            // Parse key (record its byte range for
+            // map-entry deletion).
+            let key_start = self.pos;
             let key = self.read_key()?;
+            let key_end = self.pos;
+            let key_range = key_start..key_end;
             self.skip_trivia();
             // Optional `:` separator (HJSON requires
             // it but is forgiving about whitespace).
@@ -207,6 +221,7 @@ impl<'a> Walker<'a> {
                     self.stanzas.insert(
                         path,
                         StanzaSpan {
+                            key_range: Some(key_range),
                             open_brace: open,
                             close_brace: close,
                             leading_comments_range: leading,
@@ -217,6 +232,7 @@ impl<'a> Walker<'a> {
                     self.leaves.insert(
                         path,
                         LeafSpan {
+                            key_range,
                             value_range: value_start..value_end,
                             leading_comments_range: leading,
                         },
