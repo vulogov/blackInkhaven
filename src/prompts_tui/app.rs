@@ -34,6 +34,7 @@ use crate::ai::AiClient;
 use crate::ai::prompts::{Prompt, PromptLibrary};
 use crate::ai::stream::{StreamMsg, spawn_chat_stream};
 use crate::config::{Config, DEFAULT_PROMPTS};
+use crate::prompts_tui::backup::{self, BackupEntry};
 use crate::tui::input::TextInput;
 
 /// Two-step entry: install panic hook + raw-mode +
@@ -110,6 +111,12 @@ enum Modal {
     AddPrompt { buffer: String, error: Option<String> },
     DeletePromptConfirm { name: String },
     DiscardConfirm { unsaved: usize },
+    /// Phase 4 — Ctrl+R rollback picker.
+    Rollback { entries: Vec<BackupEntry>, cursor: usize },
+    /// Confirm before deleting a backup file.
+    RollbackDelete { entry: BackupEntry },
+    /// Preview a backup's contents.
+    RollbackPreview { entry: BackupEntry, body: String, scroll: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -662,6 +669,155 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
         }
         return Ok(false);
     }
+    if let Modal::Rollback { entries, cursor } = &mut app.modal {
+        match key.code {
+            KeyCode::Esc => {
+                app.modal = Modal::None;
+            }
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < entries.len() {
+                    *cursor += 1;
+                }
+            }
+            KeyCode::PageUp => {
+                *cursor = cursor.saturating_sub(5);
+            }
+            KeyCode::PageDown => {
+                *cursor = (*cursor + 5).min(entries.len().saturating_sub(1));
+            }
+            KeyCode::Home => {
+                *cursor = 0;
+            }
+            KeyCode::End => {
+                *cursor = entries.len().saturating_sub(1);
+            }
+            KeyCode::Enter => {
+                let Some(entry) = entries.get(*cursor).cloned() else {
+                    app.modal = Modal::None;
+                    return Ok(false);
+                };
+                let outcome = stage_rollback(app, &entry);
+                match outcome {
+                    Ok(count) => {
+                        app.modal = Modal::None;
+                        app.status = format!(
+                            "rollback staged {count} change{} from {} — Ctrl+S to commit",
+                            if count == 1 { "" } else { "s" },
+                            entry.filename,
+                        );
+                    }
+                    Err(e) => {
+                        app.status = format!("rollback failed: {e:#}");
+                    }
+                }
+            }
+            KeyCode::Char('v') | KeyCode::Char('V') => {
+                let Some(entry) = entries.get(*cursor).cloned() else {
+                    return Ok(false);
+                };
+                match backup::read(&entry) {
+                    Ok(body) => {
+                        app.modal = Modal::RollbackPreview {
+                            entry,
+                            body,
+                            scroll: 0,
+                        };
+                    }
+                    Err(e) => {
+                        app.status = format!("preview failed: {e:#}");
+                    }
+                }
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                let Some(entry) = entries.get(*cursor).cloned() else {
+                    return Ok(false);
+                };
+                app.modal = Modal::RollbackDelete { entry };
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+    if let Modal::RollbackDelete { entry } = &app.modal {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                let entry = entry.clone();
+                match backup::delete(&entry) {
+                    Ok(()) => {
+                        app.status =
+                            format!("deleted backup {}", entry.filename);
+                    }
+                    Err(e) => {
+                        app.status = format!("delete failed: {e:#}");
+                    }
+                }
+                // Refresh the picker.
+                match backup::list(&app.project_root) {
+                    Ok(es) if !es.is_empty() => {
+                        app.modal = Modal::Rollback {
+                            entries: es,
+                            cursor: 0,
+                        };
+                    }
+                    _ => {
+                        app.modal = Modal::None;
+                    }
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                match backup::list(&app.project_root) {
+                    Ok(es) if !es.is_empty() => {
+                        app.modal = Modal::Rollback {
+                            entries: es,
+                            cursor: 0,
+                        };
+                    }
+                    _ => {
+                        app.modal = Modal::None;
+                    }
+                }
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+    if let Modal::RollbackPreview { body, scroll, .. } = &mut app.modal {
+        let total = body.lines().count();
+        match key.code {
+            KeyCode::Esc => {
+                match backup::list(&app.project_root) {
+                    Ok(es) if !es.is_empty() => {
+                        app.modal = Modal::Rollback {
+                            entries: es,
+                            cursor: 0,
+                        };
+                    }
+                    _ => {
+                        app.modal = Modal::None;
+                    }
+                }
+            }
+            KeyCode::Up => *scroll = scroll.saturating_sub(1),
+            KeyCode::Down => {
+                if *scroll + 1 < total {
+                    *scroll += 1;
+                }
+            }
+            KeyCode::PageUp => *scroll = scroll.saturating_sub(20),
+            KeyCode::PageDown => {
+                *scroll = (*scroll + 20).min(total.saturating_sub(1))
+            }
+            KeyCode::Home => *scroll = 0,
+            KeyCode::End => *scroll = total.saturating_sub(1),
+            _ => {}
+        }
+        return Ok(false);
+    }
 
     // Global exit chords.
     if key.code == KeyCode::Char('q')
@@ -698,6 +854,14 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
         }
         let summary = app.save_summary();
         app.modal = Modal::SaveConfirm { summary };
+        return Ok(false);
+    }
+
+    // Rollback picker — global Ctrl+R.
+    if key.code == KeyCode::Char('r')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+    {
+        open_rollback(app);
         return Ok(false);
     }
 
@@ -866,6 +1030,111 @@ fn dispatch_editor_keys(app: &mut App, key: KeyEvent) {
     let input: tui_textarea::Input = key.into();
     let _ = app.editor.input(input);
     app.first_launch = false;
+}
+
+/// 1.2.11+ — Ctrl+R handler.  Build the rollback
+/// picker modal from `.prompts-backups/`, or surface
+/// "no backups yet" on the status bar when the
+/// directory is empty / missing.
+fn open_rollback(app: &mut App) {
+    match backup::list(&app.project_root) {
+        Ok(entries) if !entries.is_empty() => {
+            app.modal = Modal::Rollback { entries, cursor: 0 };
+        }
+        Ok(_) => {
+            app.status = format!(
+                "rollback: no backups yet · save once to populate {}/{}/",
+                app.project_root.display(),
+                backup::BACKUP_DIR,
+            );
+        }
+        Err(e) => {
+            app.status = format!("rollback list failed: {e:#}");
+        }
+    }
+}
+
+/// 1.2.11+ — load a backup file into the working
+/// schema, staging every leaf diff vs the current
+/// library.  No disk write — the user reviews then
+/// Ctrl+S to commit (which writes a fresh backup
+/// of the pre-rollback state on the way).
+fn stage_rollback(app: &mut App, entry: &BackupEntry) -> Result<usize> {
+    let raw = backup::read(entry)?;
+    let restored: PromptLibrary = serde_hjson::from_str(&raw)
+        .with_context(|| format!("parse {}", entry.path.display()))?;
+
+    // Compute the diff between the restored library
+    // and the current in-memory one.  For
+    // book-keeping:
+    //   * Names in restored but not in current →
+    //     ADDED.
+    //   * Names in current but not in restored →
+    //     REMOVED.
+    //   * Names in both → swap templates / desc;
+    //     mark dirty if anything changed.
+    let mut current_by_name: std::collections::HashMap<String, &Prompt> =
+        std::collections::HashMap::new();
+    for p in &app.library.prompts {
+        current_by_name.insert(p.name.clone(), p);
+    }
+    let restored_names: std::collections::HashSet<String> =
+        restored.prompts.iter().map(|p| p.name.clone()).collect();
+
+    let mut staged: usize = 0;
+
+    // Apply additions + modifications.
+    let mut new_library = PromptLibrary::default();
+    for restored_prompt in &restored.prompts {
+        let name = restored_prompt.name.clone();
+        let was_present = current_by_name.contains_key(&name);
+        if !was_present {
+            // Brand-new vs current library.
+            app.added.insert(name.clone());
+            app.dirty.insert(name.clone());
+            staged += 1;
+        } else {
+            // Compare bodies; if different, mark
+            // dirty.
+            let live = current_by_name.get(&name).copied().unwrap();
+            if live.template != restored_prompt.template
+                || live.description != restored_prompt.description
+            {
+                app.dirty.insert(name.clone());
+                staged += 1;
+            }
+            // If the user had already staged this
+            // for deletion, the rollback un-stages
+            // it.
+            app.removed.remove(&name);
+        }
+        new_library.prompts.push(restored_prompt.clone());
+    }
+    // Names in current but missing from restored
+    // get staged for deletion.  Include them in
+    // new_library so the list still renders them
+    // (struck-through) until save.
+    for current_prompt in &app.library.prompts {
+        if !restored_names.contains(&current_prompt.name) {
+            app.removed.insert(current_prompt.name.clone());
+            // Keep the existing body for the
+            // delete-confirm strike-through render.
+            new_library.prompts.push((*current_prompt).clone());
+            staged += 1;
+        }
+    }
+
+    // Swap the library + sort + reload editor + reset
+    // cursor to clamp.
+    new_library
+        .prompts
+        .sort_by(|a, b| a.name.cmp(&b.name));
+    app.library = new_library;
+    if app.cursor >= app.library.prompts.len() && app.cursor > 0 {
+        app.cursor = app.library.prompts.len().saturating_sub(1);
+    }
+    app.reload_editor();
+    Ok(staged)
 }
 
 /// 1.2.11+ — Ctrl+G handler.  Inserts
@@ -1237,6 +1506,7 @@ fn list_help_body() -> String {
         "                       second `d` on a deleted entry revokes",
         "   Tab / Shift+Tab   cycle pane focus",
         "   Ctrl+S            save library (confirm modal)",
+        "   Ctrl+R            rollback picker (list .prompts-backups/)",
         "   Esc / Ctrl+Q      quit (confirm if unsaved)",
         "",
         " Status chips:",
@@ -1371,6 +1641,15 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
         }
         Modal::DiscardConfirm { unsaved } => {
             draw_discard_confirm(f, size, *unsaved);
+        }
+        Modal::Rollback { entries, cursor } => {
+            draw_rollback_picker(f, size, entries, *cursor);
+        }
+        Modal::RollbackDelete { entry } => {
+            draw_rollback_delete_confirm(f, size, entry);
+        }
+        Modal::RollbackPreview { entry, body, scroll } => {
+            draw_rollback_preview(f, size, entry, body, *scroll);
         }
     }
 }
@@ -1757,7 +2036,7 @@ fn draw_status(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let dim = Style::default().add_modifier(Modifier::DIM);
     let hints = match app.focus {
         Focus::List => {
-            " ↑↓ · a add · d delete · Ctrl+S save · Tab next · ? help · Ctrl+Q quit"
+            " ↑↓ · a add · d delete · Ctrl+S save · Ctrl+R rollback · Tab next · ? help"
         }
         Focus::Editor => {
             " type · Ctrl+G insert AI response · Ctrl+S save · Tab next · Ctrl+H help"
@@ -2050,6 +2329,158 @@ fn draw_discard_confirm(f: &mut ratatui::Frame, host: Rect, unsaved: usize) {
         )),
     ];
     f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_rollback_picker(
+    f: &mut ratatui::Frame,
+    host: Rect,
+    entries: &[BackupEntry],
+    cursor: usize,
+) {
+    let w = host.width.saturating_sub(8).min(96);
+    let h = (entries.len() as u16 + 6).min(host.height.saturating_sub(4));
+    let x = host.x + host.width.saturating_sub(w) / 2;
+    let y = host.y + host.height.saturating_sub(h) / 2;
+    let rect = Rect { x, y, width: w, height: h };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Prompts rollback — {} backups ", entries.len()))
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let now = chrono::Local::now();
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let mut lines: Vec<Line<'_>> = Vec::with_capacity(entries.len() + 2);
+    for (i, entry) in entries.iter().enumerate() {
+        let selected = i == cursor;
+        let style = if selected {
+            Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let marker = if selected { "▶" } else { " " };
+        let rel = backup::relative_time(entry, now);
+        let abs = entry
+            .timestamp
+            .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+            .unwrap_or_else(|| entry.filename.clone());
+        let size = if entry.size_bytes < 1024 {
+            format!("{} B", entry.size_bytes)
+        } else {
+            format!("{:.1} KB", entry.size_bytes as f64 / 1024.0)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {marker}  "), bold),
+            Span::styled(abs, style),
+            Span::styled(format!("   ({rel}, {size})"), dim),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " Enter restore (stages — Ctrl+S to commit) · v preview · d delete · Esc back",
+        dim,
+    )));
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn draw_rollback_delete_confirm(
+    f: &mut ratatui::Frame,
+    host: Rect,
+    entry: &BackupEntry,
+) {
+    let w = host.width.saturating_sub(8).min(72);
+    let h: u16 = 8;
+    let x = host.x + host.width.saturating_sub(w) / 2;
+    let y = host.y + host.height.saturating_sub(h) / 2;
+    let rect = Rect { x, y, width: w, height: h };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Delete backup? ")
+        .border_style(
+            Style::default()
+                .fg(Color::Red)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("    "),
+            Span::styled(entry.filename.clone(), bold),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "    This cannot be undone.",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "    y / Enter delete · n / Esc cancel",
+            dim,
+        )),
+    ];
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_rollback_preview(
+    f: &mut ratatui::Frame,
+    host: Rect,
+    entry: &BackupEntry,
+    body: &str,
+    scroll: usize,
+) {
+    let w = host.width.saturating_sub(4).min(120);
+    let h = host.height.saturating_sub(2).min(40);
+    let x = host.x + host.width.saturating_sub(w) / 2;
+    let y = host.y + host.height.saturating_sub(h) / 2;
+    let rect = Rect { x, y, width: w, height: h };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Preview — {} ", entry.filename))
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let visible = inner.height.saturating_sub(2) as usize;
+    let total = body.lines().count();
+    let mut lines: Vec<Line<'_>> = body
+        .lines()
+        .skip(scroll)
+        .take(visible)
+        .map(|l| Line::from(Span::raw(l.to_string())))
+        .collect();
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (empty file)",
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+    }
+    let last_line = (scroll + visible).min(total);
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!(
+            " lines {}-{} of {} · ↑↓ PgUp PgDn Home End scroll · Esc back",
+            scroll + 1,
+            last_line.max(scroll + 1),
+            total,
+        ),
+        Style::default().add_modifier(Modifier::DIM),
+    )));
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 fn draw_welcome_overlay(f: &mut ratatui::Frame, host: Rect, app: &App) {

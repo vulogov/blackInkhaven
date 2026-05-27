@@ -27,6 +27,7 @@
 //! for the full design.
 
 mod app;
+mod backup;
 
 use std::path::Path;
 
