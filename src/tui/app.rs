@@ -7666,7 +7666,7 @@ impl App {
     /// `draw_status` splices the result into the
     /// status-bar span list after the focus chip.
     pub(crate) fn pov_chip_spans(&self) -> Vec<ratatui::text::Span<'_>> {
-        use ratatui::style::{Color, Modifier, Style};
+        use ratatui::style::{Modifier, Style};
         use ratatui::text::Span;
         if !self.pov_chip_effective() {
             return Vec::new();
@@ -7688,11 +7688,16 @@ impl App {
         };
         let mut spans = Vec::with_capacity(3);
         spans.push(Span::raw(" "));
+        // Theme-driven so users can retune the chip
+        // against their terminal palette.  Default
+        // bg/fg are explicit RGB to dodge the named-
+        // colour-mapping trap that washed out the
+        // original `Color::Magenta` on Catppuccin.
         spans.push(Span::styled(
             format!(" POV: {} ", chip.pov),
             Style::default()
-                .bg(Color::Magenta)
-                .fg(Color::White)
+                .bg(self.theme.pov_chip_bg)
+                .fg(self.theme.pov_chip_fg)
                 .add_modifier(Modifier::BOLD),
         ));
         if !chip.supporting.is_empty() {
