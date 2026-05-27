@@ -1,7 +1,8 @@
 # Proposal — Full TUI configuration editor (`inkhaven config`)
 
-Status: **research / pre-implementation**.  Target
-cycle: 1.2.10 (or 1.3 if scope grows).
+Status: **research / approved — ready for
+implementation**.  Target cycle: 1.2.10.  All four
+flagged open questions resolved 2026-05-27 (§10).
 
 ## 1. Summary
 
@@ -110,6 +111,7 @@ Ctrl+S              save (with confirmation modal)
 Ctrl+R              open rollback picker
 Ctrl+A              attach / edit annotation on the current field
 Ctrl+B h            field help (floating CONFIGURATION.md slice)
+Ctrl+B i            comment inspector (floating pane — see §8.4)
 Ctrl+Z              undo last edit (in-session)
 Esc                 cancel current widget / focus tree / exit
 Ctrl+Q              quit
@@ -117,7 +119,9 @@ Ctrl+Q              quit
 
 Mirrors main inkhaven conventions wherever
 possible.  `Ctrl+B h` for help matches the existing
-context-help chord.
+context-help chord; `Ctrl+B i` is new — *inspect*
+the human-written comments attached to the focused
+field's stanza.
 
 ## 4. Architecture
 
@@ -279,27 +283,79 @@ the count; oldest dropped on overflow.
 
 ### 6.5 HJSON write — comment preservation
 
+**Decision (Q3): preserve comments via surgical
+text rewrite.**
+
 Naïve `serde_hjson::to_string(&edited)` blows away
-every comment in the live file.  Two strategies:
+every comment in the live file.  We adopt a
+**path → byte-range index** approach:
 
-  * **Strategy A — comment rebind**.  Parse HJSON
-    with a comment-preserving parser (`deser-hjson`
-    + a fork; or a hand-rolled walker), match
-    comments to fields by line proximity, re-emit
-    with comments at the same paths.  Brittle.
-  * **Strategy B — annotations replace comments**
-    (recommended).  Editor *owns* comments: any
-    in-file `#` / `//` lines outside annotations
-    get stripped on first save, replaced by
-    annotation-driven comments on subsequent
-    saves.  Simpler.  Tradeoff: hand-edited
-    comments are lost the first time the user
-    saves from the TUI — surface this in a
-    one-time "migration" modal.
+  1. Parse the live `inkhaven.hjson` with a hand-
+    rolled walker that records, for every leaf
+    key, the byte range of its **value** in the
+    source text (not the key, not the surrounding
+    whitespace) and the byte range of any leading
+    comments attached to that field.
+  2. Live in `App` as `source: String` (original
+    bytes) + `index: HashMap<String, ValueSpan>`
+    + `edited_json: serde_json::Value` (working
+    copy of the JSON shape).
+  3. On `Ctrl+S`, compute the diff of
+    `edited_json` against the disk JSON.  For
+    every changed leaf, splice the new HJSON
+    representation into `source` at
+    `index[path].value_range`.  For every newly-
+    present leaf (e.g. an `Option<T>` flipped
+    from `None` to `Some`, or a default
+    explicitly committed by the user), append at
+    the end of the appropriate stanza.
+  4. Write the spliced `source` atomically (tmp
+    + rename).
 
-**Recommend Strategy B**.  The HJSON editor
-(`Ctrl+B 0`) stays the comment-preserving path for
-users who want raw control.
+Trade-offs:
+
+  * Comments **and** unknown fields (see §6.6)
+    survive untouched.
+  * Annotation-driven comments emitted on save
+    (§7) live as their own marked blocks
+    (`# annotation:` prefix) so the editor can
+    update them in place without disturbing
+    hand-written comments above them.
+  * The parser is hand-rolled.  ~300 LOC; tested
+    against every existing project's HJSON in a
+    fixture corpus + the synthetic edge cases
+    (trailing commas, multi-line strings,
+    `#` vs `//` comments, nested braces inside
+    strings).
+
+The existing `Ctrl+B 0` HJSON editor stays as the
+power-user fallback for raw editing — both
+editors round-trip cleanly because both preserve
+comments.
+
+### 6.6 Unknown fields
+
+The user may add fields outside the inkhaven
+schema (forward-compat, external tooling
+integration, custom Bund hooks).  Policy:
+
+  * The TUI **does NOT display** unknown fields
+    in the tree.
+  * The TUI **DOES NOT EDIT** unknown fields.
+  * The surgical-rewrite save path (§6.5)
+    incidentally **preserves** unknown fields:
+    the splice only touches byte ranges the
+    schema knows about, leaving everything else
+    untouched.
+
+Surfaced as a chip on the top status bar when
+unknown fields are detected:
+*`3 unknown fields preserved as-is`*.
+
+The user is on the hook for unknown-field
+correctness — inkhaven makes no guarantees beyond
+"we didn't touch them".  Documented prominently
+on the TUI's first-launch splash.
 
 ## 7. Annotations
 
@@ -355,6 +411,56 @@ Reuse the existing markdown renderer
 (`pulldown-cmark` + the Help-book viewer plumbing
 from 1.2.8).  Read-only pane; `Esc` closes.
 
+### 8.4 Comment inspector (`Ctrl+B i`) — new
+
+A second floating pane, complementary to `Ctrl+B h`.
+While `Ctrl+B h` shows the **author** (inkhaven)
+documentation for the field, `Ctrl+B i` shows the
+**user's** comments — the `#` / `//` lines in the
+live HJSON file attached to the focused field's
+stanza.
+
+Use cases:
+
+  * The HJSON file carries an explanatory comment
+    above a field ("bumped from 10s to 5s after
+    testing on a 5K-word manuscript") and the
+    writer wants to recall the reasoning without
+    leaving the structured editor.
+  * The annotation system (§7) records short notes
+    against fields, but rich multi-line context
+    naturally lives as comments in the HJSON
+    file — the inspector surfaces both.
+
+UI:
+
+```
+┌── Comments — editor.autosave_seconds ────────────┐
+│                                                  │
+│ Lines 47-49 of inkhaven.hjson:                   │
+│                                                  │
+│   # bumped from 10s to 5s after testing on a    │
+│   # 5K-word manuscript — 10s lost too much typing │
+│   # under high-cadence editing                    │
+│                                                  │
+│ Annotation (§7):                                 │
+│   "deliberate: feels right for novel pace"       │
+│                                                  │
+│ Esc closes                                       │
+└──────────────────────────────────────────────────┘
+```
+
+The inspector reads the comment text from the
+byte-range index built at file load time (§6.5).
+Scope: comments immediately above the focused
+field's key, contiguous block.  No re-parsing —
+the index already carries the comment span.
+
+When focused on a stanza (not a leaf), the
+inspector shows comments at the stanza opener
+plus a count of fields with their own comments:
+*`5 of 12 fields carry comments`*.
+
 ## 9. Rollback (`Ctrl+R`)
 
 Modal listing every backup in
@@ -380,24 +486,27 @@ Modal listing every backup in
     on-disk file (reuse F6 snapshot-diff plumbing).
   * **d**: delete a backup with confirm.
 
-## 10. Open questions
+## 10. Resolved questions
 
-| #  | Question                                                                              | Recommendation                                                |
-|----|---------------------------------------------------------------------------------------|---------------------------------------------------------------|
-| Q1 | User spec says `YYYYDDMM_HHMMSS`; was that a typo for `YYYYMMDD_HHMMSS`?               | Confirm — ISO ordering sorts correctly chronologically.       |
-| Q2 | Should `inkhaven config` open the main project, or be CWD-agnostic?                   | `--project-directory` required when not in a project dir.     |
-| Q3 | Comment preservation in HJSON: tolerate one-time loss (Strategy B) or invest in a comment-preserving parser? | Strategy B — see §6.5.                                        |
-| Q4 | Should the rollback list display annotations attached at backup time?                 | Yes — render in DIM beside the timestamp.                      |
-| Q5 | Should `inkhaven config` work for projects that haven't run `inkhaven init` yet?      | Allow; treat as "no project, system defaults only" — useful for tuning a fresh config before init. |
-| Q6 | `theme` stanza has ~80 colour fields.  One-screen-per-colour or grouped sub-screens? | Group by surface (Editor / Tree / Modal / Style warnings).    |
-| Q7 | Should saving trigger a `restart required` banner like Ctrl+B 0 does?                 | Yes — re-use the existing overlay; same triggers.              |
-| Q8 | Edit-history undo: in-session only, or persisted across launches?                     | In-session only; persistence belongs to the backup system.    |
-| Q9 | `LlmConfig.providers` is a `HashMap<String, LlmProvider>` — needs map-editor widget; in scope for v1? | Defer to v2; v1 treats providers as opaque, edit via HJSON.   |
-| Q10| Should the TUI verify `inkhaven.hjson` against a JSON Schema, or trust serde?         | Serde validation + per-field constraints is enough.            |
+Decisions made 2026-05-27 before implementation:
+
+| #  | Question                                                                              | **Decision**                                                          |
+|----|---------------------------------------------------------------------------------------|------------------------------------------------------------------------|
+| Q1 | User spec says `YYYYDDMM_HHMMSS`; was that a typo for `YYYYMMDD_HHMMSS`?               | ✓ **Confirmed typo** → `YYYYMMDD_HHMMSS` (ISO).                       |
+| Q2 | Should `inkhaven config` open the main project, or be CWD-agnostic?                   | `--project-directory` required when not in a project dir.              |
+| Q3 | Comment preservation in HJSON.                                                         | ✓ **Preserve.**  Surgical text rewrite via path→byte-range index (§6.5).  Comments surface via new `Ctrl+B i` inspector (§8.4). |
+| Q4 | Should the rollback list display annotations attached at backup time?                 | Yes — render in DIM beside the timestamp.                              |
+| Q5 | Should `inkhaven config` work for projects that haven't run `inkhaven init` yet?      | Allow; treat as "no project, system defaults only".                    |
+| Q6 | `theme` stanza has ~80 colour fields.  One-screen-per-colour or grouped sub-screens? | Group by surface (Editor / Tree / Modal / Style warnings).             |
+| Q7 | Should saving trigger a `restart required` banner like Ctrl+B 0 does?                 | ✓ **Yes** — reuse the existing 1.2.8 restart-required overlay.        |
+| Q8 | Edit-history undo: in-session only, or persisted across launches?                     | In-session only; persistence belongs to the backup system.             |
+| Q9 | `LlmConfig.providers` map editor — v1 or defer?                                       | ✓ **In scope for v1.**  Treated as a map of named stanzas; editing tracked under §11 Phase 2. |
+| Q10| Should the TUI verify `inkhaven.hjson` against a JSON Schema, or trust serde?         | Serde validation + per-field constraints is enough.                    |
+| Q11| What about unknown / user-added fields (forward-compat, external tooling)?            | ✓ **Preserve incidentally via surgical rewrite; do NOT edit.**  See §6.6.  Top-bar chip surfaces the count. |
 
 ## 11. Implementation phases
 
-### Phase 1 — read-only walk-through (1 day)
+### Phase 1 — schema + read-only walk-through (1–2 days)
 
 Goal: a non-mutating TUI that can be shipped behind
 a feature flag.
@@ -405,71 +514,91 @@ a feature flag.
   * CLI plumbing (`inkhaven config`).
   * Schema construction (hand-rolled, all ~240
     fields).
+  * Schema-completeness CI assertion against
+    `Config::default()`.
   * Tree pane + leaf detail pane rendering.
   * Read live HJSON, overlay defaults.
-  * Help pane (Ctrl+B h).
+  * Help pane (`Ctrl+B h`).
+  * Unknown-fields detection + top-bar chip
+    (§6.6).
 
-No widgets that mutate; no save; no backup.  Already
-useful as a *config explorer*.
+No widgets that mutate; no save; no backup.  Useful
+as a *config explorer*.
 
-### Phase 2 — typed widgets + save (2–3 days)
+### Phase 2 — typed widgets + comment-preserving save (3–4 days)
 
   * Per-type widget catalog (§5).
   * Validation pipeline.
-  * `Ctrl+S` save flow with confirmation modal.
-  * Backup snapshot on save.
-  * Restart-required overlay.
+  * **Hand-rolled HJSON walker** that builds the
+    path → byte-range index for surgical rewrite
+    (§6.5).  Tested against every fixture HJSON
+    in the test corpus + edge cases (trailing
+    commas, multi-line strings, `#` vs `//`
+    comments, nested braces inside strings).
+  * **Surgical splice** save pipeline that
+    preserves comments + unknown fields.
+  * `Ctrl+S` confirmation modal.
+  * `.config-backups/inkhaven_YYYYMMDD_HHMMSS.hjson`
+    snapshot on save.
+  * Restart-required overlay (reuses 1.2.8 plumbing).
+  * **`LlmConfig.providers` map editor** (Q9 in
+    scope) — list of named provider stanzas,
+    `a` add, `d` delete, `Enter` edit child fields.
 
-### Phase 3 — rollback + annotations (1–2 days)
+### Phase 3 — rollback + annotations + comment inspector (2 days)
 
-  * `.config-backups/` lister + preview.
-  * Sidecar annotations + chip rendering.
-  * Annotation edit modal (Ctrl+A).
+  * `.config-backups/` lister + preview + diff.
+  * Sidecar `.config-annotations.hjson` + chip
+    rendering.
+  * Annotation edit modal (`Ctrl+A`).
+  * **`Ctrl+B i` comment inspector** floating
+    pane (§8.4) — reads from the byte-range
+    index built in Phase 2.
 
-### Phase 4 — polish (1 day)
+### Phase 4 — polish + docs (1 day)
 
-  * Tree-pane incremental search.
+  * Tree-pane incremental search (`/`).
   * Better diff in the rollback preview.
-  * Documentation: new tutorial 44 in
-    `Documentation/Tutorials/`.
-  * KEYBINDING.md row.
+  * New tutorial in `Documentation/Tutorials/`
+    (next free number, currently 44).
+  * KEYBINDING.md rows for `inkhaven config`'s
+    chord set.
   * Mention in `Documentation/CONFIGURATION.md`
-    header.
+    header pointing at the new editor.
+  * RELEASE_NOTES/1.2.10.md write-up.
 
-Total estimate: **5–7 days of focused work**.
+**Total estimate**: **7–9 days of focused work**
+(was 5–7 before scope grew with surgical rewrite +
+providers map editor).
 
 ## 12. Risks
 
 | Risk                                                                                                  | Mitigation                                                                          |
 |--------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|
-| Schema drifts from `Config` struct as new fields land.                                                | One-test schema-completeness assertion run in CI.                                  |
-| Comment-loss on first save surprises users.                                                            | One-time migration modal that explains + offers to keep HJSON editor as default.   |
-| `theme` stanza dwarfs every other section in field count, dominates the tree.                          | Group rendering by surface (Q6); collapse by default.                              |
-| `LlmConfig.providers` map shape is harder than scalars.                                                | Defer (Q9); document that "Providers" branch is read-only in v1.                    |
-| Users editing both Ctrl+B 0 and `inkhaven config` against the same file see divergent state.           | Mtime-watch like the main editor; reload on external change with red warning.       |
+| Schema drifts from `Config` struct as new fields land.                                                | One-test schema-completeness assertion run in CI (Phase 1).                         |
+| Hand-rolled HJSON walker mis-parses an exotic file and corrupts on save.                              | Fixture corpus + edge-case tests (Phase 2).  Backup snapshot taken *before* the splice runs, so rollback is one chord away.  |
+| `theme` stanza dwarfs every other section in field count, dominates the tree.                          | Group rendering by surface (§Q6); collapse by default.                              |
+| Surgical-rewrite splice splice-target offsets shift mid-save (re-indexing bug).                       | After each splice, rebuild the index from the post-splice source; cheap at literary HJSON sizes.  |
+| `LlmConfig.providers` map widget complexity bleeds into the timeline.                                 | Phase 2 ships a minimal map-editor (add / delete / descend); rich provider-specific UX is Phase 4 polish only if budget permits. |
+| Users editing both `Ctrl+B 0` and `inkhaven config` against the same file see divergent state.        | Mtime-watch like the main editor; reload on external change with red warning.       |
 | Backup directory grows unbounded.                                                                      | Optional retention knob (§6.4).                                                     |
+| Unknown fields surprise the user when they realise the TUI ignored them.                              | Top-bar chip (§6.6) + first-launch splash mention.                                  |
 
 ## 13. Out of scope (v1)
 
-  * **HJSON comment round-trip** — Ctrl+B 0 keeps
-    that responsibility.
-  * **Editing LLM provider blocks** — keep that
-    surface in the HJSON editor for now.
-  * **Theme preview** — colour picker shows a swatch;
-    no live overlay on a sample editor.  v2.
-  * **Bund-script config hooks** — out of scope.
+  * **Theme preview** — colour picker shows a
+    swatch; no live overlay on a sample editor.
+    Future polish.
+  * **Bund-script config hooks** (e.g.
+    `hook.on_config_save`) — out of scope.
   * **Network operations** — fully offline.
+  * **Diff-based partial-save** (commit only N of
+    M changed fields) — v1 saves everything that
+    changed; granular commits are a future refinement.
 
-## 14. Open thread → user
+## 14. Status: ready for implementation
 
-Items I'd like a green light on before starting
-implementation:
-
-  * The Q1 typo (`YYYYDDMM` → `YYYYMMDD`).
-  * Strategy B for HJSON comments (§6.5) — accept
-    that first save from the TUI may drop
-    hand-written comments.
-  * Sidecar `.config-annotations.hjson` location
-    (§7) — alternative: in the HJSON file itself as
-    `# annotation:` lines.
-  * Defer `LlmConfig.providers` editor to v2.
+All four flagged questions (Q1, Q3, Q7, Q9) plus
+the new unknown-fields policy (Q11) are resolved.
+Implementation can begin against the phased plan in
+§11.
