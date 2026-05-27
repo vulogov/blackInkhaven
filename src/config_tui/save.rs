@@ -54,6 +54,17 @@ pub enum EditKind {
     /// Path is NOT present in the live HJSON — append
     /// at the parent stanza's insertion point.
     Append,
+    /// Phase 5+ — append a whole named stanza
+    /// (e.g. a new `llm.providers.<name>` map entry).
+    /// The `new_value` is the full object body that
+    /// gets serialised + indented inside the parent
+    /// map's `}`.
+    AddMapEntry,
+    /// Phase 5+ — splice out an entire `name: { ... }`
+    /// block (key + value + optional trailing
+    /// comma + trailing newline).  Drives map-entry
+    /// deletion from the TUI.
+    DeleteMapEntry,
 }
 
 /// Compare the schema tree (post-edit) against the
@@ -134,29 +145,70 @@ fn values_match(a: &Value, b: &Value) -> bool {
 /// start offset so earlier splices don't shift later
 /// ones; appends are batched per-stanza.
 pub fn apply_edits(index: &HjsonIndex, edits: &[Edit]) -> Result<String> {
-    // Partition.
-    let mut splices: Vec<&Edit> =
-        edits.iter().filter(|e| e.kind == EditKind::Splice).collect();
-    let appends: Vec<&Edit> =
-        edits.iter().filter(|e| e.kind == EditKind::Append).collect();
-
-    // Splices: sort by value_range.start descending
-    // and rewrite in place.
     let mut source = index.source.clone();
+
+    // ── pass 1: map-entry deletions ────────────────
+    //
+    // Run first so the remaining splice / append /
+    // add passes work against a smaller, stable
+    // source.  Sort by start offset descending so
+    // earlier deletions don't shift later ones.
+    let mut deletes: Vec<&Edit> = edits
+        .iter()
+        .filter(|e| e.kind == EditKind::DeleteMapEntry)
+        .collect();
+    deletes.sort_by(|a, b| {
+        let a_start = entry_full_range(index, &a.path).map(|r| r.start).unwrap_or(0);
+        let b_start = entry_full_range(index, &b.path).map(|r| r.start).unwrap_or(0);
+        b_start.cmp(&a_start)
+    });
+    for edit in &deletes {
+        if let Some(range) = entry_full_range(index, &edit.path) {
+            source.replace_range(range, "");
+        }
+    }
+
+    // The deletions shifted byte positions, so the
+    // original index is stale for everything below.
+    // Re-parse against the working source so splice /
+    // append spans are correct.
+    let working_index = if !deletes.is_empty() {
+        super::hjson_index::parse(&source)
+            .context("re-parse source after deletions")?
+    } else {
+        index.clone()
+    };
+
+    // ── pass 2: splices ────────────────────────────
+    let mut splices: Vec<&Edit> = edits
+        .iter()
+        .filter(|e| e.kind == EditKind::Splice)
+        .collect();
     splices.sort_by(|a, b| {
-        let a_start = index.leaves[&a.path].value_range.start;
-        let b_start = index.leaves[&b.path].value_range.start;
+        let a_start = working_index
+            .leaves
+            .get(&a.path)
+            .map(|s| s.value_range.start)
+            .unwrap_or(0);
+        let b_start = working_index
+            .leaves
+            .get(&b.path)
+            .map(|s| s.value_range.start)
+            .unwrap_or(0);
         b_start.cmp(&a_start)
     });
     for edit in &splices {
-        let span = &index.leaves[&edit.path];
-        let new_text = render_value(&edit.new_value);
-        source.replace_range(span.value_range.clone(), &new_text);
+        if let Some(span) = working_index.leaves.get(&edit.path) {
+            let new_text = render_value(&edit.new_value);
+            source.replace_range(span.value_range.clone(), &new_text);
+        }
     }
 
-    // Appends: group by parent stanza so we can splice
-    // multiple new fields in one pass.  Phase 2 supports
-    // root-level appends + nested-stanza appends both.
+    // ── pass 3: leaf appends ───────────────────────
+    let appends: Vec<&Edit> = edits
+        .iter()
+        .filter(|e| e.kind == EditKind::Append)
+        .collect();
     let mut by_parent: BTreeMap<String, Vec<&Edit>> = BTreeMap::new();
     for edit in &appends {
         let parent = parent_path(&edit.path);
@@ -165,30 +217,16 @@ pub fn apply_edits(index: &HjsonIndex, edits: &[Edit]) -> Result<String> {
             .or_default()
             .push(edit);
     }
-    // Apply in reverse-document order (latest insertion
-    // point first) so earlier insertions don't shift
-    // later ones.  Rebuild the index in source so the
-    // insertion points after each batch are still
-    // valid.
     let mut insertion_plan: Vec<(usize, String)> = Vec::new();
     for (parent, edits_in_parent) in by_parent {
+        let fresh = super::hjson_index::parse(&source)
+            .context("re-parse source for append")?;
         let insertion_point = if parent.is_empty() {
-            // Append at the top-level body end (just
-            // inside the outer `}` or at EOF).
-            //
-            // The source has shifted because of the
-            // splice pass — rebuild a fresh index for
-            // a stable insertion point.
-            let fresh = super::hjson_index::parse(&source)
-                .context("re-parse source after splice")?;
             fresh.top_level_body_end
         } else {
-            let fresh = super::hjson_index::parse(&source)
-                .context("re-parse source after splice")?;
             match fresh.stanzas.get(&parent) {
                 Some(span) => span.close_brace,
-                None => continue, // parent stanza
-                                  // missing — bail.
+                None => continue,
             }
         };
         let mut payload = String::new();
@@ -202,12 +240,187 @@ pub fn apply_edits(index: &HjsonIndex, edits: &[Edit]) -> Result<String> {
         payload.push('\n');
         insertion_plan.push((insertion_point, payload));
     }
-    // Apply in descending offset.
     insertion_plan.sort_by(|a, b| b.0.cmp(&a.0));
     for (pos, payload) in insertion_plan {
         source.insert_str(pos, &payload);
     }
+
+    // ── pass 4: map-entry additions ────────────────
+    let adds: Vec<&Edit> = edits
+        .iter()
+        .filter(|e| e.kind == EditKind::AddMapEntry)
+        .collect();
+    let mut add_by_parent: BTreeMap<String, Vec<&Edit>> = BTreeMap::new();
+    for edit in &adds {
+        let parent = parent_path(&edit.path);
+        add_by_parent
+            .entry(parent.to_string())
+            .or_default()
+            .push(edit);
+    }
+    let mut add_plan: Vec<(usize, String)> = Vec::new();
+    for (parent, edits_in_parent) in add_by_parent {
+        let fresh = super::hjson_index::parse(&source)
+            .context("re-parse source for map add")?;
+        let close_brace = match fresh.stanzas.get(&parent) {
+            Some(span) => span.close_brace,
+            None => continue,
+        };
+        // Detect parent's interior indentation by
+        // peeking at the column of an existing entry's
+        // key — fall back to 4 spaces.
+        let indent = detect_indent(&source, &fresh, &parent).unwrap_or("    ".to_string());
+        let mut payload = String::new();
+        for edit in edits_in_parent {
+            let key = leaf_key(&edit.path);
+            payload.push('\n');
+            payload.push_str(&indent);
+            payload.push_str(&key);
+            payload.push_str(": ");
+            payload.push_str(&render_object_body(&edit.new_value, &indent));
+        }
+        payload.push('\n');
+        add_plan.push((close_brace, payload));
+    }
+    add_plan.sort_by(|a, b| b.0.cmp(&a.0));
+    for (pos, payload) in add_plan {
+        source.insert_str(pos, &payload);
+    }
+
     Ok(source)
+}
+
+/// Compute the splice-out range for a map entry,
+/// covering the entire `name: { ... }` block plus
+/// any trailing comma + newline so deletion leaves
+/// clean output.  Handles both leaf entries (rare
+/// for maps, but possible) and stanza entries.
+fn entry_full_range(
+    index: &HjsonIndex,
+    path: &str,
+) -> Option<std::ops::Range<usize>> {
+    let bytes = index.source.as_bytes();
+    let (start, value_end) = if let Some(span) = index.stanzas.get(path) {
+        let start = span.key_range.as_ref()?.start;
+        (start, span.close_brace + 1)
+    } else if let Some(span) = index.leaves.get(path) {
+        (span.key_range.start, span.value_range.end)
+    } else {
+        return None;
+    };
+    let mut end = value_end;
+    // Absorb trailing horizontal whitespace.
+    while end < bytes.len() && (bytes[end] == b' ' || bytes[end] == b'\t') {
+        end += 1;
+    }
+    // Optional trailing comma.
+    if end < bytes.len() && bytes[end] == b',' {
+        end += 1;
+    }
+    // Absorb trailing whitespace + a single newline so
+    // the deletion produces tidy output.
+    while end < bytes.len() && (bytes[end] == b' ' || bytes[end] == b'\t') {
+        end += 1;
+    }
+    if end < bytes.len() && bytes[end] == b'\r' {
+        end += 1;
+    }
+    if end < bytes.len() && bytes[end] == b'\n' {
+        end += 1;
+    }
+    Some(start..end)
+}
+
+/// Detect the leading-whitespace indent of an
+/// existing entry inside a stanza.  Used when
+/// rendering a new map entry so it lines up
+/// visually with its neighbours.
+fn detect_indent(
+    source: &str,
+    index: &HjsonIndex,
+    stanza_path: &str,
+) -> Option<String> {
+    let stanza = index.stanzas.get(stanza_path)?;
+    // Look at any existing child key.  Walk all
+    // leaves + stanzas under this stanza and pick
+    // one whose key sits on its own line.
+    let bytes = source.as_bytes();
+    let mut candidate_start: Option<usize> = None;
+    for (path, leaf) in &index.leaves {
+        if !path.starts_with(stanza_path) || path == stanza_path {
+            continue;
+        }
+        // Direct child only.
+        let suffix = &path[stanza_path.len()..];
+        if !suffix.starts_with('.') || suffix[1..].contains('.') {
+            continue;
+        }
+        candidate_start = Some(leaf.key_range.start);
+        break;
+    }
+    if candidate_start.is_none() {
+        for (path, span) in &index.stanzas {
+            if !path.starts_with(stanza_path) || path == stanza_path {
+                continue;
+            }
+            let suffix = &path[stanza_path.len()..];
+            if !suffix.starts_with('.') || suffix[1..].contains('.') {
+                continue;
+            }
+            if let Some(kr) = &span.key_range {
+                candidate_start = Some(kr.start);
+                break;
+            }
+        }
+    }
+    let start = candidate_start?;
+    // Walk backward from `start` to the previous
+    // newline; the indent is everything between that
+    // newline + start.
+    let mut line_start = start;
+    while line_start > 0 && bytes[line_start - 1] != b'\n' {
+        line_start -= 1;
+    }
+    let indent_bytes = &bytes[line_start..start];
+    if indent_bytes.iter().all(|b| *b == b' ' || *b == b'\t') {
+        Some(String::from_utf8_lossy(indent_bytes).into_owned())
+    } else {
+        // Mixed content on the line — bail.
+        let _ = stanza;
+        None
+    }
+}
+
+/// Render an object body as a multi-line HJSON block
+/// `{ key: val, key: val }`.  Used by the map-entry
+/// AddMapEntry pipeline.  Falls back to compact
+/// rendering for non-object values (rare for map
+/// entries, but possible).
+fn render_object_body(value: &Value, base_indent: &str) -> String {
+    let Value::Object(map) = value else {
+        return render_value(value);
+    };
+    let mut inner = String::new();
+    let inner_indent = format!("{base_indent}  ");
+    inner.push('{');
+    for (k, v) in map {
+        inner.push('\n');
+        inner.push_str(&inner_indent);
+        inner.push_str(k);
+        inner.push_str(": ");
+        match v {
+            Value::Object(_) => {
+                inner.push_str(&render_object_body(v, &inner_indent));
+            }
+            _ => {
+                inner.push_str(&render_value(v));
+            }
+        }
+    }
+    inner.push('\n');
+    inner.push_str(base_indent);
+    inner.push('}');
+    inner
 }
 
 /// Render a JSON value as HJSON text.  Strings get
@@ -497,6 +710,113 @@ mod tests {
         // Pre-existing siblings still there.
         assert!(out.contains("model: MultilingualE5Small"));
         assert!(out.contains("chunk_size: 800"));
+    }
+
+    #[test]
+    fn add_map_entry_appends_named_stanza() {
+        let src = r#"{
+  llm: {
+    providers: {
+      gemini: {
+        model: gemini-2.5-pro
+        api_key_env: GEMINI_API_KEY
+      }
+    }
+  }
+}"#;
+        let idx = super::super::hjson_index::parse(src).unwrap();
+        let new_entry = json!({
+            "model": "llama3.2",
+            "api_key_env": "OLLAMA_KEY"
+        });
+        let edits = vec![Edit {
+            path: "llm.providers.ollama_remote".into(),
+            new_value: new_entry,
+            kind: EditKind::AddMapEntry,
+        }];
+        let out = apply_edits(&idx, &edits).unwrap();
+        // New entry present.
+        assert!(out.contains("ollama_remote"));
+        assert!(out.contains("model: llama3.2"));
+        assert!(out.contains("api_key_env: OLLAMA_KEY"));
+        // Pre-existing entry untouched.
+        assert!(out.contains("gemini-2.5-pro"));
+        // Result is still parseable.
+        let _ = serde_hjson::from_str::<Value>(&out).expect("re-parse");
+    }
+
+    #[test]
+    fn delete_map_entry_splices_out_block() {
+        let src = r#"{
+  llm: {
+    providers: {
+      gemini: {
+        model: gemini-2.5-pro
+        api_key_env: GEMINI_API_KEY
+      }
+      claude: {
+        model: claude-sonnet-4-5
+        api_key_env: ANTHROPIC_API_KEY
+      }
+    }
+  }
+}"#;
+        let idx = super::super::hjson_index::parse(src).unwrap();
+        let edits = vec![Edit {
+            path: "llm.providers.gemini".into(),
+            new_value: Value::Null,
+            kind: EditKind::DeleteMapEntry,
+        }];
+        let out = apply_edits(&idx, &edits).unwrap();
+        assert!(!out.contains("gemini-2.5-pro"));
+        assert!(!out.contains("GEMINI_API_KEY"));
+        // Sibling still there.
+        assert!(out.contains("claude-sonnet-4-5"));
+        // Still parseable.
+        let _ = serde_hjson::from_str::<Value>(&out).expect("re-parse after delete");
+    }
+
+    #[test]
+    fn add_and_delete_in_same_save_round_trip() {
+        // Realistic scenario: the user deletes one
+        // existing entry AND adds a new one in the
+        // same session, then saves.  Both edits ship
+        // in one apply_edits call.  Result must
+        // contain the new entry, not the deleted one,
+        // and stay parseable.
+        let src = r#"{
+  llm: {
+    providers: {
+      gemini: {
+        model: gemini-2.5-pro
+        api_key_env: GEMINI_API_KEY
+      }
+      claude: {
+        model: claude-sonnet-4-5
+        api_key_env: ANTHROPIC_API_KEY
+      }
+    }
+  }
+}"#;
+        let idx = super::super::hjson_index::parse(src).unwrap();
+        let edits = vec![
+            Edit {
+                path: "llm.providers.gemini".into(),
+                new_value: Value::Null,
+                kind: EditKind::DeleteMapEntry,
+            },
+            Edit {
+                path: "llm.providers.ollama_remote".into(),
+                new_value: json!({ "model": "llama3.2", "api_key_env": "OLLAMA_KEY" }),
+                kind: EditKind::AddMapEntry,
+            },
+        ];
+        let out = apply_edits(&idx, &edits).unwrap();
+        assert!(!out.contains("gemini-2.5-pro"));
+        assert!(out.contains("claude-sonnet-4-5"));
+        assert!(out.contains("ollama_remote"));
+        assert!(out.contains("llama3.2"));
+        let _ = serde_hjson::from_str::<Value>(&out).expect("re-parse after mixed save");
     }
 
     #[test]

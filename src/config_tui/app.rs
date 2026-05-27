@@ -107,6 +107,17 @@ struct App {
     saved_at_least_once: bool,
     /// Phase 3 — sidecar annotation store.
     annotations: Annotations,
+    /// Phase 5 — map-entry paths staged for
+    /// addition.  Each is a full path like
+    /// `llm.providers.<name>`.  The entry's value
+    /// lives in the schema tree (added as a child of
+    /// the parent map); the path here is the
+    /// "needs append on save" marker.
+    added_map_entries: HashSet<String>,
+    /// Phase 5 — map-entry paths staged for
+    /// deletion.  The tree still renders them
+    /// (struck-through) until save.
+    removed_map_entries: HashSet<String>,
 }
 
 enum Modal {
@@ -152,6 +163,18 @@ enum Modal {
     Annotate {
         path: String,
         buffer: String,
+    },
+    /// Phase 5 — `a` add map entry.  Prompts for a
+    /// new entry name; `parent` is the map path.
+    AddMapEntry {
+        parent: String,
+        buffer: String,
+        error: Option<String>,
+    },
+    /// Phase 5 — `d` delete confirm.  The targeted
+    /// entry's full path is `path`.
+    DeleteMapEntryConfirm {
+        path: String,
     },
 }
 
@@ -219,6 +242,8 @@ impl App {
             status,
             saved_at_least_once: false,
             annotations,
+            added_map_entries: HashSet::new(),
+            removed_map_entries: HashSet::new(),
         })
     }
 
@@ -237,6 +262,21 @@ impl App {
     #[allow(dead_code)]
     fn current_path(&self) -> Option<String> {
         self.current_node().map(|n| n.path.clone())
+    }
+
+    /// True when ANY kind of unsaved change is
+    /// pending: scalar edits, map-entry additions, or
+    /// map-entry deletions.
+    fn has_unsaved(&self) -> bool {
+        !self.changed_paths.is_empty()
+            || !self.added_map_entries.is_empty()
+            || !self.removed_map_entries.is_empty()
+    }
+
+    fn unsaved_count(&self) -> usize {
+        self.changed_paths.len()
+            + self.added_map_entries.len()
+            + self.removed_map_entries.len()
     }
 
     /// Stage a new value at `path` in the schema tree.
@@ -341,6 +381,126 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
         Modal::Help { .. } | Modal::Saved { .. } | Modal::Inspector { .. }
     ) {
         app.modal = Modal::None;
+        return Ok(false);
+    }
+    if matches!(app.modal, Modal::AddMapEntry { .. }) {
+        // Handle in two stages so we can drop the
+        // modal borrow before calling staging
+        // helpers that need `&mut app`.
+        #[derive(Default)]
+        struct Outcome {
+            cancel: bool,
+            commit_parent_name: Option<(String, String)>,
+            set_error: Option<String>,
+            clear_error: bool,
+            push_char: Option<char>,
+            backspace: bool,
+        }
+        let outcome = if let Modal::AddMapEntry { parent, buffer, .. } = &app.modal {
+            let parent = parent.clone();
+            let buffer = buffer.clone();
+            let mut out = Outcome::default();
+            match key.code {
+                KeyCode::Esc => out.cancel = true,
+                KeyCode::Enter => {
+                    let name = buffer.trim().to_string();
+                    if name.is_empty() {
+                        out.set_error = Some("name is required".into());
+                    } else if !is_valid_map_entry_name(&name) {
+                        out.set_error = Some(
+                            "name must start with a letter or `_` and contain only letters / digits / `_`".into(),
+                        );
+                    } else {
+                        let new_path = format!("{parent}.{name}");
+                        if find_in_tree(&app.schema, &new_path).is_some() {
+                            out.set_error =
+                                Some(format!("`{new_path}` already exists"));
+                        } else {
+                            out.commit_parent_name = Some((parent, name));
+                        }
+                    }
+                }
+                KeyCode::Backspace => {
+                    out.backspace = true;
+                    out.clear_error = true;
+                }
+                KeyCode::Char(c)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    out.push_char = Some(c);
+                    out.clear_error = true;
+                }
+                _ => {}
+            }
+            out
+        } else {
+            Outcome::default()
+        };
+        if outcome.cancel {
+            app.modal = Modal::None;
+            app.status = "add map entry: cancelled".into();
+            return Ok(false);
+        }
+        if let Some((parent, name)) = outcome.commit_parent_name {
+            let new_path = format!("{parent}.{name}");
+            match stage_new_map_entry(app, &parent, &name) {
+                Ok(()) => {
+                    app.modal = Modal::None;
+                    app.status = format!("staged new map entry {new_path}");
+                }
+                Err(e) => {
+                    if let Modal::AddMapEntry { error, .. } = &mut app.modal {
+                        *error = Some(format!("failed: {e:#}"));
+                    }
+                }
+            }
+            return Ok(false);
+        }
+        if let Modal::AddMapEntry { buffer, error, .. } = &mut app.modal {
+            if outcome.backspace {
+                buffer.pop();
+            }
+            if let Some(c) = outcome.push_char {
+                buffer.push(c);
+            }
+            if outcome.clear_error {
+                *error = None;
+            }
+            if let Some(err) = outcome.set_error {
+                *error = Some(err);
+            }
+        }
+        return Ok(false);
+    }
+    if let Modal::DeleteMapEntryConfirm { path } = &app.modal {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                let path = path.clone();
+                if app.added_map_entries.contains(&path) {
+                    // Newly-staged entry — just drop
+                    // it from the tree + staging set
+                    // without bothering the save
+                    // pipeline.
+                    app.added_map_entries.remove(&path);
+                    remove_subtree(&mut app.schema, &path);
+                    // Drop any staged-changed leaves
+                    // under this path.
+                    app.changed_paths
+                        .retain(|p| !(p == &path || p.starts_with(&format!("{path}."))));
+                    app.status = format!("dropped unsaved map entry {path}");
+                } else {
+                    app.removed_map_entries.insert(path.clone());
+                    app.changed_paths.insert(path.clone());
+                    app.status = format!("staged deletion of {path} — Ctrl+S to commit");
+                }
+                app.modal = Modal::None;
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                app.modal = Modal::None;
+            }
+            _ => {}
+        }
         return Ok(false);
     }
     if let Modal::Annotate { path, buffer } = &mut app.modal {
@@ -565,18 +725,18 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
     if key.code == KeyCode::Char('q')
         && key.modifiers.contains(KeyModifiers::CONTROL)
     {
-        if !app.changed_paths.is_empty() {
+        if app.has_unsaved() {
             app.modal = Modal::DiscardConfirm {
-                unsaved: app.changed_paths.len(),
+                unsaved: app.unsaved_count(),
             };
             return Ok(false);
         }
         return Ok(true);
     }
     if key.code == KeyCode::Esc {
-        if !app.changed_paths.is_empty() {
+        if app.has_unsaved() {
             app.modal = Modal::DiscardConfirm {
-                unsaved: app.changed_paths.len(),
+                unsaved: app.unsaved_count(),
             };
             return Ok(false);
         }
@@ -804,6 +964,45 @@ fn static_chord_dispatch(app: &mut App, key: KeyEvent) {
             app.stage(&path, default);
             app.status = format!("reset {path} to default");
         }
+        Char('a') => {
+            // Add map entry — focused node must be a
+            // known map stanza.
+            let parent = match app.current_node() {
+                Some(n) if schema::is_known_map_path(&n.path) => n.path.clone(),
+                Some(n) if !n.path.is_empty()
+                    && schema::is_known_map_path(parent_path_str(&n.path)) =>
+                {
+                    parent_path_str(&n.path).to_string()
+                }
+                _ => {
+                    app.status = "add: focus a map-shaped stanza (e.g. `llm.providers`)".into();
+                    return;
+                }
+            };
+            app.modal = Modal::AddMapEntry {
+                parent,
+                buffer: String::new(),
+                error: None,
+            };
+        }
+        Char('d') => {
+            // Delete map entry — focused node must
+            // be a map entry (direct child of a known
+            // map path).
+            let entry_path = match app.current_node() {
+                Some(n) if !n.path.is_empty()
+                    && schema::is_known_map_path(parent_path_str(&n.path)) =>
+                {
+                    n.path.clone()
+                }
+                _ => {
+                    app.status =
+                        "delete: focus an entry of a map-shaped stanza".into();
+                    return;
+                }
+            };
+            app.modal = Modal::DeleteMapEntryConfirm { path: entry_path };
+        }
         Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             open_help(app);
         }
@@ -815,52 +1014,375 @@ fn static_chord_dispatch(app: &mut App, key: KeyEvent) {
 }
 
 fn open_help(app: &mut App) {
-    if let Some(node) = app.current_node() {
-        let body = app
-            .help
-            .lookup(&node.path)
-            .map(str::to_owned)
-            .unwrap_or_else(|| {
-                format!(
-                    "No CONFIGURATION.md row matched `{}`.\n\nDocs are indexed at build time from `Documentation/CONFIGURATION.md`.  If this field is new, add a row there.",
-                    node.path
-                )
-            });
-        app.modal = Modal::Help { body };
+    let Some(node) = app.current_node() else { return; };
+    let mut body = String::new();
+
+    // ── Section 1: structural metadata.  Always
+    // present — the field's path, type, default value,
+    // current value (when divergent), and where it
+    // came from.  Useful even when the user hasn't
+    // documented the field in CONFIGURATION.md.
+    body.push_str(" Structural\n");
+    if node.path.is_empty() {
+        body.push_str("   path     <root>\n");
+    } else {
+        body.push_str(&format!("   path     {}\n", node.path));
+    }
+    body.push_str(&format!("   type     {}\n", node.ty.label()));
+    body.push_str(&format!(
+        "   default  {}\n",
+        help_value_summary(&node.default),
+    ));
+    if node.current != node.default {
+        body.push_str(&format!(
+            "   current  {}\n",
+            help_value_summary(&node.current),
+        ));
+    }
+    body.push_str(&format!(
+        "   source   {}\n",
+        source_label(node.source),
+    ));
+
+    // ── Section 2: contextual hints.  Map semantics,
+    // staging state, and any user annotation get
+    // their own bullet so the writer sees them
+    // without paging into the docs section below.
+    let mut hints: Vec<String> = Vec::new();
+    if schema::is_known_map_path(&node.path) {
+        hints.push(
+            "this is a map of named entries; `a` to add a new one, `d` to remove the selected one"
+                .into(),
+        );
+    } else if !node.path.is_empty()
+        && schema::is_known_map_path(parent_path_str(&node.path))
+    {
+        hints.push(
+            "this is a map entry; press `d` on this row to stage its deletion"
+                .into(),
+        );
+    }
+    if app.added_map_entries.contains(&node.path) {
+        hints.push("STAGED — new map entry (Ctrl+S to write)".into());
+    }
+    if app.removed_map_entries.contains(&node.path) {
+        hints.push("STAGED — deletion (Ctrl+S to write)".into());
+    } else if app.changed_paths.contains(&node.path) && !app.added_map_entries.contains(&node.path) {
+        hints.push("STAGED — value edit (Ctrl+S to write)".into());
+    }
+    if let Some(ann) = app.annotations.get(&node.path) {
+        hints.push(format!("annotation: {ann}"));
+    }
+    if !hints.is_empty() {
+        body.push('\n');
+        body.push_str(" Notes\n");
+        for h in &hints {
+            body.push_str("   • ");
+            body.push_str(h);
+            body.push('\n');
+        }
+    }
+
+    // ── Section 3: CONFIGURATION.md row.  When the
+    // path matches a documented row, the row body
+    // lands here verbatim.  When it doesn't, we
+    // surface a clear path-forward instruction.
+    body.push('\n');
+    body.push_str(" Documentation\n");
+    match app.help.lookup(&node.path) {
+        Some(text) if !text.trim().is_empty() => {
+            for line in text.lines() {
+                body.push_str("   ");
+                body.push_str(line);
+                body.push('\n');
+            }
+        }
+        _ => {
+            body.push_str(
+                "   No CONFIGURATION.md row matched this path yet.\n",
+            );
+            body.push_str(
+                "   The structural section above is always available.\n",
+            );
+            body.push_str(
+                "   To enrich this help pane, add a row to\n",
+            );
+            body.push_str(
+                "   `Documentation/CONFIGURATION.md` keyed by this field's path.\n",
+            );
+        }
+    }
+
+    app.modal = Modal::Help { body };
+}
+
+/// Compact one-line render of a JSON value for the
+/// help pane's `default` / `current` summary.  Long
+/// objects / arrays get a shape label rather than a
+/// dump — the user can browse them via the tree.
+fn help_value_summary(value: &Value) -> String {
+    match value {
+        Value::Null => "null".into(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => {
+            let mut chars: Vec<char> = s.chars().collect();
+            if chars.len() > 80 {
+                chars.truncate(79);
+                let mut out: String = chars.into_iter().collect();
+                out.push('…');
+                format!("\"{out}\"")
+            } else {
+                format!("\"{s}\"")
+            }
+        }
+        Value::Array(arr) => {
+            if arr.is_empty() {
+                "[]".into()
+            } else if arr.iter().all(|v| v.is_string()) {
+                format!("[{} strings]", arr.len())
+            } else {
+                format!("[{} items]", arr.len())
+            }
+        }
+        Value::Object(map) => {
+            if map.is_empty() {
+                "{}".into()
+            } else {
+                format!("{{ {} fields }}", map.len())
+            }
+        }
     }
 }
 
 fn open_save_confirm(app: &mut App) {
-    if app.changed_paths.is_empty() {
+    if app.changed_paths.is_empty()
+        && app.added_map_entries.is_empty()
+        && app.removed_map_entries.is_empty()
+    {
         app.status = "nothing to save".into();
         return;
     }
-    let Some(index) = app.index.as_ref() else {
-        // No live file yet — every changed path
-        // becomes an append, parented to whatever
-        // stanza already exists.  Build a synthetic
-        // empty index for the diff.
-        let empty = match hjson_index::parse("{}") {
-            Ok(idx) => idx,
-            Err(e) => {
-                app.status = format!("save: cannot synth empty index: {e}");
-                return;
-            }
-        };
-        let edits = save::compute_edits(&app.schema, &empty);
-        if edits.is_empty() {
-            app.status = "nothing to save (no diff)".into();
-            return;
-        }
-        app.modal = Modal::SaveConfirm { edits };
-        return;
-    };
-    let edits = save::compute_edits(&app.schema, index);
+    let edits = compute_all_edits(app);
     if edits.is_empty() {
         app.status = "nothing to save (no diff)".into();
         return;
     }
     app.modal = Modal::SaveConfirm { edits };
+}
+
+/// Compose all four edit kinds: structural deletes
+/// + structural adds + scalar splice/append (only
+/// for paths NOT already covered by a map-entry
+/// add/delete).
+fn compute_all_edits(app: &mut App) -> Vec<Edit> {
+    let mut out: Vec<Edit> = Vec::new();
+    // Map-entry deletions first.
+    for path in &app.removed_map_entries {
+        out.push(Edit {
+            path: path.clone(),
+            new_value: Value::Null,
+            kind: EditKind::DeleteMapEntry,
+        });
+    }
+    // Map-entry additions next.  Each addition
+    // carries the full stanza body (the schema tree's
+    // `current` at that path).
+    for path in &app.added_map_entries {
+        if let Some(node) = find_in_tree(&app.schema, path) {
+            out.push(Edit {
+                path: path.clone(),
+                new_value: collect_subtree_value(node),
+                kind: EditKind::AddMapEntry,
+            });
+        }
+    }
+    // Scalar diffs — but skip any leaf living under
+    // a staged add or delete (those are handled by
+    // the structural edits above).
+    let index_source = match app.index.as_ref() {
+        Some(i) => i.clone(),
+        None => match hjson_index::parse("{}") {
+            Ok(idx) => idx,
+            Err(_) => return out,
+        },
+    };
+    let leaf_edits = save::compute_edits(&app.schema, &index_source);
+    for edit in leaf_edits {
+        if app
+            .added_map_entries
+            .iter()
+            .any(|p| edit.path == *p || edit.path.starts_with(&format!("{p}.")))
+        {
+            continue;
+        }
+        if app
+            .removed_map_entries
+            .iter()
+            .any(|p| edit.path == *p || edit.path.starts_with(&format!("{p}.")))
+        {
+            continue;
+        }
+        out.push(edit);
+    }
+    out
+}
+
+/// Walk a SchemaNode and rebuild its JSON shape from
+/// the `current` values.  Used to gather an added
+/// map entry's full stanza body for the
+/// `AddMapEntry` edit.
+fn collect_subtree_value(node: &SchemaNode) -> Value {
+    if node.is_leaf() {
+        return node.current.clone();
+    }
+    let mut map = serde_json::Map::new();
+    for child in &node.children {
+        map.insert(child.display.clone(), collect_subtree_value(child));
+    }
+    Value::Object(map)
+}
+
+fn find_in_tree<'a>(node: &'a SchemaNode, path: &str) -> Option<&'a SchemaNode> {
+    if node.path == path {
+        return Some(node);
+    }
+    for child in &node.children {
+        if !child.path.is_empty()
+            && (path.starts_with(&child.path)
+                || child.path.starts_with(path))
+        {
+            if let Some(found) = find_in_tree(child, path) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn remove_subtree(node: &mut SchemaNode, target: &str) {
+    let target_parent = parent_path_str(target);
+    if node.path == target_parent {
+        node.children.retain(|c| c.path != target);
+        return;
+    }
+    for child in &mut node.children {
+        if !child.path.is_empty() && target.starts_with(&child.path) {
+            remove_subtree(child, target);
+        }
+    }
+}
+
+fn parent_path_str(path: &str) -> &str {
+    match path.rfind('.') {
+        Some(idx) => &path[..idx],
+        None => "",
+    }
+}
+
+/// Reserved — leaf-key helper kept for future use
+/// (e.g. surfacing the entry name in confirm modals
+/// without re-parsing the dotted path on the
+/// renderer side).
+#[allow(dead_code)]
+fn leaf_key_str(path: &str) -> &str {
+    match path.rfind('.') {
+        Some(idx) => &path[idx + 1..],
+        None => path,
+    }
+}
+
+fn is_valid_map_entry_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let first = match chars.next() {
+        Some(c) => c,
+        None => return false,
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Stage a new map entry: build its template stanza
+/// from any existing default + insert a SchemaNode
+/// into the tree so the user can immediately edit
+/// its fields.  Marks every leaf in the new entry
+/// as "changed" (vs the disk file, where the entry
+/// doesn't exist).
+fn stage_new_map_entry(
+    app: &mut App,
+    parent_path: &str,
+    name: &str,
+) -> Result<()> {
+    let new_path = format!("{parent_path}.{name}");
+    // Find the parent stanza in the tree.
+    let parent_node = find_in_tree(&app.schema, parent_path)
+        .ok_or_else(|| anyhow::anyhow!("parent stanza `{parent_path}` not in tree"))?;
+    // Use the first existing child as the template
+    // for the new entry's structure.
+    let template = parent_node
+        .children
+        .iter()
+        .find(|c| !c.path.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "cannot add new entry to `{parent_path}` — no existing entry to use as template"
+            )
+        })?
+        .clone();
+    // Rebuild the template as a fresh subtree under
+    // the new path.  Default values come from the
+    // template's `default`; `current` initialises to
+    // the same.
+    let new_node = clone_template(&template, &new_path, name);
+    // Insert into the parent.
+    let parent_node_mut = find_mut(&mut app.schema, parent_path)
+        .ok_or_else(|| anyhow::anyhow!("parent stanza `{parent_path}` vanished mid-add"))?;
+    parent_node_mut.children.push(new_node);
+    parent_node_mut
+        .children
+        .sort_by(|a, b| a.display.cmp(&b.display));
+    parent_node_mut.source = ValueSource::Configured;
+    app.added_map_entries.insert(new_path.clone());
+    // Mark every leaf in the new entry as changed so
+    // the save pipeline sees structural work pending.
+    // (Even default-valued leaves still need
+    // emitting since the entry itself is new.)
+    app.changed_paths.insert(new_path);
+    Ok(())
+}
+
+/// Recursively clone a template SchemaNode under a
+/// new path prefix + entry name.  Re-uses the
+/// template's defaults but sets `source` to
+/// `Configured` (the entry is user-added).
+fn clone_template(template: &SchemaNode, new_path: &str, display: &str) -> SchemaNode {
+    if template.is_leaf() {
+        return SchemaNode {
+            path: new_path.to_string(),
+            display: display.to_string(),
+            ty: template.ty.clone(),
+            default: template.default.clone(),
+            current: template.default.clone(),
+            source: ValueSource::Configured,
+            children: Vec::new(),
+        };
+    }
+    let mut children = Vec::with_capacity(template.children.len());
+    for child in &template.children {
+        let child_path = format!("{new_path}.{}", child.display);
+        children.push(clone_template(child, &child_path, &child.display));
+    }
+    SchemaNode {
+        path: new_path.to_string(),
+        display: display.to_string(),
+        ty: template.ty.clone(),
+        default: template.default.clone(),
+        current: template.current.clone(),
+        source: ValueSource::Configured,
+        children,
+    }
 }
 
 fn perform_save(app: &mut App, edits: &[Edit]) -> Result<String> {
@@ -873,14 +1395,23 @@ fn perform_save(app: &mut App, edits: &[Edit]) -> Result<String> {
     };
     let working_index = hjson_index::parse(&working_source)
         .context("re-parse working source")?;
-    // Re-run compute_edits against the working index
-    // since the empty-file case re-classifies splices
-    // as appends.
-    let edits = if app.index.is_some() {
-        edits.to_vec()
+    // Re-derive the edit list against the working
+    // index (the empty-file case re-classifies splices
+    // as appends; map-entry adds/deletes also depend
+    // on the freshly-parsed index).  Caller's `edits`
+    // is now an informational preview only — the
+    // authoritative plan re-derives here.
+    let _ = edits;
+    let prior_app_index = app.index.clone();
+    if app.index.is_none() {
+        app.index = Some(working_index.clone());
+    }
+    let edits = compute_all_edits(app);
+    if prior_app_index.is_none() {
+        app.index = None;
     } else {
-        save::compute_edits(&app.schema, &working_index)
-    };
+        app.index = prior_app_index;
+    }
     let new_source = save::apply_edits(&working_index, &edits)?;
     let written = save::write_atomic(&app.cfg_path, &new_source)?;
     let backup = save::write_backup(&app.project_root, &new_source)?;
@@ -901,6 +1432,8 @@ fn perform_save(app: &mut App, edits: &[Edit]) -> Result<String> {
     snapshot_originals(&app.schema, &mut original_by_path);
     app.original_by_path = original_by_path;
     app.changed_paths.clear();
+    app.added_map_entries.clear();
+    app.removed_map_entries.clear();
     app.status = format!(
         "saved {} · backup {}",
         written.display(),
@@ -964,6 +1497,12 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
         }
         Modal::Annotate { path, buffer } => {
             draw_annotation_editor(f, size, path, buffer);
+        }
+        Modal::AddMapEntry { parent, buffer, error } => {
+            draw_add_map_entry(f, size, parent, buffer, error.as_deref());
+        }
+        Modal::DeleteMapEntryConfirm { path } => {
+            draw_delete_map_entry_confirm(f, size, path);
         }
     }
 }
@@ -1052,11 +1591,16 @@ fn draw_tree_pane(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let selected = i == app.cursor;
         let changed = app.changed_paths.contains(&node.path);
         let annotated = app.annotations.get(&node.path).is_some();
+        let added = app.added_map_entries.contains(&node.path);
+        let removed = app.removed_map_entries.contains(&node.path);
         // Two-character chip: state + annotation
-        // marker.  Stage/configured win the first
-        // slot; the second slot carries the `+`
-        // annotation indicator.
-        let state = if changed {
+        // marker.  Stage / add / remove / configured
+        // win the first slot in that order.
+        let state = if removed {
+            "✗"
+        } else if added {
+            "✚"
+        } else if changed {
             "✱"
         } else if node.is_leaf() && node.source == ValueSource::Configured {
             "●"
@@ -1067,6 +1611,12 @@ fn draw_tree_pane(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let chip = format!("{state}{ann}");
         let style = if selected {
             Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+        } else if removed {
+            Style::default()
+                .fg(Color::Red)
+                .add_modifier(Modifier::CROSSED_OUT | Modifier::DIM)
+        } else if added {
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
         } else if changed {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
         } else if node.source == ValueSource::Configured {
@@ -1212,7 +1762,7 @@ fn draw_detail_pane(f: &mut ratatui::Frame, area: Rect, app: &App) {
 fn draw_status(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let n = app.rows().len();
     let pos = format!("{} / {}", app.cursor + 1, n.max(1));
-    let hints = " ↑↓ · Enter edit/expand · e edit · r reset · Ctrl+S save · Ctrl+R rollback · Ctrl+I inspect · Ctrl+A annotate · ? help · Esc quit";
+    let hints = " ↑↓ · Enter · e edit · r reset · a add-entry · d del-entry · Ctrl+S save · Ctrl+R rollback · Ctrl+I inspect · Ctrl+A annotate · ? help · Esc";
     let dim = Style::default().add_modifier(Modifier::DIM);
     let spans = vec![
         Span::styled(format!(" {pos} "), dim),
@@ -1226,14 +1776,14 @@ fn draw_status(f: &mut ratatui::Frame, area: Rect, app: &App) {
 
 fn draw_help_modal(f: &mut ratatui::Frame, host: Rect, body: &str) {
     let w = host.width.saturating_sub(8).min(96);
-    let h = host.height.saturating_sub(4).min(28);
+    let h = host.height.saturating_sub(4).min(32);
     let x = host.x + host.width.saturating_sub(w) / 2;
     let y = host.y + host.height.saturating_sub(h) / 2;
     let rect = Rect { x, y, width: w, height: h };
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Help — CONFIGURATION.md slice ")
+        .title(" Help — config field ")
         .border_style(
             Style::default()
                 .fg(Color::Cyan)
@@ -1241,16 +1791,79 @@ fn draw_help_modal(f: &mut ratatui::Frame, host: Rect, body: &str) {
         );
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    let mut lines: Vec<Line<'_>> = body
-        .lines()
-        .map(|l| Line::from(Span::raw(l.to_string())))
-        .collect();
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    // The structural body uses ` Title\n` lines as
+    // section headers and `   key  value\n` lines for
+    // body content.  Boldify the headers (lines that
+    // start with a space + uppercase letter and end
+    // with no trailing colon) so the at-a-glance read
+    // works.  Lines starting with `   •` get a cyan
+    // bullet.  Everything else renders plain.
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    for raw in body.lines() {
+        let trimmed = raw.trim_start();
+        // Section header: starts with a single space,
+        // first non-space is uppercase, no leading
+        // bullet.
+        if raw.starts_with(' ')
+            && !raw.starts_with("  ")
+            && trimmed
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_uppercase())
+                .unwrap_or(false)
+        {
+            lines.push(Line::from(Span::styled(
+                raw.to_string(),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )));
+        } else if trimmed.starts_with("• ") {
+            lines.push(Line::from(Span::raw(raw.to_string())));
+        } else if let Some((k, v)) = split_kv_line(raw) {
+            lines.push(Line::from(vec![
+                Span::styled(k, bold),
+                Span::raw("  "),
+                Span::raw(v),
+            ]));
+        } else {
+            lines.push(Line::from(Span::raw(raw.to_string())));
+        }
+    }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         " any key closes ",
-        Style::default().add_modifier(Modifier::DIM),
+        dim,
     )));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+/// Helper for the help modal: split a 3-space-indent
+/// `   key  value` line into `(key, value)` so the
+/// renderer can bold the key.  Returns `None` when
+/// the line doesn't match the shape.
+fn split_kv_line(line: &str) -> Option<(String, String)> {
+    if !line.starts_with("   ") {
+        return None;
+    }
+    let body = &line[3..];
+    // Two-or-more consecutive spaces separate key
+    // from value.
+    let mut idx = None;
+    let bytes = body.as_bytes();
+    for i in 0..bytes.len().saturating_sub(1) {
+        if bytes[i] == b' ' && bytes[i + 1] == b' ' {
+            idx = Some(i);
+            break;
+        }
+    }
+    let i = idx?;
+    let key = body[..i].to_string();
+    let value = body[i..].trim_start().to_string();
+    if key.is_empty() {
+        return None;
+    }
+    Some((format!("   {key}"), value))
 }
 
 fn draw_edit_modal(
@@ -1310,6 +1923,8 @@ fn draw_save_confirm(
         let kind = match edit.kind {
             EditKind::Splice => "splice",
             EditKind::Append => "append",
+            EditKind::AddMapEntry => "+entry",
+            EditKind::DeleteMapEntry => "-entry",
         };
         lines.push(Line::from(vec![
             Span::raw("    "),
@@ -1616,6 +2231,103 @@ fn draw_inspector(
         dim,
     )));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn draw_add_map_entry(
+    f: &mut ratatui::Frame,
+    host: Rect,
+    parent: &str,
+    buffer: &str,
+    error: Option<&str>,
+) {
+    let w = host.width.saturating_sub(8).min(72);
+    let h: u16 = 10;
+    let x = host.x + host.width.saturating_sub(w) / 2;
+    let y = host.y + host.height.saturating_sub(h) / 2;
+    let rect = Rect { x, y, width: w, height: h };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Add map entry to {parent} "))
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "    Name for the new entry:",
+            bold,
+        )),
+        Line::from(format!("    {buffer}│")),
+        Line::from(""),
+    ];
+    if let Some(err) = error {
+        lines.push(Line::from(Span::styled(
+            format!("  ⚠ {err}"),
+            Style::default().fg(Color::Red),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "    Identifier: letter or `_` to start, then letters / digits / `_`",
+            dim,
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "    Enter commits (stages — Ctrl+S to write) · Esc cancels",
+        dim,
+    )));
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn draw_delete_map_entry_confirm(
+    f: &mut ratatui::Frame,
+    host: Rect,
+    path: &str,
+) {
+    let w = host.width.saturating_sub(8).min(72);
+    let h: u16 = 9;
+    let x = host.x + host.width.saturating_sub(w) / 2;
+    let y = host.y + host.height.saturating_sub(h) / 2;
+    let rect = Rect { x, y, width: w, height: h };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Delete map entry? ")
+        .border_style(
+            Style::default()
+                .fg(Color::Red)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("    Stage deletion of "),
+            Span::styled(path.to_string(), bold),
+            Span::raw(" ?"),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "    The entry stays in the tree (struck-through) until you Ctrl+S.",
+            dim,
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "    y / Enter confirm · n / Esc cancel",
+            dim,
+        )),
+    ];
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn draw_annotation_editor(
