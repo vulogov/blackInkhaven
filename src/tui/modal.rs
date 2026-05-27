@@ -771,6 +771,27 @@ pub(super) enum Modal {
         preview: String,
         voice_label: String,
     },
+    /// 1.2.9+ — project-wide concordance modal
+    /// (Ctrl+B Shift+L).  Built once at open time from
+    /// the in-memory hierarchy + paragraph bodies; the
+    /// render loop just slices `data.entries` against
+    /// the live `filter` text.  Esc closes, arrow keys
+    /// move the cursor, `s` toggles sort, typing
+    /// narrows by prefix (or substring once a `*` is
+    /// in the filter).
+    Concordance {
+        data: super::concordance::ConcordanceData,
+        filter: super::input::TextInput,
+        cursor: usize,
+        scroll: usize,
+        sort: super::concordance::SortMode,
+        /// Cached "visible" view that mirrors `entries`
+        /// under the current filter.  Rebuilt by
+        /// `App::concordance_refilter` whenever filter
+        /// text or sort mode change.  Stores indices
+        /// into `data.entries`.
+        visible: Vec<usize>,
+    },
 }
 
 #[cfg(test)]

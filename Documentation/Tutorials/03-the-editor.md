@@ -243,6 +243,55 @@ favourite turns of phrase you didn't realise had
 become reflexive.  Toggles with `Ctrl+B Shift+F`
 alongside filter-words.
 
+## Concordance view (1.2.9+)
+
+`Ctrl+B Shift+L` opens a project-wide concordance:
+every distinct word in your manuscript, ranked by
+how often it appears, with a few in-context excerpts
+per row.
+
+What it's good for:
+
+  * Spotting overworked vocabulary you didn't realise
+    you lean on (`somehow`, `slightly`, `glanced`).
+  * Locating where a character / place is mentioned
+    without re-running search across the book.
+  * Auditing your prose's lexical fingerprint — the
+    top of the list is your *real* voice, not the
+    voice you imagine.
+
+What the pipeline does for you:
+
+  * Strips out stop-words (`the`, `and`, `и`, `в`)
+    so the top is meaningful lexical content.
+  * Groups inflections via Snowball stemming —
+    `walk`, `walked`, `walking`, `walks` collapse to
+    one row whose "variants" trailer shows the
+    surface forms.
+  * Filters single-character tokens and bare
+    digit runs.
+  * Honours the project's `language` field — the
+    Russian / French / German / Spanish stop-word
+    lists ship built-in.
+
+Inside the modal:
+
+  * Type to filter (case-insensitive substring
+    match across headwords + variants).
+  * `↑` / `↓` / `PgUp` / `PgDn` / `Home` / `End`
+    navigate.
+  * `Ctrl+S` toggles sort (count ↔ alphabetical).
+    Plain `s` types into the filter.
+  * `Esc` closes.
+
+Bottom panel shows up to three KWIC excerpts for the
+selected row — `«word»` marks the matched token in
+each excerpt so it's visually obvious in monospace.
+
+Performance: well under a second on a 100k-word
+manuscript.  The build runs once at modal open;
+filter + sort changes are instant after that.
+
 ## Read aloud (TTS)
 
 `Ctrl+B S` (in the editor pane) speaks the open paragraph

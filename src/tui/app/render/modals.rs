@@ -3992,6 +3992,217 @@ impl super::super::App {
         );
     }
 
+    /// 1.2.9+ — project-wide concordance modal painter
+    /// (Ctrl+B Shift+L).  Three-region layout: header
+    /// (stats + filter input + sort label), main list
+    /// (rank · headword · count · variants), footer
+    /// (KWIC samples for the selected row + key hints).
+    /// Cursor + scroll clamped here against the visible
+    /// height so resizing the terminal mid-modal can't
+    /// strand the selection off-screen.
+    pub(in crate::tui::app) fn draw_concordance_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        // Modal sizing: centred, generous since the
+        // content (counts + KWIC samples) needs width.
+        let w = area.width.saturating_sub(4).min(120).max(60);
+        let h = area.height.saturating_sub(2).min(40).max(18);
+        let x = area.x + (area.width.saturating_sub(w)) / 2;
+        let y = area.y + (area.height.saturating_sub(h)) / 2;
+        let rect = Rect { x, y, width: w, height: h };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Concordance — project-wide ")
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Header: 3 rows (stats line, filter line, column header)
+        let header_h: u16 = 3;
+        let footer_h: u16 = 6; // 3 sample rows + hint + divider + headroom
+        let list_h: u16 = inner.height.saturating_sub(header_h + footer_h);
+        let header_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: header_h,
+        };
+        let list_rect = Rect {
+            x: inner.x,
+            y: inner.y + header_h,
+            width: inner.width,
+            height: list_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + header_h + list_h,
+            width: inner.width,
+            height: footer_h,
+        };
+
+        // Pull modal state out by reference.  We need to
+        // mutate `scroll` to clamp against `list_h`, so
+        // a single mut borrow throughout.
+        let dim_style = Style::default().add_modifier(Modifier::DIM);
+        let bold_style = Style::default().add_modifier(Modifier::BOLD);
+        let sel_style = Style::default()
+            .bg(self.theme.current_line_bg)
+            .add_modifier(Modifier::BOLD);
+        let accent = Color::Cyan;
+
+        let Modal::Concordance {
+            data,
+            filter,
+            cursor,
+            scroll,
+            sort,
+            visible,
+        } = &mut self.modal
+        else {
+            return;
+        };
+
+        let stats_text = format!(
+            " {} distinct · {} tokens · {} paragraphs scanned",
+            data.distinct_words,
+            data.total_tokens,
+            data.paragraphs_scanned,
+        );
+        let filter_text = format!(
+            " filter: {}   sort: {}   ({} shown)",
+            filter.render_with_cursor('│'),
+            sort.label(),
+            visible.len(),
+        );
+        let col_header = " #     word                       count   variants";
+
+        let header_lines: Vec<Line<'_>> = vec![
+            Line::from(Span::styled(stats_text, Style::default().fg(accent).add_modifier(Modifier::BOLD))),
+            Line::from(filter_text),
+            Line::from(Span::styled(col_header, dim_style)),
+        ];
+        f.render_widget(Paragraph::new(header_lines), header_rect);
+
+        // Clamp scroll so cursor stays inside the
+        // visible region.  `list_h` is the number of
+        // rows we can paint.
+        let viewport = list_h as usize;
+        if viewport > 0 {
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + viewport {
+                *scroll = cursor.saturating_sub(viewport - 1);
+            }
+        }
+
+        // Paint the list rows.
+        let mut row_lines: Vec<Line<'_>> = Vec::with_capacity(viewport);
+        let row_count = visible.len();
+        for vis_off in 0..viewport {
+            let vis_idx = *scroll + vis_off;
+            if vis_idx >= row_count {
+                break;
+            }
+            let entry_idx = visible[vis_idx];
+            let entry = &data.entries[entry_idx];
+            let rank = vis_idx + 1;
+            // Build the variants trailer.  Skip the
+            // headword itself if it appears as the
+            // first variant (it usually does).
+            let variants: Vec<String> = entry
+                .variants
+                .iter()
+                .filter(|v| *v != &entry.headword)
+                .take(3)
+                .cloned()
+                .collect();
+            let variants_label = if variants.is_empty() {
+                String::new()
+            } else {
+                format!("({})", variants.join(", "))
+            };
+            let row_text = format!(
+                " {:>4}  {:<24}  {:>6}   {}",
+                rank,
+                truncate_label(&entry.headword, 24),
+                entry.count,
+                variants_label,
+            );
+            let style = if vis_idx == *cursor { sel_style } else { Style::default() };
+            row_lines.push(Line::from(Span::styled(row_text, style)));
+        }
+        if row_lines.is_empty() {
+            row_lines.push(Line::from(Span::styled(
+                "  (no entries match the current filter)",
+                dim_style,
+            )));
+        }
+        f.render_widget(Paragraph::new(row_lines), list_rect);
+
+        // Footer: KWIC samples for the currently
+        // selected entry + key hints on the bottom row.
+        let selected_entry: Option<&crate::tui::concordance::ConcordanceEntry> =
+            visible.get(*cursor).and_then(|i| data.entries.get(*i));
+        let mut footer_lines: Vec<Line<'_>> = Vec::new();
+        if let Some(entry) = selected_entry {
+            footer_lines.push(Line::from(vec![
+                Span::styled(" samples for ", dim_style),
+                Span::styled(format!("\"{}\"", entry.headword), bold_style),
+                Span::styled(
+                    format!("  ({}× total)", entry.count),
+                    dim_style,
+                ),
+            ]));
+            for sample in entry.samples.iter().take(3) {
+                let prefix = format!(
+                    "  {}:l{}  ",
+                    truncate_label(&sample.slug_path, 32),
+                    sample.line_no,
+                );
+                let kwic = truncate_label(
+                    &sample.kwic,
+                    (inner.width as usize).saturating_sub(prefix.len() + 2),
+                );
+                footer_lines.push(Line::from(vec![
+                    Span::styled(prefix, dim_style),
+                    Span::raw(kwic),
+                ]));
+            }
+            // Pad the samples block out to a stable
+            // height so the hint line stays at the
+            // bottom even when an entry has fewer than
+            // 3 samples.
+            while footer_lines.len() < 4 {
+                footer_lines.push(Line::from(""));
+            }
+        } else {
+            footer_lines.push(Line::from(Span::styled(
+                " (no selection)",
+                dim_style,
+            )));
+            while footer_lines.len() < 4 {
+                footer_lines.push(Line::from(""));
+            }
+        }
+        footer_lines.push(Line::from(Span::styled(
+            " ↑↓ navigate · type to filter · Ctrl+S sort · Esc close ",
+            dim_style,
+        )));
+        f.render_widget(Paragraph::new(footer_lines), footer_rect);
+    }
+
 }
 
 /// 1.2.8+ — restart-required overlay painted on top of

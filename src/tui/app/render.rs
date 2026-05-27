@@ -123,6 +123,10 @@ impl super::App {
             self.draw_writing_streak_heatmap(f, area);
             return;
         }
+        if matches!(self.modal, Modal::Concordance { .. }) {
+            self.draw_concordance_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::RenderedPreview { .. }) {
             self.draw_rendered_preview_modal(f, area);
             return;
@@ -200,6 +204,8 @@ impl super::App {
                 unreachable!("hjson editor handled above"),
             Modal::WritingStreakHeatmap { .. } =>
                 unreachable!("writing-streak heatmap handled above"),
+            Modal::Concordance { .. } =>
+                unreachable!("concordance handled above"),
             Modal::RenderedPreview { .. } =>
                 unreachable!("rendered preview handled above"),
             Modal::SaveRenderedPng { .. } =>

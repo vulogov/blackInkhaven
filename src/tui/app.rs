@@ -6534,6 +6534,7 @@ impl App {
             A::SceneBreakPrev => self.scene_break_jump(-1),
             A::SceneBreakNext => self.scene_break_jump(1),
             A::ToggleStyleWarnings => self.toggle_style_warnings(),
+            A::OpenConcordance => self.open_concordance(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
@@ -7728,6 +7729,224 @@ impl App {
         self.status = format!(
             "streak: {streak_days}-day current · {longest} longest (91-day window) · Esc closes"
         );
+    }
+
+    /// 1.2.9+ — Ctrl+B Shift+L action: build a
+    /// project-wide concordance and open the
+    /// `Concordance` modal.  Walks every paragraph in
+    /// the in-memory hierarchy, loads its body via
+    /// `Store::get_content`, strips the leading typst
+    /// heading line, and feeds the body rows into the
+    /// concordance builder.  Uses the project's
+    /// `language` to pick the Snowball stemmer + the
+    /// stop-word set (same plumbing as the repeated-
+    /// phrase detector — no second list to tune).
+    /// Cheap at literary scale (well under a second
+    /// for a 100k-word manuscript); the build runs
+    /// synchronously on the UI thread, then the modal
+    /// just slices the cached entries on every key.
+    fn open_concordance(&mut self) {
+        use crate::tui::concordance::{build, ParagraphInput, SortMode};
+        let mut bodies: Vec<(String, Vec<String>)> = Vec::new();
+        for node in self.hierarchy.iter() {
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let slug_path = self.hierarchy.slug_path(node);
+            let raw = match self.store.get_content(node.id) {
+                Ok(Some(bytes)) => bytes,
+                _ => continue,
+            };
+            let text = match std::str::from_utf8(&raw) {
+                Ok(s) => strip_leading_typst_heading(s),
+                Err(_) => continue,
+            };
+            let lines: Vec<String> =
+                text.split('\n').map(|s| s.to_string()).collect();
+            bodies.push((slug_path, lines));
+        }
+        if bodies.is_empty() {
+            self.status =
+                "concordance: project has no paragraphs to analyse".into();
+            return;
+        }
+        let inputs: Vec<ParagraphInput<'_>> = bodies
+            .iter()
+            .map(|(slug, lines)| ParagraphInput {
+                slug_path: slug.clone(),
+                lines,
+            })
+            .collect();
+        let data = build(
+            &self.cfg.editor.style_warnings.repeated_phrases,
+            &self.cfg.language,
+            &inputs,
+        );
+        if data.entries.is_empty() {
+            self.status = format!(
+                "concordance: {} paragraphs scanned, no lexical content (all stop-words?)",
+                data.paragraphs_scanned
+            );
+            return;
+        }
+        let visible: Vec<usize> = (0..data.entries.len()).collect();
+        let stats = format!(
+            "concordance: {} distinct stems · {} tokens · {} paragraphs · Esc closes",
+            data.distinct_words, data.total_tokens, data.paragraphs_scanned
+        );
+        self.status = stats;
+        self.modal = Modal::Concordance {
+            data,
+            filter: crate::tui::input::TextInput::new(),
+            cursor: 0,
+            scroll: 0,
+            sort: SortMode::Count,
+            visible,
+        };
+    }
+
+    /// 1.2.9+ — recompute the cached `visible` list on
+    /// the `Concordance` modal.  Called whenever the
+    /// filter text or sort mode changes.  Filter
+    /// semantics: case-insensitive substring match
+    /// against the headword OR any kept variant — so
+    /// typing `walk` surfaces an entry whose headword
+    /// is `walked` but whose variants include `walk`.
+    fn concordance_refilter(&mut self) {
+        use crate::tui::concordance::sort_in_place;
+        let Modal::Concordance {
+            data,
+            filter,
+            cursor,
+            scroll,
+            sort,
+            visible,
+        } = &mut self.modal
+        else {
+            return;
+        };
+        sort_in_place(&mut data.entries, *sort);
+        let needle = filter.as_str().trim().to_lowercase();
+        visible.clear();
+        for (i, entry) in data.entries.iter().enumerate() {
+            if needle.is_empty()
+                || entry.headword.contains(&needle)
+                || entry.stem.contains(&needle)
+                || entry.variants.iter().any(|v| v.contains(&needle))
+            {
+                visible.push(i);
+            }
+        }
+        if visible.is_empty() {
+            *cursor = 0;
+            *scroll = 0;
+        } else if *cursor >= visible.len() {
+            *cursor = visible.len() - 1;
+        }
+        // Keep cursor on-screen — render clamps scroll
+        // against the visible-row height, so this is
+        // just a coarse precaution.
+        if *cursor < *scroll {
+            *scroll = *cursor;
+        }
+    }
+
+    /// 1.2.9+ — key dispatch for the `Concordance`
+    /// modal.  Single-pane list with an inline filter
+    /// input — typing characters narrows the list,
+    /// arrow keys move the selection, `Ctrl+S` toggles
+    /// the sort mode, Esc closes.  No Enter-to-jump
+    /// behaviour yet (would need a paragraph-locator
+    /// indirection through `slug_path`); that's a
+    /// likely follow-up.
+    fn concordance_handle_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        // Esc always closes — even mid-filter.
+        if matches!(key.code, KeyCode::Esc) {
+            self.modal = Modal::None;
+            self.status = "concordance: closed".into();
+            return;
+        }
+        // Ctrl+S toggles sort mode.  Plain `s` falls
+        // through to the filter input so headwords
+        // beginning with `s` stay typeable.
+        if matches!(key.code, KeyCode::Char('s'))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            if let Modal::Concordance { sort, .. } = &mut self.modal {
+                *sort = sort.toggle();
+            }
+            self.concordance_refilter();
+            if let Modal::Concordance { sort, .. } = &self.modal {
+                self.status = format!("concordance: sort = {}", sort.label());
+            }
+            return;
+        }
+        // Arrow keys + PgUp/PgDn move the selection.
+        match key.code {
+            KeyCode::Down => {
+                if let Modal::Concordance { cursor, visible, .. } = &mut self.modal {
+                    if !visible.is_empty() && *cursor + 1 < visible.len() {
+                        *cursor += 1;
+                    }
+                }
+                return;
+            }
+            KeyCode::Up => {
+                if let Modal::Concordance { cursor, .. } = &mut self.modal {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                return;
+            }
+            KeyCode::PageDown => {
+                if let Modal::Concordance { cursor, visible, .. } = &mut self.modal {
+                    if !visible.is_empty() {
+                        *cursor = (*cursor + 10).min(visible.len() - 1);
+                    }
+                }
+                return;
+            }
+            KeyCode::PageUp => {
+                if let Modal::Concordance { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(10);
+                }
+                return;
+            }
+            KeyCode::Home => {
+                if let Modal::Concordance { cursor, .. } = &mut self.modal {
+                    *cursor = 0;
+                }
+                return;
+            }
+            KeyCode::End => {
+                if let Modal::Concordance { cursor, visible, .. } = &mut self.modal {
+                    if !visible.is_empty() {
+                        *cursor = visible.len() - 1;
+                    }
+                }
+                return;
+            }
+            _ => {}
+        }
+        // Filter input: typing edits the filter buffer,
+        // Backspace deletes, etc.  Only ASCII-printable
+        // + Unicode chars are forwarded; control
+        // characters fall through to the no-op branch.
+        if let Modal::Concordance { filter, .. } = &mut self.modal {
+            match key.code {
+                KeyCode::Backspace => filter.backspace(),
+                KeyCode::Delete => filter.delete(),
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    filter.insert_char(c);
+                }
+                _ => return,
+            }
+        }
+        self.concordance_refilter();
     }
 
     /// 1.2.9+ — Ctrl+B Shift+R action: open a save-as
@@ -11864,6 +12083,7 @@ impl App {
         let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
         let is_tts_save_as_audio = matches!(self.modal, Modal::TtsSaveAsAudio { .. });
         let is_writing_streak_heatmap = matches!(self.modal, Modal::WritingStreakHeatmap { .. });
+        let is_concordance = matches!(self.modal, Modal::Concordance { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
         let is_ai_diff_review = matches!(self.modal, Modal::AiDiffReview { .. });
         let is_event_picker = matches!(self.modal, Modal::EventPicker { .. });
@@ -12339,6 +12559,11 @@ impl App {
             // No interactions inside; the modal is a
             // read-only viewer.
             self.modal = Modal::None;
+            return Ok(false);
+        }
+
+        if is_concordance {
+            self.concordance_handle_key(key);
             return Ok(false);
         }
 
