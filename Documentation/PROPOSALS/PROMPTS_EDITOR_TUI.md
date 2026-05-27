@@ -1,8 +1,9 @@
 # Proposal — Prompts editor TUI (`inkhaven prompts-editor`)
 
-Status: **research / pre-implementation**.  Target
-cycle: 1.2.11 (or late 1.2.10 if the config TUI
-ships before this lands).
+Status: **research / approved — ready for
+implementation**.  Target cycle: 1.2.11 (or late
+1.2.10 if scheduling allows).  All four flagged
+open questions resolved 2026-05-27 (§10).
 
 ## 1. Summary
 
@@ -116,20 +117,23 @@ list pane or `Ctrl+Q`.
 
 ### 3.4 Focus + Tab cycling
 
-`Tab` cycles focus through the four panes in
-clockwise order:
+`Tab` cycles focus through the **three editable
+panes** in this order:
 
 ```
-Prompts list  →  Editor  →  AI pane  →  AI prompt  →  Prompts list
+Prompts list  →  Editor  →  AI prompt  →  Prompts list
 ```
 
 `Shift+Tab` reverses.  The currently focused pane
 draws a coloured border + a chip in the status line.
 
-(The user's spec line "Tab shifts between prompts"
-is interpreted as "Tab cycles between panes — the
-prompts-list pane being one of them".  See §10 Q1
-for clarification.)
+The **AI response pane** is display-only and not in
+the Tab cycle — it always shows the most recent
+send.  Scroll it via `Ctrl+↑` / `Ctrl+↓` /
+`Ctrl+PgUp` / `Ctrl+PgDn` (no focus required) or
+the mouse wheel when the cursor is over it.  Long
+responses auto-scroll to the bottom as the stream
+arrives.
 
 ### 3.5 Chord set
 
@@ -254,13 +258,32 @@ Reuse the existing AI plumbing — no new client:
 
   * `AiClient::from_config(&cfg.llm)` — same the
     main TUI uses.
-  * `spawn_chat_stream(client, model, system, [],
-    user_text)` — exactly the `Some(system)`
-    pattern that `start_show_dont_tell_scan` in
-    `ai_impl.rs` already uses.  The stream
-    returns `StreamMsg` events; we pump them
-    into `app.inference` on the event loop the
-    same way.
+  * `spawn_chat_stream(client, model, None, [],
+    rendered_text)` — `None` system prompt, the
+    rendered template in the user role.  Matches
+    `start_show_dont_tell_scan` and the F12
+    critique flow.
+
+**Payload composition** (Q2 resolution):
+
+  1. Take the editor body as the template.
+  2. If it contains `{{selection}}`: replace with
+     the AI prompt input.  If it contains
+     `{{context}}`: replace with empty string
+     (the prompts editor isn't tied to a
+     hierarchy, so there's no context to inject).
+  3. If neither placeholder is present: append
+     the AI prompt input to the template body on
+     a fresh paragraph (`\n\n`) so a
+     prompts-without-placeholders template still
+     has the user's test text to operate on.
+  4. Send the rendered text as the **user**
+     message; `None` for the system prompt.
+
+This mirrors how the same template would behave
+when invoked from the main TUI's editor pane —
+faithful reproduction of production semantics, not
+a separate chat-style harness.
 
 Single inference at a time.  Sending a second
 prompt while the first is still streaming cancels
@@ -399,20 +422,22 @@ flag (added in 1.2.10).  No new flags for v1.
 `inkhaven prompts-editor --help` documents the
 chord set + layout from §3.
 
-## 10. Open questions
+## 10. Resolved questions
 
-| #  | Question                                                                                              | Recommendation                                                                                       |
-|----|-------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|
-| Q1 | The user spec says *"Tab shifts between prompts"*.  Did they mean (a) Tab cycles **panes**, or (b) Tab moves within the **prompts list**? | **Tab cycles panes** (List → Editor → AI → AiPrompt → List).  Matches the main TUI's Tab-focus pattern; List uses ↑↓ for navigation. |
-| Q2 | When the AI prompt sends, is the LLM payload `(system=editor, user=input)` or `(user=editor + "\n\n" + input)`? | `(system=editor, user=input)` — matches how the main TUI's grammar-check / critique flows work.        |
-| Q3 | Should the user be able to cycle LLM providers from inside the prompts editor (Ctrl+B L equivalent)?   | **Out of scope v1.** Use `Ctrl+B 0` in the main TUI to flip `llm.default` then re-launch.            |
-| Q4 | First-launch with no `prompts.hjson` — auto-populate with inkhaven's embedded defaults?               | **Yes** — same `reseed_prompt_examples` policy the main TUI runs.  User can `d` to remove anything they don't want. |
-| Q5 | Single-shot per send or multi-turn conversation continuing across sends?                              | **Single-shot v1.** Multi-turn is a useful follow-up; keep it for v2 once the workflow shape is validated. |
-| Q6 | AI prompt history: in-session only or persisted to a sidecar?                                          | **In-session v1.**  Persistence is a Phase 2 polish item (`.prompts-ai-history.txt` keyed by project).|
-| Q7 | Should the editor pane support the existing in-process style-warning overlays (filter-words, etc.)?   | **No.** Prompts aren't prose — flagging "really" / "very" in a prompt template would mislead.       |
-| Q8 | Should `d` deletion in the list be reversible like map-entry delete (struck-through until save)?      | **Yes** — same staging UX from the config TUI keeps this consistent.                                 |
-| Q9 | What's the rollback retention?  Reuse `.config-backups/` policy of "keep all"?                          | **Yes**, same policy.  Folder name is `.prompts-backups/` to avoid collision with config backups.    |
-| Q10| Should the `{{selection}}` / `{{context}}` template variables be visible / explorable in the help?     | **Yes** — the help pane on the editor pane includes a one-line cheat sheet of recognised variables. |
+Decisions made 2026-05-27 before implementation:
+
+| #  | Question                                                                                              | **Decision**                                                                                          |
+|----|-------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
+| Q1 | The user spec says *"Tab shifts between prompts"*.  Cycle panes, or move within the list?             | ✓ **Tab cycles panes** through `Prompts list → Editor → AI prompt → Prompts list` (three stops).  Within the list, `↑↓` navigates entries.  The AI response pane is display-only and not in the Tab cycle.   |
+| Q2 | LLM payload composition.                                                                              | ✓ **Render the template + send as user message; no system prompt.**  `{{selection}}` is substituted with the AI prompt input; `{{context}}` is replaced with empty string; templates without either placeholder get the input appended on a fresh paragraph.  Mirrors how the same template behaves when invoked from the main TUI — faithful production semantics, not a separate chat harness. |
+| Q3 | Provider switching from inside the prompts editor (Ctrl+B L equivalent)?                              | **Out of scope v1.**  Edit `llm.default` in `inkhaven.hjson` via `Ctrl+B 0` (or `inkhaven config`) and re-launch.                                                                                              |
+| Q4 | First-launch with no `prompts.hjson` — auto-populate with inkhaven's embedded defaults?               | ✓ **Yes.**  Same `reseed_prompt_examples` policy the main TUI already runs.  User can `d` to drop anything they don't want.                                                                                  |
+| Q5 | Single-shot per send or multi-turn conversation continuing across sends?                              | ✓ **Single-shot.**  This is *prompt assessment*, not a chat session — each send is an independent evaluation of how the current template behaves on the given input.  Multi-turn isn't planned.             |
+| Q6 | AI prompt history: in-session only or persisted to a sidecar?                                          | **In-session v1.**  Persistence (`.prompts-ai-history.txt` keyed by project) is a Phase 4 polish item if it proves useful.                                                                                    |
+| Q7 | Should the editor pane support the existing in-process style-warning overlays?                         | **No.**  Prompts aren't prose — flagging "really" / "very" in a prompt template would mislead.                                                                                                                |
+| Q8 | Should `d` deletion in the list be reversible like map-entry delete (struck-through until save)?      | **Yes** — same staging UX from the config TUI for consistency.                                                                                                                                                |
+| Q9 | Rollback retention?  Reuse `.config-backups/` policy of "keep all"?                                    | **Yes**, same policy.  Folder name is `.prompts-backups/` to avoid collision with config backups.                                                                                                              |
+| Q10| Should the `{{selection}}` / `{{context}}` template variables be visible / explorable in the help?     | **Yes** — the help pane on the editor pane includes a one-line cheat sheet of recognised variables.                                                                                                            |
 
 ## 11. Implementation phases
 
@@ -480,16 +505,11 @@ Useful immediately as a *prompt browser*.
   * Render-prompt-with-`{{selection}}`-substituted preview.
   * Cost / token-budget warnings.
 
-## 14. Open thread → user
+## 14. Status: ready for implementation
 
-Items I'd like a green light on before starting
-implementation:
-
-  * **Q1**: confirm Tab cycles panes (not entries
-    within the list).
-  * **Q2**: confirm `system=editor + user=input`
-    payload.
-  * **Q4**: confirm auto-populate-with-defaults
-    on first launch.
-  * **Q5**: confirm single-shot for v1 (multi-turn
-    deferred).
+All four flagged questions (Q1 Tab cycles three
+panes, Q2 template-rendered user message with no
+system prompt, Q4 auto-populate defaults, Q5
+single-shot — this is prompt assessment, not a
+chat) are resolved.  Implementation can begin
+against the phased plan in §11.
