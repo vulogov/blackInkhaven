@@ -296,6 +296,12 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # Compiles the in-tree Typst tree-sitter grammar (`src/grammar/`)
 # during `cargo build`. See `build.rs`.
 cc = "1"
+# 1.2.10+ — parse `src/config.rs` at build time and
+# emit a `(path, doc_comment)` lookup table for the
+# config-TUI's in-process help pane.  Only the
+# `parsing` feature is needed; we don't need
+# `extra-traits` or `proc-macro` for our walk.
+syn = { version = "2", features = ["full"] }
 
 [dev-dependencies]
 tempfile = "3"

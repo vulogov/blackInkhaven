@@ -3814,6 +3814,7 @@ dependencies = [
  "serde_json",
  "similar",
  "slug",
+ "syn 2.0.117",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
