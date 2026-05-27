@@ -3,7 +3,7 @@
 Inkhaven 1.2.5 added a **story view** — a floating PNG of
 the current book's structure rendered on top of the editor.
 1.2.6 added a paragraph-scoped variant. Both let you see the
-book's shape at a glance: chapters, paragraphs, wiki-links,
+book's shape at a glance: chapters, paragraphs, paragraph links,
 and Characters / Places / Artefacts mentions, laid out
 radially.
 
@@ -15,8 +15,8 @@ tree pane.
 
 | Chord            | Scope     | What it renders |
 |-------------------|-----------|------------------|
-| `Ctrl+V Shift+W` | Book      | Book at the centre. Every chapter / subchapter / paragraph + wiki-links + lexicon mentions on concentric rings. |
-| `Ctrl+V w`       | Paragraph | Open paragraph at the centre. Wiki-link neighbours (one hop out + one hop in) on the inner ring, lexicon mentions on the outer ring. |
+| `Ctrl+V Shift+W` | Book      | Book at the centre. Every chapter / subchapter / paragraph + paragraph links + lexicon mentions on concentric rings. |
+| `Ctrl+V w`       | Paragraph | Open paragraph at the centre. Paragraph link neighbours (one hop out + one hop in) on the inner ring, lexicon mentions on the outer ring. |
 
 The case distinction is intentional — lowercase `w` is the
 fast, focused view; Shift+W is the full read. Reuses the
@@ -54,7 +54,7 @@ terminals fall back to a coarser preview).
 
 - **Hierarchy edges** — parent → child structure (chapter →
   paragraph). Solid.
-- **Wiki-links** — outgoing `linked_paragraphs` (1.2.4 wiki-link
+- **Paragraph links** — outgoing `linked_paragraphs` (1.2.4 paragraph link
   feature, see [`19-wiki-links.md`](19-wiki-links.md)). Dashed.
 - **Lexicon mentions** — paragraphs that name a Place /
   Character / Artefact from the corresponding system book.
@@ -67,7 +67,7 @@ Open a paragraph and press `Ctrl+V w`:
 ```
               ┌── Story view (¶) `The Storm` · 800×600 · S saves · Esc closes ──┐
               │                                                                  │
-              │            outgoing wiki-link ──┐  ┌── incoming wiki-link        │
+              │            outgoing paragraph link ──┐  ┌── incoming paragraph link        │
               │                                 ▼  ▼                            │
               │                       ┌── The Storm ──┐                          │
               │                       └────────┬───────┘                          │
@@ -133,7 +133,7 @@ Long projects produce dense graphs. A few patterns:
 
 - `Ctrl+V Shift+W` — book story view (everything in the book).
 - `Ctrl+V w` — paragraph mini view (current paragraph + hop-1
-  wiki-link neighbours + lexicon mentions).
+  paragraph link neighbours + lexicon mentions).
 - `S` inside either view saves to a PNG file with a
   date-stamped default name.
 - `ink.story.render` (Bund, fs_write policy) writes the book

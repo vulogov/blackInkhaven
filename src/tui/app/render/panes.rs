@@ -722,6 +722,77 @@ impl super::super::App {
             })
             .collect();
 
+        // 1.2.9+ — style-warning overlays.  Effective
+        // enable flag is the session toggle if set, else
+        // the HJSON setting.  Filter-word detector +
+        // repeated-phrase detector both built once per
+        // render frame.  Per-row hits union both
+        // detectors' outputs (sorted by col_start).
+        let style_enabled = self
+            .style_warnings_toggle
+            .unwrap_or(self.cfg.editor.style_warnings.enabled);
+        let style_lang = self.cfg.language.as_str();
+        let style_cfg = &self.cfg.editor.style_warnings;
+        let filter_detector =
+            if style_enabled && style_cfg.filter_words.enabled {
+                Some(
+                    super::super::super::style_warnings::FilterWordsDetector::new(
+                        &style_cfg.filter_words,
+                        style_lang,
+                    ),
+                )
+            } else {
+                None
+            };
+        let phrase_detector =
+            if style_enabled && style_cfg.repeated_phrases.enabled {
+                Some(
+                    super::super::super::style_warnings::RepeatedPhraseDetector::new(
+                        &style_cfg.repeated_phrases,
+                        style_lang,
+                        &current_lines,
+                    ),
+                )
+            } else {
+                None
+            };
+        let sdt_detector =
+            if style_enabled && style_cfg.show_dont_tell.enabled {
+                Some(
+                    super::super::super::style_warnings::ShowDontTellDetector::new(
+                        &style_cfg.show_dont_tell,
+                        style_lang,
+                    ),
+                )
+            } else {
+                None
+            };
+        let style_per_row: Vec<Vec<super::super::super::style_warnings::StyleHit>> =
+            current_lines
+                .iter()
+                .enumerate()
+                .map(|(row, line)| {
+                    let mut hits = Vec::new();
+                    if let Some(d) = &filter_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.detect(line));
+                        }
+                    }
+                    if let Some(d) = &phrase_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.hits_for_row(row).iter().copied());
+                        }
+                    }
+                    if let Some(d) = &sdt_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.detect(line));
+                        }
+                    }
+                    hits.sort_by_key(|h| h.col_start);
+                    hits
+                })
+                .collect();
+
         let (cur_row, cur_col) = opened.textarea.cursor();
         let selection = opened.textarea.selection_range();
 
@@ -795,6 +866,10 @@ impl super::super::App {
                 .get(row)
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
+            let style_hits = style_per_row
+                .get(row)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             let mut text_spans = build_row_spans(
                 &highlighted[row],
                 row,
@@ -805,6 +880,7 @@ impl super::super::App {
                 added_flags,
                 row_hits,
                 lex_hits,
+                style_hits,
                 correction_flags,
                 theme,
             );
@@ -917,6 +993,77 @@ impl super::super::App {
             })
             .collect();
 
+        // 1.2.9+ — style-warning overlays.  Effective
+        // enable flag is the session toggle if set, else
+        // the HJSON setting.  Filter-word detector +
+        // repeated-phrase detector both built once per
+        // render frame.  Per-row hits union both
+        // detectors' outputs (sorted by col_start).
+        let style_enabled = self
+            .style_warnings_toggle
+            .unwrap_or(self.cfg.editor.style_warnings.enabled);
+        let style_lang = self.cfg.language.as_str();
+        let style_cfg = &self.cfg.editor.style_warnings;
+        let filter_detector =
+            if style_enabled && style_cfg.filter_words.enabled {
+                Some(
+                    super::super::super::style_warnings::FilterWordsDetector::new(
+                        &style_cfg.filter_words,
+                        style_lang,
+                    ),
+                )
+            } else {
+                None
+            };
+        let phrase_detector =
+            if style_enabled && style_cfg.repeated_phrases.enabled {
+                Some(
+                    super::super::super::style_warnings::RepeatedPhraseDetector::new(
+                        &style_cfg.repeated_phrases,
+                        style_lang,
+                        &current_lines,
+                    ),
+                )
+            } else {
+                None
+            };
+        let sdt_detector =
+            if style_enabled && style_cfg.show_dont_tell.enabled {
+                Some(
+                    super::super::super::style_warnings::ShowDontTellDetector::new(
+                        &style_cfg.show_dont_tell,
+                        style_lang,
+                    ),
+                )
+            } else {
+                None
+            };
+        let style_per_row: Vec<Vec<super::super::super::style_warnings::StyleHit>> =
+            current_lines
+                .iter()
+                .enumerate()
+                .map(|(row, line)| {
+                    let mut hits = Vec::new();
+                    if let Some(d) = &filter_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.detect(line));
+                        }
+                    }
+                    if let Some(d) = &phrase_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.hits_for_row(row).iter().copied());
+                        }
+                    }
+                    if let Some(d) = &sdt_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.detect(line));
+                        }
+                    }
+                    hits.sort_by_key(|h| h.col_start);
+                    hits
+                })
+                .collect();
+
         let (cur_row, cur_col) = opened.textarea.cursor();
         let selection = opened.textarea.selection_range();
 
@@ -1003,6 +1150,10 @@ impl super::super::App {
                 .get(v.src_row)
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
+            let style_hits = style_per_row
+                .get(v.src_row)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             let mut text_spans = build_visual_row_spans(
                 v,
                 selection,
@@ -1010,6 +1161,7 @@ impl super::super::App {
                 added_flags,
                 row_hits,
                 lex_hits,
+                style_hits,
                 correction_flags,
                 theme,
             );
@@ -1412,6 +1564,7 @@ impl super::super::App {
                 .fg(Color::Black)
                 .add_modifier(Modifier::BOLD),
         ));
+        spans.extend(self.pov_chip_spans());
         spans.push(Span::raw("  "));
         spans.push(Span::raw(self.status.clone()));
 

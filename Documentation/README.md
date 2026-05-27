@@ -69,7 +69,7 @@ don't need them all up front.
 | [`Tutorials/16-similar-paragraphs.md`](Tutorials/16-similar-paragraphs.md)       | Ctrl+V S — vector-similarity picker + side-by-side editor. |
 | [`Tutorials/17-writing-goals.md`](Tutorials/17-writing-goals.md)                 | Writing-progress subsystem, the `goals:` HJSON stanza, Ctrl+V G overview modal. |
 | [`Tutorials/18-bund-pane-and-script-picker.md`](Tutorials/18-bund-pane-and-script-picker.md) | The floating Bund pane, Ctrl+Z ? script picker, `ink.input` prompt modal. |
-| [`Tutorials/19-wiki-links.md`](Tutorials/19-wiki-links.md) | Metadata-only wiki-links + backlinks (Ctrl+V A / I / L / K), AI inference integration. |
+| [`Tutorials/19-wiki-links.md`](Tutorials/19-wiki-links.md) | Metadata-only paragraph links + backlinks (Ctrl+V A / I / L / K), AI inference integration. |
 | [`Tutorials/20-snapshot-diff.md`](Tutorials/20-snapshot-diff.md) | F6 V snapshot diff view + pre-restore safety snapshot on Enter. |
 | [`Tutorials/21-navigation.md`](Tutorials/21-navigation.md) | Ctrl+V P fuzzy picker, Ctrl+V B/M bookmarks, AI Up-arrow history, slash-command ranking. |
 | [`Tutorials/22-tree-multiselect.md`](Tutorials/22-tree-multiselect.md) | Tree-pane Space mark set, T cycles type, O cycles status — bulk on demand. |

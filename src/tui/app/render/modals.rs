@@ -2872,6 +2872,225 @@ impl super::super::App {
     /// `inkhaven.hjson`.  Renders the textarea's lines
     /// manually so per-line `hjson_highlight` styling
     /// (keys / strings / comments / numbers / keywords) can
+    /// 1.2.9+ — GitHub-style writing-streak heatmap.
+    /// 13×7 grid (91 days), each cell colored by daily
+    /// word-count bucket (0 → dim, 1-249 → faint, 250-
+    /// 499 → medium, 500-999 → bright, 1000+ → max).
+    /// Week columns left-to-right oldest→today; day
+    /// rows Mon-Sun.  Footer shows current streak,
+    /// longest streak in window, total words, and
+    /// active-day average.  Modal closes on any key.
+    pub(in crate::tui::app) fn draw_writing_streak_heatmap(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let (daily_words, streak_days, longest_streak, today_ymd) =
+            match &self.modal {
+                Modal::WritingStreakHeatmap {
+                    daily_words,
+                    streak_days,
+                    longest_streak,
+                    today_ymd,
+                } => (daily_words.clone(), *streak_days, *longest_streak, *today_ymd),
+                _ => return,
+            };
+
+        // Modal rect: centered, ~70% wide, ~18 rows tall
+        // (enough for the grid + header + footer +
+        // borders).
+        let w = area.width.saturating_sub(6).min(80);
+        let h = area.height.saturating_sub(4).min(20);
+        let x = area.x + (area.width - w) / 2;
+        let y = area.y + (area.height - h) / 2;
+        let rect = Rect { x, y, width: w, height: h };
+
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Writing streak — last 91 days ")
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Today's weekday so the bottom-right of the grid
+        // is today.  91 days = 13 weeks × 7.
+        let n = daily_words.len();
+        let today = match chrono::NaiveDate::from_ymd_opt(
+            today_ymd.0,
+            today_ymd.1,
+            today_ymd.2,
+        ) {
+            Some(d) => d,
+            None => chrono::Utc::now().date_naive(),
+        };
+        use chrono::Datelike;
+        let today_wd = today.weekday().num_days_from_monday();
+        // Today sits at column 12 (rightmost), row =
+        // today_wd.  Each cell at (col, row) maps to a
+        // day index in daily_words.
+        let today_cell: i64 = (today_wd as i64) + 12 * 7;
+
+        // Layout sub-rects.
+        let header_h: u16 = 2;
+        let footer_h: u16 = 5;
+        let grid_h: u16 = inner.height.saturating_sub(header_h + footer_h);
+        let header_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: header_h,
+        };
+        let grid_rect = Rect {
+            x: inner.x,
+            y: inner.y + header_h,
+            width: inner.width,
+            height: grid_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + header_h + grid_h,
+            width: inner.width,
+            height: footer_h,
+        };
+
+        // Header — month labels above each week column.
+        let mut header_text = String::from("    "); // skip day-label column
+        let mut last_month: Option<u32> = None;
+        for col in 0..13_i64 {
+            let cell = col * 7;
+            let day_offset_from_today = today_cell - cell;
+            let date = today
+                .checked_sub_signed(chrono::Duration::days(day_offset_from_today))
+                .unwrap_or(today);
+            let month = date.month();
+            let label = if Some(month) != last_month {
+                last_month = Some(month);
+                match month {
+                    1 => "Jn",
+                    2 => "Fb",
+                    3 => "Mr",
+                    4 => "Ap",
+                    5 => "My",
+                    6 => "Jn",
+                    7 => "Jl",
+                    8 => "Au",
+                    9 => "Sp",
+                    10 => "Oc",
+                    11 => "Nv",
+                    12 => "Dc",
+                    _ => "??",
+                }
+            } else {
+                "  "
+            };
+            header_text.push_str(label);
+        }
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                header_text,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            header_rect,
+        );
+
+        // Grid.  Day-label column on the left, then
+        // 13 columns × 7 rows of colored cells.
+        let day_names = [" Mon", " Tue", " Wed", " Thu", " Fri", " Sat", " Sun"];
+        for row in 0..7_usize {
+            let mut spans: Vec<Span<'_>> = Vec::with_capacity(14);
+            spans.push(Span::styled(
+                day_names[row],
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+            for col in 0..13_i64 {
+                let cell = col * 7 + row as i64;
+                let day_idx = (n as i64 - 1) - (today_cell - cell);
+                let (glyph, color) = if day_idx < 0 || (day_idx as usize) >= n {
+                    ("·", Color::DarkGray)
+                } else {
+                    let words = daily_words[day_idx as usize];
+                    heat_glyph_and_color(words)
+                };
+                let is_today =
+                    day_idx >= 0 && (day_idx as usize) == n.saturating_sub(1);
+                let style = if is_today {
+                    Style::default().fg(color).bg(Color::Rgb(0x44, 0x44, 0x44))
+                } else {
+                    Style::default().fg(color)
+                };
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(glyph.to_string(), style));
+            }
+            let row_rect = Rect {
+                x: grid_rect.x,
+                y: grid_rect.y + row as u16,
+                width: grid_rect.width,
+                height: 1,
+            };
+            f.render_widget(Paragraph::new(Line::from(spans)), row_rect);
+        }
+
+        // Footer.
+        let total_words: i64 = daily_words.iter().sum();
+        let active_days = daily_words.iter().filter(|w| **w > 0).count();
+        let avg_per_active = if active_days > 0 {
+            total_words / active_days as i64
+        } else {
+            0
+        };
+        let footer_lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(
+                    format!(" {streak_days}-day current streak"),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  ·  "),
+                Span::raw(format!("{longest_streak}-day longest in window")),
+                Span::raw("  ·  "),
+                Span::raw(format!(
+                    "{active_days}/91 days active · avg {avg_per_active} w/day"
+                )),
+            ]),
+            Line::from(Span::raw(format!(
+                " {total_words} total words in window"
+            ))),
+            Line::from(vec![
+                Span::raw(" Legend: "),
+                Span::styled("·", Style::default().fg(Color::DarkGray)),
+                Span::raw(" 0  "),
+                Span::styled("░", Style::default().fg(Color::Rgb(0x40, 0xa0, 0x40))),
+                Span::raw(" 1-249  "),
+                Span::styled("▒", Style::default().fg(Color::Rgb(0x60, 0xc0, 0x60))),
+                Span::raw(" 250-499  "),
+                Span::styled("▓", Style::default().fg(Color::Rgb(0x40, 0xe0, 0x40))),
+                Span::raw(" 500-999  "),
+                Span::styled("█", Style::default().fg(Color::Rgb(0x80, 0xff, 0x80))),
+                Span::raw(" 1000+"),
+            ]),
+            Line::from(Span::styled(
+                " Press any key to close",
+                Style::default().add_modifier(Modifier::DIM),
+            )),
+        ];
+        f.render_widget(
+            Paragraph::new(footer_lines).wrap(Wrap { trim: false }),
+            footer_rect,
+        );
+    }
+
     /// be applied — tui-textarea's built-in widget supports
     /// only line-level + cursor-level styling, not per-token.
     /// Pops a centered "config changed, restart inkhaven"
@@ -3773,6 +3992,421 @@ impl super::super::App {
         );
     }
 
+    /// 1.2.9+ — project-wide concordance modal painter
+    /// (Ctrl+B Shift+L).  Three-region layout: header
+    /// (stats + filter input + sort label), main list
+    /// (rank · headword · count · variants), footer
+    /// (KWIC samples for the selected row + key hints).
+    /// Cursor + scroll clamped here against the visible
+    /// height so resizing the terminal mid-modal can't
+    /// strand the selection off-screen.
+    pub(in crate::tui::app) fn draw_concordance_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        // Modal sizing: centred, generous since the
+        // content (counts + KWIC samples) needs width.
+        let w = area.width.saturating_sub(4).min(120).max(60);
+        let h = area.height.saturating_sub(2).min(40).max(18);
+        let x = area.x + (area.width.saturating_sub(w)) / 2;
+        let y = area.y + (area.height.saturating_sub(h)) / 2;
+        let rect = Rect { x, y, width: w, height: h };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Concordance — project-wide ")
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Header: 3 rows (stats line, filter line, column header)
+        let header_h: u16 = 3;
+        let footer_h: u16 = 6; // 3 sample rows + hint + divider + headroom
+        let list_h: u16 = inner.height.saturating_sub(header_h + footer_h);
+        let header_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: header_h,
+        };
+        let list_rect = Rect {
+            x: inner.x,
+            y: inner.y + header_h,
+            width: inner.width,
+            height: list_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + header_h + list_h,
+            width: inner.width,
+            height: footer_h,
+        };
+
+        // Pull modal state out by reference.  We need to
+        // mutate `scroll` to clamp against `list_h`, so
+        // a single mut borrow throughout.
+        let dim_style = Style::default().add_modifier(Modifier::DIM);
+        let bold_style = Style::default().add_modifier(Modifier::BOLD);
+        let sel_style = Style::default()
+            .bg(self.theme.current_line_bg)
+            .add_modifier(Modifier::BOLD);
+        let accent = Color::Cyan;
+
+        let Modal::Concordance {
+            data,
+            filter,
+            cursor,
+            scroll,
+            sort,
+            visible,
+        } = &mut self.modal
+        else {
+            return;
+        };
+
+        let stats_text = format!(
+            " {} distinct · {} tokens · {} paragraphs scanned",
+            data.distinct_words,
+            data.total_tokens,
+            data.paragraphs_scanned,
+        );
+        let filter_text = format!(
+            " filter: {}   sort: {}   ({} shown)",
+            filter.render_with_cursor('│'),
+            sort.label(),
+            visible.len(),
+        );
+        let col_header = " #     word                       count   variants";
+
+        let header_lines: Vec<Line<'_>> = vec![
+            Line::from(Span::styled(stats_text, Style::default().fg(accent).add_modifier(Modifier::BOLD))),
+            Line::from(filter_text),
+            Line::from(Span::styled(col_header, dim_style)),
+        ];
+        f.render_widget(Paragraph::new(header_lines), header_rect);
+
+        // Clamp scroll so cursor stays inside the
+        // visible region.  `list_h` is the number of
+        // rows we can paint.
+        let viewport = list_h as usize;
+        if viewport > 0 {
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + viewport {
+                *scroll = cursor.saturating_sub(viewport - 1);
+            }
+        }
+
+        // Paint the list rows.
+        let mut row_lines: Vec<Line<'_>> = Vec::with_capacity(viewport);
+        let row_count = visible.len();
+        for vis_off in 0..viewport {
+            let vis_idx = *scroll + vis_off;
+            if vis_idx >= row_count {
+                break;
+            }
+            let entry_idx = visible[vis_idx];
+            let entry = &data.entries[entry_idx];
+            let rank = vis_idx + 1;
+            // Build the variants trailer.  Skip the
+            // headword itself if it appears as the
+            // first variant (it usually does).
+            let variants: Vec<String> = entry
+                .variants
+                .iter()
+                .filter(|v| *v != &entry.headword)
+                .take(3)
+                .cloned()
+                .collect();
+            let variants_label = if variants.is_empty() {
+                String::new()
+            } else {
+                format!("({})", variants.join(", "))
+            };
+            let row_text = format!(
+                " {:>4}  {:<24}  {:>6}   {}",
+                rank,
+                truncate_label(&entry.headword, 24),
+                entry.count,
+                variants_label,
+            );
+            let style = if vis_idx == *cursor { sel_style } else { Style::default() };
+            row_lines.push(Line::from(Span::styled(row_text, style)));
+        }
+        if row_lines.is_empty() {
+            row_lines.push(Line::from(Span::styled(
+                "  (no entries match the current filter)",
+                dim_style,
+            )));
+        }
+        f.render_widget(Paragraph::new(row_lines), list_rect);
+
+        // Footer: KWIC samples for the currently
+        // selected entry + key hints on the bottom row.
+        let selected_entry: Option<&crate::tui::concordance::ConcordanceEntry> =
+            visible.get(*cursor).and_then(|i| data.entries.get(*i));
+        let mut footer_lines: Vec<Line<'_>> = Vec::new();
+        if let Some(entry) = selected_entry {
+            footer_lines.push(Line::from(vec![
+                Span::styled(" samples for ", dim_style),
+                Span::styled(format!("\"{}\"", entry.headword), bold_style),
+                Span::styled(
+                    format!("  ({}× total)", entry.count),
+                    dim_style,
+                ),
+            ]));
+            for sample in entry.samples.iter().take(3) {
+                let prefix = format!(
+                    "  {}:l{}  ",
+                    truncate_label(&sample.slug_path, 32),
+                    sample.line_no,
+                );
+                let kwic = truncate_label(
+                    &sample.kwic,
+                    (inner.width as usize).saturating_sub(prefix.len() + 2),
+                );
+                footer_lines.push(Line::from(vec![
+                    Span::styled(prefix, dim_style),
+                    Span::raw(kwic),
+                ]));
+            }
+            // Pad the samples block out to a stable
+            // height so the hint line stays at the
+            // bottom even when an entry has fewer than
+            // 3 samples.
+            while footer_lines.len() < 4 {
+                footer_lines.push(Line::from(""));
+            }
+        } else {
+            footer_lines.push(Line::from(Span::styled(
+                " (no selection)",
+                dim_style,
+            )));
+            while footer_lines.len() < 4 {
+                footer_lines.push(Line::from(""));
+            }
+        }
+        footer_lines.push(Line::from(Span::styled(
+            " ↑↓ navigate · type to filter · Ctrl+S sort · Esc close ",
+            dim_style,
+        )));
+        f.render_widget(Paragraph::new(footer_lines), footer_rect);
+    }
+
+    /// 1.2.9+ — sentence-rhythm gauge modal painter
+    /// (Ctrl+B Shift+H).  Three regions: header
+    /// (verdict + numeric stats), main list (per-
+    /// sentence bar chart), footer (outliers + key
+    /// hints).
+    pub(in crate::tui::app) fn draw_sentence_rhythm_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let w = area.width.saturating_sub(4).min(110).max(60);
+        let h = area.height.saturating_sub(2).min(36).max(18);
+        let x = area.x + (area.width.saturating_sub(w)) / 2;
+        let y = area.y + (area.height.saturating_sub(h)) / 2;
+        let rect = Rect { x, y, width: w, height: h };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Sentence rhythm — open paragraph ")
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let (stats, scroll) = match &self.modal {
+            Modal::SentenceRhythm { stats, scroll } => (stats.clone(), *scroll),
+            _ => return,
+        };
+
+        let header_h: u16 = 4;
+        let footer_h: u16 = 8;
+        let list_h: u16 = inner.height.saturating_sub(header_h + footer_h);
+        let header_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: header_h,
+        };
+        let list_rect = Rect {
+            x: inner.x,
+            y: inner.y + header_h,
+            width: inner.width,
+            height: list_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + header_h + list_h,
+            width: inner.width,
+            height: footer_h,
+        };
+
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let verdict_color = match stats.verdict {
+            crate::tui::sentence_rhythm::RhythmVerdict::TooShort => Color::DarkGray,
+            crate::tui::sentence_rhythm::RhythmVerdict::Monotone => Color::Red,
+            crate::tui::sentence_rhythm::RhythmVerdict::Steady => Color::Yellow,
+            crate::tui::sentence_rhythm::RhythmVerdict::Varied => Color::Green,
+            crate::tui::sentence_rhythm::RhythmVerdict::Choppy => Color::Cyan,
+        };
+
+        let header_lines = vec![
+            Line::from(vec![
+                Span::styled(" verdict: ", dim),
+                Span::styled(
+                    stats.verdict.label(),
+                    Style::default()
+                        .fg(verdict_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("   ({})", stats.verdict.note()),
+                    dim,
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    format!(
+                        " {} sentences · mean {:.1} · stdev {:.1} · CV {:.2} · min {} · max {}",
+                        stats.lengths.len(),
+                        stats.mean,
+                        stats.stdev,
+                        stats.cv,
+                        stats.min,
+                        stats.max,
+                    ),
+                    bold,
+                ),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  #     bar (each block = 1 word, capped at 40)            words   preview",
+                dim,
+            )),
+        ];
+        f.render_widget(Paragraph::new(header_lines), header_rect);
+
+        // Per-sentence list.  Each row: index, bar
+        // proportional to word count, count, short
+        // preview.  Cap the bar width so very long
+        // sentences don't blow up the layout —
+        // anything ≥ 40 words renders as `█████…`
+        // (cap glyph trails ellipsis).
+        let mut rows: Vec<Line<'_>> = Vec::new();
+        let viewport = list_h as usize;
+        let max_bar_chars: usize = 40;
+        for off in 0..viewport {
+            let idx = scroll + off;
+            if idx >= stats.samples.len() {
+                break;
+            }
+            let sample = &stats.samples[idx];
+            let bar_chars = sample.word_count.min(max_bar_chars);
+            let cap = if sample.word_count > max_bar_chars { "…" } else { "" };
+            let bar: String = "█".repeat(bar_chars);
+            let preview = truncate_label(
+                &sample.preview,
+                (inner.width as usize).saturating_sub(60),
+            );
+            let style = if idx == scroll {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            rows.push(Line::from(vec![
+                Span::styled(
+                    format!(" {:>3}  l{:<3} ", idx + 1, sample.line_no),
+                    dim,
+                ),
+                Span::styled(
+                    format!("{}{}", bar, cap),
+                    Style::default().fg(verdict_color),
+                ),
+                Span::styled(
+                    format!(
+                        "{:padding$}{:>3}   ",
+                        "",
+                        sample.word_count,
+                        padding = max_bar_chars + 2 - bar_chars - cap.chars().count(),
+                    ),
+                    style,
+                ),
+                Span::raw(preview),
+            ]));
+        }
+        if rows.is_empty() {
+            rows.push(Line::from(Span::styled(
+                "  (no sentences in this paragraph)",
+                dim,
+            )));
+        }
+        f.render_widget(Paragraph::new(rows), list_rect);
+
+        // Footer: outlier callouts (shortest +
+        // longest) + key hints.
+        let mut footer_lines: Vec<Line<'_>> = Vec::new();
+        footer_lines.push(Line::from(Span::styled(" shortest:", dim)));
+        for sample in stats.shortest.iter().take(3) {
+            let preview = truncate_label(
+                &sample.preview,
+                (inner.width as usize).saturating_sub(20),
+            );
+            footer_lines.push(Line::from(vec![
+                Span::styled(
+                    format!("   l{:<3} {:>3}w  ", sample.line_no, sample.word_count),
+                    dim,
+                ),
+                Span::raw(preview),
+            ]));
+        }
+        footer_lines.push(Line::from(Span::styled(" longest:", dim)));
+        for sample in stats.longest.iter().take(3) {
+            let preview = truncate_label(
+                &sample.preview,
+                (inner.width as usize).saturating_sub(20),
+            );
+            footer_lines.push(Line::from(vec![
+                Span::styled(
+                    format!("   l{:<3} {:>3}w  ", sample.line_no, sample.word_count),
+                    dim,
+                ),
+                Span::raw(preview),
+            ]));
+        }
+        // Pad to stable height so the hint sits at
+        // the bottom.
+        while footer_lines.len() + 1 < footer_h as usize {
+            footer_lines.push(Line::from(""));
+        }
+        footer_lines.push(Line::from(Span::styled(
+            " ↑↓ / PgUp/PgDn / Home / End scroll · any other key closes ",
+            dim,
+        )));
+        f.render_widget(Paragraph::new(footer_lines), footer_rect);
+    }
+
 }
 
 /// 1.2.8+ — restart-required overlay painted on top of
@@ -3782,6 +4416,30 @@ impl super::super::App {
 /// (handled at the App level) and continues editing.
 /// Restart is on the next manual relaunch — the modal
 /// can't restart the process itself.
+/// 1.2.9+ — map a daily word count to a (glyph, color)
+/// pair for the writing-streak heatmap.  Five buckets:
+///   0:        `·` dim gray         (no activity)
+///   1-249:    `░` faint green      (light)
+///   250-499:  `▒` medium green     (steady)
+///   500-999:  `▓` bright green     (productive)
+///   1000+:    `█` max green        (heavy)
+/// The buckets bracket common writing-session sizes
+/// (one paragraph ~ 250 words, one scene ~ 500 words,
+/// one chapter ~ 1500 words).
+fn heat_glyph_and_color(words: i64) -> (&'static str, Color) {
+    if words <= 0 {
+        ("·", Color::DarkGray)
+    } else if words < 250 {
+        ("░", Color::Rgb(0x40, 0xa0, 0x40))
+    } else if words < 500 {
+        ("▒", Color::Rgb(0x60, 0xc0, 0x60))
+    } else if words < 1000 {
+        ("▓", Color::Rgb(0x40, 0xe0, 0x40))
+    } else {
+        ("█", Color::Rgb(0x80, 0xff, 0x80))
+    }
+}
+
 fn draw_hjson_restart_overlay(f: &mut ratatui::Frame, host: Rect) {
     let lines: Vec<Line<'_>> = vec![
         Line::from(Span::styled(

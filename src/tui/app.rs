@@ -282,7 +282,21 @@ pub fn run(project: &Path) -> Result<()> {
         run_startup_pulse_splash(&mut terminal, &app);
     }
 
+    // 1.2.9+: TTS greeting fires here, after the splash
+    // (so the user has seen the daily-progress numbers)
+    // and just before the main render loop starts.  Non-
+    // blocking — speech plays in parallel with the
+    // editor coming up.  No-op when `editor.tts.enabled
+    // = false` or the greeting field is empty.
+    app.tts_speak_greeting();
+
     let result = app.run(&mut terminal);
+
+    // 1.2.9+: TTS goodbye fires after the main loop
+    // returns but BEFORE shutdown_flush + terminal
+    // teardown.  Blocks up to 5 seconds for the audio
+    // to drain so the shell doesn't truncate it.
+    app.tts_speak_goodbye_blocking();
 
     // Explicit final flush — HNSW save + DuckDB CHECKPOINT — while the
     // App still holds the Store. The pool's Drop impl would checkpoint
@@ -1221,6 +1235,78 @@ fn strip_leading_typst_heading(body: &str) -> String {
 /// 24-row terminal without scrolling.
 const KILL_RING_CAP: usize = 10;
 
+/// 1.2.9+ — true when `line` is a typographic scene-
+/// break line.  Recognised forms (case-insensitive,
+/// after trimming whitespace + collapsing internal
+/// spaces):
+///   * 3+ copies of any one of `*`, `-`, `_`, `~`, `#`
+///     (optionally separated by single spaces — so
+///     `* * *` and `***` both match).
+///   * A single `§` (typographic section sign).
+/// Reject everything else.  Notably does NOT match
+/// typst headings (`= Foo`, `== Foo`) — those are
+/// structural section markers, not scene breaks.
+/// Doesn't match `**` (2 chars, below threshold) or
+/// `***bold***` (mixed-content), avoiding common
+/// false positives.
+fn is_scene_break(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed == "§" {
+        return true;
+    }
+    // Strip internal whitespace; the remaining chars must
+    // be 3+ copies of one of the marker characters.
+    let chars: Vec<char> = trimmed
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    if chars.len() < 3 {
+        return false;
+    }
+    let first = chars[0];
+    if !"*-_~#".contains(first) {
+        return false;
+    }
+    chars.iter().all(|c| *c == first)
+}
+
+/// 1.2.9+ — sanitise a paragraph title into a
+/// filesystem-safe slug for the default audio path.
+/// Lowercased, ASCII-alphanumeric kept verbatim, every
+/// other char collapsed to a hyphen, runs of hyphens
+/// trimmed, empty result falls back to "paragraph".
+/// Cyrillic / non-Latin chars survive as hyphens
+/// because filesystem-portability is the goal here;
+/// users who want a localised name edit the path
+/// before pressing Enter.
+fn audio_filename_slug(title: &str) -> String {
+    let lc = title.to_lowercase();
+    let mut out = String::with_capacity(lc.len());
+    let mut last_was_dash = false;
+    for c in lc.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+            last_was_dash = false;
+        } else {
+            if !last_was_dash && !out.is_empty() {
+                out.push('-');
+                last_was_dash = true;
+            }
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "paragraph".to_string()
+    } else {
+        out
+    }
+}
+
 /// 1.2.8+ — truncate a captured shell-output blob to at most
 /// `max_lines` lines.  Returns the input unchanged if it
 /// already fits.  When truncated, the last kept line is
@@ -1287,7 +1373,7 @@ pub(crate) struct App {
     /// most-recent) or Ctrl+V Shift+U (picker over the
     /// whole ring) via `create_node` at the original
     /// position — content, tags, linked_paragraphs, event
-    /// data preserved; the uuid changes (so wiki-links from
+    /// data preserved; the uuid changes (so paragraph links from
     /// elsewhere pointing at the deleted id stay broken).
     ///
     /// 1.2.8+ — was `Option<DeletedParagraphStash>` (single
@@ -1399,6 +1485,25 @@ pub(crate) struct App {
     /// `true` after Ctrl+B inside the pane, consumed by
     /// the next keystroke.
     shell_ctrlb_pending: bool,
+    /// 1.2.9+ — TTS subprocess wrapper.  Each
+    /// `Ctrl+B S` / greeting / goodbye spawns a fresh
+    /// `/usr/bin/say` child process and stores it here.
+    /// Side-steps the in-process `tts-rs` / AVFoundation
+    /// reuse bug where the second `speak()` call in the
+    /// same process produces no audio.  See `tui::say`
+    /// for the wrapper detail.
+    tts_say: super::say::Say,
+    /// 1.2.9+ — session-local override for
+    /// `editor.style_warnings.enabled`.  `Ctrl+V w`
+    /// flips this; `true` forces overlays on regardless
+    /// of HJSON, `false` forces off, `None` (the
+    /// default) defers to the HJSON setting.
+    style_warnings_toggle: Option<bool>,
+    /// 1.2.9+ — session-local override for
+    /// `editor.pov_chip_enabled`.  `Ctrl+B Shift+P`
+    /// flips this; semantics identical to
+    /// `style_warnings_toggle`.
+    pov_chip_toggle: Option<bool>,
     /// Cursor into `ai_prompt_history`. None when not navigating;
     /// `Some(i)` when the user is stepping through history. Any
     /// edit (typing, backspace, etc.) clears it so the next Up
@@ -1744,6 +1849,9 @@ impl App {
             shell_command_history: Vec::new(),
             shell_history_db: None,
             shell_ctrlb_pending: false,
+            tts_say: super::say::Say::default(),
+            style_warnings_toggle: None,
+            pov_chip_toggle: None,
             opened: None,
             secondary: None,
             secondary_focused: false,
@@ -1974,6 +2082,13 @@ impl App {
         loop {
             self.pump_inference();
             self.tick_autosave();
+            // 1.2.9+ — close the TTS playback modal as
+            // soon as the engine reports it's idle, so
+            // the modal disappears when the paragraph
+            // finishes naturally (no user keystroke
+            // needed).  Cheap call — single FFI
+            // boolean.
+            self.tts_poll_playback();
             // Drive any deferred directory import — `commit_file_pick`
             // sets `pending_import` so the splash can be drawn directly
             // via the terminal handle (which `commit_file_pick` doesn't
@@ -2581,6 +2696,19 @@ impl App {
                 }
                 _ => return Ok(false),
             }
+        }
+
+        // 1.2.9+ — TtsUnavailable: any key dismisses.
+        if matches!(self.modal, Modal::TtsUnavailable { .. }) {
+            self.modal = Modal::None;
+            return Ok(false);
+        }
+        // 1.2.9+ — TtsPlayback: any key stops the engine
+        // and closes the modal.  The render loop polls
+        // for natural end-of-speech in `tts_poll_playback`.
+        if matches!(self.modal, Modal::TtsPlayback { .. }) {
+            self.tts_stop_playback();
+            return Ok(false);
         }
 
         // Hard quit works from anywhere, including inside a modal.
@@ -4692,7 +4820,7 @@ impl App {
         self.change_focus(Focus::Editor);
     }
 
-    // ── Wiki-links (1.2.4+) ────────────────────────────────
+    // ── Paragraph links (1.2.4+) ────────────────────────────────
 
     /// Enter "select paragraph to link" mode. Tree pane gets a
     /// custom title; Enter on a paragraph adds it to the open
@@ -6406,6 +6534,16 @@ impl App {
             A::BundOpenShellFresh => self.open_shell_pane(true),
             A::BundShellSelection => self.toggle_shell_selection_mode(),
             A::BundEditProjectHjson => self.open_hjson_editor(),
+            A::TtsReadParagraph => self.tts_read_paragraph(),
+            A::TtsSaveAsAudio => self.tts_open_save_as_audio_picker(),
+            A::OpenWritingStreakHeatmap => self.open_writing_streak_heatmap(),
+            A::SceneBreakPrev => self.scene_break_jump(-1),
+            A::SceneBreakNext => self.scene_break_jump(1),
+            A::ToggleStyleWarnings => self.toggle_style_warnings(),
+            A::OpenConcordance => self.open_concordance(),
+            A::TogglePovChip => self.toggle_pov_chip(),
+            A::OpenSentenceRhythm => self.open_sentence_rhythm(),
+            A::AnalyseShowDontTell => self.start_show_dont_tell_scan(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
@@ -7332,6 +7470,937 @@ impl App {
     /// Esc, and editing keys via `hjson_editor_handle_key`.
     /// When the file is missing, we open with an empty
     /// buffer + a status hint — saving will create the file.
+    /// 1.2.9+ — Ctrl+B S action: read the open paragraph
+    /// aloud via the OS TTS engine.  Dispatch order:
+    ///
+    ///   1. No paragraph open → status hint.
+    ///   2. Empty / whitespace-only body → status hint.
+    ///   3. `editor.tts.enabled = false` → friendly
+    ///      "TTS disabled" modal pointing at HJSON.
+    ///   4. Lazy-init the engine.  On failure, cache the
+    ///      error string and show the "TTS unavailable"
+    ///      modal so we don't pay engine-init cost on
+    ///      every keystroke.
+    ///   5. Apply HJSON voice (substring match against
+    ///      installed voices; prefer "Enhanced" /
+    ///      "Premium" variants when present) and speed
+    ///      (multiplier over `normal_rate`, clamped to
+    ///      engine bounds).
+    ///   6. Spawn speech with `interrupt = true` so a
+    ///      second Ctrl+B S during playback restarts on
+    ///      the new paragraph cleanly.
+    ///   7. Open the playback modal.  The render loop
+    ///      polls `is_speaking()` each frame and closes
+    ///      the modal when speech ends.
+    fn tts_read_paragraph(&mut self) {
+        // ── 1+2 — open paragraph + non-empty body ────
+        let source: String = match self.opened.as_ref() {
+            Some(doc) => doc.textarea.lines().join("\n"),
+            None => {
+                self.status = "TTS: no paragraph open".into();
+                return;
+            }
+        };
+        let body = strip_leading_typst_heading(&source);
+        let body = body.trim().to_string();
+        if body.is_empty() {
+            self.status = "TTS: paragraph is empty".into();
+            return;
+        }
+
+        // ── 3 — feature gate ────────────────────────
+        if !self.cfg.editor.tts.enabled {
+            self.modal = Modal::TtsUnavailable {
+                title: " TTS disabled ".into(),
+                reason: format!(
+                    "Read-aloud (Ctrl+B S) is disabled in this project.\n\n\
+                     Enable it by adding to inkhaven.hjson:\n\n  \
+                     editor: {{ tts: {{ enabled: true }} }}\n\n\
+                     Default voice is `Milena` (Russian female; ships free \
+                     with macOS after a one-time language download via \
+                     System Settings → Accessibility → Spoken Content)."
+                ),
+            };
+            return;
+        }
+
+        // ── 4 — platform gate ───────────────────────
+        if let Err(reason) = super::say::Say::available() {
+            self.modal = Modal::TtsUnavailable {
+                title: " TTS unavailable ".into(),
+                reason: format!(
+                    "{reason}\n\n\
+                     1.2.9 ships TTS via macOS `/usr/bin/say` — the only \
+                     backend that proved reliable for repeated invocations \
+                     in one process.  Cross-platform TTS is on the roadmap; \
+                     until then non-macOS hosts surface this modal."
+                ),
+            };
+            return;
+        }
+
+        // ── 5 — pick voice + speak ──────────────────
+        let cfg = &self.cfg.editor.tts;
+        let voice_resolved = super::say::Say::pick_voice(&cfg.voice);
+        let voice_label = voice_resolved
+            .clone()
+            .unwrap_or_else(|| "system default".to_string());
+        let voice_arg = voice_resolved.unwrap_or_default();
+        // Convert speed multiplier to words-per-minute.
+        // 180 wpm is the canonical "normal" reading rate;
+        // multiplying by the HJSON speed lands us in
+        // `say`'s expected range.  Clamp to [80, 400] —
+        // `say` accepts the full range, but speech is
+        // unintelligible outside it.
+        let wpm = ((180.0 * cfg.speed.max(0.1)).round() as i32)
+            .clamp(80, 400) as u16;
+
+        if let Err(e) = self.tts_say.speak(&body, &voice_arg, Some(wpm)) {
+            self.modal = Modal::TtsUnavailable {
+                title: " TTS error ".into(),
+                reason: format!(
+                    "Couldn't start `say` subprocess:\n\n  {e}\n\n\
+                     Check that /usr/bin/say is on disk and executable.  \
+                     This binary ships with every macOS install since \
+                     OS X 10.3 — its absence is usually a permissions or \
+                     SIP issue."
+                ),
+            };
+            return;
+        }
+
+        // ── 6 — playback modal ─────────────────────
+        let preview: String = body.chars().take(80).collect();
+        self.modal = Modal::TtsPlayback {
+            started_at: std::time::Instant::now(),
+            preview,
+            voice_label,
+        };
+    }
+
+    /// 1.2.9+ — close the playback modal when the `say`
+    /// subprocess exits.  Called each render frame so
+    /// playback ending naturally closes the modal
+    /// without the user pressing anything.
+    pub(super) fn tts_poll_playback(&mut self) {
+        if !matches!(self.modal, Modal::TtsPlayback { .. }) {
+            return;
+        }
+        if !self.tts_say.is_speaking() {
+            self.modal = Modal::None;
+            self.status = "TTS: finished".into();
+        }
+    }
+
+    /// 1.2.9+ — stop in-flight playback + close the
+    /// playback modal.  Called when the user hits any
+    /// key while the playback modal is open.
+    fn tts_stop_playback(&mut self) {
+        self.tts_say.stop();
+        self.modal = Modal::None;
+        self.status = "TTS: stopped".into();
+    }
+
+    /// 1.2.9+ — Ctrl+B Shift+F action: flip the
+    /// session-local style-warnings toggle.  Three
+    /// states cycle:
+    ///   None  → defer to HJSON default (initial state)
+    ///   true  → force overlays ON regardless of HJSON
+    ///   false → force overlays OFF regardless of HJSON
+    /// The chord only steps between true / false once
+    /// the user has touched it; the None state is
+    /// initial-only.  Status line names the new effective
+    /// state so the user doesn't have to look.
+    fn toggle_style_warnings(&mut self) {
+        let new_state = match self.style_warnings_toggle {
+            None => Some(!self.cfg.editor.style_warnings.enabled),
+            Some(true) => Some(false),
+            Some(false) => Some(true),
+        };
+        self.style_warnings_toggle = new_state;
+        let effective = new_state.unwrap_or(self.cfg.editor.style_warnings.enabled);
+        self.status = if effective {
+            format!(
+                "style warnings: ON · language={} · filter-words enabled",
+                self.cfg.language,
+            )
+        } else {
+            "style warnings: OFF".into()
+        };
+    }
+
+    /// 1.2.9+ — true when the POV / character chip
+    /// should be painted on the status bar.  Session
+    /// override (set via `Ctrl+B Shift+P`) wins; falls
+    /// back to `editor.pov_chip_enabled` in HJSON.
+    fn pov_chip_effective(&self) -> bool {
+        match self.pov_chip_toggle {
+            Some(v) => v,
+            None => self.cfg.editor.pov_chip_enabled,
+        }
+    }
+
+    /// 1.2.9+ — Ctrl+B Shift+P action: flip the
+    /// session-local POV-chip toggle.  Three-state
+    /// cycle identical to `toggle_style_warnings`.
+    fn toggle_pov_chip(&mut self) {
+        let new_state = match self.pov_chip_toggle {
+            None => Some(!self.cfg.editor.pov_chip_enabled),
+            Some(true) => Some(false),
+            Some(false) => Some(true),
+        };
+        self.pov_chip_toggle = new_state;
+        let effective = self.pov_chip_effective();
+        self.status = if effective {
+            "POV chip: ON · status bar shows character + supporting cast".into()
+        } else {
+            "POV chip: OFF".into()
+        };
+    }
+
+    /// 1.2.9+ — build the styled spans for the POV
+    /// character chip.  Empty Vec when the chip is
+    /// disabled, no paragraph is open, the lexicon
+    /// is empty, or no character names are mentioned
+    /// in the open paragraph.  The render loop in
+    /// `draw_status` splices the result into the
+    /// status-bar span list after the focus chip.
+    pub(crate) fn pov_chip_spans(&self) -> Vec<ratatui::text::Span<'_>> {
+        use ratatui::style::{Color, Modifier, Style};
+        use ratatui::text::Span;
+        if !self.pov_chip_effective() {
+            return Vec::new();
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            return Vec::new();
+        };
+        let lines: Vec<String> = doc
+            .textarea
+            .lines()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let chip = match crate::tui::pov_tracker::compute_pov_chip(
+            &self.lexicon, &lines,
+        ) {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+        let mut spans = Vec::with_capacity(3);
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            format!(" POV: {} ", chip.pov),
+            Style::default()
+                .bg(Color::Magenta)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ));
+        if !chip.supporting.is_empty() {
+            spans.push(Span::styled(
+                format!(" +{}", chip.supporting.join(", ")),
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+        }
+        spans
+    }
+
+    /// 1.2.9+ — Ctrl+B < / Ctrl+B > scene-break
+    /// navigation.  `dir = -1` walks backward to the
+    /// previous scene-break line; `dir = 1` walks
+    /// forward to the next.  Moves the textarea
+    /// cursor to column 0 of the matching line and
+    /// recenters the viewport via the existing
+    /// CursorMove::Jump machinery.
+    fn scene_break_jump(&mut self, dir: i32) {
+        let Some(doc) = self.opened.as_mut() else {
+            self.status = "scene break: no paragraph open".into();
+            return;
+        };
+        let (cur_row, _cur_col) = doc.textarea.cursor();
+        let lines = doc.textarea.lines();
+        let n = lines.len();
+        let target: Option<usize> = if dir > 0 {
+            // Walk forward from cur_row + 1.
+            (cur_row + 1..n).find(|&r| is_scene_break(&lines[r]))
+        } else {
+            // Walk backward from cur_row - 1.
+            (0..cur_row).rev().find(|&r| is_scene_break(&lines[r]))
+        };
+        match target {
+            Some(row) => {
+                doc.textarea.move_cursor(
+                    tui_textarea::CursorMove::Jump(row as u16, 0),
+                );
+                self.status = format!(
+                    "scene break: line {} of {}",
+                    row + 1,
+                    n,
+                );
+            }
+            None => {
+                self.status = if dir > 0 {
+                    "scene break: no break below"
+                } else {
+                    "scene break: no break above"
+                }
+                .into();
+            }
+        }
+    }
+
+    /// 1.2.9+ — Ctrl+B Shift+G action: open the
+    /// writing-streak heatmap modal.  Pulls the last
+    /// 91 days of project-wide word deltas from the
+    /// progress store, computes current + longest
+    /// streak in the window, and seeds the modal with
+    /// the data so the render path doesn't re-query.
+    fn open_writing_streak_heatmap(&mut self) {
+        let project_total = self
+            .progress_cache
+            .as_ref()
+            .map(|s| s.project.total_words)
+            .unwrap_or(0);
+        let daily_words = crate::progress::daily_words(project_total, 91);
+        if daily_words.is_empty() {
+            self.status =
+                "streak: no progress data yet — write a paragraph then save".into();
+            return;
+        }
+        // Current streak: count consecutive trailing days
+        // with > 0 words.  Stops at the first 0.  We treat
+        // today's 0 as a non-break (the user might still
+        // be about to write), but yesterday + earlier
+        // zeros break the streak.
+        let mut streak_days: u32 = 0;
+        let n = daily_words.len();
+        // Skip today if it's 0 (grace).
+        let mut idx = n.saturating_sub(1);
+        if daily_words.get(idx).copied().unwrap_or(0) == 0 && idx > 0 {
+            idx -= 1;
+        }
+        loop {
+            if daily_words.get(idx).copied().unwrap_or(0) > 0 {
+                streak_days += 1;
+                if idx == 0 {
+                    break;
+                }
+                idx -= 1;
+            } else {
+                break;
+            }
+        }
+        // Longest run of consecutive >0 days in the window.
+        let mut longest: u32 = 0;
+        let mut current: u32 = 0;
+        for w in &daily_words {
+            if *w > 0 {
+                current += 1;
+                longest = longest.max(current);
+            } else {
+                current = 0;
+            }
+        }
+        // Today's date in (y, m, d) — chrono's UTC date.
+        let today = chrono::Utc::now().date_naive();
+        use chrono::Datelike;
+        let today_ymd = (today.year(), today.month(), today.day());
+        self.modal = Modal::WritingStreakHeatmap {
+            daily_words,
+            streak_days,
+            longest_streak: longest,
+            today_ymd,
+        };
+        self.status = format!(
+            "streak: {streak_days}-day current · {longest} longest (91-day window) · Esc closes"
+        );
+    }
+
+    /// 1.2.9+ — Ctrl+B Shift+H action: analyse the
+    /// open paragraph's sentence rhythm and open the
+    /// `SentenceRhythm` modal.  Splits prose into
+    /// sentences, tallies word counts, computes
+    /// mean / stdev / coefficient of variation, and
+    /// maps the CV to a verdict.  Falls through to
+    /// a status warning when no paragraph is open or
+    /// the body has fewer than 3 sentences (rhythm
+    /// can't be meaningfully judged below that).
+    fn open_sentence_rhythm(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "rhythm: no paragraph open".into();
+            return;
+        };
+        let lines: Vec<String> = doc
+            .textarea
+            .lines()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        // Strip the leading typst heading so the
+        // title doesn't count as a sentence.
+        let body = strip_leading_typst_heading(&lines.join("\n"));
+        let body_lines: Vec<String> =
+            body.split('\n').map(|s| s.to_string()).collect();
+        let stats = crate::tui::sentence_rhythm::analyse(&body_lines);
+        if stats.lengths.is_empty() {
+            self.status = "rhythm: paragraph empty".into();
+            return;
+        }
+        self.status = format!(
+            "rhythm: {} sentences · CV {:.2} · {} · Esc closes",
+            stats.lengths.len(),
+            stats.cv,
+            stats.verdict.label(),
+        );
+        self.modal = crate::tui::modal::Modal::SentenceRhythm {
+            stats,
+            scroll: 0,
+        };
+    }
+
+    /// 1.2.9+ — key dispatch for the
+    /// `SentenceRhythm` modal.  Scroll the per-
+    /// sentence list with ↑↓ / PgUp/PgDn / Home/End;
+    /// any other key closes.
+    fn sentence_rhythm_handle_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::KeyCode;
+        let n = match &self.modal {
+            Modal::SentenceRhythm { stats, .. } => stats.samples.len(),
+            _ => return,
+        };
+        let Modal::SentenceRhythm { scroll, .. } = &mut self.modal else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "rhythm: closed".into();
+            }
+            KeyCode::Down => {
+                if *scroll + 1 < n {
+                    *scroll += 1;
+                }
+            }
+            KeyCode::Up => {
+                *scroll = scroll.saturating_sub(1);
+            }
+            KeyCode::PageDown => {
+                *scroll = (*scroll + 10).min(n.saturating_sub(1));
+            }
+            KeyCode::PageUp => {
+                *scroll = scroll.saturating_sub(10);
+            }
+            KeyCode::Home => {
+                *scroll = 0;
+            }
+            KeyCode::End => {
+                *scroll = n.saturating_sub(1);
+            }
+            _ => {
+                self.modal = Modal::None;
+                self.status = "rhythm: closed".into();
+            }
+        }
+    }
+
+    /// 1.2.9+ — Ctrl+B Shift+L action: build a
+    /// project-wide concordance and open the
+    /// `Concordance` modal.  Walks every paragraph in
+    /// the in-memory hierarchy, loads its body via
+    /// `Store::get_content`, strips the leading typst
+    /// heading line, and feeds the body rows into the
+    /// concordance builder.  Uses the project's
+    /// `language` to pick the Snowball stemmer + the
+    /// stop-word set (same plumbing as the repeated-
+    /// phrase detector — no second list to tune).
+    /// Cheap at literary scale (well under a second
+    /// for a 100k-word manuscript); the build runs
+    /// synchronously on the UI thread, then the modal
+    /// just slices the cached entries on every key.
+    fn open_concordance(&mut self) {
+        use crate::tui::concordance::{build, ParagraphInput, SortMode};
+        let mut bodies: Vec<(String, Vec<String>)> = Vec::new();
+        for node in self.hierarchy.iter() {
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let slug_path = self.hierarchy.slug_path(node);
+            let raw = match self.store.get_content(node.id) {
+                Ok(Some(bytes)) => bytes,
+                _ => continue,
+            };
+            let text = match std::str::from_utf8(&raw) {
+                Ok(s) => strip_leading_typst_heading(s),
+                Err(_) => continue,
+            };
+            let lines: Vec<String> =
+                text.split('\n').map(|s| s.to_string()).collect();
+            bodies.push((slug_path, lines));
+        }
+        if bodies.is_empty() {
+            self.status =
+                "concordance: project has no paragraphs to analyse".into();
+            return;
+        }
+        let inputs: Vec<ParagraphInput<'_>> = bodies
+            .iter()
+            .map(|(slug, lines)| ParagraphInput {
+                slug_path: slug.clone(),
+                lines,
+            })
+            .collect();
+        let data = build(
+            &self.cfg.editor.style_warnings.repeated_phrases,
+            &self.cfg.language,
+            &inputs,
+        );
+        if data.entries.is_empty() {
+            self.status = format!(
+                "concordance: {} paragraphs scanned, no lexical content (all stop-words?)",
+                data.paragraphs_scanned
+            );
+            return;
+        }
+        let visible: Vec<usize> = (0..data.entries.len()).collect();
+        let stats = format!(
+            "concordance: {} distinct stems · {} tokens · {} paragraphs · Esc closes",
+            data.distinct_words, data.total_tokens, data.paragraphs_scanned
+        );
+        self.status = stats;
+        self.modal = Modal::Concordance {
+            data,
+            filter: crate::tui::input::TextInput::new(),
+            cursor: 0,
+            scroll: 0,
+            sort: SortMode::Count,
+            visible,
+        };
+    }
+
+    /// 1.2.9+ — recompute the cached `visible` list on
+    /// the `Concordance` modal.  Called whenever the
+    /// filter text or sort mode changes.  Filter
+    /// semantics: case-insensitive substring match
+    /// against the headword OR any kept variant — so
+    /// typing `walk` surfaces an entry whose headword
+    /// is `walked` but whose variants include `walk`.
+    fn concordance_refilter(&mut self) {
+        use crate::tui::concordance::sort_in_place;
+        let Modal::Concordance {
+            data,
+            filter,
+            cursor,
+            scroll,
+            sort,
+            visible,
+        } = &mut self.modal
+        else {
+            return;
+        };
+        sort_in_place(&mut data.entries, *sort);
+        let needle = filter.as_str().trim().to_lowercase();
+        visible.clear();
+        for (i, entry) in data.entries.iter().enumerate() {
+            if needle.is_empty()
+                || entry.headword.contains(&needle)
+                || entry.stem.contains(&needle)
+                || entry.variants.iter().any(|v| v.contains(&needle))
+            {
+                visible.push(i);
+            }
+        }
+        if visible.is_empty() {
+            *cursor = 0;
+            *scroll = 0;
+        } else if *cursor >= visible.len() {
+            *cursor = visible.len() - 1;
+        }
+        // Keep cursor on-screen — render clamps scroll
+        // against the visible-row height, so this is
+        // just a coarse precaution.
+        if *cursor < *scroll {
+            *scroll = *cursor;
+        }
+    }
+
+    /// 1.2.9+ — key dispatch for the `Concordance`
+    /// modal.  Single-pane list with an inline filter
+    /// input — typing characters narrows the list,
+    /// arrow keys move the selection, `Ctrl+S` toggles
+    /// the sort mode, Esc closes.  No Enter-to-jump
+    /// behaviour yet (would need a paragraph-locator
+    /// indirection through `slug_path`); that's a
+    /// likely follow-up.
+    fn concordance_handle_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        // Esc always closes — even mid-filter.
+        if matches!(key.code, KeyCode::Esc) {
+            self.modal = Modal::None;
+            self.status = "concordance: closed".into();
+            return;
+        }
+        // Ctrl+S toggles sort mode.  Plain `s` falls
+        // through to the filter input so headwords
+        // beginning with `s` stay typeable.
+        if matches!(key.code, KeyCode::Char('s'))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            if let Modal::Concordance { sort, .. } = &mut self.modal {
+                *sort = sort.toggle();
+            }
+            self.concordance_refilter();
+            if let Modal::Concordance { sort, .. } = &self.modal {
+                self.status = format!("concordance: sort = {}", sort.label());
+            }
+            return;
+        }
+        // Arrow keys + PgUp/PgDn move the selection.
+        match key.code {
+            KeyCode::Down => {
+                if let Modal::Concordance { cursor, visible, .. } = &mut self.modal {
+                    if !visible.is_empty() && *cursor + 1 < visible.len() {
+                        *cursor += 1;
+                    }
+                }
+                return;
+            }
+            KeyCode::Up => {
+                if let Modal::Concordance { cursor, .. } = &mut self.modal {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                return;
+            }
+            KeyCode::PageDown => {
+                if let Modal::Concordance { cursor, visible, .. } = &mut self.modal {
+                    if !visible.is_empty() {
+                        *cursor = (*cursor + 10).min(visible.len() - 1);
+                    }
+                }
+                return;
+            }
+            KeyCode::PageUp => {
+                if let Modal::Concordance { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(10);
+                }
+                return;
+            }
+            KeyCode::Home => {
+                if let Modal::Concordance { cursor, .. } = &mut self.modal {
+                    *cursor = 0;
+                }
+                return;
+            }
+            KeyCode::End => {
+                if let Modal::Concordance { cursor, visible, .. } = &mut self.modal {
+                    if !visible.is_empty() {
+                        *cursor = visible.len() - 1;
+                    }
+                }
+                return;
+            }
+            _ => {}
+        }
+        // Filter input: typing edits the filter buffer,
+        // Backspace deletes, etc.  Only ASCII-printable
+        // + Unicode chars are forwarded; control
+        // characters fall through to the no-op branch.
+        if let Modal::Concordance { filter, .. } = &mut self.modal {
+            match key.code {
+                KeyCode::Backspace => filter.backspace(),
+                KeyCode::Delete => filter.delete(),
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    filter.insert_char(c);
+                }
+                _ => return,
+            }
+        }
+        self.concordance_refilter();
+    }
+
+    /// 1.2.9+ — Ctrl+B Shift+R action: open a save-as
+    /// path picker pre-filled with
+    /// `<project>/audio/<paragraph-slug>.aiff`.  Enter
+    /// commits via `commit_tts_save_as_audio`; Esc
+    /// cancels.  Same enable + platform gates as the
+    /// chord-driven TTS — surfaces the `TtsUnavailable`
+    /// modal when TTS is disabled or the OS isn't
+    /// macOS.
+    fn tts_open_save_as_audio_picker(&mut self) {
+        // Reuse the same enable + platform gates as
+        // tts_read_paragraph.
+        let source: String = match self.opened.as_ref() {
+            Some(doc) => doc.textarea.lines().join("\n"),
+            None => {
+                self.status = "TTS save: no paragraph open".into();
+                return;
+            }
+        };
+        let body = strip_leading_typst_heading(&source);
+        let body = body.trim().to_string();
+        if body.is_empty() {
+            self.status = "TTS save: paragraph is empty".into();
+            return;
+        }
+        if !self.cfg.editor.tts.enabled {
+            self.modal = Modal::TtsUnavailable {
+                title: " TTS disabled ".into(),
+                reason: format!(
+                    "Read-aloud + save-as-audio are disabled in this \
+                     project.\n\n\
+                     Enable by adding to inkhaven.hjson:\n\n  \
+                     editor: {{ tts: {{ enabled: true }} }}"
+                ),
+            };
+            return;
+        }
+        if let Err(reason) = super::say::Say::available() {
+            self.modal = Modal::TtsUnavailable {
+                title: " TTS unavailable ".into(),
+                reason: format!(
+                    "{reason}\n\nSave-as-audio uses macOS `/usr/bin/say -o`. \
+                     Cross-platform support is on the 1.3+ roadmap."
+                ),
+            };
+            return;
+        }
+        // Default destination: <project>/audio/<slug>.aiff.
+        // Slug comes from the opened doc's title (sanitised
+        // for filesystem) so two paragraphs with similar
+        // titles get distinct files.
+        let title = self
+            .opened
+            .as_ref()
+            .map(|d| d.title.clone())
+            .unwrap_or_else(|| "paragraph".to_string());
+        let slug = audio_filename_slug(&title);
+        let dest = self.layout.root.join("audio").join(format!("{slug}.aiff"));
+        let mut input = TextInput::new();
+        for c in dest.to_string_lossy().chars() {
+            input.insert_char(c);
+        }
+        let cfg = &self.cfg.editor.tts;
+        let voice = super::say::Say::pick_voice(&cfg.voice).unwrap_or_default();
+        let voice_label = if voice.is_empty() {
+            "system default".to_string()
+        } else {
+            voice.clone()
+        };
+        let wpm = ((180.0 * cfg.speed.max(0.1)).round() as i32)
+            .clamp(80, 400) as u16;
+        let status_label = voice_label.clone();
+        self.modal = Modal::TtsSaveAsAudio {
+            input,
+            body,
+            voice,
+            wpm,
+            voice_label,
+        };
+        self.status = format!(
+            "TTS save: edit path or Enter to confirm · voice={status_label} · Esc cancels",
+        );
+    }
+
+    /// 1.2.9+ — commit the save-as-audio picker.  Creates
+    /// the parent directory if missing; spawns
+    /// `say -o <dest> -v <voice> -r <wpm>` with the
+    /// paragraph text on stdin.  Blocks until the
+    /// subprocess exits so the file is on disk by the
+    /// time the status bar reports success — the user
+    /// expects to see + open it immediately.  5-second
+    /// hard cap on the wait so a stuck `say` doesn't
+    /// hang the TUI.
+    fn commit_tts_save_as_audio(
+        &mut self,
+        dest_raw: &str,
+        body: &str,
+        voice: &str,
+        wpm: u16,
+        voice_label: &str,
+    ) {
+        let dest = std::path::PathBuf::from(dest_raw.trim());
+        if let Some(parent) = dest.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                self.status = format!(
+                    "TTS save: couldn't create {}: {e}",
+                    parent.display(),
+                );
+                return;
+            }
+        }
+        let mut cmd = std::process::Command::new("/usr/bin/say");
+        cmd.arg("-o").arg(&dest);
+        if !voice.is_empty() {
+            cmd.arg("-v").arg(voice);
+        }
+        cmd.arg("-r").arg(wpm.to_string());
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::piped());
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                self.status = format!("TTS save: spawn failed: {e}");
+                return;
+            }
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            if let Err(e) = stdin.write_all(body.as_bytes()) {
+                self.status = format!("TTS save: write stdin: {e}");
+                let _ = child.kill();
+                let _ = child.wait();
+                return;
+            }
+        }
+        // Bounded wait: 30 seconds.  `say -o` writes
+        // streaming so even a long paragraph fits.
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_secs(30);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if status.success() {
+                        let bytes = std::fs::metadata(&dest)
+                            .map(|m| m.len())
+                            .unwrap_or(0);
+                        self.status = format!(
+                            "TTS save: wrote {} ({} KB · voice={voice_label})",
+                            dest.display(),
+                            bytes / 1024,
+                        );
+                    } else {
+                        let mut stderr = String::new();
+                        if let Some(mut s) = child.stderr.take() {
+                            use std::io::Read;
+                            let _ = s.read_to_string(&mut stderr);
+                        }
+                        self.status = format!(
+                            "TTS save: `say` exited {} — {}",
+                            status.code().unwrap_or(-1),
+                            stderr.trim(),
+                        );
+                    }
+                    return;
+                }
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        self.status = format!(
+                            "TTS save: timed out after 30s — partial file at {}",
+                            dest.display(),
+                        );
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(e) => {
+                    self.status = format!("TTS save: wait failed: {e}");
+                    return;
+                }
+            }
+        }
+    }
+
+    /// 1.2.9+ — speak arbitrary text through the same
+    /// TTS pipeline `Ctrl+B S` uses.  Public entry point
+    /// for Bund scripts (`"text" ink.tts.speak`).  Honours
+    /// the `editor.tts.enabled` HJSON gate the chord does
+    /// — scripts can't bypass user preference.  Returns
+    /// `Ok(())` on successful spawn (the speech then plays
+    /// in parallel), `Err(...)` when:
+    ///   * TTS is disabled in config, OR
+    ///   * the platform isn't macOS, OR
+    ///   * the `/usr/bin/say` subprocess failed to spawn.
+    /// Callers (the Bund word handler) surface these as a
+    /// script-visible error so users get a clear reason
+    /// rather than a silent no-op.
+    pub(crate) fn tts_speak_string(&mut self, text: &str) -> Result<(), String> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err("empty text".into());
+        }
+        if !self.cfg.editor.tts.enabled {
+            return Err(
+                "TTS is disabled in inkhaven.hjson (editor.tts.enabled = true)".into(),
+            );
+        }
+        if let Err(reason) = super::say::Say::available() {
+            return Err(reason.to_string());
+        }
+        let cfg = &self.cfg.editor.tts;
+        let voice = super::say::Say::pick_voice(&cfg.voice).unwrap_or_default();
+        let wpm = ((180.0 * cfg.speed.max(0.1)).round() as i32)
+            .clamp(80, 400) as u16;
+        self.tts_say
+            .speak(text, &voice, Some(wpm))
+            .map_err(|e| format!("subprocess spawn failed: {e}"))?;
+        Ok(())
+    }
+
+    /// 1.2.9+ — speak `editor.tts.greeting` at startup.
+    /// Non-blocking: spawns `say` and returns immediately.
+    /// Audio plays in parallel with the main loop coming
+    /// up.  Silently no-op when greeting is empty,
+    /// `enabled = false`, or the platform isn't macOS.
+    pub(super) fn tts_speak_greeting(&mut self) {
+        let text = self.cfg.editor.tts.greeting.trim().to_string();
+        if text.is_empty() || !self.cfg.editor.tts.enabled {
+            return;
+        }
+        if super::say::Say::available().is_err() {
+            return;
+        }
+        let cfg = &self.cfg.editor.tts;
+        let voice = super::say::Say::pick_voice(&cfg.voice).unwrap_or_default();
+        let wpm = ((180.0 * cfg.speed.max(0.1)).round() as i32)
+            .clamp(80, 400) as u16;
+        let _ = self.tts_say.speak(&text, &voice, Some(wpm));
+    }
+
+    /// 1.2.9+ — speak `editor.tts.goodbye` at shutdown
+    /// and BLOCK until the `say` subprocess exits or the
+    /// 6-second safety cap fires.  Without the block,
+    /// inkhaven would exit and the OS audio device's
+    /// driver would terminate the speech mid-word.
+    /// Polled in 50ms increments.  Silently no-op when
+    /// goodbye is empty, `enabled = false`, or the
+    /// platform isn't macOS.
+    pub(super) fn tts_speak_goodbye_blocking(&mut self) {
+        let text = self.cfg.editor.tts.goodbye.trim().to_string();
+        if text.is_empty() || !self.cfg.editor.tts.enabled {
+            return;
+        }
+        if super::say::Say::available().is_err() {
+            return;
+        }
+        let cfg = &self.cfg.editor.tts;
+        let voice = super::say::Say::pick_voice(&cfg.voice).unwrap_or_default();
+        let wpm = ((180.0 * cfg.speed.max(0.1)).round() as i32)
+            .clamp(80, 400) as u16;
+        if self.tts_say.speak(&text, &voice, Some(wpm)).is_err() {
+            return;
+        }
+        // Wait for the subprocess to exit naturally.
+        // Poll in 50ms increments; 6-second hard cap so a
+        // user who configured a tome as their goodbye
+        // doesn't hang the quit indefinitely.
+        let hard_deadline = std::time::Instant::now()
+            + std::time::Duration::from_secs(6);
+        while std::time::Instant::now() < hard_deadline {
+            if !self.tts_say.is_speaking() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        // Ensure the subprocess is gone even if it
+        // outran our deadline.
+        self.tts_say.stop();
+    }
+
     fn open_hjson_editor(&mut self) {
         let path = self.layout.config_path();
         let original_content = match std::fs::read_to_string(&path) {
@@ -9243,9 +10312,9 @@ impl App {
             // immediately; the search bar / AI prompt are hidden
             // anyway, so leaving focus on them would be confusing.
             self.change_focus(Focus::Editor);
-            self.status = "typewriter mode · Ctrl+B W to exit".into();
+            self.status = "focus mode · Ctrl+B W to exit".into();
         } else {
-            self.status = "typewriter mode off".into();
+            self.status = "focus mode off".into();
         }
     }
 
@@ -11183,6 +12252,10 @@ impl App {
         let is_hjson_editor = matches!(self.modal, Modal::HjsonEditor { .. });
         let is_rendered_preview = matches!(self.modal, Modal::RenderedPreview { .. });
         let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
+        let is_tts_save_as_audio = matches!(self.modal, Modal::TtsSaveAsAudio { .. });
+        let is_writing_streak_heatmap = matches!(self.modal, Modal::WritingStreakHeatmap { .. });
+        let is_concordance = matches!(self.modal, Modal::Concordance { .. });
+        let is_sentence_rhythm = matches!(self.modal, Modal::SentenceRhythm { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
         let is_ai_diff_review = matches!(self.modal, Modal::AiDiffReview { .. });
         let is_event_picker = matches!(self.modal, Modal::EventPicker { .. });
@@ -11648,6 +12721,57 @@ impl App {
                 return Ok(false);
             }
             if let Modal::SaveRenderedPng { input, .. } = &mut self.modal {
+                handle_text_input_key(input, key);
+            }
+            return Ok(false);
+        }
+
+        if is_writing_streak_heatmap {
+            // Any key closes — Esc, Enter, anything.
+            // No interactions inside; the modal is a
+            // read-only viewer.
+            self.modal = Modal::None;
+            return Ok(false);
+        }
+
+        if is_concordance {
+            self.concordance_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_sentence_rhythm {
+            self.sentence_rhythm_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_tts_save_as_audio {
+            if matches!(key.code, KeyCode::Esc) {
+                self.modal = Modal::None;
+                self.status = "TTS save: cancelled".into();
+                return Ok(false);
+            }
+            if matches!(key.code, KeyCode::Enter) {
+                let taken = std::mem::replace(&mut self.modal, Modal::None);
+                if let Modal::TtsSaveAsAudio {
+                    input,
+                    body,
+                    voice,
+                    wpm,
+                    voice_label,
+                } = taken
+                {
+                    let raw = input.as_str().to_string();
+                    self.commit_tts_save_as_audio(
+                        &raw,
+                        &body,
+                        &voice,
+                        wpm,
+                        &voice_label,
+                    );
+                }
+                return Ok(false);
+            }
+            if let Modal::TtsSaveAsAudio { input, .. } = &mut self.modal {
                 handle_text_input_key(input, key);
             }
             return Ok(false);
@@ -12143,7 +13267,7 @@ impl App {
             && ring_len > 0
         {
             if ring_len == 1 {
-                " · Ctrl+B U to restore (new uuid — wiki-links to old id stay broken)".to_string()
+                " · Ctrl+B U to restore (new uuid — paragraph links to old id stay broken)".to_string()
             } else {
                 format!(
                     " · Ctrl+B U restore · Ctrl+V Shift+U picker ({ring_len} in ring)",
@@ -14995,6 +16119,115 @@ pub(super) fn format_progress_gauge(current: i64, target: i64) -> (String, i64, 
 }
 
 #[cfg(test)]
+mod tests_scene_break {
+    use super::*;
+
+    #[test]
+    fn classic_asterisks_match() {
+        assert!(is_scene_break("***"));
+        assert!(is_scene_break("* * *"));
+        assert!(is_scene_break("  * * *  "));
+        assert!(is_scene_break("*****"));
+    }
+
+    #[test]
+    fn dashes_underscores_tildes_hashes_match() {
+        assert!(is_scene_break("---"));
+        assert!(is_scene_break("___"));
+        assert!(is_scene_break("~~~"));
+        assert!(is_scene_break("###"));
+        assert!(is_scene_break("- - -"));
+        assert!(is_scene_break("#####"));
+    }
+
+    #[test]
+    fn section_sign_alone_matches() {
+        assert!(is_scene_break("§"));
+        assert!(is_scene_break("  §  "));
+    }
+
+    #[test]
+    fn below_threshold_does_not_match() {
+        assert!(!is_scene_break("**"));
+        assert!(!is_scene_break("--"));
+        assert!(!is_scene_break("*"));
+    }
+
+    #[test]
+    fn empty_or_whitespace_no_match() {
+        assert!(!is_scene_break(""));
+        assert!(!is_scene_break("   "));
+        assert!(!is_scene_break("\t\t"));
+    }
+
+    #[test]
+    fn mixed_chars_dont_match() {
+        // Three different markers in a row — not a
+        // clean break pattern.
+        assert!(!is_scene_break("*-*"));
+        assert!(!is_scene_break("***foo"));
+        assert!(!is_scene_break("foo***"));
+        assert!(!is_scene_break("***bold***"));
+    }
+
+    #[test]
+    fn typst_headings_dont_match() {
+        assert!(!is_scene_break("= Chapter"));
+        assert!(!is_scene_break("== Section"));
+        assert!(!is_scene_break("=== Subsection"));
+    }
+
+    #[test]
+    fn prose_does_not_match() {
+        assert!(!is_scene_break("The morning was cold."));
+        assert!(!is_scene_break("She lifted her shoulders."));
+    }
+}
+
+#[cfg(test)]
+mod tests_audio_slug {
+    use super::*;
+
+    #[test]
+    fn ascii_lowercased_with_hyphens() {
+        assert_eq!(audio_filename_slug("Morning Walk"), "morning-walk");
+    }
+
+    #[test]
+    fn punctuation_collapsed() {
+        assert_eq!(audio_filename_slug("She Said: \"Hello!\""), "she-said-hello");
+    }
+
+    #[test]
+    fn runs_collapsed_no_trailing_dash() {
+        assert_eq!(audio_filename_slug("  hello   world  "), "hello-world");
+    }
+
+    #[test]
+    fn cyrillic_falls_through_to_hyphen_separator() {
+        // Each Cyrillic char isn't ascii_alphanumeric, so
+        // the slug becomes empty + fallback.  Acceptable —
+        // user edits the path before pressing Enter when
+        // they want a localised filename.
+        assert_eq!(audio_filename_slug("Привет мир"), "paragraph");
+    }
+
+    #[test]
+    fn mixed_keeps_ascii_drops_others() {
+        assert_eq!(
+            audio_filename_slug("Chapter 3 — введение"),
+            "chapter-3"
+        );
+    }
+
+    #[test]
+    fn empty_falls_back() {
+        assert_eq!(audio_filename_slug(""), "paragraph");
+        assert_eq!(audio_filename_slug("___"), "paragraph");
+    }
+}
+
+#[cfg(test)]
 mod tests_truncate {
     use super::*;
 
@@ -15635,6 +16868,27 @@ sentences that lose the reader, rhythm that flattens, claims that wobble, \
 imagery that doesn't earn its place. Be specific — quote the exact phrase \
 and propose a tighter alternative. Do NOT rewrite the whole paragraph; \
 critique it. Be honest, not destructive."
+}
+
+/// 1.2.9+ — embedded fallback for the Ctrl+B Shift+T
+/// AI-driven show-don't-tell scan.  Written to nudge
+/// the model into specific, quotable callouts plus
+/// one actionable rewrite each, so the writer can
+/// triage rather than re-read a paragraph of advice.
+pub(crate) fn show_dont_tell_default_prompt() -> &'static str {
+    "Read the paragraph below as a fiction draft and find every place where the \
+writer is TELLING rather than SHOWING. Telling = directly labelling an emotion \
+or internal state instead of letting behaviour, sensory detail, or dialogue \
+reveal it (`she was angry` is telling; `her knuckles whitened around the glass` \
+is showing). For each telling instance: \
+(1) Quote the exact phrase. \
+(2) Name what's being told (the emotion / state). \
+(3) Propose one concrete show-rewrite — a body-language beat, a sensory \
+detail, an action, or a fragment of dialogue. Keep the rewrite the same \
+length as the telling line, not a paragraph. \
+Skip cases where telling is deliberately efficient (transition lines, \
+summary, established interiority in first-person POV). If the paragraph is \
+already strong, say so plainly and stop. Don't pad."
 }
 
 /// 1.2.6+ — embedded fallback for F12 critique in split-edit mode.

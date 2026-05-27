@@ -708,6 +708,101 @@ pub(super) enum Modal {
     /// `request_quit` flow; N / Esc cancels.  No fields —
     /// the modal is fully transient.
     ConfirmQuit,
+    /// 1.2.9+ — TTS unavailable / disabled modal.  Opens
+    /// when `Ctrl+B S` fires while either the feature is
+    /// disabled in HJSON (`editor.tts.enabled = false`)
+    /// or the TTS engine couldn't initialise on this
+    /// platform.  `reason` is the user-facing text;
+    /// `title` distinguishes "TTS disabled" from
+    /// "TTS unavailable" in the modal header.  Any key
+    /// dismisses.
+    TtsUnavailable {
+        title: String,
+        reason: String,
+    },
+    /// 1.2.9+ — writing-streak heatmap modal (Ctrl+B
+    /// Shift+G).  GitHub-style 13×7 grid of the last 91
+    /// days of project-wide word deltas, plus the
+    /// current streak, longest streak in the window,
+    /// and per-month totals.  Data captured at open
+    /// time so the modal doesn't re-query DuckDB every
+    /// frame.  Esc closes.
+    WritingStreakHeatmap {
+        /// Project-wide word deltas, oldest first.
+        /// Length 91 (13 weeks × 7 days).
+        daily_words: Vec<i64>,
+        /// Current consecutive-writing-days streak.
+        streak_days: u32,
+        /// Longest streak in the 91-day window.
+        longest_streak: u32,
+        /// Today (UTC) as `(year, month, day)` so the
+        /// render can label months / paint today's
+        /// cell with a marker without re-parsing.
+        today_ymd: (i32, u32, u32),
+    },
+    /// 1.2.9+ — TTS save-as-audio path picker.  Opens
+    /// when the user presses Ctrl+B Shift+R; the
+    /// default path lands as `<project>/audio/<slug>.aiff`
+    /// pre-filled in the input.  Enter spawns
+    /// `say -o <path>` with the configured voice + rate;
+    /// Esc cancels.  `body` carries the paragraph text;
+    /// `voice` + `wpm` are captured at open time so a
+    /// subsequent HJSON edit doesn't change what gets
+    /// written.
+    TtsSaveAsAudio {
+        input: super::input::TextInput,
+        body: String,
+        voice: String,
+        wpm: u16,
+        voice_label: String,
+    },
+    /// 1.2.9+ — TTS playback modal.  Opens when
+    /// `Ctrl+B S` successfully kicks off speech via
+    /// `tts-rs`.  The actual TTS engine handle lives on
+    /// `App.tts_engine` (lazy-init, reused across
+    /// playbacks).  `started_at` drives the elapsed-time
+    /// counter; `preview` is the first ~80 chars of the
+    /// paragraph for the modal title.  The render loop
+    /// polls `tts.is_speaking()` each frame and closes
+    /// the modal automatically when playback ends.  Any
+    /// key calls `tts.stop()` and closes the modal.
+    TtsPlayback {
+        started_at: std::time::Instant,
+        preview: String,
+        voice_label: String,
+    },
+    /// 1.2.9+ — sentence-rhythm gauge modal
+    /// (Ctrl+B Shift+H).  Built once at open time
+    /// from the open paragraph's body; the render
+    /// loop reads cached stats and paints a per-
+    /// sentence bar list + outlier callouts.  Esc
+    /// closes; PgUp/PgDn/↑/↓ scroll the per-
+    /// sentence list.
+    SentenceRhythm {
+        stats: super::sentence_rhythm::RhythmStats,
+        scroll: usize,
+    },
+    /// 1.2.9+ — project-wide concordance modal
+    /// (Ctrl+B Shift+L).  Built once at open time from
+    /// the in-memory hierarchy + paragraph bodies; the
+    /// render loop just slices `data.entries` against
+    /// the live `filter` text.  Esc closes, arrow keys
+    /// move the cursor, `s` toggles sort, typing
+    /// narrows by prefix (or substring once a `*` is
+    /// in the filter).
+    Concordance {
+        data: super::concordance::ConcordanceData,
+        filter: super::input::TextInput,
+        cursor: usize,
+        scroll: usize,
+        sort: super::concordance::SortMode,
+        /// Cached "visible" view that mirrors `entries`
+        /// under the current filter.  Rebuilt by
+        /// `App::concordance_refilter` whenever filter
+        /// text or sort mode change.  Stores indices
+        /// into `data.entries`.
+        visible: Vec<usize>,
+    },
 }
 
 #[cfg(test)]

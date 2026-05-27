@@ -81,6 +81,16 @@ pub fn register(vm: &mut VM) -> Result<()> {
     vm.register_inline("ink.theme.set".to_string(), ink_theme_set)
         .map_err(|e| anyhow!("register ink.theme.set: {e}"))?;
 
+    // ── TTS (1.2.9+) ──────────────────────────────────────────
+    // `"text" ink.tts.speak` — read the string aloud
+    // through the same `say` subprocess Ctrl+B S uses.
+    // Honours `editor.tts.enabled` so scripts can't
+    // bypass user preference; errors are propagated to
+    // Bund (the user sees them on the status bar / Bund
+    // pane rather than silently no-op'ing).
+    vm.register_inline("ink.tts.speak".to_string(), ink_tts_speak)
+        .map_err(|e| anyhow!("register ink.tts.speak: {e}"))?;
+
     // ── Editor (Phase C) ──────────────────────────────────────
     vm.register_inline("ink.editor.replace".to_string(), ink_editor_replace)
         .map_err(|e| anyhow!("register ink.editor.replace: {e}"))?;
@@ -475,6 +485,32 @@ fn do_ink_theme_set(vm: &mut VM) -> Result<&mut VM> {
     let field = value_to_string(pull(vm, tag)?, "field", tag)?;
     with_app(tag, |app| {
         app.ink_theme_set(&field, &hex)
+            .map_err(|e| anyhow!("{tag}: {e}"))
+    })?;
+    Ok(vm)
+}
+
+// ── ink.tts.speak (1.2.9+) ──────────────────────────────────────────
+// Stack: ( text -- )
+// Read `text` aloud through the OS TTS engine (currently
+// macOS `/usr/bin/say`).  Honours `editor.tts.enabled`,
+// the configured voice + speed.  Spawn is non-blocking —
+// the next Bund word runs immediately while audio plays
+// in parallel.  Subsequent `ink.tts.speak` calls
+// interrupt the prior speech (the underlying `Say`
+// wrapper kills the old subprocess before spawning the
+// new one) so loops don't queue up.
+
+fn ink_tts_speak(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ink_tts_speak(vm).map_err(to_bund_err)
+}
+
+fn do_ink_tts_speak(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.tts.speak";
+    require_depth(vm, 1, tag)?;
+    let text = value_to_string(pull(vm, tag)?, "text", tag)?;
+    with_app(tag, |app| {
+        app.tts_speak_string(&text)
             .map_err(|e| anyhow!("{tag}: {e}"))
     })?;
     Ok(vm)

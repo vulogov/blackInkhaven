@@ -130,7 +130,7 @@ pub(super) struct ChatSelectionState {
 /// confirmed delete. Stores everything needed to call
 /// `create_node` + restore body + restore tags / linked
 /// paragraphs / event data. Note: the restored node gets a
-/// fresh uuid; cross-refs from other paragraphs (wiki-links,
+/// fresh uuid; cross-refs from other paragraphs (paragraph links,
 /// event.linked_paragraphs) pointing at the OLD uuid stay
 /// broken — flagged in the post-undo status.
 #[derive(Debug, Clone)]

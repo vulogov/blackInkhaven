@@ -10,7 +10,7 @@
 //! flow naturally outward.
 //!
 //! * **Solid grey edges** chain the structural skeleton.
-//! * **Dashed purple edges** are `linked_paragraphs` wiki-links
+//! * **Dashed purple edges** are `linked_paragraphs` paragraph links
 //!   (`Ctrl+V A` / `I`).
 //! * **Dashed green edges** connect lexicon nodes to the
 //!   paragraphs that mention them by title (case-insensitive
@@ -148,7 +148,7 @@ enum ShapeKind {
 enum EdgeStyle {
     /// Solid grey — structural parent→child.
     Structural,
-    /// Dashed purple — `linked_paragraphs` wiki-links.
+    /// Dashed purple — `linked_paragraphs` paragraph links.
     WikiLink,
     /// Dashed green — lexicon node → paragraph mention.
     Lexicon,
@@ -191,7 +191,7 @@ struct Graph {
 // ── Build the graph ───────────────────────────────────────────
 
 /// 1.2.6+ — paragraph mini graph: the centre paragraph + its
-/// outgoing wiki-link targets + incoming wiki-link sources +
+/// outgoing paragraph link targets + incoming paragraph link sources +
 /// lexicon nodes it mentions. Lays everything radially around
 /// the centre via twopi with two rings: hop-1 neighbours on
 /// the inner ring, lexicon nodes on the outer ring.
@@ -680,7 +680,7 @@ fn build_graph(store: &Store, hierarchy: &Hierarchy, book: &Node) -> Graph {
             }
         }
     }
-    // Wiki-links.
+    // Paragraph links.
     for n in &book_nodes {
         if n.kind != NodeKind::Paragraph {
             continue;

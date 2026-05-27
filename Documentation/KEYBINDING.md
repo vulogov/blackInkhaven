@@ -72,6 +72,17 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+B ]`           | (1.2.5) **Tag the open paragraph** — open the floating tag picker scoped to the editor buffer. Inside the picker: `↑↓` select, `Space` multi-selects, `T` applies selected tags (or the cursor tag if none selected), `A` adds a new tag (prompt), `D` deletes a tag project-wide (y/n confirm), `Enter` applies, `Esc` closes. | no |
 | `Ctrl+B }`           | (1.2.5) **Search by tag** — open the floating tag picker in read-only mode. `Enter` on a tag lists every paragraph that carries it with a typeable filter input; `Enter` on a paragraph row opens it in the editor. `A` / `D` still work (tag management is project-wide). | no |
 | `Ctrl+B 0`           | (1.2.8) **Edit project HJSON** — open `<project>/inkhaven.hjson` in a full-screen modal editor with HJSON syntax highlighting. `Ctrl+S` saves; when the saved bytes differ from the loaded bytes, a *Restart required* overlay pops up (config applies on next launch). `Esc` closes (status-line warning fires if there are unsaved edits). The editor mirrors the main paragraph editor's chord set: arrows / Home / End / PgUp / PgDn / Shift+arrows for selection / Ctrl+Home,End top/bottom / Ctrl+Left,Right word jumps / Ctrl+Backspace delete-word / Ctrl+U undo / Ctrl+Y redo / Ctrl+K cut / Ctrl+C copy / Ctrl+P paste / Ctrl+A select-all / Ctrl+D delete-line / Ctrl+E delete-to-EOL / Ctrl+W delete-to-BOL. | `bund.edit_project_hjson` |
+| `Ctrl+B W`           | **Distraction-free / focus mode** — hides Tree, AI, Search, and AI-prompt panes; the editor occupies the full window. Forces focus to the editor on enter. Re-press to restore the four-pane layout. Mutually exclusive with `Ctrl+B K` AI-fullscreen. Internally called "typewriter mode" in legacy strings + the HJSON serde key (`global.toggle_typewriter`) — the binding key stays for backward compatibility, but the user-facing name is now "focus mode". | `global.toggle_typewriter` |
+| `Ctrl+B S` (editor)  | (1.2.9) **Read aloud (TTS)** — speak the open paragraph through the OS text-to-speech engine. Cross-platform via `tts-rs` (AVFoundation on macOS, SAPI / WinRT on Windows, Speech Dispatcher on Linux). Default voice is `Milena` (Russian female; ships free with macOS + Windows after a one-time language download). Gated by `editor.tts.enabled = true` in HJSON — disabled by default. While playing, a `Read aloud` modal shows the elapsed time, the chosen voice, and the first 80 chars of the paragraph; any key (Esc / Space) stops playback. Modal auto-closes when the paragraph finishes. Tree-scope `Ctrl+B S` still adds a subchapter. | `editor.tts_read_paragraph` |
+| `Ctrl+B Shift+F`     | (1.2.9) **Toggle style warnings** — flip the inline filter-word overlay on / off without leaving the editor. When on, the editor underlines intensifier crutches and hedges (`just`, `really`, `very`, `просто`, `очень`, …) in amber so the writer can question + rewrite. Built-in word lists ship for English, Russian, French, German, Spanish; the active list is keyed by the project's top-level `language` field. Extra words via `editor.style_warnings.filter_words.extra_words` in HJSON. Master switch is `editor.style_warnings.enabled`; this chord is a session-local override. | `editor.toggle_style_warnings` |
+| `Ctrl+B Shift+R` (editor) | (1.2.9) **Save paragraph as audio** — write the open paragraph to an AIFF file via macOS `say -o <path>`. Opens a path picker pre-filled with `<project>/audio/<paragraph-slug>.aiff` — edit the path then Enter to write, Esc cancels. Uses the same voice + speed as `Ctrl+B S`. Output format follows the file extension (`.aiff` / `.wav` / `.m4a` all work on macOS 13+). macOS-only. | `editor.tts_save_as_audio` |
+| `Ctrl+B Shift+G`     | (1.2.9) **Writing-streak heatmap** — GitHub-style 13×7 grid of the last 91 days of project-wide word deltas. Each cell colored by daily word count bucket (0 → dim, 1-249 → faint green, 250-499 → medium, 500-999 → bright, 1000+ → max). Footer shows current streak + longest streak in window + 91-day total + active-day average. Today's cell highlighted with a dark background. Any key closes. | `view.open_writing_streak_heatmap` |
+| `Ctrl+B <` (editor)  | (1.2.9) **Previous scene break** — jump cursor to the previous scene-break line in the open paragraph. Scene breaks: `* * *`, `***`, `---`, `___`, `###`, `~~~`, or a lone `§`. Originally requested as `Ctrl+B Shift+{`; reassigned to `<` (vim-style) because `Shift+}` collides with the 1.2.5 `Ctrl+B }` = TagSearch chord. | `editor.scene_break_prev` |
+| `Ctrl+B >` (editor)  | (1.2.9) **Next scene break** — same detector as `Ctrl+B <`, jumps forward. | `editor.scene_break_next` |
+| `Ctrl+B Shift+L`     | (1.2.9) **Concordance view** — project-wide list of every distinct lexical stem with total count + up to 3 KWIC samples. Walks every paragraph, tokenises with UAX-#29, drops stop-words / single-char tokens / pure digits, and groups by Snowball stem so `walk`/`walked`/`walking` collapse to one row. Type to filter (substring match against headword + variants); `Ctrl+S` toggles sort (count ↔ alphabetical); ↑↓ / PgUp/PgDn / Home / End navigate; Esc closes. Multilingual via the project's `language` field (English / Russian / French / German / Spanish stop-word lists). | `view.open_concordance` |
+| `Ctrl+B Shift+P`     | (1.2.9) **Toggle POV chip** — flip the status-bar POV / character chip on or off (session-local override on top of `editor.pov_chip_enabled` in HJSON). When on, the status bar shows the most-mentioned character in the open paragraph as the heuristic POV character, plus up to three additional named characters present. Driven by the project's existing `characters` lexicon — no separate tagging needed. Ties broken by first-mention order. | `view.toggle_pov_chip` |
+| `Ctrl+B Shift+H` (editor) | (1.2.9) **Sentence-rhythm gauge** — open a modal that splits the open paragraph into sentences (hand-rolled walker with abbreviation suppression: Mr., Mrs., Dr., e.g., i.e., Ph.D., …), computes word-count mean / stdev / coefficient of variation (CV), and maps CV to a verdict: Monotone (`CV < 0.25` — drones), Steady (`0.25-0.45`), Varied (`0.45-0.80` — strong prose rhythm), Choppy (`≥ 0.80`). Shows a per-sentence bar list + the three shortest + three longest outliers. ↑↓ / PgUp/PgDn / Home/End scroll; any other key closes. Mnemonic: H for heartbeat. | `view.open_sentence_rhythm` |
+| `Ctrl+B Shift+T` (editor) | (1.2.9) **AI show-don't-tell scan** — send the open paragraph to the configured LLM with a system prompt asking for telling passages plus suggested rewrites. The response streams into the AI pane. Complements the always-on regex overlay (`editor.style_warnings.show_dont_tell`) — the regex catches obvious 2-grams (`was angry`, `realised`); the AI scan catches subtler instances and proposes alternatives. Mnemonic: T for tell. | `ai.analyse_show_dont_tell` |
 
 ### 1.1 Meta mode (Ctrl+B prefix)
 
@@ -130,7 +141,7 @@ before tui-textarea sees them, so they never insert a literal tab.
 ### 1.2 View mode (Ctrl+V prefix)
 
 The third meta prefix. Routes to in-process exporters, pickers,
-the writing-progress modal, wiki-links, and bookmarks. In
+the writing-progress modal, paragraph links, and bookmarks. In
 1.2.4+ all view-sub chords are rebindable through HJSON
 `keys.bindings.view_sub` and `ink.key.bind_view_sub`; the
 prefix itself is rebindable via `keys.view_prefix` (default
@@ -145,8 +156,8 @@ full workflows.
 | `S` / `s`              | any                      | Toggle **similar-paragraph mode** — saves the buffer, picks via vector search, opens a second editor side-by-side. Re-press to save both and exit. Both editors autosave on idle (1.2.4). |
 | `G` / `g`              | any                      | Open the **writing-progress modal** (today / streak / per-book pace / 30-day sparkline / status-ladder counts / per-book bar chart). |
 | `T` / `t`              | any (needs open paragraph) | Set / clear the **per-paragraph word-count target** (1.2.4+). Empty / `0` clears. Saves that cross the target auto-promote status one ladder step when `goals.auto_promote_on_target` is true. |
-| `A` / `a`              | any (needs open paragraph) | **Add outgoing wiki-link** (1.2.4) — tree pane enters select-paragraph-to-link mode; Enter confirms. Self-link / duplicate / cycle are rejected with a status-bar message. |
-| `I` / `i`              | any (needs open paragraph) | **Add incoming wiki-link** (1.2.4) — tree pane enters select-paragraph-that-will-link-to-current mode. Reverse of `A`. |
+| `A` / `a`              | any (needs open paragraph) | **Add outgoing paragraph link** (1.2.4) — tree pane enters select-paragraph-to-link mode; Enter confirms. Self-link / duplicate / cycle are rejected with a status-bar message. |
+| `I` / `i`              | any (needs open paragraph) | **Add incoming paragraph link** (1.2.4) — tree pane enters select-paragraph-that-will-link-to-current mode. Reverse of `A`. |
 | `L` / `l`              | any (needs open paragraph) | **List outgoing links** (1.2.4) — floating picker. Enter opens (autosaves prev); D removes the link. |
 | `K` / `k`              | any (needs open paragraph) | **List backlinks** (1.2.4) — paragraphs that link TO the open one. D removes the source's outgoing link. |
 | `B` / `b`              | any (needs open paragraph) | Toggle **bookmark** on the open paragraph (1.2.4). |
@@ -154,7 +165,7 @@ full workflows.
 | `P` / `p`              | any                      | **Fuzzy paragraph picker** (1.2.4) — type-to-filter modal over every user-book paragraph. Three-tier ranking (title-starts > title-contains > slug-contains). |
 | `R` / `r`              | any (needs open paragraph) | (1.2.5) **Render paragraph** — save the buffer, compile it in-process via `typst-render`, float a PNG preview on top of the editor. Inside the preview: `←` / `→` navigate pages (multi-page documents), `Home` / `End` jump to first / last; `Esc` closes; `S` opens a save-as picker for the **current page** at full DPI (288 dpi); `A` opens the picker for **all pages** at full DPI (writes `<base>-page-NNN.png` per page). Cancelling the save picker restores the preview with navigation state intact. |
 | `N` / `n`              | any (needs open paragraph) | (1.2.5) **Next typst diagnostic** — move the editor cursor to the next parse or semantic diagnostic in the buffer. Wraps at the end. Refreshes the diagnostic cache up-front so navigation reflects the current buffer state, not the last save. Status bar reports `diag N/M  line L:C  — <message>`. |
-| `W` / `w`              | any (needs current user book) | (1.2.5) **Story view** — build a twopi-style radial graph of the current book (book at centre, each depth on a concentric ring) with the hierarchy (chapters / subchapters / paragraphs / scripts / images / json) plus wiki-links (dashed purple) and Characters / Places / Artefacts mentions on an outer ring (dashed green). Rasterised via `resvg` and floated on top of the editor. Inside the modal: `Esc` closes, `S` opens a save-as picker (default `<book-slug>-story-YYYYDDMM-HHMM.png`). |
+| `W` / `w`              | any (needs current user book) | (1.2.5) **Story view** — build a twopi-style radial graph of the current book (book at centre, each depth on a concentric ring) with the hierarchy (chapters / subchapters / paragraphs / scripts / images / json) plus paragraph links (dashed purple) and Characters / Places / Artefacts mentions on an outer ring (dashed green). Rasterised via `resvg` and floated on top of the editor. Inside the modal: `Esc` closes, `S` opens a save-as picker (default `<book-slug>-story-YYYYDDMM-HHMM.png`). |
 | `Esc`                  | any                      | Cancel the chord without acting.                                       |
 
 While in similar-paragraph mode, `Tab` inside the editor toggles
@@ -1068,7 +1079,7 @@ Esc            close
 
 ```
 Ctrl+B U       restore the most recently deleted paragraph
-               (single-slot kill-ring; new uuid; wiki-links to
+               (single-slot kill-ring; new uuid; paragraph links to
                 old id stay broken).  Cleared by any branch
                 delete or another single-¶ delete (the new one
                 takes the slot).
@@ -1086,7 +1097,7 @@ Ctrl+V Shift+P recent-paragraph picker (most-recent-first list,
 ```
 
 The ring is in-memory only — restart clears it.  Opening a
-new paragraph (via Enter / picker / wiki-link / undelete /
+new paragraph (via Enter / picker / paragraph link / undelete /
 similar / timeline-Enter) clears the forward stack.
 
 See [`Tutorials/33-navigation-history.md`](Tutorials/33-navigation-history.md).

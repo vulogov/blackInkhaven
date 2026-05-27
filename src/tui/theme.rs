@@ -29,6 +29,21 @@ pub struct Theme {
     pub characters_fg: Color,
     pub artefacts_fg: Color,
     pub notes_underline_fg: Color,
+    /// 1.2.9+ — colour for inline filter-word warnings
+    /// (`just`, `really`, `очень`, …).  Underlined so the
+    /// warning is visible even on terminals that flatten
+    /// fg colour overlays.
+    pub style_warning_filter_word_fg: Color,
+    /// 1.2.9+ — colour for repeated-phrase warnings.
+    /// Different from filter-word fg so the two
+    /// overlays are visually distinct when they
+    /// overlap.
+    pub style_warning_repeated_phrase_fg: Color,
+    /// 1.2.9+ — colour for show-don't-tell warnings.
+    /// Distinct from filter-word + repeated-phrase fg
+    /// so the three overlays stay distinguishable
+    /// when adjacent.
+    pub style_warning_show_dont_tell_fg: Color,
 
     pub search_match_bg: Color,
     pub search_current_bg: Color,
@@ -91,6 +106,29 @@ impl Theme {
             // a separate knob lets the user tint the underline if the
             // pane_fg is too subtle.
             notes_underline_fg: color_or(&cfg.notes_underline_fg, Color::Rgb(0xcd, 0xd6, 0xf4)),
+            style_warning_filter_word_fg: color_or(
+                &cfg.style_warning_filter_word_fg,
+                // Soft amber — visible against most themes
+                // without being alarming.  Filter words are
+                // a "consider rewriting" prompt, not an
+                // error.
+                Color::Rgb(0xf9, 0xc4, 0x4e),
+            ),
+            style_warning_repeated_phrase_fg: color_or(
+                &cfg.style_warning_repeated_phrase_fg,
+                // Soft magenta — distinct from filter-word
+                // amber + the existing places/characters
+                // overlays.
+                Color::Rgb(0xeb, 0x6f, 0x92),
+            ),
+            style_warning_show_dont_tell_fg: color_or(
+                &cfg.style_warning_show_dont_tell_fg,
+                // Soft teal — distinct from filter-word
+                // amber + repeated-phrase magenta so the
+                // three overlays stay visually separate
+                // when adjacent.
+                Color::Rgb(0x94, 0xe2, 0xd5),
+            ),
 
             search_match_bg: color_or(&cfg.search_match_bg, Color::Rgb(0xf3, 0x8b, 0xa8)),
             search_current_bg: color_or(&cfg.search_current_bg, Color::Rgb(0xf5, 0xc2, 0xe7)),
@@ -162,6 +200,9 @@ impl Theme {
             "characters_fg" => self.characters_fg = parsed,
             "artefacts_fg" => self.artefacts_fg = parsed,
             "notes_underline_fg" => self.notes_underline_fg = parsed,
+            "style_warning_filter_word_fg" => self.style_warning_filter_word_fg = parsed,
+            "style_warning_repeated_phrase_fg" => self.style_warning_repeated_phrase_fg = parsed,
+            "style_warning_show_dont_tell_fg" => self.style_warning_show_dont_tell_fg = parsed,
             "search_match_bg" => self.search_match_bg = parsed,
             "search_current_bg" => self.search_current_bg = parsed,
             "tree_open_marker" => self.tree_open_marker = parsed,

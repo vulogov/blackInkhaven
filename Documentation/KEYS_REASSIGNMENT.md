@@ -185,8 +185,8 @@ Layer name: `view_sub`. Rebind via HJSON or `ink.key.bind_view_sub`.
 | `view.toggle_similar_mode` | `Ctrl+V S` | Open / close the similar-paragraph picker + secondary editor |
 | `view.open_progress` | `Ctrl+V G` | Open the writing-progress modal |
 | `view.open_paragraph_target` | `Ctrl+V t` | Set / clear the per-paragraph word-count target |
-| `view.add_link` | `Ctrl+V A` | Add outgoing wiki-link (tree picks target) |
-| `view.add_incoming_link` | `Ctrl+V I` | Add incoming wiki-link (tree picks source) |
+| `view.add_link` | `Ctrl+V A` | Add outgoing paragraph link (tree picks target) |
+| `view.add_incoming_link` | `Ctrl+V I` | Add incoming paragraph link (tree picks source) |
 | `view.list_links` | `Ctrl+V L` | Open the outgoing-links picker |
 | `view.list_backlinks` | `Ctrl+V K` | Open the backlinks picker |
 | `view.toggle_bookmark` | `Ctrl+V B` | Toggle bookmark on open paragraph |
@@ -194,7 +194,7 @@ Layer name: `view_sub`. Rebind via HJSON or `ink.key.bind_view_sub`.
 | `view.fuzzy_paragraph_picker` | `Ctrl+V P` | Open the fuzzy paragraph picker |
 | `view.render_paragraph` | `Ctrl+V R` | (1.2.5) Save the open paragraph, render via `typst-render`, float a PNG preview (S = save full-DPI PNG, Esc = close) |
 | `view.next_diagnostic` | `Ctrl+V N` | (1.2.5) Jump editor cursor to the next typst diagnostic in the buffer (parse or semantic). Wraps at the end. |
-| `view.story_graph` | `Ctrl+V W` | (1.2.5) Story view — twopi radial graph of the current book (hierarchy + wiki-links + lexicon mentions), rasterised via `resvg`. S saves the PNG. |
+| `view.story_graph` | `Ctrl+V W` | (1.2.5) Story view — twopi radial graph of the current book (hierarchy + paragraph links + lexicon mentions), rasterised via `resvg`. S saves the PNG. |
 
 ### Top-level keys (1.2.4+)
 

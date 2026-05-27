@@ -1,6 +1,7 @@
 pub(crate) mod app;
 mod backup_ui;
 mod bund_highlight;
+mod concordance;
 mod credits;
 mod diff_utils;
 mod file_picker;
@@ -17,6 +18,10 @@ mod lexicon_build;
 mod markdown;
 mod markdown_highlight;
 mod modal;
+mod pov_tracker;
+mod say;
+mod sentence_rhythm;
+mod style_warnings;
 mod quickref;
 mod sound;
 mod theme;

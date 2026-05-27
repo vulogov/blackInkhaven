@@ -1011,6 +1011,15 @@ pub struct ThemeConfig {
     pub characters_fg: String,
     pub artefacts_fg: String,
     pub notes_underline_fg: String,
+    /// 1.2.9+ — colour for inline filter-word warnings.
+    #[serde(default)]
+    pub style_warning_filter_word_fg: String,
+    /// 1.2.9+ — colour for repeated-phrase warnings.
+    #[serde(default)]
+    pub style_warning_repeated_phrase_fg: String,
+    /// 1.2.9+ — colour for show-don't-tell warnings.
+    #[serde(default)]
+    pub style_warning_show_dont_tell_fg: String,
 
     // Search-match overlay in the editor.
     pub search_match_bg: String,
@@ -1084,6 +1093,9 @@ impl Default for ThemeConfig {
             characters_fg: "#f9e2af".into(),
             artefacts_fg: "#fab387".into(),
             notes_underline_fg: "#cdd6f4".into(),
+            style_warning_filter_word_fg: "#f9c44e".into(),
+            style_warning_repeated_phrase_fg: "#eb6f92".into(),
+            style_warning_show_dont_tell_fg: "#94e2d5".into(),
 
             search_match_bg: "#f38ba8".into(),
             search_current_bg: "#f5c2e7".into(),
@@ -1294,6 +1306,570 @@ pub struct EditorConfig {
     /// chord especially).
     #[serde(default = "default_confirm_quit")]
     pub confirm_quit: bool,
+    /// 1.2.9+ — text-to-speech read-aloud (`Ctrl+B S`).
+    /// See `TtsConfig` below for per-knob detail.
+    #[serde(default)]
+    pub tts: TtsConfig,
+    /// 1.2.9+ — inline style-warning overlays.  See
+    /// `StyleWarningsConfig` for per-detector knobs.
+    #[serde(default)]
+    pub style_warnings: StyleWarningsConfig,
+    /// 1.2.9+ — status-bar POV / character chip.
+    /// When enabled, the status bar gains a small chip
+    /// showing the most-mentioned character in the
+    /// currently-open paragraph (the heuristic POV
+    /// character) plus up to three additional named
+    /// characters present.  Driven by the project's
+    /// existing `characters` lexicon — no separate
+    /// tagging required.  Toggle at runtime with
+    /// `Ctrl+B Shift+P`.
+    #[serde(default = "default_pov_chip_enabled")]
+    pub pov_chip_enabled: bool,
+}
+
+fn default_pov_chip_enabled() -> bool {
+    true
+}
+
+/// 1.2.9+ — `editor.style_warnings.*` HJSON stanza.
+/// Enables inline highlighting of stylistically weak
+/// prose constructs: filter words first (this release),
+/// repeated phrases / show-don't-tell / sentence-rhythm
+/// next.  All detectors are off by default and toggled
+/// individually so a user who only wants filter-word
+/// flagging doesn't get adverb noise.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StyleWarningsConfig {
+    /// Master enable for the in-editor style warning
+    /// overlays.  `false` disables every detector
+    /// regardless of the per-detector flags.  Runtime
+    /// `Ctrl+V w` toggle flips a session-only override
+    /// without rewriting HJSON.
+    pub enabled: bool,
+    /// Filter-word detector: flag intensifier crutches
+    /// + hedges (`just`, `really`, `very`, `просто`,
+    /// `очень`, …).  Built-in lists ship for English,
+    /// Russian, French, German, Spanish; the active list
+    /// is keyed by the project's top-level `language`
+    /// field.  `extra_words` is a user union added on
+    /// top of the language default — empty by default.
+    pub filter_words: FilterWordsConfig,
+    /// 1.2.9+ — repeated-phrase detector.  Slides an
+    /// `n`-word window across the open paragraph,
+    /// stems each window with the project's Snowball
+    /// algorithm, and flags every occurrence of any
+    /// n-gram that repeats `threshold` or more times.
+    /// `lifted her shoulders` matches `lifting her
+    /// shoulders` (stems align), so a writer's
+    /// favourite gesture surfaces immediately.
+    /// Multilingual via the same Snowball setup as
+    /// filter-words — no language-specific tuning
+    /// needed beyond setting the top-level `language`.
+    pub repeated_phrases: RepeatedPhrasesConfig,
+    /// 1.2.9+ — show-don't-tell detector.  Flags
+    /// "telling" prose patterns: copula + emotion-
+    /// adjective (`she was angry`, `Il était triste`),
+    /// manner-of-emotion adverbs (`angrily`,
+    /// `sadly`), and direct cognition verbs that label
+    /// internal state for the reader (`realised`,
+    /// `understood`, `knew`).  Inline overlay shares
+    /// the master toggle.  See `ShowDontTellConfig`
+    /// for per-language knobs.
+    pub show_dont_tell: ShowDontTellConfig,
+}
+
+/// 1.2.9+ — `editor.style_warnings.show_dont_tell.*`
+/// HJSON stanza.  Three lists per language:
+///   * `*_linking_verbs` — `be`, `seem`, `feel`,
+///     `look`, `appear`, `become`.  Used as
+///     pattern-anchor in the 2-gram `(verb)(adj)`
+///     detector.  Snowball-stemmed at init time so
+///     `was` / `is` / `were` all key on `be`.
+///   * `*_emotion_adjectives` — `angry`, `sad`,
+///     `happy`, `afraid`, …  Triggered as the
+///     second token of the 2-gram pattern.
+///   * `*_manner_adverbs` — `angrily`, `sadly`,
+///     `nervously`, …  Flagged on their own — these
+///     adverbs almost always label emotion outright.
+///   * `*_cognition_verbs` — `realised`, `knew`,
+///     `understood`, `wondered`, `decided`, …
+///     Flagged on their own.
+///
+/// Empty configured list = use built-in default for
+/// that language; non-empty = REPLACE the default.
+/// Same rule as `filter_words`.  English ships with
+/// curated lists; the other languages start empty so
+/// users can fill them in for their corpus.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ShowDontTellConfig {
+    pub enabled: bool,
+    /// Apply Snowball stemming before matching so
+    /// inflections collapse (e.g. `was` / `is` /
+    /// `were` all match a single `be` entry).
+    /// Disable for exact-form matching.
+    pub use_stemming: bool,
+    // English defaults populated via `built_in_*` —
+    // configured lists override.
+    pub english_linking_verbs: Vec<String>,
+    pub english_emotion_adjectives: Vec<String>,
+    pub english_manner_adverbs: Vec<String>,
+    pub english_cognition_verbs: Vec<String>,
+    pub russian_linking_verbs: Vec<String>,
+    pub russian_emotion_adjectives: Vec<String>,
+    pub russian_manner_adverbs: Vec<String>,
+    pub russian_cognition_verbs: Vec<String>,
+    pub french_linking_verbs: Vec<String>,
+    pub french_emotion_adjectives: Vec<String>,
+    pub french_manner_adverbs: Vec<String>,
+    pub french_cognition_verbs: Vec<String>,
+    pub german_linking_verbs: Vec<String>,
+    pub german_emotion_adjectives: Vec<String>,
+    pub german_manner_adverbs: Vec<String>,
+    pub german_cognition_verbs: Vec<String>,
+    pub spanish_linking_verbs: Vec<String>,
+    pub spanish_emotion_adjectives: Vec<String>,
+    pub spanish_manner_adverbs: Vec<String>,
+    pub spanish_cognition_verbs: Vec<String>,
+}
+
+impl Default for ShowDontTellConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            use_stemming: true,
+            english_linking_verbs: Vec::new(),
+            english_emotion_adjectives: Vec::new(),
+            english_manner_adverbs: Vec::new(),
+            english_cognition_verbs: Vec::new(),
+            russian_linking_verbs: Vec::new(),
+            russian_emotion_adjectives: Vec::new(),
+            russian_manner_adverbs: Vec::new(),
+            russian_cognition_verbs: Vec::new(),
+            french_linking_verbs: Vec::new(),
+            french_emotion_adjectives: Vec::new(),
+            french_manner_adverbs: Vec::new(),
+            french_cognition_verbs: Vec::new(),
+            german_linking_verbs: Vec::new(),
+            german_emotion_adjectives: Vec::new(),
+            german_manner_adverbs: Vec::new(),
+            german_cognition_verbs: Vec::new(),
+            spanish_linking_verbs: Vec::new(),
+            spanish_emotion_adjectives: Vec::new(),
+            spanish_manner_adverbs: Vec::new(),
+            spanish_cognition_verbs: Vec::new(),
+        }
+    }
+}
+
+/// 1.2.9+ — built-in show-don't-tell lists per
+/// language.  English ships with curated lists drawn
+/// from common writing-craft references; other
+/// languages return empty slices so the user can fill
+/// them in for their corpus (Russian / French /
+/// German / Spanish emotion vocabulary varies enough
+/// per genre that defaults would mislead more than
+/// help).
+pub fn built_in_linking_verbs(language: &str) -> &'static [&'static str] {
+    match language.to_lowercase().as_str() {
+        "english" | "" => &[
+            "be", "is", "am", "are", "was", "were", "been", "being",
+            "seem", "seems", "seemed", "seeming",
+            "feel", "feels", "felt", "feeling",
+            "appear", "appears", "appeared", "appearing",
+            "look", "looks", "looked", "looking",
+            "become", "becomes", "became", "becoming",
+            "remain", "remains", "remained", "remaining",
+            "grow", "grows", "grew", "growing",
+            "sound", "sounds", "sounded",
+        ],
+        _ => &[],
+    }
+}
+
+pub fn built_in_emotion_adjectives(language: &str) -> &'static [&'static str] {
+    match language.to_lowercase().as_str() {
+        "english" | "" => &[
+            // Anger family
+            "angry", "mad", "furious", "livid", "irate", "enraged",
+            "annoyed", "irritated", "agitated",
+            // Sadness family
+            "sad", "depressed", "melancholy", "gloomy", "miserable",
+            "unhappy", "dejected", "downcast", "forlorn",
+            // Fear family
+            "afraid", "scared", "frightened", "terrified", "anxious",
+            "nervous", "worried", "uneasy", "panicked", "apprehensive",
+            // Joy family
+            "happy", "joyful", "glad", "content", "pleased", "delighted",
+            "thrilled", "elated", "ecstatic", "cheerful",
+            // Fatigue family
+            "tired", "exhausted", "weary", "drained", "spent",
+            // Confusion family
+            "confused", "puzzled", "perplexed", "baffled",
+            // Surprise family
+            "surprised", "shocked", "stunned", "astonished", "amazed",
+            // Shame family
+            "embarrassed", "ashamed", "humiliated", "mortified",
+            // Pride / envy / loneliness
+            "proud", "smug",
+            "jealous", "envious",
+            "lonely", "isolated",
+            // Boredom
+            "bored", "listless", "restless",
+            // Excitement (low intensity)
+            "excited", "eager", "enthusiastic",
+            // Determination / despair
+            "determined", "resolute",
+            "hopeless", "helpless", "defeated",
+        ],
+        _ => &[],
+    }
+}
+
+pub fn built_in_manner_adverbs(language: &str) -> &'static [&'static str] {
+    match language.to_lowercase().as_str() {
+        "english" | "" => &[
+            "angrily", "sadly", "happily", "fearfully", "nervously",
+            "anxiously", "calmly", "frantically", "wearily", "tiredly",
+            "excitedly", "gleefully", "miserably", "joyfully",
+            "furiously", "irritably", "annoyedly", "bitterly",
+            "proudly", "smugly", "jealously", "enviously",
+            "lovingly", "tenderly", "coldly", "warmly",
+            "desperately", "hopelessly", "helplessly",
+            "embarrassedly", "shamefully", "guiltily",
+            "bored", "boredly", "listlessly",
+            "confusedly",
+        ],
+        _ => &[],
+    }
+}
+
+pub fn built_in_cognition_verbs(language: &str) -> &'static [&'static str] {
+    match language.to_lowercase().as_str() {
+        "english" | "" => &[
+            "realised", "realized",
+            "understood", "knew", "thought",
+            "wondered", "wished", "hoped",
+            "believed", "supposed", "decided",
+            "concluded", "discovered", "recognised", "recognized",
+            "remembered", "considered",
+            "assumed", "expected",
+        ],
+        _ => &[],
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RepeatedPhrasesConfig {
+    pub enabled: bool,
+    /// Number of consecutive words to compare.  4 is
+    /// the sweet spot — 3 catches too many incidental
+    /// "she said the X" patterns, 5+ misses most
+    /// writer-crutches.
+    pub n: u8,
+    /// Flag when an n-gram appears at least this many
+    /// times in the paragraph.  3 is the default — a
+    /// phrase has to occur 3 times before it's worth
+    /// flagging; twice is often a deliberate echo.
+    pub threshold: u8,
+    /// Apply Snowball stemming to align inflections
+    /// before n-gram comparison.  Default `true`.
+    pub use_stemming: bool,
+    /// 1.2.9+ — stop-word list per language: words
+    /// excluded from n-gram comparison so common
+    /// connectives (`the`, `and`, `и`, `в`) don't
+    /// inflate the count.  Empty list = use built-in
+    /// default for the active language.  Same lookup
+    /// rule as filter-words.  Built-in lists are
+    /// conservative (closed-class words only); users
+    /// extend via this field.
+    pub english_stop_words: Vec<String>,
+    pub russian_stop_words: Vec<String>,
+    pub french_stop_words: Vec<String>,
+    pub german_stop_words: Vec<String>,
+    pub spanish_stop_words: Vec<String>,
+}
+
+impl Default for RepeatedPhrasesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            n: 4,
+            threshold: 3,
+            use_stemming: true,
+            english_stop_words: Vec::new(),
+            russian_stop_words: Vec::new(),
+            french_stop_words: Vec::new(),
+            german_stop_words: Vec::new(),
+            spanish_stop_words: Vec::new(),
+        }
+    }
+}
+
+/// 1.2.9+ — built-in stop-word list per language.
+/// Conservative: only function words that almost never
+/// carry meaning.  Users extend via the per-language
+/// `*_stop_words` fields when an n-gram with a domain
+/// word feels noisy in their writing.
+pub fn built_in_stop_words(language: &str) -> &'static [&'static str] {
+    match language.to_lowercase().as_str() {
+        "russian" => &[
+            "и", "в", "на", "не", "с", "что", "это", "как",
+            "а", "по", "из", "у", "от", "к", "за", "о",
+            "но", "же", "так", "то", "бы", "ли", "вот",
+            "только", "ещё", "также", "был", "была",
+            "было", "были", "есть",
+        ],
+        "french" => &[
+            "le", "la", "les", "un", "une", "des", "de",
+            "du", "et", "à", "au", "aux", "en", "dans",
+            "pour", "par", "sur", "avec", "sans", "que",
+            "qui", "ce", "se", "il", "elle", "ils",
+            "elles", "ne", "pas",
+        ],
+        "german" => &[
+            "der", "die", "das", "den", "dem", "des",
+            "ein", "eine", "und", "in", "zu", "von", "mit",
+            "auf", "ist", "war", "sind", "waren", "es",
+            "er", "sie", "wir", "du", "ich", "nicht",
+        ],
+        "spanish" => &[
+            "el", "la", "los", "las", "un", "una", "y",
+            "de", "del", "en", "a", "con", "por", "para",
+            "que", "no", "es", "son", "se", "su", "lo",
+        ],
+        _ => &[
+            "the", "a", "an", "and", "or", "but", "of",
+            "to", "in", "on", "at", "by", "for", "with",
+            "as", "is", "was", "were", "are", "be",
+            "been", "being", "have", "has", "had", "do",
+            "does", "did", "it", "he", "she", "they",
+            "we", "you", "his", "her", "their", "its",
+            "this", "that", "these", "those", "not", "no",
+        ],
+    }
+}
+
+impl Default for StyleWarningsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            filter_words: FilterWordsConfig::default(),
+            repeated_phrases: RepeatedPhrasesConfig::default(),
+            show_dont_tell: ShowDontTellConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FilterWordsConfig {
+    pub enabled: bool,
+    /// 1.2.9+ — match via Snowball stemming so `seemed`
+    /// catches `seems` / `seeming`, `казалось` catches
+    /// `казался` / `казалась` / `казались`, and the
+    /// per-language list stays compact (one entry per
+    /// lemma, not per inflection).  Default `true`.
+    /// Disable to fall back to exact-lowercased match
+    /// (faster, but you'd need to list every form
+    /// manually).
+    pub use_stemming: bool,
+    /// User-supplied words added on top of the language
+    /// default.  Case-insensitive; one entry per word.
+    /// Stems with the language stemmer when
+    /// `use_stemming` is on, so `["lift"]` flags
+    /// `lifted` / `lifts` / `lifting`.
+    pub extra_words: Vec<String>,
+    /// Per-language curated lists.  Empty list means
+    /// "use the built-in default for this language";
+    /// any non-empty list **replaces** the default
+    /// (use `extra_words` for additive overrides).  The
+    /// active list is keyed by the project's top-level
+    /// `language` field; unknown languages fall back
+    /// to `english`.  Default values shipped by
+    /// `built_in_filter_words()` — run
+    /// `inkhaven doctor --filter-words-snippet` to get
+    /// a copy-paste-ready HJSON dump.
+    pub english: Vec<String>,
+    pub russian: Vec<String>,
+    pub french: Vec<String>,
+    pub german: Vec<String>,
+    pub spanish: Vec<String>,
+}
+
+impl Default for FilterWordsConfig {
+    fn default() -> Self {
+        // Defaults left empty so an HJSON dumped from a
+        // bare Config doesn't carry 100+ lines of
+        // language-specific lists.  Empty list at the
+        // detector means "use the built-in default" —
+        // see `built_in_filter_words()`.  Users who
+        // want the defaults visible in their HJSON can
+        // populate the arrays from
+        // `inkhaven doctor --filter-words-snippet`.
+        Self {
+            enabled: true,
+            use_stemming: true,
+            extra_words: Vec::new(),
+            english: Vec::new(),
+            russian: Vec::new(),
+            french: Vec::new(),
+            german: Vec::new(),
+            spanish: Vec::new(),
+        }
+    }
+}
+
+/// 1.2.9+ — accessor for the user's per-language list.
+/// Returns the configured list when non-empty;
+/// otherwise the built-in default.  Caller passes
+/// `language` from `cfg.language`.  Currently only
+/// referenced from tests + future detectors that don't
+/// want to duplicate the lookup logic; kept under
+/// `#[allow(dead_code)]` so it survives the unused-
+/// helper lint while remaining a documented surface.
+#[allow(dead_code)]
+pub fn effective_filter_words<'a>(
+    cfg: &'a FilterWordsConfig,
+    language: &str,
+) -> &'a [String] {
+    let configured: &Vec<String> = match language.to_lowercase().as_str() {
+        "russian" => &cfg.russian,
+        "french" => &cfg.french,
+        "german" => &cfg.german,
+        "spanish" => &cfg.spanish,
+        _ => &cfg.english,
+    };
+    if !configured.is_empty() {
+        return configured.as_slice();
+    }
+    // Fall back to the built-in default for that
+    // language.  `built_in_filter_words` returns a
+    // `&'static [&'static str]` which we can't return
+    // as `&[String]` directly without allocating; the
+    // detector calls `built_in_filter_words` separately
+    // when this returns an empty slice.
+    &[]
+}
+
+/// 1.2.9+ — built-in per-language filter-word lists.
+/// Public so `inkhaven doctor --filter-words-snippet`
+/// can emit them for paste-into-HJSON.
+pub fn built_in_filter_words(language: &str) -> &'static [&'static str] {
+    match language.to_lowercase().as_str() {
+        "russian" => BUILT_IN_RUSSIAN,
+        "french" => BUILT_IN_FRENCH,
+        "german" => BUILT_IN_GERMAN,
+        "spanish" => BUILT_IN_SPANISH,
+        _ => BUILT_IN_ENGLISH,
+    }
+}
+
+const BUILT_IN_ENGLISH: &[&str] = &[
+    // Hedges / intensifier crutches.  Use stems where
+    // it matters — `seem` covers `seemed` / `seems` /
+    // `seeming` via Snowball.
+    "just", "really", "very", "pretty", "quite",
+    "rather", "fairly", "somewhat", "slightly",
+    "that", "actually", "basically", "literally",
+    "essentially", "simply", "definitely", "certainly",
+    "absolutely", "totally", "completely",
+    // Sensory / hedging verbs — listed as base form;
+    // stemmer catches the inflections.
+    "seem", "feel", "look", "appear", "sound", "notice",
+    "begin", "start",
+    "suddenly", "perhaps", "maybe",
+];
+
+const BUILT_IN_RUSSIAN: &[&str] = &[
+    // Intensifier crutches + hedges
+    "очень", "просто", "именно", "довольно", "слишком",
+    "весьма", "крайне", "вполне", "достаточно",
+    // Generic placeholders
+    "собственно", "буквально", "практически",
+    "фактически", "действительно", "реально",
+    "конечно", "разумеется", "безусловно",
+    // Sensory / hedging verbs as lemmas — Snowball
+    // stems both list entry and editor text, so
+    // `казаться` catches `казался / казалась /
+    // казалось / казались`.
+    "казаться", "почувствовать", "выглядеть",
+    "заметить",
+    "вдруг", "внезапно", "наверное", "возможно",
+];
+
+const BUILT_IN_FRENCH: &[&str] = &[
+    "vraiment", "très", "assez", "plutôt",
+    "juste", "simplement", "actuellement", "littéralement",
+    "essentiellement", "absolument", "totalement", "complètement",
+    "sembler", "paraître", "sentir",
+    "soudainement", "peut-être",
+];
+
+const BUILT_IN_GERMAN: &[&str] = &[
+    "sehr", "wirklich", "ziemlich", "eher", "etwas",
+    "einfach", "tatsächlich", "buchstäblich",
+    "absolut", "völlig", "komplett",
+    "scheinen", "fühlen", "sehen",
+    "plötzlich", "vielleicht",
+];
+
+const BUILT_IN_SPANISH: &[&str] = &[
+    "muy", "realmente", "bastante", "algo",
+    "solo", "simplemente", "actualmente", "literalmente",
+    "esencialmente", "absolutamente", "totalmente", "completamente",
+    "parecer", "sentir", "ver",
+    "repentinamente", "quizás",
+];
+
+/// 1.2.9+ — `editor.tts.*` HJSON stanza.  `Ctrl+B S` in
+/// the editor pane reads the open paragraph aloud via
+/// the host OS's TTS engine.  Default voice is `Milena`
+/// (Russian female, ships free with macOS + Windows
+/// after a one-time language download).  The match is a
+/// case-insensitive substring search against installed
+/// voice names — "Milena" picks the standard or the
+/// "Milena (Enhanced)" / "Milena (Premium)" variant
+/// when available.  `speed` is a multiplier over the
+/// engine's "normal" rate (0.8 = 80%, 1.2 = 120%).
+/// Clamped to the engine's `[min_rate, max_rate]` at
+/// playback time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TtsConfig {
+    pub enabled: bool,
+    pub voice: String,
+    pub speed: f32,
+    /// 1.2.9+ — text spoken at TUI startup, just after the
+    /// daily-progress splash finishes.  Empty string (the
+    /// default) skips the greeting entirely.  Use this for
+    /// a personal welcome — "Welcome back, captain", "Доброе
+    /// утро, Владимир", etc.  Honoured only when
+    /// `enabled = true`.  Non-blocking: speech starts and
+    /// the editor lands on the cursor while audio plays
+    /// in parallel.
+    pub greeting: String,
+    /// 1.2.9+ — text spoken at TUI shutdown, just before
+    /// the terminal tears down.  Empty string (the default)
+    /// skips it.  Blocking: inkhaven waits up to 5 seconds
+    /// for the speech to complete before returning, so the
+    /// shell doesn't truncate the audio mid-word.  Keep it
+    /// short (a few words).
+    pub goodbye: String,
+}
+
+impl Default for TtsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            voice: "Milena".into(),
+            speed: 1.0,
+            greeting: String::new(),
+            goodbye: String::new(),
+        }
+    }
 }
 
 fn default_startup_splash() -> bool {
@@ -1320,6 +1896,9 @@ impl Default for EditorConfig {
             startup_splash: default_startup_splash(),
             mouse_captured: default_mouse_captured(),
             confirm_quit: default_confirm_quit(),
+            tts: TtsConfig::default(),
+            style_warnings: StyleWarningsConfig::default(),
+            pov_chip_enabled: default_pov_chip_enabled(),
         }
     }
 }

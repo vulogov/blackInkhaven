@@ -153,7 +153,7 @@ pub struct Node {
     #[serde(default)]
     pub target_hit_at_status: Option<String>,
 
-    /// Outgoing wiki-links to other paragraphs (1.2.4+). Stored as
+    /// Outgoing paragraph links to other paragraphs (1.2.4+). Stored as
     /// metadata only — the link does NOT appear in the typst
     /// source, so it travels safely through export pipelines. The
     /// status-bar widget surfaces the count; the AI inference
@@ -392,7 +392,7 @@ impl Node {
             .get("target_hit_at_status")
             .and_then(|v| v.as_str())
             .map(str::to_owned);
-        // Outgoing wiki-links — array of UUID strings. Silently
+        // Outgoing paragraph links — array of UUID strings. Silently
         // drops malformed entries (a renamed/deleted target whose
         // UUID went away survives a round-trip as missing here).
         let linked_paragraphs = obj
