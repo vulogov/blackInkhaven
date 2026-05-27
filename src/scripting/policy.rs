@@ -82,6 +82,12 @@ pub mod category {
     /// Runtime theme mutation (`ink.theme.set`). Default-denied —
     /// a script can otherwise recolour the interface invisibly.
     pub const THEME_WRITE: &str = "theme_write";
+    /// 1.2.9+ — audio output.  Currently scoped to TTS
+    /// playback (`ink.tts.speak`).  Default-allowed; the
+    /// feature is independently gated by
+    /// `editor.tts.enabled` in HJSON, so a script can't
+    /// produce audio unless the user already opted in.
+    pub const AUDIO: &str = "audio";
 }
 
 /// Categories denied out of the box. A user has to actively flip
@@ -219,6 +225,13 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // through `hooks::fire(name, …)` which honours its own
     // policy gate when the hook itself calls write words.
     ("ink.input", category::EDITOR_READ),
+
+    // ── audio (1.2.9+, default-allowed) ───────────────────────
+    // TTS playback.  Feature is independently gated by
+    // `editor.tts.enabled` in HJSON, so allowing this
+    // category by default is safe — a script can't
+    // produce audio unless the user already opted in.
+    ("ink.tts.speak", category::AUDIO),
 
     // ── fs_read / fs_write (default-denied) ─────────────────
     // 1.2.4+: filesystem IO from Bund. Default-denied — opt in

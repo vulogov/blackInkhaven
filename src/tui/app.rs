@@ -7507,6 +7507,42 @@ impl App {
         self.status = "TTS: stopped".into();
     }
 
+    /// 1.2.9+ — speak arbitrary text through the same
+    /// TTS pipeline `Ctrl+B S` uses.  Public entry point
+    /// for Bund scripts (`"text" ink.tts.speak`).  Honours
+    /// the `editor.tts.enabled` HJSON gate the chord does
+    /// — scripts can't bypass user preference.  Returns
+    /// `Ok(())` on successful spawn (the speech then plays
+    /// in parallel), `Err(...)` when:
+    ///   * TTS is disabled in config, OR
+    ///   * the platform isn't macOS, OR
+    ///   * the `/usr/bin/say` subprocess failed to spawn.
+    /// Callers (the Bund word handler) surface these as a
+    /// script-visible error so users get a clear reason
+    /// rather than a silent no-op.
+    pub(crate) fn tts_speak_string(&mut self, text: &str) -> Result<(), String> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err("empty text".into());
+        }
+        if !self.cfg.editor.tts.enabled {
+            return Err(
+                "TTS is disabled in inkhaven.hjson (editor.tts.enabled = true)".into(),
+            );
+        }
+        if let Err(reason) = super::say::Say::available() {
+            return Err(reason.to_string());
+        }
+        let cfg = &self.cfg.editor.tts;
+        let voice = super::say::Say::pick_voice(&cfg.voice).unwrap_or_default();
+        let wpm = ((180.0 * cfg.speed.max(0.1)).round() as i32)
+            .clamp(80, 400) as u16;
+        self.tts_say
+            .speak(text, &voice, Some(wpm))
+            .map_err(|e| format!("subprocess spawn failed: {e}"))?;
+        Ok(())
+    }
+
     /// 1.2.9+ — speak `editor.tts.greeting` at startup.
     /// Non-blocking: spawns `say` and returns immediately.
     /// Audio plays in parallel with the main loop coming
