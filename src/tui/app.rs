@@ -6492,6 +6492,7 @@ impl App {
             A::BundEditProjectHjson => self.open_hjson_editor(),
             A::TtsReadParagraph => self.tts_read_paragraph(),
             A::TtsSaveAsAudio => self.tts_open_save_as_audio_picker(),
+            A::OpenWritingStreakHeatmap => self.open_writing_streak_heatmap(),
             A::ToggleStyleWarnings => self.toggle_style_warnings(),
 
             // ── View prefix ───────────────────────────────────
@@ -7576,6 +7577,73 @@ impl App {
         } else {
             "style warnings: OFF".into()
         };
+    }
+
+    /// 1.2.9+ — Ctrl+B Shift+G action: open the
+    /// writing-streak heatmap modal.  Pulls the last
+    /// 91 days of project-wide word deltas from the
+    /// progress store, computes current + longest
+    /// streak in the window, and seeds the modal with
+    /// the data so the render path doesn't re-query.
+    fn open_writing_streak_heatmap(&mut self) {
+        let project_total = self
+            .progress_cache
+            .as_ref()
+            .map(|s| s.project.total_words)
+            .unwrap_or(0);
+        let daily_words = crate::progress::daily_words(project_total, 91);
+        if daily_words.is_empty() {
+            self.status =
+                "streak: no progress data yet — write a paragraph then save".into();
+            return;
+        }
+        // Current streak: count consecutive trailing days
+        // with > 0 words.  Stops at the first 0.  We treat
+        // today's 0 as a non-break (the user might still
+        // be about to write), but yesterday + earlier
+        // zeros break the streak.
+        let mut streak_days: u32 = 0;
+        let n = daily_words.len();
+        // Skip today if it's 0 (grace).
+        let mut idx = n.saturating_sub(1);
+        if daily_words.get(idx).copied().unwrap_or(0) == 0 && idx > 0 {
+            idx -= 1;
+        }
+        loop {
+            if daily_words.get(idx).copied().unwrap_or(0) > 0 {
+                streak_days += 1;
+                if idx == 0 {
+                    break;
+                }
+                idx -= 1;
+            } else {
+                break;
+            }
+        }
+        // Longest run of consecutive >0 days in the window.
+        let mut longest: u32 = 0;
+        let mut current: u32 = 0;
+        for w in &daily_words {
+            if *w > 0 {
+                current += 1;
+                longest = longest.max(current);
+            } else {
+                current = 0;
+            }
+        }
+        // Today's date in (y, m, d) — chrono's UTC date.
+        let today = chrono::Utc::now().date_naive();
+        use chrono::Datelike;
+        let today_ymd = (today.year(), today.month(), today.day());
+        self.modal = Modal::WritingStreakHeatmap {
+            daily_words,
+            streak_days,
+            longest_streak: longest,
+            today_ymd,
+        };
+        self.status = format!(
+            "streak: {streak_days}-day current · {longest} longest (91-day window) · Esc closes"
+        );
     }
 
     /// 1.2.9+ — Ctrl+B Shift+R action: open a save-as
@@ -11711,6 +11779,7 @@ impl App {
         let is_rendered_preview = matches!(self.modal, Modal::RenderedPreview { .. });
         let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
         let is_tts_save_as_audio = matches!(self.modal, Modal::TtsSaveAsAudio { .. });
+        let is_writing_streak_heatmap = matches!(self.modal, Modal::WritingStreakHeatmap { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
         let is_ai_diff_review = matches!(self.modal, Modal::AiDiffReview { .. });
         let is_event_picker = matches!(self.modal, Modal::EventPicker { .. });
@@ -12178,6 +12247,14 @@ impl App {
             if let Modal::SaveRenderedPng { input, .. } = &mut self.modal {
                 handle_text_input_key(input, key);
             }
+            return Ok(false);
+        }
+
+        if is_writing_streak_heatmap {
+            // Any key closes — Esc, Enter, anything.
+            // No interactions inside; the modal is a
+            // read-only viewer.
+            self.modal = Modal::None;
             return Ok(false);
         }
 

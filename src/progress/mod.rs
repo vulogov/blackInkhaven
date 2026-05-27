@@ -133,6 +133,46 @@ pub fn record_status_change(
     }
 }
 
+/// 1.2.9+ — last `n` days of project-wide word deltas
+/// (oldest first).  Powers the writing-streak heatmap.
+/// A day with no baseline maps to 0 (project wasn't
+/// open that day).  Returns an empty Vec when the
+/// progress store isn't installed — callers render the
+/// "(progress disabled)" UI when this happens.
+pub fn daily_words(project_total: i64, n: usize) -> Vec<i64> {
+    use store::PROJECT_SCOPE_BOOK_ID;
+    let result = with_store(|s| s.last_n_daily(PROJECT_SCOPE_BOOK_ID, project_total, n));
+    match result {
+        Some(Ok(v)) => v,
+        Some(Err(e)) => {
+            tracing::warn!(target: "inkhaven::progress", "daily_words: {e:#}");
+            Vec::new()
+        }
+        None => Vec::new(),
+    }
+}
+
+/// 1.2.9+ — number of distinct days the user wrote at
+/// least one word in the last `days_back` days.
+/// Returns a sorted Vec<day> (oldest first); empty when
+/// the store is unavailable.  Currently unused —
+/// `daily_words` is enough for the in-window streak
+/// computation — but kept as a public surface for future
+/// "lifetime streak" extensions outside the 91-day
+/// window.
+#[allow(dead_code)]
+pub fn writing_days(days_back: i64) -> Vec<i64> {
+    let result = with_store(|s| s.writing_days_recent(days_back));
+    match result {
+        Some(Ok(v)) => v,
+        Some(Err(e)) => {
+            tracing::warn!(target: "inkhaven::progress", "writing_days: {e:#}");
+            Vec::new()
+        }
+        None => Vec::new(),
+    }
+}
+
 /// Capture per-book + project-wide baselines for today. Idempotent
 /// per (day, book_id) — the second call inside the same day is a
 /// no-op. Called from `App::new` after the hierarchy + store are

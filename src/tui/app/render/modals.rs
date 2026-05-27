@@ -2872,6 +2872,225 @@ impl super::super::App {
     /// `inkhaven.hjson`.  Renders the textarea's lines
     /// manually so per-line `hjson_highlight` styling
     /// (keys / strings / comments / numbers / keywords) can
+    /// 1.2.9+ — GitHub-style writing-streak heatmap.
+    /// 13×7 grid (91 days), each cell colored by daily
+    /// word-count bucket (0 → dim, 1-249 → faint, 250-
+    /// 499 → medium, 500-999 → bright, 1000+ → max).
+    /// Week columns left-to-right oldest→today; day
+    /// rows Mon-Sun.  Footer shows current streak,
+    /// longest streak in window, total words, and
+    /// active-day average.  Modal closes on any key.
+    pub(in crate::tui::app) fn draw_writing_streak_heatmap(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let (daily_words, streak_days, longest_streak, today_ymd) =
+            match &self.modal {
+                Modal::WritingStreakHeatmap {
+                    daily_words,
+                    streak_days,
+                    longest_streak,
+                    today_ymd,
+                } => (daily_words.clone(), *streak_days, *longest_streak, *today_ymd),
+                _ => return,
+            };
+
+        // Modal rect: centered, ~70% wide, ~18 rows tall
+        // (enough for the grid + header + footer +
+        // borders).
+        let w = area.width.saturating_sub(6).min(80);
+        let h = area.height.saturating_sub(4).min(20);
+        let x = area.x + (area.width - w) / 2;
+        let y = area.y + (area.height - h) / 2;
+        let rect = Rect { x, y, width: w, height: h };
+
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Writing streak — last 91 days ")
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Today's weekday so the bottom-right of the grid
+        // is today.  91 days = 13 weeks × 7.
+        let n = daily_words.len();
+        let today = match chrono::NaiveDate::from_ymd_opt(
+            today_ymd.0,
+            today_ymd.1,
+            today_ymd.2,
+        ) {
+            Some(d) => d,
+            None => chrono::Utc::now().date_naive(),
+        };
+        use chrono::Datelike;
+        let today_wd = today.weekday().num_days_from_monday();
+        // Today sits at column 12 (rightmost), row =
+        // today_wd.  Each cell at (col, row) maps to a
+        // day index in daily_words.
+        let today_cell: i64 = (today_wd as i64) + 12 * 7;
+
+        // Layout sub-rects.
+        let header_h: u16 = 2;
+        let footer_h: u16 = 5;
+        let grid_h: u16 = inner.height.saturating_sub(header_h + footer_h);
+        let header_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: header_h,
+        };
+        let grid_rect = Rect {
+            x: inner.x,
+            y: inner.y + header_h,
+            width: inner.width,
+            height: grid_h,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + header_h + grid_h,
+            width: inner.width,
+            height: footer_h,
+        };
+
+        // Header — month labels above each week column.
+        let mut header_text = String::from("    "); // skip day-label column
+        let mut last_month: Option<u32> = None;
+        for col in 0..13_i64 {
+            let cell = col * 7;
+            let day_offset_from_today = today_cell - cell;
+            let date = today
+                .checked_sub_signed(chrono::Duration::days(day_offset_from_today))
+                .unwrap_or(today);
+            let month = date.month();
+            let label = if Some(month) != last_month {
+                last_month = Some(month);
+                match month {
+                    1 => "Jn",
+                    2 => "Fb",
+                    3 => "Mr",
+                    4 => "Ap",
+                    5 => "My",
+                    6 => "Jn",
+                    7 => "Jl",
+                    8 => "Au",
+                    9 => "Sp",
+                    10 => "Oc",
+                    11 => "Nv",
+                    12 => "Dc",
+                    _ => "??",
+                }
+            } else {
+                "  "
+            };
+            header_text.push_str(label);
+        }
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                header_text,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            header_rect,
+        );
+
+        // Grid.  Day-label column on the left, then
+        // 13 columns × 7 rows of colored cells.
+        let day_names = [" Mon", " Tue", " Wed", " Thu", " Fri", " Sat", " Sun"];
+        for row in 0..7_usize {
+            let mut spans: Vec<Span<'_>> = Vec::with_capacity(14);
+            spans.push(Span::styled(
+                day_names[row],
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+            for col in 0..13_i64 {
+                let cell = col * 7 + row as i64;
+                let day_idx = (n as i64 - 1) - (today_cell - cell);
+                let (glyph, color) = if day_idx < 0 || (day_idx as usize) >= n {
+                    ("·", Color::DarkGray)
+                } else {
+                    let words = daily_words[day_idx as usize];
+                    heat_glyph_and_color(words)
+                };
+                let is_today =
+                    day_idx >= 0 && (day_idx as usize) == n.saturating_sub(1);
+                let style = if is_today {
+                    Style::default().fg(color).bg(Color::Rgb(0x44, 0x44, 0x44))
+                } else {
+                    Style::default().fg(color)
+                };
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(glyph.to_string(), style));
+            }
+            let row_rect = Rect {
+                x: grid_rect.x,
+                y: grid_rect.y + row as u16,
+                width: grid_rect.width,
+                height: 1,
+            };
+            f.render_widget(Paragraph::new(Line::from(spans)), row_rect);
+        }
+
+        // Footer.
+        let total_words: i64 = daily_words.iter().sum();
+        let active_days = daily_words.iter().filter(|w| **w > 0).count();
+        let avg_per_active = if active_days > 0 {
+            total_words / active_days as i64
+        } else {
+            0
+        };
+        let footer_lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(
+                    format!(" {streak_days}-day current streak"),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  ·  "),
+                Span::raw(format!("{longest_streak}-day longest in window")),
+                Span::raw("  ·  "),
+                Span::raw(format!(
+                    "{active_days}/91 days active · avg {avg_per_active} w/day"
+                )),
+            ]),
+            Line::from(Span::raw(format!(
+                " {total_words} total words in window"
+            ))),
+            Line::from(vec![
+                Span::raw(" Legend: "),
+                Span::styled("·", Style::default().fg(Color::DarkGray)),
+                Span::raw(" 0  "),
+                Span::styled("░", Style::default().fg(Color::Rgb(0x40, 0xa0, 0x40))),
+                Span::raw(" 1-249  "),
+                Span::styled("▒", Style::default().fg(Color::Rgb(0x60, 0xc0, 0x60))),
+                Span::raw(" 250-499  "),
+                Span::styled("▓", Style::default().fg(Color::Rgb(0x40, 0xe0, 0x40))),
+                Span::raw(" 500-999  "),
+                Span::styled("█", Style::default().fg(Color::Rgb(0x80, 0xff, 0x80))),
+                Span::raw(" 1000+"),
+            ]),
+            Line::from(Span::styled(
+                " Press any key to close",
+                Style::default().add_modifier(Modifier::DIM),
+            )),
+        ];
+        f.render_widget(
+            Paragraph::new(footer_lines).wrap(Wrap { trim: false }),
+            footer_rect,
+        );
+    }
+
     /// be applied — tui-textarea's built-in widget supports
     /// only line-level + cursor-level styling, not per-token.
     /// Pops a centered "config changed, restart inkhaven"
@@ -3782,6 +4001,30 @@ impl super::super::App {
 /// (handled at the App level) and continues editing.
 /// Restart is on the next manual relaunch — the modal
 /// can't restart the process itself.
+/// 1.2.9+ — map a daily word count to a (glyph, color)
+/// pair for the writing-streak heatmap.  Five buckets:
+///   0:        `·` dim gray         (no activity)
+///   1-249:    `░` faint green      (light)
+///   250-499:  `▒` medium green     (steady)
+///   500-999:  `▓` bright green     (productive)
+///   1000+:    `█` max green        (heavy)
+/// The buckets bracket common writing-session sizes
+/// (one paragraph ~ 250 words, one scene ~ 500 words,
+/// one chapter ~ 1500 words).
+fn heat_glyph_and_color(words: i64) -> (&'static str, Color) {
+    if words <= 0 {
+        ("·", Color::DarkGray)
+    } else if words < 250 {
+        ("░", Color::Rgb(0x40, 0xa0, 0x40))
+    } else if words < 500 {
+        ("▒", Color::Rgb(0x60, 0xc0, 0x60))
+    } else if words < 1000 {
+        ("▓", Color::Rgb(0x40, 0xe0, 0x40))
+    } else {
+        ("█", Color::Rgb(0x80, 0xff, 0x80))
+    }
+}
+
 fn draw_hjson_restart_overlay(f: &mut ratatui::Frame, host: Rect) {
     let lines: Vec<Line<'_>> = vec![
         Line::from(Span::styled(
