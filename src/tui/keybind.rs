@@ -352,6 +352,16 @@ pub enum Action {
     /// fires with the engine-level error string.
     #[serde(rename = "editor.tts_read_paragraph")]
     TtsReadParagraph,
+    /// Ctrl+B Shift+R (1.2.9+) — save the open paragraph
+    /// as an audio file via macOS `say -o <path>`.
+    /// Opens a save-as picker pre-filled with
+    /// `<project>/audio/<paragraph-slug>.aiff`; Enter
+    /// commits, Esc cancels.  Output format is AIFF
+    /// (native to `say`); the user can change the
+    /// extension to coerce a different container — `.m4a`
+    /// / `.wav` work on recent macOS.
+    #[serde(rename = "editor.tts_save_as_audio")]
+    TtsSaveAsAudio,
     /// Ctrl+B Shift+F (1.2.9+) — toggle the inline
     /// style-warning overlays (filter words today;
     /// repeated phrases / show-don't-tell / etc. as
@@ -551,6 +561,7 @@ impl Action {
             Action::BundShellSelection => "shell select".into(),
             Action::BundEditProjectHjson => "edit hjson".into(),
             Action::TtsReadParagraph => "read aloud".into(),
+            Action::TtsSaveAsAudio => "save audio".into(),
             Action::ToggleStyleWarnings => "style warnings".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
@@ -744,6 +755,8 @@ impl Action {
                 "Open `<project>/inkhaven.hjson` in a full-screen editor (1.2.8+, Ctrl+B 0). Syntax-highlighted via the hand-rolled HJSON lexer. Ctrl+S saves; when saved bytes differ from the loaded bytes, a restart-required overlay pops up (config applies on next launch). Esc closes; unsaved-edit warnings fire on close.".into(),
             Action::TtsReadParagraph =>
                 "Read the open paragraph aloud via the OS TTS engine (1.2.9+, Ctrl+B S in editor scope). Cross-platform via `tts-rs`: AVFoundation on macOS, SAPI / WinRT on Windows, Speech Dispatcher on Linux. Gated by `editor.tts.enabled = true` in HJSON; default is off. Default voice is `Milena` (Russian female; ships free with macOS + Windows). When TTS is disabled, or the engine fails to initialise (Linux without speech-dispatcher, missing voices, etc.), a friendly explanation modal fires instead.".into(),
+            Action::TtsSaveAsAudio =>
+                "Save the open paragraph as an audio file via macOS `say -o <path>` (1.2.9+, Ctrl+B Shift+R). Opens a path picker pre-filled with `<project>/audio/<paragraph-slug>.aiff`; Enter commits, Esc cancels. Output is AIFF by default; coerce another format with the file extension (`.m4a`, `.wav` work on macOS 13+). Same voice + rate as the configured chord-driven TTS. macOS-only; non-macOS hosts surface the same `TTS unavailable` modal as Ctrl+B S.".into(),
             Action::ToggleStyleWarnings =>
                 "Toggle the inline style-warning overlays (1.2.9+, Ctrl+B Shift+F). Currently flags filter words — intensifier crutches like `just`, `really`, `very`, `просто`, `очень` — drawn in amber + underlined. Session-local override on top of `editor.style_warnings.enabled` in HJSON. Per-language defaults ship for English, Russian, French, German, Spanish; the active list is keyed by the project's top-level `language` field. Add more via `editor.style_warnings.filter_words.extra_words`. Repeated-phrase / show-don't-tell / sentence-rhythm detectors will share this toggle as they land.".into(),
             Action::ViewRenderParagraph =>
@@ -902,6 +915,10 @@ impl KeyBindings {
                 // 1.2.9+ — Ctrl+B Shift+F toggles inline
                 // style-warning overlays (filter words).
                 entry("Shift+f", Action::ToggleStyleWarnings, Scope::Any),
+                // 1.2.9+ — Ctrl+B Shift+R saves the
+                // current paragraph as an audio file
+                // via macOS `say -o`.
+                entry("Shift+r", Action::TtsSaveAsAudio, Scope::Editor),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),

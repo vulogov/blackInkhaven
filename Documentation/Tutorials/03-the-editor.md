@@ -341,6 +341,34 @@ line (`= Title`) stripped — it's structural, not prose.
 Empty / whitespace-only paragraphs surface a status
 warning and don't open the modal.
 
+### Save as audio file (`Ctrl+B Shift+R`)
+
+Companion to the read-aloud chord.  Instead of speaking
+through the speakers, writes the paragraph to an audio
+file on disk — useful for sharing a draft chapter as
+audio, building a podcast-style preview, or just having
+the prose available for car listening.
+
+Pressing `Ctrl+B Shift+R` (editor scope) opens a path
+picker pre-filled with
+`<project>/audio/<paragraph-slug>.aiff`.  Edit the path
+if you want a different name or directory, then `Enter`
+commits.  `Esc` cancels.
+
+The same voice + speed as `Ctrl+B S` is used.  Output
+format follows the file extension — `.aiff` (default
+AIFF-C compressed), `.wav` (linear PCM), `.m4a` (AAC)
+all work on macOS 13+.  The parent directory is
+created if it doesn't exist.
+
+Status bar reports the written file size + path on
+success.  Failures (no disk space, permission denied,
+voice unavailable) surface there too.
+
+Only works on macOS for now — the underlying `say -o`
+command is macOS-specific.  Non-macOS hosts see the
+same "TTS is macOS-only in 1.2.9" modal as `Ctrl+B S`.
+
 ### Performance
 
 The TTS engine is lazily initialised on the first
