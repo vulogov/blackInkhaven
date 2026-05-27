@@ -834,6 +834,17 @@ fn dispatch_list_keys(app: &mut App, key: KeyEvent) {
 }
 
 fn dispatch_editor_keys(app: &mut App, key: KeyEvent) {
+    // Ctrl+G — "Get response": insert the latest AI
+    // pane response at the editor cursor.  Useful
+    // when the reviewer LLM suggests a rewrite the
+    // user wants to lift verbatim into the template.
+    if key.code == KeyCode::Char('g')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+    {
+        insert_ai_response_into_editor(app);
+        return;
+    }
+
     // Forward to tui-textarea with its default key
     // map — arrows, Home/End, PgUp/PgDn, Shift+arrow
     // selection, plus the emacs-style readline
@@ -841,7 +852,7 @@ fn dispatch_editor_keys(app: &mut App, key: KeyEvent) {
     // of-line, Ctrl+K kill-to-end, Ctrl+W
     // delete-word-backward, Ctrl+U/Y undo/redo).
     //
-    // The three Ctrl chords we DO reserve globally
+    // The Ctrl chords we DO reserve globally
     // (Ctrl+S save, Ctrl+Q quit, Ctrl+H help) are
     // intercepted by `handle_key` before this
     // dispatcher runs, so there's no conflict
@@ -855,6 +866,40 @@ fn dispatch_editor_keys(app: &mut App, key: KeyEvent) {
     let input: tui_textarea::Input = key.into();
     let _ = app.editor.input(input);
     app.first_launch = false;
+}
+
+/// 1.2.11+ — Ctrl+G handler.  Inserts
+/// `last_send.response` at the editor cursor.
+/// No-op (with a status message) when there's no
+/// response yet or it's empty.
+fn insert_ai_response_into_editor(app: &mut App) {
+    let response_text = match app.last_send.as_ref() {
+        Some(send) if !send.response.trim().is_empty() => send.response.clone(),
+        Some(_) => {
+            app.status =
+                "AI response is empty — wait for it to finish, then Ctrl+G".into();
+            return;
+        }
+        None => {
+            app.status =
+                "no AI response yet — Tab to the AI prompt input and press Enter first".into();
+            return;
+        }
+    };
+    if app.inference.is_some() {
+        app.status =
+            "AI response still streaming — wait for it to finish".into();
+        return;
+    }
+    app.editor.insert_str(&response_text);
+    // Inserting into a previously-saved entry
+    // means it's now dirty.  Stash so the dirty
+    // set picks up the change.
+    app.stash_editor();
+    app.status = format!(
+        "inserted {} chars of AI response into editor",
+        response_text.chars().count(),
+    );
 }
 
 fn dispatch_ai_prompt_keys(app: &mut App, key: KeyEvent) {
@@ -1219,6 +1264,12 @@ fn editor_help_body() -> String {
         "   Ctrl+W            delete previous word",
         "   Ctrl+U / Ctrl+Y   undo / redo",
         "   Type to insert.",
+        "",
+        " Editor-only chord:",
+        "   Ctrl+G            \"Get response\" — insert the latest",
+        "                     AI pane response at the cursor.  No-",
+        "                     op (with status message) when the",
+        "                     response is missing or still streaming.",
         "",
         " App-global chords (intercepted before the editor sees them):",
         "   Ctrl+S            save library (confirm modal)",
@@ -1709,7 +1760,7 @@ fn draw_status(f: &mut ratatui::Frame, area: Rect, app: &App) {
             " ↑↓ · a add · d delete · Ctrl+S save · Tab next · ? help · Ctrl+Q quit"
         }
         Focus::Editor => {
-            " type to edit · Ctrl+S save · Tab next · Ctrl+H help · Ctrl+Q quit"
+            " type · Ctrl+G insert AI response · Ctrl+S save · Tab next · Ctrl+H help"
         }
         Focus::AiPrompt => {
             " type · Enter send · Up/Down history · Ctrl+L clear · Tab next · Ctrl+H help"
