@@ -391,6 +391,15 @@ pub enum Action {
     /// session without rewriting config.
     #[serde(rename = "editor.toggle_style_warnings")]
     ToggleStyleWarnings,
+    /// Ctrl+B Shift+P (1.2.9+) — toggle the POV /
+    /// character chip on the status bar.  Session-local
+    /// override on top of `editor.pov_chip_enabled` in
+    /// HJSON.  When the chip is on, the status bar shows
+    /// the most-mentioned character in the open
+    /// paragraph (the heuristic POV character) + up to
+    /// three additional named characters present.
+    #[serde(rename = "view.toggle_pov_chip")]
+    TogglePovChip,
     /// Ctrl+B Shift+L (1.2.9+) — open the project-wide
     /// concordance modal.  Lists every distinct lexical
     /// stem in the project with its total count + KWIC
@@ -596,6 +605,7 @@ impl Action {
             Action::SceneBreakNext => "next scene break".into(),
             Action::ToggleStyleWarnings => "style warnings".into(),
             Action::OpenConcordance => "concordance".into(),
+            Action::TogglePovChip => "pov chip".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -800,6 +810,8 @@ impl Action {
                 "Toggle the inline style-warning overlays (1.2.9+, Ctrl+B Shift+F). Currently flags filter words — intensifier crutches like `just`, `really`, `very`, `просто`, `очень` — drawn in amber + underlined. Session-local override on top of `editor.style_warnings.enabled` in HJSON. Per-language defaults ship for English, Russian, French, German, Spanish; the active list is keyed by the project's top-level `language` field. Add more via `editor.style_warnings.filter_words.extra_words`. Repeated-phrase / show-don't-tell / sentence-rhythm detectors will share this toggle as they land.".into(),
             Action::OpenConcordance =>
                 "Open the project-wide concordance modal (1.2.9+, Ctrl+B Shift+L). Lists every distinct lexical stem in the project with its total count plus up to three KWIC samples. Stop-words, single-character tokens, and pure-digit runs are filtered out so the list surfaces the words actually carrying the prose's weight. Multilingual via the same Snowball stemmer + stop-list plumbing as the repeated-phrase detector — `language` in HJSON drives the algorithm choice. Type to filter (substring match); s toggles sort (count ↔ alphabetical); Esc closes.".into(),
+            Action::TogglePovChip =>
+                "Toggle the POV / character chip on the status bar (1.2.9+, Ctrl+B Shift+P). When enabled, the status bar shows the most-mentioned character in the open paragraph (the heuristic POV character) plus up to three additional named characters present. Driven by the project's existing `characters` lexicon — no separate tagging needed. Ties broken by first-mention order. Session-local override on top of `editor.pov_chip_enabled` in HJSON.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -973,6 +985,9 @@ impl KeyBindings {
                 // 1.2.9+ — Ctrl+B Shift+L opens the project-
                 // wide concordance modal.
                 entry("Shift+l", Action::OpenConcordance, Scope::Any),
+                // 1.2.9+ — Ctrl+B Shift+P toggles the
+                // status-bar POV / character chip.
+                entry("Shift+p", Action::TogglePovChip, Scope::Any),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),

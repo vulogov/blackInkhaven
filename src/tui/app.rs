@@ -1499,6 +1499,11 @@ pub(crate) struct App {
     /// of HJSON, `false` forces off, `None` (the
     /// default) defers to the HJSON setting.
     style_warnings_toggle: Option<bool>,
+    /// 1.2.9+ — session-local override for
+    /// `editor.pov_chip_enabled`.  `Ctrl+B Shift+P`
+    /// flips this; semantics identical to
+    /// `style_warnings_toggle`.
+    pov_chip_toggle: Option<bool>,
     /// Cursor into `ai_prompt_history`. None when not navigating;
     /// `Some(i)` when the user is stepping through history. Any
     /// edit (typing, backspace, etc.) clears it so the next Up
@@ -1846,6 +1851,7 @@ impl App {
             shell_ctrlb_pending: false,
             tts_say: super::say::Say::default(),
             style_warnings_toggle: None,
+            pov_chip_toggle: None,
             opened: None,
             secondary: None,
             secondary_focused: false,
@@ -6535,6 +6541,7 @@ impl App {
             A::SceneBreakNext => self.scene_break_jump(1),
             A::ToggleStyleWarnings => self.toggle_style_warnings(),
             A::OpenConcordance => self.open_concordance(),
+            A::TogglePovChip => self.toggle_pov_chip(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
@@ -7618,6 +7625,81 @@ impl App {
         } else {
             "style warnings: OFF".into()
         };
+    }
+
+    /// 1.2.9+ — true when the POV / character chip
+    /// should be painted on the status bar.  Session
+    /// override (set via `Ctrl+B Shift+P`) wins; falls
+    /// back to `editor.pov_chip_enabled` in HJSON.
+    fn pov_chip_effective(&self) -> bool {
+        match self.pov_chip_toggle {
+            Some(v) => v,
+            None => self.cfg.editor.pov_chip_enabled,
+        }
+    }
+
+    /// 1.2.9+ — Ctrl+B Shift+P action: flip the
+    /// session-local POV-chip toggle.  Three-state
+    /// cycle identical to `toggle_style_warnings`.
+    fn toggle_pov_chip(&mut self) {
+        let new_state = match self.pov_chip_toggle {
+            None => Some(!self.cfg.editor.pov_chip_enabled),
+            Some(true) => Some(false),
+            Some(false) => Some(true),
+        };
+        self.pov_chip_toggle = new_state;
+        let effective = self.pov_chip_effective();
+        self.status = if effective {
+            "POV chip: ON · status bar shows character + supporting cast".into()
+        } else {
+            "POV chip: OFF".into()
+        };
+    }
+
+    /// 1.2.9+ — build the styled spans for the POV
+    /// character chip.  Empty Vec when the chip is
+    /// disabled, no paragraph is open, the lexicon
+    /// is empty, or no character names are mentioned
+    /// in the open paragraph.  The render loop in
+    /// `draw_status` splices the result into the
+    /// status-bar span list after the focus chip.
+    pub(crate) fn pov_chip_spans(&self) -> Vec<ratatui::text::Span<'_>> {
+        use ratatui::style::{Color, Modifier, Style};
+        use ratatui::text::Span;
+        if !self.pov_chip_effective() {
+            return Vec::new();
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            return Vec::new();
+        };
+        let lines: Vec<String> = doc
+            .textarea
+            .lines()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let chip = match crate::tui::pov_tracker::compute_pov_chip(
+            &self.lexicon, &lines,
+        ) {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+        let mut spans = Vec::with_capacity(3);
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            format!(" POV: {} ", chip.pov),
+            Style::default()
+                .bg(Color::Magenta)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ));
+        if !chip.supporting.is_empty() {
+            spans.push(Span::styled(
+                format!(" +{}", chip.supporting.join(", ")),
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+        }
+        spans
     }
 
     /// 1.2.9+ — Ctrl+B < / Ctrl+B > scene-break

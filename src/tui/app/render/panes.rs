@@ -1532,6 +1532,7 @@ impl super::super::App {
                 .fg(Color::Black)
                 .add_modifier(Modifier::BOLD),
         ));
+        spans.extend(self.pov_chip_spans());
         spans.push(Span::raw("  "));
         spans.push(Span::raw(self.status.clone()));
 

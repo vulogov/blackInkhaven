@@ -18,6 +18,7 @@ mod lexicon_build;
 mod markdown;
 mod markdown_highlight;
 mod modal;
+mod pov_tracker;
 mod say;
 mod style_warnings;
 mod quickref;
