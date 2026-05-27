@@ -335,6 +335,9 @@ fn style_warning_style_at(
         StyleWarningKind::FilterWord => Style::default()
             .fg(theme.style_warning_filter_word_fg)
             .add_modifier(Modifier::UNDERLINED),
+        StyleWarningKind::RepeatedPhrase => Style::default()
+            .fg(theme.style_warning_repeated_phrase_fg)
+            .add_modifier(Modifier::UNDERLINED),
     })
 }
 
