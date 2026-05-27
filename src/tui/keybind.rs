@@ -370,6 +370,18 @@ pub enum Action {
     /// closes.
     #[serde(rename = "view.open_writing_streak_heatmap")]
     OpenWritingStreakHeatmap,
+    /// Ctrl+B < (1.2.9+) — jump the editor cursor to the
+    /// previous scene-break line in the open paragraph.
+    /// A "scene break" is a typographic divider line
+    /// like `* * *`, `***`, `---`, `___`, `###`, `~~~`,
+    /// or a lone `§`.  No match → status warns "no scene
+    /// break above" and the cursor doesn't move.
+    #[serde(rename = "editor.scene_break_prev")]
+    SceneBreakPrev,
+    /// Ctrl+B > (1.2.9+) — jump to the next scene-break
+    /// line.  Same detector as `SceneBreakPrev`.
+    #[serde(rename = "editor.scene_break_next")]
+    SceneBreakNext,
     /// Ctrl+B Shift+F (1.2.9+) — toggle the inline
     /// style-warning overlays (filter words today;
     /// repeated phrases / show-don't-tell / etc. as
@@ -571,6 +583,8 @@ impl Action {
             Action::TtsReadParagraph => "read aloud".into(),
             Action::TtsSaveAsAudio => "save audio".into(),
             Action::OpenWritingStreakHeatmap => "streak".into(),
+            Action::SceneBreakPrev => "prev scene break".into(),
+            Action::SceneBreakNext => "next scene break".into(),
             Action::ToggleStyleWarnings => "style warnings".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
@@ -768,6 +782,10 @@ impl Action {
                 "Save the open paragraph as an audio file via macOS `say -o <path>` (1.2.9+, Ctrl+B Shift+R). Opens a path picker pre-filled with `<project>/audio/<paragraph-slug>.aiff`; Enter commits, Esc cancels. Output is AIFF by default; coerce another format with the file extension (`.m4a`, `.wav` work on macOS 13+). Same voice + rate as the configured chord-driven TTS. macOS-only; non-macOS hosts surface the same `TTS unavailable` modal as Ctrl+B S.".into(),
             Action::OpenWritingStreakHeatmap =>
                 "Open the writing-streak heatmap modal (1.2.9+, Ctrl+B Shift+G). GitHub-style 13×7 grid of the last 91 days of project-wide word deltas, plus current streak + longest streak in the window + per-month totals. Data comes from the existing progress store (the same source feeding the startup pulse splash + Ctrl+V G modal). Esc closes.".into(),
+            Action::SceneBreakPrev =>
+                "Jump editor cursor to the previous scene-break line (1.2.9+, Ctrl+B <). Scene breaks are typographic divider lines: `* * *`, `***`, `---`, `___`, `###`, `~~~`, or a lone `§`. Detection is hand-rolled — any line consisting only of 3+ copies of `*`/`-`/`_`/`~`/`#` (optionally space-separated) counts, plus `§` alone. Useful for navigating multi-scene paragraphs in a single pass.".into(),
+            Action::SceneBreakNext =>
+                "Jump editor cursor to the next scene-break line (1.2.9+, Ctrl+B >). Same detector as `SceneBreakPrev`.".into(),
             Action::ToggleStyleWarnings =>
                 "Toggle the inline style-warning overlays (1.2.9+, Ctrl+B Shift+F). Currently flags filter words — intensifier crutches like `just`, `really`, `very`, `просто`, `очень` — drawn in amber + underlined. Session-local override on top of `editor.style_warnings.enabled` in HJSON. Per-language defaults ship for English, Russian, French, German, Spanish; the active list is keyed by the project's top-level `language` field. Add more via `editor.style_warnings.filter_words.extra_words`. Repeated-phrase / show-don't-tell / sentence-rhythm detectors will share this toggle as they land.".into(),
             Action::ViewRenderParagraph =>
@@ -933,6 +951,13 @@ impl KeyBindings {
                 // 1.2.9+ — Ctrl+B Shift+G opens the
                 // writing-streak heatmap modal.
                 entry("Shift+g", Action::OpenWritingStreakHeatmap, Scope::Any),
+                // 1.2.9+ — Ctrl+B < / Ctrl+B > scene-break
+                // navigation in the editor.  Originally
+                // requested as `Shift+{` / `Shift+}`, but
+                // `}` is already TagSearch (1.2.5).  `<`
+                // and `>` are vim-style and free.
+                entry("<", Action::SceneBreakPrev, Scope::Editor),
+                entry(">", Action::SceneBreakNext, Scope::Editor),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),
