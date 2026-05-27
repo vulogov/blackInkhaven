@@ -13,7 +13,10 @@
 
 mod app;
 mod help;
+mod hjson_index;
+mod save;
 mod schema;
+mod widgets;
 
 use std::path::Path;
 
