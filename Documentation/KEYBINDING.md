@@ -1347,3 +1347,117 @@ Inside selection mode:
 Pane gated on `shell.enabled = true` in HJSON (default
 true).  See [`Tutorials/35-embedded-shell.md`](Tutorials/35-embedded-shell.md).
 
+## `inkhaven prompts-editor` (1.2.11+)
+
+Standalone four-pane TUI for editing
+`<project>/prompts.hjson` — the prompt library
+the main TUI's F7 / F12 / `Ctrl+B C / P / Y / G`
+flows read from.  Launched outside the main TUI:
+
+```
+inkhaven prompts-editor -p <project-dir>
+```
+
+Layout: prompts list (left) · prompt editor
+(centre, full tui-textarea chord set) · AI
+response (right, display-only) · AI prompt input
+(3-row bottom strip).
+
+### Global chords
+
+```
+Ctrl+S              save library (atomic + .prompts-backups/ snapshot)
+Ctrl+R              rollback picker (list, preview, restore, delete)
+Ctrl+H / ?          focus-aware help pane
+Tab / Shift+Tab     cycle pane focus (3 stops: list → editor → ai prompt → list)
+Esc / Ctrl+Q        quit (confirm if unsaved)
+```
+
+### Prompts list pane
+
+```
+↑↓ / PgUp / PgDn / Home / End   navigate (cursor auto-loads into editor)
+Enter                            load focused prompt + jump focus to editor
+a                                add new prompt (name prompt → empty body)
+d                                delete focused prompt (confirm modal)
+                                   second `d` on a staged-deleted entry revokes
+```
+
+### Editor pane
+
+Full tui-textarea defaults: arrows, Home/End,
+PgUp/PgDn, Shift+arrows selection, Ctrl+A/E
+start/end-of-line, Ctrl+B/F cursor left/right,
+Ctrl+N/P up/down, Ctrl+K kill-to-end, Ctrl+W
+delete-previous-word, Ctrl+U/Y undo/redo.
+
+Plus one prompts-editor-only chord:
+
+```
+Ctrl+G              "Get" — insert latest AI pane response at the cursor.
+                    No-op (with status) when the response is missing or
+                    still streaming.
+```
+
+### AI prompt input pane
+
+```
+type / Backspace / Delete         buffer edit
+Left / Right / Home / End         cursor movement
+Ctrl+A / Ctrl+E                   start / end of line (readline-style)
+Up / Down                         in-session history walk (deduped)
+Enter                             send for analysis
+Ctrl+L                            clear input
+Ctrl+K                            clear input + clear history
+```
+
+### Send semantics
+
+The LLM acts as a prompt-engineering **reviewer**
+— it does NOT execute the template.  Placeholders
+like `{{selection}}` are NOT substituted; the
+reviewer sees them as literal text and comments
+on their use.  Pressing Enter sends:
+
+  * `system` — fixed framing that explains the
+    reviewer role + the placeholder conventions.
+  * `user` — fenced template body verbatim +
+    "Analysis request:" + your typed instruction
+    (or an embedded default critique if empty).
+
+Single-shot per send; multi-turn isn't planned
+for this surface.
+
+### Save chips
+
+Top bar shows a red `N unsaved` chip when any
+prompt is staged for change.  List rows carry
+per-prompt markers:
+
+  * `✱` unsaved edit (red bold)
+  * `✚` newly-added (green bold)
+  * `✗` staged for deletion (red strike-through)
+
+### Rollback
+
+`Ctrl+R` lists every
+`.prompts-backups/prompts_YYYYMMDD_HHMMSS.hjson`
+newest-first.  Inside the picker:
+
+```
+↑↓ / PgUp / PgDn / Home / End   navigate
+Enter                            stage the backup as the working library
+                                   (Ctrl+S commits)
+v                                preview the file's contents
+d                                delete with confirm
+Esc                              back to the main view
+```
+
+The first Ctrl+S after a rollback writes a fresh
+backup of the pre-rollback state, so the safety
+chain stays intact.
+
+See [`Tutorials/44-prompts-editor.md`](Tutorials/44-prompts-editor.md)
+for the full workflow walkthrough.
+
+
