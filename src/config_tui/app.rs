@@ -1142,10 +1142,30 @@ fn draw_detail_pane(f: &mut ratatui::Frame, area: Rect, app: &App) {
             Style::default().fg(Color::Cyan),
         )));
     } else {
-        lines.push(Line::from(Span::styled(
-            format!(" {} children:", node.children.len()),
-            bold,
-        )));
+        if schema::is_known_map_path(&node.path) {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    " map of named entries · {} entr{}:",
+                    node.children.len(),
+                    if node.children.len() == 1 { "y" } else { "ies" },
+                ),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(Span::styled(
+                "   user-added entries in the live HJSON appear here too",
+                dim,
+            )));
+            lines.push(Line::from(Span::styled(
+                "   (add / delete via Ctrl+B 0 HJSON editor for now)",
+                dim,
+            )));
+            lines.push(Line::from(""));
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!(" {} children:", node.children.len()),
+                bold,
+            )));
+        }
         for child in &node.children {
             let chip = match child.source {
                 ValueSource::Configured if child.is_leaf() => "●",
