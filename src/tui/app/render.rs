@@ -119,6 +119,10 @@ impl super::App {
             self.draw_hjson_editor_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::WritingStreakHeatmap { .. }) {
+            self.draw_writing_streak_heatmap(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::RenderedPreview { .. }) {
             self.draw_rendered_preview_modal(f, area);
             return;
@@ -194,6 +198,8 @@ impl super::App {
                 unreachable!("shell pane handled above"),
             Modal::HjsonEditor { .. } =>
                 unreachable!("hjson editor handled above"),
+            Modal::WritingStreakHeatmap { .. } =>
+                unreachable!("writing-streak heatmap handled above"),
             Modal::RenderedPreview { .. } =>
                 unreachable!("rendered preview handled above"),
             Modal::SaveRenderedPng { .. } =>

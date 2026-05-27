@@ -362,6 +362,14 @@ pub enum Action {
     /// / `.wav` work on recent macOS.
     #[serde(rename = "editor.tts_save_as_audio")]
     TtsSaveAsAudio,
+    /// Ctrl+B Shift+G (1.2.9+) — open the writing-
+    /// streak heatmap modal.  Shows the last 91 days
+    /// of project-wide word deltas as a GitHub-style
+    /// 13×7 grid, with current streak + longest
+    /// streak + monthly totals at the bottom.  Esc
+    /// closes.
+    #[serde(rename = "view.open_writing_streak_heatmap")]
+    OpenWritingStreakHeatmap,
     /// Ctrl+B Shift+F (1.2.9+) — toggle the inline
     /// style-warning overlays (filter words today;
     /// repeated phrases / show-don't-tell / etc. as
@@ -562,6 +570,7 @@ impl Action {
             Action::BundEditProjectHjson => "edit hjson".into(),
             Action::TtsReadParagraph => "read aloud".into(),
             Action::TtsSaveAsAudio => "save audio".into(),
+            Action::OpenWritingStreakHeatmap => "streak".into(),
             Action::ToggleStyleWarnings => "style warnings".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
@@ -757,6 +766,8 @@ impl Action {
                 "Read the open paragraph aloud via the OS TTS engine (1.2.9+, Ctrl+B S in editor scope). Cross-platform via `tts-rs`: AVFoundation on macOS, SAPI / WinRT on Windows, Speech Dispatcher on Linux. Gated by `editor.tts.enabled = true` in HJSON; default is off. Default voice is `Milena` (Russian female; ships free with macOS + Windows). When TTS is disabled, or the engine fails to initialise (Linux without speech-dispatcher, missing voices, etc.), a friendly explanation modal fires instead.".into(),
             Action::TtsSaveAsAudio =>
                 "Save the open paragraph as an audio file via macOS `say -o <path>` (1.2.9+, Ctrl+B Shift+R). Opens a path picker pre-filled with `<project>/audio/<paragraph-slug>.aiff`; Enter commits, Esc cancels. Output is AIFF by default; coerce another format with the file extension (`.m4a`, `.wav` work on macOS 13+). Same voice + rate as the configured chord-driven TTS. macOS-only; non-macOS hosts surface the same `TTS unavailable` modal as Ctrl+B S.".into(),
+            Action::OpenWritingStreakHeatmap =>
+                "Open the writing-streak heatmap modal (1.2.9+, Ctrl+B Shift+G). GitHub-style 13×7 grid of the last 91 days of project-wide word deltas, plus current streak + longest streak in the window + per-month totals. Data comes from the existing progress store (the same source feeding the startup pulse splash + Ctrl+V G modal). Esc closes.".into(),
             Action::ToggleStyleWarnings =>
                 "Toggle the inline style-warning overlays (1.2.9+, Ctrl+B Shift+F). Currently flags filter words — intensifier crutches like `just`, `really`, `very`, `просто`, `очень` — drawn in amber + underlined. Session-local override on top of `editor.style_warnings.enabled` in HJSON. Per-language defaults ship for English, Russian, French, German, Spanish; the active list is keyed by the project's top-level `language` field. Add more via `editor.style_warnings.filter_words.extra_words`. Repeated-phrase / show-don't-tell / sentence-rhythm detectors will share this toggle as they land.".into(),
             Action::ViewRenderParagraph =>
@@ -919,6 +930,9 @@ impl KeyBindings {
                 // current paragraph as an audio file
                 // via macOS `say -o`.
                 entry("Shift+r", Action::TtsSaveAsAudio, Scope::Editor),
+                // 1.2.9+ — Ctrl+B Shift+G opens the
+                // writing-streak heatmap modal.
+                entry("Shift+g", Action::OpenWritingStreakHeatmap, Scope::Any),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),

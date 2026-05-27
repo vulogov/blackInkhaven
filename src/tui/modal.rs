@@ -720,6 +720,26 @@ pub(super) enum Modal {
         title: String,
         reason: String,
     },
+    /// 1.2.9+ — writing-streak heatmap modal (Ctrl+B
+    /// Shift+G).  GitHub-style 13×7 grid of the last 91
+    /// days of project-wide word deltas, plus the
+    /// current streak, longest streak in the window,
+    /// and per-month totals.  Data captured at open
+    /// time so the modal doesn't re-query DuckDB every
+    /// frame.  Esc closes.
+    WritingStreakHeatmap {
+        /// Project-wide word deltas, oldest first.
+        /// Length 91 (13 weeks × 7 days).
+        daily_words: Vec<i64>,
+        /// Current consecutive-writing-days streak.
+        streak_days: u32,
+        /// Longest streak in the 91-day window.
+        longest_streak: u32,
+        /// Today (UTC) as `(year, month, day)` so the
+        /// render can label months / paint today's
+        /// cell with a marker without re-parsing.
+        today_ymd: (i32, u32, u32),
+    },
     /// 1.2.9+ — TTS save-as-audio path picker.  Opens
     /// when the user presses Ctrl+B Shift+R; the
     /// default path lands as `<project>/audio/<slug>.aiff`
