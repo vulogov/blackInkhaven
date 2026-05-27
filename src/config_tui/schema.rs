@@ -193,6 +193,33 @@ pub fn build(
     (root, unknowns)
 }
 
+/// 1.2.10+ — known map-shaped config paths.  Children
+/// of these paths use dynamic keys (HashMap<String, T>
+/// in the Rust schema), so user-added keys in the
+/// live HJSON are valid map entries — NOT unknown
+/// fields.
+///
+/// Phase 4 ships a single entry: `llm.providers`.
+/// Add new entries here as new `HashMap`-shaped
+/// stanzas land in the `Config` struct.
+const KNOWN_MAP_PATHS: &[&str] = &["llm.providers"];
+
+pub fn is_known_map_path(path: &str) -> bool {
+    KNOWN_MAP_PATHS.contains(&path)
+}
+
+/// Recursively force a sub-tree to
+/// `ValueSource::Configured`.  Used for user-added
+/// map entries — every leaf came from the live HJSON,
+/// not from a built-in default, so the source rolls
+/// up uniformly.
+fn force_configured(node: &mut SchemaNode) {
+    node.source = ValueSource::Configured;
+    for child in &mut node.children {
+        force_configured(child);
+    }
+}
+
 fn build_node(
     path: &str,
     display: &str,
@@ -231,17 +258,53 @@ fn build_node(
                 }
                 children.push(child);
             }
-            // Detect unknown keys in live (present in
-            // HJSON but not in defaults).
+            // Detect live keys that aren't in
+            // defaults.  Two routes:
+            //
+            //   * At a **known map path** (e.g.
+            //     `llm.providers`) — these are valid
+            //     map entries with dynamic keys.
+            //     Build them into the tree using any
+            //     existing default entry as a
+            //     template; force them to Configured.
+            //   * Anywhere else — they're unknown
+            //     user-added fields and get routed to
+            //     `unknowns` (preserved on save,
+            //     never edited).
             if let Some(map) = live_map {
+                let map_here = is_known_map_path(path);
                 for (key, value) in map {
-                    if !default_map.contains_key(key) {
-                        let unknown_path = if path.is_empty() {
-                            key.clone()
-                        } else {
-                            format!("{path}.{key}")
-                        };
-                        collect_unknowns(&unknown_path, value, unknowns);
+                    if default_map.contains_key(key) {
+                        continue;
+                    }
+                    let child_path = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{path}.{key}")
+                    };
+                    if map_here {
+                        // Template = any default
+                        // entry's shape.  Fall back
+                        // to the live value's shape
+                        // when the defaults are
+                        // empty.
+                        let template: Value = default_map
+                            .values()
+                            .next()
+                            .cloned()
+                            .unwrap_or_else(|| value.clone());
+                        let mut child = build_node(
+                            &child_path,
+                            key,
+                            &template,
+                            value,
+                            unknowns,
+                        );
+                        force_configured(&mut child);
+                        any_configured = true;
+                        children.push(child);
+                    } else {
+                        collect_unknowns(&child_path, value, unknowns);
                     }
                 }
             }
@@ -428,5 +491,112 @@ mod tests {
         assert!(idx.contains_key("editor"));
         assert!(idx.contains_key("editor.wrap"));
         assert!(!idx.contains_key(""));
+    }
+
+    #[test]
+    fn user_added_provider_appears_under_known_map_path() {
+        // `llm.providers` is a known map path.  A
+        // user-added provider name in the live HJSON
+        // should appear in the schema tree, NOT in
+        // `unknowns`.
+        let defaults = json!({
+            "llm": {
+                "providers": {
+                    "gemini": { "model": "gemini-2.5-pro", "api_key_env": "GEMINI_API_KEY" }
+                }
+            }
+        });
+        let live = json!({
+            "llm": {
+                "providers": {
+                    "gemini": { "model": "gemini-2.5-pro", "api_key_env": "GEMINI_API_KEY" },
+                    "ollama_remote": { "model": "llama3.2", "api_key_env": "OLLAMA_KEY" }
+                }
+            }
+        });
+        let (root, unknowns) = build(&defaults, &live);
+        // The user-added provider must NOT be in unknowns.
+        assert!(
+            unknowns.iter().all(|(p, _)| !p.starts_with("llm.providers.ollama_remote")),
+            "expected llm.providers.ollama_remote to live in the tree, not unknowns; got: {unknowns:?}"
+        );
+        // It must be reachable via index_by_path.
+        let idx = index_by_path(&root);
+        assert!(idx.contains_key("llm.providers.ollama_remote"));
+        assert!(idx.contains_key("llm.providers.ollama_remote.model"));
+        assert!(idx.contains_key("llm.providers.ollama_remote.api_key_env"));
+    }
+
+    #[test]
+    fn user_added_provider_marked_configured() {
+        let defaults = json!({
+            "llm": {
+                "providers": {
+                    "gemini": { "model": "gemini-2.5-pro", "api_key_env": "GEMINI_API_KEY" }
+                }
+            }
+        });
+        let live = json!({
+            "llm": {
+                "providers": {
+                    "gemini": { "model": "gemini-2.5-pro", "api_key_env": "GEMINI_API_KEY" },
+                    "ollama_remote": { "model": "llama3.2", "api_key_env": "OLLAMA_KEY" }
+                }
+            }
+        });
+        let (root, _) = build(&defaults, &live);
+        let idx = index_by_path(&root);
+        let entry = idx.get("llm.providers.ollama_remote").unwrap();
+        assert_eq!(entry.source, ValueSource::Configured);
+        // Leaves under the user-added provider are
+        // also forced to Configured.
+        let model = idx.get("llm.providers.ollama_remote.model").unwrap();
+        assert_eq!(model.source, ValueSource::Configured);
+    }
+
+    #[test]
+    fn unknown_path_outside_map_still_collected() {
+        // Sanity: only `llm.providers` is map-shaped;
+        // a top-level unknown still goes to unknowns.
+        let defaults = json!({ "editor": { "wrap": true } });
+        let live = json!({
+            "editor": { "wrap": true },
+            "experimental": { "my_flag": "yes" }
+        });
+        let (_, unknowns) = build(&defaults, &live);
+        assert!(unknowns.iter().any(|(p, _)| p == "experimental.my_flag"));
+    }
+
+    #[test]
+    fn map_path_with_extra_field_in_entry_still_reports_unknown() {
+        // Inside a map entry, fields that aren't in
+        // the template are STILL unknown — the user
+        // probably typo'd `api_token` for
+        // `api_key_env`.
+        let defaults = json!({
+            "llm": {
+                "providers": {
+                    "gemini": { "model": "x", "api_key_env": "Y" }
+                }
+            }
+        });
+        let live = json!({
+            "llm": {
+                "providers": {
+                    "gemini": { "model": "x", "api_key_env": "Y" },
+                    "custom": { "model": "z", "api_token": "T" }
+                }
+            }
+        });
+        let (root, unknowns) = build(&defaults, &live);
+        let idx = index_by_path(&root);
+        // The provider exists in the tree.
+        assert!(idx.contains_key("llm.providers.custom"));
+        // But api_token (not in the template) is
+        // routed to unknowns.
+        assert!(
+            unknowns.iter().any(|(p, _)| p == "llm.providers.custom.api_token"),
+            "expected typo'd field to land in unknowns; got: {unknowns:?}"
+        );
     }
 }
