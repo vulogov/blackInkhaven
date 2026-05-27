@@ -931,7 +931,12 @@ fn static_chord_dispatch(app: &mut App, key: KeyEvent) {
                 None => return,
             };
             if is_leaf {
-                let widget = Widget::start_for(&current, &ty_label);
+                let ty = app
+                    .current_node()
+                    .map(|n| n.ty.clone())
+                    .unwrap_or(crate::config_tui::schema::ConfigType::String);
+                let widget =
+                    Widget::start_for_typed(&current, &ty, &ty_label, &path);
                 app.modal = Modal::Edit { path, widget };
             } else if let Some(node) = app.current_node() {
                 let p = node.path.clone();
@@ -948,8 +953,12 @@ fn static_chord_dispatch(app: &mut App, key: KeyEvent) {
             // mid-navigation.
             if let Some(node) = app.current_node() {
                 if node.is_leaf() {
-                    let widget =
-                        Widget::start_for(&node.current, node.ty.label());
+                    let widget = Widget::start_for_typed(
+                        &node.current,
+                        &node.ty,
+                        node.ty.label(),
+                        &node.path,
+                    );
                     let path = node.path.clone();
                     app.modal = Modal::Edit { path, widget };
                 }
@@ -1873,7 +1882,15 @@ fn draw_edit_modal(
     widget: &Widget,
 ) {
     let w = host.width.saturating_sub(8).min(80);
-    let h: u16 = 9;
+    // List + Color + Enum need extra vertical space
+    // for their richer content; everything else fits
+    // in 9 rows.
+    let h: u16 = match widget {
+        Widget::List(_) => 16,
+        Widget::Color(_) => 14,
+        Widget::Enum(_) => 12,
+        _ => 9,
+    };
     let x = host.x + host.width.saturating_sub(w) / 2;
     let y = host.y + host.height.saturating_sub(h) / 2;
     let rect = Rect { x, y, width: w, height: h };

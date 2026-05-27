@@ -15,15 +15,28 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// Type of a config leaf (or `Stanza` for branches).
-/// Phase 1 carries only the minimum the read-only
-/// renderer needs; richer constraints (min/max, enum
-/// variants) land in Phase 2.
+/// Phase 1 inferred shape from the JSON value alone;
+/// Phase 6+ also consults a metadata table
+/// (`refined_type`) that narrows generic `String`s
+/// into `Color` / `Path` / `Enum` based on the path.
 #[derive(Debug, Clone)]
 pub enum ConfigType {
     Bool,
     Int,
     Float,
     String,
+    /// 1.2.10+ — `#RRGGBB` hex color.  Routed when
+    /// the path lives under `theme.*` and ends in
+    /// `_bg` / `_fg` / `_border` / similar.
+    Color,
+    /// 1.2.10+ — filesystem path (file or
+    /// directory).  Routed for paths whose key
+    /// ends in `_dir` / `_directory` / `_path` /
+    /// `_file`.
+    Path,
+    /// 1.2.10+ — fixed-set enum string.  Carries
+    /// the allowed values for the picker UI.
+    Enum(Vec<&'static str>),
     /// Array of strings — common shape for the
     /// `extra_words` / `*_stop_words` / per-language
     /// lists.
@@ -72,12 +85,68 @@ impl ConfigType {
             Self::Int => "int",
             Self::Float => "float",
             Self::String => "string",
+            Self::Color => "color (#RRGGBB)",
+            Self::Path => "filesystem path",
+            Self::Enum(_) => "enum",
             Self::StringList => "list of strings",
             Self::Array => "array",
             Self::Stanza => "stanza",
             Self::Map => "map",
             Self::Unknown => "unknown",
         }
+    }
+}
+
+/// 1.2.10+ — narrow a JSON-inferred type using
+/// path-shape heuristics + a small hand-rolled
+/// metadata table.  Called by the tree builder so
+/// each leaf carries the most specific type the
+/// widget catalog has a picker for.
+///
+/// Heuristic precedence:
+///   1. Exact-path lookup in the enum table.
+///   2. Suffix match: `_bg` / `_fg` / `_border`
+///      under `theme.*` → Color.
+///   3. Suffix match: `_dir` / `_directory` /
+///      `_path` / `_file` → Path.
+///   4. Fall back to whatever JSON-inferred type
+///      the caller already computed.
+pub fn refined_type(path: &str, inferred: &ConfigType) -> ConfigType {
+    // Enum overrides land first.
+    if let Some(variants) = enum_variants_for(path) {
+        return ConfigType::Enum(variants);
+    }
+    // Color overrides — only apply to fields that
+    // were inferred as `String` to begin with.
+    if matches!(inferred, ConfigType::String) {
+        if path.starts_with("theme.")
+            && (path.ends_with("_bg")
+                || path.ends_with("_fg")
+                || path.ends_with("_border"))
+        {
+            return ConfigType::Color;
+        }
+        if path.ends_with("_directory")
+            || path.ends_with("_dir")
+            || path.ends_with("_path")
+            || path.ends_with("_file")
+        {
+            return ConfigType::Path;
+        }
+    }
+    inferred.clone()
+}
+
+fn enum_variants_for(path: &str) -> Option<Vec<&'static str>> {
+    match path {
+        "typst_compile.engine" => Some(vec!["external", "inprocess"]),
+        "embeddings.model" => Some(vec![
+            "MultilingualE5Small",
+            "MultilingualE5Base",
+            "MultilingualE5Large",
+            "BGEM3",
+        ]),
+        _ => None,
     }
 }
 
@@ -343,10 +412,14 @@ fn build_node(
             } else {
                 ValueSource::Configured
             };
+            // 1.2.10+ — narrow generic String leaves
+            // into Color / Path / Enum where the
+            // path-shape metadata table says so.
+            let refined_ty = refined_type(path, &ty);
             SchemaNode {
                 path: path.to_string(),
                 display: display.to_string(),
-                ty,
+                ty: refined_ty,
                 default: default.clone(),
                 current: live.clone(),
                 source,
