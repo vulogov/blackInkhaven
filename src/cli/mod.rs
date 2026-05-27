@@ -242,7 +242,34 @@ pub enum Command {
     /// initialised project: hierarchy shape + word counts), and
     /// notes (actionable warnings like "typst not on PATH"). No
     /// questions asked, pipe-friendly plain-text output.
-    Doctor,
+    ///
+    /// 1.2.9+ — `--voices` swaps the default report for a
+    /// pipe-friendly list of TTS voices visible to the host
+    /// OS (`tts-rs`).  Useful for picking a value for
+    /// `editor.tts.voice` in HJSON without leaving the
+    /// terminal.
+    Doctor {
+        /// List every TTS voice the host OS exposes through
+        /// `tts-rs`, one per line: `<name>  ·  <locale>`.
+        /// Skips the rest of the health report when set.
+        #[arg(long)]
+        voices: bool,
+        /// 1.2.9+ — diagnostic: init the TTS engine, set
+        /// the configured voice + rate, speak the given
+        /// text synchronously (block until audio drains),
+        /// then exit.  Use when `Ctrl+B S` shows the
+        /// modal but no audio plays — isolates the engine
+        /// path from the rest of inkhaven's runtime.
+        #[arg(long, value_name = "TEXT")]
+        tts_test: Option<String>,
+        /// 1.2.9+ — emit a copy-paste-ready HJSON
+        /// snippet of every built-in filter-word list
+        /// (English, Russian, French, German, Spanish).
+        /// Paste under `editor.style_warnings.filter_words`
+        /// to see and edit them in your project HJSON.
+        #[arg(long)]
+        filter_words_snippet: bool,
+    },
 
     /// 1.2.6+ — story-timeline event management. Requires
     /// `timeline.enabled: true` in HJSON.
@@ -495,7 +522,17 @@ impl Cli {
             Command::Stats { book_name } => {
                 stats::run(&project, book_name.as_deref()).map_err(Into::into)
             }
-            Command::Doctor => doctor::run(&project).map_err(Into::into),
+            Command::Doctor { voices, tts_test, filter_words_snippet } => {
+                if filter_words_snippet {
+                    doctor::run_filter_words_snippet().map_err(Into::into)
+                } else if let Some(text) = tts_test {
+                    doctor::run_tts_test(&project, &text).map_err(Into::into)
+                } else if voices {
+                    doctor::run_voices().map_err(Into::into)
+                } else {
+                    doctor::run(&project).map_err(Into::into)
+                }
+            }
             Command::Build { book_name, compile } => {
                 build::run(&project, book_name.as_deref(), compile).map_err(Into::into)
             }

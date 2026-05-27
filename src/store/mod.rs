@@ -1251,7 +1251,7 @@ impl Store {
             }
         }
         self.sync()?;
-        // 1.2.6+ — scrub wiki-link references to the deleted
+        // 1.2.6+ — scrub paragraph-link references to the deleted
         // nodes. Without this, every other paragraph's
         // `linked_paragraphs: Vec<Uuid>` keeps the dead UUIDs
         // and the Ctrl+V L picker silently filters them at view
@@ -1263,7 +1263,7 @@ impl Store {
         if scrubbed > 0 {
             tracing::info!(
                 target: "inkhaven::delete",
-                "delete_subtree: scrubbed wiki-links from {scrubbed} other paragraph(s)",
+                "delete_subtree: scrubbed paragraph links from {scrubbed} other paragraph(s)",
             );
         }
         // Fire hook.on_delete ( uuid -- ) once per deleted id, in
@@ -1278,7 +1278,7 @@ impl Store {
     /// Walk every remaining node and remove any UUID in
     /// `deleted` from its `linked_paragraphs` field. Returns the
     /// number of nodes touched. Used by `delete_subtree` (1.2.6+)
-    /// to keep wiki-link metadata in sync with reality.
+    /// to keep paragraph-link metadata in sync with reality.
     fn scrub_linked_paragraphs(
         &self,
         deleted: &std::collections::HashSet<Uuid>,

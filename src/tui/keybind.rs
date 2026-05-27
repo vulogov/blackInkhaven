@@ -339,6 +339,97 @@ pub enum Action {
     /// chord-prefix state machine.
     #[serde(rename = "bund.edit_project_hjson")]
     BundEditProjectHjson,
+    /// Ctrl+B S in editor scope (1.2.9+) — read the open
+    /// paragraph aloud via the OS TTS engine (`tts-rs`).
+    /// Replaces the pre-1.2.9 editor-scope `Ctrl+B S =
+    /// Save` binding which was a redundant duplicate of
+    /// plain `Ctrl+S`.  Gated on
+    /// `editor.tts.enabled = true` in HJSON; when
+    /// disabled, fires a "TTS disabled" explanation
+    /// modal.  On platforms where the TTS engine can't
+    /// initialise (Linux without `speech-dispatcher`,
+    /// containers, …), a similar explanation modal
+    /// fires with the engine-level error string.
+    #[serde(rename = "editor.tts_read_paragraph")]
+    TtsReadParagraph,
+    /// Ctrl+B Shift+R (1.2.9+) — save the open paragraph
+    /// as an audio file via macOS `say -o <path>`.
+    /// Opens a save-as picker pre-filled with
+    /// `<project>/audio/<paragraph-slug>.aiff`; Enter
+    /// commits, Esc cancels.  Output format is AIFF
+    /// (native to `say`); the user can change the
+    /// extension to coerce a different container — `.m4a`
+    /// / `.wav` work on recent macOS.
+    #[serde(rename = "editor.tts_save_as_audio")]
+    TtsSaveAsAudio,
+    /// Ctrl+B Shift+G (1.2.9+) — open the writing-
+    /// streak heatmap modal.  Shows the last 91 days
+    /// of project-wide word deltas as a GitHub-style
+    /// 13×7 grid, with current streak + longest
+    /// streak + monthly totals at the bottom.  Esc
+    /// closes.
+    #[serde(rename = "view.open_writing_streak_heatmap")]
+    OpenWritingStreakHeatmap,
+    /// Ctrl+B < (1.2.9+) — jump the editor cursor to the
+    /// previous scene-break line in the open paragraph.
+    /// A "scene break" is a typographic divider line
+    /// like `* * *`, `***`, `---`, `___`, `###`, `~~~`,
+    /// or a lone `§`.  No match → status warns "no scene
+    /// break above" and the cursor doesn't move.
+    #[serde(rename = "editor.scene_break_prev")]
+    SceneBreakPrev,
+    /// Ctrl+B > (1.2.9+) — jump to the next scene-break
+    /// line.  Same detector as `SceneBreakPrev`.
+    #[serde(rename = "editor.scene_break_next")]
+    SceneBreakNext,
+    /// Ctrl+B Shift+F (1.2.9+) — toggle the inline
+    /// style-warning overlays (filter words today;
+    /// repeated phrases / show-don't-tell / etc. as
+    /// they land).  Session-local toggle on top of the
+    /// HJSON `editor.style_warnings.enabled` master
+    /// switch — flip the chord during a writing
+    /// session without rewriting config.
+    #[serde(rename = "editor.toggle_style_warnings")]
+    ToggleStyleWarnings,
+    /// Ctrl+B Shift+T (1.2.9+) — AI-driven show-
+    /// don't-tell scan of the open paragraph.  Sends
+    /// the paragraph to the configured LLM with a
+    /// system prompt asking for telling passages and
+    /// suggested rewrites.  The response streams
+    /// into the AI pane.  The mnemonic is `T` for
+    /// "tell".  Complements the always-on regex
+    /// overlay (`editor.style_warnings.show_dont_tell`)
+    /// with deeper analysis.
+    #[serde(rename = "ai.analyse_show_dont_tell")]
+    AnalyseShowDontTell,
+    /// Ctrl+B Shift+H (1.2.9+) — open the sentence-
+    /// rhythm gauge modal for the open paragraph.
+    /// Splits prose into sentences, computes word-
+    /// count mean / stdev / coefficient of variation
+    /// (CV), maps CV to a verdict (Monotone / Steady
+    /// / Varied / Choppy), and shows a per-sentence
+    /// bar chart + outlier callouts.  The H is for
+    /// "heartbeat" — the felt rhythm of the prose.
+    #[serde(rename = "view.open_sentence_rhythm")]
+    OpenSentenceRhythm,
+    /// Ctrl+B Shift+P (1.2.9+) — toggle the POV /
+    /// character chip on the status bar.  Session-local
+    /// override on top of `editor.pov_chip_enabled` in
+    /// HJSON.  When the chip is on, the status bar shows
+    /// the most-mentioned character in the open
+    /// paragraph (the heuristic POV character) + up to
+    /// three additional named characters present.
+    #[serde(rename = "view.toggle_pov_chip")]
+    TogglePovChip,
+    /// Ctrl+B Shift+L (1.2.9+) — open the project-wide
+    /// concordance modal.  Lists every distinct lexical
+    /// stem in the project with its total count + KWIC
+    /// samples.  Stop-words and digits are filtered out
+    /// so the list surfaces the words actually carrying
+    /// the prose's weight.  Type to filter, `s` to
+    /// toggle sort (count ↔ alphabetical), Esc closes.
+    #[serde(rename = "view.open_concordance")]
+    OpenConcordance,
     /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
     /// via typst-render and float a PNG preview on top of the
     /// editor. `Esc` closes, `S` opens a save-as picker for the
@@ -353,13 +444,13 @@ pub enum Action {
     ViewNextDiagnostic,
     /// Ctrl+V Shift+W (1.2.5+) — story view of the current
     /// book: book at the centre, every chapter / subchapter /
-    /// paragraph + wiki-links + lexicon mentions on
+    /// paragraph + paragraph links + lexicon mentions on
     /// concentric rings. Rendered to PNG and floated on top
     /// of the editor; `S` saves, `Esc` closes.
     #[serde(rename = "view.story_graph")]
     ViewStoryGraph,
     /// Ctrl+V w (1.2.6+) — paragraph mini story view: the
-    /// open paragraph at the centre, its wiki-link neighbours
+    /// open paragraph at the centre, its paragraph link neighbours
     /// (one hop out + one hop in) on the first ring, and any
     /// Characters / Places / Artefacts it mentions on the
     /// outer ring. Same render pipeline + save flow as the
@@ -473,7 +564,7 @@ impl Action {
             Action::ScheduleBuild => "build".into(),
             Action::ScheduleTake => "take".into(),
             Action::BackupNow => "backup".into(),
-            Action::ToggleTypewriter => "typewriter".into(),
+            Action::ToggleTypewriter => "focus mode".into(),
             Action::ToggleAiFullscreen => "AI-full".into(),
             Action::StatusFilterReady => "Ready".into(),
             Action::StatusFilterFinal => "Final".into(),
@@ -528,6 +619,16 @@ impl Action {
             Action::BundOpenShellFresh => "shell fresh".into(),
             Action::BundShellSelection => "shell select".into(),
             Action::BundEditProjectHjson => "edit hjson".into(),
+            Action::TtsReadParagraph => "read aloud".into(),
+            Action::TtsSaveAsAudio => "save audio".into(),
+            Action::OpenWritingStreakHeatmap => "streak".into(),
+            Action::SceneBreakPrev => "prev scene break".into(),
+            Action::SceneBreakNext => "next scene break".into(),
+            Action::ToggleStyleWarnings => "style warnings".into(),
+            Action::OpenConcordance => "concordance".into(),
+            Action::TogglePovChip => "pov chip".into(),
+            Action::OpenSentenceRhythm => "rhythm".into(),
+            Action::AnalyseShowDontTell => "show↛tell AI".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -610,7 +711,7 @@ impl Action {
             Action::BackupNow =>
                 "Run a project backup now (Ctrl+B Shift+B). Always fires — ignores the exit-hook recency cooldown.".into(),
             Action::ToggleTypewriter =>
-                "Toggle full-screen typewriter mode — hides every other pane for focused writing.".into(),
+                "Toggle distraction-free / focus mode — hides every other pane (Tree, AI, Search, AI prompt) and gives the editor the full window. Re-press to restore the four-pane layout. Internally still called \"typewriter mode\" in some log strings + the HJSON config field; the chord serde key is `global.toggle_typewriter` for backward-compat.".into(),
             Action::ToggleAiFullscreen =>
                 "Toggle full-screen AI mode — AI pane | chat history + AI prompt.".into(),
             Action::StatusFilterReady =>
@@ -693,7 +794,7 @@ impl Action {
             Action::ViewAddIncomingLink =>
                 "Add an incoming link — tree pane picker; Enter on a paragraph adds the OPEN paragraph to THAT paragraph's outgoing links (reverse of Ctrl+V A).".into(),
             Action::ViewListLinks =>
-                "Open the linked-paragraphs modal — list outgoing wiki-links for the open paragraph; press D on a row to remove.".into(),
+                "Open the linked-paragraphs modal — list outgoing paragraph links for the open paragraph; press D on a row to remove.".into(),
             Action::ViewListBacklinks =>
                 "Open the backlinks modal — list paragraphs that link to the open paragraph (reverse of Ctrl+V L). Enter opens; D removes the source's outgoing link to current.".into(),
             Action::ViewToggleBookmark =>
@@ -718,14 +819,34 @@ impl Action {
                 "Inside the shell pane, toggle history-selection mode (1.2.8+) — ↑↓ walks turn-by-turn, `c` copies output to clipboard, `i` inserts wrapped in the configured typst-box template. Re-press exits.".into(),
             Action::BundEditProjectHjson =>
                 "Open `<project>/inkhaven.hjson` in a full-screen editor (1.2.8+, Ctrl+B 0). Syntax-highlighted via the hand-rolled HJSON lexer. Ctrl+S saves; when saved bytes differ from the loaded bytes, a restart-required overlay pops up (config applies on next launch). Esc closes; unsaved-edit warnings fire on close.".into(),
+            Action::TtsReadParagraph =>
+                "Read the open paragraph aloud via the OS TTS engine (1.2.9+, Ctrl+B S in editor scope). Cross-platform via `tts-rs`: AVFoundation on macOS, SAPI / WinRT on Windows, Speech Dispatcher on Linux. Gated by `editor.tts.enabled = true` in HJSON; default is off. Default voice is `Milena` (Russian female; ships free with macOS + Windows). When TTS is disabled, or the engine fails to initialise (Linux without speech-dispatcher, missing voices, etc.), a friendly explanation modal fires instead.".into(),
+            Action::TtsSaveAsAudio =>
+                "Save the open paragraph as an audio file via macOS `say -o <path>` (1.2.9+, Ctrl+B Shift+R). Opens a path picker pre-filled with `<project>/audio/<paragraph-slug>.aiff`; Enter commits, Esc cancels. Output is AIFF by default; coerce another format with the file extension (`.m4a`, `.wav` work on macOS 13+). Same voice + rate as the configured chord-driven TTS. macOS-only; non-macOS hosts surface the same `TTS unavailable` modal as Ctrl+B S.".into(),
+            Action::OpenWritingStreakHeatmap =>
+                "Open the writing-streak heatmap modal (1.2.9+, Ctrl+B Shift+G). GitHub-style 13×7 grid of the last 91 days of project-wide word deltas, plus current streak + longest streak in the window + per-month totals. Data comes from the existing progress store (the same source feeding the startup pulse splash + Ctrl+V G modal). Esc closes.".into(),
+            Action::SceneBreakPrev =>
+                "Jump editor cursor to the previous scene-break line (1.2.9+, Ctrl+B <). Scene breaks are typographic divider lines: `* * *`, `***`, `---`, `___`, `###`, `~~~`, or a lone `§`. Detection is hand-rolled — any line consisting only of 3+ copies of `*`/`-`/`_`/`~`/`#` (optionally space-separated) counts, plus `§` alone. Useful for navigating multi-scene paragraphs in a single pass.".into(),
+            Action::SceneBreakNext =>
+                "Jump editor cursor to the next scene-break line (1.2.9+, Ctrl+B >). Same detector as `SceneBreakPrev`.".into(),
+            Action::ToggleStyleWarnings =>
+                "Toggle the inline style-warning overlays (1.2.9+, Ctrl+B Shift+F). Currently flags filter words — intensifier crutches like `just`, `really`, `very`, `просто`, `очень` — drawn in amber + underlined. Session-local override on top of `editor.style_warnings.enabled` in HJSON. Per-language defaults ship for English, Russian, French, German, Spanish; the active list is keyed by the project's top-level `language` field. Add more via `editor.style_warnings.filter_words.extra_words`. Repeated-phrase / show-don't-tell / sentence-rhythm detectors will share this toggle as they land.".into(),
+            Action::OpenConcordance =>
+                "Open the project-wide concordance modal (1.2.9+, Ctrl+B Shift+L). Lists every distinct lexical stem in the project with its total count plus up to three KWIC samples. Stop-words, single-character tokens, and pure-digit runs are filtered out so the list surfaces the words actually carrying the prose's weight. Multilingual via the same Snowball stemmer + stop-list plumbing as the repeated-phrase detector — `language` in HJSON drives the algorithm choice. Type to filter (substring match); s toggles sort (count ↔ alphabetical); Esc closes.".into(),
+            Action::TogglePovChip =>
+                "Toggle the POV / character chip on the status bar (1.2.9+, Ctrl+B Shift+P). When enabled, the status bar shows the most-mentioned character in the open paragraph (the heuristic POV character) plus up to three additional named characters present. Driven by the project's existing `characters` lexicon — no separate tagging needed. Ties broken by first-mention order. Session-local override on top of `editor.pov_chip_enabled` in HJSON.".into(),
+            Action::OpenSentenceRhythm =>
+                "Open the sentence-rhythm gauge modal for the open paragraph (1.2.9+, Ctrl+B Shift+H). Splits prose into sentences (hand-rolled walker with abbreviation suppression), tallies word counts, computes mean / stdev / coefficient of variation (CV), and maps CV to a verdict: Monotone (CV < 0.25 — drones), Steady (0.25-0.45 — workable), Varied (0.45-0.80 — strong prose rhythm), Choppy (≥ 0.80 — fragments + long sentences mixed). Shows a per-sentence bar list and the three shortest + three longest outliers. Mnemonic: H for heartbeat — the felt rhythm of the prose.".into(),
+            Action::AnalyseShowDontTell =>
+                "AI-driven show-don't-tell scan of the open paragraph (1.2.9+, Ctrl+B Shift+T). Sends the paragraph to the configured LLM with a system prompt asking for telling passages plus suggested rewrites. The response streams into the AI pane. Complements the always-on regex overlay (`editor.style_warnings.show_dont_tell`) with deeper analysis — the regex catches the obvious 2-grams (`was angry`, `realised`); the AI scan catches subtler instances and proposes alternatives. Mnemonic: T for tell.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
                 "Jump the editor cursor to the next typst diagnostic (parse or semantic) in the open buffer. Wraps around at the end; no-op when there are no diagnostics.".into(),
             Action::ViewStoryGraph =>
-                "Story view of the current user book — book at the centre, every chapter / subchapter / paragraph + wiki-links + lexicon mentions on concentric rings. Float a PNG on top of the editor; S saves, Esc closes.".into(),
+                "Story view of the current user book — book at the centre, every chapter / subchapter / paragraph + paragraph links + lexicon mentions on concentric rings. Float a PNG on top of the editor; S saves, Esc closes.".into(),
             Action::ViewStoryGraphParagraph =>
-                "Paragraph mini story view — the open paragraph at the centre, its wiki-link neighbours (one hop out + one hop in) on the first ring, and any Characters / Places / Artefacts it mentions on the outer ring. Same render + save flow as the book view.".into(),
+                "Paragraph mini story view — the open paragraph at the centre, its paragraph link neighbours (one hop out + one hop in) on the first ring, and any Characters / Places / Artefacts it mentions on the outer ring. Same render + save flow as the book view.".into(),
             Action::ViewEventPicker =>
                 "Open the timeline event picker (1.2.6+). Lists every event in the project sorted by start time; Enter jumps to the event paragraph. Requires `timeline.enabled: true` in HJSON.".into(),
             Action::ViewNewEventPrompt =>
@@ -737,7 +858,7 @@ impl Action {
             Action::VisitedForward =>
                 "Browser-style forward (1.2.7+) — re-open the next paragraph in the visit history. Default chord: Alt+Right. Only active after at least one back-press.".into(),
             Action::UndoLastDelete =>
-                "Undo the most-recent paragraph delete (1.2.7+) — single-slot kill-ring. Restores content + tags + linked_paragraphs + event data, but the restored ¶ gets a NEW uuid so wiki-links from elsewhere stay broken. Branch deletes (chapter / book) can't be undone. Default chord: Ctrl+B U.".into(),
+                "Undo the most-recent paragraph delete (1.2.7+) — single-slot kill-ring. Restores content + tags + linked_paragraphs + event data, but the restored ¶ gets a NEW uuid so paragraph links from elsewhere stay broken. Branch deletes (chapter / book) can't be undone. Default chord: Ctrl+B U.".into(),
             Action::ViewEditEventMetadata =>
                 "Edit the open event paragraph's start / end / track (pipe-separated, 1.2.6+). Pre-fills with current values; empty middle = no end; empty trailing = drop track. Precision re-derived from start on commit. No-op when the open paragraph isn't an event.".into(),
             Action::ViewTimeline =>
@@ -815,7 +936,11 @@ impl KeyBindings {
                 entry("j", Action::ReorderDown, Scope::Tree),
 
                 // ── Editor pane ───────────────────────────────
-                entry("s", Action::Save, Scope::Editor),
+                // 1.2.9+ — editor-scope Ctrl+B S was a redundant
+                // duplicate of plain Ctrl+S; reclaimed for the new
+                // TTS read-aloud action.  Tree-scope Ctrl+B S =
+                // AddSubchapter stays.
+                entry("s", Action::TtsReadParagraph, Scope::Editor),
                 entry("n", Action::CreateSnapshot, Scope::Editor),
                 entry("r", Action::CycleStatus, Scope::Editor),
                 entry("f", Action::OpenFunctionPicker, Scope::Editor),
@@ -867,6 +992,36 @@ impl KeyBindings {
                 // terminal layout (previous `|` binding was
                 // dropped on some terminals' chord state).
                 entry("0", Action::BundEditProjectHjson, Scope::Any),
+                // 1.2.9+ — Ctrl+B Shift+F toggles inline
+                // style-warning overlays (filter words).
+                entry("Shift+f", Action::ToggleStyleWarnings, Scope::Any),
+                // 1.2.9+ — Ctrl+B Shift+R saves the
+                // current paragraph as an audio file
+                // via macOS `say -o`.
+                entry("Shift+r", Action::TtsSaveAsAudio, Scope::Editor),
+                // 1.2.9+ — Ctrl+B Shift+G opens the
+                // writing-streak heatmap modal.
+                entry("Shift+g", Action::OpenWritingStreakHeatmap, Scope::Any),
+                // 1.2.9+ — Ctrl+B < / Ctrl+B > scene-break
+                // navigation in the editor.  Originally
+                // requested as `Shift+{` / `Shift+}`, but
+                // `}` is already TagSearch (1.2.5).  `<`
+                // and `>` are vim-style and free.
+                entry("<", Action::SceneBreakPrev, Scope::Editor),
+                entry(">", Action::SceneBreakNext, Scope::Editor),
+                // 1.2.9+ — Ctrl+B Shift+L opens the project-
+                // wide concordance modal.
+                entry("Shift+l", Action::OpenConcordance, Scope::Any),
+                // 1.2.9+ — Ctrl+B Shift+P toggles the
+                // status-bar POV / character chip.
+                entry("Shift+p", Action::TogglePovChip, Scope::Any),
+                // 1.2.9+ — Ctrl+B Shift+H opens the
+                // sentence-rhythm gauge modal.
+                entry("Shift+h", Action::OpenSentenceRhythm, Scope::Editor),
+                // 1.2.9+ — Ctrl+B Shift+T sends the
+                // open paragraph to the LLM for a
+                // show-don't-tell scan.
+                entry("Shift+t", Action::AnalyseShowDontTell, Scope::Editor),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),
@@ -926,7 +1081,7 @@ impl KeyBindings {
                 // 1.2.6+ — swim-lane timeline view. Bound to
                 // Shift+T so the lowercase `t` chord stays free
                 // for `ViewOpenParagraphTarget` (open the
-                // wiki-link target under the cursor) — the two
+                // paragraph link target under the cursor) — the two
                 // used to collide on plain `t`, with the
                 // earlier-listed `ViewOpenParagraphTarget`
                 // shadowing this entry entirely.
@@ -1373,7 +1528,7 @@ mod tests {
 
     #[test]
     fn view_sub_t_and_shift_t_route_to_distinct_actions() {
-        // 1.2.6+ — `Ctrl+V t` opens the wiki-link target,
+        // 1.2.6+ — `Ctrl+V t` opens the paragraph link target,
         // `Ctrl+V Shift+T` opens the timeline. They used to
         // collide on plain `t` (the second binding was shadowed
         // and dead).

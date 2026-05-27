@@ -188,6 +188,7 @@ words that reach into the project store.
 | `ink.ai.poll` | `( -- string )` | 1.2.4+: non-blocking poll of the async AI response slot. Empty string when none ready. `ai_read` |
 | `ink.fs.read` | `( path -- string )` | 1.2.4+: read a file. `fs_read` (default-allowed). |
 | `ink.fs.write` | `( path content -- )` | 1.2.4+: write a file. `fs_write` — **default-denied**. Opt in: `enabled_categories: ["fs_write"]`. |
+| `ink.tts.speak` | `( text -- )` | 1.2.9+: read `text` aloud through the OS TTS engine (currently macOS `/usr/bin/say`). Non-blocking — audio plays in parallel. Subsequent calls interrupt the prior speech. `audio` category (default-allowed); independently gated by `editor.tts.enabled` in HJSON, so a script can't produce audio unless the user already opted in. Errors when TTS is disabled, the platform isn't macOS, or `/usr/bin/say` fails to spawn. |
 
 The pane + input words live under the `editor_read` policy
 category (non-destructive UI), so they're allowed by default.

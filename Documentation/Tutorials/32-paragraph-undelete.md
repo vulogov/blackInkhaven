@@ -17,7 +17,7 @@ they fire.
 2. Ctrl+D  →  delete-confirm modal.
 3. Enter   →  paragraph removed; status bar reads:
                 deleted paragraph `morning` (0 other nodes removed) ·
-                Ctrl+B U to restore (new uuid — wiki-links to
+                Ctrl+B U to restore (new uuid — paragraph links to
                 old id stay broken)
 4. Realise you wanted that prose after all.
 5. Ctrl+B U →  paragraph re-created at the same position;
@@ -37,16 +37,16 @@ the paragraph through `create_node` + `update_metadata`:
 | `slug` | ✓ | File lands at the same on-disk path. |
 | `content` (body bytes) | ✓ | Written via the same path `save_current` uses. |
 | `tags` | ✓ | Project-wide tag set is consulted again on apply. |
-| `linked_paragraphs` | ✓ | The outgoing wiki-links the restored paragraph held. |
+| `linked_paragraphs` | ✓ | The outgoing paragraph links the restored paragraph held. |
 | `status` | ✓ | Napkin → Ready ring position preserved. |
 | `target_words` | ✓ | Per-paragraph goal preserved. |
 | `content_type` | ✓ | `hjson` / `typst` flag preserved. |
 | `event` data | ✓ | Calendar timing + track + precision + linked paragraphs (timeline). |
 
-The new paragraph gets a **fresh uuid**. Wiki-links from
+The new paragraph gets a **fresh uuid**. Paragraph links from
 elsewhere that pointed at the OLD uuid stay broken; the status
 line is upfront about this. If you need the same uuid restored
-(e.g. to keep an incoming wiki-link working), use the
+(e.g. to keep an incoming paragraph link working), use the
 snapshot-restore flow on the parent branch instead — that path
 preserves identity but operates at branch granularity.
 
@@ -84,7 +84,7 @@ the store API doesn't expose today.
   Hit Ctrl+B U before doing anything else.
 - **Restructuring**: cut a paragraph from one chapter, navigate
   to another chapter, then restore. The new uuid means
-  incoming wiki-links break; for restructure where you care
+  incoming paragraph links break; for restructure where you care
   about identity, use the Ctrl+V A link-pick flow plus
   re-targeting the link by hand.
 - **Recovering from over-aggressive Ctrl+B Shift+1..7 status
