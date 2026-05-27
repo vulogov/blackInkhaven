@@ -726,25 +726,31 @@ impl super::super::App {
         // future detectors).  Effective enable flag is
         // the session toggle if set, else the HJSON
         // setting.  Per-language list keyed by the
-        // project's top-level `language` field.
+        // project's top-level `language` field.  Detector
+        // built once per render frame, reused across
+        // every line.
         let style_enabled = self
             .style_warnings_toggle
             .unwrap_or(self.cfg.editor.style_warnings.enabled);
         let style_lang = self.cfg.language.as_str();
         let style_cfg = &self.cfg.editor.style_warnings;
+        let filter_detector =
+            if style_enabled && style_cfg.filter_words.enabled {
+                Some(
+                    super::super::super::style_warnings::FilterWordsDetector::new(
+                        &style_cfg.filter_words,
+                        style_lang,
+                    ),
+                )
+            } else {
+                None
+            };
         let style_per_row: Vec<Vec<super::super::super::style_warnings::StyleHit>> =
             current_lines
                 .iter()
-                .map(|line| {
-                    if !style_enabled || !style_cfg.filter_words.enabled {
-                        Vec::new()
-                    } else {
-                        super::super::super::style_warnings::detect_filter_words(
-                            line,
-                            style_lang,
-                            &style_cfg.filter_words.extra_words,
-                        )
-                    }
+                .map(|line| match &filter_detector {
+                    Some(d) if !d.is_empty() => d.detect(line),
+                    _ => Vec::new(),
                 })
                 .collect();
 
@@ -952,25 +958,31 @@ impl super::super::App {
         // future detectors).  Effective enable flag is
         // the session toggle if set, else the HJSON
         // setting.  Per-language list keyed by the
-        // project's top-level `language` field.
+        // project's top-level `language` field.  Detector
+        // built once per render frame, reused across
+        // every line.
         let style_enabled = self
             .style_warnings_toggle
             .unwrap_or(self.cfg.editor.style_warnings.enabled);
         let style_lang = self.cfg.language.as_str();
         let style_cfg = &self.cfg.editor.style_warnings;
+        let filter_detector =
+            if style_enabled && style_cfg.filter_words.enabled {
+                Some(
+                    super::super::super::style_warnings::FilterWordsDetector::new(
+                        &style_cfg.filter_words,
+                        style_lang,
+                    ),
+                )
+            } else {
+                None
+            };
         let style_per_row: Vec<Vec<super::super::super::style_warnings::StyleHit>> =
             current_lines
                 .iter()
-                .map(|line| {
-                    if !style_enabled || !style_cfg.filter_words.enabled {
-                        Vec::new()
-                    } else {
-                        super::super::super::style_warnings::detect_filter_words(
-                            line,
-                            style_lang,
-                            &style_cfg.filter_words.extra_words,
-                        )
-                    }
+                .map(|line| match &filter_detector {
+                    Some(d) if !d.is_empty() => d.detect(line),
+                    _ => Vec::new(),
                 })
                 .collect();
 

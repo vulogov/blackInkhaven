@@ -1347,20 +1347,162 @@ impl Default for StyleWarningsConfig {
 #[serde(default)]
 pub struct FilterWordsConfig {
     pub enabled: bool,
-    /// User-provided words to flag in addition to the
-    /// language defaults.  Case-insensitive; one entry
-    /// per word.  Example: `["totally", "obviously"]`.
+    /// 1.2.9+ — match via Snowball stemming so `seemed`
+    /// catches `seems` / `seeming`, `казалось` catches
+    /// `казался` / `казалась` / `казались`, and the
+    /// per-language list stays compact (one entry per
+    /// lemma, not per inflection).  Default `true`.
+    /// Disable to fall back to exact-lowercased match
+    /// (faster, but you'd need to list every form
+    /// manually).
+    pub use_stemming: bool,
+    /// User-supplied words added on top of the language
+    /// default.  Case-insensitive; one entry per word.
+    /// Stems with the language stemmer when
+    /// `use_stemming` is on, so `["lift"]` flags
+    /// `lifted` / `lifts` / `lifting`.
     pub extra_words: Vec<String>,
+    /// Per-language curated lists.  Empty list means
+    /// "use the built-in default for this language";
+    /// any non-empty list **replaces** the default
+    /// (use `extra_words` for additive overrides).  The
+    /// active list is keyed by the project's top-level
+    /// `language` field; unknown languages fall back
+    /// to `english`.  Default values shipped by
+    /// `built_in_filter_words()` — run
+    /// `inkhaven doctor --filter-words-snippet` to get
+    /// a copy-paste-ready HJSON dump.
+    pub english: Vec<String>,
+    pub russian: Vec<String>,
+    pub french: Vec<String>,
+    pub german: Vec<String>,
+    pub spanish: Vec<String>,
 }
 
 impl Default for FilterWordsConfig {
     fn default() -> Self {
+        // Defaults left empty so an HJSON dumped from a
+        // bare Config doesn't carry 100+ lines of
+        // language-specific lists.  Empty list at the
+        // detector means "use the built-in default" —
+        // see `built_in_filter_words()`.  Users who
+        // want the defaults visible in their HJSON can
+        // populate the arrays from
+        // `inkhaven doctor --filter-words-snippet`.
         Self {
             enabled: true,
+            use_stemming: true,
             extra_words: Vec::new(),
+            english: Vec::new(),
+            russian: Vec::new(),
+            french: Vec::new(),
+            german: Vec::new(),
+            spanish: Vec::new(),
         }
     }
 }
+
+/// 1.2.9+ — accessor for the user's per-language list.
+/// Returns the configured list when non-empty;
+/// otherwise the built-in default.  Caller passes
+/// `language` from `cfg.language`.  Currently only
+/// referenced from tests + future detectors that don't
+/// want to duplicate the lookup logic; kept under
+/// `#[allow(dead_code)]` so it survives the unused-
+/// helper lint while remaining a documented surface.
+#[allow(dead_code)]
+pub fn effective_filter_words<'a>(
+    cfg: &'a FilterWordsConfig,
+    language: &str,
+) -> &'a [String] {
+    let configured: &Vec<String> = match language.to_lowercase().as_str() {
+        "russian" => &cfg.russian,
+        "french" => &cfg.french,
+        "german" => &cfg.german,
+        "spanish" => &cfg.spanish,
+        _ => &cfg.english,
+    };
+    if !configured.is_empty() {
+        return configured.as_slice();
+    }
+    // Fall back to the built-in default for that
+    // language.  `built_in_filter_words` returns a
+    // `&'static [&'static str]` which we can't return
+    // as `&[String]` directly without allocating; the
+    // detector calls `built_in_filter_words` separately
+    // when this returns an empty slice.
+    &[]
+}
+
+/// 1.2.9+ — built-in per-language filter-word lists.
+/// Public so `inkhaven doctor --filter-words-snippet`
+/// can emit them for paste-into-HJSON.
+pub fn built_in_filter_words(language: &str) -> &'static [&'static str] {
+    match language.to_lowercase().as_str() {
+        "russian" => BUILT_IN_RUSSIAN,
+        "french" => BUILT_IN_FRENCH,
+        "german" => BUILT_IN_GERMAN,
+        "spanish" => BUILT_IN_SPANISH,
+        _ => BUILT_IN_ENGLISH,
+    }
+}
+
+const BUILT_IN_ENGLISH: &[&str] = &[
+    // Hedges / intensifier crutches.  Use stems where
+    // it matters — `seem` covers `seemed` / `seems` /
+    // `seeming` via Snowball.
+    "just", "really", "very", "pretty", "quite",
+    "rather", "fairly", "somewhat", "slightly",
+    "that", "actually", "basically", "literally",
+    "essentially", "simply", "definitely", "certainly",
+    "absolutely", "totally", "completely",
+    // Sensory / hedging verbs — listed as base form;
+    // stemmer catches the inflections.
+    "seem", "feel", "look", "appear", "sound", "notice",
+    "begin", "start",
+    "suddenly", "perhaps", "maybe",
+];
+
+const BUILT_IN_RUSSIAN: &[&str] = &[
+    // Intensifier crutches + hedges
+    "очень", "просто", "именно", "довольно", "слишком",
+    "весьма", "крайне", "вполне", "достаточно",
+    // Generic placeholders
+    "собственно", "буквально", "практически",
+    "фактически", "действительно", "реально",
+    "конечно", "разумеется", "безусловно",
+    // Sensory / hedging verbs as lemmas — Snowball
+    // stems both list entry and editor text, so
+    // `казаться` catches `казался / казалась /
+    // казалось / казались`.
+    "казаться", "почувствовать", "выглядеть",
+    "заметить",
+    "вдруг", "внезапно", "наверное", "возможно",
+];
+
+const BUILT_IN_FRENCH: &[&str] = &[
+    "vraiment", "très", "assez", "plutôt",
+    "juste", "simplement", "actuellement", "littéralement",
+    "essentiellement", "absolument", "totalement", "complètement",
+    "sembler", "paraître", "sentir",
+    "soudainement", "peut-être",
+];
+
+const BUILT_IN_GERMAN: &[&str] = &[
+    "sehr", "wirklich", "ziemlich", "eher", "etwas",
+    "einfach", "tatsächlich", "buchstäblich",
+    "absolut", "völlig", "komplett",
+    "scheinen", "fühlen", "sehen",
+    "plötzlich", "vielleicht",
+];
+
+const BUILT_IN_SPANISH: &[&str] = &[
+    "muy", "realmente", "bastante", "algo",
+    "solo", "simplemente", "actualmente", "literalmente",
+    "esencialmente", "absolutamente", "totalmente", "completamente",
+    "parecer", "sentir", "ver",
+    "repentinamente", "quizás",
+];
 
 /// 1.2.9+ — `editor.tts.*` HJSON stanza.  `Ctrl+B S` in
 /// the editor pane reads the open paragraph aloud via
