@@ -199,20 +199,20 @@ struct AiRuntime {
 
 #[derive(Debug)]
 pub(super) struct Send {
-    pub user_message: String,
+    /// What the user typed into the AI prompt input
+    /// — preserved for history walking + the
+    /// "user typed:" callout in the pane title.
+    pub user_input: String,
+    /// The **rendered** text the LLM actually
+    /// received as the user message (editor body
+    /// with `{{selection}}` substituted).  Shown
+    /// under `▸ user` in the AI pane so what-you-
+    /// see-is-what-was-sent.
+    pub rendered_user_message: String,
     pub response: String,
     pub started_at: Instant,
     pub duration: Option<Duration>,
     pub failed: bool,
-    /// Snapshot of the editor body at send time so
-    /// the user knows which template the result was
-    /// produced against (even if they've already
-    /// edited it since).  Reserved for the Phase
-    /// 4 "show snapshot in AI pane title if it
-    /// differs from current editor body" polish
-    /// item.
-    #[allow(dead_code)]
-    pub template_snapshot: String,
 }
 
 pub(super) struct Inference {
@@ -770,6 +770,19 @@ fn dispatch_list_keys(app: &mut App, key: KeyEvent) {
             app.cursor = n.saturating_sub(1);
             app.reload_editor();
         }
+        KeyCode::Enter => {
+            // Cursor-driven autoload already
+            // happens on ↑↓, but pressing Enter on
+            // a row commits to working on that
+            // entry — jump focus into the editor
+            // so the user can start typing
+            // immediately.
+            if app.library.prompts.get(app.cursor).is_some() {
+                app.focus = Focus::Editor;
+                app.first_launch = false;
+                app.status = "loaded into editor".into();
+            }
+        }
         KeyCode::Char('a') | KeyCode::Char('A') => {
             app.modal = Modal::AddPrompt {
                 buffer: String::new(),
@@ -942,13 +955,18 @@ fn send_ai_prompt(app: &mut App) {
         rendered.clone(),
     );
     app.last_send = Some(Send {
-        user_message: user_input,
+        user_input,
+        rendered_user_message: rendered.clone(),
         response: String::new(),
         started_at: Instant::now(),
         duration: None,
         failed: false,
-        template_snapshot: editor_body,
     });
+    // Use the editor_body local in a no-op so it
+    // stays in scope until the Send is built —
+    // future fields may want to record it
+    // explicitly.
+    let _ = editor_body;
     app.inference = Some(Inference {
         rx,
         started_at: Instant::now(),
@@ -1482,15 +1500,29 @@ fn draw_ai_pane(f: &mut ratatui::Frame, area: Rect, app: &App) {
         return;
     };
 
-    // User message section.
-    lines.push(Line::from(Span::styled(" ▸ user", bold)));
-    if send.user_message.trim().is_empty() {
+    // User message section — show what the LLM
+    // actually received, not just the user's typed
+    // input.  The rendered template substitutes
+    // `{{selection}}` so the user can see how
+    // their input got merged into the prompt body.
+    lines.push(Line::from(vec![
+        Span::styled(" ▸ user", bold),
+        Span::styled(
+            if send.user_input.trim().is_empty() {
+                "  (no input — template sent as-is)".to_string()
+            } else {
+                format!("  (typed: {})", trim_one_line(&send.user_input, 48))
+            },
+            dim,
+        ),
+    ]));
+    if send.rendered_user_message.trim().is_empty() {
         lines.push(Line::from(Span::styled(
-            "   (no input — template sent as-is)",
+            "   (empty payload)",
             dim,
         )));
     } else {
-        for body in send.user_message.lines() {
+        for body in send.rendered_user_message.lines() {
             lines.push(Line::from(format!("   {body}")));
         }
     }
@@ -1948,6 +1980,29 @@ fn draw_welcome_overlay(f: &mut ratatui::Frame, host: Rect, app: &App) {
         lines.push(Line::from(""));
     }
     f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Collapse newlines + tabs to single spaces and
+/// clip to `max_chars` for an inline single-line
+/// preview (used by the "typed:" callout in the AI
+/// pane header).
+fn trim_one_line(text: &str, max_chars: usize) -> String {
+    let collapsed: String = text
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' || c == '\t' { ' ' } else { c })
+        .collect();
+    let trimmed = collapsed.trim();
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.len() > max_chars {
+        let mut out: String = chars
+            .into_iter()
+            .take(max_chars.saturating_sub(1))
+            .collect();
+        out.push('…');
+        out
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn border_style(focused: bool) -> Style {
