@@ -771,6 +771,17 @@ pub(super) enum Modal {
         preview: String,
         voice_label: String,
     },
+    /// 1.2.9+ — sentence-rhythm gauge modal
+    /// (Ctrl+B Shift+H).  Built once at open time
+    /// from the open paragraph's body; the render
+    /// loop reads cached stats and paints a per-
+    /// sentence bar list + outlier callouts.  Esc
+    /// closes; PgUp/PgDn/↑/↓ scroll the per-
+    /// sentence list.
+    SentenceRhythm {
+        stats: super::sentence_rhythm::RhythmStats,
+        scroll: usize,
+    },
     /// 1.2.9+ — project-wide concordance modal
     /// (Ctrl+B Shift+L).  Built once at open time from
     /// the in-memory hierarchy + paragraph bodies; the

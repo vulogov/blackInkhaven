@@ -6542,6 +6542,7 @@ impl App {
             A::ToggleStyleWarnings => self.toggle_style_warnings(),
             A::OpenConcordance => self.open_concordance(),
             A::TogglePovChip => self.toggle_pov_chip(),
+            A::OpenSentenceRhythm => self.open_sentence_rhythm(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
@@ -7811,6 +7812,93 @@ impl App {
         self.status = format!(
             "streak: {streak_days}-day current · {longest} longest (91-day window) · Esc closes"
         );
+    }
+
+    /// 1.2.9+ — Ctrl+B Shift+H action: analyse the
+    /// open paragraph's sentence rhythm and open the
+    /// `SentenceRhythm` modal.  Splits prose into
+    /// sentences, tallies word counts, computes
+    /// mean / stdev / coefficient of variation, and
+    /// maps the CV to a verdict.  Falls through to
+    /// a status warning when no paragraph is open or
+    /// the body has fewer than 3 sentences (rhythm
+    /// can't be meaningfully judged below that).
+    fn open_sentence_rhythm(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "rhythm: no paragraph open".into();
+            return;
+        };
+        let lines: Vec<String> = doc
+            .textarea
+            .lines()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        // Strip the leading typst heading so the
+        // title doesn't count as a sentence.
+        let body = strip_leading_typst_heading(&lines.join("\n"));
+        let body_lines: Vec<String> =
+            body.split('\n').map(|s| s.to_string()).collect();
+        let stats = crate::tui::sentence_rhythm::analyse(&body_lines);
+        if stats.lengths.is_empty() {
+            self.status = "rhythm: paragraph empty".into();
+            return;
+        }
+        self.status = format!(
+            "rhythm: {} sentences · CV {:.2} · {} · Esc closes",
+            stats.lengths.len(),
+            stats.cv,
+            stats.verdict.label(),
+        );
+        self.modal = crate::tui::modal::Modal::SentenceRhythm {
+            stats,
+            scroll: 0,
+        };
+    }
+
+    /// 1.2.9+ — key dispatch for the
+    /// `SentenceRhythm` modal.  Scroll the per-
+    /// sentence list with ↑↓ / PgUp/PgDn / Home/End;
+    /// any other key closes.
+    fn sentence_rhythm_handle_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::KeyCode;
+        let n = match &self.modal {
+            Modal::SentenceRhythm { stats, .. } => stats.samples.len(),
+            _ => return,
+        };
+        let Modal::SentenceRhythm { scroll, .. } = &mut self.modal else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "rhythm: closed".into();
+            }
+            KeyCode::Down => {
+                if *scroll + 1 < n {
+                    *scroll += 1;
+                }
+            }
+            KeyCode::Up => {
+                *scroll = scroll.saturating_sub(1);
+            }
+            KeyCode::PageDown => {
+                *scroll = (*scroll + 10).min(n.saturating_sub(1));
+            }
+            KeyCode::PageUp => {
+                *scroll = scroll.saturating_sub(10);
+            }
+            KeyCode::Home => {
+                *scroll = 0;
+            }
+            KeyCode::End => {
+                *scroll = n.saturating_sub(1);
+            }
+            _ => {
+                self.modal = Modal::None;
+                self.status = "rhythm: closed".into();
+            }
+        }
     }
 
     /// 1.2.9+ — Ctrl+B Shift+L action: build a
@@ -12166,6 +12254,7 @@ impl App {
         let is_tts_save_as_audio = matches!(self.modal, Modal::TtsSaveAsAudio { .. });
         let is_writing_streak_heatmap = matches!(self.modal, Modal::WritingStreakHeatmap { .. });
         let is_concordance = matches!(self.modal, Modal::Concordance { .. });
+        let is_sentence_rhythm = matches!(self.modal, Modal::SentenceRhythm { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
         let is_ai_diff_review = matches!(self.modal, Modal::AiDiffReview { .. });
         let is_event_picker = matches!(self.modal, Modal::EventPicker { .. });
@@ -12646,6 +12735,11 @@ impl App {
 
         if is_concordance {
             self.concordance_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_sentence_rhythm {
+            self.sentence_rhythm_handle_key(key);
             return Ok(false);
         }
 
