@@ -200,6 +200,7 @@ editor: {
 | `style_warnings.repeated_phrases.threshold` | int | `3` | 1.2.9+. Minimum occurrence count before flagging. `2` is too noisy in most prose; `3` is the editing-craft default. |
 | `style_warnings.repeated_phrases.use_stemming` | bool | `true` | 1.2.9+. Stem the words before n-gram comparison so `lifted her shoulders` matches `lifting her shoulders`. Disable for exact-form matching. |
 | `style_warnings.repeated_phrases.<lang>_stop_words` | array | `[]` | 1.2.9+. Per-language stop-word list (`english_stop_words`, `russian_stop_words`, …) — closed-class words excluded from n-gram comparison so `the dog and X` doesn't repeat-match `the dog and Y`. Empty = use built-in default for that language. |
+| `pov_chip_enabled` | bool | `true` | 1.2.9+. Status-bar POV / character chip. When on, the status bar shows the most-mentioned character in the currently-open paragraph (the heuristic POV character) plus up to three additional named characters present. Driven by the project's existing `characters` lexicon — no separate tagging required. `Ctrl+B Shift+P` toggles in-session without rewriting HJSON. |
 | `stemming.languages` | list of strings | `["english", "russian"]` | **Legacy** — superseded by top-level `language` when that is non-empty. See [`language`](#prompts_file-and-language). |
 
 The grammar-correction-highlight interaction: while you have an active

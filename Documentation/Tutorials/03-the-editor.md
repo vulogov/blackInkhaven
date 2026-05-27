@@ -243,6 +243,51 @@ favourite turns of phrase you didn't realise had
 become reflexive.  Toggles with `Ctrl+B Shift+F`
 alongside filter-words.
 
+## POV / character chip (1.2.9+)
+
+The status bar gains a small magenta chip showing
+the characters present in the currently-open
+paragraph.  Example:
+
+```
+[Editor]  POV: Anna  +Bob, Carol   • saved 2s ago …
+```
+
+The most-mentioned character wins the **POV slot**
+(rationale: in third-person limited prose the
+narrator's gaze inevitably centres on the POV
+character).  Ties broken by who's named first in
+the paragraph.  Up to three additional characters
+trail behind as the supporting cast.
+
+The chip is driven by the existing `characters`
+lexicon — the paragraphs you've already nested
+under the Characters book.  No separate tagging,
+no POV annotation, no per-paragraph frontmatter
+to keep current.
+
+Config (`inkhaven.hjson`):
+
+```hjson
+editor: {
+  pov_chip_enabled: true
+}
+```
+
+Runtime toggle: `Ctrl+B Shift+P` flips the chip on
+/ off without rewriting HJSON.  Session-local
+override on top of the persisted setting.
+
+Edge cases:
+
+  * No characters mentioned → no chip; the status
+    bar reverts to its non-1.2.9 layout.
+  * No paragraph open → no chip.
+  * First-person POV (the narrator is `I`, not in
+    the lexicon) → chip surfaces the *other*
+    prominent character, which is the contextually
+    useful piece of information anyway.
+
 ## Concordance view (1.2.9+)
 
 `Ctrl+B Shift+L` opens a project-wide concordance:

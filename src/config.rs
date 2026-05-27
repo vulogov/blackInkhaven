@@ -1310,6 +1310,21 @@ pub struct EditorConfig {
     /// `StyleWarningsConfig` for per-detector knobs.
     #[serde(default)]
     pub style_warnings: StyleWarningsConfig,
+    /// 1.2.9+ — status-bar POV / character chip.
+    /// When enabled, the status bar gains a small chip
+    /// showing the most-mentioned character in the
+    /// currently-open paragraph (the heuristic POV
+    /// character) plus up to three additional named
+    /// characters present.  Driven by the project's
+    /// existing `characters` lexicon — no separate
+    /// tagging required.  Toggle at runtime with
+    /// `Ctrl+B Shift+P`.
+    #[serde(default = "default_pov_chip_enabled")]
+    pub pov_chip_enabled: bool,
+}
+
+fn default_pov_chip_enabled() -> bool {
+    true
 }
 
 /// 1.2.9+ — `editor.style_warnings.*` HJSON stanza.
@@ -1687,6 +1702,7 @@ impl Default for EditorConfig {
             confirm_quit: default_confirm_quit(),
             tts: TtsConfig::default(),
             style_warnings: StyleWarningsConfig::default(),
+            pov_chip_enabled: default_pov_chip_enabled(),
         }
     }
 }
