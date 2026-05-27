@@ -1413,15 +1413,14 @@ pub(crate) struct App {
     /// `true` after Ctrl+B inside the pane, consumed by
     /// the next keystroke.
     shell_ctrlb_pending: bool,
-    /// 1.2.9+ — lazy-init TTS engine (`tts-rs`).  Built
-    /// on first `Ctrl+B S`; reused across playbacks so
-    /// the second + Nth invocations skip the engine
-    /// startup cost.  `None` until the first attempt.
-    /// `Err` after a failed init carries the engine
-    /// error string for the unavailable-modal — we keep
-    /// the failure cached so we don't retry on every
-    /// keystroke.
-    tts_engine: Option<Result<tts::Tts, String>>,
+    /// 1.2.9+ — TTS subprocess wrapper.  Each
+    /// `Ctrl+B S` / greeting / goodbye spawns a fresh
+    /// `/usr/bin/say` child process and stores it here.
+    /// Side-steps the in-process `tts-rs` / AVFoundation
+    /// reuse bug where the second `speak()` call in the
+    /// same process produces no audio.  See `tui::say`
+    /// for the wrapper detail.
+    tts_say: super::say::Say,
     /// Cursor into `ai_prompt_history`. None when not navigating;
     /// `Some(i)` when the user is stepping through history. Any
     /// edit (typing, backspace, etc.) clears it so the next Up
@@ -1767,7 +1766,7 @@ impl App {
             shell_command_history: Vec::new(),
             shell_history_db: None,
             shell_ctrlb_pending: false,
-            tts_engine: None,
+            tts_say: super::say::Say::default(),
             opened: None,
             secondary: None,
             secondary_focused: false,
@@ -7408,8 +7407,6 @@ impl App {
                 return;
             }
         };
-        // Strip a leading typst heading line (`= Title`)
-        // so the spoken text is just the prose body.
         let body = strip_leading_typst_heading(&source);
         let body = body.trim().to_string();
         if body.is_empty() {
@@ -7426,113 +7423,59 @@ impl App {
                      Enable it by adding to inkhaven.hjson:\n\n  \
                      editor: {{ tts: {{ enabled: true }} }}\n\n\
                      Default voice is `Milena` (Russian female; ships free \
-                     with macOS + Windows after the language download).  See \
-                     Documentation/CONFIGURATION.md → editor.tts for the \
-                     full knob list."
+                     with macOS after a one-time language download via \
+                     System Settings → Accessibility → Spoken Content)."
                 ),
             };
             return;
         }
 
-        // ── 4 — engine init (cached, with soft reset) ──
-        // Lazy-init on first use, reused thereafter.  The
-        // AVFoundation reuse bug (where the second
-        // speak(text, true) returns Ok but produces no
-        // audio) is worked around by stop() + 80ms sleep
-        // + speak(text, false) at the call site below.
-        // Drop-and-recreate was tried first but breaks
-        // AVFoundation engine re-init outright on some
-        // macOS versions ("Operation failed").
-        if self.tts_engine.is_none() {
-            let attempt: Result<tts::Tts, String> = tts::Tts::default()
-                .map_err(|e| format!("{e}"));
-            self.tts_engine = Some(attempt);
+        // ── 4 — platform gate ───────────────────────
+        if let Err(reason) = super::say::Say::available() {
+            self.modal = Modal::TtsUnavailable {
+                title: " TTS unavailable ".into(),
+                reason: format!(
+                    "{reason}\n\n\
+                     1.2.9 ships TTS via macOS `/usr/bin/say` — the only \
+                     backend that proved reliable for repeated invocations \
+                     in one process.  Cross-platform TTS is on the roadmap; \
+                     until then non-macOS hosts surface this modal."
+                ),
+            };
+            return;
         }
-        let engine = match self.tts_engine.as_mut().unwrap() {
-            Ok(e) => e,
-            Err(err) => {
-                let reason = format!(
-                    "The OS text-to-speech engine couldn't initialise:\n\n  \
-                     {err}\n\n\
-                     Platform notes:\n  \
-                     · macOS: voices ship with the OS but Russian needs a \
-                     one-time download via System Settings → Accessibility \
-                     → Spoken Content → Russian.\n  \
-                     · Linux: install `speech-dispatcher` system-wide \
-                     (`apt install speech-dispatcher`).  For natural \
-                     Russian, configure speechd to use RHVoice or piper \
-                     instead of the default espeak-ng.\n  \
-                     · Windows: voices ship with the OS; nothing to do.\n  \
-                     · Other platforms: TTS is not currently supported."
-                );
-                self.modal = Modal::TtsUnavailable {
-                    title: " TTS unavailable ".into(),
-                    reason,
-                };
-                return;
-            }
-        };
 
-        // ── 5 — voice + speed ──────────────────────
+        // ── 5 — pick voice + speak ──────────────────
         let cfg = &self.cfg.editor.tts;
-        let mut voice_label = "system default".to_string();
-        if !cfg.voice.is_empty() {
-            let needle = cfg.voice.to_lowercase();
-            let voices = engine.voices().ok().unwrap_or_default();
-            // Substring match; prefer entries that ALSO
-            // contain "enhanced" or "premium" so e.g.
-            // "Milena" picks "Milena (Enhanced)" when
-            // available.
-            let pick = voices
-                .iter()
-                .filter(|v| v.name().to_lowercase().contains(&needle))
-                .max_by_key(|v| {
-                    let n = v.name().to_lowercase();
-                    let enhanced =
-                        n.contains("enhanced") || n.contains("premium");
-                    (enhanced as u8, v.name().len() as isize)
-                });
-            if let Some(v) = pick {
-                voice_label = v.name();
-                let _ = engine.set_voice(v);
-            } else {
-                // Fall through with system default; warn
-                // the user on the status bar so they know
-                // the HJSON voice value didn't match.
-                self.status = format!(
-                    "TTS: no installed voice matches `{}` — using system default",
-                    cfg.voice
-                );
-            }
-        }
-        let speed = cfg.speed.max(0.1);
-        let target = (engine.normal_rate() * speed)
-            .clamp(engine.min_rate(), engine.max_rate());
-        let _ = engine.set_rate(target);
+        let voice_resolved = super::say::Say::pick_voice(&cfg.voice);
+        let voice_label = voice_resolved
+            .clone()
+            .unwrap_or_else(|| "system default".to_string());
+        let voice_arg = voice_resolved.unwrap_or_default();
+        // Convert speed multiplier to words-per-minute.
+        // 180 wpm is the canonical "normal" reading rate;
+        // multiplying by the HJSON speed lands us in
+        // `say`'s expected range.  Clamp to [80, 400] —
+        // `say` accepts the full range, but speech is
+        // unintelligible outside it.
+        let wpm = ((180.0 * cfg.speed.max(0.1)).round() as i32)
+            .clamp(80, 400) as u16;
 
-        // ── 6 — start speech ──────────────────────
-        // Soft reset before speak (workaround for the
-        // AVFoundation reuse bug where back-to-back
-        // speak() calls silently drop audio on
-        // utterance 2+).  Then speak with
-        // `interrupt: false` — the queue is already
-        // drained by stop().
-        let _ = engine.stop();
-        std::thread::sleep(std::time::Duration::from_millis(80));
-        if let Err(e) = engine.speak(body.clone(), false) {
+        if let Err(e) = self.tts_say.speak(&body, &voice_arg, Some(wpm)) {
             self.modal = Modal::TtsUnavailable {
                 title: " TTS error ".into(),
                 reason: format!(
-                    "Couldn't start speech:\n\n  {e}\n\n\
-                     The engine initialised but rejected the request.  \
-                     Check that the chosen voice supports the paragraph's \
-                     language."
+                    "Couldn't start `say` subprocess:\n\n  {e}\n\n\
+                     Check that /usr/bin/say is on disk and executable.  \
+                     This binary ships with every macOS install since \
+                     OS X 10.3 — its absence is usually a permissions or \
+                     SIP issue."
                 ),
             };
             return;
         }
 
-        // ── 7 — playback modal ─────────────────────
+        // ── 6 — playback modal ─────────────────────
         let preview: String = body.chars().take(80).collect();
         self.modal = Modal::TtsPlayback {
             started_at: std::time::Instant::now(),
@@ -7541,37 +7484,15 @@ impl App {
         };
     }
 
-    /// 1.2.9+ — close the playback modal when the TTS
-    /// engine reports `is_speaking() == false`.  Called
-    /// each render frame so playback ending naturally
-    /// (the engine ran out of text) closes the modal
-    /// without the user pressing anything.  Idempotent;
-    /// no-op when the modal isn't `TtsPlayback`.
+    /// 1.2.9+ — close the playback modal when the `say`
+    /// subprocess exits.  Called each render frame so
+    /// playback ending naturally closes the modal
+    /// without the user pressing anything.
     pub(super) fn tts_poll_playback(&mut self) {
-        // Race-condition guard: `tts.speak()` returns
-        // immediately and starts audio asynchronously.  On
-        // the first one or two render frames after the
-        // call, `is_speaking()` can return `false` because
-        // the OS audio thread hasn't actually begun
-        // playback yet.  Without this guard the modal opens
-        // and closes within a single frame and the user
-        // sees nothing.  Wait at least 600ms before
-        // auto-closing — long enough for any reasonable
-        // engine to engage, short enough that a quick
-        // "yes." doesn't keep the modal up after speech
-        // ends.
-        let started_at = match &self.modal {
-            Modal::TtsPlayback { started_at, .. } => *started_at,
-            _ => return,
-        };
-        if started_at.elapsed() < std::time::Duration::from_millis(600) {
+        if !matches!(self.modal, Modal::TtsPlayback { .. }) {
             return;
         }
-        let still_speaking = match self.tts_engine.as_ref() {
-            Some(Ok(engine)) => engine.is_speaking().unwrap_or(false),
-            _ => false,
-        };
-        if !still_speaking {
+        if !self.tts_say.is_speaking() {
             self.modal = Modal::None;
             self.status = "TTS: finished".into();
         }
@@ -7579,166 +7500,71 @@ impl App {
 
     /// 1.2.9+ — stop in-flight playback + close the
     /// playback modal.  Called when the user hits any
-    /// key while the playback modal is open (Esc, space,
-    /// etc.).  Errors from `stop()` are swallowed —
-    /// the engine might already be done; we just want to
-    /// be sure no further audio plays.
+    /// key while the playback modal is open.
     fn tts_stop_playback(&mut self) {
-        if let Some(Ok(engine)) = self.tts_engine.as_mut() {
-            let _ = engine.stop();
-        }
+        self.tts_say.stop();
         self.modal = Modal::None;
         self.status = "TTS: stopped".into();
     }
 
-    /// 1.2.9+ — shared engine-init + voice + rate setup.
-    /// Centralises what `tts_read_paragraph` was doing
-    /// inline so the greeting / goodbye helpers don't
-    /// duplicate the code.  Returns `&mut tts::Tts` on
-    /// success, None when:
-    ///   * the feature is disabled in HJSON, OR
-    ///   * the engine couldn't initialise on this host
-    ///     (Linux without speech-dispatcher, etc.)
-    /// In both cases the caller silently skips speech —
-    /// no modal, no status nag.
-    ///
-    /// Lazy-init on first call; reused thereafter.  Each
-    /// call calls `stop()` on the engine BEFORE returning
-    /// it, then sleeps 80ms — this is the workaround for
-    /// the AVFoundation reuse bug where a second
-    /// `speak(text, true)` on the same engine silently
-    /// dropped audio.  The user-visible spec stays
-    /// "interrupt prior speech and play the new one";
-    /// the call site uses `interrupt: false` because the
-    /// `stop()` above has already drained the queue.
-    fn tts_engine_ready(&mut self) -> Option<&mut tts::Tts> {
-        if !self.cfg.editor.tts.enabled {
-            return None;
-        }
-        if self.tts_engine.is_none() {
-            let attempt = tts::Tts::default().map_err(|e| format!("{e}"));
-            self.tts_engine = Some(attempt);
-        }
-        let engine = match self.tts_engine.as_mut().unwrap() {
-            Ok(e) => e,
-            Err(_) => return None,
-        };
-        // Clear any in-flight speech and pending queue.
-        // This is the workaround for the AVFoundation
-        // reuse bug: `interrupt: true` on speak() returns
-        // Ok but silently produces no audio on subsequent
-        // calls.  An explicit stop() + brief sleep
-        // followed by `interrupt: false` speak() gets the
-        // engine into a clean state every time.  80ms is
-        // enough for the previous audio thread to release
-        // the audio device on macOS without being
-        // noticeable to the user.
-        let _ = engine.stop();
-        std::thread::sleep(std::time::Duration::from_millis(80));
-        // Voice + speed (cheap operations; applying them
-        // every call keeps a runtime HJSON reload in
-        // sync without extra plumbing).
-        let cfg = &self.cfg.editor.tts;
-        if !cfg.voice.is_empty() {
-            let needle = cfg.voice.to_lowercase();
-            let voices = engine.voices().ok().unwrap_or_default();
-            let pick = voices
-                .iter()
-                .filter(|v| v.name().to_lowercase().contains(&needle))
-                .max_by_key(|v| {
-                    let n = v.name().to_lowercase();
-                    let enhanced =
-                        n.contains("enhanced") || n.contains("premium");
-                    (enhanced as u8, v.name().len() as isize)
-                });
-            if let Some(v) = pick {
-                let _ = engine.set_voice(v);
-            }
-        }
-        let speed = cfg.speed.max(0.1);
-        let target = (engine.normal_rate() * speed)
-            .clamp(engine.min_rate(), engine.max_rate());
-        let _ = engine.set_rate(target);
-        Some(engine)
-    }
-
     /// 1.2.9+ — speak `editor.tts.greeting` at startup.
-    /// Called once after the daily-progress splash
-    /// finishes and the main editor frame is about to
-    /// render.  Non-blocking: speech starts and inkhaven
-    /// continues to the cursor while audio plays in
-    /// parallel.  Silently no-op when the greeting is
-    /// empty or the TTS engine can't initialise — startup
-    /// path is not the place to nag the user with modals.
+    /// Non-blocking: spawns `say` and returns immediately.
+    /// Audio plays in parallel with the main loop coming
+    /// up.  Silently no-op when greeting is empty,
+    /// `enabled = false`, or the platform isn't macOS.
     pub(super) fn tts_speak_greeting(&mut self) {
         let text = self.cfg.editor.tts.greeting.trim().to_string();
-        if text.is_empty() {
+        if text.is_empty() || !self.cfg.editor.tts.enabled {
             return;
         }
-        if let Some(engine) = self.tts_engine_ready() {
-            // `tts_engine_ready` already did stop() + 80ms
-            // soft reset, so the queue is empty — speak
-            // with `interrupt: false` (queue an utterance
-            // on the cleared queue).  Workaround for the
-            // AVFoundation reuse bug, see
-            // `tts_engine_ready` doc.
-            let _ = engine.speak(text, false);
+        if super::say::Say::available().is_err() {
+            return;
         }
+        let cfg = &self.cfg.editor.tts;
+        let voice = super::say::Say::pick_voice(&cfg.voice).unwrap_or_default();
+        let wpm = ((180.0 * cfg.speed.max(0.1)).round() as i32)
+            .clamp(80, 400) as u16;
+        let _ = self.tts_say.speak(&text, &voice, Some(wpm));
     }
 
     /// 1.2.9+ — speak `editor.tts.goodbye` at shutdown
-    /// and BLOCK until audio finishes (or 5-second
-    /// safety cap, whichever comes first).  Without the
-    /// block, the process would exit and the OS audio
-    /// thread would be torn down mid-word.  Polled in
-    /// 50ms increments to keep the wait responsive
-    /// without busy-spinning.  Silently no-op when the
-    /// goodbye is empty.  Errors swallowed — at quit
-    /// time the user can't act on a TTS failure.
+    /// and BLOCK until the `say` subprocess exits or the
+    /// 6-second safety cap fires.  Without the block,
+    /// inkhaven would exit and the OS audio device's
+    /// driver would terminate the speech mid-word.
+    /// Polled in 50ms increments.  Silently no-op when
+    /// goodbye is empty, `enabled = false`, or the
+    /// platform isn't macOS.
     pub(super) fn tts_speak_goodbye_blocking(&mut self) {
         let text = self.cfg.editor.tts.goodbye.trim().to_string();
-        if text.is_empty() {
+        if text.is_empty() || !self.cfg.editor.tts.enabled {
             return;
         }
-        let Some(engine) = self.tts_engine_ready() else { return; };
-        // `tts_engine_ready` did stop() + 80ms soft reset
-        // so the queue is empty — use `interrupt: false`.
-        // Workaround for the AVFoundation reuse bug.
-        if engine.speak(text.clone(), false).is_err() {
+        if super::say::Say::available().is_err() {
             return;
         }
-        // Two-phase wait.  Phase 1 is a minimum hold to
-        // sidestep the race where `is_speaking()` returns
-        // false on the very next call after `speak()`
-        // because the OS audio thread hasn't actually
-        // started playback yet — without this, a "polite
-        // poll-until-idle" loop exits in zero time and the
-        // process tears down before any audio plays.
-        //
-        // The minimum is 400ms baseline (engine startup
-        // latency on the slowest backend we've seen) plus
-        // ~80ms per character (rough heuristic for actual
-        // speech duration), capped at the same 5-second
-        // safety bound as the hard deadline.  Phase 2
-        // polls `is_speaking()` past the minimum, breaking
-        // out as soon as the engine reports idle so a
-        // legitimately-short goodbye doesn't make quit
-        // feel slow.
-        let chars = text.chars().count() as u64;
-        let min_hold_ms = (400 + chars * 80).min(5000);
-        let started = std::time::Instant::now();
-        let hard_deadline = started + std::time::Duration::from_secs(5);
-
-        std::thread::sleep(std::time::Duration::from_millis(min_hold_ms));
+        let cfg = &self.cfg.editor.tts;
+        let voice = super::say::Say::pick_voice(&cfg.voice).unwrap_or_default();
+        let wpm = ((180.0 * cfg.speed.max(0.1)).round() as i32)
+            .clamp(80, 400) as u16;
+        if self.tts_say.speak(&text, &voice, Some(wpm)).is_err() {
+            return;
+        }
+        // Wait for the subprocess to exit naturally.
+        // Poll in 50ms increments; 6-second hard cap so a
+        // user who configured a tome as their goodbye
+        // doesn't hang the quit indefinitely.
+        let hard_deadline = std::time::Instant::now()
+            + std::time::Duration::from_secs(6);
         while std::time::Instant::now() < hard_deadline {
-            if !engine.is_speaking().unwrap_or(false) {
+            if !self.tts_say.is_speaking() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        // Ensure clean teardown on the engine side.  No-op
-        // when the engine is already idle.
-        let _ = engine.stop();
+        // Ensure the subprocess is gone even if it
+        // outran our deadline.
+        self.tts_say.stop();
     }
 
     fn open_hjson_editor(&mut self) {

@@ -17,6 +17,7 @@ mod lexicon_build;
 mod markdown;
 mod markdown_highlight;
 mod modal;
+mod say;
 mod quickref;
 mod sound;
 mod theme;

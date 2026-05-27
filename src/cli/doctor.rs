@@ -44,52 +44,34 @@ use crate::store::Store;
 pub fn run_voices() -> Result<()> {
     println!("inkhaven TTS voices — v{}", env!("CARGO_PKG_VERSION"));
     println!("================================================================");
-    let engine = match tts::Tts::default() {
-        Ok(e) => e,
-        Err(err) => {
-            eprintln!(
-                "TTS engine unavailable on this host: {err}\n\
-                 \n\
-                 Platform notes:\n  \
-                 · macOS:   voices ship with the OS; ensure System Settings → Accessibility → Spoken Content has voices downloaded.\n  \
-                 · Linux:   install `speech-dispatcher` (`apt install speech-dispatcher`); configure speechd to use RHVoice / piper for natural Russian.\n  \
-                 · Windows: voices ship with the OS; nothing to do."
-            );
-            return Err(crate::error::Error::Config(
-                "TTS engine init failed".into(),
-            ));
-        }
-    };
-    let voices = engine.voices().unwrap_or_default();
+    if !cfg!(target_os = "macos") || !std::path::Path::new("/usr/bin/say").exists() {
+        eprintln!(
+            "TTS unavailable: 1.2.9 ships TTS via macOS `/usr/bin/say`.  \
+             Cross-platform TTS is on the roadmap."
+        );
+        return Err(crate::error::Error::Config(
+            "TTS unavailable on this host".into(),
+        ));
+    }
+    let voices = list_say_voices();
     if voices.is_empty() {
         eprintln!(
-            "No TTS voices installed.  On macOS / Windows, install voices through System Settings.  On Linux, ensure your speech-dispatcher backend has voices configured."
+            "No voices reported by `say -v \"?\"`.  Open System Settings → \
+             Accessibility → Spoken Content → System Voice → Manage Voices \
+             and install at least one."
         );
         return Ok(());
     }
-    // Stable ordering for diff-friendly output: by language
-    // then by name.  Each voice ID is platform-specific so
-    // we skip it from the rendered output; users pick by
-    // name (substring match against `editor.tts.voice`).
-    let mut rows: Vec<(String, String, String)> = voices
-        .iter()
-        .map(|v| {
-            let lang = v.language().to_string();
-            let gender = match v.gender() {
-                Some(tts::Gender::Male) => "male".to_string(),
-                Some(tts::Gender::Female) => "female".to_string(),
-                None => "—".to_string(),
-            };
-            (v.name(), lang, gender)
-        })
-        .collect();
+    // Stable ordering for diff-friendly output: by locale
+    // then by name.
+    let mut rows = voices.clone();
     rows.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
     let max_name = rows.iter().map(|(n, _, _)| n.chars().count()).max().unwrap_or(0);
     let max_lang = rows.iter().map(|(_, l, _)| l.chars().count()).max().unwrap_or(0);
     println!(
-        "{:name_w$}  {:lang_w$}  gender",
+        "{:name_w$}  {:lang_w$}  sample",
         "name",
-        "language",
+        "locale",
         name_w = max_name,
         lang_w = max_lang,
     );
@@ -98,12 +80,12 @@ pub fn run_voices() -> Result<()> {
         "-".repeat(max_name),
         "-".repeat(max_lang),
     );
-    for (name, lang, gender) in &rows {
+    for (name, lang, sample) in &rows {
         println!(
             "{:name_w$}  {:lang_w$}  {}",
             name,
             lang,
-            gender,
+            sample,
             name_w = max_name,
             lang_w = max_lang,
         );
@@ -117,6 +99,39 @@ pub fn run_voices() -> Result<()> {
     println!("with `Enhanced` or `Premium` in the name are preferred when");
     println!("multiple voices match.");
     Ok(())
+}
+
+/// 1.2.9+ — list voices via `say -v "?"`.  Returns
+/// `(name, locale, sample)` tuples in the order `say`
+/// produced them.
+fn list_say_voices() -> Vec<(String, String, String)> {
+    let output = match std::process::Command::new("/usr/bin/say")
+        .arg("-v")
+        .arg("?")
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut out = Vec::new();
+    for line in stdout.lines() {
+        let (head, sample) = match line.split_once("# ") {
+            Some((a, b)) => (a.trim_end(), b.to_string()),
+            None => (line.trim_end(), String::new()),
+        };
+        let mut parts: Vec<&str> = head.split_whitespace().collect();
+        if parts.is_empty() {
+            continue;
+        }
+        let locale = parts.pop().unwrap_or("").to_string();
+        let name = parts.join(" ");
+        if name.is_empty() {
+            continue;
+        }
+        out.push((name, locale, sample));
+    }
+    out
 }
 
 /// 1.2.9+ — `inkhaven doctor --tts-test "<text>"`.
@@ -134,10 +149,6 @@ pub fn run_tts_test(project: &Path, text: &str) -> Result<()> {
     println!("project: {}", project.display());
     println!("text:    {text:?}");
 
-    // Load config (best-effort — we want the test to
-    // work outside a real project too).  Config::load
-    // takes the FILE PATH (inkhaven.hjson), not the
-    // project root, so we resolve here.
     let cfg_path = project.join("inkhaven.hjson");
     let cfg = match Config::load(&cfg_path) {
         Ok(c) => {
@@ -159,163 +170,86 @@ pub fn run_tts_test(project: &Path, text: &str) -> Result<()> {
         tts_cfg.enabled, tts_cfg.voice, tts_cfg.speed,
     );
 
-    // Engine init.
-    print!("[1/4] init engine ... ");
-    let mut engine = match tts::Tts::default() {
-        Ok(e) => {
-            println!("OK");
-            e
-        }
-        Err(err) => {
-            println!("FAIL");
-            eprintln!("\nEngine init error: {err}");
-            return Err(crate::error::Error::Config(
-                "TTS engine init failed".into(),
-            ));
-        }
-    };
-
-    // Voice selection.
-    print!("[2/4] pick voice ... ");
-    let voices = engine.voices().unwrap_or_default();
-    let needle = tts_cfg.voice.to_lowercase();
-    let picked = voices
-        .iter()
-        .filter(|v| v.name().to_lowercase().contains(&needle))
-        .max_by_key(|v| {
-            let n = v.name().to_lowercase();
-            let enhanced = n.contains("enhanced") || n.contains("premium");
-            (enhanced as u8, v.name().len() as isize)
-        });
-    match picked {
-        Some(v) => {
-            print!("{} — set_voice ... ", v.name());
-            match engine.set_voice(v) {
-                Ok(_) => println!("OK"),
-                Err(e) => println!("set_voice FAIL: {e:?}"),
-            }
-        }
-        None => {
-            println!("no match for {:?} — using engine default", tts_cfg.voice);
-        }
+    // Platform gate.
+    print!("[1/3] platform ... ");
+    if !cfg!(target_os = "macos") {
+        println!("FAIL — not macOS");
+        return Err(crate::error::Error::Config(
+            "TTS is macOS-only in 1.2.9".into(),
+        ));
     }
+    if !std::path::Path::new("/usr/bin/say").exists() {
+        println!("FAIL — /usr/bin/say not found");
+        return Err(crate::error::Error::Config(
+            "/usr/bin/say not found".into(),
+        ));
+    }
+    println!("macOS + /usr/bin/say OK");
 
-    // Rate.
-    print!("[3/4] set rate ... ");
-    let speed = tts_cfg.speed.max(0.1);
-    let target = (engine.normal_rate() * speed)
-        .clamp(engine.min_rate(), engine.max_rate());
-    println!(
-        "normal={:.3} target={:.3} (clamped to [{:.3}, {:.3}])",
-        engine.normal_rate(),
-        target,
-        engine.min_rate(),
-        engine.max_rate(),
-    );
-    let _ = engine.set_rate(target);
+    // Voice pick.
+    print!("[2/3] pick voice ... ");
+    let voices = list_say_voices();
+    let needle = tts_cfg.voice.to_lowercase();
+    let pick = voices
+        .iter()
+        .filter(|(n, _, _)| n.to_lowercase().contains(&needle))
+        .max_by_key(|(n, _, _)| {
+            let lc = n.to_lowercase();
+            let enhanced = lc.contains("enhanced") || lc.contains("premium");
+            (enhanced as u8, isize::MAX - n.chars().count() as isize)
+        })
+        .map(|(n, _, _)| n.clone());
+    let voice = pick.clone().unwrap_or_else(|| "(system default)".to_string());
+    println!("{voice}");
 
-    // Helper closure: speak, wait min_hold, poll until idle.
-    let speak_and_wait = |engine: &mut tts::Tts,
-                          label: &str,
-                          payload: &str|
-     -> bool {
+    // Speak via subprocess.  Each round is a fresh
+    // `say` process, so engine-reuse bugs don't apply.
+    // Run two rounds back-to-back to confirm.
+    let wpm = ((180.0 * tts_cfg.speed.max(0.1)).round() as i32).clamp(80, 400);
+    println!("[3/3] spawn say (twice, back-to-back at {wpm} wpm):");
+
+    let speak = |label: &str| -> std::io::Result<()> {
         let start = std::time::Instant::now();
-        print!("         {label}: speak ... ");
-        // Soft-reset then speak (matches the TUI path).
-        let _ = engine.stop();
-        std::thread::sleep(std::time::Duration::from_millis(80));
-        let result = engine.speak(payload.to_string(), false);
-        match &result {
-            Ok(id) => println!("Ok({:?})", id),
-            Err(e) => {
-                println!("FAIL: {e:?}");
-                return false;
-            }
+        print!("         {label}: spawn ... ");
+        let mut cmd = std::process::Command::new("/usr/bin/say");
+        if let Some(v) = &pick {
+            cmd.arg("-v").arg(v);
         }
-        let chars = payload.chars().count() as u64;
-        let min_hold_ms = (400 + chars * 80).min(10_000);
-        std::thread::sleep(std::time::Duration::from_millis(min_hold_ms));
-        let hard = start + std::time::Duration::from_secs(10);
-        let mut polls = 0;
-        while std::time::Instant::now() < hard {
-            polls += 1;
-            match engine.is_speaking() {
-                Ok(false) => break,
-                Ok(true) => {}
-                Err(_) => break,
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+        cmd.arg("-r").arg(wpm.to_string());
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
+        let mut child = cmd.spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            stdin.write_all(text.as_bytes())?;
         }
+        let status = child.wait()?;
         println!(
-            "         {label}: elapsed={:.2}s polls={polls}",
+            "exit={} elapsed={:.2}s",
+            status.code().unwrap_or(-1),
             start.elapsed().as_secs_f32(),
         );
-        true
+        Ok(())
     };
-
-    // [4/4] First speak — fresh engine.
-    println!("[4/4] speak (fresh engine):");
-    if !speak_and_wait(&mut engine, "round 1", text) {
+    if let Err(e) = speak("round 1") {
+        eprintln!("         round 1 spawn FAIL: {e}");
         return Err(crate::error::Error::Config(
-            "TTS speak failed".into(),
+            "TTS subprocess failed".into(),
+        ));
+    }
+    if let Err(e) = speak("round 2") {
+        eprintln!("         round 2 spawn FAIL: {e}");
+        return Err(crate::error::Error::Config(
+            "TTS subprocess failed".into(),
         ));
     }
 
-    // [5/5] Second speak — REUSE the same engine.  This
-    // mirrors what the TUI does: greeting at startup
-    // uses the engine, then Ctrl+B S / goodbye reuse it.
-    // If audio plays on round 1 but not round 2, the
-    // bug is engine reuse on this platform.
-    println!("[5/5] speak (reused engine):");
-    let _ = speak_and_wait(&mut engine, "round 2", text);
-
-    // Round 3 — drop the previous engine, init fresh,
-    // speak again.  If audio plays here when round 2
-    // didn't, the platform's AVFoundation backend doesn't
-    // tolerate back-to-back speak() calls on the same Tts
-    // instance — fix is to drop+recreate the engine per
-    // call in the TUI path.
-    drop(engine);
-    println!("[6/6] speak (fresh engine, third try):");
-    let mut engine3 = match tts::Tts::default() {
-        Ok(e) => e,
-        Err(err) => {
-            println!("         re-init FAIL: {err}");
-            return Ok(());
-        }
-    };
-    if let Some(v) = engine3
-        .voices()
-        .unwrap_or_default()
-        .iter()
-        .filter(|v| {
-            v.name()
-                .to_lowercase()
-                .contains(&tts_cfg.voice.to_lowercase())
-        })
-        .max_by_key(|v| {
-            let n = v.name().to_lowercase();
-            let enhanced = n.contains("enhanced") || n.contains("premium");
-            (enhanced as u8, v.name().len() as isize)
-        })
-    {
-        let _ = engine3.set_voice(v);
-    }
-    let _ = engine3.set_rate(target);
-    let _ = speak_and_wait(&mut engine3, "round 3", text);
     println!();
-    println!("If you heard NO audio during the run above, the engine");
-    println!("path is broken on this host.  Common causes:");
-    println!("  - macOS: voice not yet downloaded.  Open System Settings");
-    println!("    → Accessibility → Spoken Content → System Voice → Manage");
-    println!("    Voices and ensure the language for {:?} is installed.",
-        tts_cfg.voice,
-    );
-    println!("  - macOS: audio output muted or routed to a sink that's");
-    println!("    not playing (HDMI, headphones unplugged but still");
-    println!("    selected, etc.).");
-    println!("  - Linux: speech-dispatcher running but no audio output");
-    println!("    backend configured.");
+    println!("Both rounds should have produced audible audio.");
+    println!("If round 1 played but round 2 didn't, the issue is");
+    println!("audio device state — try System Settings → Sound →");
+    println!("Output and verify the active device.");
     Ok(())
 }
 
