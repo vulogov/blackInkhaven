@@ -1421,6 +1421,12 @@ pub(crate) struct App {
     /// same process produces no audio.  See `tui::say`
     /// for the wrapper detail.
     tts_say: super::say::Say,
+    /// 1.2.9+ — session-local override for
+    /// `editor.style_warnings.enabled`.  `Ctrl+V w`
+    /// flips this; `true` forces overlays on regardless
+    /// of HJSON, `false` forces off, `None` (the
+    /// default) defers to the HJSON setting.
+    style_warnings_toggle: Option<bool>,
     /// Cursor into `ai_prompt_history`. None when not navigating;
     /// `Some(i)` when the user is stepping through history. Any
     /// edit (typing, backspace, etc.) clears it so the next Up
@@ -1767,6 +1773,7 @@ impl App {
             shell_history_db: None,
             shell_ctrlb_pending: false,
             tts_say: super::say::Say::default(),
+            style_warnings_toggle: None,
             opened: None,
             secondary: None,
             secondary_focused: false,
@@ -6450,6 +6457,7 @@ impl App {
             A::BundShellSelection => self.toggle_shell_selection_mode(),
             A::BundEditProjectHjson => self.open_hjson_editor(),
             A::TtsReadParagraph => self.tts_read_paragraph(),
+            A::ToggleStyleWarnings => self.toggle_style_warnings(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
@@ -7505,6 +7513,34 @@ impl App {
         self.tts_say.stop();
         self.modal = Modal::None;
         self.status = "TTS: stopped".into();
+    }
+
+    /// 1.2.9+ — Ctrl+B Shift+F action: flip the
+    /// session-local style-warnings toggle.  Three
+    /// states cycle:
+    ///   None  → defer to HJSON default (initial state)
+    ///   true  → force overlays ON regardless of HJSON
+    ///   false → force overlays OFF regardless of HJSON
+    /// The chord only steps between true / false once
+    /// the user has touched it; the None state is
+    /// initial-only.  Status line names the new effective
+    /// state so the user doesn't have to look.
+    fn toggle_style_warnings(&mut self) {
+        let new_state = match self.style_warnings_toggle {
+            None => Some(!self.cfg.editor.style_warnings.enabled),
+            Some(true) => Some(false),
+            Some(false) => Some(true),
+        };
+        self.style_warnings_toggle = new_state;
+        let effective = new_state.unwrap_or(self.cfg.editor.style_warnings.enabled);
+        self.status = if effective {
+            format!(
+                "style warnings: ON · language={} · filter-words enabled",
+                self.cfg.language,
+            )
+        } else {
+            "style warnings: OFF".into()
+        };
     }
 
     /// 1.2.9+ — speak arbitrary text through the same

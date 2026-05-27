@@ -722,6 +722,32 @@ impl super::super::App {
             })
             .collect();
 
+        // 1.2.9+ — style-warning overlays (filter words +
+        // future detectors).  Effective enable flag is
+        // the session toggle if set, else the HJSON
+        // setting.  Per-language list keyed by the
+        // project's top-level `language` field.
+        let style_enabled = self
+            .style_warnings_toggle
+            .unwrap_or(self.cfg.editor.style_warnings.enabled);
+        let style_lang = self.cfg.language.as_str();
+        let style_cfg = &self.cfg.editor.style_warnings;
+        let style_per_row: Vec<Vec<super::super::super::style_warnings::StyleHit>> =
+            current_lines
+                .iter()
+                .map(|line| {
+                    if !style_enabled || !style_cfg.filter_words.enabled {
+                        Vec::new()
+                    } else {
+                        super::super::super::style_warnings::detect_filter_words(
+                            line,
+                            style_lang,
+                            &style_cfg.filter_words.extra_words,
+                        )
+                    }
+                })
+                .collect();
+
         let (cur_row, cur_col) = opened.textarea.cursor();
         let selection = opened.textarea.selection_range();
 
@@ -795,6 +821,10 @@ impl super::super::App {
                 .get(row)
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
+            let style_hits = style_per_row
+                .get(row)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             let mut text_spans = build_row_spans(
                 &highlighted[row],
                 row,
@@ -805,6 +835,7 @@ impl super::super::App {
                 added_flags,
                 row_hits,
                 lex_hits,
+                style_hits,
                 correction_flags,
                 theme,
             );
@@ -917,6 +948,32 @@ impl super::super::App {
             })
             .collect();
 
+        // 1.2.9+ — style-warning overlays (filter words +
+        // future detectors).  Effective enable flag is
+        // the session toggle if set, else the HJSON
+        // setting.  Per-language list keyed by the
+        // project's top-level `language` field.
+        let style_enabled = self
+            .style_warnings_toggle
+            .unwrap_or(self.cfg.editor.style_warnings.enabled);
+        let style_lang = self.cfg.language.as_str();
+        let style_cfg = &self.cfg.editor.style_warnings;
+        let style_per_row: Vec<Vec<super::super::super::style_warnings::StyleHit>> =
+            current_lines
+                .iter()
+                .map(|line| {
+                    if !style_enabled || !style_cfg.filter_words.enabled {
+                        Vec::new()
+                    } else {
+                        super::super::super::style_warnings::detect_filter_words(
+                            line,
+                            style_lang,
+                            &style_cfg.filter_words.extra_words,
+                        )
+                    }
+                })
+                .collect();
+
         let (cur_row, cur_col) = opened.textarea.cursor();
         let selection = opened.textarea.selection_range();
 
@@ -1003,6 +1060,10 @@ impl super::super::App {
                 .get(v.src_row)
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
+            let style_hits = style_per_row
+                .get(v.src_row)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             let mut text_spans = build_visual_row_spans(
                 v,
                 selection,
@@ -1010,6 +1071,7 @@ impl super::super::App {
                 added_flags,
                 row_hits,
                 lex_hits,
+                style_hits,
                 correction_flags,
                 theme,
             );

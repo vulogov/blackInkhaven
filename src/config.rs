@@ -1011,6 +1011,9 @@ pub struct ThemeConfig {
     pub characters_fg: String,
     pub artefacts_fg: String,
     pub notes_underline_fg: String,
+    /// 1.2.9+ — colour for inline filter-word warnings.
+    #[serde(default)]
+    pub style_warning_filter_word_fg: String,
 
     // Search-match overlay in the editor.
     pub search_match_bg: String,
@@ -1084,6 +1087,7 @@ impl Default for ThemeConfig {
             characters_fg: "#f9e2af".into(),
             artefacts_fg: "#fab387".into(),
             notes_underline_fg: "#cdd6f4".into(),
+            style_warning_filter_word_fg: "#f9c44e".into(),
 
             search_match_bg: "#f38ba8".into(),
             search_current_bg: "#f5c2e7".into(),
@@ -1298,6 +1302,64 @@ pub struct EditorConfig {
     /// See `TtsConfig` below for per-knob detail.
     #[serde(default)]
     pub tts: TtsConfig,
+    /// 1.2.9+ — inline style-warning overlays.  See
+    /// `StyleWarningsConfig` for per-detector knobs.
+    #[serde(default)]
+    pub style_warnings: StyleWarningsConfig,
+}
+
+/// 1.2.9+ — `editor.style_warnings.*` HJSON stanza.
+/// Enables inline highlighting of stylistically weak
+/// prose constructs: filter words first (this release),
+/// repeated phrases / show-don't-tell / sentence-rhythm
+/// next.  All detectors are off by default and toggled
+/// individually so a user who only wants filter-word
+/// flagging doesn't get adverb noise.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StyleWarningsConfig {
+    /// Master enable for the in-editor style warning
+    /// overlays.  `false` disables every detector
+    /// regardless of the per-detector flags.  Runtime
+    /// `Ctrl+V w` toggle flips a session-only override
+    /// without rewriting HJSON.
+    pub enabled: bool,
+    /// Filter-word detector: flag intensifier crutches
+    /// + hedges (`just`, `really`, `very`, `просто`,
+    /// `очень`, …).  Built-in lists ship for English,
+    /// Russian, French, German, Spanish; the active list
+    /// is keyed by the project's top-level `language`
+    /// field.  `extra_words` is a user union added on
+    /// top of the language default — empty by default.
+    pub filter_words: FilterWordsConfig,
+}
+
+impl Default for StyleWarningsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            filter_words: FilterWordsConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FilterWordsConfig {
+    pub enabled: bool,
+    /// User-provided words to flag in addition to the
+    /// language defaults.  Case-insensitive; one entry
+    /// per word.  Example: `["totally", "obviously"]`.
+    pub extra_words: Vec<String>,
+}
+
+impl Default for FilterWordsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            extra_words: Vec::new(),
+        }
+    }
 }
 
 /// 1.2.9+ — `editor.tts.*` HJSON stanza.  `Ctrl+B S` in
@@ -1373,6 +1435,7 @@ impl Default for EditorConfig {
             mouse_captured: default_mouse_captured(),
             confirm_quit: default_confirm_quit(),
             tts: TtsConfig::default(),
+            style_warnings: StyleWarningsConfig::default(),
         }
     }
 }

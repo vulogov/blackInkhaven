@@ -161,6 +161,54 @@ Mutually exclusive with `Ctrl+B K` (AI-fullscreen). Toggling
 either turns the other off — there's no "AI + editor split with
 everything else hidden" mode by design.
 
+## Style warnings (filter words)
+
+`Ctrl+B Shift+F` toggles an inline overlay that
+underlines stylistically weak words in amber.  Today
+the overlay flags **filter words** — intensifier
+crutches (`just`, `really`, `very`), hedges (`seemed`,
+`felt`, `appeared`), and generic placeholders
+(`actually`, `basically`).  The writer's job is to
+question whether each flagged word earns its place;
+none of them are always-delete.
+
+Built-in word lists ship for `english`, `russian`,
+`french`, `german`, `spanish`.  The active list is
+selected by the project's top-level `language` field —
+no per-paragraph language switching.  Russian users
+get a curated list of `очень / просто / именно /
+довольно / казалось / выглядел / вдруг / возможно`
++ more.
+
+Add your own:
+
+```hjson
+editor: {
+  style_warnings: {
+    enabled: true
+    filter_words: {
+      enabled: true
+      extra_words: ["lifted", "shifted", "blinked"]
+    }
+  }
+}
+```
+
+Words in `extra_words` apply on top of the language
+default — case-insensitive, exact-word match (no
+substring partials, so `lifted` won't flag
+`shoplifted`).
+
+The overlay composes with other editor highlights:
+selection still reverses, search match still wins, the
+filter underline persists underneath.  No performance
+cost — the detector runs once per render frame on the
+visible rows and the comparison is a `HashSet<String>`
+lookup per Unicode-segmented word.
+
+Future detectors (repeated phrases, show-don't-tell,
+sentence rhythm) will share the same toggle.
+
 ## Read aloud (TTS)
 
 `Ctrl+B S` (in the editor pane) speaks the open paragraph

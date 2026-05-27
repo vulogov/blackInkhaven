@@ -315,6 +315,29 @@ fn lex_style_at(
     })
 }
 
+/// 1.2.9+ — style-warning overlay.  Returns the colour
+/// to patch onto a span when `col` falls inside a hit.
+/// Style is a foreground + underline; we don't override
+/// modifiers other than UNDERLINED so the warning
+/// composes cleanly with bold (added-since-save) /
+/// italic / etc.
+fn style_warning_style_at(
+    hits: &[super::style_warnings::StyleHit],
+    col: usize,
+    theme: &super::theme::Theme,
+) -> Option<Style> {
+    use super::style_warnings::StyleWarningKind;
+    let kind = hits
+        .iter()
+        .find(|h| col >= h.col_start && col < h.col_end)
+        .map(|h| h.kind)?;
+    Some(match kind {
+        StyleWarningKind::FilterWord => Style::default()
+            .fg(theme.style_warning_filter_word_fg)
+            .add_modifier(Modifier::UNDERLINED),
+    })
+}
+
 /// Compute which characters in `current` differ from `saved`, returning a
 /// bool-per-char vector aligned with `current`. Uses the longest common
 /// prefix + suffix method: characters between the two unchanged regions are
@@ -351,6 +374,7 @@ pub fn build_visual_row_spans(
     added: AddedFlags,
     matches: &[RowHit],
     lex_hits: &[super::lexicon::LexHit],
+    style_hits: &[super::style_warnings::StyleHit],
     correction: AddedFlags,
     theme: &super::theme::Theme,
 ) -> Vec<ratatui::text::Span<'static>> {
@@ -394,6 +418,9 @@ pub fn build_visual_row_spans(
             }
             if let Some(lex_style) = lex_style_at(lex_hits, src_col, theme) {
                 style = style.patch(lex_style);
+            }
+            if let Some(sw_style) = style_warning_style_at(style_hits, src_col, theme) {
+                style = style.patch(sw_style);
             }
             // Grammar-correction changes paint the foreground in the
             // theme's grammar_change colour. Applied after lex so a
@@ -441,6 +468,7 @@ pub fn build_row_spans(
     added: AddedFlags,
     matches: &[RowHit],
     lex_hits: &[super::lexicon::LexHit],
+    style_hits: &[super::style_warnings::StyleHit],
     correction: AddedFlags,
     theme: &super::theme::Theme,
 ) -> Vec<ratatui::text::Span<'static>> {
@@ -498,6 +526,9 @@ pub fn build_row_spans(
             }
             if let Some(lex_style) = lex_style_at(lex_hits, src_col, theme) {
                 style = style.patch(lex_style);
+            }
+            if let Some(sw_style) = style_warning_style_at(style_hits, src_col, theme) {
+                style = style.patch(sw_style);
             }
             let is_corrected = correction
                 .and_then(|flags| flags.get(src_col).copied())
