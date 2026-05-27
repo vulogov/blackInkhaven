@@ -11,7 +11,9 @@
 //! See `Documentation/PROPOSALS/CONFIG_TUI.md` for the
 //! full design.
 
+mod annotations;
 mod app;
+mod backup;
 mod help;
 mod hjson_index;
 mod save;

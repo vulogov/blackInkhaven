@@ -33,6 +33,8 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use serde_json::Value;
 
 use crate::config::Config;
+use crate::config_tui::annotations::Annotations;
+use crate::config_tui::backup::{self, BackupEntry};
 use crate::config_tui::help::HelpIndex;
 use crate::config_tui::hjson_index::{self, HjsonIndex};
 use crate::config_tui::save::{self, Edit, EditKind};
@@ -103,6 +105,8 @@ struct App {
     /// session — used to flag the restart-required
     /// overlay on exit.
     saved_at_least_once: bool,
+    /// Phase 3 — sidecar annotation store.
+    annotations: Annotations,
 }
 
 enum Modal {
@@ -122,6 +126,32 @@ enum Modal {
     },
     DiscardConfirm {
         unsaved: usize,
+    },
+    /// Phase 3 — `Ctrl+R` rollback picker.
+    Rollback {
+        entries: Vec<BackupEntry>,
+        cursor: usize,
+    },
+    /// Phase 3 — confirm before deleting a backup.
+    RollbackDelete {
+        entry: BackupEntry,
+    },
+    /// Phase 3 — preview a backup file's contents.
+    RollbackPreview {
+        entry: BackupEntry,
+        body: String,
+        scroll: usize,
+    },
+    /// Phase 3 — `Ctrl+I` comment inspector.
+    Inspector {
+        title: String,
+        comments: Option<String>,
+        annotation: Option<String>,
+    },
+    /// Phase 3 — `Ctrl+A` annotation editor.
+    Annotate {
+        path: String,
+        buffer: String,
     },
 }
 
@@ -171,6 +201,8 @@ impl App {
             )
         };
 
+        let annotations = Annotations::load(&project_root);
+
         Ok(Self {
             project_root,
             cfg_path: cfg_path.to_path_buf(),
@@ -186,6 +218,7 @@ impl App {
             modal: Modal::None,
             status,
             saved_at_least_once: false,
+            annotations,
         })
     }
 
@@ -303,8 +336,196 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
         }
         return Ok(false);
     }
-    if matches!(app.modal, Modal::Help { .. } | Modal::Saved { .. }) {
+    if matches!(
+        app.modal,
+        Modal::Help { .. } | Modal::Saved { .. } | Modal::Inspector { .. }
+    ) {
         app.modal = Modal::None;
+        return Ok(false);
+    }
+    if let Modal::Annotate { path, buffer } = &mut app.modal {
+        match key.code {
+            KeyCode::Esc => {
+                app.modal = Modal::None;
+                app.status = "annotation cancelled".into();
+            }
+            KeyCode::Enter => {
+                let path = path.clone();
+                let text = buffer.clone();
+                app.annotations.set(&path, &text);
+                let outcome = app.annotations.save(&app.project_root);
+                app.modal = Modal::None;
+                app.status = match outcome {
+                    Ok(()) => {
+                        if text.trim().is_empty() {
+                            format!("annotation cleared for {path}")
+                        } else {
+                            format!("annotation saved for {path}")
+                        }
+                    }
+                    Err(e) => format!("annotation save FAILED: {e:#}"),
+                };
+            }
+            KeyCode::Backspace => {
+                buffer.pop();
+            }
+            KeyCode::Char(c)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                buffer.push(c);
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+    if let Modal::Rollback { entries, cursor } = &mut app.modal {
+        match key.code {
+            KeyCode::Esc => {
+                app.modal = Modal::None;
+            }
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < entries.len() {
+                    *cursor += 1;
+                }
+            }
+            KeyCode::PageUp => {
+                *cursor = cursor.saturating_sub(5);
+            }
+            KeyCode::PageDown => {
+                *cursor = (*cursor + 5).min(entries.len().saturating_sub(1));
+            }
+            KeyCode::Home => {
+                *cursor = 0;
+            }
+            KeyCode::End => {
+                *cursor = entries.len().saturating_sub(1);
+            }
+            KeyCode::Enter => {
+                let Some(entry) = entries.get(*cursor).cloned() else {
+                    app.modal = Modal::None;
+                    return Ok(false);
+                };
+                let outcome = stage_rollback(app, &entry);
+                match outcome {
+                    Ok(staged) => {
+                        app.modal = Modal::None;
+                        app.status = format!(
+                            "rollback staged {staged} change{} from {} — Ctrl+S to commit",
+                            if staged == 1 { "" } else { "s" },
+                            entry.filename,
+                        );
+                    }
+                    Err(e) => {
+                        app.status = format!("rollback failed: {e:#}");
+                    }
+                }
+            }
+            KeyCode::Char('v') | KeyCode::Char('V') => {
+                let Some(entry) = entries.get(*cursor).cloned() else {
+                    return Ok(false);
+                };
+                match backup::read(&entry) {
+                    Ok(body) => {
+                        app.modal = Modal::RollbackPreview {
+                            entry,
+                            body,
+                            scroll: 0,
+                        };
+                    }
+                    Err(e) => {
+                        app.status = format!("preview failed: {e:#}");
+                    }
+                }
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                let Some(entry) = entries.get(*cursor).cloned() else {
+                    return Ok(false);
+                };
+                app.modal = Modal::RollbackDelete { entry };
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+    if let Modal::RollbackDelete { entry } = &app.modal {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                let entry = entry.clone();
+                match backup::delete(&entry) {
+                    Ok(()) => {
+                        app.status = format!("deleted backup {}", entry.filename);
+                    }
+                    Err(e) => {
+                        app.status = format!("delete failed: {e:#}");
+                    }
+                }
+                // Refresh the picker.
+                match backup::list(&app.project_root) {
+                    Ok(entries) if !entries.is_empty() => {
+                        app.modal = Modal::Rollback { entries, cursor: 0 };
+                    }
+                    _ => {
+                        app.modal = Modal::None;
+                    }
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                // Return to the picker.
+                match backup::list(&app.project_root) {
+                    Ok(entries) if !entries.is_empty() => {
+                        app.modal = Modal::Rollback { entries, cursor: 0 };
+                    }
+                    _ => {
+                        app.modal = Modal::None;
+                    }
+                }
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+    if let Modal::RollbackPreview { body, scroll, .. } = &mut app.modal {
+        let total = body.lines().count();
+        match key.code {
+            KeyCode::Esc => {
+                // Back to the picker.
+                match backup::list(&app.project_root) {
+                    Ok(entries) if !entries.is_empty() => {
+                        app.modal = Modal::Rollback { entries, cursor: 0 };
+                    }
+                    _ => {
+                        app.modal = Modal::None;
+                    }
+                }
+            }
+            KeyCode::Up => {
+                *scroll = scroll.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                if *scroll + 1 < total {
+                    *scroll += 1;
+                }
+            }
+            KeyCode::PageUp => {
+                *scroll = scroll.saturating_sub(20);
+            }
+            KeyCode::PageDown => {
+                *scroll = (*scroll + 20).min(total.saturating_sub(1));
+            }
+            KeyCode::Home => {
+                *scroll = 0;
+            }
+            KeyCode::End => {
+                *scroll = total.saturating_sub(1);
+            }
+            _ => {}
+        }
         return Ok(false);
     }
     if let Modal::SaveConfirm { edits } = &app.modal {
@@ -370,8 +591,143 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
         return Ok(false);
     }
 
+    // Rollback picker.
+    if key.code == KeyCode::Char('r')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+    {
+        open_rollback(app);
+        return Ok(false);
+    }
+
+    // Comment inspector.
+    if key.code == KeyCode::Char('i')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+    {
+        open_inspector(app);
+        return Ok(false);
+    }
+
+    // Annotation editor.
+    if key.code == KeyCode::Char('a')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+    {
+        open_annotation_editor(app);
+        return Ok(false);
+    }
+
     static_chord_dispatch(app, key);
     Ok(false)
+}
+
+fn open_rollback(app: &mut App) {
+    match backup::list(&app.project_root) {
+        Ok(entries) if !entries.is_empty() => {
+            app.modal = Modal::Rollback { entries, cursor: 0 };
+        }
+        Ok(_) => {
+            app.status = format!(
+                "rollback: no backups yet · save once to populate {}/.config-backups/",
+                app.project_root.display(),
+            );
+        }
+        Err(e) => {
+            app.status = format!("rollback list failed: {e:#}");
+        }
+    }
+}
+
+fn open_inspector(app: &mut App) {
+    let Some(node) = app.current_node() else {
+        return;
+    };
+    let path = node.path.clone();
+    let title = if path.is_empty() {
+        "<root>".to_string()
+    } else {
+        path.clone()
+    };
+    // Pull comments span from the byte-range index
+    // (Phase 2 foundation).
+    let comments_text = app.index.as_ref().and_then(|idx| {
+        // Prefer leaf comments; fall back to stanza.
+        if let Some(leaf) = idx.leaves.get(&path) {
+            leaf.leading_comments_range
+                .clone()
+                .map(|r| idx.source[r].to_string())
+        } else if let Some(stanza) = idx.stanzas.get(&path) {
+            stanza
+                .leading_comments_range
+                .clone()
+                .map(|r| idx.source[r].to_string())
+        } else {
+            None
+        }
+    });
+    let annotation = app.annotations.get(&path).map(str::to_owned);
+    app.modal = Modal::Inspector {
+        title,
+        comments: comments_text,
+        annotation,
+    };
+}
+
+fn open_annotation_editor(app: &mut App) {
+    let Some(node) = app.current_node() else {
+        return;
+    };
+    let path = node.path.clone();
+    if path.is_empty() {
+        app.status = "annotation: select a field first".into();
+        return;
+    }
+    let buffer = app
+        .annotations
+        .get(&path)
+        .map(str::to_owned)
+        .unwrap_or_default();
+    app.modal = Modal::Annotate { path, buffer };
+}
+
+fn stage_rollback(app: &mut App, entry: &BackupEntry) -> Result<usize> {
+    let raw = backup::read(entry)?;
+    let backup_value =
+        serde_hjson::from_str::<Value>(&raw).context("parse backup HJSON")?;
+    let backup_index = hjson_index::parse(&raw).ok();
+
+    // Walk every leaf in the backup and stage it into
+    // the working schema.  Anything in the backup but
+    // not in the current schema is reported but not
+    // staged (unknown fields can't be edited).
+    let mut count: usize = 0;
+    stage_from_value(app, "", &backup_value, &mut count);
+    // Refresh original-source comparisons: backup's
+    // own index becomes the basis for the next save
+    // diff so unchanged-from-backup leaves don't show
+    // as "changed" against the live file.
+    if let Some(idx) = backup_index {
+        app.index = Some(idx);
+    }
+    Ok(count)
+}
+
+fn stage_from_value(app: &mut App, prefix: &str, value: &Value, count: &mut usize) {
+    if let Value::Object(map) = value {
+        for (key, child) in map {
+            let path = if prefix.is_empty() {
+                key.clone()
+            } else {
+                format!("{prefix}.{key}")
+            };
+            stage_from_value(app, &path, child, count);
+        }
+        return;
+    }
+    // Scalar / array leaf — stage if the schema knows
+    // the path.
+    if find_mut(&mut app.schema, prefix).is_some() {
+        app.stage(prefix, value.clone());
+        *count += 1;
+    }
 }
 
 fn static_chord_dispatch(app: &mut App, key: KeyEvent) {
@@ -590,6 +946,25 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
         Modal::DiscardConfirm { unsaved } => {
             draw_discard_confirm(f, size, *unsaved);
         }
+        Modal::Rollback { entries, cursor } => {
+            draw_rollback_picker(f, size, entries, *cursor);
+        }
+        Modal::RollbackDelete { entry } => {
+            draw_rollback_delete_confirm(f, size, entry);
+        }
+        Modal::RollbackPreview { entry, body, scroll } => {
+            draw_rollback_preview(f, size, entry, body, *scroll);
+        }
+        Modal::Inspector {
+            title,
+            comments,
+            annotation,
+        } => {
+            draw_inspector(f, size, title, comments.as_deref(), annotation.as_deref());
+        }
+        Modal::Annotate { path, buffer } => {
+            draw_annotation_editor(f, size, path, buffer);
+        }
     }
 }
 
@@ -676,13 +1051,20 @@ fn draw_tree_pane(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
         let indent = "  ".repeat(*depth);
         let selected = i == app.cursor;
         let changed = app.changed_paths.contains(&node.path);
-        let chip = if changed {
-            "✱ "
+        let annotated = app.annotations.get(&node.path).is_some();
+        // Two-character chip: state + annotation
+        // marker.  Stage/configured win the first
+        // slot; the second slot carries the `+`
+        // annotation indicator.
+        let state = if changed {
+            "✱"
         } else if node.is_leaf() && node.source == ValueSource::Configured {
-            "● "
+            "●"
         } else {
-            "  "
+            " "
         };
+        let ann = if annotated { "+" } else { " " };
+        let chip = format!("{state}{ann}");
         let style = if selected {
             Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
         } else if changed {
@@ -810,7 +1192,7 @@ fn draw_detail_pane(f: &mut ratatui::Frame, area: Rect, app: &App) {
 fn draw_status(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let n = app.rows().len();
     let pos = format!("{} / {}", app.cursor + 1, n.max(1));
-    let hints = " ↑↓ · Enter edit/expand · e edit · r reset · Ctrl+S save · ? help · Esc / Ctrl+Q quit";
+    let hints = " ↑↓ · Enter edit/expand · e edit · r reset · Ctrl+S save · Ctrl+R rollback · Ctrl+I inspect · Ctrl+A annotate · ? help · Esc quit";
     let dim = Style::default().add_modifier(Modifier::DIM);
     let spans = vec![
         Span::styled(format!(" {pos} "), dim),
@@ -996,6 +1378,260 @@ fn draw_discard_confirm(f: &mut ratatui::Frame, host: Rect, unsaved: usize) {
         Line::from(Span::styled(
             "    y / Enter discard + quit · n / Esc keep editing",
             Style::default().add_modifier(Modifier::DIM),
+        )),
+    ];
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+// ── Phase 3 modal painters ────────────────────────────
+
+fn draw_rollback_picker(
+    f: &mut ratatui::Frame,
+    host: Rect,
+    entries: &[BackupEntry],
+    cursor: usize,
+) {
+    let w = host.width.saturating_sub(8).min(96);
+    let h = (entries.len() as u16 + 6).min(host.height.saturating_sub(4));
+    let x = host.x + host.width.saturating_sub(w) / 2;
+    let y = host.y + host.height.saturating_sub(h) / 2;
+    let rect = Rect { x, y, width: w, height: h };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Config rollback — {} backups ", entries.len()))
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let now = chrono::Local::now();
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let mut lines: Vec<Line<'_>> = Vec::with_capacity(entries.len() + 2);
+    for (i, entry) in entries.iter().enumerate() {
+        let selected = i == cursor;
+        let style = if selected {
+            Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let marker = if selected { "▶" } else { " " };
+        let rel = backup::relative_time(entry, now);
+        let abs = entry
+            .timestamp
+            .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+            .unwrap_or_else(|| entry.filename.clone());
+        let size = if entry.size_bytes < 1024 {
+            format!("{} B", entry.size_bytes)
+        } else {
+            format!("{:.1} KB", entry.size_bytes as f64 / 1024.0)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {marker}  "), bold),
+            Span::styled(abs, style),
+            Span::styled(format!("   ({rel}, {size})"), dim),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " Enter restore (stages — Ctrl+S to commit) · v preview · d delete · Esc back",
+        dim,
+    )));
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn draw_rollback_delete_confirm(
+    f: &mut ratatui::Frame,
+    host: Rect,
+    entry: &BackupEntry,
+) {
+    let w = host.width.saturating_sub(8).min(72);
+    let h: u16 = 8;
+    let x = host.x + host.width.saturating_sub(w) / 2;
+    let y = host.y + host.height.saturating_sub(h) / 2;
+    let rect = Rect { x, y, width: w, height: h };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Delete backup? ")
+        .border_style(
+            Style::default()
+                .fg(Color::Red)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("    "),
+            Span::styled(entry.filename.clone(), Style::default().add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "    This cannot be undone.",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "    y / Enter delete · n / Esc cancel",
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+    ];
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_rollback_preview(
+    f: &mut ratatui::Frame,
+    host: Rect,
+    entry: &BackupEntry,
+    body: &str,
+    scroll: usize,
+) {
+    let w = host.width.saturating_sub(4).min(120);
+    let h = host.height.saturating_sub(2).min(40);
+    let x = host.x + host.width.saturating_sub(w) / 2;
+    let y = host.y + host.height.saturating_sub(h) / 2;
+    let rect = Rect { x, y, width: w, height: h };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Preview — {} ", entry.filename))
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let visible = inner.height.saturating_sub(2) as usize;
+    let mut lines: Vec<Line<'_>> = body
+        .lines()
+        .skip(scroll)
+        .take(visible)
+        .map(|l| Line::from(Span::raw(l.to_string())))
+        .collect();
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (empty file)",
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+    }
+    let total = body.lines().count();
+    let last_line = (scroll + visible).min(total);
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!(
+            " lines {}-{} of {} · ↑↓ PgUp PgDn Home End scroll · Esc back",
+            scroll + 1,
+            last_line.max(scroll + 1),
+            total,
+        ),
+        Style::default().add_modifier(Modifier::DIM),
+    )));
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn draw_inspector(
+    f: &mut ratatui::Frame,
+    host: Rect,
+    title: &str,
+    comments: Option<&str>,
+    annotation: Option<&str>,
+) {
+    let w = host.width.saturating_sub(8).min(96);
+    let h = host.height.saturating_sub(4).min(28);
+    let x = host.x + host.width.saturating_sub(w) / 2;
+    let y = host.y + host.height.saturating_sub(h) / 2;
+    let rect = Rect { x, y, width: w, height: h };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Inspector — {title} "))
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    lines.push(Line::from(Span::styled(" Comments in inkhaven.hjson:", bold)));
+    match comments {
+        Some(text) if !text.trim().is_empty() => {
+            for line in text.lines() {
+                lines.push(Line::from(Span::raw(format!("   {line}"))));
+            }
+        }
+        _ => {
+            lines.push(Line::from(Span::styled(
+                "   (no comments attached to this field)",
+                dim,
+            )));
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(" Annotation:", bold)));
+    match annotation {
+        Some(text) if !text.trim().is_empty() => {
+            for line in text.lines() {
+                lines.push(Line::from(Span::raw(format!("   {line}"))));
+            }
+        }
+        _ => {
+            lines.push(Line::from(Span::styled(
+                "   (no annotation — Ctrl+A to add one)",
+                dim,
+            )));
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " any key closes ",
+        dim,
+    )));
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn draw_annotation_editor(
+    f: &mut ratatui::Frame,
+    host: Rect,
+    path: &str,
+    buffer: &str,
+) {
+    let w = host.width.saturating_sub(8).min(96);
+    let h: u16 = 8;
+    let x = host.x + host.width.saturating_sub(w) / 2;
+    let y = host.y + host.height.saturating_sub(h) / 2;
+    let rect = Rect { x, y, width: w, height: h };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Annotate — {path} "))
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let lines = vec![
+        Line::from(""),
+        Line::from(format!("    {buffer}│")),
+        Line::from(""),
+        Line::from(Span::styled(
+            "    Free-text note attached to this field.  Empty input clears.",
+            dim,
+        )),
+        Line::from(Span::styled(
+            "    Enter saves · Esc cancels",
+            dim,
         )),
     ];
     f.render_widget(Paragraph::new(lines), inner);
