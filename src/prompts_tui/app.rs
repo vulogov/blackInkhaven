@@ -199,16 +199,20 @@ struct AiRuntime {
 
 #[derive(Debug)]
 pub(super) struct Send {
-    /// What the user typed into the AI prompt input
-    /// — preserved for history walking + the
-    /// "user typed:" callout in the pane title.
-    pub user_input: String,
-    /// The **rendered** text the LLM actually
-    /// received as the user message (editor body
-    /// with `{{selection}}` substituted).  Shown
-    /// under `▸ user` in the AI pane so what-you-
-    /// see-is-what-was-sent.
-    pub rendered_user_message: String,
+    /// Name of the prompt being analysed at send
+    /// time.
+    pub prompt_name: Option<String>,
+    /// Snapshot of the editor body — the template
+    /// being put under review.  Placeholders like
+    /// `{{selection}}` are NOT substituted; the
+    /// LLM sees them verbatim so it can comment on
+    /// their use.
+    pub template_under_review: String,
+    /// The analysis instruction — either what the
+    /// user typed into the AI prompt input or the
+    /// embedded `DEFAULT_ANALYSIS_REQUEST` when
+    /// the input was empty.
+    pub analysis_request: String,
     pub response: String,
     pub started_at: Instant,
     pub duration: Option<Duration>,
@@ -423,30 +427,53 @@ fn build_ai_runtime(project_root: &Path) -> Option<AiRuntime> {
     })
 }
 
-/// 1.2.11+ — render an editor body as a template.
-/// Substitutes `{{selection}}` with the user input
-/// and `{{context}}` with empty.  If neither
-/// placeholder is present, appends the input on a
-/// fresh paragraph (so templates without
-/// placeholders still have something to operate on).
-fn render_template(editor_body: &str, ai_input: &str) -> String {
-    let body = editor_body;
-    let has_selection = body.contains("{{selection}}");
-    let has_context = body.contains("{{context}}");
-    if has_selection || has_context {
-        let mut out = body.to_string();
-        if has_selection {
-            out = out.replace("{{selection}}", ai_input);
-        }
-        if has_context {
-            out = out.replace("{{context}}", "");
-        }
-        out
-    } else if ai_input.trim().is_empty() {
-        body.to_string()
+/// 1.2.11+ — system prompt that frames the LLM as
+/// a prompt-engineering reviewer.  The user pane
+/// sends a template + an analysis request; the
+/// LLM does NOT execute the template — it reviews
+/// it as prompt-engineering work.
+const ANALYSIS_SYSTEM_PROMPT: &str = "\
+You are a prompt-engineering reviewer.  The user is editing prompt \
+templates that another LLM will execute later, and they're asking \
+you to analyze, critique, or improve their drafts.
+
+Templates may contain placeholders like `{{selection}}` and \
+`{{context}}` — these are substituted at runtime by the inkhaven \
+editor (with the user's selected prose and surrounding hierarchical \
+context, respectively).  Do NOT try to execute the template yourself; \
+review it as a piece of prompt-engineering work.
+
+Be specific.  Quote phrases from the template when you critique them.  \
+Suggest concrete improvements.  When the user asks a yes/no question \
+about the template, answer it directly first, then justify.";
+
+/// Default analysis request used when the AI prompt
+/// input is empty — so the user can press Enter on
+/// any prompt and get a baseline critique.
+const DEFAULT_ANALYSIS_REQUEST: &str = "\
+Critique this prompt template.  Identify its strengths and weaknesses, \
+comment on whether the placeholders are used effectively, and suggest \
+one or two concrete improvements.";
+
+/// Compose the user message the LLM receives.  The
+/// template body is presented as a review target
+/// inside fenced markers; the analysis request
+/// follows.  Placeholders are passed through
+/// untouched so the reviewer can comment on them.
+fn build_analysis_request(template_body: &str, instruction: &str) -> String {
+    let instruction = if instruction.trim().is_empty() {
+        DEFAULT_ANALYSIS_REQUEST
     } else {
-        format!("{body}\n\n{ai_input}")
-    }
+        instruction.trim()
+    };
+    format!(
+        "--- PROMPT TEMPLATE UNDER REVIEW ---\n\
+         {template_body}\n\
+         --- END TEMPLATE ---\n\
+         \n\
+         Analysis request:\n\
+         {instruction}",
+    )
 }
 
 fn build_baseline(library: &PromptLibrary) -> std::collections::HashMap<String, String> {
@@ -934,15 +961,27 @@ fn send_ai_prompt(app: &mut App) {
             "prompt body is empty — focus the editor pane and write a prompt first".into();
         return;
     }
-    let user_input = app.ai_input.as_str().trim().to_string();
-    let rendered = render_template(&editor_body, &user_input);
+    let prompt_name = app
+        .library
+        .prompts
+        .get(app.cursor)
+        .map(|p| p.name.clone());
+    let raw_input = app.ai_input.as_str().to_string();
+    let instruction = raw_input.trim();
+    let analysis_request = if instruction.is_empty() {
+        DEFAULT_ANALYSIS_REQUEST.to_string()
+    } else {
+        instruction.to_string()
+    };
+    let rendered = build_analysis_request(&editor_body, &analysis_request);
 
-    // Push input onto the history (deduped against
-    // the previous most-recent entry).
-    if !user_input.is_empty()
-        && app.ai_history.last().map(String::as_str) != Some(user_input.as_str())
+    // Push the typed input onto the history
+    // (deduped against the previous most-recent
+    // entry).  Empty inputs don't get a row.
+    if !instruction.is_empty()
+        && app.ai_history.last().map(String::as_str) != Some(instruction)
     {
-        app.ai_history.push(user_input.clone());
+        app.ai_history.push(instruction.to_string());
     }
     app.ai_history_cursor = None;
     app.ai_input.clear();
@@ -950,28 +989,25 @@ fn send_ai_prompt(app: &mut App) {
     let rx = spawn_chat_stream(
         rt.client.client.clone(),
         rt.model.clone(),
-        None,
+        Some(ANALYSIS_SYSTEM_PROMPT.to_string()),
         Vec::new(),
-        rendered.clone(),
+        rendered,
     );
     app.last_send = Some(Send {
-        user_input,
-        rendered_user_message: rendered.clone(),
+        prompt_name,
+        template_under_review: editor_body,
+        analysis_request,
         response: String::new(),
         started_at: Instant::now(),
         duration: None,
         failed: false,
     });
-    // Use the editor_body local in a no-op so it
-    // stays in scope until the Send is built —
-    // future fields may want to record it
-    // explicitly.
-    let _ = editor_body;
     app.inference = Some(Inference {
         rx,
         started_at: Instant::now(),
     });
-    app.status = format!("sending to {} ({})…", rt.provider, rt.model);
+    app.status =
+        format!("analysing prompt via {} ({})…", rt.provider, rt.model);
 }
 
 /// Drain any StreamMsg events that arrived since the
@@ -1190,10 +1226,15 @@ fn editor_help_body() -> String {
         "   Ctrl+Q / Esc      quit (confirm if unsaved)",
         "   Tab / Shift+Tab   cycle pane focus",
         "",
-        " Template variables (recognised by the send pipeline):",
-        "   {{selection}}    replaced with the AI prompt input",
-        "   {{context}}      replaced with empty (no hierarchical",
-        "                    context inside this standalone editor)",
+        " Template variables — DOCUMENTATION ONLY in this editor.",
+        " These placeholders are NOT substituted when you send the",
+        " template to the reviewer LLM; the reviewer sees them as",
+        " literal text and comments on them as part of the critique.",
+        "",
+        "   {{selection}}    inkhaven substitutes the selected",
+        "                    prose at runtime in the main editor",
+        "   {{context}}      inkhaven substitutes the hierarchical",
+        "                    book/chapter/subchapter context",
     ]
     .join("\n")
 }
@@ -1206,22 +1247,34 @@ fn ai_prompt_help_body() -> String {
         "   Left / Right / Home / End / Ctrl+A / Ctrl+E",
         "                  cursor movement",
         "   Up / Down       history walk (in-session)",
-        "   Enter           SEND",
+        "   Enter           SEND for analysis",
         "   Ctrl+L          clear input",
         "   Ctrl+K          clear input + clear history",
         "",
-        " Send pipeline:",
-        "   1. Render the editor body as a template.",
-        "   2. Replace {{selection}} with this input.",
-        "   3. Replace {{context}} with empty.",
-        "   4. If the template has neither placeholder,",
-        "      append the input on a fresh paragraph.",
-        "   5. Send the rendered text as a USER message",
-        "      to the configured LLM (no system prompt).",
-        "   6. Stream the response into the AI pane.",
+        " What gets sent — the LLM acts as a prompt",
+        " reviewer, NOT as an executor of your template.",
         "",
-        " Single-shot per send (Q5) — each Enter is an",
-        " independent assessment; there's no conversation",
+        "   system  → a fixed framing that tells the LLM",
+        "            it's reviewing a prompt template,",
+        "            not running one.  Placeholders like",
+        "            {{selection}} are explained as",
+        "            runtime substitutions inkhaven",
+        "            handles later.",
+        "   user    → fenced template body (your editor",
+        "            pane verbatim) + your typed",
+        "            analysis request.  Placeholders are",
+        "            NOT substituted — the reviewer sees",
+        "            them as-is so it can comment on",
+        "            their use.",
+        "",
+        " Empty AI prompt input — Enter still works.  A",
+        " sensible default request kicks in:",
+        "   \"Critique this prompt template.  Identify",
+        "    strengths and weaknesses, comment on",
+        "    placeholder use, suggest improvements.\"",
+        "",
+        " Single-shot per send — each Enter is an",
+        " independent review; there's no conversation",
         " history between sends.",
     ]
     .join("\n")
@@ -1490,7 +1543,29 @@ fn draw_ai_pane(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let Some(send) = app.last_send.as_ref() else {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "  (no send yet — type into the AI prompt and press Enter)",
+            "  (no analysis yet)",
+            dim,
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Tab to the AI prompt input.  Press Enter to ask",
+            dim,
+        )));
+        lines.push(Line::from(Span::styled(
+            "  the LLM to critique the focused prompt template.",
+            dim,
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Empty input → default critique request.",
+            dim,
+        )));
+        lines.push(Line::from(Span::styled(
+            "  Typed input → that text becomes the analysis",
+            dim,
+        )));
+        lines.push(Line::from(Span::styled(
+            "  request (e.g. \"is this clear?\", \"shorten\").",
             dim,
         )));
         f.render_widget(
@@ -1500,31 +1575,29 @@ fn draw_ai_pane(f: &mut ratatui::Frame, area: Rect, app: &App) {
         return;
     };
 
-    // User message section — show what the LLM
-    // actually received, not just the user's typed
-    // input.  The rendered template substitutes
-    // `{{selection}}` so the user can see how
-    // their input got merged into the prompt body.
-    lines.push(Line::from(vec![
-        Span::styled(" ▸ user", bold),
-        Span::styled(
-            if send.user_input.trim().is_empty() {
-                "  (no input — template sent as-is)".to_string()
-            } else {
-                format!("  (typed: {})", trim_one_line(&send.user_input, 48))
-            },
-            dim,
-        ),
-    ]));
-    if send.rendered_user_message.trim().is_empty() {
+    // Three sections — what the reviewer LLM was
+    // shown.  Template under review (the editor
+    // body at send time) + analysis request (the
+    // user's instruction, or the embedded default).
+    let header = match send.prompt_name.as_deref() {
+        Some(n) => format!(" ▸ template under review · `{n}`"),
+        None => " ▸ template under review".to_string(),
+    };
+    lines.push(Line::from(Span::styled(header, bold)));
+    if send.template_under_review.trim().is_empty() {
         lines.push(Line::from(Span::styled(
-            "   (empty payload)",
+            "   (empty)",
             dim,
         )));
     } else {
-        for body in send.rendered_user_message.lines() {
+        for body in send.template_under_review.lines() {
             lines.push(Line::from(format!("   {body}")));
         }
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(" ▸ analysis request", bold)));
+    for body in send.analysis_request.lines() {
+        lines.push(Line::from(format!("   {body}")));
     }
     lines.push(Line::from(""));
 
@@ -1982,29 +2055,6 @@ fn draw_welcome_overlay(f: &mut ratatui::Frame, host: Rect, app: &App) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Collapse newlines + tabs to single spaces and
-/// clip to `max_chars` for an inline single-line
-/// preview (used by the "typed:" callout in the AI
-/// pane header).
-fn trim_one_line(text: &str, max_chars: usize) -> String {
-    let collapsed: String = text
-        .chars()
-        .map(|c| if c == '\n' || c == '\r' || c == '\t' { ' ' } else { c })
-        .collect();
-    let trimmed = collapsed.trim();
-    let chars: Vec<char> = trimmed.chars().collect();
-    if chars.len() > max_chars {
-        let mut out: String = chars
-            .into_iter()
-            .take(max_chars.saturating_sub(1))
-            .collect();
-        out.push('…');
-        out
-    } else {
-        trimmed.to_string()
-    }
-}
-
 fn border_style(focused: bool) -> Style {
     if focused {
         Style::default()
@@ -2099,49 +2149,56 @@ mod tests {
     }
 
     #[test]
-    fn render_template_substitutes_selection_placeholder() {
-        let body = "Critique the following:\n\n{{selection}}";
-        let out = render_template(body, "She walked away.");
-        assert!(out.contains("Critique the following"));
-        assert!(out.contains("She walked away."));
-        assert!(!out.contains("{{selection}}"));
+    fn analysis_request_includes_template_verbatim_with_placeholders() {
+        // Placeholders MUST appear in the output —
+        // the reviewer LLM needs to see them to
+        // comment on their use.
+        let body = "Tighten:\n\n{{selection}}\n\nContext: {{context}}";
+        let out = build_analysis_request(body, "is this clear?");
+        assert!(out.contains("{{selection}}"));
+        assert!(out.contains("{{context}}"));
+        assert!(out.contains("Tighten:"));
+        assert!(out.contains("is this clear?"));
     }
 
     #[test]
-    fn render_template_clears_context_placeholder() {
-        let body = "Read in context: {{context}}. Critique: {{selection}}";
-        let out = render_template(body, "test");
-        assert!(!out.contains("{{context}}"));
-        assert!(!out.contains("{{selection}}"));
-        assert!(out.contains("test"));
+    fn analysis_request_uses_fenced_markers() {
+        let out = build_analysis_request("body text", "instruction");
+        assert!(out.contains("--- PROMPT TEMPLATE UNDER REVIEW ---"));
+        assert!(out.contains("--- END TEMPLATE ---"));
+        assert!(out.contains("Analysis request:"));
     }
 
     #[test]
-    fn render_template_appends_when_no_placeholders() {
-        let body = "Translate to French.";
-        let out = render_template(body, "Hello, world.");
-        // No placeholders → input gets appended on a
-        // fresh paragraph.
-        assert!(out.starts_with("Translate to French."));
-        assert!(out.contains("Hello, world."));
-        assert!(out.contains("\n\n"));
+    fn analysis_request_falls_back_to_default_when_input_empty() {
+        let out = build_analysis_request("body", "");
+        assert!(out.contains(DEFAULT_ANALYSIS_REQUEST));
     }
 
     #[test]
-    fn render_template_no_input_no_appends() {
-        let body = "Stand-alone prompt with no slot.";
-        let out = render_template(body, "");
-        assert_eq!(out, body);
+    fn analysis_request_falls_back_to_default_on_whitespace_only_input() {
+        let out = build_analysis_request("body", "    \t  \n  ");
+        assert!(out.contains(DEFAULT_ANALYSIS_REQUEST));
     }
 
     #[test]
-    fn render_template_no_input_substitutes_with_empty() {
-        // Template has a {{selection}} but the user
-        // sent an empty input — substitute with empty
-        // string (don't bail).
-        let body = "Critique: {{selection}}";
-        let out = render_template(body, "");
-        assert!(!out.contains("{{selection}}"));
+    fn analysis_request_trims_user_instruction() {
+        // Surrounding whitespace gets stripped so the
+        // instruction lands cleanly under the
+        // "Analysis request:" header.
+        let out = build_analysis_request("body", "  rewrite to be concise  ");
+        assert!(out.contains("Analysis request:\nrewrite to be concise"));
+        assert!(!out.contains("Analysis request:\n  rewrite"));
+    }
+
+    #[test]
+    fn system_prompt_frames_reviewer_role() {
+        // Sanity check: the system prompt should
+        // explicitly tell the LLM not to execute the
+        // template — that's the whole shift in
+        // workflow this fix is about.
+        assert!(ANALYSIS_SYSTEM_PROMPT.contains("Do NOT try to execute"));
+        assert!(ANALYSIS_SYSTEM_PROMPT.contains("reviewer"));
     }
 
     #[test]
