@@ -1014,6 +1014,9 @@ pub struct ThemeConfig {
     /// 1.2.9+ — colour for inline filter-word warnings.
     #[serde(default)]
     pub style_warning_filter_word_fg: String,
+    /// 1.2.9+ — colour for repeated-phrase warnings.
+    #[serde(default)]
+    pub style_warning_repeated_phrase_fg: String,
 
     // Search-match overlay in the editor.
     pub search_match_bg: String,
@@ -1088,6 +1091,7 @@ impl Default for ThemeConfig {
             artefacts_fg: "#fab387".into(),
             notes_underline_fg: "#cdd6f4".into(),
             style_warning_filter_word_fg: "#f9c44e".into(),
+            style_warning_repeated_phrase_fg: "#eb6f92".into(),
 
             search_match_bg: "#f38ba8".into(),
             search_current_bg: "#f5c2e7".into(),
@@ -1332,6 +1336,110 @@ pub struct StyleWarningsConfig {
     /// field.  `extra_words` is a user union added on
     /// top of the language default — empty by default.
     pub filter_words: FilterWordsConfig,
+    /// 1.2.9+ — repeated-phrase detector.  Slides an
+    /// `n`-word window across the open paragraph,
+    /// stems each window with the project's Snowball
+    /// algorithm, and flags every occurrence of any
+    /// n-gram that repeats `threshold` or more times.
+    /// `lifted her shoulders` matches `lifting her
+    /// shoulders` (stems align), so a writer's
+    /// favourite gesture surfaces immediately.
+    /// Multilingual via the same Snowball setup as
+    /// filter-words — no language-specific tuning
+    /// needed beyond setting the top-level `language`.
+    pub repeated_phrases: RepeatedPhrasesConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RepeatedPhrasesConfig {
+    pub enabled: bool,
+    /// Number of consecutive words to compare.  4 is
+    /// the sweet spot — 3 catches too many incidental
+    /// "she said the X" patterns, 5+ misses most
+    /// writer-crutches.
+    pub n: u8,
+    /// Flag when an n-gram appears at least this many
+    /// times in the paragraph.  3 is the default — a
+    /// phrase has to occur 3 times before it's worth
+    /// flagging; twice is often a deliberate echo.
+    pub threshold: u8,
+    /// Apply Snowball stemming to align inflections
+    /// before n-gram comparison.  Default `true`.
+    pub use_stemming: bool,
+    /// 1.2.9+ — stop-word list per language: words
+    /// excluded from n-gram comparison so common
+    /// connectives (`the`, `and`, `и`, `в`) don't
+    /// inflate the count.  Empty list = use built-in
+    /// default for the active language.  Same lookup
+    /// rule as filter-words.  Built-in lists are
+    /// conservative (closed-class words only); users
+    /// extend via this field.
+    pub english_stop_words: Vec<String>,
+    pub russian_stop_words: Vec<String>,
+    pub french_stop_words: Vec<String>,
+    pub german_stop_words: Vec<String>,
+    pub spanish_stop_words: Vec<String>,
+}
+
+impl Default for RepeatedPhrasesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            n: 4,
+            threshold: 3,
+            use_stemming: true,
+            english_stop_words: Vec::new(),
+            russian_stop_words: Vec::new(),
+            french_stop_words: Vec::new(),
+            german_stop_words: Vec::new(),
+            spanish_stop_words: Vec::new(),
+        }
+    }
+}
+
+/// 1.2.9+ — built-in stop-word list per language.
+/// Conservative: only function words that almost never
+/// carry meaning.  Users extend via the per-language
+/// `*_stop_words` fields when an n-gram with a domain
+/// word feels noisy in their writing.
+pub fn built_in_stop_words(language: &str) -> &'static [&'static str] {
+    match language.to_lowercase().as_str() {
+        "russian" => &[
+            "и", "в", "на", "не", "с", "что", "это", "как",
+            "а", "по", "из", "у", "от", "к", "за", "о",
+            "но", "же", "так", "то", "бы", "ли", "вот",
+            "только", "ещё", "также", "был", "была",
+            "было", "были", "есть",
+        ],
+        "french" => &[
+            "le", "la", "les", "un", "une", "des", "de",
+            "du", "et", "à", "au", "aux", "en", "dans",
+            "pour", "par", "sur", "avec", "sans", "que",
+            "qui", "ce", "se", "il", "elle", "ils",
+            "elles", "ne", "pas",
+        ],
+        "german" => &[
+            "der", "die", "das", "den", "dem", "des",
+            "ein", "eine", "und", "in", "zu", "von", "mit",
+            "auf", "ist", "war", "sind", "waren", "es",
+            "er", "sie", "wir", "du", "ich", "nicht",
+        ],
+        "spanish" => &[
+            "el", "la", "los", "las", "un", "una", "y",
+            "de", "del", "en", "a", "con", "por", "para",
+            "que", "no", "es", "son", "se", "su", "lo",
+        ],
+        _ => &[
+            "the", "a", "an", "and", "or", "but", "of",
+            "to", "in", "on", "at", "by", "for", "with",
+            "as", "is", "was", "were", "are", "be",
+            "been", "being", "have", "has", "had", "do",
+            "does", "did", "it", "he", "she", "they",
+            "we", "you", "his", "her", "their", "its",
+            "this", "that", "these", "those", "not", "no",
+        ],
+    }
 }
 
 impl Default for StyleWarningsConfig {
@@ -1339,6 +1447,7 @@ impl Default for StyleWarningsConfig {
         Self {
             enabled: false,
             filter_words: FilterWordsConfig::default(),
+            repeated_phrases: RepeatedPhrasesConfig::default(),
         }
     }
 }

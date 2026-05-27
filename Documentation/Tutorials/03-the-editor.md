@@ -206,8 +206,42 @@ cost — the detector runs once per render frame on the
 visible rows and the comparison is a `HashSet<String>`
 lookup per Unicode-segmented word.
 
-Future detectors (repeated phrases, show-don't-tell,
-sentence rhythm) will share the same toggle.
+Future detectors (show-don't-tell, sentence rhythm)
+will share the same toggle.
+
+### Repeated phrases
+
+The repeated-phrase detector flags every occurrence of
+any 4-word phrase (configurable via
+`style_warnings.repeated_phrases.n`) that appears 3+
+times in the open paragraph (configurable via
+`threshold`).  Marker colour: soft magenta + underline.
+
+Snowball stemming aligns inflections before comparison
+— `she lifted her shoulders` matches `she was lifting
+her shoulders`.  Closed-class words (`the`, `and`,
+`и`, `в`) are filtered via a per-language stop list so
+common connectives don't inflate the count.  Built-in
+stop lists ship for the five supported languages;
+override via `<lang>_stop_words`.
+
+```hjson
+editor: {
+  style_warnings: {
+    repeated_phrases: {
+      enabled: true
+      n: 4
+      threshold: 3
+      use_stemming: true
+    }
+  }
+}
+```
+
+Useful for catching writer-crutch gestures and
+favourite turns of phrase you didn't realise had
+become reflexive.  Toggles with `Ctrl+B Shift+F`
+alongside filter-words.
 
 ## Read aloud (TTS)
 

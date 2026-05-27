@@ -722,13 +722,12 @@ impl super::super::App {
             })
             .collect();
 
-        // 1.2.9+ — style-warning overlays (filter words +
-        // future detectors).  Effective enable flag is
-        // the session toggle if set, else the HJSON
-        // setting.  Per-language list keyed by the
-        // project's top-level `language` field.  Detector
-        // built once per render frame, reused across
-        // every line.
+        // 1.2.9+ — style-warning overlays.  Effective
+        // enable flag is the session toggle if set, else
+        // the HJSON setting.  Filter-word detector +
+        // repeated-phrase detector both built once per
+        // render frame.  Per-row hits union both
+        // detectors' outputs (sorted by col_start).
         let style_enabled = self
             .style_warnings_toggle
             .unwrap_or(self.cfg.editor.style_warnings.enabled);
@@ -745,12 +744,36 @@ impl super::super::App {
             } else {
                 None
             };
+        let phrase_detector =
+            if style_enabled && style_cfg.repeated_phrases.enabled {
+                Some(
+                    super::super::super::style_warnings::RepeatedPhraseDetector::new(
+                        &style_cfg.repeated_phrases,
+                        style_lang,
+                        &current_lines,
+                    ),
+                )
+            } else {
+                None
+            };
         let style_per_row: Vec<Vec<super::super::super::style_warnings::StyleHit>> =
             current_lines
                 .iter()
-                .map(|line| match &filter_detector {
-                    Some(d) if !d.is_empty() => d.detect(line),
-                    _ => Vec::new(),
+                .enumerate()
+                .map(|(row, line)| {
+                    let mut hits = Vec::new();
+                    if let Some(d) = &filter_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.detect(line));
+                        }
+                    }
+                    if let Some(d) = &phrase_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.hits_for_row(row).iter().copied());
+                        }
+                    }
+                    hits.sort_by_key(|h| h.col_start);
+                    hits
                 })
                 .collect();
 
@@ -954,13 +977,12 @@ impl super::super::App {
             })
             .collect();
 
-        // 1.2.9+ — style-warning overlays (filter words +
-        // future detectors).  Effective enable flag is
-        // the session toggle if set, else the HJSON
-        // setting.  Per-language list keyed by the
-        // project's top-level `language` field.  Detector
-        // built once per render frame, reused across
-        // every line.
+        // 1.2.9+ — style-warning overlays.  Effective
+        // enable flag is the session toggle if set, else
+        // the HJSON setting.  Filter-word detector +
+        // repeated-phrase detector both built once per
+        // render frame.  Per-row hits union both
+        // detectors' outputs (sorted by col_start).
         let style_enabled = self
             .style_warnings_toggle
             .unwrap_or(self.cfg.editor.style_warnings.enabled);
@@ -977,12 +999,36 @@ impl super::super::App {
             } else {
                 None
             };
+        let phrase_detector =
+            if style_enabled && style_cfg.repeated_phrases.enabled {
+                Some(
+                    super::super::super::style_warnings::RepeatedPhraseDetector::new(
+                        &style_cfg.repeated_phrases,
+                        style_lang,
+                        &current_lines,
+                    ),
+                )
+            } else {
+                None
+            };
         let style_per_row: Vec<Vec<super::super::super::style_warnings::StyleHit>> =
             current_lines
                 .iter()
-                .map(|line| match &filter_detector {
-                    Some(d) if !d.is_empty() => d.detect(line),
-                    _ => Vec::new(),
+                .enumerate()
+                .map(|(row, line)| {
+                    let mut hits = Vec::new();
+                    if let Some(d) = &filter_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.detect(line));
+                        }
+                    }
+                    if let Some(d) = &phrase_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.hits_for_row(row).iter().copied());
+                        }
+                    }
+                    hits.sort_by_key(|h| h.col_start);
+                    hits
                 })
                 .collect();
 
