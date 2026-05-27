@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use chrono::Local;
@@ -27,10 +27,14 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use tokio::sync::mpsc::UnboundedReceiver;
 use tui_textarea::TextArea;
 
+use crate::ai::AiClient;
 use crate::ai::prompts::{Prompt, PromptLibrary};
-use crate::config::DEFAULT_PROMPTS;
+use crate::ai::stream::{StreamMsg, spawn_chat_stream};
+use crate::config::{Config, DEFAULT_PROMPTS};
+use crate::tui::input::TextInput;
 
 /// Two-step entry: install panic hook + raw-mode +
 /// alt-screen, run the event loop, restore the
@@ -162,6 +166,63 @@ struct App {
     focus: Focus,
     modal: Modal,
     status: String,
+    /// Phase 3 — AI client + model resolved at load
+    /// time.  `None` when the project's
+    /// `inkhaven.hjson` isn't readable / the default
+    /// provider isn't configured.  Send path stays
+    /// inert in that case; everything else works.
+    ai: Option<AiRuntime>,
+    /// Phase 3 — AI prompt input (single-line).
+    ai_input: TextInput,
+    /// Phase 3 — in-session prompt history; Up/Down
+    /// walks while AI prompt pane is focused.
+    ai_history: Vec<String>,
+    /// `None` = editing fresh; `Some(i)` = walking
+    /// history.  Cleared on any text edit.
+    ai_history_cursor: Option<usize>,
+    /// Phase 3 — most recent (or in-flight) send.
+    /// Single-shot per send per Q5; replaced wholesale
+    /// every Enter.
+    last_send: Option<Send>,
+    /// Live streaming inference handle (token receiver
+    /// + start time).  Set on send, cleared when the
+    /// stream finishes.
+    inference: Option<Inference>,
+}
+
+#[derive(Clone)]
+struct AiRuntime {
+    client: AiClient,
+    model: String,
+    provider: String,
+}
+
+#[derive(Debug)]
+pub(super) struct Send {
+    pub user_message: String,
+    pub response: String,
+    pub started_at: Instant,
+    pub duration: Option<Duration>,
+    pub failed: bool,
+    /// Snapshot of the editor body at send time so
+    /// the user knows which template the result was
+    /// produced against (even if they've already
+    /// edited it since).  Reserved for the Phase
+    /// 4 "show snapshot in AI pane title if it
+    /// differs from current editor body" polish
+    /// item.
+    #[allow(dead_code)]
+    pub template_snapshot: String,
+}
+
+pub(super) struct Inference {
+    rx: UnboundedReceiver<StreamMsg>,
+    /// Reserved — the Send struct currently owns
+    /// the canonical timer; this field is kept for
+    /// future "abandoned stream older than X
+    /// seconds" cleanup logic.
+    #[allow(dead_code)]
+    started_at: Instant,
 }
 
 impl App {
@@ -211,6 +272,25 @@ impl App {
             )
         };
 
+        // Phase 3 — build the AI runtime if the
+        // project's inkhaven.hjson is readable AND
+        // its llm.default provider is configured.
+        // Any failure flags the runtime as disabled;
+        // the rest of the TUI still works.
+        let ai = build_ai_runtime(&project_root);
+        let status = match (&ai, status.as_str()) {
+            (Some(rt), s) => {
+                if loaded_from_defaults {
+                    format!("{s} · LLM: {} · {}", rt.provider, rt.model)
+                } else {
+                    format!("{s} · LLM: {} · {}", rt.provider, rt.model)
+                }
+            }
+            (None, s) => format!(
+                "{s} · LLM: (not configured — send is inert)",
+            ),
+        };
+
         Ok(Self {
             project_root,
             prompts_path: prompts_path.to_path_buf(),
@@ -227,6 +307,12 @@ impl App {
             focus: Focus::List,
             modal: Modal::None,
             status,
+            ai,
+            ai_input: TextInput::new(),
+            ai_history: Vec::new(),
+            ai_history_cursor: None,
+            last_send: None,
+            inference: None,
         })
     }
 
@@ -308,6 +394,61 @@ impl App {
     }
 }
 
+/// Best-effort: load `<project>/inkhaven.hjson`,
+/// resolve the default LLM provider, build an
+/// AiClient.  Any failure → return `None` so the
+/// prompts editor still launches with a disabled
+/// send path.  This keeps the TUI useful for users
+/// who haven't set up AI yet.
+fn build_ai_runtime(project_root: &Path) -> Option<AiRuntime> {
+    let cfg_path = project_root.join("inkhaven.hjson");
+    let cfg = if cfg_path.exists() {
+        Config::load(&cfg_path).ok()?
+    } else {
+        // No inkhaven.hjson — use defaults.  Default
+        // provider is whatever Config::default()
+        // declares; without an API key in the
+        // environment the resolve will fail
+        // gracefully below.
+        Config::default()
+    };
+    let client = AiClient::from_config(&cfg.llm).ok()?;
+    let (model, _env) = client.resolve_provider(&cfg.llm, None).ok()?;
+    let model = model.to_string();
+    let provider = client.default_provider.clone();
+    Some(AiRuntime {
+        client,
+        model,
+        provider,
+    })
+}
+
+/// 1.2.11+ — render an editor body as a template.
+/// Substitutes `{{selection}}` with the user input
+/// and `{{context}}` with empty.  If neither
+/// placeholder is present, appends the input on a
+/// fresh paragraph (so templates without
+/// placeholders still have something to operate on).
+fn render_template(editor_body: &str, ai_input: &str) -> String {
+    let body = editor_body;
+    let has_selection = body.contains("{{selection}}");
+    let has_context = body.contains("{{context}}");
+    if has_selection || has_context {
+        let mut out = body.to_string();
+        if has_selection {
+            out = out.replace("{{selection}}", ai_input);
+        }
+        if has_context {
+            out = out.replace("{{context}}", "");
+        }
+        out
+    } else if ai_input.trim().is_empty() {
+        body.to_string()
+    } else {
+        format!("{body}\n\n{ai_input}")
+    }
+}
+
 fn build_baseline(library: &PromptLibrary) -> std::collections::HashMap<String, String> {
     library
         .prompts
@@ -332,8 +473,16 @@ fn event_loop(
     mut app: App,
 ) -> Result<()> {
     loop {
+        // Drain any AI tokens that arrived since the
+        // last frame BEFORE we draw so the response
+        // pane is always up-to-date.
+        pump_inference(&mut app);
         terminal.draw(|f| render(f, &mut app))?;
-        if event::poll(Duration::from_millis(250))? {
+        // Shorter poll while streaming so the spinner
+        // animates and tokens flow into the pane
+        // promptly.
+        let poll_ms = if app.inference.is_some() { 80 } else { 250 };
+        if event::poll(Duration::from_millis(poll_ms))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     if handle_key(&mut app, key)? {
@@ -661,11 +810,213 @@ fn dispatch_editor_keys(app: &mut App, key: KeyEvent) {
     }
 }
 
-fn dispatch_ai_prompt_keys(app: &mut App, _key: KeyEvent) {
-    // Phase 2: input is still inert.  Phase 3 wires
-    // it to spawn_chat_stream.
-    app.status =
-        "AI prompt input wires to the LLM in Phase 3".into();
+fn dispatch_ai_prompt_keys(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Enter => {
+            send_ai_prompt(app);
+        }
+        KeyCode::Up => {
+            if app.ai_history.is_empty() {
+                return;
+            }
+            let new_cursor = match app.ai_history_cursor {
+                None => Some(app.ai_history.len() - 1),
+                Some(0) => Some(0),
+                Some(i) => Some(i - 1),
+            };
+            app.ai_history_cursor = new_cursor;
+            if let Some(i) = new_cursor {
+                let text = app.ai_history[i].clone();
+                let len = text.chars().count();
+                app.ai_input.set_with_cursor(text, len);
+            }
+        }
+        KeyCode::Down => {
+            let Some(i) = app.ai_history_cursor else {
+                return;
+            };
+            if i + 1 < app.ai_history.len() {
+                app.ai_history_cursor = Some(i + 1);
+                let text = app.ai_history[i + 1].clone();
+                let len = text.chars().count();
+                app.ai_input.set_with_cursor(text, len);
+            } else {
+                // Past the most-recent entry — clear
+                // back to a fresh empty buffer.
+                app.ai_history_cursor = None;
+                app.ai_input.clear();
+            }
+        }
+        KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.ai_input.clear();
+            app.ai_history_cursor = None;
+        }
+        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.ai_input.clear();
+            app.ai_history.clear();
+            app.ai_history_cursor = None;
+            app.status = "ai prompt: input + history cleared".into();
+        }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.ai_input.move_home();
+        }
+        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.ai_input.move_end();
+        }
+        KeyCode::Home => {
+            app.ai_input.move_home();
+        }
+        KeyCode::End => {
+            app.ai_input.move_end();
+        }
+        KeyCode::Left => {
+            app.ai_input.move_left();
+        }
+        KeyCode::Right => {
+            app.ai_input.move_right();
+        }
+        KeyCode::Backspace => {
+            app.ai_input.backspace();
+            app.ai_history_cursor = None;
+        }
+        KeyCode::Delete => {
+            app.ai_input.delete();
+            app.ai_history_cursor = None;
+        }
+        KeyCode::Char(c)
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            app.ai_input.insert_char(c);
+            app.ai_history_cursor = None;
+        }
+        _ => {}
+    }
+}
+
+fn send_ai_prompt(app: &mut App) {
+    let Some(rt) = app.ai.clone() else {
+        app.status =
+            "LLM not configured — set llm.default in inkhaven.hjson + provide its API key".into();
+        return;
+    };
+    // Stash the editor so the template rendered
+    // below sees the live in-progress edit.
+    app.stash_editor();
+    let editor_body = app
+        .library
+        .prompts
+        .get(app.cursor)
+        .map(|p| p.template.clone())
+        .unwrap_or_default();
+    if editor_body.trim().is_empty() {
+        app.status =
+            "prompt body is empty — focus the editor pane and write a prompt first".into();
+        return;
+    }
+    let user_input = app.ai_input.as_str().trim().to_string();
+    let rendered = render_template(&editor_body, &user_input);
+
+    // Push input onto the history (deduped against
+    // the previous most-recent entry).
+    if !user_input.is_empty()
+        && app.ai_history.last().map(String::as_str) != Some(user_input.as_str())
+    {
+        app.ai_history.push(user_input.clone());
+    }
+    app.ai_history_cursor = None;
+    app.ai_input.clear();
+
+    let rx = spawn_chat_stream(
+        rt.client.client.clone(),
+        rt.model.clone(),
+        None,
+        Vec::new(),
+        rendered.clone(),
+    );
+    app.last_send = Some(Send {
+        user_message: user_input,
+        response: String::new(),
+        started_at: Instant::now(),
+        duration: None,
+        failed: false,
+        template_snapshot: editor_body,
+    });
+    app.inference = Some(Inference {
+        rx,
+        started_at: Instant::now(),
+    });
+    app.status = format!("sending to {} ({})…", rt.provider, rt.model);
+}
+
+/// Drain any StreamMsg events that arrived since the
+/// last frame.  Mutates `app.last_send.response` /
+/// `.duration` / `.failed` based on what's flowed
+/// through.  Called from the event loop just before
+/// `terminal.draw`.
+fn pump_inference(app: &mut App) {
+    // Pump in a scope so the &mut borrow on
+    // `app.inference` drops before we try to set it
+    // back to `None`.
+    let done = {
+        let Some(inf) = app.inference.as_mut() else {
+            return;
+        };
+        let mut finished = false;
+        loop {
+            match inf.rx.try_recv() {
+                Ok(StreamMsg::Token(chunk)) => {
+                    if let Some(send) = app.last_send.as_mut() {
+                        send.response.push_str(&chunk);
+                    }
+                }
+                Ok(StreamMsg::Done) => {
+                    if let Some(send) = app.last_send.as_mut() {
+                        send.duration = Some(send.started_at.elapsed());
+                    }
+                    finished = true;
+                    break;
+                }
+                Ok(StreamMsg::Error(e)) => {
+                    if let Some(send) = app.last_send.as_mut() {
+                        send.failed = true;
+                        if !send.response.is_empty() {
+                            send.response.push_str("\n\n");
+                        }
+                        send.response.push_str(&format!("⚠ ERROR: {e}"));
+                        send.duration = Some(send.started_at.elapsed());
+                    }
+                    finished = true;
+                    break;
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    if let Some(send) = app.last_send.as_mut() {
+                        if send.duration.is_none() {
+                            send.duration = Some(send.started_at.elapsed());
+                        }
+                    }
+                    finished = true;
+                    break;
+                }
+            }
+        }
+        finished
+    };
+    if done {
+        app.inference = None;
+        if let Some(send) = app.last_send.as_ref() {
+            if send.failed {
+                app.status = "AI response: FAILED".into();
+            } else {
+                let secs = send
+                    .duration
+                    .map(|d| d.as_secs_f32())
+                    .unwrap_or(0.0);
+                app.status = format!("AI response ready · {secs:.1}s");
+            }
+        }
+    }
 }
 
 // ── save pipeline ─────────────────────────────────────
@@ -819,22 +1170,27 @@ fn ai_prompt_help_body() -> String {
     [
         " AI prompt input — chord summary",
         "",
-        "   (Phase 1: inert — Phase 3 wires the send pipeline)",
-        "",
-        " Phase 3 will support:",
-        "   type to edit · Backspace deletes",
-        "   Up / Down     history walk",
-        "   Enter         SEND",
-        "   Ctrl+L        clear input",
-        "   Ctrl+K        clear input + history",
+        "   type to edit · Backspace / Delete remove",
+        "   Left / Right / Home / End / Ctrl+A / Ctrl+E",
+        "                  cursor movement",
+        "   Up / Down       history walk (in-session)",
+        "   Enter           SEND",
+        "   Ctrl+L          clear input",
+        "   Ctrl+K          clear input + clear history",
         "",
         " Send pipeline:",
         "   1. Render the editor body as a template.",
         "   2. Replace {{selection}} with this input.",
         "   3. Replace {{context}} with empty.",
-        "   4. Send the rendered text as a USER message to the",
-        "      configured LLM (no system prompt).",
-        "   5. Stream the response into the AI pane.",
+        "   4. If the template has neither placeholder,",
+        "      append the input on a fresh paragraph.",
+        "   5. Send the rendered text as a USER message",
+        "      to the configured LLM (no system prompt).",
+        "   6. Stream the response into the AI pane.",
+        "",
+        " Single-shot per send (Q5) — each Enter is an",
+        " independent assessment; there's no conversation",
+        " history between sends.",
     ]
     .join("\n")
 }
@@ -1065,55 +1421,166 @@ fn draw_editor_pane(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
     f.render_widget(&app.editor, inner);
 }
 
-fn draw_ai_pane(f: &mut ratatui::Frame, area: Rect, _app: &App) {
+fn draw_ai_pane(f: &mut ratatui::Frame, area: Rect, app: &App) {
+    let title = ai_pane_title(app);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" AI response ")
+        .title(title)
         .border_style(border_style(false));
     let inner = block.inner(area);
     f.render_widget(block, area);
     let dim = Style::default().add_modifier(Modifier::DIM);
-    let body = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "  (Phase 3 streams LLM responses here)",
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let mut lines: Vec<Line<'_>> = Vec::new();
+
+    if app.ai.is_none() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  ⚠ LLM not configured",
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Set `llm.default` in inkhaven.hjson and",
             dim,
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  Send semantics:",
+        )));
+        lines.push(Line::from(Span::styled(
+            "  provide its API-key env var, then relaunch.",
             dim,
-        )),
-        Line::from(Span::styled(
-            "    1. Render editor as a template.",
+        )));
+        f.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            inner,
+        );
+        return;
+    }
+
+    let Some(send) = app.last_send.as_ref() else {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  (no send yet — type into the AI prompt and press Enter)",
             dim,
-        )),
-        Line::from(Span::styled(
-            "    2. {{selection}} ← AI prompt input.",
+        )));
+        f.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            inner,
+        );
+        return;
+    };
+
+    // User message section.
+    lines.push(Line::from(Span::styled(" ▸ user", bold)));
+    if send.user_message.trim().is_empty() {
+        lines.push(Line::from(Span::styled(
+            "   (no input — template sent as-is)",
             dim,
-        )),
-        Line::from(Span::styled(
-            "    3. Send rendered text as user message.",
+        )));
+    } else {
+        for body in send.user_message.lines() {
+            lines.push(Line::from(format!("   {body}")));
+        }
+    }
+    lines.push(Line::from(""));
+
+    // Assistant response section.
+    let header_style = if send.failed {
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+    } else {
+        bold
+    };
+    lines.push(Line::from(Span::styled(" ▸ assistant", header_style)));
+    if send.response.is_empty() && send.duration.is_none() {
+        let elapsed = send.started_at.elapsed();
+        let secs = elapsed.as_secs_f32();
+        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let idx = (elapsed.as_millis() / 100) as usize % spinner_frames.len();
+        lines.push(Line::from(vec![
+            Span::raw("   "),
+            Span::styled(
+                spinner_frames[idx],
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("streaming · {secs:.1}s"),
+                dim,
+            ),
+        ]));
+    } else if send.response.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "   (empty response)",
             dim,
-        )),
-    ];
-    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
+        )));
+    } else {
+        for body in send.response.lines() {
+            lines.push(Line::from(format!("   {body}")));
+        }
+    }
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn ai_pane_title(app: &App) -> String {
+    let Some(rt) = app.ai.as_ref() else {
+        return " AI response ".to_string();
+    };
+    let model = rt.model.as_str();
+    let provider = rt.provider.as_str();
+    match (app.inference.as_ref(), app.last_send.as_ref()) {
+        (Some(_), _) => format!(" AI · {provider} · {model} · streaming "),
+        (None, Some(send)) => {
+            if send.failed {
+                format!(" AI · {provider} · {model} · FAILED ")
+            } else if let Some(d) = send.duration {
+                format!(
+                    " AI · {provider} · {model} · {:.1}s ",
+                    d.as_secs_f32()
+                )
+            } else {
+                format!(" AI · {provider} · {model} ")
+            }
+        }
+        (None, None) => format!(" AI · {provider} · {model} "),
+    }
 }
 
 fn draw_ai_prompt(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let focused = app.focus == Focus::AiPrompt;
+    let title = if app.inference.is_some() {
+        " Test prompt · sending… ".to_string()
+    } else if app.ai.is_none() {
+        " Test prompt · (LLM disabled) ".to_string()
+    } else {
+        match &app.ai_history_cursor {
+            Some(i) => format!(
+                " Test prompt · history {}/{} ",
+                i + 1,
+                app.ai_history.len(),
+            ),
+            None => " Test prompt ".to_string(),
+        }
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Test prompt — Phase 3 sends to LLM ")
+        .title(title)
         .border_style(border_style(focused));
     let inner = block.inner(area);
     f.render_widget(block, area);
     let dim = Style::default().add_modifier(Modifier::DIM);
-    let body = vec![Line::from(Span::styled(
-        "  (Phase 3 wires this single-line input)",
-        dim,
-    ))];
-    f.render_widget(Paragraph::new(body), inner);
+    let rendered = app.ai_input.render_with_cursor(if focused { '│' } else { ' ' });
+    let hint = if app.ai.is_none() {
+        "  (LLM not configured — see AI pane)"
+    } else if app.inference.is_some() {
+        "  (Esc cancels by ending the session; Enter ignored while streaming)"
+    } else if focused {
+        "  Enter sends · Up/Down history · Ctrl+L clear · Ctrl+K clear+history"
+    } else {
+        "  Tab to focus · type a test input, Enter sends"
+    };
+    let lines = vec![
+        Line::from(format!(" › {rendered}")),
+        Line::from(Span::styled(hint, dim)),
+    ];
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn draw_status(f: &mut ratatui::Frame, area: Rect, app: &App) {
@@ -1126,7 +1593,7 @@ fn draw_status(f: &mut ratatui::Frame, area: Rect, app: &App) {
             " type to edit · Ctrl+S save · Tab next · Ctrl+H help · Ctrl+Q quit"
         }
         Focus::AiPrompt => {
-            " (Phase 3 wires this) · Ctrl+S save · Tab next · Ctrl+H help · Ctrl+Q quit"
+            " type · Enter send · Up/Down history · Ctrl+L clear · Tab next · Ctrl+H help"
         }
     };
     let pos = format!(" {}/{} ", app.cursor + 1, app.library.prompts.len().max(1));
@@ -1552,8 +2019,60 @@ mod tests {
             focus: Focus::List,
             modal: Modal::None,
             status: String::new(),
+            ai: None,
+            ai_input: TextInput::new(),
+            ai_history: Vec::new(),
+            ai_history_cursor: None,
+            last_send: None,
+            inference: None,
         };
         assert!(app.current_prompt().is_none());
+    }
+
+    #[test]
+    fn render_template_substitutes_selection_placeholder() {
+        let body = "Critique the following:\n\n{{selection}}";
+        let out = render_template(body, "She walked away.");
+        assert!(out.contains("Critique the following"));
+        assert!(out.contains("She walked away."));
+        assert!(!out.contains("{{selection}}"));
+    }
+
+    #[test]
+    fn render_template_clears_context_placeholder() {
+        let body = "Read in context: {{context}}. Critique: {{selection}}";
+        let out = render_template(body, "test");
+        assert!(!out.contains("{{context}}"));
+        assert!(!out.contains("{{selection}}"));
+        assert!(out.contains("test"));
+    }
+
+    #[test]
+    fn render_template_appends_when_no_placeholders() {
+        let body = "Translate to French.";
+        let out = render_template(body, "Hello, world.");
+        // No placeholders → input gets appended on a
+        // fresh paragraph.
+        assert!(out.starts_with("Translate to French."));
+        assert!(out.contains("Hello, world."));
+        assert!(out.contains("\n\n"));
+    }
+
+    #[test]
+    fn render_template_no_input_no_appends() {
+        let body = "Stand-alone prompt with no slot.";
+        let out = render_template(body, "");
+        assert_eq!(out, body);
+    }
+
+    #[test]
+    fn render_template_no_input_substitutes_with_empty() {
+        // Template has a {{selection}} but the user
+        // sent an empty input — substitute with empty
+        // string (don't bail).
+        let body = "Critique: {{selection}}";
+        let out = render_template(body, "");
+        assert!(!out.contains("{{selection}}"));
     }
 
     #[test]
@@ -1602,6 +2121,12 @@ mod tests {
             focus: Focus::List,
             modal: Modal::None,
             status: String::new(),
+            ai: None,
+            ai_input: TextInput::new(),
+            ai_history: Vec::new(),
+            ai_history_cursor: None,
+            last_send: None,
+            inference: None,
         };
         // alpha modified, beta unchanged, gamma added, beta also removed.
         app.dirty.insert("alpha".into());
@@ -1636,6 +2161,12 @@ mod tests {
             focus: Focus::List,
             modal: Modal::None,
             status: String::new(),
+            ai: None,
+            ai_input: TextInput::new(),
+            ai_history: Vec::new(),
+            ai_history_cursor: None,
+            last_send: None,
+            inference: None,
         };
         assert!(!app.has_unsaved());
         app.dirty.insert("x".into());
@@ -1682,6 +2213,12 @@ mod tests {
             focus: Focus::List,
             modal: Modal::None,
             status: String::new(),
+            ai: None,
+            ai_input: TextInput::new(),
+            ai_history: Vec::new(),
+            ai_history_cursor: None,
+            last_send: None,
+            inference: None,
         };
         let p = app.current_prompt().expect("cursor points at a prompt");
         assert_eq!(p.name, "beta");

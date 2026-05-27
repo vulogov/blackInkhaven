@@ -10,7 +10,7 @@ mod highlight;
 mod hjson_edit;
 mod hjson_highlight;
 mod inference;
-mod input;
+pub(crate) mod input;
 pub(crate) mod keybind;
 pub(crate) mod keymap;
 mod lexicon;
