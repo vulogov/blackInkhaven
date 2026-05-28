@@ -1617,6 +1617,17 @@ pub(crate) struct App {
     /// open. Consumed by `pump_inference` on stream
     /// completion alongside `pending_chat_user_msg`.
     pending_paragraph_memory_target: Option<Uuid>,
+    /// 1.2.11+ — set by `start_sentence_rhythm_rewrite`
+    /// (Ctrl+B Shift+M) when an inference is in flight
+    /// that should auto-open the AI diff modal on
+    /// completion.  `pump_inference` watches for the
+    /// Streaming → Done transition and triggers the
+    /// modal with `post_accept_snapshot = Some("Sentence
+    /// rhythm rewrite")` so the apply step preserves
+    /// the pre-rewrite state under an F6-discoverable
+    /// snapshot.  Cleared after either auto-open OR
+    /// an error path.
+    pub(super) pending_rhythm_rewrite: bool,
 
     /// RAG context block (e.g. a place/character lookup) that the next
     /// AI-prompt submission should prepend to the user's typed query.
@@ -1877,6 +1888,7 @@ impl App {
             system_prompt_override: None,
             pending_chat_user_msg: None,
             pending_paragraph_memory_target: None,
+            pending_rhythm_rewrite: false,
             pending_rag_prefix: None,
             layout_search: Rect::default(),
             layout_tree: Rect::default(),
@@ -2366,6 +2378,38 @@ impl App {
                 // per-paragraph memory.
                 self.pending_paragraph_memory_target = None;
             }
+            // 1.2.11+ — Ctrl+B Shift+M rhythm rewrite:
+            // auto-open the AI diff modal so the user
+            // reviews the response before it lands in
+            // the buffer.  The modal carries the
+            // snapshot annotation so the apply step
+            // preserves the pre-rewrite state under
+            // "Sentence rhythm rewrite".
+            if self.pending_rhythm_rewrite {
+                self.pending_rhythm_rewrite = false;
+                let raw = self
+                    .inference
+                    .as_ref()
+                    .map(|i| i.response.clone())
+                    .unwrap_or_default();
+                if !raw.trim().is_empty() {
+                    self.open_ai_diff_review_with_snapshot(
+                        InferenceAction::Replace,
+                        &raw,
+                        "Sentence rhythm rewrite",
+                    );
+                } else {
+                    self.status = "rhythm rewrite: model returned empty response".into();
+                }
+            }
+        } else if matches!(
+            self.inference.as_ref().map(|i| &i.status),
+            Some(InferenceStatus::Error(_))
+        ) && self.pending_rhythm_rewrite
+        {
+            // Error path: clear the pending flag so a
+            // future Ctrl+B Shift+M starts clean.
+            self.pending_rhythm_rewrite = false;
         }
     }
 
@@ -6544,6 +6588,7 @@ impl App {
             A::TogglePovChip => self.toggle_pov_chip(),
             A::OpenSentenceRhythm => self.open_sentence_rhythm(),
             A::AnalyseShowDontTell => self.start_show_dont_tell_scan(),
+            A::AiRewriteRhythm => self.start_sentence_rhythm_rewrite(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
@@ -14213,6 +14258,7 @@ impl App {
             after_lines,
             action,
             scroll: 0,
+            post_accept_snapshot: None,
         };
         self.status = if extracted {
             format!(
@@ -14222,6 +14268,56 @@ impl App {
             )
         } else {
             "AI diff · a accept · r reject · ↑↓ scroll".into()
+        };
+    }
+
+    /// 1.2.11+ — same as `open_ai_diff_review` but
+    /// stamps a `post_accept_snapshot` annotation
+    /// on the modal so the apply step creates a
+    /// labelled snapshot of the pre-rewrite
+    /// buffer.  Used by the Ctrl+B Shift+M rhythm
+    /// rewrite flow.
+    fn open_ai_diff_review_with_snapshot(
+        &mut self,
+        action: InferenceAction,
+        raw: &str,
+        annotation: &str,
+    ) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status =
+                "no paragraph open — apply needs a focused paragraph".into();
+            return;
+        };
+        let before_lines: Vec<String> = doc.textarea.lines().to_vec();
+        let force = matches!(action, InferenceAction::ReplaceCorrected);
+        let raw_len = raw.len();
+        let (after_text, extracted) = match select_apply_text(raw, force) {
+            Ok(pair) => pair,
+            Err(msg) => {
+                self.status = msg.into();
+                return;
+            }
+        };
+        let after_lines: Vec<String> = if after_text.is_empty() {
+            vec![String::new()]
+        } else {
+            after_text.split('\n').map(String::from).collect()
+        };
+        self.modal = Modal::AiDiffReview {
+            before_lines,
+            after_lines,
+            action,
+            scroll: 0,
+            post_accept_snapshot: Some(annotation.to_string()),
+        };
+        self.status = if extracted {
+            format!(
+                "rhythm rewrite · ✂ extracted {}/{} chars · a accept (snapshot + replace) · r reject",
+                after_text.len(),
+                raw_len,
+            )
+        } else {
+            "rhythm rewrite · a accept (snapshot + replace) · r reject · ↑↓ scroll".into()
         };
     }
 
@@ -16894,6 +16990,40 @@ length as the telling line, not a paragraph. \
 Skip cases where telling is deliberately efficient (transition lines, \
 summary, established interiority in first-person POV). If the paragraph is \
 already strong, say so plainly and stop. Don't pad."
+}
+
+/// 1.2.11+ — embedded fallback prompt for the
+/// `Ctrl+B Shift+M` AI-driven sentence-rhythm
+/// rewrite.  Asks the model to break monotonous
+/// rhythm by mixing short and long sentences while
+/// preserving the author's voice + meaning.
+/// Language-aware: the prompt explicitly names the
+/// project's `language` setting so the rewrite
+/// lands in the same language (the model wouldn't
+/// translate but for the strong directive).
+///
+/// Output must be the rewritten paragraph and
+/// nothing else — no commentary, no explanation,
+/// no "Here is the rewrite:" preface — because the
+/// AI diff pipeline takes the response verbatim
+/// and replaces the buffer with it.  The
+/// `select_apply_text` plumbing handles fenced
+/// code blocks / leading prose if the model
+/// disobeys, but the prompt nudges hard for clean
+/// output.
+pub(crate) fn sentence_rhythm_rewrite_default_prompt(language: &str) -> String {
+    format!(
+        "Rewrite the {language} paragraph below to break its monotonous \
+sentence rhythm.  Mix short, punchy sentences with longer ones so the \
+reader's ear has variety to follow.  Preserve voice, tone, meaning, \
+named characters, quoted dialogue, em-dashes, and paragraph breaks.  Do \
+NOT translate; keep the prose in {language}.  Do NOT summarise; rewrite \
+line for line.
+
+Return ONLY the rewritten paragraph.  No preface (\"Here is the \
+rewrite:\"), no commentary, no markdown headings, no bullet points, no \
+explanation.  Plain prose, ready to paste back into the editor."
+    )
 }
 
 /// 1.2.6+ — embedded fallback for F12 critique in split-edit mode.
