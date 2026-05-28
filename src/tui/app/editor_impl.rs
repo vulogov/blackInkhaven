@@ -492,8 +492,17 @@ impl super::App {
             typst_diagnostics: Vec::new(),
             typst_diagnostics_checked_at: std::time::Instant::now(),
             typst_diag_last_fired: None,
+            detected_language: None,
+            detected_language_length: 0,
         });
         self.refresh_typst_diagnostics_for_opened();
+        // 1.2.12+ — run whatlang on the freshly loaded body so
+        // the AI resolver has a cached language when the user
+        // fires their first chord.  No-op when the paragraph is
+        // too short or `editor.prompt_language_mode` is
+        // `book_defined` (the function itself short-circuits in
+        // book mode to avoid unnecessary work).
+        self.detect_paragraph_language();
         self.change_focus(Focus::Editor);
         self.status = format!("opened {}", abs.display());
         // 1.2.7+ — push to the visited-paragraph history,
@@ -820,6 +829,12 @@ impl super::App {
             typst_diagnostics: Vec::new(),
             typst_diagnostics_checked_at: std::time::Instant::now(),
             typst_diag_last_fired: None,
+            // 1.2.12+ — secondary docs (split-view, similar-mode)
+            // don't drive the AI resolver; we never call
+            // `active_prompt_language` against them.  Leave the
+            // detection cache empty.
+            detected_language: None,
+            detected_language_length: 0,
         });
         self.secondary_focused = false;
         self.status = format!(

@@ -43,7 +43,14 @@ pub fn run(project: &Path, cmd: ShowDontTellCommand) -> Result<()> {
             language,
             genre,
             provider,
-        } => bootstrap(project, &language, genre.as_deref(), provider.as_deref()),
+            update,
+        } => bootstrap(
+            project,
+            &language,
+            genre.as_deref(),
+            provider.as_deref(),
+            update,
+        ),
     }
 }
 
@@ -52,6 +59,7 @@ fn bootstrap(
     language: &str,
     genre: Option<&str>,
     provider: Option<&str>,
+    update: bool,
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
@@ -105,8 +113,167 @@ fn bootstrap(
         }
     };
 
-    print_snippet(language, &lists);
+    // 1.2.11+ — `--update` path.  Merge the LLM lists
+    // with what's already in the user's HJSON (union,
+    // case-insensitive dedup, existing entries first
+    // so the user's hand-edits keep their position) and
+    // apply the merged lists in place via the shared
+    // `config_tui::apply_in_place_edits` helper —
+    // versioned backup + atomic write + comment
+    // preservation come for free.  Then also print the
+    // merged snippet to stdout so the user sees what
+    // landed.
+    let final_lists = if update {
+        let existing = load_existing(&cfg, language);
+        let merged = Lists {
+            linking_verbs: merge(&existing.linking_verbs, &lists.linking_verbs),
+            emotion_adjectives: merge(
+                &existing.emotion_adjectives,
+                &lists.emotion_adjectives,
+            ),
+            manner_adverbs: merge(
+                &existing.manner_adverbs,
+                &lists.manner_adverbs,
+            ),
+            cognition_verbs: merge(
+                &existing.cognition_verbs,
+                &lists.cognition_verbs,
+            ),
+        };
+        let updates = build_updates(language, &merged);
+        match crate::config_tui::apply_in_place_edits(project, &updates) {
+            Ok(outcome) => {
+                eprintln!(
+                    "patched {} (pre-patch backup: {})",
+                    outcome.config_path.display(),
+                    outcome.backup.display(),
+                );
+            }
+            Err(e) => {
+                eprintln!("in-place update failed: {e}");
+                eprintln!(
+                    "(nothing was written to inkhaven.hjson; pasting the snippet below by hand still works)"
+                );
+                print_snippet(language, &merged);
+                return Ok(());
+            }
+        }
+        merged
+    } else {
+        lists
+    };
+
+    print_snippet(language, &final_lists);
     Ok(())
+}
+
+/// 1.2.11+ — pull the live per-language lists out of
+/// the loaded `Config`.  Used by `--update` to compute
+/// the merge baseline.  An empty configured list means
+/// "user is using the built-in default" — we treat it
+/// as empty (the union will then be just the LLM
+/// output, which is exactly what we want: graduate
+/// from built-in to a curated, persisted list).
+fn load_existing(cfg: &Config, language: &str) -> Lists {
+    let sdt = &cfg.editor.style_warnings.show_dont_tell;
+    match language.to_lowercase().as_str() {
+        "russian" => Lists {
+            linking_verbs: sdt.russian_linking_verbs.clone(),
+            emotion_adjectives: sdt.russian_emotion_adjectives.clone(),
+            manner_adverbs: sdt.russian_manner_adverbs.clone(),
+            cognition_verbs: sdt.russian_cognition_verbs.clone(),
+        },
+        "french" => Lists {
+            linking_verbs: sdt.french_linking_verbs.clone(),
+            emotion_adjectives: sdt.french_emotion_adjectives.clone(),
+            manner_adverbs: sdt.french_manner_adverbs.clone(),
+            cognition_verbs: sdt.french_cognition_verbs.clone(),
+        },
+        "german" => Lists {
+            linking_verbs: sdt.german_linking_verbs.clone(),
+            emotion_adjectives: sdt.german_emotion_adjectives.clone(),
+            manner_adverbs: sdt.german_manner_adverbs.clone(),
+            cognition_verbs: sdt.german_cognition_verbs.clone(),
+        },
+        "spanish" => Lists {
+            linking_verbs: sdt.spanish_linking_verbs.clone(),
+            emotion_adjectives: sdt.spanish_emotion_adjectives.clone(),
+            manner_adverbs: sdt.spanish_manner_adverbs.clone(),
+            cognition_verbs: sdt.spanish_cognition_verbs.clone(),
+        },
+        _ => Lists {
+            linking_verbs: sdt.english_linking_verbs.clone(),
+            emotion_adjectives: sdt.english_emotion_adjectives.clone(),
+            manner_adverbs: sdt.english_manner_adverbs.clone(),
+            cognition_verbs: sdt.english_cognition_verbs.clone(),
+        },
+    }
+}
+
+/// 1.2.11+ — union with case-insensitive dedup,
+/// preserving insertion order: existing entries first
+/// (so the user's hand-tuned ordering survives), then
+/// new arrivals.  Empty / whitespace-only entries are
+/// dropped silently.
+fn merge(existing: &[String], new: &[String]) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<String> = Vec::with_capacity(existing.len() + new.len());
+    let push = |w: &str, out: &mut Vec<String>, seen: &mut HashSet<String>| {
+        let trimmed = w.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let key = trimmed.to_lowercase();
+        if seen.insert(key) {
+            out.push(trimmed.to_string());
+        }
+    };
+    for w in existing {
+        push(w, &mut out, &mut seen);
+    }
+    for w in new {
+        push(w, &mut out, &mut seen);
+    }
+    out
+}
+
+/// 1.2.11+ — build the dotted-path update tuples for
+/// `config_tui::apply_in_place_edits`.  Path prefix
+/// follows the `serde_hjson` derived shape of
+/// `Config::editor::style_warnings::show_dont_tell::<lang>_*`.
+fn build_updates(
+    language: &str,
+    lists: &Lists,
+) -> Vec<(String, serde_json::Value)> {
+    let lang = language.to_lowercase();
+    let prefix = "editor.style_warnings.show_dont_tell";
+    let to_value = |words: &Vec<String>| -> serde_json::Value {
+        serde_json::Value::Array(
+            words
+                .iter()
+                .map(|w| serde_json::Value::String(w.clone()))
+                .collect(),
+        )
+    };
+    vec![
+        (
+            format!("{prefix}.{lang}_linking_verbs"),
+            to_value(&lists.linking_verbs),
+        ),
+        (
+            format!("{prefix}.{lang}_emotion_adjectives"),
+            to_value(&lists.emotion_adjectives),
+        ),
+        (
+            format!("{prefix}.{lang}_manner_adverbs"),
+            to_value(&lists.manner_adverbs),
+        ),
+        (
+            format!("{prefix}.{lang}_cognition_verbs"),
+            to_value(&lists.cognition_verbs),
+        ),
+    ]
 }
 
 const SYSTEM_PROMPT: &str = "\
@@ -304,5 +471,44 @@ mod tests {
     fn parse_lists_rejects_garbage() {
         let err = parse_lists("not json at all").unwrap_err();
         assert!(err.contains("no JSON object"));
+    }
+
+    #[test]
+    fn merge_preserves_existing_order_and_dedups_case_insensitively() {
+        let existing = vec![
+            "быть".to_string(),
+            "казаться".to_string(),
+            "выглядеть".to_string(),
+        ];
+        let new = vec![
+            "Казаться".to_string(), // case-insensitive dup
+            "оставаться".to_string(),
+            "  ".to_string(),       // whitespace dropped
+            "становиться".to_string(),
+        ];
+        let merged = merge(&existing, &new);
+        // Existing order preserved at the head.
+        assert_eq!(
+            merged,
+            vec![
+                "быть".to_string(),
+                "казаться".to_string(),
+                "выглядеть".to_string(),
+                "оставаться".to_string(),
+                "становиться".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_handles_empty_existing() {
+        // The user hasn't customised this language at
+        // all — the merge should reduce to the LLM
+        // output, with whitespace trimmed.
+        let merged = merge(&[], &[
+            "  ser  ".to_string(),
+            "estar".to_string(),
+        ]);
+        assert_eq!(merged, vec!["ser".to_string(), "estar".to_string()]);
     }
 }

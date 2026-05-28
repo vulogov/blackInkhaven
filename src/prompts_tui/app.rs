@@ -640,6 +640,14 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                         name: name.clone(),
                         description: String::new(),
                         template: String::new(),
+                        // 1.2.12+ — `None` = untagged; the
+                        // Phase C language picker in the prompts
+                        // editor will populate this.  Until then,
+                        // newly-added prompts land untagged so
+                        // the back-compat resolver pass picks
+                        // them up like every other 1.2.11
+                        // prompt.
+                        language: None,
                     };
                     app.library.prompts.push(new_prompt);
                     app.added.insert(name.clone());
@@ -2772,10 +2780,12 @@ mod tests {
             name: "alpha".into(),
             description: "".into(),
             template: "a".into(),
+            language: None,
         });
         lib.prompts.push(Prompt {
             name: "beta".into(),
             description: "".into(),
+            language: None,
             template: "b".into(),
         });
         let mut app = App {
@@ -2866,11 +2876,13 @@ mod tests {
             name: "alpha".into(),
             description: "first".into(),
             template: "alpha body".into(),
+            language: None,
         });
         lib.prompts.push(Prompt {
             name: "beta".into(),
             description: "second".into(),
             template: "beta body".into(),
+            language: None,
         });
         let app = App {
             project_root: PathBuf::from("/tmp"),

@@ -216,6 +216,21 @@ pub(super) struct OpenedDoc {
     /// change). `None` means we've never fired or the doc is
     /// freshly opened.
     pub typst_diag_last_fired: Option<(usize, String)>,
+    /// 1.2.12+ — cached whatlang result for the paragraph body.
+    /// Computed lazily by `App::detect_paragraph_language` on
+    /// load and after edits that grew/shrank the body by ≥ 50
+    /// chars.  Holds an ISO 639-1 code (`en`, `ru`, `es`, `de`,
+    /// `fr`) when whatlang confidently named a supported
+    /// language, `None` otherwise (too short, unsupported, or
+    /// inconclusive).  When `None`, the resolver falls back to
+    /// the book language silently.  Consumed only when
+    /// `editor.prompt_language_mode = "paragraph_detected"`.
+    pub detected_language: Option<String>,
+    /// 1.2.12+ — paragraph body length (in non-whitespace chars)
+    /// at the last detection.  Used to decide whether the
+    /// cached `detected_language` is still trustworthy after an
+    /// edit, or whether to recompute.
+    pub detected_language_length: usize,
 }
 
 pub(super) struct SplitView {

@@ -4179,23 +4179,150 @@ impl App {
         name: &str,
         fallback: impl FnOnce() -> String,
     ) -> String {
-        let display = name.replace('-', " ");
-        if let Some(t) = self.lookup_book_prompt_template(name) {
-            return t;
-        }
-        if let Some(t) = self.lookup_book_prompt_template(&display) {
-            return t;
-        }
-        if let Some(p) = self.prompts.find(name) {
-            return p.template.clone();
-        }
-        if let Some(p) = self.prompts.find(&display) {
-            return p.template.clone();
-        }
-        fallback()
+        // 1.2.12+ — Phase A.  The legacy single-language
+        // resolver now delegates to the three-pass language-
+        // aware resolver, with `active_prompt_language()` as
+        // the target.  Pass 2 (untagged) is what keeps every
+        // pre-1.2.12 project working: every existing prompt
+        // is untagged, so it lands in Pass 2 with the same
+        // semantics as the old code.  See
+        // `Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md`.
+        let want_lang = self.active_prompt_language();
+        self.resolve_prompt(name, &want_lang, fallback).template
     }
 
-    fn lookup_book_prompt_template(&self, name: &str) -> Option<String> {
+    /// 1.2.12+ — three-pass language-aware prompt resolver
+    /// with an embedded-fallback floor.  Pass 1 looks for an
+    /// exact `want_lang` match; Pass 2 looks for an untagged
+    /// match (back-compat for projects that pre-date the
+    /// language attribute); Pass 3 accepts any-language
+    /// matches with the supplied embedded fallback (English
+    /// by current convention) as the floor.  Within each
+    /// pass, both `name` and its space-substituted form
+    /// (`grammar-check` → `grammar check`) are tried so
+    /// prompt-book paragraphs named with either convention
+    /// resolve.  Returns the resolved template along with
+    /// the language and source the resolver landed on —
+    /// Phase C will surface the `found_lang` / `source` in
+    /// the AI pane title bar.
+    pub(super) fn resolve_prompt(
+        &self,
+        name: &str,
+        want_lang: &str,
+        fallback: impl FnOnce() -> String,
+    ) -> ResolvedPrompt {
+        if let Some(found) = self.resolve_prompt_optional(name, want_lang) {
+            return found;
+        }
+        // Floor — caller's embedded fallback.  Until Phase B
+        // ships the per-language embedded tables, the
+        // fallback is always English.
+        ResolvedPrompt::new(fallback(), "en", PromptResolveSource::Embedded)
+    }
+
+    /// 1.2.12+ — same three-pass search as `resolve_prompt`
+    /// but WITHOUT the embedded fallback.  Returns `None`
+    /// when nothing matches.  Used by the `/name [args]`
+    /// AI-prompt form where the user typed an explicit
+    /// name and there's no embedded prompt to fall back to
+    /// for arbitrary names — the caller surfaces the
+    /// not-found case as a status message.
+    pub(super) fn resolve_prompt_optional(
+        &self,
+        name: &str,
+        want_lang: &str,
+    ) -> Option<ResolvedPrompt> {
+        let display = name.replace('-', " ");
+        let want_lang_lc = want_lang.to_lowercase();
+
+        // ── Pass 1 — strict same-language ──
+        if let Some(t) =
+            self.lookup_book_prompt_template_with_lang(name, Some(&want_lang_lc))
+        {
+            return Some(ResolvedPrompt::new(t, &want_lang_lc, PromptResolveSource::Book));
+        }
+        if let Some(t) = self
+            .lookup_book_prompt_template_with_lang(&display, Some(&want_lang_lc))
+        {
+            return Some(ResolvedPrompt::new(t, &want_lang_lc, PromptResolveSource::Book));
+        }
+        if let Some(p) = self.prompts.find_lang(name, Some(&want_lang_lc)) {
+            return Some(ResolvedPrompt::new(
+                p.template.clone(),
+                &want_lang_lc,
+                PromptResolveSource::Hjson,
+            ));
+        }
+        if let Some(p) = self.prompts.find_lang(&display, Some(&want_lang_lc)) {
+            return Some(ResolvedPrompt::new(
+                p.template.clone(),
+                &want_lang_lc,
+                PromptResolveSource::Hjson,
+            ));
+        }
+
+        // ── Pass 2 — untagged (back-compat) ──
+        if let Some(t) = self.lookup_book_prompt_template_with_lang(name, None) {
+            return Some(ResolvedPrompt::new(t, "untagged", PromptResolveSource::Book));
+        }
+        if let Some(t) = self.lookup_book_prompt_template_with_lang(&display, None)
+        {
+            return Some(ResolvedPrompt::new(t, "untagged", PromptResolveSource::Book));
+        }
+        if let Some(p) = self.prompts.find_lang(name, None) {
+            return Some(ResolvedPrompt::new(
+                p.template.clone(),
+                "untagged",
+                PromptResolveSource::Hjson,
+            ));
+        }
+        if let Some(p) = self.prompts.find_lang(&display, None) {
+            return Some(ResolvedPrompt::new(
+                p.template.clone(),
+                "untagged",
+                PromptResolveSource::Hjson,
+            ));
+        }
+
+        // ── Pass 3 — any-language ──
+        if let Some((t, lang)) = self.lookup_book_prompt_any_language(name) {
+            return Some(ResolvedPrompt::new(t, &lang, PromptResolveSource::Book));
+        }
+        if let Some((t, lang)) = self.lookup_book_prompt_any_language(&display) {
+            return Some(ResolvedPrompt::new(t, &lang, PromptResolveSource::Book));
+        }
+        if let Some(p) = self.prompts.find(name) {
+            let lang = p.language.clone().unwrap_or_else(|| "untagged".into());
+            return Some(ResolvedPrompt::new(
+                p.template.clone(),
+                &lang,
+                PromptResolveSource::Hjson,
+            ));
+        }
+        if let Some(p) = self.prompts.find(&display) {
+            let lang = p.language.clone().unwrap_or_else(|| "untagged".into());
+            return Some(ResolvedPrompt::new(
+                p.template.clone(),
+                &lang,
+                PromptResolveSource::Hjson,
+            ));
+        }
+
+        None
+    }
+
+    /// 1.2.12+ — Prompts-book paragraph lookup, optionally
+    /// filtered by the `lang:<code>` tag convention.
+    ///
+    ///   * `lang_filter = Some("ru")` — only paragraphs whose
+    ///     `Node.tags` contain `lang:ru` are considered.
+    ///   * `lang_filter = None`       — only paragraphs with
+    ///     NO `lang:*` tag are considered (Pass 2).
+    fn lookup_book_prompt_template_with_lang(
+        &self,
+        name: &str,
+        lang_filter: Option<&str>,
+    ) -> Option<String> {
         let book_id = self.system_book_id(crate::store::SYSTEM_TAG_PROMPTS)?;
         let lower = name.to_lowercase();
         for id in self.hierarchy.collect_subtree(book_id) {
@@ -4206,14 +4333,184 @@ impl App {
             if node.kind != NodeKind::Paragraph {
                 continue;
             }
-            if node.slug.to_lowercase() == lower || node.title.to_lowercase() == lower {
-                let bytes = self.store.get_content(node.id).ok().flatten()?;
-                let text = String::from_utf8_lossy(&bytes).to_string();
-                return Some(strip_leading_typst_heading(&text));
+            if node.slug.to_lowercase() != lower
+                && node.title.to_lowercase() != lower
+            {
+                continue;
             }
+            if !node_lang_matches(node, lang_filter) {
+                continue;
+            }
+            let bytes = self.store.get_content(node.id).ok().flatten()?;
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            return Some(strip_leading_typst_heading(&text));
         }
         None
     }
+
+    /// 1.2.12+ — Pass 3 helper: return the first
+    /// matching-name Prompts-book paragraph regardless of
+    /// language tag, plus the language code it was tagged
+    /// with (or `"untagged"` when none).
+    fn lookup_book_prompt_any_language(
+        &self,
+        name: &str,
+    ) -> Option<(String, String)> {
+        let book_id = self.system_book_id(crate::store::SYSTEM_TAG_PROMPTS)?;
+        let lower = name.to_lowercase();
+        for id in self.hierarchy.collect_subtree(book_id) {
+            if id == book_id {
+                continue;
+            }
+            let node = self.hierarchy.get(id)?;
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            if node.slug.to_lowercase() != lower
+                && node.title.to_lowercase() != lower
+            {
+                continue;
+            }
+            let lang = node_lang_tag(node).unwrap_or_else(|| "untagged".into());
+            let bytes = self.store.get_content(node.id).ok().flatten()?;
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            return Some((strip_leading_typst_heading(&text), lang));
+        }
+        None
+    }
+
+    /// 1.2.12+ — the language to resolve prompts against on
+    /// this call.  Reads `editor.prompt_language_mode` (HJSON;
+    /// `book_defined` default) and, when set to
+    /// `paragraph_detected`, returns the cached whatlang code
+    /// for the open paragraph if available — falling back to
+    /// the book language when the paragraph is too short to
+    /// detect reliably (see `detect_paragraph_language`).
+    /// Phase C will add a session-local runtime override
+    /// hooked to `Ctrl+B Shift+N`.
+    pub(super) fn active_prompt_language(&self) -> String {
+        let mode_book = self.cfg.editor.prompt_language_mode
+            .eq_ignore_ascii_case("book_defined");
+        if mode_book {
+            return crate::ai::prompts::iso_from_long(&self.cfg.language).to_string();
+        }
+        // paragraph_detected (or any non-book-defined value)
+        if let Some(doc) = self.opened.as_ref() {
+            if let Some(code) = doc.detected_language.as_deref() {
+                return code.to_string();
+            }
+        }
+        // Detection failed or paragraph too short — fall back
+        // to book language silently.
+        crate::ai::prompts::iso_from_long(&self.cfg.language).to_string()
+    }
+
+    /// 1.2.12+ — run whatlang on the currently-opened
+    /// paragraph and cache the result on
+    /// `OpenedDoc.detected_language`.  No-op when:
+    ///
+    ///   * `editor.prompt_language_mode = "book_defined"`
+    ///     (book mode never consults paragraph detection)
+    ///   * No paragraph is open
+    ///   * The body has fewer non-whitespace characters than
+    ///     `editor.prompt_language_detection_min_chars`
+    ///     (whatlang is unreliable on short text)
+    ///   * whatlang's detection isn't confident, OR it
+    ///     reports a language outside inkhaven's supported
+    ///     set (`en/ru/es/de/fr`)
+    ///
+    /// All of the above leave `detected_language = None`,
+    /// which the resolver treats as "fall back to book
+    /// language".
+    pub(super) fn detect_paragraph_language(&mut self) {
+        if self.cfg.editor.prompt_language_mode
+            .eq_ignore_ascii_case("book_defined")
+        {
+            return;
+        }
+        let min_chars = self.cfg.editor.prompt_language_detection_min_chars;
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        let body: String = doc.textarea.lines().join("\n");
+        let nws_len = body.chars().filter(|c| !c.is_whitespace()).count();
+        if nws_len < min_chars {
+            doc.detected_language = None;
+            doc.detected_language_length = nws_len;
+            return;
+        }
+        let info = whatlang::detect(&body);
+        let code = info
+            .filter(|i| i.is_reliable())
+            .and_then(|i| crate::ai::prompts::iso_from_alpha3(i.lang().code()));
+        doc.detected_language = code.map(|s| s.to_string());
+        doc.detected_language_length = nws_len;
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ResolvedPrompt {
+    pub template: String,
+    /// ISO 639-1 code the resolver actually used, OR the
+    /// literal string `"untagged"` when the matched prompt
+    /// has no language attached.
+    pub found_lang: String,
+    pub source: PromptResolveSource,
+}
+
+impl ResolvedPrompt {
+    fn new(template: String, found_lang: &str, source: PromptResolveSource) -> Self {
+        Self {
+            template,
+            found_lang: found_lang.to_string(),
+            source,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PromptResolveSource {
+    Book,
+    Hjson,
+    Embedded,
+}
+
+/// 1.2.12+ — true when the node's `lang:<code>` tag matches
+/// `lang_filter`.  `lang_filter = Some("ru")` requires a
+/// `lang:ru` tag; `lang_filter = None` requires the absence
+/// of any `lang:*` tag (the untagged-back-compat Pass 2).
+fn node_lang_matches(
+    node: &crate::store::node::Node,
+    lang_filter: Option<&str>,
+) -> bool {
+    let actual = node_lang_tag(node);
+    match (lang_filter, actual.as_deref()) {
+        (Some(want), Some(have)) => have.eq_ignore_ascii_case(want),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// 1.2.12+ — pull the `lang:<code>` tag value out of the
+/// node's tag list.  Returns the lowercased code (`ru`,
+/// `en`, …) when exactly one such tag is present; `None`
+/// when no `lang:*` tag is set.  Multiple `lang:*` tags
+/// (a user mistake) — the first wins; the others are
+/// silently ignored.
+fn node_lang_tag(node: &crate::store::node::Node) -> Option<String> {
+    for t in &node.tags {
+        let lc = t.to_lowercase();
+        if let Some(rest) = lc.strip_prefix("lang:") {
+            let code = rest.trim();
+            if !code.is_empty() {
+                return Some(code.to_string());
+            }
+        }
+    }
+    None
+}
+
+impl App {
 
     fn current_selection_or_paragraph(&self) -> String {
         let Some(doc) = self.opened.as_ref() else {
@@ -17344,4 +17641,91 @@ fn slice_lines(lines: &[String], r1: usize, c1: usize, r2: usize, c2: usize) -> 
         out.extend(chars[..e].iter());
     }
     out
+}
+
+#[cfg(test)]
+mod tests_node_lang {
+    use super::*;
+    use crate::store::node::{Node, NodeKind};
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    fn paragraph_with_tags(tags: Vec<String>) -> Node {
+        Node {
+            id: Uuid::new_v4(),
+            kind: NodeKind::Paragraph,
+            title: "test".into(),
+            slug: "test".into(),
+            path: Vec::new(),
+            parent_id: None,
+            order: 0,
+            file: None,
+            word_count: 0,
+            modified_at: Utc::now(),
+            protected: false,
+            system_tag: None,
+            image_ext: None,
+            image_caption: None,
+            image_alt: None,
+            content_type: None,
+            status: None,
+            target_words: None,
+            target_hit_at_status: None,
+            linked_paragraphs: Vec::new(),
+            bookmark: false,
+            tags,
+            ai_memory: Vec::new(),
+            event: None,
+        }
+    }
+
+    #[test]
+    fn node_lang_tag_extracts_code() {
+        let n = paragraph_with_tags(vec!["lang:ru".into(), "draft".into()]);
+        assert_eq!(node_lang_tag(&n), Some("ru".into()));
+    }
+
+    #[test]
+    fn node_lang_tag_case_insensitive() {
+        // Tag preserves case on save, but the lookup
+        // lowercases both sides.
+        let n = paragraph_with_tags(vec!["LANG:RU".into()]);
+        assert_eq!(node_lang_tag(&n), Some("ru".into()));
+    }
+
+    #[test]
+    fn node_lang_tag_absent_returns_none() {
+        let n = paragraph_with_tags(vec!["draft".into(), "wip".into()]);
+        assert_eq!(node_lang_tag(&n), None);
+    }
+
+    #[test]
+    fn node_lang_tag_ignores_empty_value() {
+        // `lang:` with no code → not a meaningful tag; treat
+        // as untagged so the resolver falls through to Pass 2.
+        let n = paragraph_with_tags(vec!["lang:".into()]);
+        assert_eq!(node_lang_tag(&n), None);
+    }
+
+    #[test]
+    fn node_lang_matches_strict_same_language() {
+        let n = paragraph_with_tags(vec!["lang:ru".into()]);
+        assert!(node_lang_matches(&n, Some("ru")));
+        assert!(!node_lang_matches(&n, Some("en")));
+    }
+
+    #[test]
+    fn node_lang_matches_untagged_pass_skips_tagged_nodes() {
+        // Pass 2 (lang_filter = None) must only match nodes
+        // that have NO lang:* tag.  A node tagged `lang:ru`
+        // is a Pass 1 / Pass 3 hit, never Pass 2.
+        let n = paragraph_with_tags(vec!["lang:ru".into()]);
+        assert!(!node_lang_matches(&n, None));
+    }
+
+    #[test]
+    fn node_lang_matches_untagged_pass_matches_untagged_nodes() {
+        let n = paragraph_with_tags(vec!["draft".into()]);
+        assert!(node_lang_matches(&n, None));
+    }
 }

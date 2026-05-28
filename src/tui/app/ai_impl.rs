@@ -302,17 +302,23 @@ impl super::App {
             return;
         }
         let user_query = if raw.starts_with('/') {
-            // Resolve `/name [extra args]` form. Search system prompts
-            // (prompts.hjson) first, then paragraphs under the Prompts book.
+            // 1.2.12+ — `/name [extra args]` form routes through
+            // the language-aware resolver so a user with
+            // `lang:ru` tagged prompts gets the Russian variant
+            // first when working on Russian prose.  Embedded-
+            // fallback floor doesn't apply here: arbitrary user
+            // names have no embedded counterpart, so a miss is
+            // surfaced as a status message instead.
             let after = raw.trim_start_matches('/').trim();
-            if let Some(p) = self.prompts.find(after) {
-                self.render_template(&p.template.clone())
-            } else if let Some(text) = self.lookup_book_prompt_template(after) {
-                self.render_template(&text)
-            } else {
-                self.status =
-                    format!("no prompt `{after}` — type `/` to see the list");
-                return;
+            let want_lang = self.active_prompt_language();
+            match self.resolve_prompt_optional(after, &want_lang) {
+                Some(found) => self.render_template(&found.template),
+                None => {
+                    self.status = format!(
+                        "no prompt `{after}` — type `/` to see the list"
+                    );
+                    return;
+                }
             }
         } else {
             raw
@@ -565,22 +571,19 @@ impl super::App {
             return;
         }
 
-        // Resolver precedence. `grammar-check` is the canonical slug —
-        // case-insensitive match against both slug and title catches the
-        // common variants ("Grammar check", "GRAMMAR CHECK", etc.).
+        // 1.2.12+ — Phase A: route through the three-pass
+        // language-aware resolver.  Same observable behaviour as
+        // the legacy 4-step pattern for projects without any
+        // `lang:*` tags or `language: <code>` HJSON entries
+        // (Pass 2 picks up every untagged prompt); projects that
+        // *do* add per-language prompts get them preferred.
         const NAME: &str = "grammar-check";
-        const TITLE: &str = "grammar check";
-        let template = if let Some(t) = self.lookup_book_prompt_template(NAME) {
-            t
-        } else if let Some(t) = self.lookup_book_prompt_template(TITLE) {
-            t
-        } else if let Some(p) = self.prompts.find(NAME) {
-            p.template.clone()
-        } else if let Some(p) = self.prompts.find(TITLE) {
-            p.template.clone()
-        } else {
-            grammar_check_default_prompt(&self.cfg.language)
-        };
+        let want_lang = self.active_prompt_language();
+        let template = self
+            .resolve_prompt(NAME, &want_lang, || {
+                grammar_check_default_prompt(&self.cfg.language)
+            })
+            .template;
 
         // Render placeholders ({{selection}} / {{context}}) and then
         // append the paragraph body so the model has a single trailing
@@ -1015,22 +1018,17 @@ impl super::App {
         }
         let title = doc.title.clone();
         let language = self.cfg.language.clone();
-        // Standard prompt-resolution precedence.
-        // Same precedence the F7 grammar-check
-        // flow uses.
+        // 1.2.12+ — Phase A: route through the language-aware
+        // resolver.  Same precedence the F7 grammar-check flow
+        // uses; both slug and title forms are tried inside each
+        // pass by the resolver.
         const NAME: &str = "sentence-rhythm-rewrite";
-        const TITLE: &str = "sentence rhythm rewrite";
-        let template = if let Some(t) = self.lookup_book_prompt_template(NAME) {
-            t
-        } else if let Some(t) = self.lookup_book_prompt_template(TITLE) {
-            t
-        } else if let Some(p) = self.prompts.find(NAME) {
-            p.template.clone()
-        } else if let Some(p) = self.prompts.find(TITLE) {
-            p.template.clone()
-        } else {
-            sentence_rhythm_rewrite_default_prompt(&language)
-        };
+        let want_lang = self.active_prompt_language();
+        let template = self
+            .resolve_prompt(NAME, &want_lang, || {
+                sentence_rhythm_rewrite_default_prompt(&language)
+            })
+            .template;
         let rendered = self.render_template(&template);
         let prompt_text = format!(
             "{rendered}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──",

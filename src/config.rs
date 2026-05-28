@@ -1336,10 +1336,39 @@ pub struct EditorConfig {
     /// `Ctrl+B Shift+P`.
     #[serde(default = "default_pov_chip_enabled")]
     pub pov_chip_enabled: bool,
+    /// 1.2.12+ — prompt-language resolution mode.
+    /// `"book_defined"` (default) uses the top-level
+    /// `language` field — every AI call resolves prompts
+    /// against the project's language.
+    /// `"paragraph_detected"` runs whatlang on the live
+    /// paragraph body and falls back to `book_defined`
+    /// when the paragraph is shorter than
+    /// `prompt_language_detection_min_chars` of non-
+    /// whitespace text (whatlang is unreliable below ~50
+    /// chars).  Session-local override via the runtime
+    /// chord (Phase C); HJSON is the persistent default.
+    /// See `Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md`.
+    #[serde(default = "default_prompt_language_mode")]
+    pub prompt_language_mode: String,
+    /// 1.2.12+ — minimum non-whitespace character count
+    /// the live paragraph must have before
+    /// `prompt_language_mode = "paragraph_detected"`
+    /// will even attempt whatlang detection.  Below this,
+    /// the resolver silently uses the book language.
+    #[serde(default = "default_prompt_language_detection_min_chars")]
+    pub prompt_language_detection_min_chars: usize,
 }
 
 fn default_pov_chip_enabled() -> bool {
     true
+}
+
+fn default_prompt_language_mode() -> String {
+    "book_defined".into()
+}
+
+fn default_prompt_language_detection_min_chars() -> usize {
+    50
 }
 
 /// 1.2.9+ — `editor.style_warnings.*` HJSON stanza.
@@ -2192,6 +2221,9 @@ impl Default for EditorConfig {
             tts: TtsConfig::default(),
             style_warnings: StyleWarningsConfig::default(),
             pov_chip_enabled: default_pov_chip_enabled(),
+            prompt_language_mode: default_prompt_language_mode(),
+            prompt_language_detection_min_chars:
+                default_prompt_language_detection_min_chars(),
         }
     }
 }
