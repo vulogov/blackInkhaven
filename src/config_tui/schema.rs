@@ -146,6 +146,11 @@ fn enum_variants_for(path: &str) -> Option<Vec<&'static str>> {
             "MultilingualE5Large",
             "BGEM3",
         ]),
+        // 1.2.12+ — prompt-language resolver mode.  See
+        // `Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md` §5.
+        "editor.prompt_language_mode" => {
+            Some(vec!["book_defined", "paragraph_detected"])
+        }
         _ => None,
     }
 }

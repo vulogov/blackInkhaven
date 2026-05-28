@@ -454,6 +454,22 @@ pub enum ShowDontTellCommand {
         /// `--project`).
         #[arg(long)]
         provider: Option<String>,
+        /// 1.2.11+ — apply the LLM-discovered lists
+        /// **in place** to `inkhaven.hjson`, merging
+        /// with any existing per-language entries
+        /// (union, case-insensitive dedup, existing
+        /// entries first then new arrivals).  A
+        /// versioned backup of the pre-patch file
+        /// lands under `<project>/.config-backups/`
+        /// before the rewrite, so rolling back is a
+        /// single `cp`.  Default (without `--update`)
+        /// stays as today: print the HJSON snippet to
+        /// stdout and touch nothing.  The two modes
+        /// are mutually compatible — `--update` also
+        /// prints the merged snippet to stdout so the
+        /// user can see what landed.
+        #[arg(long)]
+        update: bool,
     },
 }
 

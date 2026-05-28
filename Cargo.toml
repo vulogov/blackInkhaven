@@ -169,6 +169,15 @@ regex = "1"
 # "Москва" lights up "Москве", "Москвою", etc.
 rust-stemmers = "1.2"
 unicode-segmentation = "1"
+# 1.2.12+ — character-n-gram language detector used by the
+# `editor.prompt_language_mode = "paragraph_detected"` mode in
+# `App::active_prompt_language`. Offline, no network, ISO 639-3 →
+# `iso_from_alpha3` maps to inkhaven's five supported languages
+# (en/ru/fr/de/es). Cached on `OpenedDoc.detected_language` and
+# only consulted when the paragraph has at least
+# `editor.prompt_language_detection_min_chars` of non-whitespace
+# text — whatlang is unreliable on very short inputs.
+whatlang = "0.16"
 # Markdown parsing for the AI pane's rendered output, plus the
 # markdown→Typst translator that runs when the user applies an AI result to
 # a paragraph via r/i/t/b.

@@ -199,7 +199,12 @@ pub fn apply_edits(index: &HjsonIndex, edits: &[Edit]) -> Result<String> {
     });
     for edit in &splices {
         if let Some(span) = working_index.leaves.get(&edit.path) {
-            let new_text = render_value(&edit.new_value);
+            // 1.2.11+ — pass the leaf's line-indent so
+            // arrays of strings can render multi-line
+            // with consistent indentation matching the
+            // surrounding HJSON.
+            let indent = line_indent_at_offset(&source, span.value_range.start);
+            let new_text = render_value_with_indent(&edit.new_value, indent);
             source.replace_range(span.value_range.clone(), &new_text);
         }
     }
@@ -235,7 +240,10 @@ pub fn apply_edits(index: &HjsonIndex, edits: &[Edit]) -> Result<String> {
             payload.push_str("\n  ");
             payload.push_str(&key);
             payload.push_str(": ");
-            payload.push_str(&render_value(&edit.new_value));
+            // Appended leaves live at the parent's
+            // canonical 2-space indent; arrays render
+            // multi-line against that column.
+            payload.push_str(&render_value_with_indent(&edit.new_value, 2));
         }
         payload.push('\n');
         insertion_plan.push((insertion_point, payload));
@@ -433,6 +441,33 @@ fn render_object_body(value: &Value, base_indent: &str) -> String {
 /// that this isn't worth a full pretty-printer in
 /// Phase 2.
 fn render_value(v: &Value) -> String {
+    // No-indent shim — kept for the small number of
+    // call sites (object-body, tests) that don't care
+    // about array layout.  The splice + append paths
+    // route through `render_value_with_indent` so
+    // multi-line array rendering stays accurate to the
+    // surrounding HJSON.
+    render_value_with_indent(v, 0)
+}
+
+/// 1.2.11+ — like `render_value` but aware of the
+/// column where the value's text begins.  Currently
+/// only affects arrays of strings: short ones (≤ 3
+/// elements AND ≤ 60 chars when serialised compact)
+/// stay on one line; longer ones break to
+///
+/// ```hjson
+/// [
+///   "word1"
+///   "word2"
+///   "word3"
+/// ]
+/// ```
+///
+/// with elements indented to `line_indent + 2` and
+/// the closing `]` aligned to `line_indent` (so it
+/// sits flush under the leaf's key).
+fn render_value_with_indent(v: &Value, line_indent: usize) -> String {
     match v {
         Value::Null => "null".into(),
         Value::Bool(b) => if *b { "true" } else { "false" }.into(),
@@ -444,12 +479,71 @@ fn render_value(v: &Value) -> String {
                 s.clone()
             }
         }
-        // For arrays / objects fall back to compact
-        // serde_json — Phase 2 doesn't typically
-        // surgically rewrite these.
+        Value::Array(arr) => render_array_with_indent(arr, line_indent),
+        // Objects still fall back to compact JSON.  A
+        // genuine surgical-rewrite of a leaf object is
+        // rare; the AddMapEntry pipeline already has
+        // its own pretty-printer (`render_object_body`).
         other => serde_json::to_string(other)
             .unwrap_or_else(|_| "null".to_string()),
     }
+}
+
+fn render_array_with_indent(arr: &[Value], line_indent: usize) -> String {
+    if arr.is_empty() {
+        return "[]".into();
+    }
+    // Pre-render each element compactly; this both
+    // gives us the multi-line text AND lets us decide
+    // whether the compact form fits on one line.
+    let parts: Vec<String> = arr
+        .iter()
+        .map(|v| render_value_with_indent(v, line_indent + 2))
+        .collect();
+    let compact = format!("[{}]", parts.join(", "));
+    let all_strings = arr.iter().all(|v| matches!(v, Value::String(_)));
+    if !all_strings || (arr.len() <= 3 && compact.chars().count() <= 60) {
+        return compact;
+    }
+    // Multi-line.  HJSON allows newline-separated
+    // array elements with no commas — that's the
+    // form authors edit by hand, so we mirror it.
+    let inner_pad: String = std::iter::repeat(' ').take(line_indent + 2).collect();
+    let close_pad: String = std::iter::repeat(' ').take(line_indent).collect();
+    let mut out = String::from("[");
+    for p in &parts {
+        out.push('\n');
+        out.push_str(&inner_pad);
+        out.push_str(p);
+    }
+    out.push('\n');
+    out.push_str(&close_pad);
+    out.push(']');
+    out
+}
+
+/// 1.2.11+ — leading-whitespace column of the line
+/// containing `byte_offset`.  Used to align multi-line
+/// array renders with their key's indent.  Walks back
+/// to the previous `\n` (or to byte 0 for the first
+/// line), then counts contiguous spaces; tabs are
+/// approximated as four columns since the editor
+/// indents with spaces by convention.
+fn line_indent_at_offset(source: &str, byte_offset: usize) -> usize {
+    let bytes = source.as_bytes();
+    let line_start = source[..byte_offset]
+        .rfind('\n')
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let mut col = 0usize;
+    for &b in &bytes[line_start..byte_offset] {
+        match b {
+            b' ' => col += 1,
+            b'\t' => col += 4,
+            _ => break,
+        }
+    }
+    col
 }
 
 fn needs_quoting(s: &str) -> bool {
@@ -646,6 +740,72 @@ mod tests {
     #[test]
     fn render_value_quotes_numeric_lookalike() {
         assert_eq!(render_value(&json!("42")), "\"42\"");
+    }
+
+    #[test]
+    fn render_array_short_stays_compact() {
+        let v = json!(["a", "b", "c"]);
+        assert_eq!(render_value_with_indent(&v, 4), "[a, b, c]");
+    }
+
+    #[test]
+    fn render_array_long_breaks_multiline() {
+        let v = json!([
+            "сердитый",
+            "грустный",
+            "испуганный",
+            "счастливый",
+            "усталый",
+        ]);
+        let out = render_value_with_indent(&v, 2);
+        // Multi-line shape with elements indented to
+        // line_indent + 2 (= 4) and the closing `]`
+        // flush at line_indent (= 2).  Cyrillic words
+        // pass `needs_quoting` so they land unquoted —
+        // valid HJSON and the form authors use by
+        // hand.
+        assert!(out.starts_with("[\n    "));
+        assert!(out.contains("\n    счастливый"));
+        assert!(out.ends_with("\n  ]"));
+    }
+
+    #[test]
+    fn render_array_mixed_types_falls_back_compact() {
+        // Mixed types stay compact — multi-line only
+        // makes sense for string-array word-lists.
+        let v = json!(["a", 1, true]);
+        let out = render_value_with_indent(&v, 2);
+        assert!(out.starts_with('['));
+        assert!(!out.contains('\n'));
+    }
+
+    #[test]
+    fn line_indent_at_offset_walks_back_to_previous_newline() {
+        let src = "outer: {\n    russian_linking_verbs: [\"быть\"]\n}";
+        let pos = src.find('[').unwrap();
+        // Line of interest is `    russian_linking_verbs: [...]` — 4 spaces.
+        assert_eq!(line_indent_at_offset(src, pos), 4);
+    }
+
+    #[test]
+    fn splice_long_string_array_lands_multiline() {
+        let src = "show_dont_tell: {\n  russian_linking_verbs: [\"old\"]\n}";
+        let idx = super::super::hjson_index::parse(src).unwrap();
+        let edits = vec![Edit {
+            path: "show_dont_tell.russian_linking_verbs".into(),
+            new_value: json!([
+                "быть", "казаться", "выглядеть", "становиться",
+                "оставаться", "чувствовать",
+            ]),
+            kind: EditKind::Splice,
+        }];
+        let out = apply_edits(&idx, &edits).unwrap();
+        // Multi-line with the closing `]` aligned to
+        // the leaf's key column (2 spaces).  Cyrillic
+        // words pass `needs_quoting` so they land
+        // unquoted.
+        assert!(out.contains("russian_linking_verbs: [\n    быть"));
+        assert!(out.contains("\n    чувствовать\n  ]"));
     }
 
     #[test]
