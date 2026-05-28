@@ -232,6 +232,10 @@ impl super::App {
                     description: p.description.clone(),
                     body: PromptBody::Static(p.template.clone()),
                     source: PromptSource::System,
+                    // 1.2.12+ Phase C — propagate the
+                    // language tag so the picker can
+                    // section + chip.
+                    language: p.language.clone(),
                 }));
             }
         }
@@ -251,18 +255,49 @@ impl super::App {
                 let title = node.title.clone();
                 let s = score(&name, &title);
                 if s > 0 {
+                    // Pull `lang:<code>` tag if present.
+                    let language = node.tags.iter().find_map(|t| {
+                        let lc = t.to_lowercase();
+                        let rest = lc.strip_prefix("lang:")?;
+                        let code = rest.trim();
+                        if code.is_empty() {
+                            None
+                        } else {
+                            Some(code.to_string())
+                        }
+                    });
                     scored.push((s, PromptCandidate {
                         name,
                         description: title,
                         body: PromptBody::BookParagraph(node.id),
                         source: PromptSource::Book,
+                        language,
                     }));
                 }
             }
         }
-        // Stable sort by descending score — preserves the
-        // "system before book" within-tier ordering.
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        // 1.2.12+ Phase C — three-tier sort:
+        //   1. language-priority bucket (active → untagged → other)
+        //   2. score (existing prefix > word-prefix > substring)
+        //   3. stable insertion order (system before book)
+        //
+        // The user sees in-language prompts first, untagged
+        // (back-compat) below them, other-language matches
+        // at the bottom.  Section headers in the renderer
+        // make the split visible.
+        let active = self.active_prompt_language();
+        let bucket = |lang: &Option<String>| -> u8 {
+            match lang.as_deref() {
+                Some(l) if l.eq_ignore_ascii_case(&active) => 0,
+                None => 1,
+                Some(_) => 2,
+            }
+        };
+        scored.sort_by(|a, b| {
+            bucket(&a.1.language)
+                .cmp(&bucket(&b.1.language))
+                .then(b.0.cmp(&a.0))
+        });
         let out: Vec<PromptCandidate> = scored.into_iter().map(|(_, c)| c).collect();
         out
     }

@@ -1055,6 +1055,32 @@ fn dispatch_list_keys(app: &mut App, key: KeyEvent) {
                 }
             }
         }
+        // 1.2.12+ Phase C — `l` cycles the language tag
+        // on the selected prompt through `None → en →
+        // ru → es → de → fr → None`.  Marks the prompt
+        // dirty so Ctrl+S persists.  Editor-pane focus
+        // is unaffected (only the list pane consumes
+        // this chord).
+        KeyCode::Char('l') | KeyCode::Char('L') => {
+            if let Some(prompt) = app.library.prompts.get_mut(app.cursor) {
+                let next = match prompt.language.as_deref() {
+                    None => Some("en".to_string()),
+                    Some("en") => Some("ru".to_string()),
+                    Some("ru") => Some("es".to_string()),
+                    Some("es") => Some("de".to_string()),
+                    Some("de") => Some("fr".to_string()),
+                    Some("fr") => None,
+                    _ => None,
+                };
+                prompt.language = next.clone();
+                let name = prompt.name.clone();
+                app.dirty.insert(name.clone());
+                app.status = match next {
+                    Some(code) => format!("`{name}` language → {code}"),
+                    None => format!("`{name}` language → untagged"),
+                };
+            }
+        }
         _ => {}
     }
 }
@@ -1561,6 +1587,7 @@ fn list_help_body() -> String {
         "   a                 add new prompt (name prompt)",
         "   d                 delete focused prompt (confirm)",
         "                       second `d` on a deleted entry revokes",
+        "   l                 cycle language tag (—/en/ru/es/de/fr) (1.2.12+)",
         "   Tab / Shift+Tab   cycle pane focus",
         "   Ctrl+S            save library (confirm modal)",
         "   Ctrl+R            rollback picker (list .prompts-backups/)",
@@ -1850,9 +1877,21 @@ fn draw_list_pane(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
             Style::default()
         };
         let marker = if selected { "▶" } else { " " };
+        // 1.2.12+ Phase C — inline language chip per
+        // row.  `[ru]` for tagged prompts; `[—]` for
+        // untagged so the visual width stays steady.
+        let lang_chip = match prompt.language.as_deref() {
+            Some(l) => format!("[{l}]"),
+            None => "[—]".to_string(),
+        };
+        let lang_chip_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::DIM);
         lines.push(Line::from(vec![
             Span::raw(format!(" {marker} ")),
             Span::raw(format!("{chip} ")),
+            Span::styled(lang_chip, lang_chip_style),
+            Span::raw(" "),
             Span::styled(prompt.name.clone(), style),
         ]));
     }

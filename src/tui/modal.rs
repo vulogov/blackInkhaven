@@ -37,6 +37,13 @@ pub(super) struct PromptCandidate {
     pub description: String,
     pub body: PromptBody,
     pub source: PromptSource,
+    /// 1.2.12+ Phase C — language tag attached to this
+    /// prompt, if any.  For hjson entries this is the
+    /// `language` field; for Prompts-book paragraphs
+    /// it's the `lang:<code>` tag value.  `None` =
+    /// untagged.  Drives sectioning + chip display in
+    /// the `/` picker.
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone)]
