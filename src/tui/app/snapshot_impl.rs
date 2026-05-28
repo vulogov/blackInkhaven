@@ -154,6 +154,37 @@ impl super::App {
         }
     }
 
+    /// 1.2.11+ — snapshot the currently open
+    /// paragraph with `annotation`, picking up the
+    /// live editor body (not the on-disk file).
+    /// Used by flows that need to label the
+    /// pre-mutation state before they apply an
+    /// AI rewrite — most notably the Ctrl+B Shift+M
+    /// sentence-rhythm rewrite, which snapshots
+    /// the unrewritten body annotated `Sentence
+    /// rhythm rewrite` immediately before the
+    /// rewrite lands.  No-op when no paragraph is
+    /// open; failures land on the status bar.
+    pub(super) fn snapshot_open_paragraph_with_annotation(
+        &mut self,
+        annotation: &str,
+    ) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status =
+                "snapshot: no paragraph open".into();
+            return;
+        };
+        let parent_id = doc.id;
+        let parent_title = doc.title.clone();
+        let body = doc.textarea.lines().join("\n").into_bytes();
+        self.commit_snapshot_annotation(
+            parent_id,
+            &parent_title,
+            &body,
+            annotation,
+        );
+    }
+
     pub(super) fn open_snapshot_picker(&mut self) {
         let Some(doc) = self.opened.as_ref() else {
             self.status = "no paragraph open".into();

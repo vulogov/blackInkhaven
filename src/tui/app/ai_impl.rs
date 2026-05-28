@@ -14,8 +14,9 @@ use uuid::Uuid;
 
 use super::{
     critique_changes_default_prompt, critique_edit_default_prompt, current_word_or_selection,
-    explain_diagnostic_default_prompt, extract_corrected_text, grammar_check_default_prompt, select_apply_text, FULL_SYSTEM_PROMPT, GRAMMAR_CHECK_SYSTEM_PROMPT,
-    HELP_SYSTEM_PROMPT, LOCAL_SYSTEM_PROMPT,
+    explain_diagnostic_default_prompt, extract_corrected_text, grammar_check_default_prompt,
+    select_apply_text, sentence_rhythm_rewrite_default_prompt, FULL_SYSTEM_PROMPT,
+    GRAMMAR_CHECK_SYSTEM_PROMPT, HELP_SYSTEM_PROMPT, LOCAL_SYSTEM_PROMPT,
 };
 
 use crate::ai::stream::{spawn_chat_stream, ChatTurn};
@@ -968,6 +969,98 @@ impl super::App {
             format!("show↛tell scan: streaming from {provider}…");
     }
 
+    /// 1.2.11+ — Ctrl+B Shift+M.  AI-driven sentence-
+    /// rhythm rewrite of the open paragraph.
+    ///
+    /// Prompt resolution follows the standard
+    /// pattern (`resolve_prompt_template`):
+    ///   1. Paragraph in the project's Prompts
+    ///      system book with slug or title
+    ///      `sentence-rhythm-rewrite` /
+    ///      `sentence rhythm rewrite`.
+    ///   2. Entry in the project's
+    ///      `prompts.hjson`.
+    ///   3. Embedded multilingual fallback —
+    ///      `sentence_rhythm_rewrite_default_prompt`,
+    ///      language-aware via `cfg.language`.
+    ///
+    /// Unlike show-don't-tell (which leaves the
+    /// response in the AI pane for the user to
+    /// read), the rewrite flow auto-opens an AI
+    /// diff modal when streaming completes.  The
+    /// modal carries `post_accept_snapshot =
+    /// Some("Sentence rhythm rewrite")` so the
+    /// apply step creates an annotated F6-
+    /// discoverable snapshot of the pre-rewrite
+    /// state BEFORE the buffer is replaced.
+    pub(super) fn start_sentence_rhythm_rewrite(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "rhythm rewrite: no paragraph open".into();
+            return;
+        };
+        let body = doc.textarea.lines().join("\n");
+        if body.trim().is_empty() {
+            self.status = "rhythm rewrite: paragraph is empty".into();
+            return;
+        }
+        let title = doc.title.clone();
+        let language = self.cfg.language.clone();
+        // Standard prompt-resolution precedence.
+        // Same precedence the F7 grammar-check
+        // flow uses.
+        const NAME: &str = "sentence-rhythm-rewrite";
+        const TITLE: &str = "sentence rhythm rewrite";
+        let template = if let Some(t) = self.lookup_book_prompt_template(NAME) {
+            t
+        } else if let Some(t) = self.lookup_book_prompt_template(TITLE) {
+            t
+        } else if let Some(p) = self.prompts.find(NAME) {
+            p.template.clone()
+        } else if let Some(p) = self.prompts.find(TITLE) {
+            p.template.clone()
+        } else {
+            sentence_rhythm_rewrite_default_prompt(&language)
+        };
+        let rendered = self.render_template(&template);
+        let prompt_text = format!(
+            "{rendered}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──",
+        );
+        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("rhythm rewrite: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            None,
+            Vec::new(),
+            prompt_text,
+        );
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        // Flag this inference as "auto-apply via
+        // diff review" — pump_inference watches
+        // for the transition to Done and opens
+        // the diff modal automatically.
+        self.pending_rhythm_rewrite = true;
+        self.change_focus(Focus::Ai);
+        self.status = format!(
+            "rhythm rewrite ({language}): streaming from {provider} · diff review on completion…"
+        );
+    }
+
     pub(super) fn ai_diff_review_handle_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up => {
@@ -1036,7 +1129,28 @@ impl super::App {
             | KeyCode::Char('E')
             | KeyCode::Enter => {
                 let taken = std::mem::replace(&mut self.modal, Modal::None);
-                if let Modal::AiDiffReview { after_lines, action, .. } = taken {
+                if let Modal::AiDiffReview {
+                    after_lines,
+                    action,
+                    post_accept_snapshot,
+                    ..
+                } = taken
+                {
+                    // 1.2.11+ — when the rewrite flow
+                    // requested it, snapshot the
+                    // pre-rewrite buffer with the
+                    // supplied annotation BEFORE
+                    // replacing.  This is how
+                    // Ctrl+B Shift+M (sentence-
+                    // rhythm rewrite) preserves the
+                    // user's old prose with a
+                    // labelled F6-discoverable
+                    // entry.
+                    if let Some(annotation) = post_accept_snapshot {
+                        self.snapshot_open_paragraph_with_annotation(
+                            &annotation,
+                        );
+                    }
                     let after = after_lines.join("\n");
                     self.apply_ai_diff_accepted(action, after, true);
                 }

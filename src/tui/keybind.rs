@@ -412,6 +412,25 @@ pub enum Action {
     /// "heartbeat" — the felt rhythm of the prose.
     #[serde(rename = "view.open_sentence_rhythm")]
     OpenSentenceRhythm,
+    /// Ctrl+B Shift+M (1.2.11+) — AI-driven sentence-
+    /// rhythm rewrite of the open paragraph.  Sends
+    /// the paragraph body to the LLM with a prompt
+    /// asking it to break up monotonous rhythm
+    /// (the `Ctrl+B Shift+H` gauge's MONOTONE verdict
+    /// has the same target).  When the stream
+    /// completes, auto-opens an AI diff modal so
+    /// the user can review the rewrite line by
+    /// line.  On accept, a snapshot is created with
+    /// annotation "Sentence rhythm rewrite" before
+    /// the buffer is replaced; on reject, nothing
+    /// changes.  Mnemonic: M for "Modulate" /
+    /// "Mix it up".  Prompt resolution follows the
+    /// standard pattern (Prompts book →
+    /// `prompts.hjson` → embedded fallback).
+    /// Multilingual via the project's `language`
+    /// setting.
+    #[serde(rename = "ai.rewrite_sentence_rhythm")]
+    AiRewriteRhythm,
     /// Ctrl+B Shift+P (1.2.9+) — toggle the POV /
     /// character chip on the status bar.  Session-local
     /// override on top of `editor.pov_chip_enabled` in
@@ -628,6 +647,7 @@ impl Action {
             Action::OpenConcordance => "concordance".into(),
             Action::TogglePovChip => "pov chip".into(),
             Action::OpenSentenceRhythm => "rhythm".into(),
+            Action::AiRewriteRhythm => "rhythm rewrite".into(),
             Action::AnalyseShowDontTell => "show↛tell AI".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
@@ -837,6 +857,8 @@ impl Action {
                 "Toggle the POV / character chip on the status bar (1.2.9+, Ctrl+B Shift+P). When enabled, the status bar shows the most-mentioned character in the open paragraph (the heuristic POV character) plus up to three additional named characters present. Driven by the project's existing `characters` lexicon — no separate tagging needed. Ties broken by first-mention order. Session-local override on top of `editor.pov_chip_enabled` in HJSON.".into(),
             Action::OpenSentenceRhythm =>
                 "Open the sentence-rhythm gauge modal for the open paragraph (1.2.9+, Ctrl+B Shift+H). Splits prose into sentences (hand-rolled walker with abbreviation suppression), tallies word counts, computes mean / stdev / coefficient of variation (CV), and maps CV to a verdict: Monotone (CV < 0.25 — drones), Steady (0.25-0.45 — workable), Varied (0.45-0.80 — strong prose rhythm), Choppy (≥ 0.80 — fragments + long sentences mixed). Shows a per-sentence bar list and the three shortest + three longest outliers. Mnemonic: H for heartbeat — the felt rhythm of the prose.".into(),
+            Action::AiRewriteRhythm =>
+                "AI-driven sentence-rhythm rewrite of the open paragraph (1.2.11+, Ctrl+B Shift+M). Sends the paragraph to the configured LLM with a prompt asking it to break monotonous rhythm by mixing short and long sentences while preserving voice + meaning. Prompt resolution follows the standard pattern: the project's Prompts book first (look up by slug or title `sentence-rhythm-rewrite`), then prompts.hjson, then an embedded multilingual fallback that respects the project's `language` setting. When the stream completes, an AI diff modal pops automatically so the user can review the rewrite line by line. Accept commits the rewrite into the buffer AND creates a snapshot annotated `Sentence rhythm rewrite` first; reject leaves the buffer untouched. Mnemonic: M for Modulate / Mix it up. Pairs with the Ctrl+B Shift+H rhythm gauge.".into(),
             Action::AnalyseShowDontTell =>
                 "AI-driven show-don't-tell scan of the open paragraph (1.2.9+, Ctrl+B Shift+T). Sends the paragraph to the configured LLM with a system prompt asking for telling passages plus suggested rewrites. The response streams into the AI pane. Complements the always-on regex overlay (`editor.style_warnings.show_dont_tell`) with deeper analysis — the regex catches the obvious 2-grams (`was angry`, `realised`); the AI scan catches subtler instances and proposes alternatives. Mnemonic: T for tell.".into(),
             Action::ViewRenderParagraph =>
@@ -1022,6 +1044,13 @@ impl KeyBindings {
                 // open paragraph to the LLM for a
                 // show-don't-tell scan.
                 entry("Shift+t", Action::AnalyseShowDontTell, Scope::Editor),
+                // 1.2.11+ — Ctrl+B Shift+M asks the
+                // LLM to rewrite the open paragraph
+                // for rhythm variety; AI diff modal
+                // pops on completion; snapshot
+                // annotated "Sentence rhythm
+                // rewrite" on accept.
+                entry("Shift+m", Action::AiRewriteRhythm, Scope::Editor),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),

@@ -505,6 +505,15 @@ pub(super) enum Modal {
         after_lines: Vec<String>,
         action: InferenceAction,
         scroll: usize,
+        /// 1.2.11+ — when `Some`, the apply-step
+        /// creates a snapshot annotated with this
+        /// string BEFORE replacing the buffer.
+        /// Used by the rhythm-rewrite flow
+        /// (`Ctrl+B Shift+M`) so the pre-rewrite
+        /// state is preserved + labelled.  `None`
+        /// for the existing grammar / critique
+        /// paths.
+        post_accept_snapshot: Option<String>,
     },
     /// F5 (1.2.6+) — annotation prompt that pops before a new
     /// snapshot is committed. `body` is captured at open time
