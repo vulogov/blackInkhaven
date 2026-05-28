@@ -103,7 +103,7 @@ improvements").
 | Ctrl+K                 | Kill to end of line             |
 | Ctrl+W                 | Delete previous word            |
 | Ctrl+U / Ctrl+Y        | Undo / redo                     |
-| **`Ctrl+G`**           | **Get** AI response into editor at cursor |
+| **`Ctrl+B G`**         | **Get** AI response into editor at cursor (focus jumps to editor) |
 | Type to insert         |                                 |
 
 ### AI prompt input pane
@@ -204,7 +204,7 @@ The typical workflow:
      pane.
   6. Tab back to the editor, position the cursor
      where you want to use the suggested rewrite,
-     press **`Ctrl+G`** — the response drops in
+     press **`Ctrl+B G`** — the response drops in
      verbatim.
   7. Edit to taste, repeat.
   8. `Ctrl+S` to commit.

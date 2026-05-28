@@ -195,6 +195,14 @@ struct App {
     /// + start time).  Set on send, cleared when the
     /// stream finishes.
     inference: Option<Inference>,
+    /// 1.2.11+ — meta-prefix state.  `true` after the
+    /// user presses Ctrl+B; the next keystroke is
+    /// interpreted as a chord suffix.  Reset after
+    /// processing or on Esc.  Mirrors the main TUI's
+    /// Ctrl+B chord scheme so terminal-level Ctrl
+    /// intercepts (Ctrl+G as ASCII BEL is the typical
+    /// offender) can't eat our chords.
+    meta_pending: bool,
 }
 
 #[derive(Clone)]
@@ -324,6 +332,7 @@ impl App {
             ai_history_cursor: None,
             last_send: None,
             inference: None,
+            meta_pending: false,
         })
     }
 
@@ -530,6 +539,51 @@ fn event_loop(
 
 /// Returns `Ok(true)` when the loop should exit.
 fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
+    // Meta-prefix dispatch first.  After the user
+    // pressed `Ctrl+B`, the next keystroke is a
+    // chord suffix.  Most chords here are
+    // duplicates of the bare-Ctrl chords above so
+    // users can pick whichever their terminal
+    // doesn't eat — Ctrl+G is the canonical
+    // offender (ASCII BEL).
+    if app.meta_pending {
+        app.meta_pending = false;
+        match key.code {
+            KeyCode::Char('g') | KeyCode::Char('G') => {
+                insert_ai_response_into_editor(app);
+                // Focus-agnostic — the user can fire
+                // this from any pane and the
+                // response still lands in the
+                // editor.  If they were focused on
+                // the AI prompt or list pane,
+                // they'll usually want to switch to
+                // the editor right after.
+                app.focus = Focus::Editor;
+            }
+            KeyCode::Esc => {
+                app.status = "meta: cancelled".into();
+            }
+            other => {
+                app.status = format!(
+                    "meta: unknown chord (got {other:?}) — Ctrl+B G to insert AI response",
+                );
+            }
+        }
+        return Ok(false);
+    }
+    // Ctrl+B alone (no other modifier) starts the
+    // meta prefix.  Only fires when no modal is
+    // open — otherwise the modal handlers see the
+    // key first.
+    if matches!(app.modal, Modal::None)
+        && key.code == KeyCode::Char('b')
+        && key.modifiers == KeyModifiers::CONTROL
+    {
+        app.meta_pending = true;
+        app.status = "META — next key is a chord suffix · Esc cancels".into();
+        return Ok(false);
+    }
+
     // Modal-first dispatch.
     if matches!(
         app.modal,
@@ -998,16 +1052,11 @@ fn dispatch_list_keys(app: &mut App, key: KeyEvent) {
 }
 
 fn dispatch_editor_keys(app: &mut App, key: KeyEvent) {
-    // Ctrl+G — "Get response": insert the latest AI
-    // pane response at the editor cursor.  Useful
-    // when the reviewer LLM suggests a rewrite the
-    // user wants to lift verbatim into the template.
-    if key.code == KeyCode::Char('g')
-        && key.modifiers.contains(KeyModifiers::CONTROL)
-    {
-        insert_ai_response_into_editor(app);
-        return;
-    }
+    // (Ctrl+G as a direct chord was reported as
+    // intercepted by the terminal — Ctrl+G is ASCII
+    // BEL — so the "Get response" action moved to
+    // the meta-prefix chord `Ctrl+B G`, handled
+    // globally in handle_key.)
 
     // Forward to tui-textarea with its default key
     // map — arrows, Home/End, PgUp/PgDn, Shift+arrow
@@ -1535,11 +1584,16 @@ fn editor_help_body() -> String {
         "   Ctrl+U / Ctrl+Y   undo / redo",
         "   Type to insert.",
         "",
-        " Editor-only chord:",
-        "   Ctrl+G            \"Get response\" — insert the latest",
-        "                     AI pane response at the cursor.  No-",
-        "                     op (with status message) when the",
-        "                     response is missing or still streaming.",
+        " AI-response insertion (works from any pane):",
+        "   Ctrl+B G          \"Get response\" — insert the latest",
+        "                     AI pane response at the editor cursor",
+        "                     and jump focus to the editor.  Used",
+        "                     to be plain Ctrl+G but the terminal",
+        "                     eats Ctrl+G as ASCII BEL on most",
+        "                     setups, so it moved to the meta",
+        "                     prefix.  No-op (with status message)",
+        "                     when the response is missing or",
+        "                     still streaming.",
         "",
         " App-global chords (intercepted before the editor sees them):",
         "   Ctrl+S            save library (confirm modal)",
@@ -1672,6 +1726,16 @@ fn draw_top_bar(f: &mut ratatui::Frame, area: Rect, app: &App) {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
             " from embedded defaults ",
+            Style::default()
+                .bg(Color::Yellow)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    if app.meta_pending {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            " META ",
             Style::default()
                 .bg(Color::Yellow)
                 .fg(Color::Black)
@@ -2039,7 +2103,7 @@ fn draw_status(f: &mut ratatui::Frame, area: Rect, app: &App) {
             " ↑↓ · a add · d delete · Ctrl+S save · Ctrl+R rollback · Tab next · ? help"
         }
         Focus::Editor => {
-            " type · Ctrl+G insert AI response · Ctrl+S save · Tab next · Ctrl+H help"
+            " type · Ctrl+B G insert AI response · Ctrl+S save · Tab next · Ctrl+H help"
         }
         Focus::AiPrompt => {
             " type · Enter send · Up/Down history · Ctrl+L clear · Tab next · Ctrl+H help"
@@ -2626,6 +2690,7 @@ mod tests {
             ai_history_cursor: None,
             last_send: None,
             inference: None,
+            meta_pending: false,
         };
         assert!(app.current_prompt().is_none());
     }
@@ -2735,6 +2800,7 @@ mod tests {
             ai_history_cursor: None,
             last_send: None,
             inference: None,
+            meta_pending: false,
         };
         // alpha modified, beta unchanged, gamma added, beta also removed.
         app.dirty.insert("alpha".into());
@@ -2775,6 +2841,7 @@ mod tests {
             ai_history_cursor: None,
             last_send: None,
             inference: None,
+            meta_pending: false,
         };
         assert!(!app.has_unsaved());
         app.dirty.insert("x".into());
@@ -2827,6 +2894,7 @@ mod tests {
             ai_history_cursor: None,
             last_send: None,
             inference: None,
+            meta_pending: false,
         };
         let p = app.current_prompt().expect("cursor points at a prompt");
         assert_eq!(p.name, "beta");

@@ -1391,12 +1391,14 @@ start/end-of-line, Ctrl+B/F cursor left/right,
 Ctrl+N/P up/down, Ctrl+K kill-to-end, Ctrl+W
 delete-previous-word, Ctrl+U/Y undo/redo.
 
-Plus one prompts-editor-only chord:
+Plus one prompts-editor-only chord (meta-prefix
+because terminals eat plain Ctrl+G as ASCII BEL):
 
 ```
-Ctrl+G              "Get" — insert latest AI pane response at the cursor.
-                    No-op (with status) when the response is missing or
-                    still streaming.
+Ctrl+B G            "Get" — insert latest AI pane response at the editor
+                    cursor and jump focus to the editor.  Works from any
+                    pane.  No-op (with status) when the response is
+                    missing or still streaming.
 ```
 
 ### AI prompt input pane
