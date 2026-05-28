@@ -27,6 +27,100 @@ use super::super::super::text_utils::{
 use super::super::super::timeline_state::TimelineEvent;
 
 
+/// 1.2.11+ — wrap a single diff row to `column_w`,
+/// returning one `Line` per wrapped row.  The first
+/// row keeps the supplied `prefix` ("- " / "+ " /
+/// "  ") so the diff marker stays leftmost;
+/// continuation rows are indented two columns to
+/// match the prefix width, so a long sentence reads
+/// as one visually continuous block.  Whitespace
+/// between words is collapsed to a single space.
+/// Hard-breaks words that are themselves wider than
+/// the column (URLs, em-dash-heavy phrases, etc).
+fn wrap_diff_row(
+    text: &str,
+    prefix: &str,
+    column_w: usize,
+    style: Style,
+) -> Vec<Line<'static>> {
+    let prefix_w = prefix.chars().count();
+    let cont_indent = "  ";
+    let cont_indent_w = cont_indent.chars().count();
+    let body_w_first = column_w.saturating_sub(prefix_w).max(1);
+    let body_w_cont = column_w.saturating_sub(cont_indent_w).max(1);
+    let mut rows: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_w = 0usize;
+    let mut first = true;
+    let row_w = |first: bool| if first { body_w_first } else { body_w_cont };
+    for word in text.split_whitespace() {
+        let w = word.chars().count();
+        if cur_w == 0 {
+            if w > row_w(first) {
+                let mut buf = String::new();
+                let mut buf_w = 0;
+                for ch in word.chars() {
+                    if buf_w == row_w(first) {
+                        rows.push(std::mem::take(&mut buf));
+                        first = false;
+                        buf_w = 0;
+                    }
+                    buf.push(ch);
+                    buf_w += 1;
+                }
+                cur = buf;
+                cur_w = buf_w;
+            } else {
+                cur.push_str(word);
+                cur_w = w;
+            }
+        } else if cur_w + 1 + w > row_w(first) {
+            rows.push(std::mem::take(&mut cur));
+            first = false;
+            if w > row_w(first) {
+                let mut buf = String::new();
+                let mut buf_w = 0;
+                for ch in word.chars() {
+                    if buf_w == row_w(first) {
+                        rows.push(std::mem::take(&mut buf));
+                        first = false;
+                        buf_w = 0;
+                    }
+                    buf.push(ch);
+                    buf_w += 1;
+                }
+                cur = buf;
+                cur_w = buf_w;
+            } else {
+                cur.push_str(word);
+                cur_w = w;
+            }
+        } else {
+            cur.push(' ');
+            cur.push_str(word);
+            cur_w += 1 + w;
+        }
+    }
+    if !cur.is_empty() {
+        rows.push(cur);
+    }
+    if rows.is_empty() {
+        rows.push(String::new());
+    }
+    rows.into_iter()
+        .enumerate()
+        .map(|(i, body)| {
+            let display = if i == 0 {
+                format!("{prefix}{body}")
+            } else {
+                format!("{cont_indent}{body}")
+            };
+            Line::from(Span::styled(display, style))
+        })
+        .collect()
+}
+
+
 impl super::super::App {
 
     pub(in crate::tui::app) fn draw_book_info_modal(
@@ -1442,20 +1536,34 @@ impl super::super::App {
     /// `similar::TextDiff::from_lines` to mark inserted /
     /// removed lines; the two columns are aligned so paired
     /// changes land on the same screen row when possible.
+    /// Long lines are wrapped at column width (1.2.11+) —
+    /// each side wraps independently then the shorter side
+    /// is padded with empty rows so paired diff entries stay
+    /// vertically aligned.  Continuation rows are indented
+    /// two columns (matching the diff prefix width) so the
+    /// visual flow of a wrapped sentence is unambiguous.
     pub(in crate::tui::app) fn draw_ai_diff_review_modal(
-        &self,
+        &mut self,
         f: &mut ratatui::Frame,
         area: Rect,
     ) {
-        let Modal::AiDiffReview {
-            before_lines,
-            after_lines,
-            scroll,
-            ..
-        } = &self.modal
-        else {
-            return;
+        let (before_text, after_text, scroll_in) = {
+            let Modal::AiDiffReview {
+                before_lines,
+                after_lines,
+                scroll,
+                ..
+            } = &self.modal
+            else {
+                return;
+            };
+            (
+                before_lines.join("\n"),
+                after_lines.join("\n"),
+                *scroll,
+            )
         };
+
         let width = area.width.saturating_sub(4).max(80);
         let height = area.height.saturating_sub(4).max(20);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
@@ -1499,42 +1607,63 @@ impl super::super::App {
             width: inner.width,
             height: footer_h,
         };
+        // Leave one trailing cell as a visual gutter so the
+        // wrapped tail doesn't kiss the column boundary.
+        let left_w = (before_rect.width as usize).saturating_sub(1).max(1);
+        let right_w = (after_rect.width as usize).saturating_sub(1).max(1);
 
-        let before_text = before_lines.join("\n");
-        let after_text = after_lines.join("\n");
         let diff = similar::TextDiff::from_lines(&before_text, &after_text);
         let mut left: Vec<Line> = Vec::new();
         let mut right: Vec<Line> = Vec::new();
         for change in diff.iter_all_changes() {
             let raw = change.value().trim_end_matches('\n').to_string();
-            match change.tag() {
-                similar::ChangeTag::Equal => {
-                    let line = Line::from(format!("  {raw}"));
-                    left.push(line.clone());
-                    right.push(line);
-                }
-                similar::ChangeTag::Delete => {
-                    left.push(Line::from(Span::styled(
-                        format!("- {raw}"),
+            let (left_rows, right_rows) = match change.tag() {
+                similar::ChangeTag::Equal => (
+                    wrap_diff_row(&raw, "  ", left_w, Style::default()),
+                    wrap_diff_row(&raw, "  ", right_w, Style::default()),
+                ),
+                similar::ChangeTag::Delete => (
+                    wrap_diff_row(
+                        &raw,
+                        "- ",
+                        left_w,
                         Style::default()
                             .fg(Color::Red)
                             .add_modifier(Modifier::BOLD),
-                    )));
-                    right.push(Line::from(""));
-                }
-                similar::ChangeTag::Insert => {
-                    left.push(Line::from(""));
-                    right.push(Line::from(Span::styled(
-                        format!("+ {raw}"),
+                    ),
+                    vec![Line::from("")],
+                ),
+                similar::ChangeTag::Insert => (
+                    vec![Line::from("")],
+                    wrap_diff_row(
+                        &raw,
+                        "+ ",
+                        right_w,
                         Style::default()
                             .fg(Color::Green)
                             .add_modifier(Modifier::BOLD),
-                    )));
-                }
+                    ),
+                ),
+            };
+            let n = left_rows.len().max(right_rows.len()).max(1);
+            for i in 0..n {
+                left.push(
+                    left_rows.get(i).cloned().unwrap_or_else(|| Line::from("")),
+                );
+                right.push(
+                    right_rows.get(i).cloned().unwrap_or_else(|| Line::from("")),
+                );
             }
         }
         let total = left.len();
-        let start = (*scroll).min(total.saturating_sub(1));
+        // Write the wrapped total back into the modal so the
+        // key handler can clamp scroll against the
+        // post-wrap row count instead of the source-line
+        // count.
+        if let Modal::AiDiffReview { wrapped_total, .. } = &mut self.modal {
+            *wrapped_total = total;
+        }
+        let start = scroll_in.min(total.saturating_sub(1));
         let take = body_h;
         let left_view: Vec<Line> =
             left.into_iter().skip(start).take(take).collect();

@@ -7913,6 +7913,23 @@ impl App {
     /// any other key closes.
     fn sentence_rhythm_handle_key(&mut self, key: crossterm::event::KeyEvent) {
         use crossterm::event::KeyCode;
+        // 1.2.11+ — the rhythm gauge is the natural
+        // launchpad for the rhythm-rewrite chord
+        // (Ctrl+B Shift+M).  Intercept the meta
+        // prefix here so the chord works from
+        // inside the modal: dismiss the gauge,
+        // arm meta-pending, and let the next key
+        // flow through the normal meta-prefix
+        // dispatch at the top of `handle_key`.
+        // This generalises — any meta-action is
+        // reachable from inside the gauge, not
+        // just the rewrite.
+        if self.keymap.meta_prefix.matches(&key) {
+            self.modal = Modal::None;
+            self.meta_pending = true;
+            self.status = super::keybind::read().meta_hint(self.focus);
+            return;
+        }
         let n = match &self.modal {
             Modal::SentenceRhythm { stats, .. } => stats.samples.len(),
             _ => return,
@@ -14259,6 +14276,7 @@ impl App {
             action,
             scroll: 0,
             post_accept_snapshot: None,
+            wrapped_total: 0,
         };
         self.status = if extracted {
             format!(
@@ -14309,6 +14327,7 @@ impl App {
             action,
             scroll: 0,
             post_accept_snapshot: Some(annotation.to_string()),
+            wrapped_total: 0,
         };
         self.status = if extracted {
             format!(

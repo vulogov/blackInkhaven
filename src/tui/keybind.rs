@@ -428,7 +428,11 @@ pub enum Action {
     /// standard pattern (Prompts book →
     /// `prompts.hjson` → embedded fallback).
     /// Multilingual via the project's `language`
-    /// setting.
+    /// setting.  Also fires from inside the
+    /// `Ctrl+B Shift+H` rhythm-gauge modal — the
+    /// natural diagnose-then-rewrite path: open
+    /// the gauge, see a MONOTONE verdict, press
+    /// `Ctrl+B Shift+M` to fix it.
     #[serde(rename = "ai.rewrite_sentence_rhythm")]
     AiRewriteRhythm,
     /// Ctrl+B Shift+P (1.2.9+) — toggle the POV /
@@ -858,7 +862,7 @@ impl Action {
             Action::OpenSentenceRhythm =>
                 "Open the sentence-rhythm gauge modal for the open paragraph (1.2.9+, Ctrl+B Shift+H). Splits prose into sentences (hand-rolled walker with abbreviation suppression), tallies word counts, computes mean / stdev / coefficient of variation (CV), and maps CV to a verdict: Monotone (CV < 0.25 — drones), Steady (0.25-0.45 — workable), Varied (0.45-0.80 — strong prose rhythm), Choppy (≥ 0.80 — fragments + long sentences mixed). Shows a per-sentence bar list and the three shortest + three longest outliers. Mnemonic: H for heartbeat — the felt rhythm of the prose.".into(),
             Action::AiRewriteRhythm =>
-                "AI-driven sentence-rhythm rewrite of the open paragraph (1.2.11+, Ctrl+B Shift+M). Sends the paragraph to the configured LLM with a prompt asking it to break monotonous rhythm by mixing short and long sentences while preserving voice + meaning. Prompt resolution follows the standard pattern: the project's Prompts book first (look up by slug or title `sentence-rhythm-rewrite`), then prompts.hjson, then an embedded multilingual fallback that respects the project's `language` setting. When the stream completes, an AI diff modal pops automatically so the user can review the rewrite line by line. Accept commits the rewrite into the buffer AND creates a snapshot annotated `Sentence rhythm rewrite` first; reject leaves the buffer untouched. Mnemonic: M for Modulate / Mix it up. Pairs with the Ctrl+B Shift+H rhythm gauge.".into(),
+                "AI-driven sentence-rhythm rewrite of the open paragraph (1.2.11+, Ctrl+B Shift+M). Sends the paragraph to the configured LLM with a prompt asking it to break monotonous rhythm by mixing short and long sentences while preserving voice + meaning. Prompt resolution follows the standard pattern: the project's Prompts book first (look up by slug or title `sentence-rhythm-rewrite`), then prompts.hjson, then an embedded multilingual fallback that respects the project's `language` setting. When the stream completes, an AI diff modal pops automatically so the user can review the rewrite line by line. Accept commits the rewrite into the buffer AND creates a snapshot annotated `Sentence rhythm rewrite` first; reject leaves the buffer untouched. Mnemonic: M for Modulate / Mix it up. Pairs with the Ctrl+B Shift+H rhythm gauge — and the chord ALSO fires from inside that gauge modal, so the natural diagnose-then-rewrite workflow needs no extra keystrokes: open the gauge, see MONOTONE, press Ctrl+B Shift+M to fix it. The gauge dismisses automatically as the rewrite spawns.".into(),
             Action::AnalyseShowDontTell =>
                 "AI-driven show-don't-tell scan of the open paragraph (1.2.9+, Ctrl+B Shift+T). Sends the paragraph to the configured LLM with a system prompt asking for telling passages plus suggested rewrites. The response streams into the AI pane. Complements the always-on regex overlay (`editor.style_warnings.show_dont_tell`) with deeper analysis — the regex catches the obvious 2-grams (`was angry`, `realised`); the AI scan catches subtler instances and proposes alternatives. Mnemonic: T for tell.".into(),
             Action::ViewRenderParagraph =>
