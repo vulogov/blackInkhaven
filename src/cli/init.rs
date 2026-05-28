@@ -106,11 +106,11 @@ pub(crate) fn seed_prompt_examples(cfg: &Config, store: &Store) -> Result<()> {
         InsertPosition, NodeKind, SYSTEM_TAG_PROMPTS,
     };
 
-    let lang = if cfg.language.trim().is_empty() {
-        "English".to_owned()
-    } else {
-        cfg.language.trim().to_owned()
-    };
+    // 1.2.12+ Phase B — embedded prompts are now keyed by
+    // ISO 639-1 (`en`/`ru`/`es`/`de`/`fr`).  Map the long-
+    // form `cfg.language` once here so the seeds carry the
+    // project's working language out of the box.
+    let lang_iso = crate::ai::prompts::iso_from_long(&cfg.language);
 
     // (paragraph_title, body) tuples. Title carries the `.example`
     // suffix so it's clearly inert until the user renames.
@@ -122,7 +122,7 @@ pub(crate) fn seed_prompt_examples(cfg: &Config, store: &Store) -> Result<()> {
                  // Rename this paragraph to `grammar-check` (drop `.example`)\n\
                  // to take effect; until then inkhaven uses the built-in default.\n\n\
                  {}\n",
-                crate::tui::app::grammar_check_default_prompt(&lang),
+                crate::tui::app::grammar_check_default_prompt(lang_iso),
             ),
         ),
         (
@@ -131,7 +131,7 @@ pub(crate) fn seed_prompt_examples(cfg: &Config, store: &Store) -> Result<()> {
                 "// Ctrl+F12 — AI-explain the typst diagnostic at the cursor.\n\
                  // Rename to `explain-diagnostic` to take effect.\n\n\
                  {}\n",
-                crate::tui::app::explain_diagnostic_default_prompt(),
+                crate::tui::app::explain_diagnostic_default_prompt(lang_iso),
             ),
         ),
         (
@@ -140,7 +140,7 @@ pub(crate) fn seed_prompt_examples(cfg: &Config, store: &Store) -> Result<()> {
                 "// F12 (editor mode) — what's weak about the open paragraph.\n\
                  // Rename to `critique-edit` to take effect.\n\n\
                  {}\n",
-                crate::tui::app::critique_edit_default_prompt(),
+                crate::tui::app::critique_edit_default_prompt(lang_iso),
             ),
         ),
         (
@@ -149,7 +149,7 @@ pub(crate) fn seed_prompt_examples(cfg: &Config, store: &Store) -> Result<()> {
                 "// F12 (split-edit mode) — evaluate the changes from the snapshot.\n\
                  // Rename to `critique-changes` to take effect.\n\n\
                  {}\n",
-                crate::tui::app::critique_changes_default_prompt(),
+                crate::tui::app::critique_changes_default_prompt(lang_iso),
             ),
         ),
         (
@@ -159,7 +159,7 @@ pub(crate) fn seed_prompt_examples(cfg: &Config, store: &Store) -> Result<()> {
                  // consistency audit. Rename to `timeline-health`\n\
                  // to take effect.\n\n\
                  {}\n",
-                crate::tui::app::timeline_health_default_prompt(),
+                crate::tui::app::timeline_health_default_prompt(lang_iso),
             ),
         ),
     ];

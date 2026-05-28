@@ -17394,118 +17394,343 @@ paragraph buffer with it.";
 pub(super) const CORRECTED_BEGIN: &str = "<<<CORRECTED>>>";
 pub(super) const CORRECTED_END: &str = "<<<END>>>";
 
-/// Fallback prompt body for F7 grammar check when no user-defined
-/// `Grammar check` prompt exists in the Prompts book or `prompts.hjson`.
-/// The configured `language` from the HJSON drives the grammar rules.
-pub(crate) fn grammar_check_default_prompt(language: &str) -> String {
-    let lang = if language.trim().is_empty() {
-        "English"
-    } else {
-        language.trim()
-    };
-    format!(
-        "Run a copy-edit pass on the paragraph below. Treat it as {lang} \
-prose. Check syntax, agreement, tense, and punctuation; flag anything \
-that's grammatically incorrect according to standard {lang} grammar. \
-Typst markup may be present — preserve it verbatim in any corrected \
-output. After listing issues, give the fully corrected paragraph."
-    )
+/// 1.2.12+ Phase B — promoted to a 5-arm language match.
+/// Caller passes the ISO 639-1 code from
+/// `App::active_prompt_language()`.  The English arm is
+/// the canonical / reference variant; the other four are
+/// translations of the same instructions tuned for native
+/// grammatical idiom.  Unknown codes fall back to English
+/// so the resolver always has a floor.  Same shape for the
+/// other six embedded prompts below.
+pub(crate) fn grammar_check_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Сделай корректорскую вычитку русского абзаца ниже. Проверь \
+синтаксис, согласование, время и пунктуацию; отметь всё, что нарушает \
+нормы современного русского языка. В тексте может быть разметка Typst — \
+сохрани её дословно в исправленном варианте. После списка замечаний дай \
+полностью исправленный абзац.",
+        "es" => "Haz una corrección de estilo del párrafo en español que sigue. \
+Revisa sintaxis, concordancia, tiempos verbales y puntuación; señala todo \
+lo gramaticalmente incorrecto según la norma estándar del español. Puede \
+haber marcado Typst — consérvalo literalmente en la versión corregida. \
+Tras la lista de problemas, da el párrafo corregido por completo.",
+        "de" => "Führe einen Korrektorat-Durchgang am folgenden deutschen Absatz \
+durch. Prüfe Syntax, Kongruenz, Tempus und Interpunktion; markiere \
+alles, was nach der Standard-Grammatik des Deutschen grammatisch falsch \
+ist. Typst-Markup kann vorkommen — übernimm es wörtlich in den \
+korrigierten Text. Liste die Probleme auf und gib danach den vollständig \
+korrigierten Absatz.",
+        "fr" => "Effectue une relecture de copy-edit sur le paragraphe français \
+ci-dessous. Vérifie la syntaxe, l'accord, les temps et la ponctuation ; \
+signale tout ce qui est grammaticalement incorrect au regard de la norme \
+française standard. Du balisage Typst peut être présent — conserve-le \
+tel quel dans toute version corrigée. Après la liste des problèmes, \
+donne le paragraphe entièrement corrigé.",
+        _ => "Run a copy-edit pass on the English paragraph below. Check \
+syntax, agreement, tense, and punctuation; flag anything that's \
+grammatically incorrect according to standard English grammar. Typst \
+markup may be present — preserve it verbatim in any corrected output. \
+After listing issues, give the fully corrected paragraph.",
+    }
 }
 
 /// 1.2.6+ — embedded fallback for Ctrl+F12 explain-diagnostic.
-pub(crate) fn explain_diagnostic_default_prompt() -> &'static str {
-    "A Typst compiler diagnostic is shown below with the surrounding source. \
-Explain in plain English what the diagnostic means, why it likely fired in \
-this context, and the most plausible one-line fix. If the diagnostic is a \
-false positive — e.g. the paragraph references a function defined in the \
-book's preamble that isn't visible to this isolated compile — say so and \
-move on. Keep the answer tight and actionable."
+/// 1.2.12+ Phase B — five-language variants.
+pub(crate) fn explain_diagnostic_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Ниже показано диагностическое сообщение компилятора Typst \
+вместе с фрагментом исходного кода. Объясни простым языком, что означает \
+это сообщение, почему оно, скорее всего, возникло в данном контексте, и \
+самое вероятное однострочное исправление. Если сообщение — ложное \
+срабатывание (например, абзац ссылается на функцию, определённую в \
+преамбуле книги, которая не видна изолированной компиляции), скажи об \
+этом и переходи дальше. Ответ — короткий и конкретный.",
+        "es" => "A continuación se muestra un diagnóstico del compilador Typst \
+con el código fuente que lo rodea. Explica con palabras claras qué \
+significa el diagnóstico, por qué probablemente se disparó en este \
+contexto y la corrección más plausible de una sola línea. Si el \
+diagnóstico es un falso positivo —por ejemplo, el párrafo usa una \
+función definida en el preámbulo del libro que esta compilación aislada \
+no ve—, dilo y sigue adelante. Mantén la respuesta breve y accionable.",
+        "de" => "Unten siehst du eine Typst-Compiler-Meldung mitsamt umgebendem \
+Quelltext. Erkläre in klarer Sprache, was die Meldung bedeutet, warum \
+sie in diesem Kontext vermutlich ausgelöst wurde und welche einzeilige \
+Korrektur am wahrscheinlichsten ist. Wenn es sich um einen Fehlalarm \
+handelt — z. B. der Absatz nutzt eine im Buch-Präambel definierte \
+Funktion, die diese isolierte Kompilierung nicht sieht — sag es und \
+gehe weiter. Antwort knapp und umsetzbar halten.",
+        "fr" => "Un diagnostic du compilateur Typst est présenté ci-dessous avec \
+le code source qui l'entoure. Explique en français clair ce que signifie \
+le diagnostic, pourquoi il s'est probablement déclenché dans ce \
+contexte, et la correction d'une ligne la plus plausible. Si c'est un \
+faux positif — par exemple, le paragraphe utilise une fonction définie \
+dans le préambule du livre que cette compilation isolée ne voit pas — \
+dis-le et passe à autre chose. Garde la réponse concise et actionnable.",
+        _ => "A Typst compiler diagnostic is shown below with the surrounding \
+source. Explain in plain English what the diagnostic means, why it \
+likely fired in this context, and the most plausible one-line fix. If \
+the diagnostic is a false positive — e.g. the paragraph references a \
+function defined in the book's preamble that isn't visible to this \
+isolated compile — say so and move on. Keep the answer tight and \
+actionable.",
+    }
 }
 
 /// 1.2.6+ — embedded fallback for F12 critique in editor mode.
-pub(crate) fn critique_edit_default_prompt() -> &'static str {
-    "Read the paragraph below as a draft. Point out the weakest two or three \
-elements: vague verbs, abstract nouns where the concrete would land harder, \
-sentences that lose the reader, rhythm that flattens, claims that wobble, \
-imagery that doesn't earn its place. Be specific — quote the exact phrase \
-and propose a tighter alternative. Do NOT rewrite the whole paragraph; \
-critique it. Be honest, not destructive."
+/// 1.2.12+ Phase B — five-language variants.
+pub(crate) fn critique_edit_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Прочти абзац ниже как черновик. Назови два-три самых слабых \
+элемента: расплывчатые глаголы, абстрактные существительные там, где \
+конкретное ударило бы сильнее, фразы, теряющие читателя, ритм, который \
+сглаживается, утверждения, которые «плывут», образы, не оправдывающие \
+своего места. Будь конкретен — цитируй именно тот оборот и предлагай \
+более плотный вариант. НЕ переписывай весь абзац; критикуй его. Будь \
+честным, но не разрушай текст.",
+        "es" => "Lee el párrafo siguiente como un borrador. Señala los dos o \
+tres elementos más débiles: verbos vagos, sustantivos abstractos donde \
+lo concreto golpearía más fuerte, frases que pierden al lector, ritmo \
+que se aplana, afirmaciones que titubean, imágenes que no se ganan su \
+sitio. Sé específico: cita la frase exacta y propón una alternativa más \
+apretada. NO reescribas el párrafo entero; critícalo. Sé honesto, no \
+destructivo.",
+        "de" => "Lies den folgenden Absatz wie einen Entwurf. Benenne die zwei \
+oder drei schwächsten Stellen: vage Verben, abstrakte Substantive an \
+Stellen, wo das Konkrete härter träfe, Sätze, die den Leser verlieren, \
+Rhythmus, der erlahmt, Behauptungen, die wackeln, Bilder, die ihren \
+Platz nicht verdienen. Sei konkret — zitiere die genaue Wendung und \
+schlage eine straffere Alternative vor. Schreibe NICHT den ganzen \
+Absatz neu; kritisiere ihn. Ehrlich, aber nicht zerstörerisch.",
+        "fr" => "Lis le paragraphe ci-dessous comme un brouillon. Pointe les \
+deux ou trois éléments les plus faibles : verbes vagues, noms abstraits \
+là où le concret frapperait plus fort, phrases qui perdent le lecteur, \
+rythme qui s'aplatit, affirmations qui vacillent, images qui ne \
+méritent pas leur place. Sois précis — cite la formulation exacte et \
+propose une alternative plus serrée. NE réécris PAS le paragraphe \
+entier ; critique-le. Sois honnête sans être destructeur.",
+        _ => "Read the paragraph below as a draft. Point out the weakest two \
+or three elements: vague verbs, abstract nouns where the concrete would \
+land harder, sentences that lose the reader, rhythm that flattens, \
+claims that wobble, imagery that doesn't earn its place. Be specific — \
+quote the exact phrase and propose a tighter alternative. Do NOT \
+rewrite the whole paragraph; critique it. Be honest, not destructive.",
+    }
 }
 
 /// 1.2.9+ — embedded fallback for the Ctrl+B Shift+T
-/// AI-driven show-don't-tell scan.  Written to nudge
-/// the model into specific, quotable callouts plus
-/// one actionable rewrite each, so the writer can
-/// triage rather than re-read a paragraph of advice.
-pub(crate) fn show_dont_tell_default_prompt() -> &'static str {
-    "Read the paragraph below as a fiction draft and find every place where the \
-writer is TELLING rather than SHOWING. Telling = directly labelling an emotion \
-or internal state instead of letting behaviour, sensory detail, or dialogue \
-reveal it (`she was angry` is telling; `her knuckles whitened around the glass` \
-is showing). For each telling instance: \
-(1) Quote the exact phrase. \
-(2) Name what's being told (the emotion / state). \
-(3) Propose one concrete show-rewrite — a body-language beat, a sensory \
-detail, an action, or a fragment of dialogue. Keep the rewrite the same \
-length as the telling line, not a paragraph. \
-Skip cases where telling is deliberately efficient (transition lines, \
-summary, established interiority in first-person POV). If the paragraph is \
-already strong, say so plainly and stop. Don't pad."
+/// AI-driven show-don't-tell scan.
+/// 1.2.12+ Phase B — five-language variants.
+pub(crate) fn show_dont_tell_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Прочти абзац ниже как черновик художественного текста и найди \
+каждое место, где автор РАССКАЗЫВАЕТ, вместо того чтобы ПОКАЗЫВАТЬ. \
+Рассказ = прямой ярлык эмоции или внутреннего состояния вместо того, \
+чтобы дать поведению, чувственной детали или диалогу его проявить \
+(«она злилась» — рассказ; «костяшки её пальцев побелели на стекле» — \
+показ). По каждому случаю: (1) Процитируй точную фразу. (2) Назови, \
+что именно рассказывается (эмоция / состояние). (3) Предложи один \
+конкретный вариант показа — телесная деталь, чувственный штрих, \
+действие или короткая реплика. Переписанный фрагмент той же длины, \
+что и исходная строка, не абзац. Пропускай случаи, где рассказ \
+оправдан (переходные фразы, краткое резюме, устоявшаяся внутренняя \
+точка зрения в первом лице). Если абзац уже силён — скажи это прямо и \
+остановись. Не разводи воду.",
+        "es" => "Lee el párrafo de abajo como un borrador de ficción y busca \
+cada lugar donde el autor está CONTANDO en lugar de MOSTRANDO. Contar \
+= etiquetar directamente una emoción o estado interno en vez de dejar \
+que la conducta, el detalle sensorial o el diálogo lo revelen («estaba \
+enfadada» es contar; «los nudillos se le blanquearon contra el vaso» es \
+mostrar). Para cada caso de contar: (1) Cita la frase exacta. (2) \
+Nombra lo que se está contando (la emoción / el estado). (3) Propón un \
+mostrar concreto — un gesto corporal, un detalle sensorial, una \
+acción, o un fragmento de diálogo. La reescritura debe tener la misma \
+longitud que la línea original, no un párrafo. Omite los casos donde \
+contar es deliberadamente eficiente (transiciones, resumen, interioridad \
+asentada en primera persona). Si el párrafo ya es fuerte, dilo \
+claramente y para. No rellenes.",
+        "de" => "Lies den folgenden Absatz als Belletristik-Entwurf und finde \
+jede Stelle, an der der Autor BERICHTET statt ZU ZEIGEN. Berichten = \
+eine Emotion oder einen inneren Zustand direkt benennen, statt Verhalten, \
+Sinnesdetail oder Dialog ihn verraten zu lassen («sie war wütend» ist \
+berichtet; «ihre Knöchel weißten sich um das Glas» ist gezeigt). Für \
+jeden Berichts-Fall: (1) Zitiere die genaue Wendung. (2) Benenne, was \
+berichtet wird (die Emotion / der Zustand). (3) Schlage eine konkrete \
+Zeige-Umschreibung vor — eine Körpergeste, ein Sinnesdetail, eine \
+Handlung oder ein Dialog-Fragment. Die Umschreibung soll dieselbe Länge \
+haben wie die Berichts-Zeile, kein Absatz. Überspringe Fälle, in denen \
+Berichten bewusst effizient ist (Überleitungen, Zusammenfassung, \
+etablierte Innensicht in der ersten Person). Wenn der Absatz schon \
+stark ist, sag es klar und hör auf. Kein Füller.",
+        "fr" => "Lis le paragraphe ci-dessous comme un brouillon de fiction et \
+repère chaque endroit où l'auteur RACONTE au lieu de MONTRER. Raconter \
+= étiqueter directement une émotion ou un état interne au lieu de \
+laisser le comportement, le détail sensoriel ou le dialogue le \
+révéler («elle était en colère» = raconter ; «ses jointures \
+blanchirent autour du verre» = montrer). Pour chaque cas de \
+raconter : (1) Cite la formulation exacte. (2) Nomme ce qui est \
+raconté (l'émotion / l'état). (3) Propose une réécriture-montrer \
+concrète — un geste corporel, un détail sensoriel, une action, ou un \
+fragment de dialogue. La réécriture doit faire la même longueur que \
+la ligne d'origine, pas un paragraphe. Saute les cas où raconter est \
+volontairement efficace (transitions, résumés, intériorité établie \
+en première personne). Si le paragraphe est déjà solide, dis-le \
+clairement et arrête. Pas de remplissage.",
+        _ => "Read the paragraph below as a fiction draft and find every \
+place where the writer is TELLING rather than SHOWING. Telling = \
+directly labelling an emotion or internal state instead of letting \
+behaviour, sensory detail, or dialogue reveal it (`she was angry` is \
+telling; `her knuckles whitened around the glass` is showing). For \
+each telling instance: (1) Quote the exact phrase. (2) Name what's \
+being told (the emotion / state). (3) Propose one concrete show- \
+rewrite — a body-language beat, a sensory detail, an action, or a \
+fragment of dialogue. Keep the rewrite the same length as the telling \
+line, not a paragraph. Skip cases where telling is deliberately \
+efficient (transition lines, summary, established interiority in \
+first-person POV). If the paragraph is already strong, say so plainly \
+and stop. Don't pad.",
+    }
 }
 
 /// 1.2.11+ — embedded fallback prompt for the
-/// `Ctrl+B Shift+M` AI-driven sentence-rhythm
-/// rewrite.  Asks the model to break monotonous
-/// rhythm by mixing short and long sentences while
-/// preserving the author's voice + meaning.
-/// Language-aware: the prompt explicitly names the
-/// project's `language` setting so the rewrite
-/// lands in the same language (the model wouldn't
-/// translate but for the strong directive).
-///
-/// Output must be the rewritten paragraph and
-/// nothing else — no commentary, no explanation,
-/// no "Here is the rewrite:" preface — because the
-/// AI diff pipeline takes the response verbatim
-/// and replaces the buffer with it.  The
-/// `select_apply_text` plumbing handles fenced
-/// code blocks / leading prose if the model
-/// disobeys, but the prompt nudges hard for clean
-/// output.
-pub(crate) fn sentence_rhythm_rewrite_default_prompt(language: &str) -> String {
-    format!(
-        "Rewrite the {language} paragraph below to break its monotonous \
-sentence rhythm.  Mix short, punchy sentences with longer ones so the \
-reader's ear has variety to follow.  Preserve voice, tone, meaning, \
-named characters, quoted dialogue, em-dashes, and paragraph breaks.  Do \
-NOT translate; keep the prose in {language}.  Do NOT summarise; rewrite \
-line for line.
+/// `Ctrl+B Shift+M` AI-driven sentence-rhythm rewrite.
+/// 1.2.12+ Phase B — five-language variants.  Each
+/// variant explicitly forbids translation in the
+/// target language so the model rewrites in place
+/// rather than localising mid-call.
+pub(crate) fn sentence_rhythm_rewrite_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Перепиши русский абзац ниже так, чтобы сломать его монотонный \
+синтаксический ритм. Чередуй короткие, резкие фразы с более длинными, \
+чтобы у читательского уха была вариативность. Сохрани голос, тон, \
+смысл, именованных персонажей, прямую речь, тире и абзацные разрывы. \
+НЕ переводи; держи прозу на русском. НЕ резюмируй; переписывай строка \
+за строкой.
 
-Return ONLY the rewritten paragraph.  No preface (\"Here is the \
-rewrite:\"), no commentary, no markdown headings, no bullet points, no \
-explanation.  Plain prose, ready to paste back into the editor."
-    )
+Верни ТОЛЬКО переписанный абзац. Без вступления («Вот переписанный \
+вариант:»), без комментариев, без markdown-заголовков, без списков, \
+без объяснений. Чистая проза, готовая к вставке обратно в редактор.",
+        "es" => "Reescribe el párrafo en español de abajo para romper su ritmo \
+sintáctico monótono. Mezcla frases cortas y secas con otras más \
+largas, de modo que el oído del lector tenga variedad. Conserva la voz, \
+el tono, el sentido, los personajes nombrados, los diálogos entre \
+comillas, las rayas y los saltos de párrafo. NO traduzcas; mantén la \
+prosa en español. NO resumas; reescribe línea por línea.
+
+Devuelve SÓLO el párrafo reescrito. Sin prefacio («Aquí está la \
+reescritura:»), sin comentarios, sin encabezados markdown, sin viñetas, \
+sin explicaciones. Prosa simple, lista para pegar en el editor.",
+        "de" => "Schreibe den deutschen Absatz unten so um, dass sein \
+monotoner Satzrhythmus aufgebrochen wird. Mische kurze, knappe Sätze \
+mit längeren, sodass das Ohr des Lesers Abwechslung bekommt. Bewahre \
+Stimme, Ton, Bedeutung, benannte Figuren, wörtliche Rede, Gedankenstriche \
+und Absatzumbrüche. Übersetze NICHT; halte die Prosa auf Deutsch. \
+Fasse NICHT zusammen; schreibe Zeile für Zeile um.
+
+Gib NUR den umgeschriebenen Absatz zurück. Keine Einleitung (\"Hier ist \
+die Umschrift:\"), keine Kommentare, keine Markdown-Überschriften, keine \
+Aufzählungspunkte, keine Erklärungen. Reine Prosa, bereit zum \
+Zurückeinfügen in den Editor.",
+        "fr" => "Réécris le paragraphe français ci-dessous pour casser son \
+rythme syntaxique monotone. Mêle des phrases courtes et nettes à \
+d'autres plus longues, pour que l'oreille du lecteur ait de la \
+variété. Conserve la voix, le ton, le sens, les personnages nommés, \
+les dialogues entre guillemets, les tirets cadratins et les sauts de \
+paragraphe. NE traduis PAS ; garde la prose en français. NE résume \
+PAS ; réécris ligne à ligne.
+
+Renvoie UNIQUEMENT le paragraphe réécrit. Pas de préface (« Voici la \
+réécriture : »), pas de commentaire, pas de titres markdown, pas de \
+puces, pas d'explication. Prose pure, prête à coller dans l'éditeur.",
+        _ => "Rewrite the English paragraph below to break its monotonous \
+sentence rhythm. Mix short, punchy sentences with longer ones so the \
+reader's ear has variety to follow. Preserve voice, tone, meaning, \
+named characters, quoted dialogue, em-dashes, and paragraph breaks. \
+Do NOT translate; keep the prose in English. Do NOT summarise; \
+rewrite line for line.
+
+Return ONLY the rewritten paragraph. No preface (\"Here is the \
+rewrite:\"), no commentary, no markdown headings, no bullet points, \
+no explanation. Plain prose, ready to paste back into the editor.",
+    }
 }
 
 /// 1.2.6+ — embedded fallback for F12 critique in split-edit mode.
-pub(crate) fn critique_changes_default_prompt() -> &'static str {
-    "Two versions of the same paragraph are shown below: a `Before` snapshot \
-and the current `After` buffer. Identify what the revision changed (added / \
-removed / reordered), and evaluate whether each change is an improvement, a \
-regression, or neutral. Quote the specific phrases that moved. End with one \
-suggestion for what the next revision pass should focus on."
+/// 1.2.12+ Phase B — five-language variants.
+pub(crate) fn critique_changes_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Ниже показаны две версии одного и того же абзаца: снимок \
+`До` и текущий буфер `После`. Определи, что именно изменила правка \
+(добавлено / удалено / переставлено), и оцени, каждое изменение — \
+улучшение, регрессия или нейтрально. Цитируй именно те фразы, которые \
+сдвинулись. В конце дай одно предложение, на чём должен \
+сосредоточиться следующий проход правки.",
+        "es" => "Abajo se muestran dos versiones del mismo párrafo: una \
+instantánea `Antes` y el búfer actual `Después`. Identifica qué cambió \
+la revisión (añadido / eliminado / reordenado) y evalúa si cada cambio \
+es una mejora, una regresión, o neutro. Cita las frases concretas que \
+se movieron. Termina con una sugerencia sobre en qué debería \
+concentrarse la próxima pasada de revisión.",
+        "de" => "Unten siehst du zwei Fassungen desselben Absatzes: einen \
+`Vorher`-Schnappschuss und den aktuellen `Nachher`-Puffer. Stelle fest, \
+was die Überarbeitung geändert hat (hinzugefügt / entfernt / umgestellt), \
+und bewerte, ob jede Änderung eine Verbesserung, eine Verschlechterung \
+oder neutral ist. Zitiere die konkreten Wendungen, die sich verschoben \
+haben. Schließe mit einem Vorschlag dafür, worauf sich der nächste \
+Überarbeitungsdurchlauf konzentrieren sollte.",
+        "fr" => "Deux versions du même paragraphe sont présentées ci-dessous : \
+un instantané `Avant` et le tampon courant `Après`. Identifie ce que \
+la révision a changé (ajouté / retiré / réordonné), et évalue si \
+chaque changement est une amélioration, une régression, ou neutre. \
+Cite les formulations précises qui ont bougé. Termine par une \
+suggestion sur ce qu'il faudrait viser à la prochaine passe de \
+révision.",
+        _ => "Two versions of the same paragraph are shown below: a `Before` \
+snapshot and the current `After` buffer. Identify what the revision \
+changed (added / removed / reordered), and evaluate whether each change \
+is an improvement, a regression, or neutral. Quote the specific phrases \
+that moved. End with one suggestion for what the next revision pass \
+should focus on.",
+    }
 }
 
 /// 1.2.6+ — embedded fallback for the timeline health
-/// check (y / Y / Ctrl+Y inside Ctrl+V t). The payload
-/// itself does the heavy lifting; this top text just sets
-/// the model's task tone.
-pub(crate) fn timeline_health_default_prompt() -> &'static str {
-    "You are reviewing the story timeline that follows for internal consistency. \
-Treat the events as facts about a single fictional world; do not invent missing \
-detail. Read the audit checklist at the bottom and respond to it — be specific, \
-quote event titles, and surface concrete fixes. If the timeline is internally \
-coherent, say so briefly rather than padding with caveats."
+/// check (y / Y / Ctrl+Y inside Ctrl+V t).
+/// 1.2.12+ Phase B — five-language variants.
+pub(crate) fn timeline_health_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Ты проверяешь сюжетную хронологию ниже на внутреннюю \
+согласованность. Относись к событиям как к фактам единого \
+вымышленного мира; не выдумывай недостающие детали. Прочти контрольный \
+список в конце и ответь по нему — будь конкретен, цитируй заголовки \
+событий, предлагай конкретные исправления. Если хронология внутренне \
+согласована — скажи об этом коротко, не разводя оговорок.",
+        "es" => "Estás revisando la cronología narrativa que sigue para \
+detectar incoherencias internas. Trata los eventos como hechos de un \
+único mundo ficticio; no inventes detalles que falten. Lee la lista de \
+verificación al final y responde a ella — sé específico, cita los \
+títulos de eventos, y propón correcciones concretas. Si la cronología \
+es internamente coherente, dilo brevemente en vez de rellenar con \
+salvedades.",
+        "de" => "Du prüfst die folgende Story-Zeitleiste auf innere \
+Stimmigkeit. Behandle die Ereignisse als Fakten einer einzigen \
+fiktionalen Welt; erfinde keine fehlenden Details. Lies die Prüfliste \
+am Ende und reagiere darauf — sei konkret, zitiere Ereignistitel, und \
+zeige greifbare Korrekturen auf. Wenn die Zeitleiste in sich \
+stimmig ist, sag es kurz, statt mit Einschränkungen aufzufüllen.",
+        "fr" => "Tu examines la chronologie narrative qui suit pour vérifier \
+sa cohérence interne. Traite les événements comme des faits d'un \
+unique monde fictif ; n'invente pas de détails manquants. Lis la \
+liste de contrôle à la fin et réponds-y — sois précis, cite les \
+titres d'événements, et propose des corrections concrètes. Si la \
+chronologie est cohérente, dis-le brièvement plutôt que de remplir \
+avec des réserves.",
+        _ => "You are reviewing the story timeline that follows for internal \
+consistency. Treat the events as facts about a single fictional world; \
+do not invent missing detail. Read the audit checklist at the bottom \
+and respond to it — be specific, quote event titles, and surface \
+concrete fixes. If the timeline is internally coherent, say so briefly \
+rather than padding with caveats.",
+    }
 }
 
 /// System prompt for the F1 / "Help!" RAG flow. We force the model to
