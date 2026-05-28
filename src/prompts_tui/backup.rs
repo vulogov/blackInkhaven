@@ -1,4 +1,4 @@
-//! 1.2.11+ — backup listing for the prompts-editor
+//! 1.2.10+ — backup listing for the prompts-editor
 //! rollback picker.
 //!
 //! Backups land in `<project>/.prompts-backups/` with

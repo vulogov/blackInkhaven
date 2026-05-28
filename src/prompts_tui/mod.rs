@@ -1,4 +1,4 @@
-//! 1.2.11+ — standalone TUI prompts editor.
+//! 1.2.10+ — standalone TUI prompts editor.
 //!
 //! Launched as `inkhaven prompts-editor -p <dir>`.
 //! Four-pane workbench:

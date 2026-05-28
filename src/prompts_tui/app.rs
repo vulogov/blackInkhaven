@@ -1,4 +1,4 @@
-//! 1.2.11+ — prompts-editor event loop + render.
+//! 1.2.10+ — prompts-editor event loop + render.
 //!
 //! Phase 1: read-only walk-through.  CLI plumbing,
 //! the four-pane shell, list navigation, show-on-
@@ -195,7 +195,7 @@ struct App {
     /// + start time).  Set on send, cleared when the
     /// stream finishes.
     inference: Option<Inference>,
-    /// 1.2.11+ — meta-prefix state.  `true` after the
+    /// 1.2.10+ — meta-prefix state.  `true` after the
     /// user presses Ctrl+B; the next keystroke is
     /// interpreted as a chord suffix.  Reset after
     /// processing or on Esc.  Mirrors the main TUI's
@@ -443,7 +443,7 @@ fn build_ai_runtime(project_root: &Path) -> Option<AiRuntime> {
     })
 }
 
-/// 1.2.11+ — system prompt that frames the LLM as
+/// 1.2.10+ — system prompt that frames the LLM as
 /// a prompt-engineering reviewer.  The user pane
 /// sends a template + an analysis request; the
 /// LLM does NOT execute the template — it reviews
@@ -1081,7 +1081,7 @@ fn dispatch_editor_keys(app: &mut App, key: KeyEvent) {
     app.first_launch = false;
 }
 
-/// 1.2.11+ — Ctrl+R handler.  Build the rollback
+/// 1.2.10+ — Ctrl+R handler.  Build the rollback
 /// picker modal from `.prompts-backups/`, or surface
 /// "no backups yet" on the status bar when the
 /// directory is empty / missing.
@@ -1103,7 +1103,7 @@ fn open_rollback(app: &mut App) {
     }
 }
 
-/// 1.2.11+ — load a backup file into the working
+/// 1.2.10+ — load a backup file into the working
 /// schema, staging every leaf diff vs the current
 /// library.  No disk write — the user reviews then
 /// Ctrl+S to commit (which writes a fresh backup
@@ -1186,7 +1186,7 @@ fn stage_rollback(app: &mut App, entry: &BackupEntry) -> Result<usize> {
     Ok(staged)
 }
 
-/// 1.2.11+ — Ctrl+G handler.  Inserts
+/// 1.2.10+ — Ctrl+G handler.  Inserts
 /// `last_send.response` at the editor cursor.
 /// No-op (with a status message) when there's no
 /// response yet or it's empty.

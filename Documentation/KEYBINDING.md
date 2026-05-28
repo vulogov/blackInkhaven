@@ -1347,7 +1347,7 @@ Inside selection mode:
 Pane gated on `shell.enabled = true` in HJSON (default
 true).  See [`Tutorials/35-embedded-shell.md`](Tutorials/35-embedded-shell.md).
 
-## `inkhaven prompts-editor` (1.2.11+)
+## `inkhaven prompts-editor` (1.2.10+)
 
 Standalone four-pane TUI for editing
 `<project>/prompts.hjson` — the prompt library
