@@ -21,89 +21,94 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.9 — Prose-craft tools for novelists
+## Latest release · 1.2.10 — Standalone editors for `inkhaven.hjson` and `prompts.hjson`
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.9.md`](Documentation/RELEASE_NOTES/1.2.9.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.10.md`](Documentation/RELEASE_NOTES/1.2.10.md)
 
-1.2.9 turns inkhaven from a *book editor* into a *book editor
-that audits your prose while you write it*.  Nine new
-features, all keyed to the same writing-craft idea: catch
-the mechanical weaknesses (drone, telling, hedging, lexical
-ruts) inline, while the words are still soft, instead of
-discovering them at revision time.
+1.2.10 turns two of inkhaven's HJSON files —
+`inkhaven.hjson` (project config) and `prompts.hjson`
+(prompt library) — into first-class editing surfaces
+with dedicated TUIs.  Both are standalone subcommands
+that run outside the main TUI; both share atomic-write
++ timestamped backup + `Ctrl+R` rollback + `Ctrl+S`
+confirmation-modal conventions.
 
-The headline overlays — always-on, zero latency:
+### `inkhaven config -p <dir>`
 
-- **Filter-word highlight** (`Ctrl+B Shift+F`).  Underlines
-  intensifier crutches and hedges: `just`, `really`, `very`,
-  `seemed`, `felt`, plus the Russian / French / German /
-  Spanish equivalents.  Snowball-stemmed so `seemed` /
-  `seems` / `seeming` all flag the same way; per-language
-  HJSON lists are user-extensible.  `inkhaven doctor
-  --filter-words-snippet` dumps the built-in lists ready to
-  paste.
-- **Repeated-phrase detector**.  Slides an `n`-word window
-  across the paragraph (default `n=4`, threshold `3`), stems
-  each window, flags every occurrence of any n-gram that
-  repeats — `lifted her shoulders` matches `lifting her
-  shoulders`.  Multilingual stop-word filtering keeps
-  closed-class noise out.  Shares the `Ctrl+B Shift+F`
-  toggle with filter-words.
-- **Show-don't-tell flag**.  Catches three telling patterns
-  (copula + emotion adjective, manner-of-emotion adverbs,
-  cognition verbs) in soft teal.  `was angry` flags both
-  tokens; `realised` flags itself; `was running` correctly
-  does *not* flag.  Stemmed.  Pairs with an **AI-driven
-  scan** (`Ctrl+B Shift+T`) that sends the paragraph to the
-  configured LLM and asks for telling phrases plus
-  concrete rewrites.
+Schema-aware editor for the project's `inkhaven.hjson`.
 
-The headline modals + chips — on-demand prose audit:
+- **Auto-derived schema** from the Rust `Config`
+  struct.  New fields show up in the tree without any
+  manual table.
+- **Build-time `///` doc-comment extraction** via
+  `syn` so every field has docs in the help pane —
+  not just the ones in `Documentation/CONFIGURATION.md`.
+- **Typed widgets**: bool toggle, int with bounds,
+  float, string, **colour with live preview**
+  (fg / bg / border variants based on the field's
+  path suffix), path (with existence check), enum
+  (cycler over allowed variants), list (Vec<String>
+  with browse + add/delete/edit submodes).
+- **Comment-preserving surgical save.**  A hand-
+  rolled HJSON walker records the byte range of
+  every leaf at load time; saves only mutate those
+  byte ranges, so every comment + unknown field +
+  whitespace block survives byte-identical.
+- **Timestamped backups** to
+  `<project>/.config-backups/inkhaven_YYYYMMDD_HHMMSS.hjson`
+  on every save.  `Ctrl+R` opens a rollback picker
+  (preview, restore, delete).
+- **Per-field annotations** (`Ctrl+A`) in a sidecar
+  `.config-annotations.hjson`.
+- **Comment inspector** (`Ctrl+I`) surfaces the
+  HJSON file's own `#` / `//` / `/* */` comments
+  attached to the focused field.  Distinct from
+  `Ctrl+H` help (which shows inkhaven's docs).
+- **Map-entry add/delete** for `llm.providers` —
+  user-added providers in the live HJSON appear as
+  first-class tree entries; `a` adds, `d` deletes.
 
-- **Concordance view** (`Ctrl+B Shift+L`).  Project-wide:
-  every distinct lexical stem ranked by occurrence, with
-  KWIC samples per row.  Snowball-grouped (so
-  `walk`/`walked`/`walking` collapse), stop-word filtered.
-  Type to filter; `Ctrl+S` toggles count ↔ alphabetical
-  sort.  Useful for noticing what your real voice
-  actually is.
-- **Sentence-rhythm gauge** (`Ctrl+B Shift+H`).  Splits the
-  open paragraph into sentences, computes word-count
-  mean / stdev / coefficient of variation, maps CV to a
-  verdict (`MONOTONE` red / `STEADY` yellow / `VARIED`
-  green / `CHOPPY` cyan).  Per-sentence bar chart +
-  three-shortest + three-longest outliers.  Inspired by
-  Gary Provost's "this sentence has five words" parable —
-  measures the drone, in numbers.
-- **POV / character chip** (`Ctrl+B Shift+P`).  Status-bar
-  chip showing the most-mentioned character in the open
-  paragraph (the heuristic POV) plus the supporting cast.
-  Driven by the existing characters lexicon — no separate
-  tagging.  Catches POV drift mid-scene.
-- **Writing-streak heatmap** (`Ctrl+B Shift+G`).  GitHub-
-  style 13×7 grid of the last 91 days of word activity,
-  with current streak + longest streak + active-day
-  average.  Tracks habit, not just total output.
-- **Scene-break navigation** (`Ctrl+B <` / `Ctrl+B >`).
-  Jump cursor between typographic dividers (`* * *`,
-  `***`, `---`, `___`, `###`, `~~~`, `§`) inside the open
-  paragraph.
+### `inkhaven prompts-editor -p <dir>`
 
-And the headline new accessibility surface:
+Four-pane workbench for the project's
+`prompts.hjson`.
 
-- **Text-to-speech read-aloud** (`Ctrl+B S`).  Speaks the
-  open paragraph through the host OS's TTS engine.
-  Provides the *ear* feedback that catches what the eye
-  glides over.  **`Ctrl+B Shift+R` saves the paragraph as
-  an audio file** (`.aiff` by default; macOS `say -o`
-  pipeline).  Configurable voice + speed + greeting +
-  goodbye in HJSON.
+- **Layout**: prompts list (left) + prompt editor
+  (centre, full tui-textarea chord set) + AI
+  response (right, display-only) + AI prompt input
+  (3-row bottom strip).  `Tab` cycles focus across
+  three editable panes; the AI response pane is
+  display-only.
+- **The LLM acts as a prompt-engineering reviewer**,
+  not as an executor.  Placeholders like
+  `{{selection}}` are NOT substituted; the reviewer
+  sees them as literal text and comments on their
+  use.  Empty AI prompt input falls back to a
+  baseline critique request — pressing Enter on any
+  prompt always yields something useful.
+- **`Ctrl+B G`** ("Get response") lifts the
+  reviewer's response into the editor at the cursor.
+- **Save semantics** mirror the config TUI: atomic
+  write + timestamped backup in
+  `.prompts-backups/prompts_YYYYMMDD_HHMMSS.hjson`,
+  with a `Ctrl+R` rollback picker that lists every
+  past snapshot.
+- **Auto-populate** from inkhaven's embedded
+  defaults on first launch (when `prompts.hjson`
+  doesn't exist), so a fresh project can start
+  editing immediately.
 
-Plus six new tutorials (38–43); updated KEYBINDING,
-CONFIGURATION; `inkhaven doctor --voices` lists installed
-TTS voices, `--tts-test` exercises the pipeline end-to-end,
-`--filter-words-snippet` dumps the built-in style-warning
-lists.
+Both editors keep the existing `Ctrl+B 0` in-app
+HJSON editor as the power-user fallback for raw
+text edits.  Round-trips between the structured
+TUIs and the in-app editor are clean — both routes
+preserve comments + unknown fields.
+
+Plus two new tutorials
+([`44-prompts-editor.md`](Documentation/Tutorials/44-prompts-editor.md),
+[`45-config-tui.md`](Documentation/Tutorials/45-config-tui.md));
+updated `KEYBINDING.md` with the `inkhaven
+prompts-editor` chord set.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
