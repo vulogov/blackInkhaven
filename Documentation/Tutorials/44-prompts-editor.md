@@ -219,3 +219,32 @@ The typical workflow:
   * `Documentation/PROMPTS.md` — the canonical
     reference for prompt template variables +
     expected shape.
+
+## 1.2.11 additions
+
+- **Per-prompt language tag.**  Each list-pane row
+  carries a yellow-dim `[lang]` chip; `[—]` for
+  untagged prompts.  Press `l` (lowercase L, list
+  pane only) on the focused prompt to cycle its
+  language tag through `None → en → ru → es →
+  de → fr → None`.  The prompt is marked dirty;
+  `Ctrl+S` persists the tag to `prompts.hjson`'s
+  `language:` field.
+- **Why tag prompts at all?**  The 1.2.11
+  multilingual prompt resolver prefers same-
+  language matches at Pass 1 of its three-pass
+  cascade — see
+  [tutorial 47 — multilingual prompts](47-multilingual-prompts.md)
+  for the full picture.  Tagging a prompt with
+  `lang:ru` means the resolver picks it for
+  Russian paragraphs; the same prompt name in
+  English (untagged or tagged `en`) is still
+  available for English paragraphs.
+- **`inkhaven prompts bootstrap <lang>` CLI.**  A
+  one-shot LLM-assisted way to seed
+  `prompts.hjson` with per-language variants of
+  every embedded prompt.  Stdout-only by default;
+  `--update` merges in place with a versioned
+  pre-patch backup.  Mirrors the SDT bootstrap
+  pattern.  See tutorial 47 for the worked
+  example.
