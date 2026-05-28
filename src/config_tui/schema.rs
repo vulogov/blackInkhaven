@@ -151,6 +151,46 @@ fn enum_variants_for(path: &str) -> Option<Vec<&'static str>> {
         "editor.prompt_language_mode" => {
             Some(vec!["book_defined", "paragraph_detected"])
         }
+        // 1.2.11+ — project working language.  Drives
+        // per-language stop-word + stemmer + SDT-list +
+        // prompt-resolver paths across the binary.  The
+        // five supported values match what inkhaven
+        // actually ships plumbing for; any other value
+        // silently falls back to English.
+        "language" => Some(vec![
+            "english",
+            "russian",
+            "french",
+            "german",
+            "spanish",
+        ]),
+        // 1.2.11+ — typst's `#set text(lang: ...)` for
+        // hyphenation + smart-quote behaviour.  ISO 639-1
+        // two-letter codes; the five here match
+        // inkhaven's supported languages so the picker
+        // stays small + consistent with the top-level
+        // `language` field.  Users wanting an exotic
+        // typst language (it/pt/ja/zh/…) can still set
+        // it via `Ctrl+B 0` raw HJSON edit.
+        "typst_page.language" => {
+            Some(vec!["en", "ru", "fr", "de", "es"])
+        }
+        // 1.2.11+ — typst page-number format.  The set
+        // covers every common form: empty (no numbers,
+        // typst default), arabic, lowercase / uppercase
+        // roman, lowercase / uppercase letter, and the
+        // "1 of 1" with-total form.  Custom prefixes
+        // (e.g. "Chapter 1.1") fall outside this set and
+        // need the raw HJSON edit.
+        "typst_page.page_numbering" => Some(vec![
+            "",
+            "1",
+            "i",
+            "I",
+            "a",
+            "A",
+            "1 of 1",
+        ]),
         _ => None,
     }
 }
