@@ -514,6 +514,14 @@ pub(super) enum Modal {
         /// for the existing grammar / critique
         /// paths.
         post_accept_snapshot: Option<String>,
+        /// 1.2.11+ — total rendered row count after
+        /// long-line wrapping.  Written by the
+        /// renderer each frame (it owns the column
+        /// width), read by the key handler to
+        /// clamp scroll.  Defaults to 0; the
+        /// handler falls back to source-line count
+        /// until the first render populates it.
+        wrapped_total: usize,
     },
     /// F5 (1.2.6+) — annotation prompt that pops before a new
     /// snapshot is committed. `body` is captured at open time

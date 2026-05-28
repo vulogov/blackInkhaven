@@ -994,6 +994,16 @@ impl super::App {
     /// discoverable snapshot of the pre-rewrite
     /// state BEFORE the buffer is replaced.
     pub(super) fn start_sentence_rhythm_rewrite(&mut self) {
+        // 1.2.11+ — chord can fire from inside the
+        // `Ctrl+B Shift+H` rhythm-gauge modal
+        // (the natural diagnose-then-rewrite
+        // workflow).  Dismiss the gauge before
+        // spawning the inference so the user
+        // sees the AI pane streaming the rewrite,
+        // not a stale gauge frozen on a verdict.
+        if matches!(self.modal, Modal::SentenceRhythm { .. }) {
+            self.modal = Modal::None;
+        }
         let Some(doc) = self.opened.as_ref() else {
             self.status = "rhythm rewrite: no paragraph open".into();
             return;
@@ -1075,10 +1085,22 @@ impl super::App {
                     before_lines,
                     after_lines,
                     scroll,
+                    wrapped_total,
                     ..
                 } = &mut self.modal
                 {
-                    let max = before_lines.len().max(after_lines.len());
+                    // 1.2.11+ — bound by wrapped row count
+                    // when the renderer has populated it
+                    // (every frame after first render).
+                    // Fall back to source-line count on
+                    // the very first key press before any
+                    // render — it's a safe lower bound
+                    // since wrapping only adds rows.
+                    let max = if *wrapped_total > 0 {
+                        *wrapped_total
+                    } else {
+                        before_lines.len().max(after_lines.len())
+                    };
                     if *scroll + 1 < max {
                         *scroll += 1;
                     }
@@ -1094,10 +1116,15 @@ impl super::App {
                     before_lines,
                     after_lines,
                     scroll,
+                    wrapped_total,
                     ..
                 } = &mut self.modal
                 {
-                    let max = before_lines.len().max(after_lines.len());
+                    let max = if *wrapped_total > 0 {
+                        *wrapped_total
+                    } else {
+                        before_lines.len().max(after_lines.len())
+                    };
                     *scroll = (*scroll + 10).min(max.saturating_sub(1));
                 }
             }
@@ -1111,10 +1138,15 @@ impl super::App {
                     before_lines,
                     after_lines,
                     scroll,
+                    wrapped_total,
                     ..
                 } = &mut self.modal
                 {
-                    let max = before_lines.len().max(after_lines.len());
+                    let max = if *wrapped_total > 0 {
+                        *wrapped_total
+                    } else {
+                        before_lines.len().max(after_lines.len())
+                    };
                     *scroll = max.saturating_sub(1);
                 }
             }
