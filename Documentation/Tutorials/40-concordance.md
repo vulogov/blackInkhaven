@@ -116,3 +116,24 @@ land on a different stem entirely.
 - [`16-similar-paragraphs.md`](16-similar-paragraphs.md)
   — vector-similarity picker (semantic version of
   "find me where I wrote about X").
+
+## 1.2.11 additions
+
+- **Enter jumps to the source paragraph.**  Pressing
+  Enter on a concordance row closes the modal and
+  opens the source paragraph at the first sample's
+  editor line.  The heading offset is computed
+  against the live editor body so the cursor lands
+  on the right textarea row (the index is built
+  over heading-stripped bodies; the editor shows the
+  raw paragraph with the `= title` line).
+- **System books excluded from the corpus.**  System
+  books (Prompts, Characters, Places, Lore, Help,
+  Notes, Artefacts, Typst, Scripts) are skipped at
+  index-build time.  Two reasons: their content is
+  metadata, not prose — counting them dilutes the
+  lexical signal; and their bodies aren't always
+  reachable through the on-disk path (prompts-editor
+  saves to bdslib only), so an Enter-jump to one
+  would fail.  Filtering them out at index time
+  eliminates the broken nav case.
