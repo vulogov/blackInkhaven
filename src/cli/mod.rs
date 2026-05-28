@@ -30,8 +30,10 @@ use crate::store::NodeKind;
 #[command(name = "inkhaven", version, about = "TUI literary work editor for Typst books")]
 pub struct Cli {
     /// Path to a project root. For `init`, this is the project to create. For
-    /// every other subcommand, defaults to the current directory.
-    #[arg(long, global = true)]
+    /// every other subcommand, defaults to the current directory.  Accepts
+    /// `--project`, the longer alias `--project-directory`, and the short
+    /// form `-p` (1.2.10+).
+    #[arg(long, short = 'p', alias = "project-directory", global = true)]
     pub project: Option<PathBuf>,
 
     #[command(subcommand)]
@@ -328,6 +330,28 @@ pub enum Command {
 
     /// Launch the TUI editor (default if no subcommand is given).
     Tui,
+
+    /// 1.2.10+ — launch the standalone TUI configuration
+    /// editor for `<project>/inkhaven.hjson`.  Tree-pane
+    /// hierarchy on the left, schema-aware widgets on the
+    /// right.  Read-only walk-through in Phase 1; typed
+    /// editing + save + versioned backups + rollback in
+    /// subsequent phases.  See
+    /// `Documentation/PROPOSALS/CONFIG_TUI.md`.
+    ///
+    /// The existing `Ctrl+B 0` in-app HJSON editor stays
+    /// as the power-user fallback for raw text editing.
+    Config,
+
+    /// 1.2.11+ — launch the standalone TUI prompts
+    /// editor for `<project>/prompts.hjson`.  Four-pane
+    /// workbench: prompts list (left), prompt editor
+    /// (centre, same chord set as the main inkhaven
+    /// editor), AI response (right), AI prompt input
+    /// (bottom).  Phase 1 ships read-only; editing +
+    /// save + AI integration in subsequent phases.
+    /// See `Documentation/PROPOSALS/PROMPTS_EDITOR_TUI.md`.
+    PromptsEditor,
 }
 
 /// Sub-subcommands under `inkhaven event …`.
@@ -550,6 +574,8 @@ impl Cli {
                 track.as_deref(),
             ).map_err(Into::into),
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
+            Command::Config => crate::config_tui::run(&project).map_err(Into::into),
+            Command::PromptsEditor => crate::prompts_tui::run(&project).map_err(Into::into),
         }
     }
 }

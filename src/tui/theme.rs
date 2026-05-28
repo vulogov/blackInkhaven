@@ -44,6 +44,14 @@ pub struct Theme {
     /// so the three overlays stay distinguishable
     /// when adjacent.
     pub style_warning_show_dont_tell_fg: Color,
+    /// 1.2.9+ — POV / character chip on the status
+    /// bar (Ctrl+B Shift+P).  Explicit RGB defaults
+    /// so the chip stays readable across terminal
+    /// palettes (the original `Color::Magenta`
+    /// surfaced as a pale pink on Catppuccin and
+    /// killed contrast against the white fg).
+    pub pov_chip_bg: Color,
+    pub pov_chip_fg: Color,
 
     pub search_match_bg: Color,
     pub search_current_bg: Color,
@@ -129,6 +137,20 @@ impl Theme {
                 // when adjacent.
                 Color::Rgb(0x94, 0xe2, 0xd5),
             ),
+            pov_chip_bg: color_or(
+                &cfg.pov_chip_bg,
+                // Deep magenta — guarantees contrast
+                // against the white-bold fg below
+                // regardless of the terminal's named-
+                // magenta mapping.  Catppuccin's named
+                // magenta is a pastel that washed out
+                // against white.
+                Color::Rgb(0x8b, 0x1d, 0x88),
+            ),
+            pov_chip_fg: color_or(
+                &cfg.pov_chip_fg,
+                Color::Rgb(0xff, 0xff, 0xff),
+            ),
 
             search_match_bg: color_or(&cfg.search_match_bg, Color::Rgb(0xf3, 0x8b, 0xa8)),
             search_current_bg: color_or(&cfg.search_current_bg, Color::Rgb(0xf5, 0xc2, 0xe7)),
@@ -203,6 +225,8 @@ impl Theme {
             "style_warning_filter_word_fg" => self.style_warning_filter_word_fg = parsed,
             "style_warning_repeated_phrase_fg" => self.style_warning_repeated_phrase_fg = parsed,
             "style_warning_show_dont_tell_fg" => self.style_warning_show_dont_tell_fg = parsed,
+            "pov_chip_bg" => self.pov_chip_bg = parsed,
+            "pov_chip_fg" => self.pov_chip_fg = parsed,
             "search_match_bg" => self.search_match_bg = parsed,
             "search_current_bg" => self.search_current_bg = parsed,
             "tree_open_marker" => self.tree_open_marker = parsed,

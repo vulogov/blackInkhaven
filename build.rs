@@ -8,6 +8,8 @@
 //! Upstream source: github.com/uben0/tree-sitter-typst (MIT, © 2023
 //! Gerbais-Nief Eddie). See `LICENSES/tree-sitter-typst-LICENSE`.
 
+mod config_help_extract;
+
 fn main() {
     let src_dir = std::path::Path::new("src/grammar");
     let parser_c = src_dir.join("parser.c");
@@ -32,4 +34,10 @@ fn main() {
     println!("cargo:rerun-if-changed=src/grammar/tree_sitter/alloc.h");
     println!("cargo:rerun-if-changed=src/grammar/tree_sitter/array.h");
     println!("cargo:rerun-if-changed=src/grammar/tree_sitter/parser.h");
+
+    // 1.2.10+ — emit the config-TUI's in-process help
+    // table from doc-comments on the Config struct
+    // tree.  Generated into $OUT_DIR/config_help.rs
+    // and `include!`-ed by `src/config_tui/help.rs`.
+    config_help_extract::run();
 }
