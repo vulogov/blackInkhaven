@@ -653,8 +653,12 @@ impl super::App {
             track_filter.as_deref(),
             &self.cfg.timeline.default_track,
         );
+        // 1.2.12+ Phase B — embedded floor is language-aware;
+        // pass the ISO code so the timeline review lands in
+        // the project's working language.
+        let want_lang = self.active_prompt_language();
         let template = self.resolve_prompt_template("timeline-health", || {
-            timeline_health_default_prompt().to_string()
+            timeline_health_default_prompt(&want_lang).to_string()
         });
         let rendered = self.render_template(&template);
         let prompt_text = format!("{rendered}\n\n{payload_body}");

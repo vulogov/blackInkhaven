@@ -17,6 +17,7 @@ pub mod restore;
 pub mod search;
 pub mod doctor;
 pub mod event;
+pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
 
@@ -366,6 +367,23 @@ pub enum Command {
     /// `doctor --filter-words-snippet`.
     #[command(subcommand, name = "show-dont-tell")]
     ShowDontTell(ShowDontTellCommand),
+
+    /// 1.2.12+ Phase B — prompts tooling.  Currently
+    /// hosts `bootstrap <lang>`, which uses the
+    /// configured LLM to generate per-language
+    /// variants of the seven inkhaven embedded
+    /// prompts (`grammar-check`, `show-don't-tell`,
+    /// `sentence-rhythm-rewrite`, `critique-edit`,
+    /// `critique-changes`, `explain-diagnostic`,
+    /// `timeline-health`).  Output is an HJSON
+    /// snippet ready to paste under
+    /// `prompts.hjson`; with `--update` it merges
+    /// into the live file in place via the same
+    /// `apply_in_place_edits` helper the SDT
+    /// bootstrap uses.  See
+    /// `Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md`.
+    #[command(subcommand)]
+    Prompts(PromptsCommand),
 }
 
 /// Sub-subcommands under `inkhaven event …`.
@@ -414,6 +432,52 @@ pub enum EventCommand {
     Show {
         /// Slug-path of the event paragraph.
         path: String,
+    },
+}
+
+/// 1.2.12+ Phase B — sub-subcommands under
+/// `inkhaven prompts …`.
+#[derive(Debug, Subcommand)]
+pub enum PromptsCommand {
+    /// Generate per-language variants of inkhaven's
+    /// seven embedded prompts using the configured
+    /// LLM.  Emits an HJSON snippet on stdout (default)
+    /// or, with `--update`, merges into
+    /// `<project>/prompts.hjson` in place — versioned
+    /// backup + atomic write + comment preservation
+    /// via the shared `apply_in_place_edits` helper.
+    /// Mirrors `inkhaven show-dont-tell bootstrap`.
+    Bootstrap {
+        /// Target language.  One of: english, russian,
+        /// french, german, spanish.  Mapped to ISO 639-1
+        /// (`en`/`ru`/`fr`/`de`/`es`) for the
+        /// `language:` field on each generated prompt
+        /// entry — that's the value the prompt resolver
+        /// compares against.
+        language: String,
+        /// Optional genre / register hint folded into
+        /// the prompt so the model picks vocabulary at
+        /// the right reading level ("literary fiction",
+        /// "thriller", "YA fantasy", …).
+        #[arg(long)]
+        genre: Option<String>,
+        /// Override the default LLM provider for this
+        /// invocation.  Same semantics as
+        /// `inkhaven ai --provider`.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Apply the LLM-generated prompts **in place**
+        /// to `prompts.hjson`, merging with any
+        /// existing same-name entries (case-insensitive
+        /// name match + `language` field match — only
+        /// overwrites the exact `(name, language)`
+        /// pair, leaves every other entry untouched).
+        /// A versioned backup of the pre-patch file
+        /// lands under `<project>/.config-backups/`
+        /// first.  Without `--update`, prints the
+        /// snippet to stdout and touches nothing.
+        #[arg(long)]
+        update: bool,
     },
 }
 
@@ -648,6 +712,9 @@ impl Cli {
             Command::PromptsEditor => crate::prompts_tui::run(&project).map_err(Into::into),
             Command::ShowDontTell(cmd) => {
                 show_dont_tell::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Prompts(cmd) => {
+                prompts::run(&project, cmd).map_err(Into::into)
             }
         }
     }

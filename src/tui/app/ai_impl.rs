@@ -581,7 +581,10 @@ impl super::App {
         let want_lang = self.active_prompt_language();
         let template = self
             .resolve_prompt(NAME, &want_lang, || {
-                grammar_check_default_prompt(&self.cfg.language)
+                // 1.2.12+ Phase B — embedded floor is now
+                // language-aware; pass the ISO code from
+                // `active_prompt_language`.
+                grammar_check_default_prompt(&want_lang).to_string()
             })
             .template;
 
@@ -797,8 +800,14 @@ impl super::App {
             context.push_str(&format!("{mark}{lineno:>4}  {line}\n"));
         }
 
+        // 1.2.12+ Phase B — capture the want-lang code so the
+        // language-aware embedded floor can pick the right
+        // variant.  `resolve_prompt_template` itself reads
+        // `active_prompt_language` internally for its
+        // language target.
+        let want_lang = self.active_prompt_language();
         let template = self.resolve_prompt_template("explain-diagnostic", || {
-            explain_diagnostic_default_prompt().to_string()
+            explain_diagnostic_default_prompt(&want_lang).to_string()
         });
         let rendered = self.render_template(&template);
         let prompt_text = format!(
@@ -863,14 +872,24 @@ impl super::App {
             .as_ref()
             .map(|s| s.snapshot_lines.join("\n"));
 
-        let (prompt_name, embedded): (&str, fn() -> &'static str) =
-            if split_baseline.is_some() {
-                ("critique-changes", || critique_changes_default_prompt())
-            } else {
-                ("critique-edit", || critique_edit_default_prompt())
-            };
+        // 1.2.12+ Phase B — embedded floors are language-
+        // aware; capture the want-lang ISO and pass it into
+        // whichever variant fires.  Function pointers can't
+        // close over local state, so the dispatch is the
+        // local `match` below.
+        let want_lang = self.active_prompt_language();
+        let prompt_name = if split_baseline.is_some() {
+            "critique-changes"
+        } else {
+            "critique-edit"
+        };
         let template = self
-            .resolve_prompt_template(prompt_name, || embedded().to_string());
+            .resolve_prompt_template(prompt_name, || match prompt_name {
+                "critique-changes" => {
+                    critique_changes_default_prompt(&want_lang).to_string()
+                }
+                _ => critique_edit_default_prompt(&want_lang).to_string(),
+            });
         let rendered = self.render_template(&template);
 
         let prompt_text = match split_baseline.as_ref() {
@@ -936,7 +955,11 @@ impl super::App {
         let title = doc.title.clone();
         let template = self.resolve_prompt_template(
             "show-dont-tell",
-            || super::super::app::show_dont_tell_default_prompt().to_string(),
+            || {
+                let want_lang = self.active_prompt_language();
+                super::super::app::show_dont_tell_default_prompt(&want_lang)
+                    .to_string()
+            },
         );
         let rendered = self.render_template(&template);
         let prompt_text = format!(
@@ -1026,7 +1049,9 @@ impl super::App {
         let want_lang = self.active_prompt_language();
         let template = self
             .resolve_prompt(NAME, &want_lang, || {
-                sentence_rhythm_rewrite_default_prompt(&language)
+                // 1.2.12+ Phase B — embedded floor is now
+                // a 5-language match keyed by ISO code.
+                sentence_rhythm_rewrite_default_prompt(&want_lang).to_string()
             })
             .template;
         let rendered = self.render_template(&template);
