@@ -1504,6 +1504,15 @@ pub(crate) struct App {
     /// flips this; semantics identical to
     /// `style_warnings_toggle`.
     pov_chip_toggle: Option<bool>,
+    /// 1.2.12+ Phase C — session-local override for
+    /// `editor.prompt_language_mode`.  `Ctrl+B Shift+N`
+    /// cycles this through `Some("book_defined")` /
+    /// `Some("paragraph_detected")` / `None` (defer to
+    /// HJSON).  Same shape as `pov_chip_toggle` /
+    /// `style_warnings_toggle`.  The AI pane title bar
+    /// reflects the effective mode so the user can
+    /// confirm what the resolver will target.
+    prompt_lang_mode_runtime: Option<String>,
     /// Cursor into `ai_prompt_history`. None when not navigating;
     /// `Some(i)` when the user is stepping through history. Any
     /// edit (typing, backspace, etc.) clears it so the next Up
@@ -1863,6 +1872,7 @@ impl App {
             tts_say: super::say::Say::default(),
             style_warnings_toggle: None,
             pov_chip_toggle: None,
+            prompt_lang_mode_runtime: None,
             opened: None,
             secondary: None,
             secondary_focused: false,
@@ -4380,18 +4390,23 @@ impl App {
     }
 
     /// 1.2.12+ — the language to resolve prompts against on
-    /// this call.  Reads `editor.prompt_language_mode` (HJSON;
-    /// `book_defined` default) and, when set to
-    /// `paragraph_detected`, returns the cached whatlang code
-    /// for the open paragraph if available — falling back to
-    /// the book language when the paragraph is too short to
-    /// detect reliably (see `detect_paragraph_language`).
-    /// Phase C will add a session-local runtime override
-    /// hooked to `Ctrl+B Shift+N`.
+    /// this call.  Reads (in order of precedence):
+    ///   1. Session-local runtime override
+    ///      (`Ctrl+B Shift+N`, Phase C).
+    ///   2. `editor.prompt_language_mode` (HJSON;
+    ///      `book_defined` default).
+    ///
+    /// When the resolved mode is `paragraph_detected`,
+    /// returns the cached whatlang code for the open
+    /// paragraph if available — falling back to the book
+    /// language when the paragraph is too short to detect
+    /// reliably (see `detect_paragraph_language`).
     pub(super) fn active_prompt_language(&self) -> String {
-        let mode_book = self.cfg.editor.prompt_language_mode
-            .eq_ignore_ascii_case("book_defined");
-        if mode_book {
+        let mode = self
+            .prompt_lang_mode_runtime
+            .as_deref()
+            .unwrap_or(self.cfg.editor.prompt_language_mode.as_str());
+        if mode.eq_ignore_ascii_case("book_defined") {
             return crate::ai::prompts::iso_from_long(&self.cfg.language).to_string();
         }
         // paragraph_detected (or any non-book-defined value)
@@ -4403,6 +4418,74 @@ impl App {
         // Detection failed or paragraph too short — fall back
         // to book language silently.
         crate::ai::prompts::iso_from_long(&self.cfg.language).to_string()
+    }
+
+    /// 1.2.12+ Phase C — effective prompt-language mode
+    /// for display purposes (AI pane title bar, status
+    /// echo on toggle).  Returns the runtime override if
+    /// set, otherwise the HJSON value.
+    pub(super) fn effective_prompt_language_mode(&self) -> &str {
+        self.prompt_lang_mode_runtime
+            .as_deref()
+            .unwrap_or(self.cfg.editor.prompt_language_mode.as_str())
+    }
+
+    /// 1.2.12+ Phase C — Ctrl+B Shift+N handler.  Cycles
+    /// the runtime override through:
+    ///   None (defer to HJSON)
+    ///     → Some("book_defined")
+    ///     → Some("paragraph_detected")
+    ///     → None
+    /// rather than a binary flip so the user can return to
+    /// the HJSON default without restarting.  Echoes the
+    /// effective mode on the status bar so the chord is
+    /// self-documenting.
+    pub(super) fn toggle_prompt_language_mode(&mut self) {
+        let next = match self.prompt_lang_mode_runtime.as_deref() {
+            None => Some("book_defined".to_string()),
+            Some(m) if m.eq_ignore_ascii_case("book_defined") => {
+                Some("paragraph_detected".to_string())
+            }
+            Some(m) if m.eq_ignore_ascii_case("paragraph_detected") => None,
+            _ => Some("book_defined".to_string()),
+        };
+        self.prompt_lang_mode_runtime = next;
+        // Re-run detection so the cache is fresh against
+        // the new mode.  No-op when the effective mode
+        // ends up `book_defined` (detect_paragraph_language
+        // short-circuits there).
+        self.detect_paragraph_language();
+        let effective = self.effective_prompt_language_mode().to_string();
+        let lang = self.active_prompt_language();
+        let suffix = match self.prompt_lang_mode_runtime.as_deref() {
+            None => format!("HJSON default ({effective})"),
+            Some(_) => "session override".into(),
+        };
+        self.status = format!(
+            "prompt language mode: {effective} · resolving as `{lang}` · {suffix}",
+        );
+    }
+
+    /// 1.2.12+ Phase C — short label for the AI pane
+    /// title decoration.  Format:
+    ///   `<lang> (<mode-shorthand>)`
+    /// where the shorthand collapses
+    /// `book_defined` → `book` and
+    /// `paragraph_detected` → `paragraph`.
+    /// Used by the AI pane renderer; kept here next to
+    /// `active_prompt_language` so the label stays in
+    /// sync with the resolver target.
+    pub(super) fn ai_pane_language_label(&self) -> String {
+        let lang = self.active_prompt_language();
+        let mode = self.effective_prompt_language_mode();
+        let shorthand = if mode.eq_ignore_ascii_case("book_defined") {
+            "book"
+        } else if mode.eq_ignore_ascii_case("paragraph_detected") {
+            "paragraph"
+        } else {
+            "?"
+        };
+        format!("{lang} ({shorthand})")
     }
 
     /// 1.2.12+ — run whatlang on the currently-opened
@@ -6883,6 +6966,7 @@ impl App {
             A::ToggleStyleWarnings => self.toggle_style_warnings(),
             A::OpenConcordance => self.open_concordance(),
             A::TogglePovChip => self.toggle_pov_chip(),
+            A::TogglePromptLanguageMode => self.toggle_prompt_language_mode(),
             A::OpenSentenceRhythm => self.open_sentence_rhythm(),
             A::AnalyseShowDontTell => self.start_show_dont_tell_scan(),
             A::AiRewriteRhythm => self.start_sentence_rhythm_rewrite(),
