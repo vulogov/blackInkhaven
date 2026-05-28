@@ -1009,11 +1009,15 @@ mod tests {
 
     #[test]
     fn sdt_unsupported_language_falls_back_quiet() {
-        // No built-in lists for German yet — and the
-        // configured lists are empty by default.  The
-        // detector must be `is_empty()` so the render
-        // pipeline can short-circuit cleanly.
-        let d = ShowDontTellDetector::new(&sdt_cfg_default(), "german");
+        // 1.2.11+ — built-ins now ship for all five
+        // supported languages (en/ru/fr/de/es).  This
+        // test still locks the fallback path: a
+        // language we *don't* ship lists for + empty
+        // user config must produce an `is_empty()`
+        // detector so the render pipeline can short-
+        // circuit cleanly.  "klingon" stands in for
+        // "anything not on the list".
+        let d = ShowDontTellDetector::new(&sdt_cfg_default(), "klingon");
         assert!(d.is_empty());
     }
 
