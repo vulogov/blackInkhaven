@@ -2297,6 +2297,9 @@ impl App {
         }
         let _ = id;
         self.refresh_typst_diagnostics_for_opened();
+        // 1.2.12+ Phase D — external rewrite swapped the
+        // body wholesale; cached detection is stale.
+        self.detect_paragraph_language();
         self.status = format!(
             "↻ reloaded `{title}` — file changed on disk"
         );
@@ -4492,8 +4495,15 @@ impl App {
     /// paragraph and cache the result on
     /// `OpenedDoc.detected_language`.  No-op when:
     ///
-    ///   * `editor.prompt_language_mode = "book_defined"`
-    ///     (book mode never consults paragraph detection)
+    ///   * The effective prompt-language mode is
+    ///     `book_defined` (book mode never consults
+    ///     paragraph detection).  "Effective" means
+    ///     the session override
+    ///     (`prompt_lang_mode_runtime`) when set,
+    ///     otherwise `editor.prompt_language_mode` from
+    ///     HJSON — so the Ctrl+B Shift+N flip into
+    ///     `paragraph_detected` actually triggers a
+    ///     fresh run.
     ///   * No paragraph is open
     ///   * The body has fewer non-whitespace characters than
     ///     `editor.prompt_language_detection_min_chars`
@@ -4506,7 +4516,7 @@ impl App {
     /// which the resolver treats as "fall back to book
     /// language".
     pub(super) fn detect_paragraph_language(&mut self) {
-        if self.cfg.editor.prompt_language_mode
+        if self.effective_prompt_language_mode()
             .eq_ignore_ascii_case("book_defined")
         {
             return;
@@ -4528,6 +4538,48 @@ impl App {
             .and_then(|i| crate::ai::prompts::iso_from_alpha3(i.lang().code()));
         doc.detected_language = code.map(|s| s.to_string());
         doc.detected_language_length = nws_len;
+    }
+
+    /// 1.2.12+ Phase D — cheap edit-time re-detection
+    /// guard.  Compares the current non-whitespace
+    /// length against the cached
+    /// `detected_language_length`; only calls
+    /// `detect_paragraph_language` when the delta
+    /// exceeds `PARAGRAPH_LANGUAGE_REDETECT_THRESHOLD`.
+    /// Cheaper than running whatlang on every save —
+    /// typing a sentence here or there doesn't change
+    /// the dominant-language signal, but a multi-
+    /// paragraph rewrite (or a paste of foreign text)
+    /// does.  Threshold is the same as
+    /// `prompt_language_detection_min_chars` (50 by
+    /// default): a body that crosses 50 chars in
+    /// either direction is meaningfully different
+    /// from what whatlang last saw.  Called from
+    /// `save_current`, `apply_ai_diff_accepted`, and
+    /// the AI critique apply paths.
+    pub(super) fn maybe_redetect_paragraph_language(&mut self) {
+        if self.effective_prompt_language_mode()
+            .eq_ignore_ascii_case("book_defined")
+        {
+            return;
+        }
+        let threshold = self
+            .cfg
+            .editor
+            .prompt_language_detection_min_chars
+            .max(1);
+        let needs_redetect = match self.opened.as_ref() {
+            Some(doc) => {
+                let body: String = doc.textarea.lines().join("\n");
+                let nws_len = body.chars().filter(|c| !c.is_whitespace()).count();
+                let delta = nws_len.abs_diff(doc.detected_language_length);
+                delta >= threshold
+            }
+            None => false,
+        };
+        if needs_redetect {
+            self.detect_paragraph_language();
+        }
     }
 }
 
@@ -14904,6 +14956,13 @@ impl App {
         }
         doc.dirty = true;
         doc.last_activity = std::time::Instant::now();
+        // 1.2.12+ Phase D — diff-apply replaces the entire
+        // buffer, so any cached whatlang detection is stale
+        // by construction.  Force a fresh detection
+        // unconditionally — the function short-circuits when
+        // the effective mode is `book_defined` or the new
+        // body is below the min-chars threshold.
+        self.detect_paragraph_language();
         self.status = format!("AI diff: accepted ({})", action.label());
         if refocus_editor {
             self.change_focus(Focus::Editor);

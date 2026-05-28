@@ -182,6 +182,12 @@ impl super::App {
             InferenceAction::CopyOnly | InferenceAction::ReplaceCorrected => unreachable!(),
         }
         doc.dirty = true;
+        // 1.2.12+ Phase D — text-insertion / paste of AI
+        // output can land enough new content to change the
+        // dominant-language signal; let the delta-guard
+        // decide whether re-detection is warranted.  No-op
+        // when the effective mode is `book_defined`.
+        self.maybe_redetect_paragraph_language();
         self.status = format!("applied AI result ({})", action.label());
         self.change_focus(Focus::Editor);
     }

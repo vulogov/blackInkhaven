@@ -665,6 +665,12 @@ impl super::App {
         // mutable doc so the next render reflects errors the user
         // just introduced (or fixed).
         self.refresh_typst_diagnostics_for_opened();
+        // 1.2.12+ Phase D — re-detect paragraph language if the
+        // body length has drifted enough from the last detection
+        // to plausibly change the dominant-language signal.
+        // No-op when the effective mode is `book_defined` (the
+        // function itself short-circuits there).
+        self.maybe_redetect_paragraph_language();
         Ok(())
     }
 
