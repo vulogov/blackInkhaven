@@ -7990,6 +7990,30 @@ impl App {
             if node.kind != NodeKind::Paragraph {
                 continue;
             }
+            // 1.2.11+ — skip paragraphs that live under any
+            // system book (Prompts, Characters, Places,
+            // Lore, Help, Notes, Artefacts, Typst,
+            // Scripts, etc).  Two reasons: (1) those are
+            // metadata / scaffolding, not prose, so they
+            // dilute the lexical signal — the keybind
+            // description promises "the words actually
+            // carrying the prose's weight".  (2) System-
+            // book paragraphs are typically stored only in
+            // bdslib (the prompts editor never writes to
+            // disk), so the Enter-to-jump path would
+            // fail with `read …: No such file or
+            // directory` when `load_paragraph` looks for
+            // the .typ file.  Identified by walking the
+            // ancestor chain; ANY ancestor with a
+            // `system_tag` disqualifies the descendant.
+            if self
+                .hierarchy
+                .ancestors(node)
+                .iter()
+                .any(|a| a.system_tag.is_some())
+            {
+                continue;
+            }
             let slug_path = self.hierarchy.slug_path(node);
             let raw = match self.store.get_content(node.id) {
                 Ok(Some(bytes)) => bytes,
@@ -8093,10 +8117,10 @@ impl App {
     /// modal.  Single-pane list with an inline filter
     /// input — typing characters narrows the list,
     /// arrow keys move the selection, `Ctrl+S` toggles
-    /// the sort mode, Esc closes.  No Enter-to-jump
-    /// behaviour yet (would need a paragraph-locator
-    /// indirection through `slug_path`); that's a
-    /// likely follow-up.
+    /// the sort mode, Esc closes.  1.2.11+ — Enter on
+    /// a selected row jumps to the first sample's
+    /// source paragraph at the corresponding editor
+    /// line; see `concordance_jump_to_selection`.
     fn concordance_handle_key(&mut self, key: crossterm::event::KeyEvent) {
         use crossterm::event::{KeyCode, KeyModifiers};
         // Esc always closes — even mid-filter.
@@ -8118,6 +8142,19 @@ impl App {
             if let Modal::Concordance { sort, .. } = &self.modal {
                 self.status = format!("concordance: sort = {}", sort.label());
             }
+            return;
+        }
+        // 1.2.11+ — Enter on a row jumps to the source
+        // paragraph at the first sample's line.  Plain
+        // Enter only — Ctrl+Enter and friends pass
+        // through to the filter input (which today
+        // doesn't recognise them either, so they no-op,
+        // which is what we want).
+        if matches!(key.code, KeyCode::Enter)
+            && !key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
+        {
+            self.concordance_jump_to_selection();
             return;
         }
         // Arrow keys + PgUp/PgDn move the selection.
@@ -8185,6 +8222,114 @@ impl App {
             }
         }
         self.concordance_refilter();
+    }
+
+    /// 1.2.11+ — Enter on a selected concordance row.
+    /// Resolves the first sample's `slug_path` to a
+    /// paragraph node via `Hierarchy::find_by_path`,
+    /// loads it via `open_paragraph_by_uuid`, then
+    /// positions the textarea cursor at the matching
+    /// editor row.  The concordance index is built
+    /// over heading-stripped bodies but the editor
+    /// displays the raw paragraph (with the leading
+    /// `= title` line), so we compute the head-stripped
+    /// offset on the freshly loaded body and add it to
+    /// the sample's 1-based `line_no`.
+    fn concordance_jump_to_selection(&mut self) {
+        // Pull what we need out of the modal up front
+        // so the modal can be closed before
+        // borrow-y operations like loading the
+        // paragraph.
+        let (slug_path, line_no, headword) = {
+            let Modal::Concordance {
+                data,
+                cursor,
+                visible,
+                ..
+            } = &self.modal
+            else {
+                return;
+            };
+            if visible.is_empty() {
+                self.status = "concordance: no row selected".into();
+                return;
+            }
+            let entry_idx = visible[*cursor];
+            let entry = &data.entries[entry_idx];
+            let Some(sample) = entry.samples.first() else {
+                self.status = format!(
+                    "concordance: `{}` has no samples — nothing to jump to",
+                    entry.headword,
+                );
+                return;
+            };
+            (
+                sample.slug_path.clone(),
+                sample.line_no,
+                entry.headword.clone(),
+            )
+        };
+        // Resolve slug_path → node.  `find_by_path`
+        // walks slug segments from the root, which is
+        // the exact inverse of `slug_path` (used at
+        // build time), so a round-trip always
+        // resolves when the source paragraph still
+        // exists.
+        let target_id = match self.hierarchy.find_by_path(&slug_path) {
+            Some(node) if node.kind == NodeKind::Paragraph => node.id,
+            Some(_) => {
+                self.status = format!(
+                    "concordance: `{slug_path}` resolves to a non-paragraph node"
+                );
+                return;
+            }
+            None => {
+                self.status = format!(
+                    "concordance: source paragraph `{slug_path}` no longer exists"
+                );
+                return;
+            }
+        };
+        // Close the modal before navigating so the
+        // user lands on a fully-visible editor.
+        self.modal = Modal::None;
+        if let Err(e) = self.open_paragraph_by_uuid(target_id) {
+            self.status = format!("concordance: couldn't open paragraph: {e}");
+            return;
+        }
+        // Translate the 1-based line_no (counted in
+        // the heading-stripped body) to an editor
+        // row in the full body.  The strip removes the
+        // `= heading` line plus subsequent blank
+        // lines; we replay the same skip on the live
+        // textarea to get the prefix offset.
+        let offset = if let Some(doc) = self.opened.as_ref() {
+            let lines = doc.textarea.lines();
+            let mut o = 0usize;
+            if lines
+                .first()
+                .is_some_and(|l| l.trim_start().starts_with('='))
+            {
+                o += 1;
+                while lines.get(o).is_some_and(|l| l.trim().is_empty()) {
+                    o += 1;
+                }
+            }
+            o
+        } else {
+            0
+        };
+        let target_row = offset + line_no.saturating_sub(1);
+        if let Some(doc) = self.opened.as_mut() {
+            let max_row = doc.textarea.lines().len().saturating_sub(1);
+            let row = target_row.min(max_row);
+            doc.textarea.move_cursor(
+                tui_textarea::CursorMove::Jump(row as u16, 0),
+            );
+        }
+        self.status = format!(
+            "concordance: jumped to `{headword}` at {slug_path}:{line_no}",
+        );
     }
 
     /// 1.2.9+ — Ctrl+B Shift+R action: open a save-as

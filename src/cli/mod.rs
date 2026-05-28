@@ -17,6 +17,7 @@ pub mod restore;
 pub mod search;
 pub mod doctor;
 pub mod event;
+pub mod show_dont_tell;
 pub mod stats;
 
 use std::path::PathBuf;
@@ -352,6 +353,19 @@ pub enum Command {
     /// save + AI integration in subsequent phases.
     /// See `Documentation/PROPOSALS/PROMPTS_EDITOR_TUI.md`.
     PromptsEditor,
+
+    /// 1.2.11+ — show-don't-tell tooling.  Currently
+    /// hosts `bootstrap`, which uses the configured LLM
+    /// to generate the four per-language word lists
+    /// (linking_verbs / emotion_adjectives /
+    /// manner_adverbs / cognition_verbs) for the
+    /// show-don't-tell overlay.  Output is an HJSON
+    /// snippet on stdout — never writes to your
+    /// `inkhaven.hjson` automatically; review and paste
+    /// what you like.  Pattern mirrors
+    /// `doctor --filter-words-snippet`.
+    #[command(subcommand, name = "show-dont-tell")]
+    ShowDontTell(ShowDontTellCommand),
 }
 
 /// Sub-subcommands under `inkhaven event …`.
@@ -400,6 +414,46 @@ pub enum EventCommand {
     Show {
         /// Slug-path of the event paragraph.
         path: String,
+    },
+}
+
+/// 1.2.11+ — sub-subcommands under
+/// `inkhaven show-dont-tell …`.
+#[derive(Debug, Subcommand)]
+pub enum ShowDontTellCommand {
+    /// Generate per-language word lists for the
+    /// show-don't-tell overlay using the configured
+    /// LLM.  Emits an HJSON snippet on stdout — never
+    /// touches your `inkhaven.hjson`; review and paste
+    /// what you like (same shape as
+    /// `doctor --filter-words-snippet`).  The four
+    /// fields produced match the
+    /// `editor.style_warnings.show_dont_tell.<lang>_*`
+    /// stanza: `linking_verbs`, `emotion_adjectives`,
+    /// `manner_adverbs`, `cognition_verbs`.  Optional
+    /// `--genre` hint biases the vocabulary toward a
+    /// register (e.g. "literary fiction", "thriller",
+    /// "YA fantasy") — useful when the built-in defaults
+    /// sit at the wrong reading level for your corpus.
+    Bootstrap {
+        /// Target language.  One of: english, russian,
+        /// french, german, spanish.  Other values are
+        /// passed through verbatim — the LLM will try,
+        /// but per-language stop-word + stemmer plumbing
+        /// only ships for the five above.
+        language: String,
+        /// Optional genre / register hint.  Folded into
+        /// the prompt so the model picks vocabulary at
+        /// the right reading level.
+        #[arg(long)]
+        genre: Option<String>,
+        /// Override the default LLM provider for this
+        /// invocation.  Same semantics as `inkhaven ai
+        /// --provider` (no short alias here because
+        /// `-p` is reserved by the global
+        /// `--project`).
+        #[arg(long)]
+        provider: Option<String>,
     },
 }
 
@@ -576,6 +630,9 @@ impl Cli {
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
             Command::Config => crate::config_tui::run(&project).map_err(Into::into),
             Command::PromptsEditor => crate::prompts_tui::run(&project).map_err(Into::into),
+            Command::ShowDontTell(cmd) => {
+                show_dont_tell::run(&project, cmd).map_err(Into::into)
+            }
         }
     }
 }
