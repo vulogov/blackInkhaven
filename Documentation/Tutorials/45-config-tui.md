@@ -243,3 +243,40 @@ chain stays intact.
   * `Documentation/Tutorials/36-config-editor.md`
     — the in-app `Ctrl+B 0` HJSON editor (the
     textual sibling to this structured one).
+
+## 1.2.11 additions
+
+- **F3 file-picker in the path widget.**  Inside an
+  edit on a `_dir` / `_path` / `_file` field,
+  press `F3` to open the same tree-style filesystem
+  browser the main TUI's F3 chord uses.  The root
+  is the buffer's parent directory when the buffer
+  points somewhere existing; otherwise the project
+  root.  Picker chords: `↑↓` / `PgUp` / `PgDn` /
+  `Home` / `End` navigate, `→` expands a directory,
+  `←` collapses or steps to the parent, Enter
+  selects (overwrites the buffer; press Enter
+  again in text mode to commit the config value),
+  Esc or F3 cancels.
+- **Three new enum entries** surfaced as pickers:
+  - `language` — `english` / `russian` / `french`
+    / `german` / `spanish` (inkhaven's supported
+    set).
+  - `typst_page.language` — ISO 639-1 short codes
+    `en` / `ru` / `fr` / `de` / `es` (the matching
+    typst `#set text(lang: …)` values).
+  - `typst_page.page_numbering` — typst's standard
+    forms: empty, `"1"`, `"i"`, `"I"`, `"a"`,
+    `"A"`, `"1 of 1"`.
+- **HSL slider mode for the colour widget.**  Press
+  `h` to toggle the colour widget between Hex
+  mode (the existing input) and HSL mode.  HSL
+  shows three sliders — Hue (0-360° wrapping),
+  Saturation (0-100%), Lightness (0-100%); `Tab`
+  cycles which slider has focus; `←` / `→` adjust
+  by 1, `Shift+←` / `Shift+→` by 10, `Home` /
+  `End` jump to min / max.  The hex buffer is kept
+  in sync with every slider move so Enter still
+  commits a canonical `#rrggbb`.  Useful when you
+  want to "make this colour 10% lighter" without
+  doing the hex math.

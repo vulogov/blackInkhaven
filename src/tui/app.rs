@@ -1504,6 +1504,15 @@ pub(crate) struct App {
     /// flips this; semantics identical to
     /// `style_warnings_toggle`.
     pov_chip_toggle: Option<bool>,
+    /// 1.2.12+ Phase C — session-local override for
+    /// `editor.prompt_language_mode`.  `Ctrl+B Shift+N`
+    /// cycles this through `Some("book_defined")` /
+    /// `Some("paragraph_detected")` / `None` (defer to
+    /// HJSON).  Same shape as `pov_chip_toggle` /
+    /// `style_warnings_toggle`.  The AI pane title bar
+    /// reflects the effective mode so the user can
+    /// confirm what the resolver will target.
+    prompt_lang_mode_runtime: Option<String>,
     /// Cursor into `ai_prompt_history`. None when not navigating;
     /// `Some(i)` when the user is stepping through history. Any
     /// edit (typing, backspace, etc.) clears it so the next Up
@@ -1617,6 +1626,17 @@ pub(crate) struct App {
     /// open. Consumed by `pump_inference` on stream
     /// completion alongside `pending_chat_user_msg`.
     pending_paragraph_memory_target: Option<Uuid>,
+    /// 1.2.11+ — set by `start_sentence_rhythm_rewrite`
+    /// (Ctrl+B Shift+M) when an inference is in flight
+    /// that should auto-open the AI diff modal on
+    /// completion.  `pump_inference` watches for the
+    /// Streaming → Done transition and triggers the
+    /// modal with `post_accept_snapshot = Some("Sentence
+    /// rhythm rewrite")` so the apply step preserves
+    /// the pre-rewrite state under an F6-discoverable
+    /// snapshot.  Cleared after either auto-open OR
+    /// an error path.
+    pub(super) pending_rhythm_rewrite: bool,
 
     /// RAG context block (e.g. a place/character lookup) that the next
     /// AI-prompt submission should prepend to the user's typed query.
@@ -1852,6 +1872,7 @@ impl App {
             tts_say: super::say::Say::default(),
             style_warnings_toggle: None,
             pov_chip_toggle: None,
+            prompt_lang_mode_runtime: None,
             opened: None,
             secondary: None,
             secondary_focused: false,
@@ -1877,6 +1898,7 @@ impl App {
             system_prompt_override: None,
             pending_chat_user_msg: None,
             pending_paragraph_memory_target: None,
+            pending_rhythm_rewrite: false,
             pending_rag_prefix: None,
             layout_search: Rect::default(),
             layout_tree: Rect::default(),
@@ -2275,6 +2297,9 @@ impl App {
         }
         let _ = id;
         self.refresh_typst_diagnostics_for_opened();
+        // 1.2.12+ Phase D — external rewrite swapped the
+        // body wholesale; cached detection is stale.
+        self.detect_paragraph_language();
         self.status = format!(
             "↻ reloaded `{title}` — file changed on disk"
         );
@@ -2366,6 +2391,38 @@ impl App {
                 // per-paragraph memory.
                 self.pending_paragraph_memory_target = None;
             }
+            // 1.2.11+ — Ctrl+B Shift+M rhythm rewrite:
+            // auto-open the AI diff modal so the user
+            // reviews the response before it lands in
+            // the buffer.  The modal carries the
+            // snapshot annotation so the apply step
+            // preserves the pre-rewrite state under
+            // "Sentence rhythm rewrite".
+            if self.pending_rhythm_rewrite {
+                self.pending_rhythm_rewrite = false;
+                let raw = self
+                    .inference
+                    .as_ref()
+                    .map(|i| i.response.clone())
+                    .unwrap_or_default();
+                if !raw.trim().is_empty() {
+                    self.open_ai_diff_review_with_snapshot(
+                        InferenceAction::Replace,
+                        &raw,
+                        "Sentence rhythm rewrite",
+                    );
+                } else {
+                    self.status = "rhythm rewrite: model returned empty response".into();
+                }
+            }
+        } else if matches!(
+            self.inference.as_ref().map(|i| &i.status),
+            Some(InferenceStatus::Error(_))
+        ) && self.pending_rhythm_rewrite
+        {
+            // Error path: clear the pending flag so a
+            // future Ctrl+B Shift+M starts clean.
+            self.pending_rhythm_rewrite = false;
         }
     }
 
@@ -4135,23 +4192,150 @@ impl App {
         name: &str,
         fallback: impl FnOnce() -> String,
     ) -> String {
-        let display = name.replace('-', " ");
-        if let Some(t) = self.lookup_book_prompt_template(name) {
-            return t;
-        }
-        if let Some(t) = self.lookup_book_prompt_template(&display) {
-            return t;
-        }
-        if let Some(p) = self.prompts.find(name) {
-            return p.template.clone();
-        }
-        if let Some(p) = self.prompts.find(&display) {
-            return p.template.clone();
-        }
-        fallback()
+        // 1.2.12+ — Phase A.  The legacy single-language
+        // resolver now delegates to the three-pass language-
+        // aware resolver, with `active_prompt_language()` as
+        // the target.  Pass 2 (untagged) is what keeps every
+        // pre-1.2.12 project working: every existing prompt
+        // is untagged, so it lands in Pass 2 with the same
+        // semantics as the old code.  See
+        // `Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md`.
+        let want_lang = self.active_prompt_language();
+        self.resolve_prompt(name, &want_lang, fallback).template
     }
 
-    fn lookup_book_prompt_template(&self, name: &str) -> Option<String> {
+    /// 1.2.12+ — three-pass language-aware prompt resolver
+    /// with an embedded-fallback floor.  Pass 1 looks for an
+    /// exact `want_lang` match; Pass 2 looks for an untagged
+    /// match (back-compat for projects that pre-date the
+    /// language attribute); Pass 3 accepts any-language
+    /// matches with the supplied embedded fallback (English
+    /// by current convention) as the floor.  Within each
+    /// pass, both `name` and its space-substituted form
+    /// (`grammar-check` → `grammar check`) are tried so
+    /// prompt-book paragraphs named with either convention
+    /// resolve.  Returns the resolved template along with
+    /// the language and source the resolver landed on —
+    /// Phase C will surface the `found_lang` / `source` in
+    /// the AI pane title bar.
+    pub(super) fn resolve_prompt(
+        &self,
+        name: &str,
+        want_lang: &str,
+        fallback: impl FnOnce() -> String,
+    ) -> ResolvedPrompt {
+        if let Some(found) = self.resolve_prompt_optional(name, want_lang) {
+            return found;
+        }
+        // Floor — caller's embedded fallback.  Until Phase B
+        // ships the per-language embedded tables, the
+        // fallback is always English.
+        ResolvedPrompt::new(fallback(), "en", PromptResolveSource::Embedded)
+    }
+
+    /// 1.2.12+ — same three-pass search as `resolve_prompt`
+    /// but WITHOUT the embedded fallback.  Returns `None`
+    /// when nothing matches.  Used by the `/name [args]`
+    /// AI-prompt form where the user typed an explicit
+    /// name and there's no embedded prompt to fall back to
+    /// for arbitrary names — the caller surfaces the
+    /// not-found case as a status message.
+    pub(super) fn resolve_prompt_optional(
+        &self,
+        name: &str,
+        want_lang: &str,
+    ) -> Option<ResolvedPrompt> {
+        let display = name.replace('-', " ");
+        let want_lang_lc = want_lang.to_lowercase();
+
+        // ── Pass 1 — strict same-language ──
+        if let Some(t) =
+            self.lookup_book_prompt_template_with_lang(name, Some(&want_lang_lc))
+        {
+            return Some(ResolvedPrompt::new(t, &want_lang_lc, PromptResolveSource::Book));
+        }
+        if let Some(t) = self
+            .lookup_book_prompt_template_with_lang(&display, Some(&want_lang_lc))
+        {
+            return Some(ResolvedPrompt::new(t, &want_lang_lc, PromptResolveSource::Book));
+        }
+        if let Some(p) = self.prompts.find_lang(name, Some(&want_lang_lc)) {
+            return Some(ResolvedPrompt::new(
+                p.template.clone(),
+                &want_lang_lc,
+                PromptResolveSource::Hjson,
+            ));
+        }
+        if let Some(p) = self.prompts.find_lang(&display, Some(&want_lang_lc)) {
+            return Some(ResolvedPrompt::new(
+                p.template.clone(),
+                &want_lang_lc,
+                PromptResolveSource::Hjson,
+            ));
+        }
+
+        // ── Pass 2 — untagged (back-compat) ──
+        if let Some(t) = self.lookup_book_prompt_template_with_lang(name, None) {
+            return Some(ResolvedPrompt::new(t, "untagged", PromptResolveSource::Book));
+        }
+        if let Some(t) = self.lookup_book_prompt_template_with_lang(&display, None)
+        {
+            return Some(ResolvedPrompt::new(t, "untagged", PromptResolveSource::Book));
+        }
+        if let Some(p) = self.prompts.find_lang(name, None) {
+            return Some(ResolvedPrompt::new(
+                p.template.clone(),
+                "untagged",
+                PromptResolveSource::Hjson,
+            ));
+        }
+        if let Some(p) = self.prompts.find_lang(&display, None) {
+            return Some(ResolvedPrompt::new(
+                p.template.clone(),
+                "untagged",
+                PromptResolveSource::Hjson,
+            ));
+        }
+
+        // ── Pass 3 — any-language ──
+        if let Some((t, lang)) = self.lookup_book_prompt_any_language(name) {
+            return Some(ResolvedPrompt::new(t, &lang, PromptResolveSource::Book));
+        }
+        if let Some((t, lang)) = self.lookup_book_prompt_any_language(&display) {
+            return Some(ResolvedPrompt::new(t, &lang, PromptResolveSource::Book));
+        }
+        if let Some(p) = self.prompts.find(name) {
+            let lang = p.language.clone().unwrap_or_else(|| "untagged".into());
+            return Some(ResolvedPrompt::new(
+                p.template.clone(),
+                &lang,
+                PromptResolveSource::Hjson,
+            ));
+        }
+        if let Some(p) = self.prompts.find(&display) {
+            let lang = p.language.clone().unwrap_or_else(|| "untagged".into());
+            return Some(ResolvedPrompt::new(
+                p.template.clone(),
+                &lang,
+                PromptResolveSource::Hjson,
+            ));
+        }
+
+        None
+    }
+
+    /// 1.2.12+ — Prompts-book paragraph lookup, optionally
+    /// filtered by the `lang:<code>` tag convention.
+    ///
+    ///   * `lang_filter = Some("ru")` — only paragraphs whose
+    ///     `Node.tags` contain `lang:ru` are considered.
+    ///   * `lang_filter = None`       — only paragraphs with
+    ///     NO `lang:*` tag are considered (Pass 2).
+    fn lookup_book_prompt_template_with_lang(
+        &self,
+        name: &str,
+        lang_filter: Option<&str>,
+    ) -> Option<String> {
         let book_id = self.system_book_id(crate::store::SYSTEM_TAG_PROMPTS)?;
         let lower = name.to_lowercase();
         for id in self.hierarchy.collect_subtree(book_id) {
@@ -4162,14 +4346,306 @@ impl App {
             if node.kind != NodeKind::Paragraph {
                 continue;
             }
-            if node.slug.to_lowercase() == lower || node.title.to_lowercase() == lower {
-                let bytes = self.store.get_content(node.id).ok().flatten()?;
-                let text = String::from_utf8_lossy(&bytes).to_string();
-                return Some(strip_leading_typst_heading(&text));
+            if node.slug.to_lowercase() != lower
+                && node.title.to_lowercase() != lower
+            {
+                continue;
             }
+            if !node_lang_matches(node, lang_filter) {
+                continue;
+            }
+            let bytes = self.store.get_content(node.id).ok().flatten()?;
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            return Some(strip_leading_typst_heading(&text));
         }
         None
     }
+
+    /// 1.2.12+ — Pass 3 helper: return the first
+    /// matching-name Prompts-book paragraph regardless of
+    /// language tag, plus the language code it was tagged
+    /// with (or `"untagged"` when none).
+    fn lookup_book_prompt_any_language(
+        &self,
+        name: &str,
+    ) -> Option<(String, String)> {
+        let book_id = self.system_book_id(crate::store::SYSTEM_TAG_PROMPTS)?;
+        let lower = name.to_lowercase();
+        for id in self.hierarchy.collect_subtree(book_id) {
+            if id == book_id {
+                continue;
+            }
+            let node = self.hierarchy.get(id)?;
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            if node.slug.to_lowercase() != lower
+                && node.title.to_lowercase() != lower
+            {
+                continue;
+            }
+            let lang = node_lang_tag(node).unwrap_or_else(|| "untagged".into());
+            let bytes = self.store.get_content(node.id).ok().flatten()?;
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            return Some((strip_leading_typst_heading(&text), lang));
+        }
+        None
+    }
+
+    /// 1.2.12+ — the language to resolve prompts against on
+    /// this call.  Reads (in order of precedence):
+    ///   1. Session-local runtime override
+    ///      (`Ctrl+B Shift+N`, Phase C).
+    ///   2. `editor.prompt_language_mode` (HJSON;
+    ///      `book_defined` default).
+    ///
+    /// When the resolved mode is `paragraph_detected`,
+    /// returns the cached whatlang code for the open
+    /// paragraph if available — falling back to the book
+    /// language when the paragraph is too short to detect
+    /// reliably (see `detect_paragraph_language`).
+    pub(super) fn active_prompt_language(&self) -> String {
+        let mode = self
+            .prompt_lang_mode_runtime
+            .as_deref()
+            .unwrap_or(self.cfg.editor.prompt_language_mode.as_str());
+        if mode.eq_ignore_ascii_case("book_defined") {
+            return crate::ai::prompts::iso_from_long(&self.cfg.language).to_string();
+        }
+        // paragraph_detected (or any non-book-defined value)
+        if let Some(doc) = self.opened.as_ref() {
+            if let Some(code) = doc.detected_language.as_deref() {
+                return code.to_string();
+            }
+        }
+        // Detection failed or paragraph too short — fall back
+        // to book language silently.
+        crate::ai::prompts::iso_from_long(&self.cfg.language).to_string()
+    }
+
+    /// 1.2.12+ Phase C — effective prompt-language mode
+    /// for display purposes (AI pane title bar, status
+    /// echo on toggle).  Returns the runtime override if
+    /// set, otherwise the HJSON value.
+    pub(super) fn effective_prompt_language_mode(&self) -> &str {
+        self.prompt_lang_mode_runtime
+            .as_deref()
+            .unwrap_or(self.cfg.editor.prompt_language_mode.as_str())
+    }
+
+    /// 1.2.12+ Phase C — Ctrl+B Shift+N handler.  Cycles
+    /// the runtime override through:
+    ///   None (defer to HJSON)
+    ///     → Some("book_defined")
+    ///     → Some("paragraph_detected")
+    ///     → None
+    /// rather than a binary flip so the user can return to
+    /// the HJSON default without restarting.  Echoes the
+    /// effective mode on the status bar so the chord is
+    /// self-documenting.
+    pub(super) fn toggle_prompt_language_mode(&mut self) {
+        let next = match self.prompt_lang_mode_runtime.as_deref() {
+            None => Some("book_defined".to_string()),
+            Some(m) if m.eq_ignore_ascii_case("book_defined") => {
+                Some("paragraph_detected".to_string())
+            }
+            Some(m) if m.eq_ignore_ascii_case("paragraph_detected") => None,
+            _ => Some("book_defined".to_string()),
+        };
+        self.prompt_lang_mode_runtime = next;
+        // Re-run detection so the cache is fresh against
+        // the new mode.  No-op when the effective mode
+        // ends up `book_defined` (detect_paragraph_language
+        // short-circuits there).
+        self.detect_paragraph_language();
+        let effective = self.effective_prompt_language_mode().to_string();
+        let lang = self.active_prompt_language();
+        let suffix = match self.prompt_lang_mode_runtime.as_deref() {
+            None => format!("HJSON default ({effective})"),
+            Some(_) => "session override".into(),
+        };
+        self.status = format!(
+            "prompt language mode: {effective} · resolving as `{lang}` · {suffix}",
+        );
+    }
+
+    /// 1.2.12+ Phase C — short label for the AI pane
+    /// title decoration.  Format:
+    ///   `<lang> (<mode-shorthand>)`
+    /// where the shorthand collapses
+    /// `book_defined` → `book` and
+    /// `paragraph_detected` → `paragraph`.
+    /// Used by the AI pane renderer; kept here next to
+    /// `active_prompt_language` so the label stays in
+    /// sync with the resolver target.
+    pub(super) fn ai_pane_language_label(&self) -> String {
+        let lang = self.active_prompt_language();
+        let mode = self.effective_prompt_language_mode();
+        let shorthand = if mode.eq_ignore_ascii_case("book_defined") {
+            "book"
+        } else if mode.eq_ignore_ascii_case("paragraph_detected") {
+            "paragraph"
+        } else {
+            "?"
+        };
+        format!("{lang} ({shorthand})")
+    }
+
+    /// 1.2.12+ — run whatlang on the currently-opened
+    /// paragraph and cache the result on
+    /// `OpenedDoc.detected_language`.  No-op when:
+    ///
+    ///   * The effective prompt-language mode is
+    ///     `book_defined` (book mode never consults
+    ///     paragraph detection).  "Effective" means
+    ///     the session override
+    ///     (`prompt_lang_mode_runtime`) when set,
+    ///     otherwise `editor.prompt_language_mode` from
+    ///     HJSON — so the Ctrl+B Shift+N flip into
+    ///     `paragraph_detected` actually triggers a
+    ///     fresh run.
+    ///   * No paragraph is open
+    ///   * The body has fewer non-whitespace characters than
+    ///     `editor.prompt_language_detection_min_chars`
+    ///     (whatlang is unreliable on short text)
+    ///   * whatlang's detection isn't confident, OR it
+    ///     reports a language outside inkhaven's supported
+    ///     set (`en/ru/es/de/fr`)
+    ///
+    /// All of the above leave `detected_language = None`,
+    /// which the resolver treats as "fall back to book
+    /// language".
+    pub(super) fn detect_paragraph_language(&mut self) {
+        if self.effective_prompt_language_mode()
+            .eq_ignore_ascii_case("book_defined")
+        {
+            return;
+        }
+        let min_chars = self.cfg.editor.prompt_language_detection_min_chars;
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        let body: String = doc.textarea.lines().join("\n");
+        let nws_len = body.chars().filter(|c| !c.is_whitespace()).count();
+        if nws_len < min_chars {
+            doc.detected_language = None;
+            doc.detected_language_length = nws_len;
+            return;
+        }
+        let info = whatlang::detect(&body);
+        let code = info
+            .filter(|i| i.is_reliable())
+            .and_then(|i| crate::ai::prompts::iso_from_alpha3(i.lang().code()));
+        doc.detected_language = code.map(|s| s.to_string());
+        doc.detected_language_length = nws_len;
+    }
+
+    /// 1.2.12+ Phase D — cheap edit-time re-detection
+    /// guard.  Compares the current non-whitespace
+    /// length against the cached
+    /// `detected_language_length`; only calls
+    /// `detect_paragraph_language` when the delta
+    /// exceeds `PARAGRAPH_LANGUAGE_REDETECT_THRESHOLD`.
+    /// Cheaper than running whatlang on every save —
+    /// typing a sentence here or there doesn't change
+    /// the dominant-language signal, but a multi-
+    /// paragraph rewrite (or a paste of foreign text)
+    /// does.  Threshold is the same as
+    /// `prompt_language_detection_min_chars` (50 by
+    /// default): a body that crosses 50 chars in
+    /// either direction is meaningfully different
+    /// from what whatlang last saw.  Called from
+    /// `save_current`, `apply_ai_diff_accepted`, and
+    /// the AI critique apply paths.
+    pub(super) fn maybe_redetect_paragraph_language(&mut self) {
+        if self.effective_prompt_language_mode()
+            .eq_ignore_ascii_case("book_defined")
+        {
+            return;
+        }
+        let threshold = self
+            .cfg
+            .editor
+            .prompt_language_detection_min_chars
+            .max(1);
+        let needs_redetect = match self.opened.as_ref() {
+            Some(doc) => {
+                let body: String = doc.textarea.lines().join("\n");
+                let nws_len = body.chars().filter(|c| !c.is_whitespace()).count();
+                let delta = nws_len.abs_diff(doc.detected_language_length);
+                delta >= threshold
+            }
+            None => false,
+        };
+        if needs_redetect {
+            self.detect_paragraph_language();
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ResolvedPrompt {
+    pub template: String,
+    /// ISO 639-1 code the resolver actually used, OR the
+    /// literal string `"untagged"` when the matched prompt
+    /// has no language attached.
+    pub found_lang: String,
+    pub source: PromptResolveSource,
+}
+
+impl ResolvedPrompt {
+    fn new(template: String, found_lang: &str, source: PromptResolveSource) -> Self {
+        Self {
+            template,
+            found_lang: found_lang.to_string(),
+            source,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PromptResolveSource {
+    Book,
+    Hjson,
+    Embedded,
+}
+
+/// 1.2.12+ — true when the node's `lang:<code>` tag matches
+/// `lang_filter`.  `lang_filter = Some("ru")` requires a
+/// `lang:ru` tag; `lang_filter = None` requires the absence
+/// of any `lang:*` tag (the untagged-back-compat Pass 2).
+fn node_lang_matches(
+    node: &crate::store::node::Node,
+    lang_filter: Option<&str>,
+) -> bool {
+    let actual = node_lang_tag(node);
+    match (lang_filter, actual.as_deref()) {
+        (Some(want), Some(have)) => have.eq_ignore_ascii_case(want),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// 1.2.12+ — pull the `lang:<code>` tag value out of the
+/// node's tag list.  Returns the lowercased code (`ru`,
+/// `en`, …) when exactly one such tag is present; `None`
+/// when no `lang:*` tag is set.  Multiple `lang:*` tags
+/// (a user mistake) — the first wins; the others are
+/// silently ignored.
+fn node_lang_tag(node: &crate::store::node::Node) -> Option<String> {
+    for t in &node.tags {
+        let lc = t.to_lowercase();
+        if let Some(rest) = lc.strip_prefix("lang:") {
+            let code = rest.trim();
+            if !code.is_empty() {
+                return Some(code.to_string());
+            }
+        }
+    }
+    None
+}
+
+impl App {
 
     fn current_selection_or_paragraph(&self) -> String {
         let Some(doc) = self.opened.as_ref() else {
@@ -6542,8 +7018,10 @@ impl App {
             A::ToggleStyleWarnings => self.toggle_style_warnings(),
             A::OpenConcordance => self.open_concordance(),
             A::TogglePovChip => self.toggle_pov_chip(),
+            A::TogglePromptLanguageMode => self.toggle_prompt_language_mode(),
             A::OpenSentenceRhythm => self.open_sentence_rhythm(),
             A::AnalyseShowDontTell => self.start_show_dont_tell_scan(),
+            A::AiRewriteRhythm => self.start_sentence_rhythm_rewrite(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
@@ -7868,6 +8346,23 @@ impl App {
     /// any other key closes.
     fn sentence_rhythm_handle_key(&mut self, key: crossterm::event::KeyEvent) {
         use crossterm::event::KeyCode;
+        // 1.2.11+ — the rhythm gauge is the natural
+        // launchpad for the rhythm-rewrite chord
+        // (Ctrl+B Shift+M).  Intercept the meta
+        // prefix here so the chord works from
+        // inside the modal: dismiss the gauge,
+        // arm meta-pending, and let the next key
+        // flow through the normal meta-prefix
+        // dispatch at the top of `handle_key`.
+        // This generalises — any meta-action is
+        // reachable from inside the gauge, not
+        // just the rewrite.
+        if self.keymap.meta_prefix.matches(&key) {
+            self.modal = Modal::None;
+            self.meta_pending = true;
+            self.status = super::keybind::read().meta_hint(self.focus);
+            return;
+        }
         let n = match &self.modal {
             Modal::SentenceRhythm { stats, .. } => stats.samples.len(),
             _ => return,
@@ -7926,6 +8421,30 @@ impl App {
         let mut bodies: Vec<(String, Vec<String>)> = Vec::new();
         for node in self.hierarchy.iter() {
             if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            // 1.2.11+ — skip paragraphs that live under any
+            // system book (Prompts, Characters, Places,
+            // Lore, Help, Notes, Artefacts, Typst,
+            // Scripts, etc).  Two reasons: (1) those are
+            // metadata / scaffolding, not prose, so they
+            // dilute the lexical signal — the keybind
+            // description promises "the words actually
+            // carrying the prose's weight".  (2) System-
+            // book paragraphs are typically stored only in
+            // bdslib (the prompts editor never writes to
+            // disk), so the Enter-to-jump path would
+            // fail with `read …: No such file or
+            // directory` when `load_paragraph` looks for
+            // the .typ file.  Identified by walking the
+            // ancestor chain; ANY ancestor with a
+            // `system_tag` disqualifies the descendant.
+            if self
+                .hierarchy
+                .ancestors(node)
+                .iter()
+                .any(|a| a.system_tag.is_some())
+            {
                 continue;
             }
             let slug_path = self.hierarchy.slug_path(node);
@@ -8031,10 +8550,10 @@ impl App {
     /// modal.  Single-pane list with an inline filter
     /// input — typing characters narrows the list,
     /// arrow keys move the selection, `Ctrl+S` toggles
-    /// the sort mode, Esc closes.  No Enter-to-jump
-    /// behaviour yet (would need a paragraph-locator
-    /// indirection through `slug_path`); that's a
-    /// likely follow-up.
+    /// the sort mode, Esc closes.  1.2.11+ — Enter on
+    /// a selected row jumps to the first sample's
+    /// source paragraph at the corresponding editor
+    /// line; see `concordance_jump_to_selection`.
     fn concordance_handle_key(&mut self, key: crossterm::event::KeyEvent) {
         use crossterm::event::{KeyCode, KeyModifiers};
         // Esc always closes — even mid-filter.
@@ -8056,6 +8575,19 @@ impl App {
             if let Modal::Concordance { sort, .. } = &self.modal {
                 self.status = format!("concordance: sort = {}", sort.label());
             }
+            return;
+        }
+        // 1.2.11+ — Enter on a row jumps to the source
+        // paragraph at the first sample's line.  Plain
+        // Enter only — Ctrl+Enter and friends pass
+        // through to the filter input (which today
+        // doesn't recognise them either, so they no-op,
+        // which is what we want).
+        if matches!(key.code, KeyCode::Enter)
+            && !key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
+        {
+            self.concordance_jump_to_selection();
             return;
         }
         // Arrow keys + PgUp/PgDn move the selection.
@@ -8123,6 +8655,114 @@ impl App {
             }
         }
         self.concordance_refilter();
+    }
+
+    /// 1.2.11+ — Enter on a selected concordance row.
+    /// Resolves the first sample's `slug_path` to a
+    /// paragraph node via `Hierarchy::find_by_path`,
+    /// loads it via `open_paragraph_by_uuid`, then
+    /// positions the textarea cursor at the matching
+    /// editor row.  The concordance index is built
+    /// over heading-stripped bodies but the editor
+    /// displays the raw paragraph (with the leading
+    /// `= title` line), so we compute the head-stripped
+    /// offset on the freshly loaded body and add it to
+    /// the sample's 1-based `line_no`.
+    fn concordance_jump_to_selection(&mut self) {
+        // Pull what we need out of the modal up front
+        // so the modal can be closed before
+        // borrow-y operations like loading the
+        // paragraph.
+        let (slug_path, line_no, headword) = {
+            let Modal::Concordance {
+                data,
+                cursor,
+                visible,
+                ..
+            } = &self.modal
+            else {
+                return;
+            };
+            if visible.is_empty() {
+                self.status = "concordance: no row selected".into();
+                return;
+            }
+            let entry_idx = visible[*cursor];
+            let entry = &data.entries[entry_idx];
+            let Some(sample) = entry.samples.first() else {
+                self.status = format!(
+                    "concordance: `{}` has no samples — nothing to jump to",
+                    entry.headword,
+                );
+                return;
+            };
+            (
+                sample.slug_path.clone(),
+                sample.line_no,
+                entry.headword.clone(),
+            )
+        };
+        // Resolve slug_path → node.  `find_by_path`
+        // walks slug segments from the root, which is
+        // the exact inverse of `slug_path` (used at
+        // build time), so a round-trip always
+        // resolves when the source paragraph still
+        // exists.
+        let target_id = match self.hierarchy.find_by_path(&slug_path) {
+            Some(node) if node.kind == NodeKind::Paragraph => node.id,
+            Some(_) => {
+                self.status = format!(
+                    "concordance: `{slug_path}` resolves to a non-paragraph node"
+                );
+                return;
+            }
+            None => {
+                self.status = format!(
+                    "concordance: source paragraph `{slug_path}` no longer exists"
+                );
+                return;
+            }
+        };
+        // Close the modal before navigating so the
+        // user lands on a fully-visible editor.
+        self.modal = Modal::None;
+        if let Err(e) = self.open_paragraph_by_uuid(target_id) {
+            self.status = format!("concordance: couldn't open paragraph: {e}");
+            return;
+        }
+        // Translate the 1-based line_no (counted in
+        // the heading-stripped body) to an editor
+        // row in the full body.  The strip removes the
+        // `= heading` line plus subsequent blank
+        // lines; we replay the same skip on the live
+        // textarea to get the prefix offset.
+        let offset = if let Some(doc) = self.opened.as_ref() {
+            let lines = doc.textarea.lines();
+            let mut o = 0usize;
+            if lines
+                .first()
+                .is_some_and(|l| l.trim_start().starts_with('='))
+            {
+                o += 1;
+                while lines.get(o).is_some_and(|l| l.trim().is_empty()) {
+                    o += 1;
+                }
+            }
+            o
+        } else {
+            0
+        };
+        let target_row = offset + line_no.saturating_sub(1);
+        if let Some(doc) = self.opened.as_mut() {
+            let max_row = doc.textarea.lines().len().saturating_sub(1);
+            let row = target_row.min(max_row);
+            doc.textarea.move_cursor(
+                tui_textarea::CursorMove::Jump(row as u16, 0),
+            );
+        }
+        self.status = format!(
+            "concordance: jumped to `{headword}` at {slug_path}:{line_no}",
+        );
     }
 
     /// 1.2.9+ — Ctrl+B Shift+R action: open a save-as
@@ -14213,6 +14853,8 @@ impl App {
             after_lines,
             action,
             scroll: 0,
+            post_accept_snapshot: None,
+            wrapped_total: 0,
         };
         self.status = if extracted {
             format!(
@@ -14222,6 +14864,57 @@ impl App {
             )
         } else {
             "AI diff · a accept · r reject · ↑↓ scroll".into()
+        };
+    }
+
+    /// 1.2.11+ — same as `open_ai_diff_review` but
+    /// stamps a `post_accept_snapshot` annotation
+    /// on the modal so the apply step creates a
+    /// labelled snapshot of the pre-rewrite
+    /// buffer.  Used by the Ctrl+B Shift+M rhythm
+    /// rewrite flow.
+    fn open_ai_diff_review_with_snapshot(
+        &mut self,
+        action: InferenceAction,
+        raw: &str,
+        annotation: &str,
+    ) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status =
+                "no paragraph open — apply needs a focused paragraph".into();
+            return;
+        };
+        let before_lines: Vec<String> = doc.textarea.lines().to_vec();
+        let force = matches!(action, InferenceAction::ReplaceCorrected);
+        let raw_len = raw.len();
+        let (after_text, extracted) = match select_apply_text(raw, force) {
+            Ok(pair) => pair,
+            Err(msg) => {
+                self.status = msg.into();
+                return;
+            }
+        };
+        let after_lines: Vec<String> = if after_text.is_empty() {
+            vec![String::new()]
+        } else {
+            after_text.split('\n').map(String::from).collect()
+        };
+        self.modal = Modal::AiDiffReview {
+            before_lines,
+            after_lines,
+            action,
+            scroll: 0,
+            post_accept_snapshot: Some(annotation.to_string()),
+            wrapped_total: 0,
+        };
+        self.status = if extracted {
+            format!(
+                "rhythm rewrite · ✂ extracted {}/{} chars · a accept (snapshot + replace) · r reject",
+                after_text.len(),
+                raw_len,
+            )
+        } else {
+            "rhythm rewrite · a accept (snapshot + replace) · r reject · ↑↓ scroll".into()
         };
     }
 
@@ -14263,6 +14956,13 @@ impl App {
         }
         doc.dirty = true;
         doc.last_activity = std::time::Instant::now();
+        // 1.2.12+ Phase D — diff-apply replaces the entire
+        // buffer, so any cached whatlang detection is stale
+        // by construction.  Force a fresh detection
+        // unconditionally — the function short-circuits when
+        // the effective mode is `book_defined` or the new
+        // body is below the min-chars threshold.
+        self.detect_paragraph_language();
         self.status = format!("AI diff: accepted ({})", action.label());
         if refocus_editor {
             self.change_focus(Focus::Editor);
@@ -16837,84 +17537,343 @@ paragraph buffer with it.";
 pub(super) const CORRECTED_BEGIN: &str = "<<<CORRECTED>>>";
 pub(super) const CORRECTED_END: &str = "<<<END>>>";
 
-/// Fallback prompt body for F7 grammar check when no user-defined
-/// `Grammar check` prompt exists in the Prompts book or `prompts.hjson`.
-/// The configured `language` from the HJSON drives the grammar rules.
-pub(crate) fn grammar_check_default_prompt(language: &str) -> String {
-    let lang = if language.trim().is_empty() {
-        "English"
-    } else {
-        language.trim()
-    };
-    format!(
-        "Run a copy-edit pass on the paragraph below. Treat it as {lang} \
-prose. Check syntax, agreement, tense, and punctuation; flag anything \
-that's grammatically incorrect according to standard {lang} grammar. \
-Typst markup may be present — preserve it verbatim in any corrected \
-output. After listing issues, give the fully corrected paragraph."
-    )
+/// 1.2.12+ Phase B — promoted to a 5-arm language match.
+/// Caller passes the ISO 639-1 code from
+/// `App::active_prompt_language()`.  The English arm is
+/// the canonical / reference variant; the other four are
+/// translations of the same instructions tuned for native
+/// grammatical idiom.  Unknown codes fall back to English
+/// so the resolver always has a floor.  Same shape for the
+/// other six embedded prompts below.
+pub(crate) fn grammar_check_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Сделай корректорскую вычитку русского абзаца ниже. Проверь \
+синтаксис, согласование, время и пунктуацию; отметь всё, что нарушает \
+нормы современного русского языка. В тексте может быть разметка Typst — \
+сохрани её дословно в исправленном варианте. После списка замечаний дай \
+полностью исправленный абзац.",
+        "es" => "Haz una corrección de estilo del párrafo en español que sigue. \
+Revisa sintaxis, concordancia, tiempos verbales y puntuación; señala todo \
+lo gramaticalmente incorrecto según la norma estándar del español. Puede \
+haber marcado Typst — consérvalo literalmente en la versión corregida. \
+Tras la lista de problemas, da el párrafo corregido por completo.",
+        "de" => "Führe einen Korrektorat-Durchgang am folgenden deutschen Absatz \
+durch. Prüfe Syntax, Kongruenz, Tempus und Interpunktion; markiere \
+alles, was nach der Standard-Grammatik des Deutschen grammatisch falsch \
+ist. Typst-Markup kann vorkommen — übernimm es wörtlich in den \
+korrigierten Text. Liste die Probleme auf und gib danach den vollständig \
+korrigierten Absatz.",
+        "fr" => "Effectue une relecture de copy-edit sur le paragraphe français \
+ci-dessous. Vérifie la syntaxe, l'accord, les temps et la ponctuation ; \
+signale tout ce qui est grammaticalement incorrect au regard de la norme \
+française standard. Du balisage Typst peut être présent — conserve-le \
+tel quel dans toute version corrigée. Après la liste des problèmes, \
+donne le paragraphe entièrement corrigé.",
+        _ => "Run a copy-edit pass on the English paragraph below. Check \
+syntax, agreement, tense, and punctuation; flag anything that's \
+grammatically incorrect according to standard English grammar. Typst \
+markup may be present — preserve it verbatim in any corrected output. \
+After listing issues, give the fully corrected paragraph.",
+    }
 }
 
 /// 1.2.6+ — embedded fallback for Ctrl+F12 explain-diagnostic.
-pub(crate) fn explain_diagnostic_default_prompt() -> &'static str {
-    "A Typst compiler diagnostic is shown below with the surrounding source. \
-Explain in plain English what the diagnostic means, why it likely fired in \
-this context, and the most plausible one-line fix. If the diagnostic is a \
-false positive — e.g. the paragraph references a function defined in the \
-book's preamble that isn't visible to this isolated compile — say so and \
-move on. Keep the answer tight and actionable."
+/// 1.2.12+ Phase B — five-language variants.
+pub(crate) fn explain_diagnostic_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Ниже показано диагностическое сообщение компилятора Typst \
+вместе с фрагментом исходного кода. Объясни простым языком, что означает \
+это сообщение, почему оно, скорее всего, возникло в данном контексте, и \
+самое вероятное однострочное исправление. Если сообщение — ложное \
+срабатывание (например, абзац ссылается на функцию, определённую в \
+преамбуле книги, которая не видна изолированной компиляции), скажи об \
+этом и переходи дальше. Ответ — короткий и конкретный.",
+        "es" => "A continuación se muestra un diagnóstico del compilador Typst \
+con el código fuente que lo rodea. Explica con palabras claras qué \
+significa el diagnóstico, por qué probablemente se disparó en este \
+contexto y la corrección más plausible de una sola línea. Si el \
+diagnóstico es un falso positivo —por ejemplo, el párrafo usa una \
+función definida en el preámbulo del libro que esta compilación aislada \
+no ve—, dilo y sigue adelante. Mantén la respuesta breve y accionable.",
+        "de" => "Unten siehst du eine Typst-Compiler-Meldung mitsamt umgebendem \
+Quelltext. Erkläre in klarer Sprache, was die Meldung bedeutet, warum \
+sie in diesem Kontext vermutlich ausgelöst wurde und welche einzeilige \
+Korrektur am wahrscheinlichsten ist. Wenn es sich um einen Fehlalarm \
+handelt — z. B. der Absatz nutzt eine im Buch-Präambel definierte \
+Funktion, die diese isolierte Kompilierung nicht sieht — sag es und \
+gehe weiter. Antwort knapp und umsetzbar halten.",
+        "fr" => "Un diagnostic du compilateur Typst est présenté ci-dessous avec \
+le code source qui l'entoure. Explique en français clair ce que signifie \
+le diagnostic, pourquoi il s'est probablement déclenché dans ce \
+contexte, et la correction d'une ligne la plus plausible. Si c'est un \
+faux positif — par exemple, le paragraphe utilise une fonction définie \
+dans le préambule du livre que cette compilation isolée ne voit pas — \
+dis-le et passe à autre chose. Garde la réponse concise et actionnable.",
+        _ => "A Typst compiler diagnostic is shown below with the surrounding \
+source. Explain in plain English what the diagnostic means, why it \
+likely fired in this context, and the most plausible one-line fix. If \
+the diagnostic is a false positive — e.g. the paragraph references a \
+function defined in the book's preamble that isn't visible to this \
+isolated compile — say so and move on. Keep the answer tight and \
+actionable.",
+    }
 }
 
 /// 1.2.6+ — embedded fallback for F12 critique in editor mode.
-pub(crate) fn critique_edit_default_prompt() -> &'static str {
-    "Read the paragraph below as a draft. Point out the weakest two or three \
-elements: vague verbs, abstract nouns where the concrete would land harder, \
-sentences that lose the reader, rhythm that flattens, claims that wobble, \
-imagery that doesn't earn its place. Be specific — quote the exact phrase \
-and propose a tighter alternative. Do NOT rewrite the whole paragraph; \
-critique it. Be honest, not destructive."
+/// 1.2.12+ Phase B — five-language variants.
+pub(crate) fn critique_edit_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Прочти абзац ниже как черновик. Назови два-три самых слабых \
+элемента: расплывчатые глаголы, абстрактные существительные там, где \
+конкретное ударило бы сильнее, фразы, теряющие читателя, ритм, который \
+сглаживается, утверждения, которые «плывут», образы, не оправдывающие \
+своего места. Будь конкретен — цитируй именно тот оборот и предлагай \
+более плотный вариант. НЕ переписывай весь абзац; критикуй его. Будь \
+честным, но не разрушай текст.",
+        "es" => "Lee el párrafo siguiente como un borrador. Señala los dos o \
+tres elementos más débiles: verbos vagos, sustantivos abstractos donde \
+lo concreto golpearía más fuerte, frases que pierden al lector, ritmo \
+que se aplana, afirmaciones que titubean, imágenes que no se ganan su \
+sitio. Sé específico: cita la frase exacta y propón una alternativa más \
+apretada. NO reescribas el párrafo entero; critícalo. Sé honesto, no \
+destructivo.",
+        "de" => "Lies den folgenden Absatz wie einen Entwurf. Benenne die zwei \
+oder drei schwächsten Stellen: vage Verben, abstrakte Substantive an \
+Stellen, wo das Konkrete härter träfe, Sätze, die den Leser verlieren, \
+Rhythmus, der erlahmt, Behauptungen, die wackeln, Bilder, die ihren \
+Platz nicht verdienen. Sei konkret — zitiere die genaue Wendung und \
+schlage eine straffere Alternative vor. Schreibe NICHT den ganzen \
+Absatz neu; kritisiere ihn. Ehrlich, aber nicht zerstörerisch.",
+        "fr" => "Lis le paragraphe ci-dessous comme un brouillon. Pointe les \
+deux ou trois éléments les plus faibles : verbes vagues, noms abstraits \
+là où le concret frapperait plus fort, phrases qui perdent le lecteur, \
+rythme qui s'aplatit, affirmations qui vacillent, images qui ne \
+méritent pas leur place. Sois précis — cite la formulation exacte et \
+propose une alternative plus serrée. NE réécris PAS le paragraphe \
+entier ; critique-le. Sois honnête sans être destructeur.",
+        _ => "Read the paragraph below as a draft. Point out the weakest two \
+or three elements: vague verbs, abstract nouns where the concrete would \
+land harder, sentences that lose the reader, rhythm that flattens, \
+claims that wobble, imagery that doesn't earn its place. Be specific — \
+quote the exact phrase and propose a tighter alternative. Do NOT \
+rewrite the whole paragraph; critique it. Be honest, not destructive.",
+    }
 }
 
 /// 1.2.9+ — embedded fallback for the Ctrl+B Shift+T
-/// AI-driven show-don't-tell scan.  Written to nudge
-/// the model into specific, quotable callouts plus
-/// one actionable rewrite each, so the writer can
-/// triage rather than re-read a paragraph of advice.
-pub(crate) fn show_dont_tell_default_prompt() -> &'static str {
-    "Read the paragraph below as a fiction draft and find every place where the \
-writer is TELLING rather than SHOWING. Telling = directly labelling an emotion \
-or internal state instead of letting behaviour, sensory detail, or dialogue \
-reveal it (`she was angry` is telling; `her knuckles whitened around the glass` \
-is showing). For each telling instance: \
-(1) Quote the exact phrase. \
-(2) Name what's being told (the emotion / state). \
-(3) Propose one concrete show-rewrite — a body-language beat, a sensory \
-detail, an action, or a fragment of dialogue. Keep the rewrite the same \
-length as the telling line, not a paragraph. \
-Skip cases where telling is deliberately efficient (transition lines, \
-summary, established interiority in first-person POV). If the paragraph is \
-already strong, say so plainly and stop. Don't pad."
+/// AI-driven show-don't-tell scan.
+/// 1.2.12+ Phase B — five-language variants.
+pub(crate) fn show_dont_tell_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Прочти абзац ниже как черновик художественного текста и найди \
+каждое место, где автор РАССКАЗЫВАЕТ, вместо того чтобы ПОКАЗЫВАТЬ. \
+Рассказ = прямой ярлык эмоции или внутреннего состояния вместо того, \
+чтобы дать поведению, чувственной детали или диалогу его проявить \
+(«она злилась» — рассказ; «костяшки её пальцев побелели на стекле» — \
+показ). По каждому случаю: (1) Процитируй точную фразу. (2) Назови, \
+что именно рассказывается (эмоция / состояние). (3) Предложи один \
+конкретный вариант показа — телесная деталь, чувственный штрих, \
+действие или короткая реплика. Переписанный фрагмент той же длины, \
+что и исходная строка, не абзац. Пропускай случаи, где рассказ \
+оправдан (переходные фразы, краткое резюме, устоявшаяся внутренняя \
+точка зрения в первом лице). Если абзац уже силён — скажи это прямо и \
+остановись. Не разводи воду.",
+        "es" => "Lee el párrafo de abajo como un borrador de ficción y busca \
+cada lugar donde el autor está CONTANDO en lugar de MOSTRANDO. Contar \
+= etiquetar directamente una emoción o estado interno en vez de dejar \
+que la conducta, el detalle sensorial o el diálogo lo revelen («estaba \
+enfadada» es contar; «los nudillos se le blanquearon contra el vaso» es \
+mostrar). Para cada caso de contar: (1) Cita la frase exacta. (2) \
+Nombra lo que se está contando (la emoción / el estado). (3) Propón un \
+mostrar concreto — un gesto corporal, un detalle sensorial, una \
+acción, o un fragmento de diálogo. La reescritura debe tener la misma \
+longitud que la línea original, no un párrafo. Omite los casos donde \
+contar es deliberadamente eficiente (transiciones, resumen, interioridad \
+asentada en primera persona). Si el párrafo ya es fuerte, dilo \
+claramente y para. No rellenes.",
+        "de" => "Lies den folgenden Absatz als Belletristik-Entwurf und finde \
+jede Stelle, an der der Autor BERICHTET statt ZU ZEIGEN. Berichten = \
+eine Emotion oder einen inneren Zustand direkt benennen, statt Verhalten, \
+Sinnesdetail oder Dialog ihn verraten zu lassen («sie war wütend» ist \
+berichtet; «ihre Knöchel weißten sich um das Glas» ist gezeigt). Für \
+jeden Berichts-Fall: (1) Zitiere die genaue Wendung. (2) Benenne, was \
+berichtet wird (die Emotion / der Zustand). (3) Schlage eine konkrete \
+Zeige-Umschreibung vor — eine Körpergeste, ein Sinnesdetail, eine \
+Handlung oder ein Dialog-Fragment. Die Umschreibung soll dieselbe Länge \
+haben wie die Berichts-Zeile, kein Absatz. Überspringe Fälle, in denen \
+Berichten bewusst effizient ist (Überleitungen, Zusammenfassung, \
+etablierte Innensicht in der ersten Person). Wenn der Absatz schon \
+stark ist, sag es klar und hör auf. Kein Füller.",
+        "fr" => "Lis le paragraphe ci-dessous comme un brouillon de fiction et \
+repère chaque endroit où l'auteur RACONTE au lieu de MONTRER. Raconter \
+= étiqueter directement une émotion ou un état interne au lieu de \
+laisser le comportement, le détail sensoriel ou le dialogue le \
+révéler («elle était en colère» = raconter ; «ses jointures \
+blanchirent autour du verre» = montrer). Pour chaque cas de \
+raconter : (1) Cite la formulation exacte. (2) Nomme ce qui est \
+raconté (l'émotion / l'état). (3) Propose une réécriture-montrer \
+concrète — un geste corporel, un détail sensoriel, une action, ou un \
+fragment de dialogue. La réécriture doit faire la même longueur que \
+la ligne d'origine, pas un paragraphe. Saute les cas où raconter est \
+volontairement efficace (transitions, résumés, intériorité établie \
+en première personne). Si le paragraphe est déjà solide, dis-le \
+clairement et arrête. Pas de remplissage.",
+        _ => "Read the paragraph below as a fiction draft and find every \
+place where the writer is TELLING rather than SHOWING. Telling = \
+directly labelling an emotion or internal state instead of letting \
+behaviour, sensory detail, or dialogue reveal it (`she was angry` is \
+telling; `her knuckles whitened around the glass` is showing). For \
+each telling instance: (1) Quote the exact phrase. (2) Name what's \
+being told (the emotion / state). (3) Propose one concrete show- \
+rewrite — a body-language beat, a sensory detail, an action, or a \
+fragment of dialogue. Keep the rewrite the same length as the telling \
+line, not a paragraph. Skip cases where telling is deliberately \
+efficient (transition lines, summary, established interiority in \
+first-person POV). If the paragraph is already strong, say so plainly \
+and stop. Don't pad.",
+    }
+}
+
+/// 1.2.11+ — embedded fallback prompt for the
+/// `Ctrl+B Shift+M` AI-driven sentence-rhythm rewrite.
+/// 1.2.12+ Phase B — five-language variants.  Each
+/// variant explicitly forbids translation in the
+/// target language so the model rewrites in place
+/// rather than localising mid-call.
+pub(crate) fn sentence_rhythm_rewrite_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Перепиши русский абзац ниже так, чтобы сломать его монотонный \
+синтаксический ритм. Чередуй короткие, резкие фразы с более длинными, \
+чтобы у читательского уха была вариативность. Сохрани голос, тон, \
+смысл, именованных персонажей, прямую речь, тире и абзацные разрывы. \
+НЕ переводи; держи прозу на русском. НЕ резюмируй; переписывай строка \
+за строкой.
+
+Верни ТОЛЬКО переписанный абзац. Без вступления («Вот переписанный \
+вариант:»), без комментариев, без markdown-заголовков, без списков, \
+без объяснений. Чистая проза, готовая к вставке обратно в редактор.",
+        "es" => "Reescribe el párrafo en español de abajo para romper su ritmo \
+sintáctico monótono. Mezcla frases cortas y secas con otras más \
+largas, de modo que el oído del lector tenga variedad. Conserva la voz, \
+el tono, el sentido, los personajes nombrados, los diálogos entre \
+comillas, las rayas y los saltos de párrafo. NO traduzcas; mantén la \
+prosa en español. NO resumas; reescribe línea por línea.
+
+Devuelve SÓLO el párrafo reescrito. Sin prefacio («Aquí está la \
+reescritura:»), sin comentarios, sin encabezados markdown, sin viñetas, \
+sin explicaciones. Prosa simple, lista para pegar en el editor.",
+        "de" => "Schreibe den deutschen Absatz unten so um, dass sein \
+monotoner Satzrhythmus aufgebrochen wird. Mische kurze, knappe Sätze \
+mit längeren, sodass das Ohr des Lesers Abwechslung bekommt. Bewahre \
+Stimme, Ton, Bedeutung, benannte Figuren, wörtliche Rede, Gedankenstriche \
+und Absatzumbrüche. Übersetze NICHT; halte die Prosa auf Deutsch. \
+Fasse NICHT zusammen; schreibe Zeile für Zeile um.
+
+Gib NUR den umgeschriebenen Absatz zurück. Keine Einleitung (\"Hier ist \
+die Umschrift:\"), keine Kommentare, keine Markdown-Überschriften, keine \
+Aufzählungspunkte, keine Erklärungen. Reine Prosa, bereit zum \
+Zurückeinfügen in den Editor.",
+        "fr" => "Réécris le paragraphe français ci-dessous pour casser son \
+rythme syntaxique monotone. Mêle des phrases courtes et nettes à \
+d'autres plus longues, pour que l'oreille du lecteur ait de la \
+variété. Conserve la voix, le ton, le sens, les personnages nommés, \
+les dialogues entre guillemets, les tirets cadratins et les sauts de \
+paragraphe. NE traduis PAS ; garde la prose en français. NE résume \
+PAS ; réécris ligne à ligne.
+
+Renvoie UNIQUEMENT le paragraphe réécrit. Pas de préface (« Voici la \
+réécriture : »), pas de commentaire, pas de titres markdown, pas de \
+puces, pas d'explication. Prose pure, prête à coller dans l'éditeur.",
+        _ => "Rewrite the English paragraph below to break its monotonous \
+sentence rhythm. Mix short, punchy sentences with longer ones so the \
+reader's ear has variety to follow. Preserve voice, tone, meaning, \
+named characters, quoted dialogue, em-dashes, and paragraph breaks. \
+Do NOT translate; keep the prose in English. Do NOT summarise; \
+rewrite line for line.
+
+Return ONLY the rewritten paragraph. No preface (\"Here is the \
+rewrite:\"), no commentary, no markdown headings, no bullet points, \
+no explanation. Plain prose, ready to paste back into the editor.",
+    }
 }
 
 /// 1.2.6+ — embedded fallback for F12 critique in split-edit mode.
-pub(crate) fn critique_changes_default_prompt() -> &'static str {
-    "Two versions of the same paragraph are shown below: a `Before` snapshot \
-and the current `After` buffer. Identify what the revision changed (added / \
-removed / reordered), and evaluate whether each change is an improvement, a \
-regression, or neutral. Quote the specific phrases that moved. End with one \
-suggestion for what the next revision pass should focus on."
+/// 1.2.12+ Phase B — five-language variants.
+pub(crate) fn critique_changes_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Ниже показаны две версии одного и того же абзаца: снимок \
+`До` и текущий буфер `После`. Определи, что именно изменила правка \
+(добавлено / удалено / переставлено), и оцени, каждое изменение — \
+улучшение, регрессия или нейтрально. Цитируй именно те фразы, которые \
+сдвинулись. В конце дай одно предложение, на чём должен \
+сосредоточиться следующий проход правки.",
+        "es" => "Abajo se muestran dos versiones del mismo párrafo: una \
+instantánea `Antes` y el búfer actual `Después`. Identifica qué cambió \
+la revisión (añadido / eliminado / reordenado) y evalúa si cada cambio \
+es una mejora, una regresión, o neutro. Cita las frases concretas que \
+se movieron. Termina con una sugerencia sobre en qué debería \
+concentrarse la próxima pasada de revisión.",
+        "de" => "Unten siehst du zwei Fassungen desselben Absatzes: einen \
+`Vorher`-Schnappschuss und den aktuellen `Nachher`-Puffer. Stelle fest, \
+was die Überarbeitung geändert hat (hinzugefügt / entfernt / umgestellt), \
+und bewerte, ob jede Änderung eine Verbesserung, eine Verschlechterung \
+oder neutral ist. Zitiere die konkreten Wendungen, die sich verschoben \
+haben. Schließe mit einem Vorschlag dafür, worauf sich der nächste \
+Überarbeitungsdurchlauf konzentrieren sollte.",
+        "fr" => "Deux versions du même paragraphe sont présentées ci-dessous : \
+un instantané `Avant` et le tampon courant `Après`. Identifie ce que \
+la révision a changé (ajouté / retiré / réordonné), et évalue si \
+chaque changement est une amélioration, une régression, ou neutre. \
+Cite les formulations précises qui ont bougé. Termine par une \
+suggestion sur ce qu'il faudrait viser à la prochaine passe de \
+révision.",
+        _ => "Two versions of the same paragraph are shown below: a `Before` \
+snapshot and the current `After` buffer. Identify what the revision \
+changed (added / removed / reordered), and evaluate whether each change \
+is an improvement, a regression, or neutral. Quote the specific phrases \
+that moved. End with one suggestion for what the next revision pass \
+should focus on.",
+    }
 }
 
 /// 1.2.6+ — embedded fallback for the timeline health
-/// check (y / Y / Ctrl+Y inside Ctrl+V t). The payload
-/// itself does the heavy lifting; this top text just sets
-/// the model's task tone.
-pub(crate) fn timeline_health_default_prompt() -> &'static str {
-    "You are reviewing the story timeline that follows for internal consistency. \
-Treat the events as facts about a single fictional world; do not invent missing \
-detail. Read the audit checklist at the bottom and respond to it — be specific, \
-quote event titles, and surface concrete fixes. If the timeline is internally \
-coherent, say so briefly rather than padding with caveats."
+/// check (y / Y / Ctrl+Y inside Ctrl+V t).
+/// 1.2.12+ Phase B — five-language variants.
+pub(crate) fn timeline_health_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Ты проверяешь сюжетную хронологию ниже на внутреннюю \
+согласованность. Относись к событиям как к фактам единого \
+вымышленного мира; не выдумывай недостающие детали. Прочти контрольный \
+список в конце и ответь по нему — будь конкретен, цитируй заголовки \
+событий, предлагай конкретные исправления. Если хронология внутренне \
+согласована — скажи об этом коротко, не разводя оговорок.",
+        "es" => "Estás revisando la cronología narrativa que sigue para \
+detectar incoherencias internas. Trata los eventos como hechos de un \
+único mundo ficticio; no inventes detalles que falten. Lee la lista de \
+verificación al final y responde a ella — sé específico, cita los \
+títulos de eventos, y propón correcciones concretas. Si la cronología \
+es internamente coherente, dilo brevemente en vez de rellenar con \
+salvedades.",
+        "de" => "Du prüfst die folgende Story-Zeitleiste auf innere \
+Stimmigkeit. Behandle die Ereignisse als Fakten einer einzigen \
+fiktionalen Welt; erfinde keine fehlenden Details. Lies die Prüfliste \
+am Ende und reagiere darauf — sei konkret, zitiere Ereignistitel, und \
+zeige greifbare Korrekturen auf. Wenn die Zeitleiste in sich \
+stimmig ist, sag es kurz, statt mit Einschränkungen aufzufüllen.",
+        "fr" => "Tu examines la chronologie narrative qui suit pour vérifier \
+sa cohérence interne. Traite les événements comme des faits d'un \
+unique monde fictif ; n'invente pas de détails manquants. Lis la \
+liste de contrôle à la fin et réponds-y — sois précis, cite les \
+titres d'événements, et propose des corrections concrètes. Si la \
+chronologie est cohérente, dis-le brièvement plutôt que de remplir \
+avec des réserves.",
+        _ => "You are reviewing the story timeline that follows for internal \
+consistency. Treat the events as facts about a single fictional world; \
+do not invent missing detail. Read the audit checklist at the bottom \
+and respond to it — be specific, quote event titles, and surface \
+concrete fixes. If the timeline is internally coherent, say so briefly \
+rather than padding with caveats.",
+    }
 }
 
 /// System prompt for the F1 / "Help!" RAG flow. We force the model to
@@ -17050,4 +18009,91 @@ fn slice_lines(lines: &[String], r1: usize, c1: usize, r2: usize, c2: usize) -> 
         out.extend(chars[..e].iter());
     }
     out
+}
+
+#[cfg(test)]
+mod tests_node_lang {
+    use super::*;
+    use crate::store::node::{Node, NodeKind};
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    fn paragraph_with_tags(tags: Vec<String>) -> Node {
+        Node {
+            id: Uuid::new_v4(),
+            kind: NodeKind::Paragraph,
+            title: "test".into(),
+            slug: "test".into(),
+            path: Vec::new(),
+            parent_id: None,
+            order: 0,
+            file: None,
+            word_count: 0,
+            modified_at: Utc::now(),
+            protected: false,
+            system_tag: None,
+            image_ext: None,
+            image_caption: None,
+            image_alt: None,
+            content_type: None,
+            status: None,
+            target_words: None,
+            target_hit_at_status: None,
+            linked_paragraphs: Vec::new(),
+            bookmark: false,
+            tags,
+            ai_memory: Vec::new(),
+            event: None,
+        }
+    }
+
+    #[test]
+    fn node_lang_tag_extracts_code() {
+        let n = paragraph_with_tags(vec!["lang:ru".into(), "draft".into()]);
+        assert_eq!(node_lang_tag(&n), Some("ru".into()));
+    }
+
+    #[test]
+    fn node_lang_tag_case_insensitive() {
+        // Tag preserves case on save, but the lookup
+        // lowercases both sides.
+        let n = paragraph_with_tags(vec!["LANG:RU".into()]);
+        assert_eq!(node_lang_tag(&n), Some("ru".into()));
+    }
+
+    #[test]
+    fn node_lang_tag_absent_returns_none() {
+        let n = paragraph_with_tags(vec!["draft".into(), "wip".into()]);
+        assert_eq!(node_lang_tag(&n), None);
+    }
+
+    #[test]
+    fn node_lang_tag_ignores_empty_value() {
+        // `lang:` with no code → not a meaningful tag; treat
+        // as untagged so the resolver falls through to Pass 2.
+        let n = paragraph_with_tags(vec!["lang:".into()]);
+        assert_eq!(node_lang_tag(&n), None);
+    }
+
+    #[test]
+    fn node_lang_matches_strict_same_language() {
+        let n = paragraph_with_tags(vec!["lang:ru".into()]);
+        assert!(node_lang_matches(&n, Some("ru")));
+        assert!(!node_lang_matches(&n, Some("en")));
+    }
+
+    #[test]
+    fn node_lang_matches_untagged_pass_skips_tagged_nodes() {
+        // Pass 2 (lang_filter = None) must only match nodes
+        // that have NO lang:* tag.  A node tagged `lang:ru`
+        // is a Pass 1 / Pass 3 hit, never Pass 2.
+        let n = paragraph_with_tags(vec!["lang:ru".into()]);
+        assert!(!node_lang_matches(&n, None));
+    }
+
+    #[test]
+    fn node_lang_matches_untagged_pass_matches_untagged_nodes() {
+        let n = paragraph_with_tags(vec!["draft".into()]);
+        assert!(node_lang_matches(&n, None));
+    }
 }

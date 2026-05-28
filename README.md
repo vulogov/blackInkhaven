@@ -21,94 +21,88 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.10 — Standalone editors for `inkhaven.hjson` and `prompts.hjson`
+## Latest release · 1.2.11 — Multilingual prompts, AI rhythm rewrite, polish
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.10.md`](Documentation/RELEASE_NOTES/1.2.10.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.11.md`](Documentation/RELEASE_NOTES/1.2.11.md)
 
-1.2.10 turns two of inkhaven's HJSON files —
-`inkhaven.hjson` (project config) and `prompts.hjson`
-(prompt library) — into first-class editing surfaces
-with dedicated TUIs.  Both are standalone subcommands
-that run outside the main TUI; both share atomic-write
-+ timestamped backup + `Ctrl+R` rollback + `Ctrl+S`
-confirmation-modal conventions.
+1.2.11 is a polish-heavy cycle whose largest piece
+is a four-phase rework of how inkhaven resolves AI
+prompts: every named flow is now language-aware end
+to end, with hand-written English / Russian /
+French / German / Spanish variants for the seven
+embedded prompts and a CLI to generate more.
 
-### `inkhaven config -p <dir>`
+### Multilingual prompts
 
-Schema-aware editor for the project's `inkhaven.hjson`.
+Every AI flow (grammar check, critique, rhythm
+rewrite, show-don't-tell scan, timeline health
+audit, …) now resolves its prompt through a
+three-pass language-aware cascade:
 
-- **Auto-derived schema** from the Rust `Config`
-  struct.  New fields show up in the tree without any
-  manual table.
-- **Build-time `///` doc-comment extraction** via
-  `syn` so every field has docs in the help pane —
-  not just the ones in `Documentation/CONFIGURATION.md`.
-- **Typed widgets**: bool toggle, int with bounds,
-  float, string, **colour with live preview**
-  (fg / bg / border variants based on the field's
-  path suffix), path (with existence check), enum
-  (cycler over allowed variants), list (Vec<String>
-  with browse + add/delete/edit submodes).
-- **Comment-preserving surgical save.**  A hand-
-  rolled HJSON walker records the byte range of
-  every leaf at load time; saves only mutate those
-  byte ranges, so every comment + unknown field +
-  whitespace block survives byte-identical.
-- **Timestamped backups** to
-  `<project>/.config-backups/inkhaven_YYYYMMDD_HHMMSS.hjson`
-  on every save.  `Ctrl+R` opens a rollback picker
-  (preview, restore, delete).
-- **Per-field annotations** (`Ctrl+A`) in a sidecar
-  `.config-annotations.hjson`.
-- **Comment inspector** (`Ctrl+I`) surfaces the
-  HJSON file's own `#` / `//` / `/* */` comments
-  attached to the focused field.  Distinct from
-  `Ctrl+H` help (which shows inkhaven's docs).
-- **Map-entry add/delete** for `llm.providers` —
-  user-added providers in the live HJSON appear as
-  first-class tree entries; `a` adds, `d` deletes.
+  1. **Strict same-language** — Prompts-book
+     paragraph tagged `lang:<code>`, or
+     `prompts.hjson` entry with a matching
+     `language:` field.
+  2. **Untagged** — back-compat for every project
+     that pre-dates the language attribute.  Your
+     1.2.10 prompts keep working unchanged.
+  3. **Any-language** with the hand-written
+     embedded prompt as the English floor.
 
-### `inkhaven prompts-editor -p <dir>`
+**Two resolution modes.**
+`editor.prompt_language_mode = "book_defined"`
+(default) uses the project's top-level `language`
+field for every AI call.
+`editor.prompt_language_mode = "paragraph_detected"`
+runs `whatlang` on the live paragraph and uses the
+detected language, falling back to the book setting
+for paragraphs shorter than
+`editor.prompt_language_detection_min_chars`.
+`Ctrl+B Shift+N` cycles a session-local override;
+the AI pane title bar's `lang=` chip reflects the
+active mode.
 
-Four-pane workbench for the project's
-`prompts.hjson`.
+**Five-language embedded floor.**  All seven of
+inkhaven's named flows ship hand-written variants
+in English, Russian, French, German, and Spanish.
+A fresh project with `language: russian` in HJSON
+and no custom prompts already gets correct-language
+behaviour everywhere — no setup required.
 
-- **Layout**: prompts list (left) + prompt editor
-  (centre, full tui-textarea chord set) + AI
-  response (right, display-only) + AI prompt input
-  (3-row bottom strip).  `Tab` cycles focus across
-  three editable panes; the AI response pane is
-  display-only.
-- **The LLM acts as a prompt-engineering reviewer**,
-  not as an executor.  Placeholders like
-  `{{selection}}` are NOT substituted; the reviewer
-  sees them as literal text and comments on their
-  use.  Empty AI prompt input falls back to a
-  baseline critique request — pressing Enter on any
-  prompt always yields something useful.
-- **`Ctrl+B G`** ("Get response") lifts the
-  reviewer's response into the editor at the cursor.
-- **Save semantics** mirror the config TUI: atomic
-  write + timestamped backup in
-  `.prompts-backups/prompts_YYYYMMDD_HHMMSS.hjson`,
-  with a `Ctrl+R` rollback picker that lists every
-  past snapshot.
-- **Auto-populate** from inkhaven's embedded
-  defaults on first launch (when `prompts.hjson`
-  doesn't exist), so a fresh project can start
-  editing immediately.
+**`inkhaven prompts bootstrap <lang> [--update]` CLI.**
+One-shot LLM-assisted way to seed `prompts.hjson`
+with per-language variants of every embedded
+prompt.  Stdout-only by default; `--update`
+merges in place with a versioned pre-patch backup
+under `.config-backups/`.  Mirrors the SDT
+bootstrap pattern.
 
-Both editors keep the existing `Ctrl+B 0` in-app
-HJSON editor as the power-user fallback for raw
-text edits.  Round-trips between the structured
-TUIs and the in-app editor are clean — both routes
-preserve comments + unknown fields.
+### AI sentence-rhythm rewrite — `Ctrl+B Shift+M`
+
+Pairs with the `Ctrl+B Shift+H` rhythm gauge:
+diagnose with the gauge, fix with the rewrite.
+Streams a side-by-side diff modal on completion;
+accept replaces the buffer AND creates an
+annotated snapshot (`Sentence rhythm rewrite`) for
+safe rollback.  The chord fires from inside the
+gauge modal too — see MONOTONE, press the chord,
+watch the rewrite.
+
+### Polish across the board
+
+- **Concordance: Enter jumps to the source paragraph** at the first sample's line; system books (Prompts, Characters, Places, …) excluded from the corpus.
+- **Show-don't-tell:** curated built-in lists now ship for all five supported languages; **`inkhaven show-dont-tell bootstrap <lang> [--update]`** uses the LLM as a one-shot vocabulary curator for per-genre lists.
+- **AI diff pane** wraps long lines with continuation indent so a paragraph-length sentence reads as one block.
+- **Config TUI:** F3 file-picker in the path widget; three new enum entries (`language`, `typst_page.language`, `typst_page.page_numbering`); HSL slider mode for the colour widget (`h` toggles, three sliders, Tab cycles).
+- **Prompts editor TUI:** per-prompt language tag (`l` chord cycles `None → en → ru → es → de → fr → None`); list rows carry a yellow-dim `[lang]` chip.
+- **`/` prompt picker** sectioned by language with inline `[ru]`/`[—]` chips; same-language prompts surface at the top.
 
 Plus two new tutorials
-([`44-prompts-editor.md`](Documentation/Tutorials/44-prompts-editor.md),
-[`45-config-tui.md`](Documentation/Tutorials/45-config-tui.md));
-updated `KEYBINDING.md` with the `inkhaven
-prompts-editor` chord set.
+([`46-ai-rhythm-rewrite.md`](Documentation/Tutorials/46-ai-rhythm-rewrite.md),
+[`47-multilingual-prompts.md`](Documentation/Tutorials/47-multilingual-prompts.md));
+the design proposal at
+[`Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md`](Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md)
+captures the resolver's four-phase rollout in detail.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

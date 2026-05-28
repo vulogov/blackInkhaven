@@ -1336,10 +1336,39 @@ pub struct EditorConfig {
     /// `Ctrl+B Shift+P`.
     #[serde(default = "default_pov_chip_enabled")]
     pub pov_chip_enabled: bool,
+    /// 1.2.12+ — prompt-language resolution mode.
+    /// `"book_defined"` (default) uses the top-level
+    /// `language` field — every AI call resolves prompts
+    /// against the project's language.
+    /// `"paragraph_detected"` runs whatlang on the live
+    /// paragraph body and falls back to `book_defined`
+    /// when the paragraph is shorter than
+    /// `prompt_language_detection_min_chars` of non-
+    /// whitespace text (whatlang is unreliable below ~50
+    /// chars).  Session-local override via the runtime
+    /// chord (Phase C); HJSON is the persistent default.
+    /// See `Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md`.
+    #[serde(default = "default_prompt_language_mode")]
+    pub prompt_language_mode: String,
+    /// 1.2.12+ — minimum non-whitespace character count
+    /// the live paragraph must have before
+    /// `prompt_language_mode = "paragraph_detected"`
+    /// will even attempt whatlang detection.  Below this,
+    /// the resolver silently uses the book language.
+    #[serde(default = "default_prompt_language_detection_min_chars")]
+    pub prompt_language_detection_min_chars: usize,
 }
 
 fn default_pov_chip_enabled() -> bool {
     true
+}
+
+fn default_prompt_language_mode() -> String {
+    "book_defined".into()
+}
+
+fn default_prompt_language_detection_min_chars() -> usize {
+    50
 }
 
 /// 1.2.9+ — `editor.style_warnings.*` HJSON stanza.
@@ -1483,6 +1512,14 @@ impl Default for ShowDontTellConfig {
 /// per genre that defaults would mislead more than
 /// help).
 pub fn built_in_linking_verbs(language: &str) -> &'static [&'static str] {
+    // 1.2.11+ — built-ins now ship for all five
+    // supported languages.  Conservative, dictionary-
+    // shape lemmas; per-genre tuning belongs in
+    // `inkhaven show-dont-tell bootstrap <lang>`,
+    // which emits a richer HJSON snippet a user can
+    // paste over these defaults.  Snowball stemming is
+    // applied at match time so a handful of common
+    // inflections cover the rest.
     match language.to_lowercase().as_str() {
         "english" | "" => &[
             "be", "is", "am", "are", "was", "were", "been", "being",
@@ -1495,11 +1532,83 @@ pub fn built_in_linking_verbs(language: &str) -> &'static [&'static str] {
             "grow", "grows", "grew", "growing",
             "sound", "sounds", "sounded",
         ],
+        "russian" => &[
+            // быть — copula in past + present-zero +
+            // future forms.  Russian drops the present-
+            // tense copula in prose, so the detector
+            // mostly fires on past + future.
+            "быть", "был", "была", "было", "были",
+            "буду", "будешь", "будет", "будем", "будете", "будут",
+            "есть",
+            // казаться — "to seem"
+            "казаться", "кажется", "казался", "казалась", "казалось", "казались",
+            // выглядеть — "to look (like)"
+            "выглядеть", "выглядит", "выглядел", "выглядела", "выглядело",
+            // становиться / стать — "to become"
+            "становиться", "становится", "становился", "становилась",
+            "стать", "стал", "стала", "стало", "стали",
+            // оставаться — "to remain"
+            "оставаться", "остаётся", "оставался", "оставалась",
+            // чувствовать (себя) — "to feel"
+            "чувствовать", "чувствует", "чувствовал", "чувствовала",
+            // оказаться — "to turn out / appear to be"
+            "оказаться", "оказался", "оказалась", "оказалось",
+        ],
+        "french" => &[
+            // être
+            "être", "est", "sont", "étais", "était", "étions", "étiez", "étaient",
+            "fus", "fut", "fûmes", "furent",
+            "sera", "seront", "serait", "seraient",
+            // paraître / sembler
+            "paraître", "paraît", "paraissait", "paraissent",
+            "sembler", "semble", "semblait", "semblent",
+            // devenir / rester / demeurer
+            "devenir", "devient", "devenait", "deviennent",
+            "rester", "reste", "restait", "restent",
+            "demeurer", "demeure", "demeurait",
+            // se sentir / avoir l'air
+            "sentir", "sent", "sentait",
+            "avoir", "a", "avait", "ont",
+        ],
+        "german" => &[
+            // sein
+            "sein", "ist", "sind", "war", "waren", "bin", "bist", "seid",
+            "gewesen",
+            // scheinen / wirken
+            "scheinen", "scheint", "schien", "schienen",
+            "wirken", "wirkt", "wirkte", "wirkten",
+            // werden / bleiben / aussehen
+            "werden", "wird", "wurde", "wurden", "geworden",
+            "bleiben", "bleibt", "blieb", "blieben",
+            "aussehen", "sieht", "sah",
+            // fühlen (sich)
+            "fühlen", "fühlt", "fühlte", "fühlten",
+        ],
+        "spanish" => &[
+            // ser
+            "ser", "es", "son", "era", "eran", "fue", "fueron",
+            "será", "serán", "sería", "serían",
+            // estar
+            "estar", "está", "están", "estaba", "estaban", "estuvo", "estuvieron",
+            // parecer / sentirse / quedar(se)
+            "parecer", "parece", "parecía", "parecen",
+            "sentir", "sentirse", "siente", "sentía",
+            "quedar", "quedarse", "queda", "quedaba",
+            // volverse / ponerse / hallarse / encontrarse
+            "volverse", "vuelve", "volvía",
+            "ponerse", "pone", "puso", "ponía",
+            "encontrarse", "encuentra", "encontraba",
+        ],
         _ => &[],
     }
 }
 
 pub fn built_in_emotion_adjectives(language: &str) -> &'static [&'static str] {
+    // 1.2.11+ — defaults for RU/FR/DE/ES.  Cover the
+    // major emotion families (anger / sadness / fear /
+    // joy / fatigue / surprise / shame); per-genre
+    // additions belong in
+    // `inkhaven show-dont-tell bootstrap`.
     match language.to_lowercase().as_str() {
         "english" | "" => &[
             // Anger family
@@ -1534,11 +1643,112 @@ pub fn built_in_emotion_adjectives(language: &str) -> &'static [&'static str] {
             "determined", "resolute",
             "hopeless", "helpless", "defeated",
         ],
+        "russian" => &[
+            // Anger
+            "сердитый", "злой", "разгневанный", "раздражённый",
+            // Sadness
+            "грустный", "печальный", "несчастный", "унылый", "тоскливый",
+            // Fear
+            "испуганный", "напуганный", "тревожный", "встревоженный", "испугавшийся",
+            // Joy
+            "счастливый", "радостный", "довольный", "весёлый", "восторженный",
+            // Fatigue
+            "усталый", "измождённый", "утомлённый", "обессиленный",
+            // Surprise
+            "удивлённый", "поражённый", "ошеломлённый", "изумлённый",
+            // Confusion
+            "растерянный", "смущённый", "озадаченный",
+            // Shame
+            "пристыженный", "сконфуженный",
+            // Pride / envy / loneliness / boredom
+            "гордый", "ревнивый", "завистливый", "одинокий", "скучающий",
+            // Excitement / determination / despair
+            "взволнованный", "возбуждённый",
+            "решительный",
+            "безнадёжный", "беспомощный",
+        ],
+        "french" => &[
+            // Anger
+            "furieux", "furieuse", "en colère", "fâché", "fâchée",
+            "irrité", "irritée", "agacé", "agacée",
+            // Sadness
+            "triste", "malheureux", "malheureuse", "mélancolique", "abattu", "abattue",
+            // Fear
+            "effrayé", "effrayée", "apeuré", "apeurée",
+            "anxieux", "anxieuse", "inquiet", "inquiète", "nerveux", "nerveuse",
+            // Joy
+            "heureux", "heureuse", "joyeux", "joyeuse",
+            "ravi", "ravie", "content", "contente",
+            // Fatigue
+            "fatigué", "fatiguée", "épuisé", "épuisée", "las", "lasse",
+            // Surprise
+            "surpris", "surprise", "étonné", "étonnée", "stupéfait", "stupéfaite",
+            // Confusion / shame
+            "confus", "confuse", "perplexe",
+            "honteux", "honteuse", "gêné", "gênée",
+            // Pride / envy / loneliness / boredom / excitement
+            "fier", "fière", "jaloux", "jalouse", "envieux", "envieuse",
+            "seul", "seule", "ennuyé", "ennuyée",
+            "excité", "excitée", "enthousiaste",
+            // Despair
+            "désespéré", "désespérée", "impuissant", "impuissante",
+        ],
+        "german" => &[
+            // Anger
+            "wütend", "zornig", "verärgert", "gereizt",
+            // Sadness
+            "traurig", "betrübt", "niedergeschlagen", "trübselig", "unglücklich",
+            // Fear
+            "ängstlich", "verängstigt", "besorgt", "nervös", "panisch",
+            // Joy
+            "glücklich", "fröhlich", "erfreut", "zufrieden", "begeistert",
+            // Fatigue
+            "müde", "erschöpft", "ermattet",
+            // Surprise
+            "überrascht", "erstaunt", "verblüfft", "schockiert",
+            // Confusion / shame
+            "verwirrt", "verlegen", "beschämt",
+            // Pride / envy / loneliness / boredom / excitement / despair
+            "stolz", "eifersüchtig", "neidisch",
+            "einsam", "gelangweilt",
+            "aufgeregt", "entschlossen",
+            "hoffnungslos", "hilflos",
+        ],
+        "spanish" => &[
+            // Anger
+            "enfadado", "enfadada", "enojado", "enojada", "furioso", "furiosa",
+            "irritado", "irritada",
+            // Sadness
+            "triste", "afligido", "afligida", "deprimido", "deprimida",
+            "melancólico", "melancólica", "desdichado", "desdichada",
+            // Fear
+            "asustado", "asustada", "aterrado", "aterrada",
+            "ansioso", "ansiosa", "nervioso", "nerviosa", "preocupado", "preocupada",
+            // Joy
+            "feliz", "alegre", "contento", "contenta", "encantado", "encantada",
+            // Fatigue
+            "cansado", "cansada", "agotado", "agotada", "exhausto", "exhausta",
+            // Surprise
+            "sorprendido", "sorprendida", "asombrado", "asombrada", "atónito", "atónita",
+            // Confusion / shame
+            "confundido", "confundida", "perplejo", "perpleja",
+            "avergonzado", "avergonzada",
+            // Pride / envy / loneliness / boredom / excitement / despair
+            "orgulloso", "orgullosa", "celoso", "celosa", "envidioso", "envidiosa",
+            "solo", "sola", "aburrido", "aburrida",
+            "emocionado", "emocionada", "decidido", "decidida",
+            "desesperado", "desesperada", "impotente",
+        ],
         _ => &[],
     }
 }
 
 pub fn built_in_manner_adverbs(language: &str) -> &'static [&'static str] {
+    // 1.2.11+ — defaults for RU/FR/DE/ES.  Emotion-
+    // labelling adverbs (the `-ly` family in English,
+    // `-о/-е` in Russian, `-ment` in French, `-mente`
+    // in Spanish, plain adjective-form in German for
+    // adverbial use).
     match language.to_lowercase().as_str() {
         "english" | "" => &[
             "angrily", "sadly", "happily", "fearfully", "nervously",
@@ -1552,11 +1762,64 @@ pub fn built_in_manner_adverbs(language: &str) -> &'static [&'static str] {
             "bored", "boredly", "listlessly",
             "confusedly",
         ],
+        "russian" => &[
+            "сердито", "злобно", "раздражённо",
+            "грустно", "печально", "уныло", "тоскливо",
+            "испуганно", "тревожно", "нервно",
+            "счастливо", "радостно", "весело",
+            "устало", "измождённо",
+            "удивлённо", "поражённо",
+            "растерянно", "смущённо",
+            "гордо", "ревниво", "одиноко",
+            "взволнованно", "решительно",
+            "безнадёжно", "беспомощно",
+            "холодно", "тепло",
+            "горько", "нежно",
+        ],
+        "french" => &[
+            "furieusement", "rageusement", "tristement", "mélancoliquement",
+            "peureusement", "nerveusement", "anxieusement",
+            "joyeusement", "heureusement", "gaiement",
+            "fatiguement",
+            "tendrement", "amoureusement", "froidement", "chaleureusement",
+            "fièrement", "jalousement", "envieusement",
+            "désespérément", "honteusement", "calmement",
+            "amèrement", "douloureusement",
+        ],
+        "german" => &[
+            "wütend", "zornig", "ärgerlich",
+            "traurig", "betrübt", "unglücklich",
+            "ängstlich", "nervös", "besorgt",
+            "fröhlich", "glücklich", "freudig",
+            "müde", "erschöpft",
+            "überrascht", "verwirrt",
+            "stolz", "eifersüchtig",
+            "einsam", "gelangweilt",
+            "aufgeregt", "verzweifelt", "hilflos",
+            "kalt", "warm", "liebevoll", "bitter",
+        ],
+        "spanish" => &[
+            "furiosamente", "rabiosamente", "enojadamente",
+            "tristemente", "melancólicamente",
+            "miedosamente", "nerviosamente", "ansiosamente",
+            "felizmente", "alegremente", "gozosamente",
+            "cansadamente",
+            "sorprendidamente",
+            "orgullosamente", "celosamente", "envidiosamente",
+            "solamente", "aburridamente",
+            "desesperadamente", "vergonzosamente",
+            "fríamente", "cálidamente", "amorosamente", "amargamente",
+        ],
         _ => &[],
     }
 }
 
 pub fn built_in_cognition_verbs(language: &str) -> &'static [&'static str] {
+    // 1.2.11+ — defaults for RU/FR/DE/ES.  Verbs that
+    // narrate thought instead of showing it.  Past-
+    // tense forms dominate because that's where the
+    // "she realised" / "elle comprit" telling pattern
+    // typically lands in fiction.
     match language.to_lowercase().as_str() {
         "english" | "" => &[
             "realised", "realized",
@@ -1566,6 +1829,54 @@ pub fn built_in_cognition_verbs(language: &str) -> &'static [&'static str] {
             "concluded", "discovered", "recognised", "recognized",
             "remembered", "considered",
             "assumed", "expected",
+        ],
+        "russian" => &[
+            "понял", "поняла", "понять", "понимал", "понимала",
+            "знал", "знала", "знать",
+            "подумал", "подумала", "думать",
+            "осознал", "осознала", "осознать",
+            "решил", "решила", "решить",
+            "вспомнил", "вспомнила", "вспомнить",
+            "заметил", "заметила",
+            "почувствовал", "почувствовала",
+            "поверил", "поверила", "верить",
+            "догадался", "догадалась",
+        ],
+        "french" => &[
+            "réalisa", "réalisé", "réaliser",
+            "comprit", "compris", "comprendre",
+            "sut", "su", "savoir",
+            "pensa", "pensé", "penser",
+            "songea", "songer",
+            "décida", "décidé", "décider",
+            "se souvint", "se rappela",
+            "crut", "cru", "croire",
+            "supposa", "supposer",
+            "remarqua", "aperçut",
+        ],
+        "german" => &[
+            "erkannte", "erkannt", "erkennen",
+            "verstand", "verstanden", "verstehen",
+            "wusste", "gewusst", "wissen",
+            "dachte", "gedacht", "denken",
+            "überlegte", "überlegt",
+            "beschloss", "entschied", "entschieden",
+            "erinnerte", "erinnert",
+            "bemerkte", "bemerkt",
+            "glaubte", "geglaubt",
+            "vermutete",
+        ],
+        "spanish" => &[
+            "se dio cuenta", "comprendió", "comprender",
+            "entendió", "entender",
+            "supo", "sabía", "saber",
+            "pensó", "pensar",
+            "creyó", "creer", "creía",
+            "decidió", "decidir",
+            "recordó", "recordar",
+            "notó", "advirtió",
+            "supuso", "esperaba",
+            "concluyó",
         ],
         _ => &[],
     }
@@ -1910,6 +2221,9 @@ impl Default for EditorConfig {
             tts: TtsConfig::default(),
             style_warnings: StyleWarningsConfig::default(),
             pov_chip_enabled: default_pov_chip_enabled(),
+            prompt_language_mode: default_prompt_language_mode(),
+            prompt_language_detection_min_chars:
+                default_prompt_language_detection_min_chars(),
         }
     }
 }

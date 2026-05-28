@@ -412,6 +412,29 @@ pub enum Action {
     /// "heartbeat" — the felt rhythm of the prose.
     #[serde(rename = "view.open_sentence_rhythm")]
     OpenSentenceRhythm,
+    /// Ctrl+B Shift+M (1.2.11+) — AI-driven sentence-
+    /// rhythm rewrite of the open paragraph.  Sends
+    /// the paragraph body to the LLM with a prompt
+    /// asking it to break up monotonous rhythm
+    /// (the `Ctrl+B Shift+H` gauge's MONOTONE verdict
+    /// has the same target).  When the stream
+    /// completes, auto-opens an AI diff modal so
+    /// the user can review the rewrite line by
+    /// line.  On accept, a snapshot is created with
+    /// annotation "Sentence rhythm rewrite" before
+    /// the buffer is replaced; on reject, nothing
+    /// changes.  Mnemonic: M for "Modulate" /
+    /// "Mix it up".  Prompt resolution follows the
+    /// standard pattern (Prompts book →
+    /// `prompts.hjson` → embedded fallback).
+    /// Multilingual via the project's `language`
+    /// setting.  Also fires from inside the
+    /// `Ctrl+B Shift+H` rhythm-gauge modal — the
+    /// natural diagnose-then-rewrite path: open
+    /// the gauge, see a MONOTONE verdict, press
+    /// `Ctrl+B Shift+M` to fix it.
+    #[serde(rename = "ai.rewrite_sentence_rhythm")]
+    AiRewriteRhythm,
     /// Ctrl+B Shift+P (1.2.9+) — toggle the POV /
     /// character chip on the status bar.  Session-local
     /// override on top of `editor.pov_chip_enabled` in
@@ -421,6 +444,17 @@ pub enum Action {
     /// three additional named characters present.
     #[serde(rename = "view.toggle_pov_chip")]
     TogglePovChip,
+    /// Ctrl+B Shift+N (1.2.12+) — toggle prompt-language
+    /// resolution mode between book-defined and
+    /// paragraph-detected (whatlang).  Session-local
+    /// override on top of `editor.prompt_language_mode`
+    /// in HJSON; the chord does NOT rewrite the HJSON.
+    /// The AI pane title bar reflects the active mode
+    /// so the user can confirm what language the
+    /// resolver will target on the next AI call.
+    /// See `Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md`.
+    #[serde(rename = "view.toggle_prompt_language_mode")]
+    TogglePromptLanguageMode,
     /// Ctrl+B Shift+L (1.2.9+) — open the project-wide
     /// concordance modal.  Lists every distinct lexical
     /// stem in the project with its total count + KWIC
@@ -627,7 +661,9 @@ impl Action {
             Action::ToggleStyleWarnings => "style warnings".into(),
             Action::OpenConcordance => "concordance".into(),
             Action::TogglePovChip => "pov chip".into(),
+            Action::TogglePromptLanguageMode => "prompt lang mode".into(),
             Action::OpenSentenceRhythm => "rhythm".into(),
+            Action::AiRewriteRhythm => "rhythm rewrite".into(),
             Action::AnalyseShowDontTell => "show↛tell AI".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
@@ -832,11 +868,15 @@ impl Action {
             Action::ToggleStyleWarnings =>
                 "Toggle the inline style-warning overlays (1.2.9+, Ctrl+B Shift+F). Currently flags filter words — intensifier crutches like `just`, `really`, `very`, `просто`, `очень` — drawn in amber + underlined. Session-local override on top of `editor.style_warnings.enabled` in HJSON. Per-language defaults ship for English, Russian, French, German, Spanish; the active list is keyed by the project's top-level `language` field. Add more via `editor.style_warnings.filter_words.extra_words`. Repeated-phrase / show-don't-tell / sentence-rhythm detectors will share this toggle as they land.".into(),
             Action::OpenConcordance =>
-                "Open the project-wide concordance modal (1.2.9+, Ctrl+B Shift+L). Lists every distinct lexical stem in the project with its total count plus up to three KWIC samples. Stop-words, single-character tokens, and pure-digit runs are filtered out so the list surfaces the words actually carrying the prose's weight. Multilingual via the same Snowball stemmer + stop-list plumbing as the repeated-phrase detector — `language` in HJSON drives the algorithm choice. Type to filter (substring match); s toggles sort (count ↔ alphabetical); Esc closes.".into(),
+                "Open the project-wide concordance modal (1.2.9+, Ctrl+B Shift+L). Lists every distinct lexical stem in the project with its total count plus up to three KWIC samples. Stop-words, single-character tokens, and pure-digit runs are filtered out so the list surfaces the words actually carrying the prose's weight. System books (Prompts, Characters, Places, Lore, Help, Notes, Artefacts, etc.) are excluded from the corpus since they're metadata/scaffolding, not prose (1.2.11+). Multilingual via the same Snowball stemmer + stop-list plumbing as the repeated-phrase detector — `language` in HJSON drives the algorithm choice. Type to filter (substring match); Ctrl+S toggles sort (count ↔ alphabetical); Enter jumps to the first sample's source paragraph at the matching line (1.2.11+); Esc closes.".into(),
             Action::TogglePovChip =>
                 "Toggle the POV / character chip on the status bar (1.2.9+, Ctrl+B Shift+P). When enabled, the status bar shows the most-mentioned character in the open paragraph (the heuristic POV character) plus up to three additional named characters present. Driven by the project's existing `characters` lexicon — no separate tagging needed. Ties broken by first-mention order. Session-local override on top of `editor.pov_chip_enabled` in HJSON.".into(),
+            Action::TogglePromptLanguageMode =>
+                "Toggle prompt-language resolution mode between `book_defined` (use the top-level `language` field) and `paragraph_detected` (run whatlang on the open paragraph; fall back to book language for short paragraphs) (1.2.12+, Ctrl+B Shift+N). Session-local override on top of `editor.prompt_language_mode` in HJSON — the chord does NOT rewrite the HJSON. The AI pane title bar reflects the active mode: `AI · ru (book)` vs `AI · ru (paragraph)`. The status bar echoes the new mode on toggle. Mnemonic: N for Natural language / laNguage picker. See Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md.".into(),
             Action::OpenSentenceRhythm =>
                 "Open the sentence-rhythm gauge modal for the open paragraph (1.2.9+, Ctrl+B Shift+H). Splits prose into sentences (hand-rolled walker with abbreviation suppression), tallies word counts, computes mean / stdev / coefficient of variation (CV), and maps CV to a verdict: Monotone (CV < 0.25 — drones), Steady (0.25-0.45 — workable), Varied (0.45-0.80 — strong prose rhythm), Choppy (≥ 0.80 — fragments + long sentences mixed). Shows a per-sentence bar list and the three shortest + three longest outliers. Mnemonic: H for heartbeat — the felt rhythm of the prose.".into(),
+            Action::AiRewriteRhythm =>
+                "AI-driven sentence-rhythm rewrite of the open paragraph (1.2.11+, Ctrl+B Shift+M). Sends the paragraph to the configured LLM with a prompt asking it to break monotonous rhythm by mixing short and long sentences while preserving voice + meaning. Prompt resolution follows the standard pattern: the project's Prompts book first (look up by slug or title `sentence-rhythm-rewrite`), then prompts.hjson, then an embedded multilingual fallback that respects the project's `language` setting. When the stream completes, an AI diff modal pops automatically so the user can review the rewrite line by line. Accept commits the rewrite into the buffer AND creates a snapshot annotated `Sentence rhythm rewrite` first; reject leaves the buffer untouched. Mnemonic: M for Modulate / Mix it up. Pairs with the Ctrl+B Shift+H rhythm gauge — and the chord ALSO fires from inside that gauge modal, so the natural diagnose-then-rewrite workflow needs no extra keystrokes: open the gauge, see MONOTONE, press Ctrl+B Shift+M to fix it. The gauge dismisses automatically as the rewrite spawns.".into(),
             Action::AnalyseShowDontTell =>
                 "AI-driven show-don't-tell scan of the open paragraph (1.2.9+, Ctrl+B Shift+T). Sends the paragraph to the configured LLM with a system prompt asking for telling passages plus suggested rewrites. The response streams into the AI pane. Complements the always-on regex overlay (`editor.style_warnings.show_dont_tell`) with deeper analysis — the regex catches the obvious 2-grams (`was angry`, `realised`); the AI scan catches subtler instances and proposes alternatives. Mnemonic: T for tell.".into(),
             Action::ViewRenderParagraph =>
@@ -1015,6 +1055,12 @@ impl KeyBindings {
                 // 1.2.9+ — Ctrl+B Shift+P toggles the
                 // status-bar POV / character chip.
                 entry("Shift+p", Action::TogglePovChip, Scope::Any),
+                // 1.2.12+ — Ctrl+B Shift+N toggles
+                // prompt-language resolution mode
+                // (book_defined ↔ paragraph_detected).
+                // Session-local; AI pane title bar
+                // reflects the active mode.
+                entry("Shift+n", Action::TogglePromptLanguageMode, Scope::Any),
                 // 1.2.9+ — Ctrl+B Shift+H opens the
                 // sentence-rhythm gauge modal.
                 entry("Shift+h", Action::OpenSentenceRhythm, Scope::Editor),
@@ -1022,6 +1068,13 @@ impl KeyBindings {
                 // open paragraph to the LLM for a
                 // show-don't-tell scan.
                 entry("Shift+t", Action::AnalyseShowDontTell, Scope::Editor),
+                // 1.2.11+ — Ctrl+B Shift+M asks the
+                // LLM to rewrite the open paragraph
+                // for rhythm variety; AI diff modal
+                // pops on completion; snapshot
+                // annotated "Sentence rhythm
+                // rewrite" on accept.
+                entry("Shift+m", Action::AiRewriteRhythm, Scope::Editor),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),
