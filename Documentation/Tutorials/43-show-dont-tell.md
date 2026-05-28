@@ -183,3 +183,26 @@ misses — and proposes specific alternatives.
   — F12 critique, prompt-template override
   machinery (shared with the show-don't-tell AI
   scan).
+
+## 1.2.11 additions
+
+- **Curated built-in lists for RU / FR / DE / ES.**
+  The four `built_in_*` functions
+  (`linking_verbs`, `emotion_adjectives`,
+  `manner_adverbs`, `cognition_verbs`) now ship
+  conservative dictionary-shape lemmas for all
+  five supported languages, not just English.
+  Snowball stemming covers the inflection space;
+  the regex overlay highlights matches in any
+  of the five languages out of the box.
+- **`inkhaven show-dont-tell bootstrap <lang>`
+  CLI.**  Uses the configured LLM as a one-shot
+  vocabulary curator for the four SDT lists:
+  reads the project's HJSON / model defaults,
+  asks the LLM to generate per-language word
+  lists, prints an HJSON snippet on stdout
+  (default) or merges in place with `--update`
+  (versioned backup under `.config-backups/`,
+  union with case-insensitive dedup, existing
+  order preserved).  Optional `--genre <hint>`
+  biases the vocabulary toward a register.

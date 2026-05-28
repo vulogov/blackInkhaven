@@ -382,3 +382,96 @@ Inkhaven's `Ctrl+F12` works on macOS because the
 Ctrl-modifier shifts the chord out of Apple's owned
 range. `Cmd+anything` doesn't bind in the TUI — macOS
 doesn't pass those events to terminal apps.
+
+## 1.2.7 – 1.2.11 — new actions
+
+Catalogue of named actions added across the cycles
+ending in 1.2.11.  Same rebind path applies: name
+them in `keys.bindings` or `ink.key.bind`.
+
+### Navigation history (1.2.7+)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `view.navigate_back` | `Alt+Left` | Browser-style back through visited paragraphs. |
+| `view.navigate_forward` | `Alt+Right` | Browser-style forward through visited paragraphs. |
+| `view.recent_paragraph_picker` | `Ctrl+V Shift+P` | Picker over the recent-paragraphs ring. |
+
+### Paragraph undelete (1.2.7+)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `tree.undelete_paragraph` | `Ctrl+B U` | Restore the most recently deleted paragraph (body + tags + status + links + event data). |
+
+### Mouse + external watcher (1.2.7+)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `global.toggle_mouse_capture` | `Ctrl+Shift+M` | Toggle TUI mouse capture so the terminal's native text-select + copy works. |
+
+### Embedded shell (1.2.8+)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `bund.open_shell_pane` | `Ctrl+Z o` | Open / close the floating nushell pane. |
+| `bund.open_shell_history` | `Ctrl+Z h` | Open the shell's per-project SQLite history with selection-mode `c` / `i`. |
+
+### Config + confirm-quit (1.2.8+)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `editor.open_config_editor` | `Ctrl+B 0` | Full-screen HJSON editor for `inkhaven.hjson`. |
+
+### Writing-streak heatmap (1.2.9+)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `view.open_streak_heatmap` | `Ctrl+B Shift+G` | 13×7 grid of the last 91 days of word activity. |
+
+### Scene breaks (1.2.9+)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `view.scene_break_prev` | `Ctrl+B <` | Cursor to previous scene-break line. |
+| `view.scene_break_next` | `Ctrl+B >` | Cursor to next scene-break line. |
+
+### Style-warning + literary analysis (1.2.9+)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `view.toggle_style_warnings` | `Ctrl+B Shift+F` | Session-local override on `editor.style_warnings.enabled`. |
+| `view.open_concordance` | `Ctrl+B Shift+L` | Project-wide concordance modal. Enter jumps to the source paragraph (1.2.11+). |
+| `view.toggle_pov_chip` | `Ctrl+B Shift+P` | Toggle the status-bar POV / character chip. |
+| `view.open_sentence_rhythm` | `Ctrl+B Shift+H` | Sentence-rhythm gauge modal. |
+| `ai.analyse_show_dont_tell` | `Ctrl+B Shift+T` | AI-driven show-don't-tell scan. |
+| `view.toggle_tts_playback` | `Ctrl+B S` *(global, beats Add-Subchapter when an open paragraph exists)* | Read the open paragraph aloud (macOS-only TTS). |
+
+### Tag-from-anywhere (1.2.9+)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `view.open_story_view_paragraph` | `Ctrl+V W` *(rebind from V w when capital + lower diverged)* | Paragraph mini story view. |
+
+### Multilingual prompts + rhythm rewrite (1.2.11+)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `ai.rewrite_sentence_rhythm` | `Ctrl+B Shift+M` | AI sentence-rhythm rewrite of the open paragraph; fires from the editor pane OR from inside the `Ctrl+B Shift+H` gauge modal.  Auto-opens an AI diff modal when streaming completes; accept commits the rewrite AND snapshots the pre-rewrite buffer (annotation: `Sentence rhythm rewrite`). |
+| `view.toggle_prompt_language_mode` | `Ctrl+B Shift+N` | Cycle prompt-language resolution mode: `None` (defer to HJSON) → `book_defined` → `paragraph_detected` → `None`.  Session-local override on `editor.prompt_language_mode`; the AI pane's `lang=` chip reflects the active mode. |
+
+### Example overlay
+
+To map the rhythm rewrite to a free shortcut that
+matches your muscle memory — e.g. `Ctrl+V M`:
+
+```hjson
+keys: {
+  bindings: [
+    { chord: "Ctrl+V M", action: "ai.rewrite_sentence_rhythm" }
+  ]
+}
+```
+
+The default `Ctrl+B Shift+M` continues to fire the
+same action — multiple chords map to one action with
+no conflict.

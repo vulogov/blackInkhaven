@@ -17,6 +17,8 @@ pub mod restore;
 pub mod search;
 pub mod doctor;
 pub mod event;
+pub mod prompts;
+pub mod show_dont_tell;
 pub mod stats;
 
 use std::path::PathBuf;
@@ -352,6 +354,36 @@ pub enum Command {
     /// save + AI integration in subsequent phases.
     /// See `Documentation/PROPOSALS/PROMPTS_EDITOR_TUI.md`.
     PromptsEditor,
+
+    /// 1.2.11+ — show-don't-tell tooling.  Currently
+    /// hosts `bootstrap`, which uses the configured LLM
+    /// to generate the four per-language word lists
+    /// (linking_verbs / emotion_adjectives /
+    /// manner_adverbs / cognition_verbs) for the
+    /// show-don't-tell overlay.  Output is an HJSON
+    /// snippet on stdout — never writes to your
+    /// `inkhaven.hjson` automatically; review and paste
+    /// what you like.  Pattern mirrors
+    /// `doctor --filter-words-snippet`.
+    #[command(subcommand, name = "show-dont-tell")]
+    ShowDontTell(ShowDontTellCommand),
+
+    /// 1.2.12+ Phase B — prompts tooling.  Currently
+    /// hosts `bootstrap <lang>`, which uses the
+    /// configured LLM to generate per-language
+    /// variants of the seven inkhaven embedded
+    /// prompts (`grammar-check`, `show-don't-tell`,
+    /// `sentence-rhythm-rewrite`, `critique-edit`,
+    /// `critique-changes`, `explain-diagnostic`,
+    /// `timeline-health`).  Output is an HJSON
+    /// snippet ready to paste under
+    /// `prompts.hjson`; with `--update` it merges
+    /// into the live file in place via the same
+    /// `apply_in_place_edits` helper the SDT
+    /// bootstrap uses.  See
+    /// `Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md`.
+    #[command(subcommand)]
+    Prompts(PromptsCommand),
 }
 
 /// Sub-subcommands under `inkhaven event …`.
@@ -400,6 +432,108 @@ pub enum EventCommand {
     Show {
         /// Slug-path of the event paragraph.
         path: String,
+    },
+}
+
+/// 1.2.12+ Phase B — sub-subcommands under
+/// `inkhaven prompts …`.
+#[derive(Debug, Subcommand)]
+pub enum PromptsCommand {
+    /// Generate per-language variants of inkhaven's
+    /// seven embedded prompts using the configured
+    /// LLM.  Emits an HJSON snippet on stdout (default)
+    /// or, with `--update`, merges into
+    /// `<project>/prompts.hjson` in place — versioned
+    /// backup + atomic write + comment preservation
+    /// via the shared `apply_in_place_edits` helper.
+    /// Mirrors `inkhaven show-dont-tell bootstrap`.
+    Bootstrap {
+        /// Target language.  One of: english, russian,
+        /// french, german, spanish.  Mapped to ISO 639-1
+        /// (`en`/`ru`/`fr`/`de`/`es`) for the
+        /// `language:` field on each generated prompt
+        /// entry — that's the value the prompt resolver
+        /// compares against.
+        language: String,
+        /// Optional genre / register hint folded into
+        /// the prompt so the model picks vocabulary at
+        /// the right reading level ("literary fiction",
+        /// "thriller", "YA fantasy", …).
+        #[arg(long)]
+        genre: Option<String>,
+        /// Override the default LLM provider for this
+        /// invocation.  Same semantics as
+        /// `inkhaven ai --provider`.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Apply the LLM-generated prompts **in place**
+        /// to `prompts.hjson`, merging with any
+        /// existing same-name entries (case-insensitive
+        /// name match + `language` field match — only
+        /// overwrites the exact `(name, language)`
+        /// pair, leaves every other entry untouched).
+        /// A versioned backup of the pre-patch file
+        /// lands under `<project>/.config-backups/`
+        /// first.  Without `--update`, prints the
+        /// snippet to stdout and touches nothing.
+        #[arg(long)]
+        update: bool,
+    },
+}
+
+/// 1.2.11+ — sub-subcommands under
+/// `inkhaven show-dont-tell …`.
+#[derive(Debug, Subcommand)]
+pub enum ShowDontTellCommand {
+    /// Generate per-language word lists for the
+    /// show-don't-tell overlay using the configured
+    /// LLM.  Emits an HJSON snippet on stdout — never
+    /// touches your `inkhaven.hjson`; review and paste
+    /// what you like (same shape as
+    /// `doctor --filter-words-snippet`).  The four
+    /// fields produced match the
+    /// `editor.style_warnings.show_dont_tell.<lang>_*`
+    /// stanza: `linking_verbs`, `emotion_adjectives`,
+    /// `manner_adverbs`, `cognition_verbs`.  Optional
+    /// `--genre` hint biases the vocabulary toward a
+    /// register (e.g. "literary fiction", "thriller",
+    /// "YA fantasy") — useful when the built-in defaults
+    /// sit at the wrong reading level for your corpus.
+    Bootstrap {
+        /// Target language.  One of: english, russian,
+        /// french, german, spanish.  Other values are
+        /// passed through verbatim — the LLM will try,
+        /// but per-language stop-word + stemmer plumbing
+        /// only ships for the five above.
+        language: String,
+        /// Optional genre / register hint.  Folded into
+        /// the prompt so the model picks vocabulary at
+        /// the right reading level.
+        #[arg(long)]
+        genre: Option<String>,
+        /// Override the default LLM provider for this
+        /// invocation.  Same semantics as `inkhaven ai
+        /// --provider` (no short alias here because
+        /// `-p` is reserved by the global
+        /// `--project`).
+        #[arg(long)]
+        provider: Option<String>,
+        /// 1.2.11+ — apply the LLM-discovered lists
+        /// **in place** to `inkhaven.hjson`, merging
+        /// with any existing per-language entries
+        /// (union, case-insensitive dedup, existing
+        /// entries first then new arrivals).  A
+        /// versioned backup of the pre-patch file
+        /// lands under `<project>/.config-backups/`
+        /// before the rewrite, so rolling back is a
+        /// single `cp`.  Default (without `--update`)
+        /// stays as today: print the HJSON snippet to
+        /// stdout and touch nothing.  The two modes
+        /// are mutually compatible — `--update` also
+        /// prints the merged snippet to stdout so the
+        /// user can see what landed.
+        #[arg(long)]
+        update: bool,
     },
 }
 
@@ -576,6 +710,12 @@ impl Cli {
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
             Command::Config => crate::config_tui::run(&project).map_err(Into::into),
             Command::PromptsEditor => crate::prompts_tui::run(&project).map_err(Into::into),
+            Command::ShowDontTell(cmd) => {
+                show_dont_tell::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Prompts(cmd) => {
+                prompts::run(&project, cmd).map_err(Into::into)
+            }
         }
     }
 }

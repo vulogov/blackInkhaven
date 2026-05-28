@@ -37,6 +37,13 @@ pub(super) struct PromptCandidate {
     pub description: String,
     pub body: PromptBody,
     pub source: PromptSource,
+    /// 1.2.12+ Phase C — language tag attached to this
+    /// prompt, if any.  For hjson entries this is the
+    /// `language` field; for Prompts-book paragraphs
+    /// it's the `lang:<code>` tag value.  `None` =
+    /// untagged.  Drives sectioning + chip display in
+    /// the `/` picker.
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -505,6 +512,23 @@ pub(super) enum Modal {
         after_lines: Vec<String>,
         action: InferenceAction,
         scroll: usize,
+        /// 1.2.11+ — when `Some`, the apply-step
+        /// creates a snapshot annotated with this
+        /// string BEFORE replacing the buffer.
+        /// Used by the rhythm-rewrite flow
+        /// (`Ctrl+B Shift+M`) so the pre-rewrite
+        /// state is preserved + labelled.  `None`
+        /// for the existing grammar / critique
+        /// paths.
+        post_accept_snapshot: Option<String>,
+        /// 1.2.11+ — total rendered row count after
+        /// long-line wrapping.  Written by the
+        /// renderer each frame (it owns the column
+        /// width), read by the key handler to
+        /// clamp scroll.  Defaults to 0; the
+        /// handler falls back to source-line count
+        /// until the first render populates it.
+        wrapped_total: usize,
     },
     /// F5 (1.2.6+) — annotation prompt that pops before a new
     /// snapshot is committed. `body` is captured at open time

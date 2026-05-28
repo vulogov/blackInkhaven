@@ -14,8 +14,9 @@ use uuid::Uuid;
 
 use super::{
     critique_changes_default_prompt, critique_edit_default_prompt, current_word_or_selection,
-    explain_diagnostic_default_prompt, extract_corrected_text, grammar_check_default_prompt, select_apply_text, FULL_SYSTEM_PROMPT, GRAMMAR_CHECK_SYSTEM_PROMPT,
-    HELP_SYSTEM_PROMPT, LOCAL_SYSTEM_PROMPT,
+    explain_diagnostic_default_prompt, extract_corrected_text, grammar_check_default_prompt,
+    select_apply_text, sentence_rhythm_rewrite_default_prompt, FULL_SYSTEM_PROMPT,
+    GRAMMAR_CHECK_SYSTEM_PROMPT, HELP_SYSTEM_PROMPT, LOCAL_SYSTEM_PROMPT,
 };
 
 use crate::ai::stream::{spawn_chat_stream, ChatTurn};
@@ -181,6 +182,12 @@ impl super::App {
             InferenceAction::CopyOnly | InferenceAction::ReplaceCorrected => unreachable!(),
         }
         doc.dirty = true;
+        // 1.2.12+ Phase D — text-insertion / paste of AI
+        // output can land enough new content to change the
+        // dominant-language signal; let the delta-guard
+        // decide whether re-detection is warranted.  No-op
+        // when the effective mode is `book_defined`.
+        self.maybe_redetect_paragraph_language();
         self.status = format!("applied AI result ({})", action.label());
         self.change_focus(Focus::Editor);
     }
@@ -231,6 +238,10 @@ impl super::App {
                     description: p.description.clone(),
                     body: PromptBody::Static(p.template.clone()),
                     source: PromptSource::System,
+                    // 1.2.12+ Phase C — propagate the
+                    // language tag so the picker can
+                    // section + chip.
+                    language: p.language.clone(),
                 }));
             }
         }
@@ -250,18 +261,49 @@ impl super::App {
                 let title = node.title.clone();
                 let s = score(&name, &title);
                 if s > 0 {
+                    // Pull `lang:<code>` tag if present.
+                    let language = node.tags.iter().find_map(|t| {
+                        let lc = t.to_lowercase();
+                        let rest = lc.strip_prefix("lang:")?;
+                        let code = rest.trim();
+                        if code.is_empty() {
+                            None
+                        } else {
+                            Some(code.to_string())
+                        }
+                    });
                     scored.push((s, PromptCandidate {
                         name,
                         description: title,
                         body: PromptBody::BookParagraph(node.id),
                         source: PromptSource::Book,
+                        language,
                     }));
                 }
             }
         }
-        // Stable sort by descending score — preserves the
-        // "system before book" within-tier ordering.
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        // 1.2.12+ Phase C — three-tier sort:
+        //   1. language-priority bucket (active → untagged → other)
+        //   2. score (existing prefix > word-prefix > substring)
+        //   3. stable insertion order (system before book)
+        //
+        // The user sees in-language prompts first, untagged
+        // (back-compat) below them, other-language matches
+        // at the bottom.  Section headers in the renderer
+        // make the split visible.
+        let active = self.active_prompt_language();
+        let bucket = |lang: &Option<String>| -> u8 {
+            match lang.as_deref() {
+                Some(l) if l.eq_ignore_ascii_case(&active) => 0,
+                None => 1,
+                Some(_) => 2,
+            }
+        };
+        scored.sort_by(|a, b| {
+            bucket(&a.1.language)
+                .cmp(&bucket(&b.1.language))
+                .then(b.0.cmp(&a.0))
+        });
         let out: Vec<PromptCandidate> = scored.into_iter().map(|(_, c)| c).collect();
         out
     }
@@ -301,17 +343,23 @@ impl super::App {
             return;
         }
         let user_query = if raw.starts_with('/') {
-            // Resolve `/name [extra args]` form. Search system prompts
-            // (prompts.hjson) first, then paragraphs under the Prompts book.
+            // 1.2.12+ — `/name [extra args]` form routes through
+            // the language-aware resolver so a user with
+            // `lang:ru` tagged prompts gets the Russian variant
+            // first when working on Russian prose.  Embedded-
+            // fallback floor doesn't apply here: arbitrary user
+            // names have no embedded counterpart, so a miss is
+            // surfaced as a status message instead.
             let after = raw.trim_start_matches('/').trim();
-            if let Some(p) = self.prompts.find(after) {
-                self.render_template(&p.template.clone())
-            } else if let Some(text) = self.lookup_book_prompt_template(after) {
-                self.render_template(&text)
-            } else {
-                self.status =
-                    format!("no prompt `{after}` — type `/` to see the list");
-                return;
+            let want_lang = self.active_prompt_language();
+            match self.resolve_prompt_optional(after, &want_lang) {
+                Some(found) => self.render_template(&found.template),
+                None => {
+                    self.status = format!(
+                        "no prompt `{after}` — type `/` to see the list"
+                    );
+                    return;
+                }
             }
         } else {
             raw
@@ -564,22 +612,22 @@ impl super::App {
             return;
         }
 
-        // Resolver precedence. `grammar-check` is the canonical slug —
-        // case-insensitive match against both slug and title catches the
-        // common variants ("Grammar check", "GRAMMAR CHECK", etc.).
+        // 1.2.12+ — Phase A: route through the three-pass
+        // language-aware resolver.  Same observable behaviour as
+        // the legacy 4-step pattern for projects without any
+        // `lang:*` tags or `language: <code>` HJSON entries
+        // (Pass 2 picks up every untagged prompt); projects that
+        // *do* add per-language prompts get them preferred.
         const NAME: &str = "grammar-check";
-        const TITLE: &str = "grammar check";
-        let template = if let Some(t) = self.lookup_book_prompt_template(NAME) {
-            t
-        } else if let Some(t) = self.lookup_book_prompt_template(TITLE) {
-            t
-        } else if let Some(p) = self.prompts.find(NAME) {
-            p.template.clone()
-        } else if let Some(p) = self.prompts.find(TITLE) {
-            p.template.clone()
-        } else {
-            grammar_check_default_prompt(&self.cfg.language)
-        };
+        let want_lang = self.active_prompt_language();
+        let template = self
+            .resolve_prompt(NAME, &want_lang, || {
+                // 1.2.12+ Phase B — embedded floor is now
+                // language-aware; pass the ISO code from
+                // `active_prompt_language`.
+                grammar_check_default_prompt(&want_lang).to_string()
+            })
+            .template;
 
         // Render placeholders ({{selection}} / {{context}}) and then
         // append the paragraph body so the model has a single trailing
@@ -793,8 +841,14 @@ impl super::App {
             context.push_str(&format!("{mark}{lineno:>4}  {line}\n"));
         }
 
+        // 1.2.12+ Phase B — capture the want-lang code so the
+        // language-aware embedded floor can pick the right
+        // variant.  `resolve_prompt_template` itself reads
+        // `active_prompt_language` internally for its
+        // language target.
+        let want_lang = self.active_prompt_language();
         let template = self.resolve_prompt_template("explain-diagnostic", || {
-            explain_diagnostic_default_prompt().to_string()
+            explain_diagnostic_default_prompt(&want_lang).to_string()
         });
         let rendered = self.render_template(&template);
         let prompt_text = format!(
@@ -859,14 +913,24 @@ impl super::App {
             .as_ref()
             .map(|s| s.snapshot_lines.join("\n"));
 
-        let (prompt_name, embedded): (&str, fn() -> &'static str) =
-            if split_baseline.is_some() {
-                ("critique-changes", || critique_changes_default_prompt())
-            } else {
-                ("critique-edit", || critique_edit_default_prompt())
-            };
+        // 1.2.12+ Phase B — embedded floors are language-
+        // aware; capture the want-lang ISO and pass it into
+        // whichever variant fires.  Function pointers can't
+        // close over local state, so the dispatch is the
+        // local `match` below.
+        let want_lang = self.active_prompt_language();
+        let prompt_name = if split_baseline.is_some() {
+            "critique-changes"
+        } else {
+            "critique-edit"
+        };
         let template = self
-            .resolve_prompt_template(prompt_name, || embedded().to_string());
+            .resolve_prompt_template(prompt_name, || match prompt_name {
+                "critique-changes" => {
+                    critique_changes_default_prompt(&want_lang).to_string()
+                }
+                _ => critique_edit_default_prompt(&want_lang).to_string(),
+            });
         let rendered = self.render_template(&template);
 
         let prompt_text = match split_baseline.as_ref() {
@@ -932,7 +996,11 @@ impl super::App {
         let title = doc.title.clone();
         let template = self.resolve_prompt_template(
             "show-dont-tell",
-            || super::super::app::show_dont_tell_default_prompt().to_string(),
+            || {
+                let want_lang = self.active_prompt_language();
+                super::super::app::show_dont_tell_default_prompt(&want_lang)
+                    .to_string()
+            },
         );
         let rendered = self.render_template(&template);
         let prompt_text = format!(
@@ -968,6 +1036,105 @@ impl super::App {
             format!("show↛tell scan: streaming from {provider}…");
     }
 
+    /// 1.2.11+ — Ctrl+B Shift+M.  AI-driven sentence-
+    /// rhythm rewrite of the open paragraph.
+    ///
+    /// Prompt resolution follows the standard
+    /// pattern (`resolve_prompt_template`):
+    ///   1. Paragraph in the project's Prompts
+    ///      system book with slug or title
+    ///      `sentence-rhythm-rewrite` /
+    ///      `sentence rhythm rewrite`.
+    ///   2. Entry in the project's
+    ///      `prompts.hjson`.
+    ///   3. Embedded multilingual fallback —
+    ///      `sentence_rhythm_rewrite_default_prompt`,
+    ///      language-aware via `cfg.language`.
+    ///
+    /// Unlike show-don't-tell (which leaves the
+    /// response in the AI pane for the user to
+    /// read), the rewrite flow auto-opens an AI
+    /// diff modal when streaming completes.  The
+    /// modal carries `post_accept_snapshot =
+    /// Some("Sentence rhythm rewrite")` so the
+    /// apply step creates an annotated F6-
+    /// discoverable snapshot of the pre-rewrite
+    /// state BEFORE the buffer is replaced.
+    pub(super) fn start_sentence_rhythm_rewrite(&mut self) {
+        // 1.2.11+ — chord can fire from inside the
+        // `Ctrl+B Shift+H` rhythm-gauge modal
+        // (the natural diagnose-then-rewrite
+        // workflow).  Dismiss the gauge before
+        // spawning the inference so the user
+        // sees the AI pane streaming the rewrite,
+        // not a stale gauge frozen on a verdict.
+        if matches!(self.modal, Modal::SentenceRhythm { .. }) {
+            self.modal = Modal::None;
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "rhythm rewrite: no paragraph open".into();
+            return;
+        };
+        let body = doc.textarea.lines().join("\n");
+        if body.trim().is_empty() {
+            self.status = "rhythm rewrite: paragraph is empty".into();
+            return;
+        }
+        let title = doc.title.clone();
+        let language = self.cfg.language.clone();
+        // 1.2.12+ — Phase A: route through the language-aware
+        // resolver.  Same precedence the F7 grammar-check flow
+        // uses; both slug and title forms are tried inside each
+        // pass by the resolver.
+        const NAME: &str = "sentence-rhythm-rewrite";
+        let want_lang = self.active_prompt_language();
+        let template = self
+            .resolve_prompt(NAME, &want_lang, || {
+                // 1.2.12+ Phase B — embedded floor is now
+                // a 5-language match keyed by ISO code.
+                sentence_rhythm_rewrite_default_prompt(&want_lang).to_string()
+            })
+            .template;
+        let rendered = self.render_template(&template);
+        let prompt_text = format!(
+            "{rendered}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──",
+        );
+        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("rhythm rewrite: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            None,
+            Vec::new(),
+            prompt_text,
+        );
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        // Flag this inference as "auto-apply via
+        // diff review" — pump_inference watches
+        // for the transition to Done and opens
+        // the diff modal automatically.
+        self.pending_rhythm_rewrite = true;
+        self.change_focus(Focus::Ai);
+        self.status = format!(
+            "rhythm rewrite ({language}): streaming from {provider} · diff review on completion…"
+        );
+    }
+
     pub(super) fn ai_diff_review_handle_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up => {
@@ -982,10 +1149,22 @@ impl super::App {
                     before_lines,
                     after_lines,
                     scroll,
+                    wrapped_total,
                     ..
                 } = &mut self.modal
                 {
-                    let max = before_lines.len().max(after_lines.len());
+                    // 1.2.11+ — bound by wrapped row count
+                    // when the renderer has populated it
+                    // (every frame after first render).
+                    // Fall back to source-line count on
+                    // the very first key press before any
+                    // render — it's a safe lower bound
+                    // since wrapping only adds rows.
+                    let max = if *wrapped_total > 0 {
+                        *wrapped_total
+                    } else {
+                        before_lines.len().max(after_lines.len())
+                    };
                     if *scroll + 1 < max {
                         *scroll += 1;
                     }
@@ -1001,10 +1180,15 @@ impl super::App {
                     before_lines,
                     after_lines,
                     scroll,
+                    wrapped_total,
                     ..
                 } = &mut self.modal
                 {
-                    let max = before_lines.len().max(after_lines.len());
+                    let max = if *wrapped_total > 0 {
+                        *wrapped_total
+                    } else {
+                        before_lines.len().max(after_lines.len())
+                    };
                     *scroll = (*scroll + 10).min(max.saturating_sub(1));
                 }
             }
@@ -1018,10 +1202,15 @@ impl super::App {
                     before_lines,
                     after_lines,
                     scroll,
+                    wrapped_total,
                     ..
                 } = &mut self.modal
                 {
-                    let max = before_lines.len().max(after_lines.len());
+                    let max = if *wrapped_total > 0 {
+                        *wrapped_total
+                    } else {
+                        before_lines.len().max(after_lines.len())
+                    };
                     *scroll = max.saturating_sub(1);
                 }
             }
@@ -1036,7 +1225,28 @@ impl super::App {
             | KeyCode::Char('E')
             | KeyCode::Enter => {
                 let taken = std::mem::replace(&mut self.modal, Modal::None);
-                if let Modal::AiDiffReview { after_lines, action, .. } = taken {
+                if let Modal::AiDiffReview {
+                    after_lines,
+                    action,
+                    post_accept_snapshot,
+                    ..
+                } = taken
+                {
+                    // 1.2.11+ — when the rewrite flow
+                    // requested it, snapshot the
+                    // pre-rewrite buffer with the
+                    // supplied annotation BEFORE
+                    // replacing.  This is how
+                    // Ctrl+B Shift+M (sentence-
+                    // rhythm rewrite) preserves the
+                    // user's old prose with a
+                    // labelled F6-discoverable
+                    // entry.
+                    if let Some(annotation) = post_accept_snapshot {
+                        self.snapshot_open_paragraph_with_annotation(
+                            &annotation,
+                        );
+                    }
                     let after = after_lines.join("\n");
                     self.apply_ai_diff_accepted(action, after, true);
                 }

@@ -1264,6 +1264,18 @@ impl super::super::App {
                 .fg(self.theme.ai_infer_fg)
                 .add_modifier(Modifier::BOLD),
         ));
+        // 1.2.12+ Phase C — prompt-language chip.  Shows
+        // the ISO code the resolver will target plus a
+        // one-word mode hint (`book` / `paragraph`).
+        // `Ctrl+B Shift+N` cycles the session override
+        // and the chip flips immediately.
+        spans.push(Span::raw(" · lang="));
+        spans.push(Span::styled(
+            self.ai_pane_language_label(),
+            Style::default()
+                .fg(self.theme.ai_infer_fg)
+                .add_modifier(Modifier::BOLD),
+        ));
         if chat_turns > 0 {
             spans.push(Span::raw(format!(" · {chat_turns} turn(s)")));
         }
@@ -1482,6 +1494,28 @@ impl super::super::App {
                 Style::default().add_modifier(Modifier::DIM),
             )));
         } else {
+            // 1.2.12+ Phase C — section the list by
+            // language-priority bucket: active language
+            // first, then untagged (back-compat), then
+            // other languages.  Section headers appear
+            // at each transition so the user can see
+            // why "their" prompts are at the top.
+            let active = self.active_prompt_language();
+            let bucket_of = |lang: &Option<String>| -> u8 {
+                match lang.as_deref() {
+                    Some(l) if l.eq_ignore_ascii_case(&active) => 0,
+                    None => 1,
+                    Some(_) => 2,
+                }
+            };
+            let header_for = |b: u8| -> String {
+                match b {
+                    0 => format!("── In active language ({active}) ──"),
+                    1 => "── Untagged ──".to_string(),
+                    _ => "── Other languages ──".to_string(),
+                }
+            };
+            let mut last_bucket: Option<u8> = None;
             for (i, p) in matches.iter().enumerate() {
                 let selected = i == self.prompt_picker_cursor;
                 let name_style = if selected {
@@ -1504,8 +1538,32 @@ impl super::super::App {
                     .bg(chip_color)
                     .fg(Color::Black)
                     .add_modifier(Modifier::BOLD);
+                // Section header on bucket transition.
+                let bucket = bucket_of(&p.language);
+                if last_bucket != Some(bucket) {
+                    if last_bucket.is_some() {
+                        lines.push(Line::from(""));
+                    }
+                    lines.push(Line::from(Span::styled(
+                        header_for(bucket),
+                        Style::default()
+                            .add_modifier(Modifier::DIM | Modifier::BOLD),
+                    )));
+                    last_bucket = Some(bucket);
+                }
+                // Inline language chip per row — `[ru]`
+                // when tagged, `[—]` when untagged so
+                // the visual width stays steady.
+                let lang_chip = match p.language.as_deref() {
+                    Some(l) => format!(" [{l}]"),
+                    None => " [—]".to_string(),
+                };
+                let lang_chip_style = Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::DIM);
                 lines.push(Line::from(vec![
                     Span::styled(chip_text.to_string(), chip_style),
+                    Span::styled(lang_chip, lang_chip_style),
                     Span::styled(format!(" /{}", p.name), name_style),
                 ]));
                 lines.push(Line::from(Span::styled(
