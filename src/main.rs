@@ -3,6 +3,8 @@ mod assemble;
 mod backup;
 mod cli;
 mod config;
+mod config_tui;
+mod prompts_tui;
 mod error;
 mod export;
 mod grammar;
@@ -31,7 +33,16 @@ fn main() {
     // back-buffer (we'd see ghost panes or stray text inside the rendered
     // grid). Route TUI logs to a per-project file and keep CLI logs on
     // stderr where they're useful.
-    let is_tui = matches!(&cli.command, None | Some(cli::Command::Tui));
+    // `Command::Config` and `Command::PromptsEditor` are
+    // also TUIs (standalone HJSON / prompts editors) —
+    // same stderr-quiet logging requirement as the main
+    // editor.
+    let is_tui = matches!(
+        &cli.command,
+        None | Some(cli::Command::Tui)
+            | Some(cli::Command::Config)
+            | Some(cli::Command::PromptsEditor)
+    );
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("inkhaven=info,warn"));
     if is_tui {

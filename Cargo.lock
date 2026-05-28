@@ -3772,7 +3772,7 @@ checksum = "a588916bfdfd92e71cacef98a63d9b1f0d74d6599980d11894290e7ddefffcf7"
 
 [[package]]
 name = "inkhaven"
-version = "1.2.9"
+version = "1.2.10"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3814,6 +3814,7 @@ dependencies = [
  "serde_json",
  "similar",
  "slug",
+ "syn 2.0.117",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

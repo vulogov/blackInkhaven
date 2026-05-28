@@ -1020,6 +1020,15 @@ pub struct ThemeConfig {
     /// 1.2.9+ — colour for show-don't-tell warnings.
     #[serde(default)]
     pub style_warning_show_dont_tell_fg: String,
+    /// 1.2.10+ — POV / character chip background +
+    /// foreground.  Explicit RGB so the chip stays
+    /// readable across terminal palettes (the named
+    /// `Color::Magenta` rendered as a pale pink on
+    /// Catppuccin and killed contrast against white).
+    #[serde(default)]
+    pub pov_chip_bg: String,
+    #[serde(default)]
+    pub pov_chip_fg: String,
 
     // Search-match overlay in the editor.
     pub search_match_bg: String,
@@ -1096,6 +1105,8 @@ impl Default for ThemeConfig {
             style_warning_filter_word_fg: "#f9c44e".into(),
             style_warning_repeated_phrase_fg: "#eb6f92".into(),
             style_warning_show_dont_tell_fg: "#94e2d5".into(),
+            pov_chip_bg: "#8b1d88".into(),
+            pov_chip_fg: "#ffffff".into(),
 
             search_match_bg: "#f38ba8".into(),
             search_current_bg: "#f5c2e7".into(),

@@ -53,6 +53,8 @@ covers.
 | 41 | [`41-pov-character-chip.md`](41-pov-character-chip.md) | Ctrl+B Shift+P — status-bar POV / character chip; most-mentioned character surfaces as the heuristic POV, with up to three supporting characters; driven by the existing characters lexicon (1.2.9+). |
 | 42 | [`42-sentence-rhythm-gauge.md`](42-sentence-rhythm-gauge.md) | Ctrl+B Shift+H — sentence-rhythm gauge: word-count mean / stdev / CV → verdict (Monotone / Steady / Varied / Choppy); per-sentence bar chart + outlier callouts; the felt rhythm of the prose (1.2.9+). |
 | 43 | [`43-show-dont-tell.md`](43-show-dont-tell.md) | Inline overlay (under Ctrl+B Shift+F): copula+emotion-adj 2-grams, manner-of-emotion adverbs, cognition verbs. Plus Ctrl+B Shift+T — AI-driven scan with rewrite suggestions in the AI pane (1.2.9+). |
+| 44 | [`44-prompts-editor.md`](44-prompts-editor.md) | `inkhaven prompts-editor` — standalone four-pane workbench for `prompts.hjson`. List + editor + AI response + AI prompt input.  The LLM acts as a prompt-engineering REVIEWER (no template execution).  Ctrl+B G inserts the AI response at the editor cursor; Ctrl+R rolls back to a `.prompts-backups/` snapshot.  Auto-populates from embedded defaults on first launch (1.2.10+). |
+| 45 | [`45-config-tui.md`](45-config-tui.md) | `inkhaven config` — standalone schema-aware editor for `inkhaven.hjson`.  Typed widgets (bool / int / float / string / colour with preview / path / enum / list).  Build-time doc-comment extraction so every field has docs.  Comment-preserving surgical save + .config-backups/ rollback + annotations + Ctrl+I comment inspector + map-entry add/delete for `llm.providers` (1.2.10+). |
 
 ## Scripting + chord customisation
 
