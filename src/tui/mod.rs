@@ -4,7 +4,9 @@ mod bund_highlight;
 mod concordance;
 mod credits;
 mod diff_utils;
-mod file_picker;
+// 1.2.11+ — exposed crate-wide so the config-TUI's
+// path widget can reuse the F3 file picker.
+pub(crate) mod file_picker;
 mod focus;
 mod highlight;
 mod hjson_edit;

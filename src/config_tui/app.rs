@@ -935,8 +935,13 @@ fn static_chord_dispatch(app: &mut App, key: KeyEvent) {
                     .current_node()
                     .map(|n| n.ty.clone())
                     .unwrap_or(crate::config_tui::schema::ConfigType::String);
-                let widget =
-                    Widget::start_for_typed(&current, &ty, &ty_label, &path);
+                let widget = Widget::start_for_typed(
+                    &current,
+                    &ty,
+                    &ty_label,
+                    &path,
+                    &app.project_root,
+                );
                 app.modal = Modal::Edit { path, widget };
             } else if let Some(node) = app.current_node() {
                 let p = node.path.clone();
@@ -953,14 +958,20 @@ fn static_chord_dispatch(app: &mut App, key: KeyEvent) {
             // mid-navigation.
             if let Some(node) = app.current_node() {
                 if node.is_leaf() {
-                    let widget = Widget::start_for_typed(
-                        &node.current,
-                        &node.ty,
+                    let (current, ty, ty_label, npath) = (
+                        node.current.clone(),
+                        node.ty.clone(),
                         node.ty.label(),
-                        &node.path,
+                        node.path.clone(),
                     );
-                    let path = node.path.clone();
-                    app.modal = Modal::Edit { path, widget };
+                    let widget = Widget::start_for_typed(
+                        &current,
+                        &ty,
+                        ty_label,
+                        &npath,
+                        &app.project_root,
+                    );
+                    app.modal = Modal::Edit { path: npath, widget };
                 }
             }
         }
