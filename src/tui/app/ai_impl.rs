@@ -913,13 +913,41 @@ impl super::App {
             .as_ref()
             .map(|s| s.snapshot_lines.join("\n"));
 
+        // 1.2.12+ Phase D — split-view with two distinct
+        // paragraphs picks the `critique-compare` flow:
+        // bundle both bodies and ask the LLM for a
+        // comparative critique (translation faithfulness,
+        // draft-vs-draft strength).  Same precedence
+        // rules as the other flows — Prompts book →
+        // prompts.hjson → embedded.  Skips the comparison
+        // when secondary is empty or holds the same body
+        // as primary (avoids self-compare); falls back to
+        // single-paragraph critique-edit in those cases.
+        let primary_id = doc.id;
+        let split_compare: Option<(String, String, String)> = if self.split_view {
+            self.secondary.as_ref().and_then(|sec| {
+                if sec.id == primary_id {
+                    return None;
+                }
+                let sec_body = sec.textarea.lines().join("\n");
+                if sec_body.trim().is_empty() {
+                    return None;
+                }
+                Some((sec.title.clone(), sec_body, sec.id.to_string()))
+            })
+        } else {
+            None
+        };
+
         // 1.2.12+ Phase B — embedded floors are language-
         // aware; capture the want-lang ISO and pass it into
         // whichever variant fires.  Function pointers can't
         // close over local state, so the dispatch is the
         // local `match` below.
         let want_lang = self.active_prompt_language();
-        let prompt_name = if split_baseline.is_some() {
+        let prompt_name = if split_compare.is_some() {
+            "critique-compare"
+        } else if split_baseline.is_some() {
             "critique-changes"
         } else {
             "critique-edit"
@@ -929,15 +957,22 @@ impl super::App {
                 "critique-changes" => {
                     critique_changes_default_prompt(&want_lang).to_string()
                 }
+                "critique-compare" => {
+                    super::super::app::critique_compare_default_prompt(&want_lang)
+                        .to_string()
+                }
                 _ => critique_edit_default_prompt(&want_lang).to_string(),
             });
         let rendered = self.render_template(&template);
 
-        let prompt_text = match split_baseline.as_ref() {
-            Some(baseline) => format!(
+        let prompt_text = match (&split_compare, split_baseline.as_ref()) {
+            (Some((sec_title, sec_body, _)), _) => format!(
+                "{rendered}\n\n── Left (`{title}`) ──\n{body}\n── end left ──\n\n── Right (`{sec_title}`) ──\n{sec_body}\n── end right ──",
+            ),
+            (None, Some(baseline)) => format!(
                 "{rendered}\n\n── Before (snapshot) ──\n{baseline}\n── end before ──\n\n── After (current buffer of `{title}`) ──\n{body}\n── end after ──",
             ),
-            None => format!(
+            (None, None) => format!(
                 "{rendered}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──",
             ),
         };

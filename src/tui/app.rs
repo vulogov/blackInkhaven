@@ -4570,6 +4570,115 @@ impl App {
         self.secondary_focused = false;
     }
 
+    /// 1.2.12+ Phase D — sibling-book lookup for the
+    /// split-view secondary pane.  Given the open
+    /// paragraph's slug, walks the project's hierarchy
+    /// for paragraphs with the same slug under a
+    /// *different* top-level book (i.e., a different
+    /// "book ancestor" — the topmost Book node in the
+    /// path).  Results:
+    ///
+    ///   * Zero matches → status message names the
+    ///     slug we tried.
+    ///   * One match → auto-pin to `secondary` via
+    ///     `dispatch_picker_accept(id, true)`.  The
+    ///     user typically follows up with `Shift+F4`
+    ///     to view the split.
+    ///   * Two or more matches → open a fuzzy
+    ///     paragraph picker scoped to the matches
+    ///     (the same modal as `Ctrl+V P`, so
+    ///     `Shift+Enter` still pins).
+    pub(super) fn sibling_book_lookup(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "sibling lookup: no paragraph open".into();
+            return;
+        };
+        let primary_id = doc.id;
+        let Some(node) = self.hierarchy.get(primary_id) else {
+            self.status = "sibling lookup: open paragraph missing from hierarchy".into();
+            return;
+        };
+        let slug = node.slug.clone();
+        let title = node.title.clone();
+        // Identify the top-level book ancestor of the
+        // open paragraph so we exclude same-book
+        // matches from the search.  `slug_path` joins
+        // ancestor slugs, the first segment is the
+        // book.  Same primitive the concordance Pass 1
+        // dispatcher uses.
+        let primary_book_slug = self
+            .hierarchy
+            .ancestors(node)
+            .first()
+            .map(|n| n.slug.clone())
+            .unwrap_or_default();
+        // Walk every paragraph node in the project,
+        // keeping ones whose slug matches and whose
+        // top-level book is NOT the primary's.
+        use crate::store::NodeKind;
+        let mut matches: Vec<ScriptPickerEntry> = Vec::new();
+        for cand in self.hierarchy.iter() {
+            if cand.kind != NodeKind::Paragraph || cand.id == primary_id {
+                continue;
+            }
+            if cand.slug != slug {
+                continue;
+            }
+            let cand_book_slug = self
+                .hierarchy
+                .ancestors(cand)
+                .first()
+                .map(|n| n.slug.clone())
+                .unwrap_or_default();
+            if cand_book_slug == primary_book_slug {
+                continue;
+            }
+            let slug_path = self.hierarchy.slug_path(cand);
+            matches.push(ScriptPickerEntry {
+                id: cand.id,
+                title: cand.title.clone(),
+                slug_path,
+            });
+        }
+        match matches.len() {
+            0 => {
+                self.status = format!(
+                    "sibling lookup: no paragraph slug `{slug}` in any other book (open: `{title}`)",
+                );
+            }
+            1 => {
+                let id = matches[0].id;
+                let slug_path = matches[0].slug_path.clone();
+                self.dispatch_picker_accept(id, true);
+                // Override the default pin status with
+                // something that names the sibling
+                // path — useful confirmation in
+                // multi-book projects.
+                self.status = format!(
+                    "sibling: pinned `{slug_path}` to secondary — Shift+F4 to view split",
+                );
+            }
+            n => {
+                // Multi-match: reuse the fuzzy
+                // paragraph picker scoped to just
+                // these entries.  Input starts empty
+                // because the entries list is already
+                // pre-filtered to same-slug matches —
+                // typing in the input narrows by
+                // fuzzy title / slug_path.
+                self.modal = crate::tui::modal::Modal::FuzzyParagraphPicker {
+                    input: crate::tui::input::TextInput::new(),
+                    entries: matches,
+                    cursor: 0,
+                    scroll: 0,
+                };
+                self.status = format!(
+                    "sibling lookup: {n} matches for `{slug}` · Enter opens · Shift+Enter pins to split · Esc cancels",
+                );
+            }
+        }
+    }
+
     /// 1.2.12+ Phase B — universal dispatcher for
     /// paragraph-picker accepts.  `pin_to_secondary`
     /// distinguishes plain Enter (route to primary
@@ -7216,6 +7325,7 @@ impl App {
             A::ToggleSplit => self.toggle_split(),
             A::AcceptSplitSnapshot => self.accept_split_snapshot(),
             A::ToggleSplitView => self.toggle_split_view(),
+            A::ViewSiblingBookLookup => self.sibling_book_lookup(),
             A::OpenSnapshotPicker => self.open_snapshot_picker(),
             A::GrammarCheck => self.start_grammar_check(),
             A::CycleAiMode => self.cycle_ai_mode(),
@@ -18059,6 +18169,74 @@ should focus on.",
     }
 }
 
+/// 1.2.12+ Phase D — embedded fallback for F12
+/// critique when split-view is active with two
+/// distinct paragraphs.  Sends both bodies and asks
+/// for a comparative critique: where do they
+/// converge, where do they diverge, which one lands
+/// the beat better.  Particularly useful for
+/// translation work (left = source, right =
+/// translation: is the rendering accurate, does the
+/// register match) and for draft comparison (left =
+/// snapshot, right = current: which version is
+/// stronger, line by line).
+///
+/// Five-language variants follow the same shape as
+/// the other six embedded prompts; English is the
+/// floor for unsupported codes.
+pub(crate) fn critique_compare_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Ниже даны два абзаца — `Левый` и `Правый`.  Сравни их по
+существу: что в них совпадает, что расходится, какой работает сильнее
+и почему.  Обращай внимание на тон, ритм, точность образов, конкретику
+глаголов и существительных.  Если это перевод (например, левый —
+оригинал, правый — перевод), оцени, насколько перевод передаёт смысл,
+голос и регистр.  Если это две черновых редакции, скажи, какая
+интенсивнее и какие именно куски следующий проход правки должен
+переносить из слабой в сильную.  Будь конкретен — цитируй точные
+фразы.",
+        "es" => "A continuación se muestran dos párrafos — `Izquierda` y
+`Derecha`.  Compáralos en lo esencial: qué coincide, qué diverge, cuál
+funciona mejor y por qué.  Presta atención al tono, al ritmo, a la
+precisión de las imágenes, a la concreción de verbos y sustantivos.
+Si se trata de una traducción (por ejemplo, izquierda = original,
+derecha = traducción), evalúa si la traducción transmite el sentido,
+la voz y el registro.  Si son dos borradores de revisión, indica
+cuál tiene más fuerza y qué fragmentos concretos debería trasladar
+la próxima pasada del débil al fuerte.  Sé específico — cita las
+frases exactas.",
+        "de" => "Unten siehst du zwei Absätze — `Links` und `Rechts`.
+Vergleiche sie inhaltlich: was stimmt überein, was unterscheidet sich,
+welcher trifft den Beat stärker und warum.  Achte auf Ton, Rhythmus,
+Präzision der Bilder, Konkretheit der Verben und Substantive.  Wenn
+es sich um eine Übersetzung handelt (z. B. links = Original, rechts =
+Übersetzung), bewerte, ob die Übersetzung Sinn, Stimme und Register
+trägt.  Wenn es zwei Entwürfe sind, sag, welcher kräftiger ist und
+welche konkreten Stellen der nächste Überarbeitungsdurchlauf von der
+schwächeren in die stärkere übernehmen sollte.  Sei konkret —
+zitiere die genauen Wendungen.",
+        "fr" => "Voici deux paragraphes — `Gauche` et `Droite`.  Compare-les
+sur le fond : ce qui converge, ce qui diverge, lequel fonctionne plus
+fort et pourquoi.  Sois attentif au ton, au rythme, à la précision
+des images, au concret des verbes et des substantifs.  S'il s'agit
+d'une traduction (par exemple, gauche = original, droite =
+traduction), évalue si la traduction porte le sens, la voix et le
+registre.  S'il s'agit de deux brouillons, dis lequel est plus
+intense et quels fragments précis la prochaine passe de révision
+doit reprendre du faible vers le fort.  Sois précis — cite les
+formulations exactes.",
+        _ => "Two paragraphs are shown below — `Left` and `Right`.  Compare \
+them substantively: what overlaps, what diverges, which lands the \
+beat harder and why.  Pay attention to tone, rhythm, precision of \
+imagery, concreteness of verbs and nouns.  If this is a translation \
+(e.g. left = source, right = translation), evaluate whether the \
+translation carries the meaning, voice, and register.  If these are \
+two drafts, say which one is stronger and which specific lines the \
+next revision pass should carry from the weaker into the stronger.  \
+Be specific — quote the exact phrases.",
+    }
+}
+
 /// 1.2.6+ — embedded fallback for the timeline health
 /// check (y / Y / Ctrl+Y inside Ctrl+V t).
 /// 1.2.12+ Phase B — five-language variants.
@@ -18449,5 +18627,43 @@ mod tests_split_view {
         _type_check_save_doc(|app: &mut App, doc: &mut OpenedDoc| {
             app.save_doc(doc)
         });
+    }
+
+    /// 1.2.12+ Phase D — locks the contract that the
+    /// new `critique-compare` embedded prompt has a
+    /// five-language match (the same shape as every
+    /// other embedded prompt in 1.2.11+).
+    #[test]
+    fn critique_compare_default_prompt_covers_five_languages() {
+        // Each language returns a distinct, non-empty
+        // body.  English is the fallback for unknown
+        // codes, so an unsupported code maps to the
+        // same body as "en".
+        let en = super::critique_compare_default_prompt("en");
+        let ru = super::critique_compare_default_prompt("ru");
+        let es = super::critique_compare_default_prompt("es");
+        let de = super::critique_compare_default_prompt("de");
+        let fr = super::critique_compare_default_prompt("fr");
+        let unknown = super::critique_compare_default_prompt("klingon");
+        // Every variant has content.
+        for body in [en, ru, es, de, fr] {
+            assert!(
+                body.trim().len() > 80,
+                "critique_compare body suspiciously short: {body:?}",
+            );
+        }
+        // The five known variants are pairwise distinct
+        // (translation, not pass-through).
+        let bodies = [en, ru, es, de, fr];
+        for i in 0..bodies.len() {
+            for j in (i + 1)..bodies.len() {
+                assert_ne!(
+                    bodies[i], bodies[j],
+                    "critique_compare bodies at indices {i} and {j} are identical — translation missed?",
+                );
+            }
+        }
+        // Unknown codes fall back to English.
+        assert_eq!(unknown, en);
     }
 }
