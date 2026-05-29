@@ -1533,6 +1533,28 @@ pub(crate) struct App {
     /// `secondary_in_left_pane` flag tells the renderer which
     /// physical pane currently holds `opened`.
     secondary: Option<OpenedDoc>,
+    /// 1.2.12+ — fullscreen two-paragraph split-view
+    /// layout flag.  When `true` and `secondary.is_some()`,
+    /// the renderer draws both `opened` and `secondary` as
+    /// equal-width fullscreen editors with the tree pane
+    /// and AI response pane hidden.  Toggled by `Shift+F4`
+    /// (Action::ToggleSplitView).  Distinct from F4 split-
+    /// edit (which is same-paragraph, snapshot-bottom) and
+    /// from the `secondary_focused` flag (which says
+    /// *which* of the two slots has focus, not whether the
+    /// fullscreen layout is on).  See
+    /// `Documentation/PROPOSALS/SPLIT_VIEW.md`.
+    split_view: bool,
+    /// 1.2.12+ — when a picker is open, which slot does it
+    /// target?  Captured from focus when the picker opens
+    /// (NOT when it accepts) so the user can't accidentally
+    /// route the wrong way by Tabbing while the picker is
+    /// up.  Phase B wires every paragraph-opening picker
+    /// through this; Phase A initialises the field and
+    /// adds the helper functions but no caller consumes it
+    /// yet.
+    #[allow(dead_code)]
+    picker_target: PaneTarget,
     /// Cached writing-progress snapshot, refreshed on every save +
     /// on project open. Status-bar widget reads from this cache so
     /// per-frame redraws don't trigger a hierarchy walk. `None`
@@ -1876,6 +1898,8 @@ impl App {
             opened: None,
             secondary: None,
             secondary_focused: false,
+            split_view: false,
+            picker_target: PaneTarget::Primary,
             progress_cache: None,
             link_pick_for: None,
             tree_marked: std::collections::HashSet::new(),
@@ -4469,6 +4493,73 @@ impl App {
         );
     }
 
+    /// 1.2.12+ Phase A — toggle the fullscreen
+    /// split-view layout flag.  Invariant: if
+    /// `secondary` is None when toggling ON, the flag
+    /// is set anyway but the renderer falls back to
+    /// the standard single-editor layout silently (so
+    /// the user gets a hint to pick a paragraph for
+    /// the right pane via the still-active main
+    /// picker chords).  Phase B + C add the picker
+    /// routing + per-pane chrome that make the layout
+    /// usable; Phase A just wires the flag + chord +
+    /// status echo.
+    pub(super) fn toggle_split_view(&mut self) {
+        self.split_view = !self.split_view;
+        let on = self.split_view;
+        let has_secondary = self.secondary.is_some();
+        self.status = match (on, has_secondary) {
+            (true, true) => {
+                "split view: ON · Tab swaps panes · Shift+F4 closes".into()
+            }
+            (true, false) => {
+                "split view: ON (right pane empty — open a paragraph picker to fill it) · Shift+F4 closes".into()
+            }
+            (false, _) => "split view: OFF".into(),
+        };
+    }
+
+    /// 1.2.12+ Phase A — populate the `secondary`
+    /// slot from any paragraph UUID.  Mirrors the
+    /// shape of `open_paragraph_by_uuid` but writes
+    /// to `self.secondary` instead of `self.opened`.
+    /// Phase B wires every paragraph picker through
+    /// this; Phase A defines the helper so callers
+    /// can land in B without a parallel rewrite.
+    ///
+    /// Refuses to pin the same paragraph that's
+    /// already primary — showing the same body in
+    /// both panes is never useful and would
+    /// surprise the user.
+    #[allow(dead_code)]
+    pub(super) fn pin_secondary_by_uuid(
+        &mut self,
+        id: uuid::Uuid,
+    ) -> std::result::Result<(), String> {
+        if self.opened.as_ref().is_some_and(|d| d.id == id) {
+            return Err(
+                "split view: that paragraph is already in the primary pane".into(),
+            );
+        }
+        // Reuse the existing similar-mode loader; it
+        // already looks up the node + constructs an
+        // OpenedDoc with full textarea + cursor-memory
+        // + style discipline.  Rejects non-paragraph
+        // nodes and missing-from-hierarchy IDs.
+        self.load_secondary_paragraph(id)
+    }
+
+    /// 1.2.12+ Phase A — clear the secondary slot.
+    /// Used by Phase B's picker dispatch when the
+    /// user explicitly drops the secondary; also a
+    /// natural undo for "I pinned the wrong paragraph".
+    /// Currently unused; Phase B adds the chord.
+    #[allow(dead_code)]
+    pub(super) fn drop_secondary(&mut self) {
+        self.secondary = None;
+        self.secondary_focused = false;
+    }
+
     /// 1.2.12+ Phase C — short label for the AI pane
     /// title decoration.  Format:
     ///   `<lang> (<mode-shorthand>)`
@@ -4608,6 +4699,22 @@ pub(super) enum PromptResolveSource {
     Book,
     Hjson,
     Embedded,
+}
+
+/// 1.2.12+ Phase A — which slot does a picker target.
+/// Captured at picker-open time (see Phase 0 plan §3) so
+/// Tabbing while the picker is up can't reroute the
+/// pick.  `Primary` is the default; `Secondary` is set
+/// when a picker is opened from inside split-view with
+/// the right pane focused.  `#[allow(dead_code)]` on
+/// `Secondary` is intentional for Phase A — no caller
+/// reads it yet; Phase B wires the pickers through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum PaneTarget {
+    #[default]
+    Primary,
+    #[allow(dead_code)]
+    Secondary,
 }
 
 /// 1.2.12+ — true when the node's `lang:<code>` tag matches
@@ -7061,6 +7168,7 @@ impl App {
             }
             A::ToggleSplit => self.toggle_split(),
             A::AcceptSplitSnapshot => self.accept_split_snapshot(),
+            A::ToggleSplitView => self.toggle_split_view(),
             A::OpenSnapshotPicker => self.open_snapshot_picker(),
             A::GrammarCheck => self.start_grammar_check(),
             A::CycleAiMode => self.cycle_ai_mode(),
@@ -15151,6 +15259,58 @@ impl App {
             return;
         }
 
+        // 1.2.12+ Phase A — fullscreen two-paragraph
+        // split-view.  Layout: 50/50 horizontal editor
+        // panes; AI prompt at the bottom; one status
+        // line.  Tree, search bar, and AI response pane
+        // are hidden.  Renders only when `split_view`
+        // is on AND the secondary slot is populated;
+        // otherwise the user gets the standard layout
+        // and a hint in the status bar (set by
+        // `toggle_split_view`) telling them to pick a
+        // paragraph for the right pane.  Phase B wires
+        // pickers; Phase C adds per-pane chrome (focus
+        // highlights, gutter parity).
+        if self.split_view && self.secondary.is_some() {
+            let outer = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(3),
+                    Constraint::Length(1),
+                ])
+                .split(f.area());
+            let top = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(50),
+                    Constraint::Percentage(50),
+                ])
+                .split(outer[0]);
+            self.layout_search = Rect::default();
+            self.layout_tree = Rect::default();
+            self.layout_editor = top[0];
+            self.layout_ai = top[1];
+            self.layout_ai_prompt = outer[1];
+            // Left pane: primary editor (unchanged
+            // chrome).  Right pane: today we reuse the
+            // similar-mode secondary-editor renderer
+            // (`draw_secondary`) which already exists
+            // for Ctrl+V S — it knows how to paint a
+            // second OpenedDoc against an arbitrary
+            // Rect.  Phase C will replace this with a
+            // full-chrome variant; Phase A reuses to
+            // ship the smoke-test surface.
+            self.draw_editor(f, top[0]);
+            self.draw_secondary_editor(f, top[1]);
+            self.draw_ai_prompt(f, outer[1]);
+            self.draw_status(f, outer[2]);
+            if !matches!(self.modal, Modal::None) {
+                self.draw_modal(f, f.area());
+            }
+            return;
+        }
+
         if self.ai_fullscreen {
             // Layout: most of the screen split 50/50 (AI pane | chat
             // history); AI prompt at the bottom; one status line.
@@ -18095,5 +18255,68 @@ mod tests_node_lang {
     fn node_lang_matches_untagged_pass_matches_untagged_nodes() {
         let n = paragraph_with_tags(vec!["draft".into()]);
         assert!(node_lang_matches(&n, None));
+    }
+}
+
+#[cfg(test)]
+mod tests_split_view {
+    use super::*;
+
+    /// 1.2.12+ Phase A — the binding-table audit.
+    /// Locks the guarantee that F4 and Ctrl+F4 keep
+    /// their existing meanings.  If a future commit
+    /// rebinds either, this test fails loud.
+    #[test]
+    fn existing_f4_and_ctrl_f4_bindings_remain_untouched() {
+        use crate::tui::keybind;
+        let table = keybind::KeyBindings::defaults();
+        // F4 plain → ToggleSplit in editor scope.
+        let f4 = table
+            .top_level
+            .iter()
+            .find(|e| {
+                e.chord.code == crossterm::event::KeyCode::F(4)
+                    && e.chord.modifiers == crossterm::event::KeyModifiers::NONE
+            })
+            .expect("F4 must still bind to something");
+        assert!(
+            matches!(f4.action, keybind::Action::ToggleSplit),
+            "F4 must still mean ToggleSplit; Phase A may not rebind it",
+        );
+        // Ctrl+F4 → AcceptSplitSnapshot.
+        let ctrl_f4 = table
+            .top_level
+            .iter()
+            .find(|e| {
+                e.chord.code == crossterm::event::KeyCode::F(4)
+                    && e.chord.modifiers == crossterm::event::KeyModifiers::CONTROL
+            })
+            .expect("Ctrl+F4 must still bind to something");
+        assert!(
+            matches!(ctrl_f4.action, keybind::Action::AcceptSplitSnapshot),
+            "Ctrl+F4 must still mean AcceptSplitSnapshot",
+        );
+        // Shift+F4 → ToggleSplitView (the new chord).
+        let shift_f4 = table
+            .top_level
+            .iter()
+            .find(|e| {
+                e.chord.code == crossterm::event::KeyCode::F(4)
+                    && e.chord.modifiers == crossterm::event::KeyModifiers::SHIFT
+            })
+            .expect("Shift+F4 must bind to ToggleSplitView");
+        assert!(
+            matches!(shift_f4.action, keybind::Action::ToggleSplitView),
+            "Shift+F4 must map to ToggleSplitView",
+        );
+    }
+
+    /// 1.2.12+ Phase A — `PaneTarget::default()` is
+    /// `Primary`.  Locks the contract that picker
+    /// callers default to the primary slot when no
+    /// explicit target is set.
+    #[test]
+    fn pane_target_defaults_to_primary() {
+        assert_eq!(PaneTarget::default(), PaneTarget::Primary);
     }
 }
