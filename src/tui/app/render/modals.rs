@@ -2339,7 +2339,9 @@ impl super::super::App {
             .collect();
         f.render_widget(Paragraph::new(lines), body_rect);
 
-        let hint = " ↑↓ select · Enter opens · Esc closes ";
+        // 1.2.12+ Phase B — Shift+Enter pins to the
+        // split-view secondary pane.
+        let hint = " ↑↓ select · Enter opens · Shift+Enter pins to split · Esc closes ";
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 hint,
@@ -2651,7 +2653,7 @@ impl super::super::App {
             " (empty) · Esc close ".to_string()
         } else {
             format!(
-                " ↑↓ select · Enter opens · D removes bookmark · Esc closes    ({}/{}) ",
+                " ↑↓ select · Enter opens · Shift+Enter pins to split · D removes bookmark · Esc closes    ({}/{}) ",
                 cursor + 1,
                 entries.len()
             )

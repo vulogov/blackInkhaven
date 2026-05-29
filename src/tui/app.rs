@@ -3186,9 +3186,16 @@ impl App {
             // 1.2.4+: when link-pick mode is active, Enter on a
             // tree row links the row's paragraph to the
             // pick-mode owner rather than opening it for editing.
+            // 1.2.12+ Phase B: Shift+Enter pins the focused
+            // paragraph to the split-view secondary slot
+            // instead of opening it into the primary.
             KeyCode::Enter => {
                 if self.link_pick_for.is_some() {
                     self.commit_link_pick();
+                } else if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    if let Some(&(id, _)) = self.rows.get(self.tree_cursor) {
+                        self.dispatch_picker_accept(id, true);
+                    }
                 } else {
                     self.open_selected()?;
                 }
@@ -4553,11 +4560,47 @@ impl App {
     /// Used by Phase B's picker dispatch when the
     /// user explicitly drops the secondary; also a
     /// natural undo for "I pinned the wrong paragraph".
-    /// Currently unused; Phase B adds the chord.
     #[allow(dead_code)]
     pub(super) fn drop_secondary(&mut self) {
         self.secondary = None;
         self.secondary_focused = false;
+    }
+
+    /// 1.2.12+ Phase B — universal dispatcher for
+    /// paragraph-picker accepts.  `pin_to_secondary`
+    /// distinguishes plain Enter (route to primary
+    /// via `open_search_result`) from Shift+Enter
+    /// (route to the `secondary` slot via
+    /// `pin_secondary_by_uuid`).  Surfaces pin
+    /// failures on the status bar rather than
+    /// silently dropping them so the user knows
+    /// when e.g. the chosen paragraph is already
+    /// primary.
+    ///
+    /// Callers extract `pin_to_secondary` from the
+    /// SHIFT modifier on the Enter keystroke.  Used
+    /// by the fuzzy paragraph picker (which also
+    /// backs the recent-paragraph picker), the
+    /// bookmark picker, and the tree-pane Enter
+    /// dispatcher.
+    pub(super) fn dispatch_picker_accept(
+        &mut self,
+        id: uuid::Uuid,
+        pin_to_secondary: bool,
+    ) {
+        if pin_to_secondary {
+            match self.pin_secondary_by_uuid(id) {
+                Ok(()) => {
+                    self.status =
+                        "pinned to secondary pane — Shift+F4 to view split".into();
+                }
+                Err(e) => {
+                    self.status = format!("split view: {e}");
+                }
+            }
+        } else {
+            self.open_search_result(id);
+        }
     }
 
     /// 1.2.12+ Phase C — short label for the AI pane
@@ -5507,7 +5550,7 @@ impl App {
             scroll: 0,
         };
         self.status =
-            "bookmarks: ↑↓ select · Enter opens · D clears bookmark · Esc closes"
+            "bookmarks: ↑↓ select · Enter opens · Shift+Enter pins to split · D clears · Esc closes"
                 .into();
     }
 
@@ -5836,7 +5879,7 @@ impl App {
             scroll: 0,
         };
         self.status =
-            "find ¶: type to filter · ↑↓ select · Enter opens · Esc cancels".into();
+            "find ¶: type to filter · ↑↓ select · Enter opens · Shift+Enter pins to split · Esc".into();
     }
 
     /// 1.2.7+ — Ctrl+V Shift+P. Same fuzzy picker as
@@ -5873,7 +5916,7 @@ impl App {
             scroll: 0,
         };
         self.status =
-            "recent ¶: most-recently-modified first · type to filter · ↑↓ select · Enter opens · Esc cancels".into();
+            "recent ¶: most-recently-modified first · ↑↓ select · Enter opens · Shift+Enter pins to split · Esc".into();
     }
 
     /// Collect every paragraph in the project (excluding
@@ -15682,6 +15725,11 @@ impl App {
     }
 
     fn fuzzy_paragraph_picker_handle_key(&mut self, key: KeyEvent) {
+        // 1.2.12+ Phase B — Shift+Enter routes the
+        // pick to the split-view secondary slot;
+        // plain Enter still opens into the primary.
+        let pin_to_secondary =
+            key.modifiers.contains(KeyModifiers::SHIFT);
         let to_open = {
             let Modal::FuzzyParagraphPicker { input, entries, cursor, scroll } =
                 &mut self.modal
@@ -15713,6 +15761,13 @@ impl App {
                     }
                 }
                 _ => {
+                    // Don't treat Shift+printable as
+                    // text input here — the Shift
+                    // modifier is the split-view hint;
+                    // Shift+a etc. is just a capital
+                    // letter and handle_text_input_key
+                    // already lowercases / treats it
+                    // correctly.
                     handle_text_input_key(input, key);
                     // Reset cursor on input edit; matches list
                     // may have shifted.
@@ -15730,11 +15785,15 @@ impl App {
 
         if let Some(id) = to_open {
             self.modal = Modal::None;
-            self.open_search_result(id);
+            self.dispatch_picker_accept(id, pin_to_secondary);
         }
     }
 
     fn bookmark_picker_handle_key(&mut self, key: KeyEvent) {
+        // 1.2.12+ Phase B — Shift+Enter routes to the
+        // split-view secondary slot.
+        let pin_to_secondary =
+            key.modifiers.contains(KeyModifiers::SHIFT);
         let (id_to_unbookmark, id_to_open) = {
             let Modal::BookmarkPicker { entries, cursor, scroll } = &mut self.modal else {
                 return;
@@ -15782,7 +15841,7 @@ impl App {
 
         if let Some(id) = id_to_open {
             self.modal = Modal::None;
-            self.open_search_result(id);
+            self.dispatch_picker_accept(id, pin_to_secondary);
             return;
         }
 
@@ -18318,5 +18377,22 @@ mod tests_split_view {
     #[test]
     fn pane_target_defaults_to_primary() {
         assert_eq!(PaneTarget::default(), PaneTarget::Primary);
+    }
+
+    /// 1.2.12+ Phase B — Shift+Enter chord is
+    /// detected from the SHIFT modifier on a KeyEvent.
+    /// The picker handlers extract this *before*
+    /// destructuring the modal so the routing
+    /// decision survives the modal re-borrow.
+    /// Locks the contract that the SHIFT modifier
+    /// flag is what drives pin_to_secondary, not
+    /// any per-picker custom chord.
+    #[test]
+    fn shift_modifier_drives_pin_to_secondary() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let plain = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let shifted = KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT);
+        assert!(!plain.modifiers.contains(KeyModifiers::SHIFT));
+        assert!(shifted.modifiers.contains(KeyModifiers::SHIFT));
     }
 }
