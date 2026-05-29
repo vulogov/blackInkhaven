@@ -15429,6 +15429,19 @@ impl App {
         // Enter).  Without this, pressing Shift+F4 on
         // a fresh session looked like a no-op.
         if self.split_view {
+            // 1.2.12+ Phase D follow-up — tree pane
+            // stays visible in split-view so the user
+            // can navigate the hierarchy and pin
+            // paragraphs to the right pane via the
+            // existing tree-pane `Shift+Enter` chord.
+            // The original Phase 0 plan hid the tree;
+            // that turned out to confuse users —
+            // they couldn't see how to populate the
+            // secondary slot.  AI response pane
+            // stays hidden (the two editors need
+            // the room).  AI prompt input still
+            // spans the bottom so `Ctrl+I` works
+            // from either editor pane.
             let outer = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
@@ -15437,23 +15450,28 @@ impl App {
                     Constraint::Length(1),
                 ])
                 .split(f.area());
+            // Tree pane: same fixed width the
+            // standard layout uses (30 cols by
+            // default).  Editors share the rest 50/50.
             let top = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
+                    Constraint::Length(30),
                     Constraint::Percentage(50),
                     Constraint::Percentage(50),
                 ])
                 .split(outer[0]);
             self.layout_search = Rect::default();
-            self.layout_tree = Rect::default();
-            self.layout_editor = top[0];
-            self.layout_ai = top[1];
+            self.layout_tree = top[0];
+            self.layout_editor = top[1];
+            self.layout_ai = top[2];
             self.layout_ai_prompt = outer[1];
-            self.draw_editor(f, top[0]);
+            self.draw_tree(f, top[0]);
+            self.draw_editor(f, top[1]);
             if self.secondary.is_some() {
-                self.draw_secondary_editor(f, top[1]);
+                self.draw_secondary_editor(f, top[2]);
             } else {
-                self.draw_split_placeholder(f, top[1]);
+                self.draw_split_placeholder(f, top[2]);
             }
             self.draw_ai_prompt(f, outer[1]);
             self.draw_status(f, outer[2]);

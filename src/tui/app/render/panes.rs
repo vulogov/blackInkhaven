@@ -162,9 +162,16 @@ impl super::super::App {
             )),
             Line::from(""),
             Line::from(vec![
+                Span::styled("    Tree pane", key),
+                Span::styled(
+                    " (left): navigate, then Shift+Enter pins",
+                    body,
+                ),
+            ]),
+            Line::from(vec![
                 Span::styled("    Ctrl+V P", key),
                 Span::styled(
-                    "       fuzzy paragraph picker — Shift+Enter pins",
+                    "       fuzzy picker — Shift+Enter pins",
                     body,
                 ),
             ]),
@@ -178,27 +185,20 @@ impl super::super::App {
             Line::from(vec![
                 Span::styled("    Ctrl+V M", key),
                 Span::styled(
-                    "       bookmark picker — Shift+Enter pins",
+                    "       bookmarks — Shift+Enter pins",
                     body,
                 ),
             ]),
             Line::from(vec![
                 Span::styled("    Ctrl+V Shift+B", key),
                 Span::styled(
-                    " sibling-book lookup — same slug, other book",
-                    body,
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("    Tree pane:  Shift+Enter", key),
-                Span::styled(
-                    "  on a paragraph row pins it",
+                    " sibling-book (same slug, other book)",
                     body,
                 ),
             ]),
             Line::from(""),
             Line::from(Span::styled(
-                "  Tab swaps focus between left and right.",
+                "  Tab swaps focus between editor panes.",
                 dim,
             )),
             Line::from(Span::styled(
