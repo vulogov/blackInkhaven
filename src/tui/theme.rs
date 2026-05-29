@@ -4,7 +4,7 @@
 //! shipped Catppuccin Mocha defaults — the TUI never panics on a malformed
 //! theme block.
 
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 
 use crate::config::{color_or, ThemeConfig};
 
@@ -44,6 +44,22 @@ pub struct Theme {
     /// so the three overlays stay distinguishable
     /// when adjacent.
     pub style_warning_show_dont_tell_fg: Color,
+    /// 1.2.12+ — per-detector style modifier for
+    /// the three style-warning overlays.  Defaults to
+    /// `Modifier::UNDERLINED` for all three
+    /// (preserves the 1.2.9-1.2.11 behaviour) but
+    /// users can override via the corresponding
+    /// `theme.style_warning_*_modifier` HJSON fields
+    /// — `"underline"`, `"bold"`, `"dim"`,
+    /// `"reversed"`, `"none"`, or `"+"`-combined
+    /// like `"underline+bold"`.  The teal underline
+    /// reads differently on different terminal
+    /// palettes; this gives users the escape hatch
+    /// without forcing them to learn ratatui's
+    /// modifier API.
+    pub style_warning_filter_word_modifier: Modifier,
+    pub style_warning_repeated_phrase_modifier: Modifier,
+    pub style_warning_show_dont_tell_modifier: Modifier,
     /// 1.2.9+ — POV / character chip on the status
     /// bar (Ctrl+B Shift+P).  Explicit RGB defaults
     /// so the chip stays readable across terminal
@@ -136,6 +152,18 @@ impl Theme {
                 // three overlays stay visually separate
                 // when adjacent.
                 Color::Rgb(0x94, 0xe2, 0xd5),
+            ),
+            // 1.2.12+ — per-detector modifier overrides;
+            // default is UNDERLINED for all three (1.2.9
+            // baseline).  See `parse_style_modifier`.
+            style_warning_filter_word_modifier: parse_style_modifier(
+                &cfg.style_warning_filter_word_modifier,
+            ),
+            style_warning_repeated_phrase_modifier: parse_style_modifier(
+                &cfg.style_warning_repeated_phrase_modifier,
+            ),
+            style_warning_show_dont_tell_modifier: parse_style_modifier(
+                &cfg.style_warning_show_dont_tell_modifier,
             ),
             pov_chip_bg: color_or(
                 &cfg.pov_chip_bg,
@@ -256,5 +284,102 @@ impl Theme {
             other => return Err(format!("unknown theme field `{other}`")),
         }
         Ok(())
+    }
+}
+
+/// 1.2.12+ — parse the HJSON string form of a
+/// `Modifier` chord into a ratatui `Modifier`.
+/// Recognised tokens (case-insensitive):
+///
+///   * `none`      → `Modifier::empty()`
+///   * `underline` → `Modifier::UNDERLINED`
+///   * `bold`      → `Modifier::BOLD`
+///   * `dim`       → `Modifier::DIM`
+///   * `reversed`  → `Modifier::REVERSED`
+///   * `italic`    → `Modifier::ITALIC`
+///   * `<empty>` or unknown → default
+///     `Modifier::UNDERLINED` (preserves
+///     1.2.9-1.2.11 behaviour).
+///
+/// Multiple modifiers can be combined with `+`:
+/// `underline+bold` lights up both bits.
+pub fn parse_style_modifier(raw: &str) -> Modifier {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Modifier::UNDERLINED;
+    }
+    let mut acc = Modifier::empty();
+    let mut saw_known = false;
+    for token in trimmed.split('+') {
+        let lc = token.trim().to_lowercase();
+        match lc.as_str() {
+            "none" => {
+                saw_known = true;
+            }
+            "underline" | "underlined" => {
+                acc |= Modifier::UNDERLINED;
+                saw_known = true;
+            }
+            "bold" => {
+                acc |= Modifier::BOLD;
+                saw_known = true;
+            }
+            "dim" => {
+                acc |= Modifier::DIM;
+                saw_known = true;
+            }
+            "reversed" | "reverse" => {
+                acc |= Modifier::REVERSED;
+                saw_known = true;
+            }
+            "italic" => {
+                acc |= Modifier::ITALIC;
+                saw_known = true;
+            }
+            _ => {}
+        }
+    }
+    if saw_known { acc } else { Modifier::UNDERLINED }
+}
+
+#[cfg(test)]
+mod tests_style_modifier {
+    use super::*;
+
+    #[test]
+    fn empty_input_defaults_to_underlined() {
+        assert_eq!(parse_style_modifier(""), Modifier::UNDERLINED);
+        assert_eq!(parse_style_modifier("   "), Modifier::UNDERLINED);
+    }
+
+    #[test]
+    fn unknown_token_defaults_to_underlined() {
+        assert_eq!(parse_style_modifier("rainbow"), Modifier::UNDERLINED);
+    }
+
+    #[test]
+    fn each_single_token_works_case_insensitively() {
+        assert_eq!(parse_style_modifier("bold"), Modifier::BOLD);
+        assert_eq!(parse_style_modifier("BOLD"), Modifier::BOLD);
+        assert_eq!(parse_style_modifier("Dim"), Modifier::DIM);
+        assert_eq!(parse_style_modifier("reversed"), Modifier::REVERSED);
+        assert_eq!(parse_style_modifier("italic"), Modifier::ITALIC);
+        assert_eq!(parse_style_modifier("underline"), Modifier::UNDERLINED);
+    }
+
+    #[test]
+    fn none_clears_modifiers() {
+        assert_eq!(parse_style_modifier("none"), Modifier::empty());
+    }
+
+    #[test]
+    fn plus_combinator_unions_modifiers() {
+        let m = parse_style_modifier("underline+bold");
+        assert!(m.contains(Modifier::UNDERLINED));
+        assert!(m.contains(Modifier::BOLD));
+        let m = parse_style_modifier("dim+italic+reversed");
+        assert!(m.contains(Modifier::DIM));
+        assert!(m.contains(Modifier::ITALIC));
+        assert!(m.contains(Modifier::REVERSED));
     }
 }

@@ -422,11 +422,42 @@ impl super::App {
             return Ok(());
         };
         let abs = self.layout.root.join(rel);
+        // 1.2.12+ Phase D follow-up — fall back to bdslib
+        // (`store.get_content`) when the on-disk file is
+        // missing.  Some paragraphs live only in the
+        // document store (prompts-editor TUI writes
+        // bdslib without disk; some import flows do
+        // similar).  We'd rather show bdslib content
+        // than refuse to open the paragraph.
         let body = match std::fs::read_to_string(&abs) {
             Ok(b) => b,
-            Err(e) => {
-                self.status = format!("read {}: {e}", abs.display());
-                return Ok(());
+            Err(disk_err) => {
+                match self.store.get_content(node.id) {
+                    Ok(Some(bytes)) => match String::from_utf8(bytes) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            self.status = format!(
+                                "open `{}`: bdslib content isn't UTF-8: {e}",
+                                node.title,
+                            );
+                            return Ok(());
+                        }
+                    },
+                    Ok(None) => {
+                        self.status = format!(
+                            "read {}: {disk_err} · no bdslib record either",
+                            abs.display(),
+                        );
+                        return Ok(());
+                    }
+                    Err(bdslib_err) => {
+                        self.status = format!(
+                            "read {}: {disk_err} · bdslib lookup failed: {bdslib_err}",
+                            abs.display(),
+                        );
+                        return Ok(());
+                    }
+                }
             }
         };
 
@@ -786,8 +817,43 @@ impl super::App {
             .as_ref()
             .ok_or_else(|| format!("paragraph `{}` has no file on disk", node.title))?;
         let abs = self.layout.root.join(rel);
-        let body = std::fs::read_to_string(&abs)
-            .map_err(|e| format!("read {}: {e}", abs.display()))?;
+        // 1.2.12+ Phase D follow-up — fall back to bdslib
+        // (`store.get_content`) when the on-disk file is
+        // missing.  Some paragraphs live only in the
+        // document store: the prompts-editor TUI writes
+        // to bdslib without touching disk, and the
+        // `inkhaven import-*` flows can do the same.  The
+        // primary `load_paragraph` errors on missing
+        // files; for the secondary slot we'd rather show
+        // bdslib content than block the pin entirely.
+        // Same fallback the concordance system-book
+        // filter validated.
+        let body = match std::fs::read_to_string(&abs) {
+            Ok(b) => b,
+            Err(_) => {
+                let bytes = self
+                    .store
+                    .get_content(node.id)
+                    .map_err(|e| {
+                        format!(
+                            "read {}: missing on disk, and bdslib lookup failed: {e}",
+                            abs.display(),
+                        )
+                    })?;
+                let bytes = bytes.ok_or_else(|| {
+                    format!(
+                        "read {}: missing on disk, no bdslib record either",
+                        abs.display(),
+                    )
+                })?;
+                String::from_utf8(bytes).map_err(|e| {
+                    format!(
+                        "bdslib content for `{}` is not valid UTF-8: {e}",
+                        node.title,
+                    )
+                })?
+            }
+        };
         let lines = body_to_lines(&body);
         let saved_lines = lines.clone();
         let mut textarea = TextArea::new(lines);

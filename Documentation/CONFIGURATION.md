@@ -269,6 +269,17 @@ theme: {
   // Grammar-check change overlay
   grammar_change_fg: "#f38ba8"
 
+  // 1.2.12+ — per-detector style-warning modifier
+  // overrides.  Empty string maps to "underline"
+  // (the 1.2.9-1.2.11 hardcoded default).  Accepts
+  // "underline", "bold", "dim", "reversed",
+  // "italic", "none", or "+"-combined like
+  // "underline+bold".  Useful on terminal palettes
+  // where the teal underline reads faint.
+  style_warning_filter_word_modifier:       ""
+  style_warning_repeated_phrase_modifier:   ""
+  style_warning_show_dont_tell_modifier:    ""
+
   // Typst syntax
   syntax_heading:    "#cba6f7"
   syntax_bold:       "#f9e2af"

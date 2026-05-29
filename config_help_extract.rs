@@ -8,15 +8,26 @@
 //!
 //! Special handling:
 //!
-//!   * `Option<T>` / `Vec<T>` / `HashMap<K, V>` — the
+//!   * Transparent single-arg wrappers: `Option<T>`,
+//!     `Vec<T>`, `Box<T>`, `Arc<T>`, `Rc<T>` — the
 //!     field itself emits an entry (using the
 //!     wrapper's doc-comment), and the walk
-//!     descends into `T` (or `V`) when it's a
-//!     known struct in the file.  For
-//!     `HashMap<String, T>`, the descended path
-//!     uses `<entry>` as a placeholder segment;
-//!     the runtime lookup substitutes it when
-//!     querying paths under known map paths.
+//!     descends into `T`.  Nested wrappers chain:
+//!     `Option<Vec<Foo>>` → descends to `Foo`.
+//!
+//!   * Map wrappers: `HashMap<K, V>`, `BTreeMap<K, V>`
+//!     — descend on `V`; the descended path uses
+//!     `<entry>` as a placeholder segment; the
+//!     runtime lookup substitutes it when querying
+//!     paths under known map paths.  Nested maps
+//!     (`HashMap<K, HashMap<K2, V>>`) preserve the
+//!     `is_map = true` marker so the walker drops
+//!     the right `<entry>` placeholder.
+//!
+//!   * Composed wrappers: `Option<HashMap<K, V>>` /
+//!     `Option<Vec<HashMap<K, V>>>` ride the
+//!     recursive descent — the inner `is_map = true`
+//!     bubbles up through the Option/Vec layers.
 //!
 //!   * `#[serde(rename = "x")]` — the JSON key
 //!     used at runtime is `x`, not the Rust field
@@ -239,12 +250,23 @@ fn extract_serde_rename(attrs: &[syn::Attribute]) -> Option<String> {
 /// Pull the structural descent type out of a field
 /// `Type`.  Returns `(inner_type_ident, is_map)`.
 ///
-///   * `Foo`                  → ("Foo", false)
-///   * `Option<Foo>`          → ("Foo", false)
-///   * `Vec<Foo>`             → ("Foo", false)
-///   * `HashMap<String, Foo>` → ("Foo", true)
-///   * `BTreeMap<String, Foo>`→ ("Foo", true)
-///   * Anything else          → ("", false)
+///   * `Foo`                          → ("Foo", false)
+///   * `Option<Foo>`                  → ("Foo", false)
+///   * `Vec<Foo>`                     → ("Foo", false)
+///   * `Box<Foo>`                     → ("Foo", false)
+///   * `Arc<Foo>` / `Rc<Foo>`         → ("Foo", false)
+///   * `HashMap<String, Foo>`         → ("Foo", true)
+///   * `BTreeMap<String, Foo>`        → ("Foo", true)
+///   * `Option<HashMap<K, Foo>>`      → ("Foo", true)
+///   * `Option<Vec<HashMap<K, Foo>>>` → ("Foo", true)
+///   * `HashMap<K, HashMap<K2, Foo>>` → ("Foo", true)
+///   * Anything else                  → ("", false)
+///
+/// The `is_map` flag stays `true` whenever a map
+/// appears at *any* level of the descent — that
+/// way nested-map wrappers ride the same map-aware
+/// `<entry>` path-segment treatment a single-level
+/// `HashMap<K, V>` already gets.
 fn type_descent(ty: &syn::Type) -> (String, bool) {
     let syn::Type::Path(tp) = ty else {
         return (String::new(), false);
@@ -254,18 +276,31 @@ fn type_descent(ty: &syn::Type) -> (String, bool) {
     };
     let head = seg.ident.to_string();
     match (head.as_str(), &seg.arguments) {
+        // Transparent single-arg wrappers — recurse on
+        // the inner type and bubble its `(t, m)` up.
         ("Option", syn::PathArguments::AngleBracketed(args))
-        | ("Vec", syn::PathArguments::AngleBracketed(args)) => {
+        | ("Vec", syn::PathArguments::AngleBracketed(args))
+        | ("Box", syn::PathArguments::AngleBracketed(args))
+        | ("Arc", syn::PathArguments::AngleBracketed(args))
+        | ("Rc", syn::PathArguments::AngleBracketed(args)) => {
             if let Some(syn::GenericArgument::Type(inner)) = args.args.last() {
                 let (t, m) = type_descent(inner);
                 return (t, m);
             }
             (String::new(), false)
         }
+        // Map wrappers — force `is_map = true` AND
+        // preserve the inner map flag if the value
+        // type is itself a map (so deeply-nested
+        // maps still descend correctly through the
+        // map-aware walker).  Previously this arm
+        // discarded the inner `is_map`, so
+        // `HashMap<K, HashMap<K2, V>>` lost the
+        // marker for the inner level.
         ("HashMap", syn::PathArguments::AngleBracketed(args))
         | ("BTreeMap", syn::PathArguments::AngleBracketed(args)) => {
             if let Some(syn::GenericArgument::Type(inner)) = args.args.last() {
-                let (t, _) = type_descent(inner);
+                let (t, _m_inner) = type_descent(inner);
                 return (t, true);
             }
             (String::new(), true)

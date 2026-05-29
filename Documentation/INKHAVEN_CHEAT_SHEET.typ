@@ -1,9 +1,9 @@
-// Inkhaven 1.2.6 — printable cheat sheet
+// Inkhaven 1.2.12 — printable cheat sheet
 // Compile: `typst compile Documentation/INKHAVEN_CHEAT_SHEET.typ`
 // Or in the TUI: open this file via F3 then `Ctrl+B B` to build.
 
 #set document(
-  title: "Inkhaven 1.2.6 — Cheat Sheet",
+  title: "Inkhaven 1.2.12 — Cheat Sheet",
   author: "Inkhaven",
 )
 #set page(
@@ -11,7 +11,7 @@
   margin: (top: 1.2cm, bottom: 1.2cm, left: 1.2cm, right: 1.2cm),
   footer: context [
     #set text(7pt, fill: luma(120))
-    Inkhaven 1.2.6 cheat sheet  ·  page #counter(page).display() / #counter(page).final().first()
+    Inkhaven 1.2.12 cheat sheet  ·  page #counter(page).display() / #counter(page).final().first()
   ],
 )
 #set text(font: "New Computer Modern", size: 8pt)
@@ -46,7 +46,7 @@
   ..rows.pos().flatten(),
 )
 
-= Inkhaven 1.2.6 — Cheat Sheet
+= Inkhaven 1.2.12 — Cheat Sheet
 
 A two-page reference. For workflows see
 `Documentation/Tutorials/` and the *Book of Inkhaven* at
@@ -100,6 +100,17 @@ A two-page reference. For workflows see
   row([↑ / ↓], [Reorder cursor row]),
   row([\]],   [(1.2.5) Tag picker for open ¶]),
   row([\}],   [(1.2.5) Search-by-tag picker]),
+  row([U],   [(1.2.7) Undo last paragraph delete]),
+  row([0],   [(1.2.8) Full-screen HJSON editor for inkhaven.hjson]),
+  row([Shift+G], [(1.2.9) Writing-streak heatmap (last 91 days)]),
+  row([Shift+F], [(1.2.9) Toggle style-warning overlays]),
+  row([< / >], [(1.2.9) Prev / next scene-break line]),
+  row([Shift+H], [(1.2.9) Sentence-rhythm gauge]),
+  row([Shift+L], [(1.2.9) Concordance modal · Enter jumps to source (1.2.11)]),
+  row([Shift+P], [(1.2.9) POV / character chip toggle]),
+  row([Shift+T], [(1.2.9) AI show-don't-tell scan]),
+  row([Shift+M], [(1.2.11) AI sentence-rhythm rewrite · auto-diff · snapshot on accept]),
+  row([Shift+N], [(1.2.12) Toggle prompt-language mode (book ↔ paragraph-detected)]),
 )
 
 Inside the tag picker (`Ctrl+B ]` / `Ctrl+B }`):
@@ -132,6 +143,9 @@ Inside the tag picker (`Ctrl+B ]` / `Ctrl+B }`):
   row([e],   [(1.2.6) Event picker — chronological list]),
   row([Shift+E], [(1.2.6) New event (opens timeline + prompts for title)]),
   row([Shift+I], [(1.2.6) Edit open event's start | end | track]),
+  row([Shift+P], [(1.2.7) Recent paragraphs picker (mod-time desc)]),
+  row([Shift+U], [(1.2.8) Kill-ring picker (deleted-paragraph history)]),
+  row([Shift+B], [(1.2.12) Sibling-book lookup — pin same-slug ¶ from other book]),
   row([Esc], [Cancel chord]),
 )
 
@@ -193,7 +207,9 @@ Inside the tag picker (`Ctrl+B ]` / `Ctrl+B }`):
   row([F1],  [RAG over Help book]),
   row([F2],  [Rename modal]),
   row([F3],  [File picker (import / load)]),
-  row([F4],  [Toggle split-edit]),
+  row([F4],  [Toggle split-edit (same-paragraph snapshot)]),
+  row([Ctrl+F4], [Accept snapshot into live buffer]),
+  row([Shift+F4], [(1.2.12) Toggle fullscreen split-view (two paragraphs)]),
   row([F5],  [Snapshot (1.2.6: with annotation prompt)]),
   row([F6],  [Snapshot picker]),
   row([F7],  [Grammar check]),
@@ -255,6 +271,24 @@ current-line highlight.
 
 (1.2.6) Annotated snapshots show an italic-cyan `✎`-prefixed
 second line beneath each row.
+
+== Split view (Shift+F4) — 1.2.12
+
+Three-column layout: tree pane · primary editor ·
+secondary editor.  AI prompt input still spans the
+bottom; AI response pane is hidden.
+
+#kv-table(
+  row([Shift+F4], [Toggle fullscreen split-view]),
+  row([Shift+Enter], [Pin focused paragraph to secondary pane (universal modifier on tree-Enter, Ctrl+V P / M / Shift+P, Ctrl+V Shift+B)]),
+  row([Ctrl+V Shift+B], [Auto-pin same-slug ¶ from another book (single match) or open picker (multi)]),
+  row([Tab],   [Swap focus between primary and secondary editors]),
+  row([F12],   [Critique-compare prompt fires when both panes hold distinct paragraphs]),
+)
+
+Exiting Shift+F4 clears the secondary slot so the
+standard layout's AI pane reappears.  Re-pin via any
+of the above on next Shift+F4.
 
 == AI prompt (Ctrl+I)
 

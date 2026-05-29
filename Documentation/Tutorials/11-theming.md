@@ -376,3 +376,31 @@ override them.)
   surface in the theme (border state colours, current-line, etc.).
 - Build your own palette: pick a base colour from a palette generator
   like [`coolors.co`](https://coolors.co) and fill out the fields.
+
+## 1.2.12 additions
+
+- **Per-detector style-warning modifier override.**
+  The three style-warning overlays (`FilterWord`,
+  `RepeatedPhrase`, `ShowDontTell`) used to
+  hard-code `UNDERLINED`.  On some terminal
+  palettes the teal underline reads faint or
+  doesn't read at all.  Three new HJSON knobs let
+  you dial it up — or off:
+
+  ```hjson
+  theme: {
+    style_warning_filter_word_modifier:       "bold"
+    style_warning_repeated_phrase_modifier:   "underline+bold"
+    style_warning_show_dont_tell_modifier:    "reversed"
+  }
+  ```
+
+  Recognised values: `"underline"` (the default),
+  `"bold"`, `"dim"`, `"reversed"`, `"italic"`,
+  `"none"`, or `+`-combined chords like
+  `"underline+bold"`.  Empty / unrecognised maps
+  to `"underline"` so configs missing the field
+  preserve the 1.2.9-1.2.11 baseline behaviour.
+  Lives next to the `_fg` colour knobs in the
+  `theme` stanza for ergonomic placement —
+  appearance toggles cluster together.
