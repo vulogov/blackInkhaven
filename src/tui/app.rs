@@ -4505,19 +4505,46 @@ impl App {
     }
 
     /// 1.2.12+ Phase A — toggle the fullscreen
-    /// split-view layout flag.  Invariant: if
-    /// `secondary` is None when toggling ON, the flag
-    /// is set anyway but the renderer falls back to
-    /// the standard single-editor layout silently (so
-    /// the user gets a hint to pick a paragraph for
-    /// the right pane via the still-active main
-    /// picker chords).  Phase B + C add the picker
-    /// routing + per-pane chrome that make the layout
-    /// usable; Phase A just wires the flag + chord +
-    /// status echo.
+    /// split-view layout flag.  When turning OFF, the
+    /// secondary slot is cleared.
+    ///
+    /// Why clear on exit: the existing Ctrl+V S
+    /// similar-mode reuses the same `secondary` slot
+    /// AND the standard-layout renderer's rule "if
+    /// secondary.is_some(), put secondary in the right
+    /// column instead of the AI pane".  If we kept the
+    /// pin across split-view exit, the standard
+    /// layout would silently lose the AI pane.  The
+    /// less-surprising default is: Shift+F4 off →
+    /// secondary slot cleared → standard layout with
+    /// AI pane back where it belongs.  Re-pinning
+    /// before re-entering split-view is one
+    /// `Ctrl+V P` / `Shift+Enter` away.
+    ///
+    /// Phase 0 plan §7 picked "keep pinned" but the
+    /// downstream interaction with similar-mode's
+    /// display rule made that choice misleading in
+    /// practice.  Revised here based on user report.
     pub(super) fn toggle_split_view(&mut self) {
         self.split_view = !self.split_view;
         let on = self.split_view;
+        if !on {
+            // Drop the secondary on exit so the
+            // standard layout's AI pane comes back.
+            // Save first if dirty — same protection
+            // as similar-mode's exit path.
+            if let Some(mut sec) = self.secondary.take() {
+                if sec.dirty {
+                    if let Err(e) = self.save_doc(&mut sec) {
+                        tracing::warn!(
+                            target: "inkhaven::split_view",
+                            "secondary save on exit failed: {e:#}",
+                        );
+                    }
+                }
+            }
+            self.secondary_focused = false;
+        }
         let has_secondary = self.secondary.is_some();
         self.status = match (on, has_secondary) {
             (true, true) => {
@@ -4526,7 +4553,9 @@ impl App {
             (true, false) => {
                 "split view: ON (right pane empty — open a paragraph picker to fill it) · Shift+F4 closes".into()
             }
-            (false, _) => "split view: OFF".into(),
+            (false, _) => {
+                "split view: OFF (secondary cleared)".into()
+            }
         };
     }
 
