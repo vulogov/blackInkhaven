@@ -119,6 +119,96 @@ impl super::super::App {
         );
     }
 
+    /// 1.2.12+ Phase D follow-up — placeholder for the
+    /// right pane when fullscreen split-view is on
+    /// (`App.split_view = true`) but `App.secondary`
+    /// is None.  Without this, pressing Shift+F4 on a
+    /// fresh session looked like a no-op because the
+    /// renderer silently fell back to the standard
+    /// layout.  Now: the layout flips visibly; the
+    /// right pane shows a help-text panel with the
+    /// chord-by-chord cookbook for filling the
+    /// secondary slot.
+    pub(in crate::tui::app) fn draw_split_placeholder(&self, f: &mut ratatui::Frame, area: Rect) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" (no paragraph pinned — pick one) ")
+            .border_style(
+                Style::default()
+                    .fg(self.theme.border_unfocused)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.pane_bg)
+                    .fg(self.theme.pane_fg),
+            );
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let key = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+        let body = Style::default();
+        let lines: Vec<Line<'_>> = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Split-view is ON, right pane is empty.",
+                body,
+            )),
+            Line::from(Span::styled(
+                "  Pin a paragraph here via any of:",
+                body,
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("    Ctrl+V P", key),
+                Span::styled(
+                    "       fuzzy paragraph picker — Shift+Enter pins",
+                    body,
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("    Ctrl+V Shift+P", key),
+                Span::styled(
+                    " recent paragraphs — Shift+Enter pins",
+                    body,
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("    Ctrl+V M", key),
+                Span::styled(
+                    "       bookmark picker — Shift+Enter pins",
+                    body,
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("    Ctrl+V Shift+B", key),
+                Span::styled(
+                    " sibling-book lookup — same slug, other book",
+                    body,
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("    Tree pane:  Shift+Enter", key),
+                Span::styled(
+                    "  on a paragraph row pins it",
+                    body,
+                ),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Tab swaps focus between left and right.",
+                dim,
+            )),
+            Line::from(Span::styled(
+                "  Shift+F4 toggles the layout off again.",
+                dim,
+            )),
+        ];
+        f.render_widget(Paragraph::new(lines), inner);
+    }
+
     /// Slug-path footer drawn UNDER the primary editor pane when
     /// in similar-paragraph mode (so both panes show their path).
     /// Carved out of the primary editor's rect by the layout in
