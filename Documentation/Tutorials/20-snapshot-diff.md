@@ -147,3 +147,22 @@ snapshot fully — every step is recoverable.
 - [`Bund/BUND_TUTORIAL.md`](../Bund/BUND_TUTORIAL.md) — write
   a `hook.on_snapshot` lambda if you want to mirror snapshots
   to git or another store.
+
+## 1.2.12 additions
+
+- **`Shift+Enter` pins the snapshot to the split-
+  view secondary pane** as a read-only historical
+  view.  Closes the F6 picker (same as a normal
+  Enter would for restore), but instead of
+  replacing the live buffer, the snapshot text
+  loads into `App.secondary`.  Title is suffixed
+  with the snapshot age — `My paragraph (snapshot
+  · 2h ago)` — so the historical-vs-live
+  distinction stays visible in the split-view
+  title bar.
+
+  Combined with `Shift+F4`, this is the draft-vs-
+  current comparison workflow [tutorial 48](48-split-view.md)
+  covers: snapshot right, live left, `F12` to fire
+  the `critique-compare` embedded prompt across
+  the two versions.

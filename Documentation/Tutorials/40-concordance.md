@@ -137,3 +137,26 @@ land on a different stem entirely.
   saves to bdslib only), so an Enter-jump to one
   would fail.  Filtering them out at index time
   eliminates the broken nav case.
+
+## 1.2.12 additions
+
+- **`inkhaven export-concordance` CLI.**  Same
+  data the `Ctrl+B Shift+L` modal shows, written
+  to disk for use in spreadsheets / analysis
+  pipelines.  Two formats:
+
+  ```
+  inkhaven export-concordance --output stems.csv
+  inkhaven export-concordance --format json --output stems.json
+  ```
+
+  CSV is one row per stem with
+  `headword,stem,count,variants,sample_paths`
+  columns.  JSON is the structured form including
+  KWIC snippets, line numbers, full variants list,
+  project-wide totals.  Optional `--min-count
+  <N>` flag drops long-tail single-occurrence stems
+  below the threshold from the export — useful for
+  filtering noise on big manuscripts.  Same
+  multilingual Snowball-stemmed plumbing as the
+  modal; same system-book exclusion.

@@ -173,3 +173,22 @@ The HJSON editor is intentionally lean.  It exists for
 the config file specifically; if you want a richer Bund
 or HJSON editing experience use the regular tree-opened
 paragraph route.
+
+## 1.2.12 additions
+
+- **`Ctrl+R` fires an LLM review** of the current
+  buffer.  Same "reviewer LLM, not executor" pattern
+  the standalone prompts-editor TUI uses (1.2.10).
+  The model critiques the HJSON as a piece of work:
+  invalid combinations, dangerous defaults, fields
+  that look misnamed, fields that should probably
+  be set but aren't.  The system prompt asks the
+  reviewer to quote dotted field paths
+  (`editor.style_warnings.show_dont_tell.enabled`,
+  not "the SDT field") so the critique is
+  concretely actionable.  The response streams
+  into `App.inference` and is visible in the
+  regular AI pane once you close the modal (Esc).
+  Status bar tracks progress while the modal is up.
+  Use it as a "second opinion" before saving a
+  config change you're unsure about.
