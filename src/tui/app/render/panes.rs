@@ -50,7 +50,23 @@ impl super::super::App {
         } else {
             self.theme.border_unfocused
         };
-        let title = format!(" {}  ·  (similar) ", doc.title);
+        // 1.2.12+ Phase C — title is mode-aware.  In
+        // split-view the secondary is a peer of the
+        // primary, so the badge reads "split"; in
+        // similar-mode (Ctrl+V S) it stays as
+        // "similar".  Cursor L/C surfaces so the user
+        // can see where the secondary's cursor is
+        // without Tabbing into it — handy in
+        // translation work where you scroll the
+        // secondary to keep pace with the primary.
+        let (row, col) = doc.textarea.cursor();
+        let mode_badge = if self.split_view { "split" } else { "similar" };
+        let title = format!(
+            " {}  ·  ({mode_badge})  ·  L{} C{} ",
+            doc.title,
+            row + 1,
+            col + 1,
+        );
         let block = Block::default()
             .borders(Borders::ALL)
             .title(title)
