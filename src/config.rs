@@ -1020,6 +1020,22 @@ pub struct ThemeConfig {
     /// 1.2.9+ — colour for show-don't-tell warnings.
     #[serde(default)]
     pub style_warning_show_dont_tell_fg: String,
+    /// 1.2.12+ — per-detector style modifier for the
+    /// three style-warning overlays.  Accepts
+    /// `"underline"` (default), `"bold"`, `"dim"`,
+    /// `"reversed"`, `"italic"`, `"none"`, or
+    /// `+`-combined like `"underline+bold"`.  The
+    /// previous hard-coded `UNDERLINED` worked great
+    /// for most terminals but read faint on some
+    /// palettes — these knobs let users dial it up
+    /// (or off, with `"none"`) without touching the
+    /// detector colours.
+    #[serde(default)]
+    pub style_warning_filter_word_modifier: String,
+    #[serde(default)]
+    pub style_warning_repeated_phrase_modifier: String,
+    #[serde(default)]
+    pub style_warning_show_dont_tell_modifier: String,
     /// 1.2.10+ — POV / character chip background +
     /// foreground.  Explicit RGB so the chip stays
     /// readable across terminal palettes (the named
@@ -1105,6 +1121,13 @@ impl Default for ThemeConfig {
             style_warning_filter_word_fg: "#f9c44e".into(),
             style_warning_repeated_phrase_fg: "#eb6f92".into(),
             style_warning_show_dont_tell_fg: "#94e2d5".into(),
+            // 1.2.12+ — empty defaults map to UNDERLINED
+            // (the historical hardcoded modifier).  Users
+            // override to "bold", "dim", "reversed",
+            // "italic", "none", or "+"-combined chords.
+            style_warning_filter_word_modifier: String::new(),
+            style_warning_repeated_phrase_modifier: String::new(),
+            style_warning_show_dont_tell_modifier: String::new(),
             pov_chip_bg: "#8b1d88".into(),
             pov_chip_fg: "#ffffff".into(),
 
