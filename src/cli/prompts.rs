@@ -84,6 +84,10 @@ const EMBEDDED_PROMPTS: &[(&str, &str)] = &[
         "F12 (split-edit mode) — evaluate what the latest revision changed.",
     ),
     (
+        "critique-compare",
+        "F12 (split-view mode, 1.2.12+) — compare two distinct paragraphs (translation source vs translation, draft vs draft); identify convergence, divergence, which one lands the beat better.",
+    ),
+    (
         "show-dont-tell",
         "Ctrl+B Shift+T — find every place the writer is telling instead of showing.",
     ),
@@ -480,6 +484,7 @@ mod tests {
             "explain-diagnostic",
             "critique-edit",
             "critique-changes",
+            "critique-compare",
             "show-dont-tell",
             "sentence-rhythm-rewrite",
             "timeline-health",
@@ -489,7 +494,7 @@ mod tests {
                 "EMBEDDED_PROMPTS missing entry for `{expected}`",
             );
         }
-        assert_eq!(EMBEDDED_PROMPTS.len(), 7);
+        assert_eq!(EMBEDDED_PROMPTS.len(), 8);
     }
 
     #[test]

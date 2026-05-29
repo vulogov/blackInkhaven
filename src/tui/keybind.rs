@@ -205,6 +205,30 @@ pub enum Action {
     /// `Documentation/PROPOSALS/SPLIT_VIEW.md`.
     #[serde(rename = "editor.toggle_split_view")]
     ToggleSplitView,
+    /// Ctrl+V Shift+B (1.2.12+) — sibling-book lookup
+    /// for the split-view secondary pane.  Given the
+    /// open paragraph's slug, walks the project's
+    /// hierarchy looking for paragraphs with the same
+    /// slug under a *different* top-level book.
+    ///
+    ///   * Zero matches → status message names the
+    ///     slug we tried.
+    ///   * Exactly one match → auto-pin to the
+    ///     `secondary` slot (the user typically
+    ///     follows up with Shift+F4 to view the
+    ///     split).
+    ///   * Two or more matches → open a fuzzy
+    ///     paragraph picker scoped to the matches
+    ///     so the user picks which translation /
+    ///     mirror to compare.
+    ///
+    /// Primary translation-workflow chord: if you're
+    /// in `manuscript-en/03-rain`, this finds
+    /// `manuscript-ru/03-rain` and pins it next to
+    /// you.  See `Documentation/PROPOSALS/SPLIT_VIEW.md`
+    /// §10 Phase D.
+    #[serde(rename = "view.sibling_book_lookup")]
+    ViewSiblingBookLookup,
     /// Ctrl+F4 in Editor — accept the snapshot pane into the
     /// live buffer.
     #[serde(rename = "editor.accept_split_snapshot")]
@@ -639,6 +663,7 @@ impl Action {
             Action::ToggleSplit => "split".into(),
             Action::AcceptSplitSnapshot => "accept snap".into(),
             Action::ToggleSplitView => "split view".into(),
+            Action::ViewSiblingBookLookup => "sibling book".into(),
             Action::OpenSnapshotPicker => "snapshots".into(),
             Action::GrammarCheck => "grammar".into(),
             Action::DiagnosticsList => "diags".into(),
@@ -814,6 +839,8 @@ impl Action {
                 "Replace the live buffer with the split's captured snapshot, exit split, mark dirty.".into(),
             Action::ToggleSplitView =>
                 "Toggle fullscreen split-view (Shift+F4, 1.2.12+). Left pane is the primary buffer; right pane is the `secondary` slot (populated by pickers — Phase B). Tab swaps focus. Tree + AI response panes are hidden; AI prompt input bar still spans the bottom so Ctrl+I works from either pane. Existing F4 (same-paragraph snapshot split) and Ctrl+F4 (accept snapshot) are untouched.".into(),
+            Action::ViewSiblingBookLookup =>
+                "Sibling-book lookup for the split-view secondary pane (Ctrl+V Shift+B, 1.2.12+). Given the open paragraph's slug, walks the project hierarchy for paragraphs with the same slug under a different top-level book. Zero matches → status message names the slug. Single match → auto-pin to secondary. Multiple matches → open a fuzzy picker. Primary translation-workflow chord: from `manuscript-en/03-rain`, finds `manuscript-ru/03-rain` and pins it for side-by-side review via Shift+F4.".into(),
             Action::OpenSnapshotPicker =>
                 "Open the snapshot picker for the current paragraph (↑↓ navigate · Enter loads · V diff · D delete).".into(),
             Action::GrammarCheck =>
@@ -1121,6 +1148,9 @@ impl KeyBindings {
                 entry("l", Action::ViewListLinks, Scope::Any),
                 entry("k", Action::ViewListBacklinks, Scope::Any),
                 entry("b", Action::ViewToggleBookmark, Scope::Any),
+                // 1.2.12+ Phase D — sibling-book lookup
+                // for the split-view secondary pane.
+                entry("Shift+b", Action::ViewSiblingBookLookup, Scope::Any),
                 entry("m", Action::ViewListBookmarks, Scope::Any),
                 entry("p", Action::ViewFuzzyParagraphPicker, Scope::Any),
                 // 1.2.7+ — same picker sorted by modified_at desc.
