@@ -3392,11 +3392,14 @@ impl super::super::App {
             ));
         }
 
-        // Hint line.
+        // Hint line.  1.2.12+ — Ctrl+R fires the
+        // reviewer-LLM critique of the buffer; the
+        // response streams into App.inference and is
+        // visible in the AI pane after closing.
         let hint = if dirty {
-            " Ctrl+S save · Esc close · arrows / Page navigate · [unsaved] "
+            " Ctrl+S save · Ctrl+R review · Esc close · arrows / Page navigate · [unsaved] "
         } else {
-            " Ctrl+S save · Esc close · arrows / Page navigate "
+            " Ctrl+S save · Ctrl+R review · Esc close · arrows / Page navigate "
         };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
