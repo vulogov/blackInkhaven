@@ -15420,15 +15420,15 @@ impl App {
         // split-view.  Layout: 50/50 horizontal editor
         // panes; AI prompt at the bottom; one status
         // line.  Tree, search bar, and AI response pane
-        // are hidden.  Renders only when `split_view`
-        // is on AND the secondary slot is populated;
-        // otherwise the user gets the standard layout
-        // and a hint in the status bar (set by
-        // `toggle_split_view`) telling them to pick a
-        // paragraph for the right pane.  Phase B wires
-        // pickers; Phase C adds per-pane chrome (focus
-        // highlights, gutter parity).
-        if self.split_view && self.secondary.is_some() {
+        // are hidden.  Renders whenever `split_view`
+        // is on — when the secondary slot is empty,
+        // the right pane shows a prominent help
+        // placeholder so the user can see HOW to fill
+        // it (Ctrl+V P picker, Ctrl+V Shift+B sibling-
+        // book, Ctrl+V M bookmarks, tree-pane Shift+
+        // Enter).  Without this, pressing Shift+F4 on
+        // a fresh session looked like a no-op.
+        if self.split_view {
             let outer = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
@@ -15449,17 +15449,12 @@ impl App {
             self.layout_editor = top[0];
             self.layout_ai = top[1];
             self.layout_ai_prompt = outer[1];
-            // Left pane: primary editor (unchanged
-            // chrome).  Right pane: today we reuse the
-            // similar-mode secondary-editor renderer
-            // (`draw_secondary`) which already exists
-            // for Ctrl+V S — it knows how to paint a
-            // second OpenedDoc against an arbitrary
-            // Rect.  Phase C will replace this with a
-            // full-chrome variant; Phase A reuses to
-            // ship the smoke-test surface.
             self.draw_editor(f, top[0]);
-            self.draw_secondary_editor(f, top[1]);
+            if self.secondary.is_some() {
+                self.draw_secondary_editor(f, top[1]);
+            } else {
+                self.draw_split_placeholder(f, top[1]);
+            }
             self.draw_ai_prompt(f, outer[1]);
             self.draw_status(f, outer[2]);
             if !matches!(self.modal, Modal::None) {
