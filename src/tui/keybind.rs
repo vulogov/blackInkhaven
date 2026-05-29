@@ -191,6 +191,20 @@ pub enum Action {
     /// F4 in Editor — toggle split-edit mode.
     #[serde(rename = "editor.toggle_split")]
     ToggleSplit,
+    /// Shift+F4 (1.2.12+) — toggle the full-screen
+    /// two-paragraph split-view layout.  Left pane is
+    /// the current primary buffer; right pane is the
+    /// `App.secondary` slot (populated by pickers in
+    /// Phase B).  Tab swaps focus left ↔ right in
+    /// split-view; tree + AI response panes are
+    /// hidden while split-view is active.  The AI
+    /// prompt input bar still spans the bottom so
+    /// `Ctrl+I` calls work from either pane.  F4
+    /// (same-paragraph snapshot split) and Ctrl+F4
+    /// (accept-snapshot) are untouched.  See
+    /// `Documentation/PROPOSALS/SPLIT_VIEW.md`.
+    #[serde(rename = "editor.toggle_split_view")]
+    ToggleSplitView,
     /// Ctrl+F4 in Editor — accept the snapshot pane into the
     /// live buffer.
     #[serde(rename = "editor.accept_split_snapshot")]
@@ -624,6 +638,7 @@ impl Action {
             Action::FilePickerEditorLoad => "load file".into(),
             Action::ToggleSplit => "split".into(),
             Action::AcceptSplitSnapshot => "accept snap".into(),
+            Action::ToggleSplitView => "split view".into(),
             Action::OpenSnapshotPicker => "snapshots".into(),
             Action::GrammarCheck => "grammar".into(),
             Action::DiagnosticsList => "diags".into(),
@@ -797,6 +812,8 @@ impl Action {
                 "Toggle split-edit mode — captures the current buffer as a read-only lower pane.".into(),
             Action::AcceptSplitSnapshot =>
                 "Replace the live buffer with the split's captured snapshot, exit split, mark dirty.".into(),
+            Action::ToggleSplitView =>
+                "Toggle fullscreen split-view (Shift+F4, 1.2.12+). Left pane is the primary buffer; right pane is the `secondary` slot (populated by pickers — Phase B). Tab swaps focus. Tree + AI response panes are hidden; AI prompt input bar still spans the bottom so Ctrl+I works from either pane. Existing F4 (same-paragraph snapshot split) and Ctrl+F4 (accept snapshot) are untouched.".into(),
             Action::OpenSnapshotPicker =>
                 "Open the snapshot picker for the current paragraph (↑↓ navigate · Enter loads · V diff · D delete).".into(),
             Action::GrammarCheck =>
@@ -1155,6 +1172,11 @@ impl KeyBindings {
                 // F4 / Ctrl+F4 — split-edit and "accept split".
                 entry("F4", Action::ToggleSplit, Scope::Editor),
                 entry("Ctrl+F4", Action::AcceptSplitSnapshot, Scope::Editor),
+                // 1.2.12+ — Shift+F4 toggles fullscreen
+                // two-paragraph split-view.  Editor-scope so
+                // F4 / Ctrl+F4's existing meanings don't
+                // shadow it.
+                entry("Shift+F4", Action::ToggleSplitView, Scope::Editor),
                 // F5 — snapshot the open paragraph (same as
                 // Ctrl+B N inside meta_sub).
                 entry("F5", Action::CreateSnapshot, Scope::Editor),
