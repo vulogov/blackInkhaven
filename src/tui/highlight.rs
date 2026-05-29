@@ -331,16 +331,20 @@ fn style_warning_style_at(
         .iter()
         .find(|h| col >= h.col_start && col < h.col_end)
         .map(|h| h.kind)?;
+    // 1.2.12+ — per-detector modifier comes from the
+    // theme so users can override the default
+    // UNDERLINED on terminals where it reads faint
+    // (or doesn't read at all).
     Some(match kind {
         StyleWarningKind::FilterWord => Style::default()
             .fg(theme.style_warning_filter_word_fg)
-            .add_modifier(Modifier::UNDERLINED),
+            .add_modifier(theme.style_warning_filter_word_modifier),
         StyleWarningKind::RepeatedPhrase => Style::default()
             .fg(theme.style_warning_repeated_phrase_fg)
-            .add_modifier(Modifier::UNDERLINED),
+            .add_modifier(theme.style_warning_repeated_phrase_modifier),
         StyleWarningKind::ShowDontTell => Style::default()
             .fg(theme.style_warning_show_dont_tell_fg)
-            .add_modifier(Modifier::UNDERLINED),
+            .add_modifier(theme.style_warning_show_dont_tell_modifier),
     })
 }
 
