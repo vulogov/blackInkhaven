@@ -5,6 +5,7 @@ pub mod build;
 pub mod bund;
 pub mod delete;
 pub mod export;
+pub mod export_concordance;
 pub mod export_timeline;
 pub mod import_help;
 pub mod import_scrivener;
@@ -238,6 +239,31 @@ pub enum Command {
         /// user book it can be omitted.
         #[arg(long)]
         book_name: Option<String>,
+    },
+
+    /// 1.2.12+ — export the project-wide concordance (every
+    /// distinct lexical stem with count + KWIC samples) to a file
+    /// for use in spreadsheets / analysis pipelines.  Same data the
+    /// `Ctrl+B Shift+L` modal shows: stop-words / single-char
+    /// tokens / pure digits filtered out; Snowball-stemmed so
+    /// `walk` / `walked` / `walking` collapse to one row.  System
+    /// books (Prompts / Characters / Places / Lore / Help / Notes /
+    /// Artefacts) excluded — same scope as the in-TUI view.
+    /// Multilingual via the project's `language` field.
+    ExportConcordance {
+        /// Output format.  CSV is one row per stem with semicolon-
+        /// separated sample slug-paths; JSON is the structured form
+        /// for downstream tooling.
+        #[arg(value_enum, default_value_t = ConcordanceExportFormat::Csv)]
+        format: ConcordanceExportFormat,
+        /// Output path.  Required.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Minimum count threshold.  Stems occurring fewer than
+        /// this many times across the project are dropped from
+        /// the export.  Default: 1 (everything).
+        #[arg(long, default_value_t = 1)]
+        min_count: usize,
     },
 
     /// Print a health report for the inkhaven install (1.2.5+).
@@ -579,6 +605,22 @@ pub enum ExportFormat {
     Epub,
 }
 
+/// 1.2.12+ — output formats for
+/// `inkhaven export-concordance`.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ConcordanceExportFormat {
+    /// CSV — one row per stem: headword, stem, count,
+    /// variants (comma-separated), and the slug-path
+    /// of each sample (semicolon-separated).  Drops
+    /// the KWIC text since spreadsheet tools handle
+    /// quotes poorly.  Easiest for pivoting.
+    Csv,
+    /// JSON — full structured form including KWIC
+    /// snippets, line numbers, variants list.
+    /// Use for downstream tooling.
+    Json,
+}
+
 /// 1.2.8+ — output formats for `inkhaven export-timeline`.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum TimelineExportFormat {
@@ -677,6 +719,10 @@ impl Cli {
                 restore::run(&archive, &to).map_err(Into::into)
             }
             Command::Bund { code } => bund::run(&code, &project),
+            Command::ExportConcordance { format, output, min_count } => {
+                export_concordance::run(&project, format, &output, min_count)
+                    .map_err(Into::into)
+            }
             Command::Stats { book_name } => {
                 stats::run(&project, book_name.as_deref()).map_err(Into::into)
             }

@@ -1,7 +1,11 @@
 pub(crate) mod app;
 mod backup_ui;
 mod bund_highlight;
-mod concordance;
+// 1.2.12+ — exposed crate-wide so the CLI's
+// `inkhaven export-concordance` subcommand can reuse
+// the same builder + types the Ctrl+B Shift+L modal
+// shows.
+pub(crate) mod concordance;
 mod credits;
 mod diff_utils;
 // 1.2.11+ — exposed crate-wide so the config-TUI's
