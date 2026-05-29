@@ -21,88 +21,106 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.11 — Multilingual prompts, AI rhythm rewrite, polish
+## Latest release · 1.2.12 — Fullscreen split view, translation workflow, polish
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.11.md`](Documentation/RELEASE_NOTES/1.2.11.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.12.md`](Documentation/RELEASE_NOTES/1.2.12.md)
 
-1.2.11 is a polish-heavy cycle whose largest piece
-is a four-phase rework of how inkhaven resolves AI
-prompts: every named flow is now language-aware end
-to end, with hand-written English / Russian /
-French / German / Spanish variants for the seven
-embedded prompts and a CLI to generate more.
+1.2.12's headline is a four-phase rework of how
+inkhaven handles two-paragraph workflows — the
+long-deferred fullscreen split view feature.
+Plus a clutch of carryover polish: concordance
+export, HJSON-editor LLM review, per-detector
+underline modifiers, snapshot side-by-side.
 
-### Multilingual prompts
+### Fullscreen split view — `Shift+F4`
 
-Every AI flow (grammar check, critique, rhythm
-rewrite, show-don't-tell scan, timeline health
-audit, …) now resolves its prompt through a
-three-pass language-aware cascade:
+`Shift+F4` toggles a three-column layout: tree
+pane on the left, primary editor in the middle,
+secondary editor on the right.  AI response pane
+hides (the two editors need the room); AI prompt
+input still spans the bottom so `Ctrl+I` works
+from either pane.  `Tab` swaps focus between the
+two editors.
 
-  1. **Strict same-language** — Prompts-book
-     paragraph tagged `lang:<code>`, or
-     `prompts.hjson` entry with a matching
-     `language:` field.
-  2. **Untagged** — back-compat for every project
-     that pre-dates the language attribute.  Your
-     1.2.10 prompts keep working unchanged.
-  3. **Any-language** with the hand-written
-     embedded prompt as the English floor.
+**Universal `Shift+Enter` pin modifier.**  Every
+paragraph picker that targets the primary slot
+now also accepts `Shift+Enter` as a "pin to the
+right pane instead" modifier.  Same picker, same
+filter, same selection — the modifier changes the
+destination.  Works from:
 
-**Two resolution modes.**
-`editor.prompt_language_mode = "book_defined"`
-(default) uses the project's top-level `language`
-field for every AI call.
-`editor.prompt_language_mode = "paragraph_detected"`
-runs `whatlang` on the live paragraph and uses the
-detected language, falling back to the book setting
-for paragraphs shorter than
-`editor.prompt_language_detection_min_chars`.
-`Ctrl+B Shift+N` cycles a session-local override;
-the AI pane title bar's `lang=` chip reflects the
-active mode.
+- Tree-pane Enter
+- `Ctrl+V P` (fuzzy paragraph picker)
+- `Ctrl+V Shift+P` (recent paragraphs)
+- `Ctrl+V M` (bookmarks)
+- `F6` snapshot picker (pins as read-only
+  historical view)
 
-**Five-language embedded floor.**  All seven of
-inkhaven's named flows ship hand-written variants
-in English, Russian, French, German, and Spanish.
-A fresh project with `language: russian` in HJSON
-and no custom prompts already gets correct-language
-behaviour everywhere — no setup required.
+**Sibling-book lookup — `Ctrl+V Shift+B`.**  The
+translation-workflow chord.  Given the open
+paragraph's slug, walks the project's hierarchy
+for paragraphs with the same slug under a
+*different* top-level book.  Single match →
+auto-pin.  Multi-match → fuzzy picker scoped to
+the matches.  Designed for parallel manuscripts:
+from `manuscript-en/chapter-3/03-rain`, finds
+`manuscript-ru/chapter-3/03-rain` and pins it.
 
-**`inkhaven prompts bootstrap <lang> [--update]` CLI.**
-One-shot LLM-assisted way to seed `prompts.hjson`
-with per-language variants of every embedded
-prompt.  Stdout-only by default; `--update`
-merges in place with a versioned pre-patch backup
-under `.config-backups/`.  Mirrors the SDT
-bootstrap pattern.
+**F12 `critique-compare`.**  When the split is on
+AND both panes hold distinct paragraphs, F12
+fires the new `critique-compare` embedded prompt
+— eighth named flow, five-language match
+(en / ru / es / de / fr) routed through the
+1.2.11 multilingual resolver.  The model
+compares the two paragraphs substantively: what
+overlaps, what diverges, which one lands the
+beat harder.  Specifically covers translation
+review (source vs translation: does it carry
+meaning, voice, register?) and draft comparison
+(snapshot vs current: which is stronger?).
 
-### AI sentence-rhythm rewrite — `Ctrl+B Shift+M`
-
-Pairs with the `Ctrl+B Shift+H` rhythm gauge:
-diagnose with the gauge, fix with the rewrite.
-Streams a side-by-side diff modal on completion;
-accept replaces the buffer AND creates an
-annotated snapshot (`Sentence rhythm rewrite`) for
-safe rollback.  The chord fires from inside the
-gauge modal too — see MONOTONE, press the chord,
-watch the rewrite.
+The `Documentation/PROPOSALS/SPLIT_VIEW.md`
+proposal captures the four-phase design.
 
 ### Polish across the board
 
-- **Concordance: Enter jumps to the source paragraph** at the first sample's line; system books (Prompts, Characters, Places, …) excluded from the corpus.
-- **Show-don't-tell:** curated built-in lists now ship for all five supported languages; **`inkhaven show-dont-tell bootstrap <lang> [--update]`** uses the LLM as a one-shot vocabulary curator for per-genre lists.
-- **AI diff pane** wraps long lines with continuation indent so a paragraph-length sentence reads as one block.
-- **Config TUI:** F3 file-picker in the path widget; three new enum entries (`language`, `typst_page.language`, `typst_page.page_numbering`); HSL slider mode for the colour widget (`h` toggles, three sliders, Tab cycles).
-- **Prompts editor TUI:** per-prompt language tag (`l` chord cycles `None → en → ru → es → de → fr → None`); list rows carry a yellow-dim `[lang]` chip.
-- **`/` prompt picker** sectioned by language with inline `[ru]`/`[—]` chips; same-language prompts surface at the top.
+- **`inkhaven export-concordance` CLI.**  Same
+  data the `Ctrl+B Shift+L` modal shows, written
+  to disk for use in spreadsheets / analysis
+  pipelines.  CSV (one row per stem) and JSON
+  (structured form with KWIC snippets, line
+  numbers) formats; `--min-count` flag drops the
+  long tail.
+- **`Ctrl+R` LLM review inside the `Ctrl+B 0`
+  HJSON editor.**  Mirrors the 1.2.10
+  prompts-editor TUI's reviewer-LLM pattern: the
+  model critiques the project config as a piece
+  of work, not by executing it.  Asks for
+  dotted-path-specific critique (e.g.
+  `editor.style_warnings.show_dont_tell.enabled`,
+  not "the SDT field").  Use as a "second
+  opinion" before saving a config change.
+- **Per-detector underline-style overrides.**
+  Three new HJSON theme knobs
+  (`style_warning_*_modifier`) let users dial the
+  filter-word / repeated-phrase / show-don't-tell
+  overlay's modifier from the hardcoded `UNDERLINED`
+  to `bold` / `dim` / `reversed` / `italic` /
+  `none` / `+`-combined.  Empty preserves the
+  baseline.  Useful on terminal palettes where
+  the teal underline reads faint.
+- **Build-time doc-comment extractor polish.**
+  `Option<HashMap<K, V>>`, `Box<T>`, `Arc<T>`,
+  `Rc<T>` wrappers all descend cleanly now;
+  nested-map shapes preserve the `is_map` flag
+  through every recursion level.
 
-Plus two new tutorials
-([`46-ai-rhythm-rewrite.md`](Documentation/Tutorials/46-ai-rhythm-rewrite.md),
-[`47-multilingual-prompts.md`](Documentation/Tutorials/47-multilingual-prompts.md));
-the design proposal at
-[`Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md`](Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md)
-captures the resolver's four-phase rollout in detail.
+Plus a new tutorial
+([`48-split-view.md`](Documentation/Tutorials/48-split-view.md));
+the refreshed
+[`INKHAVEN_CHEAT_SHEET.typ`](Documentation/INKHAVEN_CHEAT_SHEET.typ)
+bumps from 1.2.6 to 1.2.12 with every chord added
+since.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

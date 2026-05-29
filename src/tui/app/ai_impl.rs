@@ -30,6 +30,33 @@ use super::super::lexicon_build::LexiconKind;
 use super::super::modal::{Modal, PromptBody, PromptCandidate, PromptSource};
 use super::super::search_results::SearchHit;
 
+/// 1.2.12+ — system prompt for the Ctrl+R review
+/// inside the Ctrl+B 0 HJSON editor.  Same shape as
+/// the prompts-editor TUI's ANALYSIS_SYSTEM_PROMPT
+/// (the LLM is a reviewer, not an executor) but
+/// tuned for project-config critique: the reviewer
+/// knows the field shapes via inkhaven's documented
+/// schema and can point at concrete improvements.
+const HJSON_REVIEW_SYSTEM_PROMPT: &str = "\
+You are reviewing an inkhaven project's `inkhaven.hjson` \
+configuration.  inkhaven is a TUI literary editor for Typst \
+books; the HJSON document governs every runtime knob — language, \
+embeddings model, LLM provider settings, theme colours, style-\
+warning detectors, autosave, backup behaviour, hooks, and more.
+
+Your job: critique this config as a piece of work.  Identify \
+fields that look misnamed; combinations that contradict each \
+other; defaults that are dangerous given the rest of the config; \
+fields that should probably be set but aren't (e.g. an `llm.\
+default` pointing at a provider that isn't configured below).
+
+Be specific.  Quote the dotted field path when you call something \
+out — `editor.style_warnings.show_dont_tell.enabled`, not \
+'the show-don't-tell field'.  When the user asks a direct \
+question about the config, answer it first, then justify.  \
+Do NOT rewrite the whole file — point at concrete fixes the user \
+can apply line-by-line.";
+
 impl super::App {
 
     pub(super) fn inference_done_with_text(&self) -> bool {
@@ -787,6 +814,75 @@ impl super::App {
         );
     }
 
+    /// 1.2.12+ — Ctrl+R inside the `Ctrl+B 0` HJSON
+    /// editor modal: kick off an LLM review of the
+    /// current buffer.  Mirrors the prompts-editor
+    /// TUI's "reviewer LLM" pattern — the model
+    /// critiques the HJSON config as a piece of work,
+    /// not by executing it.  Streams into
+    /// `App.inference` so the response is visible in
+    /// the main TUI's AI pane once the modal closes.
+    /// Status echoes progress while the modal is up.
+    pub(super) fn start_hjson_review(&mut self) {
+        let buffer = match &self.modal {
+            crate::tui::modal::Modal::HjsonEditor { textarea, path, .. } => {
+                let body = textarea.lines().join("\n");
+                let path_label = path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "inkhaven.hjson".to_string());
+                (body, path_label)
+            }
+            _ => {
+                self.status = "hjson review: not in the hjson editor".into();
+                return;
+            }
+        };
+        let (body, label) = buffer;
+        if body.trim().is_empty() {
+            self.status = "hjson review: buffer is empty".into();
+            return;
+        }
+        let prompt_text = format!(
+            "Review this `{label}` configuration for an inkhaven project.  \
+             Identify potential issues: invalid combinations of values, \
+             dangerous defaults, fields that look misnamed, fields that \
+             should probably be set but aren't, places where the existing \
+             value contradicts a comment.  Be specific — quote the field \
+             path when you critique it.  When the user asks a question \
+             about the config, answer it directly first, then justify.\n\n\
+             ```hjson\n{body}\n```"
+        );
+        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("hjson review: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            Some(HJSON_REVIEW_SYSTEM_PROMPT.to_string()),
+            Vec::new(),
+            prompt_text,
+        );
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        self.status = format!(
+            "hjson review: streaming from {provider} — close (Esc) to read in AI pane",
+        );
+    }
+
     /// Ctrl+F12 (1.2.6+) — send the typst diagnostic at the
     /// cursor (or the closest one) to the AI pane with the
     /// configured explain-or-fix prompt. Surrounds the
@@ -913,13 +1009,41 @@ impl super::App {
             .as_ref()
             .map(|s| s.snapshot_lines.join("\n"));
 
+        // 1.2.12+ Phase D — split-view with two distinct
+        // paragraphs picks the `critique-compare` flow:
+        // bundle both bodies and ask the LLM for a
+        // comparative critique (translation faithfulness,
+        // draft-vs-draft strength).  Same precedence
+        // rules as the other flows — Prompts book →
+        // prompts.hjson → embedded.  Skips the comparison
+        // when secondary is empty or holds the same body
+        // as primary (avoids self-compare); falls back to
+        // single-paragraph critique-edit in those cases.
+        let primary_id = doc.id;
+        let split_compare: Option<(String, String, String)> = if self.split_view {
+            self.secondary.as_ref().and_then(|sec| {
+                if sec.id == primary_id {
+                    return None;
+                }
+                let sec_body = sec.textarea.lines().join("\n");
+                if sec_body.trim().is_empty() {
+                    return None;
+                }
+                Some((sec.title.clone(), sec_body, sec.id.to_string()))
+            })
+        } else {
+            None
+        };
+
         // 1.2.12+ Phase B — embedded floors are language-
         // aware; capture the want-lang ISO and pass it into
         // whichever variant fires.  Function pointers can't
         // close over local state, so the dispatch is the
         // local `match` below.
         let want_lang = self.active_prompt_language();
-        let prompt_name = if split_baseline.is_some() {
+        let prompt_name = if split_compare.is_some() {
+            "critique-compare"
+        } else if split_baseline.is_some() {
             "critique-changes"
         } else {
             "critique-edit"
@@ -929,15 +1053,22 @@ impl super::App {
                 "critique-changes" => {
                     critique_changes_default_prompt(&want_lang).to_string()
                 }
+                "critique-compare" => {
+                    super::super::app::critique_compare_default_prompt(&want_lang)
+                        .to_string()
+                }
                 _ => critique_edit_default_prompt(&want_lang).to_string(),
             });
         let rendered = self.render_template(&template);
 
-        let prompt_text = match split_baseline.as_ref() {
-            Some(baseline) => format!(
+        let prompt_text = match (&split_compare, split_baseline.as_ref()) {
+            (Some((sec_title, sec_body, _)), _) => format!(
+                "{rendered}\n\n── Left (`{title}`) ──\n{body}\n── end left ──\n\n── Right (`{sec_title}`) ──\n{sec_body}\n── end right ──",
+            ),
+            (None, Some(baseline)) => format!(
                 "{rendered}\n\n── Before (snapshot) ──\n{baseline}\n── end before ──\n\n── After (current buffer of `{title}`) ──\n{body}\n── end after ──",
             ),
-            None => format!(
+            (None, None) => format!(
                 "{rendered}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──",
             ),
         };

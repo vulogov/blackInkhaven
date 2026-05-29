@@ -50,7 +50,23 @@ impl super::super::App {
         } else {
             self.theme.border_unfocused
         };
-        let title = format!(" {}  ·  (similar) ", doc.title);
+        // 1.2.12+ Phase C — title is mode-aware.  In
+        // split-view the secondary is a peer of the
+        // primary, so the badge reads "split"; in
+        // similar-mode (Ctrl+V S) it stays as
+        // "similar".  Cursor L/C surfaces so the user
+        // can see where the secondary's cursor is
+        // without Tabbing into it — handy in
+        // translation work where you scroll the
+        // secondary to keep pace with the primary.
+        let (row, col) = doc.textarea.cursor();
+        let mode_badge = if self.split_view { "split" } else { "similar" };
+        let title = format!(
+            " {}  ·  ({mode_badge})  ·  L{} C{} ",
+            doc.title,
+            row + 1,
+            col + 1,
+        );
         let block = Block::default()
             .borders(Borders::ALL)
             .title(title)
@@ -101,6 +117,96 @@ impl super::super::App {
             Paragraph::new(Line::from(Span::styled(footer, style))),
             footer_rect,
         );
+    }
+
+    /// 1.2.12+ Phase D follow-up — placeholder for the
+    /// right pane when fullscreen split-view is on
+    /// (`App.split_view = true`) but `App.secondary`
+    /// is None.  Without this, pressing Shift+F4 on a
+    /// fresh session looked like a no-op because the
+    /// renderer silently fell back to the standard
+    /// layout.  Now: the layout flips visibly; the
+    /// right pane shows a help-text panel with the
+    /// chord-by-chord cookbook for filling the
+    /// secondary slot.
+    pub(in crate::tui::app) fn draw_split_placeholder(&self, f: &mut ratatui::Frame, area: Rect) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" (no paragraph pinned — pick one) ")
+            .border_style(
+                Style::default()
+                    .fg(self.theme.border_unfocused)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.pane_bg)
+                    .fg(self.theme.pane_fg),
+            );
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let key = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+        let body = Style::default();
+        let lines: Vec<Line<'_>> = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Split-view is ON, right pane is empty.",
+                body,
+            )),
+            Line::from(Span::styled(
+                "  Pin a paragraph here via any of:",
+                body,
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("    Tree pane", key),
+                Span::styled(
+                    " (left): navigate, then Shift+Enter pins",
+                    body,
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("    Ctrl+V P", key),
+                Span::styled(
+                    "       fuzzy picker — Shift+Enter pins",
+                    body,
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("    Ctrl+V Shift+P", key),
+                Span::styled(
+                    " recent paragraphs — Shift+Enter pins",
+                    body,
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("    Ctrl+V M", key),
+                Span::styled(
+                    "       bookmarks — Shift+Enter pins",
+                    body,
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("    Ctrl+V Shift+B", key),
+                Span::styled(
+                    " sibling-book (same slug, other book)",
+                    body,
+                ),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Tab swaps focus between editor panes.",
+                dim,
+            )),
+            Line::from(Span::styled(
+                "  Shift+F4 toggles the layout off again.",
+                dim,
+            )),
+        ];
+        f.render_widget(Paragraph::new(lines), inner);
     }
 
     /// Slug-path footer drawn UNDER the primary editor pane when

@@ -238,6 +238,113 @@ impl super::App {
             .collect()
     }
 
+    /// 1.2.12+ — Shift+Enter on a snapshot picker
+    /// row: load the snapshot's body into the
+    /// split-view `secondary` slot as a *read-only*
+    /// historical view of the paragraph.  Unlocks
+    /// the draft-vs-current comparison workflow:
+    /// snapshot in the right pane, live buffer in
+    /// the left, `Shift+F4` to view side-by-side,
+    /// `F12` to fire `critique-compare`.
+    ///
+    /// The pinned secondary's `read_only` flag is
+    /// `true` — the user can scroll and select but
+    /// can't edit.  The title is prefixed with the
+    /// snapshot's timestamp so the historical-vs-
+    /// live distinction is visible at a glance in
+    /// the split-view title bar.
+    ///
+    /// Closes the picker modal on success.  On
+    /// error, leaves the modal up so the user can
+    /// retry or pick a different row.
+    pub(super) fn pin_snapshot_to_secondary(&mut self) {
+        let (snap_id, when) = match &self.modal {
+            Modal::SnapshotPicker {
+                snapshots, cursor, ..
+            } => {
+                let visible = self.visible_snapshot_indices(snapshots);
+                let Some(abs_idx) = visible.get(*cursor) else {
+                    return;
+                };
+                let Some(snap) = snapshots.get(*abs_idx) else {
+                    return;
+                };
+                (snap.id, snap.created_at)
+            }
+            _ => return,
+        };
+        let content = match self.store.snapshot_content(snap_id) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                self.status = "snapshot has no body — nothing to pin".into();
+                return;
+            }
+            Err(e) => {
+                self.status = format!("snapshot pin failed: {e}");
+                return;
+            }
+        };
+        let Some(primary) = self.opened.as_ref() else {
+            self.status =
+                "snapshot pin: no paragraph open to anchor against".into();
+            return;
+        };
+        let primary_id = primary.id;
+        let primary_title = primary.title.clone();
+        let primary_rel = primary.rel_path.clone();
+        let primary_content_type = primary.content_type.clone();
+        let body = String::from_utf8_lossy(&content).into_owned();
+        let lines = body_to_lines(&body);
+        let saved_lines = lines.clone();
+        let mut textarea = TextArea::new(lines);
+        textarea.set_cursor_line_style(
+            Style::default().add_modifier(Modifier::REVERSED),
+        );
+        textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
+        // Format the snapshot age compactly for the
+        // title so the user sees "(snapshot · 2h
+        // ago)" in the split-view chrome.
+        let age = {
+            let now = chrono::Utc::now();
+            let delta = now.signed_duration_since(when);
+            let secs = delta.num_seconds().max(0) as u64;
+            super::super::text_utils::format_age_humantime(
+                std::time::Duration::from_secs(secs),
+            )
+        };
+        let snap_title = format!("{primary_title} (snapshot · {age})");
+        self.secondary = Some(super::super::state::OpenedDoc {
+            id: primary_id,
+            title: snap_title,
+            rel_path: primary_rel,
+            textarea,
+            dirty: false,
+            scroll_row: 0,
+            scroll_col: 0,
+            block_anchor: None,
+            last_activity: std::time::Instant::now(),
+            saved_lines,
+            loaded_mtime: None,
+            split: None,
+            search: None,
+            // Read-only — historical snapshot is for
+            // comparison, not editing.
+            read_only: true,
+            correction_baseline: None,
+            content_type: primary_content_type,
+            typst_diagnostics: Vec::new(),
+            typst_diagnostics_checked_at: std::time::Instant::now(),
+            typst_diag_last_fired: None,
+            detected_language: None,
+            detected_language_length: 0,
+        });
+        self.secondary_focused = false;
+        self.modal = Modal::None;
+        self.status = format!(
+            "snapshot pinned to secondary (read-only · {age}) — Shift+F4 to view split",
+        );
+    }
+
     pub(super) fn commit_snapshot_load(&mut self) {
         // 1.2.8+ — when the annotation filter is non-empty,
         // `cursor` indexes the FILTERED visible list, not the

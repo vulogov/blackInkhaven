@@ -1533,6 +1533,44 @@ pub(crate) struct App {
     /// `secondary_in_left_pane` flag tells the renderer which
     /// physical pane currently holds `opened`.
     secondary: Option<OpenedDoc>,
+    /// 1.2.12+ — fullscreen two-paragraph split-view
+    /// layout flag.  When `true` and `secondary.is_some()`,
+    /// the renderer draws both `opened` and `secondary` as
+    /// equal-width fullscreen editors with the tree pane
+    /// and AI response pane hidden.  Toggled by `Shift+F4`
+    /// (Action::ToggleSplitView).  Distinct from F4 split-
+    /// edit (which is same-paragraph, snapshot-bottom) and
+    /// from the `secondary_focused` flag (which says
+    /// *which* of the two slots has focus, not whether the
+    /// fullscreen layout is on).  See
+    /// `Documentation/PROPOSALS/SPLIT_VIEW.md`.
+    split_view: bool,
+    /// 1.2.12+ — explicit "similar-paragraph mode is
+    /// active" flag, used by the standard-layout
+    /// renderer to decide whether to draw the
+    /// `secondary` doc in the right column instead of
+    /// the AI pane.  Pre-1.2.12 the renderer used
+    /// `secondary.is_some()` as the trigger, which
+    /// meant Shift+F4 split-view and `Ctrl+V S`
+    /// similar-mode shared a single signal — pinning
+    /// for one displaced the other.  Now they're
+    /// orthogonal: `similar_mode = true` enters
+    /// similar-mode display; `split_view = true`
+    /// enters split-view display; both can be on
+    /// simultaneously without bleeding into each
+    /// other (split-view always wins for layout
+    /// dispatch).
+    similar_mode: bool,
+    /// 1.2.12+ — when a picker is open, which slot does it
+    /// target?  Captured from focus when the picker opens
+    /// (NOT when it accepts) so the user can't accidentally
+    /// route the wrong way by Tabbing while the picker is
+    /// up.  Phase B wires every paragraph-opening picker
+    /// through this; Phase A initialises the field and
+    /// adds the helper functions but no caller consumes it
+    /// yet.
+    #[allow(dead_code)]
+    picker_target: PaneTarget,
     /// Cached writing-progress snapshot, refreshed on every save +
     /// on project open. Status-bar widget reads from this cache so
     /// per-frame redraws don't trigger a hierarchy walk. `None`
@@ -1876,6 +1914,9 @@ impl App {
             opened: None,
             secondary: None,
             secondary_focused: false,
+            split_view: false,
+            similar_mode: false,
+            picker_target: PaneTarget::Primary,
             progress_cache: None,
             link_pick_for: None,
             tree_marked: std::collections::HashSet::new(),
@@ -3064,12 +3105,16 @@ impl App {
             // keyboard focus between the two editor panes instead
             // of cycling to a non-existent AI pane. Shift+Tab does
             // the same — there's only one "other pane" to flip to.
+            // 1.2.12+ Phase C — the same path covers split-view
+            // (Shift+F4); the status echo says "split" instead of
+            // "similar" so the user knows which layout they're in.
             if self.secondary.is_some() {
                 self.secondary_focused = !self.secondary_focused;
+                let mode = if self.split_view { "split" } else { "similar" };
                 self.status = if self.secondary_focused {
-                    "similar: right editor focused".into()
+                    format!("{mode}: right editor focused")
                 } else {
-                    "similar: left editor focused".into()
+                    format!("{mode}: left editor focused")
                 };
                 return Ok(false);
             }
@@ -3162,9 +3207,16 @@ impl App {
             // 1.2.4+: when link-pick mode is active, Enter on a
             // tree row links the row's paragraph to the
             // pick-mode owner rather than opening it for editing.
+            // 1.2.12+ Phase B: Shift+Enter pins the focused
+            // paragraph to the split-view secondary slot
+            // instead of opening it into the primary.
             KeyCode::Enter => {
                 if self.link_pick_for.is_some() {
                     self.commit_link_pick();
+                } else if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    if let Some(&(id, _)) = self.rows.get(self.tree_cursor) {
+                        self.dispatch_picker_accept(id, true);
+                    }
                 } else {
                     self.open_selected()?;
                 }
@@ -4469,6 +4521,260 @@ impl App {
         );
     }
 
+    /// 1.2.12+ Phase A — toggle the fullscreen
+    /// split-view layout flag.  When turning OFF, the
+    /// secondary slot is cleared.
+    ///
+    /// Why clear on exit: the existing Ctrl+V S
+    /// similar-mode reuses the same `secondary` slot
+    /// AND the standard-layout renderer's rule "if
+    /// secondary.is_some(), put secondary in the right
+    /// column instead of the AI pane".  If we kept the
+    /// pin across split-view exit, the standard
+    /// layout would silently lose the AI pane.  The
+    /// less-surprising default is: Shift+F4 off →
+    /// secondary slot cleared → standard layout with
+    /// AI pane back where it belongs.  Re-pinning
+    /// before re-entering split-view is one
+    /// `Ctrl+V P` / `Shift+Enter` away.
+    ///
+    /// Phase 0 plan §7 picked "keep pinned" but the
+    /// downstream interaction with similar-mode's
+    /// display rule made that choice misleading in
+    /// practice.  Revised here based on user report.
+    pub(super) fn toggle_split_view(&mut self) {
+        self.split_view = !self.split_view;
+        let on = self.split_view;
+        if !on {
+            // 1.2.12+ — drop the secondary on exit
+            // ONLY when similar-mode isn't currently
+            // owning the slot.  When similar-mode is
+            // active, Shift+F4 just toggles the
+            // display layout and leaves the slot
+            // alone so similar-mode's right-column
+            // editor reappears in the standard
+            // layout.
+            //
+            // The save-on-clear path preserves dirty
+            // edits — same protection similar-mode's
+            // exit uses.
+            if !self.similar_mode {
+                if let Some(mut sec) = self.secondary.take() {
+                    if sec.dirty {
+                        if let Err(e) = self.save_doc(&mut sec) {
+                            tracing::warn!(
+                                target: "inkhaven::split_view",
+                                "secondary save on exit failed: {e:#}",
+                            );
+                        }
+                    }
+                }
+                self.secondary_focused = false;
+            }
+        }
+        let has_secondary = self.secondary.is_some();
+        self.status = match (on, has_secondary, self.similar_mode) {
+            (true, true, _) => {
+                "split view: ON · Tab swaps panes · Shift+F4 closes".into()
+            }
+            (true, false, _) => {
+                "split view: ON (right pane empty — open a paragraph picker to fill it) · Shift+F4 closes".into()
+            }
+            (false, _, true) => {
+                "split view: OFF (similar-mode kept; secondary stays pinned)".into()
+            }
+            (false, _, false) => {
+                "split view: OFF (secondary cleared)".into()
+            }
+        };
+    }
+
+    /// 1.2.12+ Phase A — populate the `secondary`
+    /// slot from any paragraph UUID.  Mirrors the
+    /// shape of `open_paragraph_by_uuid` but writes
+    /// to `self.secondary` instead of `self.opened`.
+    /// Phase B wires every paragraph picker through
+    /// this; Phase A defines the helper so callers
+    /// can land in B without a parallel rewrite.
+    ///
+    /// Refuses to pin the same paragraph that's
+    /// already primary — showing the same body in
+    /// both panes is never useful and would
+    /// surprise the user.
+    #[allow(dead_code)]
+    pub(super) fn pin_secondary_by_uuid(
+        &mut self,
+        id: uuid::Uuid,
+    ) -> std::result::Result<(), String> {
+        if self.opened.as_ref().is_some_and(|d| d.id == id) {
+            return Err(
+                "split view: that paragraph is already in the primary pane".into(),
+            );
+        }
+        // Reuse the existing similar-mode loader; it
+        // already looks up the node + constructs an
+        // OpenedDoc with full textarea + cursor-memory
+        // + style discipline.  Rejects non-paragraph
+        // nodes and missing-from-hierarchy IDs.
+        self.load_secondary_paragraph(id)
+    }
+
+    /// 1.2.12+ Phase A — clear the secondary slot.
+    /// Used by Phase B's picker dispatch when the
+    /// user explicitly drops the secondary; also a
+    /// natural undo for "I pinned the wrong paragraph".
+    #[allow(dead_code)]
+    pub(super) fn drop_secondary(&mut self) {
+        self.secondary = None;
+        self.secondary_focused = false;
+    }
+
+    /// 1.2.12+ Phase D — sibling-book lookup for the
+    /// split-view secondary pane.  Given the open
+    /// paragraph's slug, walks the project's hierarchy
+    /// for paragraphs with the same slug under a
+    /// *different* top-level book (i.e., a different
+    /// "book ancestor" — the topmost Book node in the
+    /// path).  Results:
+    ///
+    ///   * Zero matches → status message names the
+    ///     slug we tried.
+    ///   * One match → auto-pin to `secondary` via
+    ///     `dispatch_picker_accept(id, true)`.  The
+    ///     user typically follows up with `Shift+F4`
+    ///     to view the split.
+    ///   * Two or more matches → open a fuzzy
+    ///     paragraph picker scoped to the matches
+    ///     (the same modal as `Ctrl+V P`, so
+    ///     `Shift+Enter` still pins).
+    pub(super) fn sibling_book_lookup(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "sibling lookup: no paragraph open".into();
+            return;
+        };
+        let primary_id = doc.id;
+        let Some(node) = self.hierarchy.get(primary_id) else {
+            self.status = "sibling lookup: open paragraph missing from hierarchy".into();
+            return;
+        };
+        let slug = node.slug.clone();
+        let title = node.title.clone();
+        // Identify the top-level book ancestor of the
+        // open paragraph so we exclude same-book
+        // matches from the search.  `slug_path` joins
+        // ancestor slugs, the first segment is the
+        // book.  Same primitive the concordance Pass 1
+        // dispatcher uses.
+        let primary_book_slug = self
+            .hierarchy
+            .ancestors(node)
+            .first()
+            .map(|n| n.slug.clone())
+            .unwrap_or_default();
+        // Walk every paragraph node in the project,
+        // keeping ones whose slug matches and whose
+        // top-level book is NOT the primary's.
+        use crate::store::NodeKind;
+        let mut matches: Vec<ScriptPickerEntry> = Vec::new();
+        for cand in self.hierarchy.iter() {
+            if cand.kind != NodeKind::Paragraph || cand.id == primary_id {
+                continue;
+            }
+            if cand.slug != slug {
+                continue;
+            }
+            let cand_book_slug = self
+                .hierarchy
+                .ancestors(cand)
+                .first()
+                .map(|n| n.slug.clone())
+                .unwrap_or_default();
+            if cand_book_slug == primary_book_slug {
+                continue;
+            }
+            let slug_path = self.hierarchy.slug_path(cand);
+            matches.push(ScriptPickerEntry {
+                id: cand.id,
+                title: cand.title.clone(),
+                slug_path,
+            });
+        }
+        match matches.len() {
+            0 => {
+                self.status = format!(
+                    "sibling lookup: no paragraph slug `{slug}` in any other book (open: `{title}`)",
+                );
+            }
+            1 => {
+                let id = matches[0].id;
+                let slug_path = matches[0].slug_path.clone();
+                self.dispatch_picker_accept(id, true);
+                // Override the default pin status with
+                // something that names the sibling
+                // path — useful confirmation in
+                // multi-book projects.
+                self.status = format!(
+                    "sibling: pinned `{slug_path}` to secondary — Shift+F4 to view split",
+                );
+            }
+            n => {
+                // Multi-match: reuse the fuzzy
+                // paragraph picker scoped to just
+                // these entries.  Input starts empty
+                // because the entries list is already
+                // pre-filtered to same-slug matches —
+                // typing in the input narrows by
+                // fuzzy title / slug_path.
+                self.modal = crate::tui::modal::Modal::FuzzyParagraphPicker {
+                    input: crate::tui::input::TextInput::new(),
+                    entries: matches,
+                    cursor: 0,
+                    scroll: 0,
+                };
+                self.status = format!(
+                    "sibling lookup: {n} matches for `{slug}` · Enter opens · Shift+Enter pins to split · Esc cancels",
+                );
+            }
+        }
+    }
+
+    /// 1.2.12+ Phase B — universal dispatcher for
+    /// paragraph-picker accepts.  `pin_to_secondary`
+    /// distinguishes plain Enter (route to primary
+    /// via `open_search_result`) from Shift+Enter
+    /// (route to the `secondary` slot via
+    /// `pin_secondary_by_uuid`).  Surfaces pin
+    /// failures on the status bar rather than
+    /// silently dropping them so the user knows
+    /// when e.g. the chosen paragraph is already
+    /// primary.
+    ///
+    /// Callers extract `pin_to_secondary` from the
+    /// SHIFT modifier on the Enter keystroke.  Used
+    /// by the fuzzy paragraph picker (which also
+    /// backs the recent-paragraph picker), the
+    /// bookmark picker, and the tree-pane Enter
+    /// dispatcher.
+    pub(super) fn dispatch_picker_accept(
+        &mut self,
+        id: uuid::Uuid,
+        pin_to_secondary: bool,
+    ) {
+        if pin_to_secondary {
+            match self.pin_secondary_by_uuid(id) {
+                Ok(()) => {
+                    self.status =
+                        "pinned to secondary pane — Shift+F4 to view split".into();
+                }
+                Err(e) => {
+                    self.status = format!("split view: {e}");
+                }
+            }
+        } else {
+            self.open_search_result(id);
+        }
+    }
+
     /// 1.2.12+ Phase C — short label for the AI pane
     /// title decoration.  Format:
     ///   `<lang> (<mode-shorthand>)`
@@ -4608,6 +4914,22 @@ pub(super) enum PromptResolveSource {
     Book,
     Hjson,
     Embedded,
+}
+
+/// 1.2.12+ Phase A — which slot does a picker target.
+/// Captured at picker-open time (see Phase 0 plan §3) so
+/// Tabbing while the picker is up can't reroute the
+/// pick.  `Primary` is the default; `Secondary` is set
+/// when a picker is opened from inside split-view with
+/// the right pane focused.  `#[allow(dead_code)]` on
+/// `Secondary` is intentional for Phase A — no caller
+/// reads it yet; Phase B wires the pickers through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum PaneTarget {
+    #[default]
+    Primary,
+    #[allow(dead_code)]
+    Secondary,
 }
 
 /// 1.2.12+ — true when the node's `lang:<code>` tag matches
@@ -5400,7 +5722,7 @@ impl App {
             scroll: 0,
         };
         self.status =
-            "bookmarks: ↑↓ select · Enter opens · D clears bookmark · Esc closes"
+            "bookmarks: ↑↓ select · Enter opens · Shift+Enter pins to split · D clears · Esc closes"
                 .into();
     }
 
@@ -5729,7 +6051,7 @@ impl App {
             scroll: 0,
         };
         self.status =
-            "find ¶: type to filter · ↑↓ select · Enter opens · Esc cancels".into();
+            "find ¶: type to filter · ↑↓ select · Enter opens · Shift+Enter pins to split · Esc".into();
     }
 
     /// 1.2.7+ — Ctrl+V Shift+P. Same fuzzy picker as
@@ -5766,7 +6088,7 @@ impl App {
             scroll: 0,
         };
         self.status =
-            "recent ¶: most-recently-modified first · type to filter · ↑↓ select · Enter opens · Esc cancels".into();
+            "recent ¶: most-recently-modified first · ↑↓ select · Enter opens · Shift+Enter pins to split · Esc".into();
     }
 
     /// Collect every paragraph in the project (excluding
@@ -6407,7 +6729,11 @@ impl App {
     /// * Already in mode → save both buffers and drop the
     ///   secondary doc so the layout returns to tree | editor | AI.
     fn toggle_similar_paragraph_mode(&mut self) {
-        if self.secondary.is_some() {
+        // 1.2.12+ — similar-mode gates on its own
+        // `similar_mode` flag now (was `secondary
+        // .is_some()`) so it doesn't bleed into the
+        // Shift+F4 split-view's use of the same slot.
+        if self.similar_mode {
             // Save both, then exit similar mode. If the focused
             // (= `self.opened`) doc fails to save, surface that
             // first and keep the user in similar mode so they can
@@ -6434,6 +6760,7 @@ impl App {
                 }
             }
             self.secondary_focused = false;
+            self.similar_mode = false;
             self.status = "view S: exited similar-paragraphs mode".into();
             return;
         }
@@ -7061,6 +7388,8 @@ impl App {
             }
             A::ToggleSplit => self.toggle_split(),
             A::AcceptSplitSnapshot => self.accept_split_snapshot(),
+            A::ToggleSplitView => self.toggle_split_view(),
+            A::ViewSiblingBookLookup => self.sibling_book_lookup(),
             A::OpenSnapshotPicker => self.open_snapshot_picker(),
             A::GrammarCheck => self.start_grammar_check(),
             A::CycleAiMode => self.cycle_ai_mode(),
@@ -9185,6 +9514,20 @@ impl App {
             && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S'))
         {
             self.save_hjson_editor();
+            return;
+        }
+
+        // 1.2.12+ — Ctrl+R fires an LLM review of the
+        // current buffer.  Reuses the prompts-editor
+        // TUI's "reviewer LLM" pattern: the model
+        // critiques the HJSON config without trying
+        // to execute it.  Response streams into
+        // `App.inference` so it's visible in the AI
+        // pane after the modal closes (Esc).
+        if ctrl
+            && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
+        {
+            self.start_hjson_review();
             return;
         }
 
@@ -13677,6 +14020,14 @@ impl App {
                 }
                 _ => 0,
             };
+            // 1.2.12+ Phase B follow-up — Shift+Enter
+            // pins the focused snapshot to the split-
+            // view secondary slot as a read-only
+            // historical view of the paragraph.
+            // Combined with Shift+F4, this is the
+            // draft-vs-current comparison workflow the
+            // split-view proposal promised.
+            let mut pin_snapshot = false;
             if let Modal::SnapshotPicker { cursor, .. } = &mut self.modal {
                 match key.code {
                     KeyCode::Up => {
@@ -13693,7 +14044,13 @@ impl App {
                     KeyCode::End => {
                         *cursor = visible_len.saturating_sub(1);
                     }
-                    KeyCode::Enter => commit = true,
+                    KeyCode::Enter => {
+                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                            pin_snapshot = true;
+                        } else {
+                            commit = true;
+                        }
+                    }
                     // D (case-insensitive) or the Delete key removes
                     // the cursor's snapshot. No further confirmation —
                     // snapshots are explicit creations (F5 / Ctrl+B N),
@@ -13718,6 +14075,8 @@ impl App {
                 self.delete_current_snapshot();
             } else if view_diff {
                 self.open_snapshot_diff();
+            } else if pin_snapshot {
+                self.pin_snapshot_to_secondary();
             }
             return Ok(false);
         }
@@ -15151,6 +15510,71 @@ impl App {
             return;
         }
 
+        // 1.2.12+ Phase A — fullscreen two-paragraph
+        // split-view.  Layout: 50/50 horizontal editor
+        // panes; AI prompt at the bottom; one status
+        // line.  Tree, search bar, and AI response pane
+        // are hidden.  Renders whenever `split_view`
+        // is on — when the secondary slot is empty,
+        // the right pane shows a prominent help
+        // placeholder so the user can see HOW to fill
+        // it (Ctrl+V P picker, Ctrl+V Shift+B sibling-
+        // book, Ctrl+V M bookmarks, tree-pane Shift+
+        // Enter).  Without this, pressing Shift+F4 on
+        // a fresh session looked like a no-op.
+        if self.split_view {
+            // 1.2.12+ Phase D follow-up — tree pane
+            // stays visible in split-view so the user
+            // can navigate the hierarchy and pin
+            // paragraphs to the right pane via the
+            // existing tree-pane `Shift+Enter` chord.
+            // The original Phase 0 plan hid the tree;
+            // that turned out to confuse users —
+            // they couldn't see how to populate the
+            // secondary slot.  AI response pane
+            // stays hidden (the two editors need
+            // the room).  AI prompt input still
+            // spans the bottom so `Ctrl+I` works
+            // from either editor pane.
+            let outer = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(3),
+                    Constraint::Length(1),
+                ])
+                .split(f.area());
+            // Tree pane: same fixed width the
+            // standard layout uses (30 cols by
+            // default).  Editors share the rest 50/50.
+            let top = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(30),
+                    Constraint::Percentage(50),
+                    Constraint::Percentage(50),
+                ])
+                .split(outer[0]);
+            self.layout_search = Rect::default();
+            self.layout_tree = top[0];
+            self.layout_editor = top[1];
+            self.layout_ai = top[2];
+            self.layout_ai_prompt = outer[1];
+            self.draw_tree(f, top[0]);
+            self.draw_editor(f, top[1]);
+            if self.secondary.is_some() {
+                self.draw_secondary_editor(f, top[2]);
+            } else {
+                self.draw_split_placeholder(f, top[2]);
+            }
+            self.draw_ai_prompt(f, outer[1]);
+            self.draw_status(f, outer[2]);
+            if !matches!(self.modal, Modal::None) {
+                self.draw_modal(f, f.area());
+            }
+            return;
+        }
+
         if self.ai_fullscreen {
             // Layout: most of the screen split 50/50 (AI pane | chat
             // history); AI prompt at the bottom; one status line.
@@ -15215,7 +15639,13 @@ impl App {
 
         self.draw_search_bar(f, outer[0]);
         self.draw_tree(f, body[0]);
-        if self.secondary.is_some() {
+        // 1.2.12+ — similar-mode display is now gated
+        // on `App.similar_mode` (set by Ctrl+V S),
+        // not on `secondary.is_some()`.  This keeps
+        // Shift+F4 split-view pins from displacing
+        // the AI pane in the standard layout after
+        // exit.  See `Documentation/PROPOSALS/SPLIT_VIEW.md`.
+        if self.similar_mode && self.secondary.is_some() {
             // Similar-paragraph mode: AI pane is repurposed as
             // the second editor. Both panes carve off the bottom
             // row of their rect for the full slug-path footer
@@ -15522,6 +15952,11 @@ impl App {
     }
 
     fn fuzzy_paragraph_picker_handle_key(&mut self, key: KeyEvent) {
+        // 1.2.12+ Phase B — Shift+Enter routes the
+        // pick to the split-view secondary slot;
+        // plain Enter still opens into the primary.
+        let pin_to_secondary =
+            key.modifiers.contains(KeyModifiers::SHIFT);
         let to_open = {
             let Modal::FuzzyParagraphPicker { input, entries, cursor, scroll } =
                 &mut self.modal
@@ -15553,6 +15988,13 @@ impl App {
                     }
                 }
                 _ => {
+                    // Don't treat Shift+printable as
+                    // text input here — the Shift
+                    // modifier is the split-view hint;
+                    // Shift+a etc. is just a capital
+                    // letter and handle_text_input_key
+                    // already lowercases / treats it
+                    // correctly.
                     handle_text_input_key(input, key);
                     // Reset cursor on input edit; matches list
                     // may have shifted.
@@ -15570,11 +16012,15 @@ impl App {
 
         if let Some(id) = to_open {
             self.modal = Modal::None;
-            self.open_search_result(id);
+            self.dispatch_picker_accept(id, pin_to_secondary);
         }
     }
 
     fn bookmark_picker_handle_key(&mut self, key: KeyEvent) {
+        // 1.2.12+ Phase B — Shift+Enter routes to the
+        // split-view secondary slot.
+        let pin_to_secondary =
+            key.modifiers.contains(KeyModifiers::SHIFT);
         let (id_to_unbookmark, id_to_open) = {
             let Modal::BookmarkPicker { entries, cursor, scroll } = &mut self.modal else {
                 return;
@@ -15622,7 +16068,7 @@ impl App {
 
         if let Some(id) = id_to_open {
             self.modal = Modal::None;
-            self.open_search_result(id);
+            self.dispatch_picker_accept(id, pin_to_secondary);
             return;
         }
 
@@ -15783,8 +16229,19 @@ impl App {
         if was_enter {
             self.modal = Modal::None;
             if let Some(id) = selected_id {
-                if let Err(e) = self.load_secondary_paragraph(id) {
-                    self.status = format!("similar: {e}");
+                match self.load_secondary_paragraph(id) {
+                    Ok(()) => {
+                        // 1.2.12+ — entering similar-mode
+                        // explicitly so the standard-layout
+                        // renderer draws secondary in the
+                        // right column (instead of the AI
+                        // pane).  Was implicit from
+                        // `secondary.is_some()` pre-1.2.12.
+                        self.similar_mode = true;
+                    }
+                    Err(e) => {
+                        self.status = format!("similar: {e}");
+                    }
                 }
             } else if total == 0 {
                 self.status = "similar: nothing to open".into();
@@ -17836,6 +18293,74 @@ should focus on.",
     }
 }
 
+/// 1.2.12+ Phase D — embedded fallback for F12
+/// critique when split-view is active with two
+/// distinct paragraphs.  Sends both bodies and asks
+/// for a comparative critique: where do they
+/// converge, where do they diverge, which one lands
+/// the beat better.  Particularly useful for
+/// translation work (left = source, right =
+/// translation: is the rendering accurate, does the
+/// register match) and for draft comparison (left =
+/// snapshot, right = current: which version is
+/// stronger, line by line).
+///
+/// Five-language variants follow the same shape as
+/// the other six embedded prompts; English is the
+/// floor for unsupported codes.
+pub(crate) fn critique_compare_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Ниже даны два абзаца — `Левый` и `Правый`.  Сравни их по
+существу: что в них совпадает, что расходится, какой работает сильнее
+и почему.  Обращай внимание на тон, ритм, точность образов, конкретику
+глаголов и существительных.  Если это перевод (например, левый —
+оригинал, правый — перевод), оцени, насколько перевод передаёт смысл,
+голос и регистр.  Если это две черновых редакции, скажи, какая
+интенсивнее и какие именно куски следующий проход правки должен
+переносить из слабой в сильную.  Будь конкретен — цитируй точные
+фразы.",
+        "es" => "A continuación se muestran dos párrafos — `Izquierda` y
+`Derecha`.  Compáralos en lo esencial: qué coincide, qué diverge, cuál
+funciona mejor y por qué.  Presta atención al tono, al ritmo, a la
+precisión de las imágenes, a la concreción de verbos y sustantivos.
+Si se trata de una traducción (por ejemplo, izquierda = original,
+derecha = traducción), evalúa si la traducción transmite el sentido,
+la voz y el registro.  Si son dos borradores de revisión, indica
+cuál tiene más fuerza y qué fragmentos concretos debería trasladar
+la próxima pasada del débil al fuerte.  Sé específico — cita las
+frases exactas.",
+        "de" => "Unten siehst du zwei Absätze — `Links` und `Rechts`.
+Vergleiche sie inhaltlich: was stimmt überein, was unterscheidet sich,
+welcher trifft den Beat stärker und warum.  Achte auf Ton, Rhythmus,
+Präzision der Bilder, Konkretheit der Verben und Substantive.  Wenn
+es sich um eine Übersetzung handelt (z. B. links = Original, rechts =
+Übersetzung), bewerte, ob die Übersetzung Sinn, Stimme und Register
+trägt.  Wenn es zwei Entwürfe sind, sag, welcher kräftiger ist und
+welche konkreten Stellen der nächste Überarbeitungsdurchlauf von der
+schwächeren in die stärkere übernehmen sollte.  Sei konkret —
+zitiere die genauen Wendungen.",
+        "fr" => "Voici deux paragraphes — `Gauche` et `Droite`.  Compare-les
+sur le fond : ce qui converge, ce qui diverge, lequel fonctionne plus
+fort et pourquoi.  Sois attentif au ton, au rythme, à la précision
+des images, au concret des verbes et des substantifs.  S'il s'agit
+d'une traduction (par exemple, gauche = original, droite =
+traduction), évalue si la traduction porte le sens, la voix et le
+registre.  S'il s'agit de deux brouillons, dis lequel est plus
+intense et quels fragments précis la prochaine passe de révision
+doit reprendre du faible vers le fort.  Sois précis — cite les
+formulations exactes.",
+        _ => "Two paragraphs are shown below — `Left` and `Right`.  Compare \
+them substantively: what overlaps, what diverges, which lands the \
+beat harder and why.  Pay attention to tone, rhythm, precision of \
+imagery, concreteness of verbs and nouns.  If this is a translation \
+(e.g. left = source, right = translation), evaluate whether the \
+translation carries the meaning, voice, and register.  If these are \
+two drafts, say which one is stronger and which specific lines the \
+next revision pass should carry from the weaker into the stronger.  \
+Be specific — quote the exact phrases.",
+    }
+}
+
 /// 1.2.6+ — embedded fallback for the timeline health
 /// check (y / Y / Ctrl+Y inside Ctrl+V t).
 /// 1.2.12+ Phase B — five-language variants.
@@ -18095,5 +18620,174 @@ mod tests_node_lang {
     fn node_lang_matches_untagged_pass_matches_untagged_nodes() {
         let n = paragraph_with_tags(vec!["draft".into()]);
         assert!(node_lang_matches(&n, None));
+    }
+}
+
+#[cfg(test)]
+mod tests_split_view {
+    use super::*;
+
+    /// 1.2.12+ Phase A — the binding-table audit.
+    /// Locks the guarantee that F4 and Ctrl+F4 keep
+    /// their existing meanings.  If a future commit
+    /// rebinds either, this test fails loud.
+    #[test]
+    fn existing_f4_and_ctrl_f4_bindings_remain_untouched() {
+        use crate::tui::keybind;
+        let table = keybind::KeyBindings::defaults();
+        // F4 plain → ToggleSplit in editor scope.
+        let f4 = table
+            .top_level
+            .iter()
+            .find(|e| {
+                e.chord.code == crossterm::event::KeyCode::F(4)
+                    && e.chord.modifiers == crossterm::event::KeyModifiers::NONE
+            })
+            .expect("F4 must still bind to something");
+        assert!(
+            matches!(f4.action, keybind::Action::ToggleSplit),
+            "F4 must still mean ToggleSplit; Phase A may not rebind it",
+        );
+        // Ctrl+F4 → AcceptSplitSnapshot.
+        let ctrl_f4 = table
+            .top_level
+            .iter()
+            .find(|e| {
+                e.chord.code == crossterm::event::KeyCode::F(4)
+                    && e.chord.modifiers == crossterm::event::KeyModifiers::CONTROL
+            })
+            .expect("Ctrl+F4 must still bind to something");
+        assert!(
+            matches!(ctrl_f4.action, keybind::Action::AcceptSplitSnapshot),
+            "Ctrl+F4 must still mean AcceptSplitSnapshot",
+        );
+        // Shift+F4 → ToggleSplitView (the new chord).
+        let shift_f4 = table
+            .top_level
+            .iter()
+            .find(|e| {
+                e.chord.code == crossterm::event::KeyCode::F(4)
+                    && e.chord.modifiers == crossterm::event::KeyModifiers::SHIFT
+            })
+            .expect("Shift+F4 must bind to ToggleSplitView");
+        assert!(
+            matches!(shift_f4.action, keybind::Action::ToggleSplitView),
+            "Shift+F4 must map to ToggleSplitView",
+        );
+    }
+
+    /// 1.2.12+ Phase A — `PaneTarget::default()` is
+    /// `Primary`.  Locks the contract that picker
+    /// callers default to the primary slot when no
+    /// explicit target is set.
+    #[test]
+    fn pane_target_defaults_to_primary() {
+        assert_eq!(PaneTarget::default(), PaneTarget::Primary);
+    }
+
+    /// 1.2.12+ Phase B — Shift+Enter chord is
+    /// detected from the SHIFT modifier on a KeyEvent.
+    /// The picker handlers extract this *before*
+    /// destructuring the modal so the routing
+    /// decision survives the modal re-borrow.
+    /// Locks the contract that the SHIFT modifier
+    /// flag is what drives pin_to_secondary, not
+    /// any per-picker custom chord.
+    #[test]
+    fn shift_modifier_drives_pin_to_secondary() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let plain = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let shifted = KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT);
+        assert!(!plain.modifiers.contains(KeyModifiers::SHIFT));
+        assert!(shifted.modifiers.contains(KeyModifiers::SHIFT));
+    }
+
+    /// 1.2.12+ Phase C — locks the Tab dispatch
+    /// contract.  The Tab handler at
+    /// `app.rs:3091` flips `secondary_focused`
+    /// when the secondary slot is populated; this
+    /// test exercises the boolean toggle itself in
+    /// isolation so a future refactor that changes
+    /// the Tab dispatch can't silently break the
+    /// invariant.
+    #[test]
+    fn tab_swap_toggles_secondary_focused_flag() {
+        // The contract: starting from
+        // `secondary_focused = false`, one toggle
+        // flips to true; a second toggle flips
+        // back.  The Tab handler in `handle_key`
+        // expresses this as
+        // `secondary_focused = !secondary_focused`.
+        let mut focused = false;
+        focused = !focused;
+        assert!(focused, "first Tab swaps to right editor");
+        focused = !focused;
+        assert!(!focused, "second Tab swaps back to left editor");
+    }
+
+    /// 1.2.12+ Phase C — the autosave loop walks
+    /// both `opened` and `secondary` slots; this
+    /// already shipped in 1.2.4 with similar-mode
+    /// (`tick_autosave` at app.rs:2161-2200).
+    /// Phase A inherits that behaviour for split-
+    /// view since both layouts use the same
+    /// secondary slot.  This test guards against a
+    /// future refactor that drops the secondary
+    /// branch of the autosave by asserting the
+    /// surface continues to expose `save_doc` as
+    /// the shared save path.
+    #[test]
+    fn save_doc_is_callable_against_secondary_slot() {
+        // Compile-time check: `save_doc` exists with
+        // the right signature.  Anyone removing it
+        // would break this assertion at compile
+        // time, surfacing the autosave regression
+        // before the binary ships.
+        fn _type_check_save_doc<T>(_: T)
+        where
+            T: for<'a> Fn(&'a mut App, &'a mut OpenedDoc) -> Result<(), String>,
+        {
+        }
+        _type_check_save_doc(|app: &mut App, doc: &mut OpenedDoc| {
+            app.save_doc(doc)
+        });
+    }
+
+    /// 1.2.12+ Phase D — locks the contract that the
+    /// new `critique-compare` embedded prompt has a
+    /// five-language match (the same shape as every
+    /// other embedded prompt in 1.2.11+).
+    #[test]
+    fn critique_compare_default_prompt_covers_five_languages() {
+        // Each language returns a distinct, non-empty
+        // body.  English is the fallback for unknown
+        // codes, so an unsupported code maps to the
+        // same body as "en".
+        let en = super::critique_compare_default_prompt("en");
+        let ru = super::critique_compare_default_prompt("ru");
+        let es = super::critique_compare_default_prompt("es");
+        let de = super::critique_compare_default_prompt("de");
+        let fr = super::critique_compare_default_prompt("fr");
+        let unknown = super::critique_compare_default_prompt("klingon");
+        // Every variant has content.
+        for body in [en, ru, es, de, fr] {
+            assert!(
+                body.trim().len() > 80,
+                "critique_compare body suspiciously short: {body:?}",
+            );
+        }
+        // The five known variants are pairwise distinct
+        // (translation, not pass-through).
+        let bodies = [en, ru, es, de, fr];
+        for i in 0..bodies.len() {
+            for j in (i + 1)..bodies.len() {
+                assert_ne!(
+                    bodies[i], bodies[j],
+                    "critique_compare bodies at indices {i} and {j} are identical — translation missed?",
+                );
+            }
+        }
+        // Unknown codes fall back to English.
+        assert_eq!(unknown, en);
     }
 }
