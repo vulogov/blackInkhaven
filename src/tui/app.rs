@@ -1545,6 +1545,22 @@ pub(crate) struct App {
     /// fullscreen layout is on).  See
     /// `Documentation/PROPOSALS/SPLIT_VIEW.md`.
     split_view: bool,
+    /// 1.2.12+ — explicit "similar-paragraph mode is
+    /// active" flag, used by the standard-layout
+    /// renderer to decide whether to draw the
+    /// `secondary` doc in the right column instead of
+    /// the AI pane.  Pre-1.2.12 the renderer used
+    /// `secondary.is_some()` as the trigger, which
+    /// meant Shift+F4 split-view and `Ctrl+V S`
+    /// similar-mode shared a single signal — pinning
+    /// for one displaced the other.  Now they're
+    /// orthogonal: `similar_mode = true` enters
+    /// similar-mode display; `split_view = true`
+    /// enters split-view display; both can be on
+    /// simultaneously without bleeding into each
+    /// other (split-view always wins for layout
+    /// dispatch).
+    similar_mode: bool,
     /// 1.2.12+ — when a picker is open, which slot does it
     /// target?  Captured from focus when the picker opens
     /// (NOT when it accepts) so the user can't accidentally
@@ -1899,6 +1915,7 @@ impl App {
             secondary: None,
             secondary_focused: false,
             split_view: false,
+            similar_mode: false,
             picker_target: PaneTarget::Primary,
             progress_cache: None,
             link_pick_for: None,
@@ -4529,31 +4546,44 @@ impl App {
         self.split_view = !self.split_view;
         let on = self.split_view;
         if !on {
-            // Drop the secondary on exit so the
-            // standard layout's AI pane comes back.
-            // Save first if dirty — same protection
-            // as similar-mode's exit path.
-            if let Some(mut sec) = self.secondary.take() {
-                if sec.dirty {
-                    if let Err(e) = self.save_doc(&mut sec) {
-                        tracing::warn!(
-                            target: "inkhaven::split_view",
-                            "secondary save on exit failed: {e:#}",
-                        );
+            // 1.2.12+ — drop the secondary on exit
+            // ONLY when similar-mode isn't currently
+            // owning the slot.  When similar-mode is
+            // active, Shift+F4 just toggles the
+            // display layout and leaves the slot
+            // alone so similar-mode's right-column
+            // editor reappears in the standard
+            // layout.
+            //
+            // The save-on-clear path preserves dirty
+            // edits — same protection similar-mode's
+            // exit uses.
+            if !self.similar_mode {
+                if let Some(mut sec) = self.secondary.take() {
+                    if sec.dirty {
+                        if let Err(e) = self.save_doc(&mut sec) {
+                            tracing::warn!(
+                                target: "inkhaven::split_view",
+                                "secondary save on exit failed: {e:#}",
+                            );
+                        }
                     }
                 }
+                self.secondary_focused = false;
             }
-            self.secondary_focused = false;
         }
         let has_secondary = self.secondary.is_some();
-        self.status = match (on, has_secondary) {
-            (true, true) => {
+        self.status = match (on, has_secondary, self.similar_mode) {
+            (true, true, _) => {
                 "split view: ON · Tab swaps panes · Shift+F4 closes".into()
             }
-            (true, false) => {
+            (true, false, _) => {
                 "split view: ON (right pane empty — open a paragraph picker to fill it) · Shift+F4 closes".into()
             }
-            (false, _) => {
+            (false, _, true) => {
+                "split view: OFF (similar-mode kept; secondary stays pinned)".into()
+            }
+            (false, _, false) => {
                 "split view: OFF (secondary cleared)".into()
             }
         };
@@ -6699,7 +6729,11 @@ impl App {
     /// * Already in mode → save both buffers and drop the
     ///   secondary doc so the layout returns to tree | editor | AI.
     fn toggle_similar_paragraph_mode(&mut self) {
-        if self.secondary.is_some() {
+        // 1.2.12+ — similar-mode gates on its own
+        // `similar_mode` flag now (was `secondary
+        // .is_some()`) so it doesn't bleed into the
+        // Shift+F4 split-view's use of the same slot.
+        if self.similar_mode {
             // Save both, then exit similar mode. If the focused
             // (= `self.opened`) doc fails to save, surface that
             // first and keep the user in similar mode so they can
@@ -6726,6 +6760,7 @@ impl App {
                 }
             }
             self.secondary_focused = false;
+            self.similar_mode = false;
             self.status = "view S: exited similar-paragraphs mode".into();
             return;
         }
@@ -13971,6 +14006,14 @@ impl App {
                 }
                 _ => 0,
             };
+            // 1.2.12+ Phase B follow-up — Shift+Enter
+            // pins the focused snapshot to the split-
+            // view secondary slot as a read-only
+            // historical view of the paragraph.
+            // Combined with Shift+F4, this is the
+            // draft-vs-current comparison workflow the
+            // split-view proposal promised.
+            let mut pin_snapshot = false;
             if let Modal::SnapshotPicker { cursor, .. } = &mut self.modal {
                 match key.code {
                     KeyCode::Up => {
@@ -13987,7 +14030,13 @@ impl App {
                     KeyCode::End => {
                         *cursor = visible_len.saturating_sub(1);
                     }
-                    KeyCode::Enter => commit = true,
+                    KeyCode::Enter => {
+                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                            pin_snapshot = true;
+                        } else {
+                            commit = true;
+                        }
+                    }
                     // D (case-insensitive) or the Delete key removes
                     // the cursor's snapshot. No further confirmation —
                     // snapshots are explicit creations (F5 / Ctrl+B N),
@@ -14012,6 +14061,8 @@ impl App {
                 self.delete_current_snapshot();
             } else if view_diff {
                 self.open_snapshot_diff();
+            } else if pin_snapshot {
+                self.pin_snapshot_to_secondary();
             }
             return Ok(false);
         }
@@ -15574,7 +15625,13 @@ impl App {
 
         self.draw_search_bar(f, outer[0]);
         self.draw_tree(f, body[0]);
-        if self.secondary.is_some() {
+        // 1.2.12+ — similar-mode display is now gated
+        // on `App.similar_mode` (set by Ctrl+V S),
+        // not on `secondary.is_some()`.  This keeps
+        // Shift+F4 split-view pins from displacing
+        // the AI pane in the standard layout after
+        // exit.  See `Documentation/PROPOSALS/SPLIT_VIEW.md`.
+        if self.similar_mode && self.secondary.is_some() {
             // Similar-paragraph mode: AI pane is repurposed as
             // the second editor. Both panes carve off the bottom
             // row of their rect for the full slug-path footer
@@ -16158,8 +16215,19 @@ impl App {
         if was_enter {
             self.modal = Modal::None;
             if let Some(id) = selected_id {
-                if let Err(e) = self.load_secondary_paragraph(id) {
-                    self.status = format!("similar: {e}");
+                match self.load_secondary_paragraph(id) {
+                    Ok(()) => {
+                        // 1.2.12+ — entering similar-mode
+                        // explicitly so the standard-layout
+                        // renderer draws secondary in the
+                        // right column (instead of the AI
+                        // pane).  Was implicit from
+                        // `secondary.is_some()` pre-1.2.12.
+                        self.similar_mode = true;
+                    }
+                    Err(e) => {
+                        self.status = format!("similar: {e}");
+                    }
                 }
             } else if total == 0 {
                 self.status = "similar: nothing to open".into();
