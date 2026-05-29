@@ -475,3 +475,37 @@ keys: {
 The default `Ctrl+B Shift+M` continues to fire the
 same action — multiple chords map to one action with
 no conflict.
+
+## 1.2.12 — new actions
+
+Catalogue of named actions added across the 1.2.12
+cycle.  Same rebind path applies.
+
+### Split view (Shift+F4)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `editor.toggle_split_view` | `Shift+F4` | Toggle fullscreen split-view layout (tree pane left · primary editor middle · secondary editor right; AI response pane hidden).  Existing F4 (same-paragraph snapshot) and Ctrl+F4 (accept snapshot) untouched. |
+| `view.sibling_book_lookup` | `Ctrl+V Shift+B` | Sibling-book lookup — walk the project's hierarchy for paragraphs with the same slug under a different top-level book; auto-pin single match, open picker on multi-match.  Translation-workflow chord. |
+
+### Universal Shift+Enter pin modifier
+
+Not a separately-bindable action — `Shift+Enter` on
+the following pickers routes the chosen paragraph to
+`App.secondary` instead of `App.opened`:
+
+  * Tree-pane Enter
+  * `view.fuzzy_paragraph_picker` (Ctrl+V P)
+  * `view.recent_paragraph_picker` (Ctrl+V Shift+P)
+  * `view.list_bookmarks` (Ctrl+V M)
+  * `editor.open_snapshot_picker` (F6) — pinned
+    snapshot is loaded as read-only
+
+Rebinding the underlying actions to different chords
+preserves the Shift+Enter modifier on each.
+
+### `Ctrl+R` in `Ctrl+B 0` HJSON editor
+
+| Chord | What it does |
+|-------|--------------|
+| `Ctrl+R` | Fire LLM review of the current `inkhaven.hjson` buffer.  Reviewer-LLM pattern (not executor); streams into App.inference; visible in the AI pane after closing the modal.  Not currently rebindable — lives inside the HJSON editor modal's local chord dispatch, not the binding table.
