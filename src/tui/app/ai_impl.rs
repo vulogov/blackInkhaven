@@ -30,6 +30,33 @@ use super::super::lexicon_build::LexiconKind;
 use super::super::modal::{Modal, PromptBody, PromptCandidate, PromptSource};
 use super::super::search_results::SearchHit;
 
+/// 1.2.12+ — system prompt for the Ctrl+R review
+/// inside the Ctrl+B 0 HJSON editor.  Same shape as
+/// the prompts-editor TUI's ANALYSIS_SYSTEM_PROMPT
+/// (the LLM is a reviewer, not an executor) but
+/// tuned for project-config critique: the reviewer
+/// knows the field shapes via inkhaven's documented
+/// schema and can point at concrete improvements.
+const HJSON_REVIEW_SYSTEM_PROMPT: &str = "\
+You are reviewing an inkhaven project's `inkhaven.hjson` \
+configuration.  inkhaven is a TUI literary editor for Typst \
+books; the HJSON document governs every runtime knob — language, \
+embeddings model, LLM provider settings, theme colours, style-\
+warning detectors, autosave, backup behaviour, hooks, and more.
+
+Your job: critique this config as a piece of work.  Identify \
+fields that look misnamed; combinations that contradict each \
+other; defaults that are dangerous given the rest of the config; \
+fields that should probably be set but aren't (e.g. an `llm.\
+default` pointing at a provider that isn't configured below).
+
+Be specific.  Quote the dotted field path when you call something \
+out — `editor.style_warnings.show_dont_tell.enabled`, not \
+'the show-don't-tell field'.  When the user asks a direct \
+question about the config, answer it first, then justify.  \
+Do NOT rewrite the whole file — point at concrete fixes the user \
+can apply line-by-line.";
+
 impl super::App {
 
     pub(super) fn inference_done_with_text(&self) -> bool {
@@ -784,6 +811,75 @@ impl super::App {
         self.change_focus(Focus::AiPrompt);
         self.status = format!(
             "Help: streaming answer from {provider} (grounded on {included} excerpt(s))…"
+        );
+    }
+
+    /// 1.2.12+ — Ctrl+R inside the `Ctrl+B 0` HJSON
+    /// editor modal: kick off an LLM review of the
+    /// current buffer.  Mirrors the prompts-editor
+    /// TUI's "reviewer LLM" pattern — the model
+    /// critiques the HJSON config as a piece of work,
+    /// not by executing it.  Streams into
+    /// `App.inference` so the response is visible in
+    /// the main TUI's AI pane once the modal closes.
+    /// Status echoes progress while the modal is up.
+    pub(super) fn start_hjson_review(&mut self) {
+        let buffer = match &self.modal {
+            crate::tui::modal::Modal::HjsonEditor { textarea, path, .. } => {
+                let body = textarea.lines().join("\n");
+                let path_label = path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "inkhaven.hjson".to_string());
+                (body, path_label)
+            }
+            _ => {
+                self.status = "hjson review: not in the hjson editor".into();
+                return;
+            }
+        };
+        let (body, label) = buffer;
+        if body.trim().is_empty() {
+            self.status = "hjson review: buffer is empty".into();
+            return;
+        }
+        let prompt_text = format!(
+            "Review this `{label}` configuration for an inkhaven project.  \
+             Identify potential issues: invalid combinations of values, \
+             dangerous defaults, fields that look misnamed, fields that \
+             should probably be set but aren't, places where the existing \
+             value contradicts a comment.  Be specific — quote the field \
+             path when you critique it.  When the user asks a question \
+             about the config, answer it directly first, then justify.\n\n\
+             ```hjson\n{body}\n```"
+        );
+        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("hjson review: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            Some(HJSON_REVIEW_SYSTEM_PROMPT.to_string()),
+            Vec::new(),
+            prompt_text,
+        );
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        self.status = format!(
+            "hjson review: streaming from {provider} — close (Esc) to read in AI pane",
         );
     }
 

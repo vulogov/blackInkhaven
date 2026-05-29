@@ -9517,6 +9517,20 @@ impl App {
             return;
         }
 
+        // 1.2.12+ — Ctrl+R fires an LLM review of the
+        // current buffer.  Reuses the prompts-editor
+        // TUI's "reviewer LLM" pattern: the model
+        // critiques the HJSON config without trying
+        // to execute it.  Response streams into
+        // `App.inference` so it's visible in the AI
+        // pane after the modal closes (Esc).
+        if ctrl
+            && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
+        {
+            self.start_hjson_review();
+            return;
+        }
+
         // Esc — close (with dirty warn).
         if matches!(key.code, KeyCode::Esc) {
             let dirty = matches!(
