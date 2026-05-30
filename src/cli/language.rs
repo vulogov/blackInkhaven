@@ -94,36 +94,103 @@ const STANDARD_CHAPTERS: &[&str] = &[
 /// Typst-wrapped entries still parse via the fence
 /// extractor.
 const META_OVERVIEW_BODY: &str = "{
-  // Language metadata.  Edit before adding entries —
-  // `alphabet` drives the Dictionary's subchapter
-  // auto-creation.
+  // ──────────────────────────────────────────────────
+  // IDENTITY
+  // ──────────────────────────────────────────────────
+
+  // Display name for the language.
   name: \"\"
-  // \"constructed\" | \"natural\"
-  language_kind: constructed
-  // Sibling languages (e.g. Elvish).
+
+  // Sibling languages (e.g. Elvish, Romance, Slavic).
+  // Phase D.2 will use this for cross-language family
+  // browsing in the sidebar.
   family: \"\"
-  // Optional ISO 639-3 code.
+
+  // \"constructed\" | \"natural\" — drives default
+  // assumptions in the AI translator.  Constructed
+  // languages get stricter adherence to the explicit
+  // rules below; natural languages let the LLM lean
+  // more on its pretraining.
+  language_kind: constructed
+
+  // Optional ISO 639-3 code (e.g. \"qya\" for Quenya).
+  // Used by the multilingual prompt resolver when
+  // mixing this language with the project's working
+  // language flow.
   iso_code: \"\"
-  // Alphabet entries — for non-Latin orthographies,
-  // override with the author's declared groupings
-  // (e.g. [\"Aleph\", \"Beth\", \"Gimel\"] for Hebrew
-  // letter names; [\"Aa\", \"Bb\"] for paired-case
-  // Latin).  Drives Dictionary bucket auto-creation
-  // in `inkhaven language add-word` and the in-TUI
-  // `+` chord.
+
+  // ──────────────────────────────────────────────────
+  // ORTHOGRAPHY
+  // ──────────────────────────────────────────────────
+
+  // Alphabet entries in canonical order.  For non-
+  // Latin orthographies, override with the author's
+  // declared groupings:
+  //   * paired-case Latin: [\"Aa\", \"Bb\", \"Cc\"]
+  //   * Hebrew letter names: [\"Aleph\", \"Beth\", \"Gimel\"]
+  //   * Greek: [\"Α\", \"Β\", \"Γ\"]
+  //   * Cyrillic: [\"А\", \"Б\", \"В\"]
+  //   * Polish digraphs: [\"A\", \"Cz\", \"Dz\", \"Sz\"]
+  // Drives Dictionary bucket auto-creation in
+  // `inkhaven language add-word` and the in-TUI `+`
+  // chord.
   alphabet: [\"A\", \"B\", \"C\", \"D\", \"E\", \"F\", \"G\", \"H\", \"I\",
              \"J\", \"K\", \"L\", \"M\", \"N\", \"O\", \"P\", \"Q\", \"R\",
              \"S\", \"T\", \"U\", \"V\", \"W\", \"X\", \"Y\", \"Z\"]
-  // \"ltr\" | \"rtl\"
+
+  // \"ltr\" (default) | \"rtl\" | \"ttb\" (top-to-bottom)
   reading_direction: ltr
-  // Optional Snowball stemmer algo (rare for conlangs).
+
+  // Script / writing system name (Latin, Cyrillic,
+  // Tengwar, Devanagari, …).  Free-form; informational.
+  script: \"\"
+
+  // ──────────────────────────────────────────────────
+  // LINGUISTIC SHAPE — quick-reference summary the
+  // AI translator reads before composing prompts.
+  // ──────────────────────────────────────────────────
+
+  // Word order: SVO | SOV | VSO | VOS | OSV | OVS | free
+  word_order: \"\"
+
+  // Morphological type: isolating | agglutinative |
+  // fusional | polysynthetic | mixed
+  morphology: \"\"
+
+  // Tonal: true | false (informational only).
+  tonal: false
+
+  // Has grammatical case (declension)?
+  has_cases: false
+
+  // Has grammatical gender?
+  has_gender: false
+
+  // ──────────────────────────────────────────────────
+  // RUNTIME / TOOLING
+  // ──────────────────────────────────────────────────
+
+  // Optional Snowball stemmer algo name (\"english\",
+  // \"russian\", \"french\", \"spanish\", \"german\").
+  // Rare for conlangs — leave empty to let the
+  // lexicon overlay rely on the dictionary
+  // `inflection` paradigm fields instead.
   stemmer: \"\"
-  // Free-form citation for the canonical sample corpus.
+
+  // Free-form citation for the canonical sample
+  // corpus the LLM should treat as authoritative
+  // (Tolkien's Etymologies, Klingon Dictionary, etc.).
   example_corpus_ref: \"\"
+
+  // ──────────────────────────────────────────────────
+  // NOTES
+  // ──────────────────────────────────────────────────
+
   // Worldbuilding context — who speaks the language,
   // where, in what era, what register.  Read by the
-  // human author; the LLM only consumes the structured
-  // fields above when composing translation prompts.
+  // human author; the LLM only consumes the
+  // structured fields above when composing
+  // translation prompts.
   notes: \"\"
 }
 ";
@@ -424,27 +491,106 @@ pub(crate) fn add_dictionary_entry_impl(
 /// parser handles entries today.  Authors edit the
 /// HJSON to fill in `category`, `applies_when`, etc.
 pub(crate) const GRAMMAR_RULE_SEED_BODY: &str = "{
-  // Identifier the AI translation prompt references in
-  // applied-rules lists.  Lowercase + hyphens.
-  rule_id: \"\"
-  // morphology | syntax | phonology — drives Phase D.2
-  // grammar export sectioning.
-  category: \"\"
-  // RAG trigger sentence — the AI translation prompt
-  // includes this rule only when the source matches
-  // this condition.  Default cap is 6 rules; tight
-  // applies_when keeps the prompt focused.
-  applies_when: \"\"
-  // Sibling rules this one builds on, by rule_id.
-  depends_on: []
-  // Source / gloss / target triples for the rule's
-  // canonical examples.
+  // ──────────────────────────────────────────────────
+  // IDENTITY
+  // ──────────────────────────────────────────────────
+
+  // Identifier the AI translation prompt references
+  // in applied-rules lists.  Lowercase + hyphens.
+  // Example: \"noun-case-system\",
+  // \"verb-tense-aspect\", \"reduplication\".
+  rule_id:      \"\"
+
+  // Human-readable title for the rule card renderer.
+  title:        \"\"
+
+  // Category — drives Phase D.2 grammar export
+  // sectioning AND the in-prompt grouping.
+  //   morphology   — word-formation, inflection
+  //   syntax       — clause structure, word order
+  //   phonology    — sound rules
+  //   orthography  — spelling conventions
+  //   semantics    — meaning relationships
+  //   pragmatics   — usage / discourse rules
+  category:     \"\"
+
+  // ──────────────────────────────────────────────────
+  // RULE BODY — read by both the LLM and the human.
+  // Plain text inside an HJSON multi-line string;
+  // tabular layouts work fine.
+  // ──────────────────────────────────────────────────
+
+  rule:         '''
+    Describe the rule here.  This text is fed
+    verbatim to the AI translator at translation
+    time, so be explicit:
+
+      * State the input → output transformation.
+      * Show the morpheme boundaries (- or .).
+      * Show ALL exceptions inline so the LLM
+        doesn't have to guess.
+
+    Example layout for a case system:
+
+      NOM: zero suffix.   aran     (king)
+      ACC: -n.             aran → aranin
+      DAT: -en.            aran → aranen
+      GEN: -o.             aran → arano
+  '''
+
+  // ──────────────────────────────────────────────────
+  // FEW-SHOT EXAMPLES — bundled into the translation
+  // prompt envelope so the LLM sees the rule applied.
+  // ──────────────────────────────────────────────────
+
   examples: [
-    // { source: \"\", gloss: \"\", target: \"\" }
+    // { source: \"\",  target: \"\",  gloss: \"\" }
+    // { source: \"\",  target: \"\",  gloss: \"\" }
   ]
-  // Human-readable rule description.  Not consumed by
-  // the LLM; for the author's notes.
-  notes: \"\"
+
+  // ──────────────────────────────────────────────────
+  // RAG TRIGGERING — when this rule should be
+  // included in the translation prompt envelope.
+  // ──────────────────────────────────────────────────
+
+  // Plain-language condition the LLM evaluates
+  // against the source sentence.  Tight applies_when
+  // keeps the prompt focused (Phase C envelope
+  // includes only matching rules; default cap is 6).
+  applies_when: \"\"
+
+  // Sibling rules this one builds on, by rule_id.
+  // The RAG layer pulls dependent rules
+  // automatically.  Example: a verb-conjugation
+  // rule depends on the stem-formation rule.
+  depends_on:   []
+
+  // Rules that conflict with this one — only one
+  // should fire per translation pass.  Phase D.2
+  // `language doctor` will surface conflicting
+  // pairs that lack an `applies_when` disambiguator.
+  conflicts_with: []
+
+  // ──────────────────────────────────────────────────
+  // METADATA / NOTES
+  // ──────────────────────────────────────────────────
+
+  // Productivity — how broadly the rule applies.
+  // \"core\"        — fires on most sentences
+  // \"common\"      — fires on a recognisable
+  //                  subset of constructions
+  // \"specialised\" — narrow / register-bound
+  // \"vestigial\"   — historical residue only
+  productivity: \"\"
+
+  // Register / style restrictions, if any:
+  // formal | informal | literary | sacred | archaic.
+  register:     \"\"
+
+  // Author's notes — historical motivation,
+  // worldbuilding rationale, comparison to natural-
+  // language analogues.  Not read by the LLM.
+  notes:        \"\"
 }
 ";
 
@@ -454,12 +600,102 @@ pub(crate) const GRAMMAR_RULE_SEED_BODY: &str = "{
 /// be more declarative (allowed onsets, vowel
 /// harmony patterns) than triggered.
 pub(crate) const PHONOLOGY_RULE_SEED_BODY: &str = "{
-  rule_id: \"\"
-  // syllable | onset | coda | vowel-harmony | stress
-  category: \"\"
-  // C(C)V(C)(C) etc.
-  pattern: \"\"
-  notes: \"\"
+  // ──────────────────────────────────────────────────
+  // IDENTITY
+  // ──────────────────────────────────────────────────
+
+  // Identifier — lowercase + hyphens.  Referenced by
+  // grammar rules' `depends_on` field and by the
+  // phonotactic generator (`Ctrl+B Shift+W` in the
+  // Language book — Phase D.2).
+  // Examples: \"consonant-inventory\",
+  // \"vowel-harmony\", \"syllable-template\",
+  // \"intervocalic-voicing\".
+  rule_id:      \"\"
+
+  // Human-readable title for the rule card renderer.
+  title:        \"\"
+
+  // Category — drives Phase D.2 phonology export
+  // sectioning AND the phonotactic generator's
+  // weighting.
+  //   consonants     — IPA inventory of consonants
+  //   vowels         — IPA inventory of vowels
+  //   phonotactics   — allowed onset / nucleus / coda
+  //   syllable       — syllable template (CV, CVC, …)
+  //   stress         — stress placement rule
+  //   tone           — tonal system / pitch rules
+  //   sound-changes  — historical or allophonic shifts
+  //   prosody        — intonation / rhythm patterns
+  category:     \"\"
+
+  // ──────────────────────────────────────────────────
+  // RULE BODY — read by both the LLM and the human.
+  // ──────────────────────────────────────────────────
+
+  rule:         '''
+    Describe the rule here.  Use IPA inside
+    /slashes/ for phonemic and [brackets] for
+    phonetic.
+
+    Example layouts:
+
+      Phonotactic template:
+        ONSET: zero | C | CC (only stop+liquid)
+        NUCLEUS: V | VV (long vowels)
+        CODA: zero | C | CC (limited to /s, n, r, l/)
+
+      Sound change:
+        /s/ → [z] / V_V (intervocalic voicing)
+
+      Vowel harmony:
+        Front vowels {i, e} co-occur in roots;
+        back vowels {a, o, u} co-occur in roots;
+        suffixes harmonise with the root.
+  '''
+
+  // ──────────────────────────────────────────────────
+  // INVENTORIES — for consonants / vowels categories.
+  // ──────────────────────────────────────────────────
+
+  // List of phonemes (IPA strings).  Optional; used
+  // by the phonotactic generator to constrain output.
+  // phonemes:     []
+
+  // Allophonic variants by environment.  Map of
+  // phoneme → list of (environment, realisation).
+  // allophones:   {}
+
+  // ──────────────────────────────────────────────────
+  // ENVIRONMENT — for sound-changes / allophony.
+  // ──────────────────────────────────────────────────
+
+  // Where the rule applies (LLM evaluates against the
+  // source's phonetic context).
+  // environment:  \"\"
+
+  // ──────────────────────────────────────────────────
+  // EXAMPLES — IPA pairs showing the rule in action.
+  // ──────────────────────────────────────────────────
+
+  examples: [
+    // { input: \"\", output: \"\", gloss: \"\" }
+  ]
+
+  // Known exceptions — words / morphemes where the
+  // rule does NOT apply.
+  exceptions: []
+
+  // ──────────────────────────────────────────────────
+  // NOTES
+  // ──────────────────────────────────────────────────
+
+  // Register / style restrictions, if any.
+  register:     \"\"
+
+  // Author's notes — historical motivation, source
+  // dialect, comparison to natural-language analogues.
+  notes:        \"\"
 }
 ";
 
@@ -547,28 +783,95 @@ fn seed_dictionary_entry_body(
     let example_value = example.unwrap_or("").trim();
     format!(
         "{{\n  \
-         word:         \"{}\"\n  \
-         // Part of speech — noun | verb | adjective |\n  \
+         // ──────────────────────────────────────────────────\n  \
+         // CORE — required for the entry to function as a\n  \
+         // lexicon-overlay target + translation-prompt source.\n  \
+         // ──────────────────────────────────────────────────\n  \
+         \n  \
+         word:         \"{word}\"\n  \
+         \n  \
+         // Part of speech.  Free-form string; the\n  \
+         // proposal suggests: noun | verb | adjective |\n  \
          // adverb | pronoun | preposition | conjunction |\n  \
-         // interjection | particle (free-form; the language\n  \
-         // can use its own categories).\n  \
-         type:         \"{}\"\n  \
-         translation:  \"{}\"\n  \
-         example:      \"{}\"\n  \
-         // Optional: paradigm forms.  Every value here gets\n  \
-         // added to the lexicon overlay so inflected words\n  \
-         // light up in prose alongside the lemma.\n  \
-         // inflection: {{\n  \
-         //   plural:   \"\"\n  \
-         //   genitive: \"\"\n  \
+         // interjection | particle.  Language-specific\n  \
+         // categories (\"classifier\", \"evidential\",\n  \
+         // \"applicative\") are fine.\n  \
+         type:         \"{pos}\"\n  \
+         \n  \
+         // Working-language gloss — what this word\n  \
+         // means in the project's `language` (the value\n  \
+         // the AI translator maps to/from).\n  \
+         translation:  \"{translation}\"\n  \
+         \n  \
+         // Canonical sample sentence the author wants\n  \
+         // frozen into the entry.  Becomes few-shot\n  \
+         // anchor data in the translation prompt.\n  \
+         example:      \"{example}\"\n  \
+         \n  \
+         // ──────────────────────────────────────────────────\n  \
+         // OPTIONAL — uncomment and fill the ones you need.\n  \
+         // Each is consumed by either the translation\n  \
+         // prompt envelope (Phase C) or the future\n  \
+         // dictionary card renderer (Phase D.2).\n  \
+         // ──────────────────────────────────────────────────\n  \
+         \n  \
+         // Additional example sentences beyond the\n  \
+         // canonical one.  Phase C translation flow\n  \
+         // uses every example as few-shot data.\n  \
+         // examples:     [\n  \
+         //   \"\"\n  \
+         //   \"\"\n  \
+         // ]\n  \
+         \n  \
+         // IPA transcription (between slashes for\n  \
+         // phonemic, brackets for phonetic).\n  \
+         // pronunciation: \"\"\n  \
+         \n  \
+         // Etymology / derivation.  Plain text or\n  \
+         // [[wikilink]] style cross-reference to a\n  \
+         // proto-form entry.\n  \
+         // etymology:    \"\"\n  \
+         \n  \
+         // Cross-references to sibling entries — other\n  \
+         // words in this language that share roots,\n  \
+         // contrast in register, or commonly co-occur.\n  \
+         // related:      []\n  \
+         \n  \
+         // Paradigm forms.  Every VALUE here gets\n  \
+         // added to the lexicon overlay so inflected\n  \
+         // words light up in prose alongside the\n  \
+         // lemma.  KEY names are free-form and feed\n  \
+         // the translation prompt as paradigm hints.\n  \
+         // inflection:   {{\n  \
+         //   plural:     \"\"\n  \
+         //   genitive:   \"\"\n  \
+         //   accusative: \"\"\n  \
+         //   dative:     \"\"\n  \
+         //   ablative:   \"\"\n  \
          // }}\n  \
-         // Optional: free-form etymology / register / notes.\n  \
+         \n  \
+         // Register / style: formal | informal |\n  \
+         // archaic | literary | colloquial | sacred.\n  \
+         // register:     \"\"\n  \
+         \n  \
+         // Era — when the word entered the language.\n  \
+         // Useful for historical-fiction projects.\n  \
+         // era:          \"\"\n  \
+         \n  \
+         // Auto-tracked count of mentions in the\n  \
+         // manuscript.  Phase D.2 `language doctor`\n  \
+         // updates this; leave 0 for now.\n  \
+         // frequency:    0\n  \
+         \n  \
+         // Free-form usage notes — register cues,\n  \
+         // taboos, mnemonic etymology, whatever\n  \
+         // helps you remember the word.\n  \
          notes:        \"\"\n\
          }}\n",
-        escape_hjson(word),
-        escape_hjson(pos),
-        escape_hjson(translation),
-        escape_hjson(example_value),
+        word = escape_hjson(word),
+        pos = escape_hjson(pos),
+        translation = escape_hjson(translation),
+        example = escape_hjson(example_value),
     )
 }
 
@@ -1491,6 +1794,42 @@ mod tests {
             STANDARD_CHAPTERS,
             &["Meta", "Dictionary", "Grammar", "Phonology", "Sample texts"]
         );
+    }
+
+    /// 1.2.13+ Phase D.1 hotfix — the verbose seed
+    /// templates use HJSON multi-line strings (`'''`)
+    /// and a generous amount of commented-out
+    /// optional fields.  A typo or unbalanced bracket
+    /// in any of them would silently break every new
+    /// language sub-book the user scaffolds.  Parse
+    /// each template through serde_hjson directly to
+    /// catch syntax regressions at test time, not at
+    /// the user's first `+` press.
+    #[test]
+    fn meta_overview_seed_parses() {
+        let _: serde_hjson::Value = serde_hjson::from_str(META_OVERVIEW_BODY)
+            .expect("META_OVERVIEW_BODY must be valid HJSON");
+    }
+
+    #[test]
+    fn dictionary_entry_seed_parses() {
+        let body = seed_dictionary_entry_body(
+            "aiya", "interjection", "hail", Some("Aiya!"),
+        );
+        let _: serde_hjson::Value = serde_hjson::from_str(&body)
+            .expect("dictionary entry seed must be valid HJSON");
+    }
+
+    #[test]
+    fn grammar_rule_seed_parses() {
+        let _: serde_hjson::Value = serde_hjson::from_str(GRAMMAR_RULE_SEED_BODY)
+            .expect("GRAMMAR_RULE_SEED_BODY must be valid HJSON");
+    }
+
+    #[test]
+    fn phonology_rule_seed_parses() {
+        let _: serde_hjson::Value = serde_hjson::from_str(PHONOLOGY_RULE_SEED_BODY)
+            .expect("PHONOLOGY_RULE_SEED_BODY must be valid HJSON");
     }
 
     #[test]
