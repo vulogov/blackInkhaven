@@ -1,0 +1,13 @@
+word,type,translation,example,pronunciation,inflection,examples,etymology,related,register,notes
+atal,noun,river,"Atal nan ta-mi sora.",/ˈa.tal/,"nominative=atal;genitive=atale;plural=atatal","Atal sora-mi.|Pelele atal-e.","from proto-Tira *a-tal 'flowing water'","atale;atatal",formal,"Central worldbuilding word — the river-cult takes its name from this root"
+sora,verb,flow,"Atal sora-mi.",/ˈso.ɾa/,,,"from proto-Tira *so- 'move'",,,
+mi,particle,(present tense marker),,,,,,,formal,"Always trails the verb; never sentence-initial"
+nan,pronoun,you,"Atal nan ta-mi sora.",/nan/,"nominative=nan;genitive=nane",,,,formal,"Second-person singular formal; informal forms not attested"
+ta,particle,(subject/object marker),,,,,,,,
+peli,noun,mountain,"Peli kima-mi.",/ˈpe.li/,"nominative=peli;genitive=pelie;plural=pepeli","Pepeli kima-mi.|Atal peli-e nan-ta sora-mi.","from proto-Tira *pe-li 'standing-stone'",,formal,
+kima,adjective,green,"Peli kima-mi.",/ˈki.ma/,"nominative=kima;plural=kikima",,"from proto-Tira *ki-ma 'leaf-coloured'",,formal,"Used for the green of mountain growth — distinct from sora-coloured (river-green)"
+# the words below are vocabulary for the river-cult's ritual vocabulary
+mora,noun,song,"Mora mi-mi sora-lo.",/ˈmo.ɾa/,"nominative=mora;genitive=morae;plural=momora","Mora kima-mi.|Mora sora-mi atal-e.","from proto-Tira *mo-ra 'breath-shaping'",,sacred,"In sacred register only — see notes/ritual.typ"
+samu,noun,star,"Pepeli samu-mi.",/ˈsa.mu/,"nominative=samu;genitive=samue;plural=sasamu",,"loan from neighbouring Atal-Kele *samu 'pin-point'",,formal,"One of the few attested loanwords from a neighbouring language"
+lo,particle,(past tense marker),"Atal sora-lo.",/lo/,,,,,formal,"Always trails the verb"
+sa,particle,(future tense marker),"Atal sora-sa.",/sa/,,,,,formal,
