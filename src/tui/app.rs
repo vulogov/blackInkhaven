@@ -5246,6 +5246,83 @@ impl App {
             .map(|n| n.id)
     }
 
+    /// 1.2.13+ Phase D.1 hotfix — walk up `parent`'s
+    /// ancestor chain and return the per-language Book
+    /// (child of the Language system book) IFF the
+    /// parent sits anywhere under a chapter titled
+    /// "Dictionary" under that language.  Used by
+    /// `commit_add` to route Paragraph additions
+    /// through `add_dictionary_entry_impl` so they
+    /// land in the right alphabet bucket with the
+    /// HJSON template seeded.
+    fn find_language_book_for_dictionary_paragraph(
+        &self,
+        parent: Option<&crate::store::node::Node>,
+    ) -> Option<crate::store::node::Node> {
+        let lang_root_id =
+            self.system_book_id(crate::store::SYSTEM_TAG_LANGUAGES)?;
+        let parent = parent?;
+        // Walk up: parent → ancestor that's a Chapter
+        // named "Dictionary" → ancestor that's a Book
+        // (the per-language sub-book) whose parent is
+        // the Language system book.
+        let mut saw_dictionary = false;
+        let mut cur: Option<&crate::store::node::Node> = Some(parent);
+        while let Some(node) = cur {
+            if !saw_dictionary
+                && node.kind == NodeKind::Chapter
+                && node.title.eq_ignore_ascii_case("Dictionary")
+            {
+                saw_dictionary = true;
+            }
+            if saw_dictionary
+                && node.kind == NodeKind::Book
+                && node.parent_id == Some(lang_root_id)
+            {
+                return Some(node.clone());
+            }
+            cur = node.parent_id.and_then(|id| self.hierarchy.get(id));
+        }
+        None
+    }
+
+    /// 1.2.13+ Phase D.1 hotfix — like
+    /// `find_language_book_for_dictionary_paragraph`,
+    /// but for Grammar / Phonology chapters.  Returns
+    /// the template body string to seed; the rule's
+    /// final parent stays whatever the user pointed
+    /// at (no bucket routing — these chapters are
+    /// flat).
+    fn language_rule_chapter_for_paragraph(
+        &self,
+        parent: Option<&crate::store::node::Node>,
+    ) -> Option<&'static str> {
+        let lang_root_id =
+            self.system_book_id(crate::store::SYSTEM_TAG_LANGUAGES)?;
+        let parent = parent?;
+        let mut matched_template: Option<&'static str> = None;
+        let mut cur: Option<&crate::store::node::Node> = Some(parent);
+        while let Some(node) = cur {
+            if matched_template.is_none() && node.kind == NodeKind::Chapter {
+                if node.title.eq_ignore_ascii_case("Grammar") {
+                    matched_template =
+                        Some(crate::cli::language::GRAMMAR_RULE_SEED_BODY);
+                } else if node.title.eq_ignore_ascii_case("Phonology") {
+                    matched_template =
+                        Some(crate::cli::language::PHONOLOGY_RULE_SEED_BODY);
+                }
+            }
+            if matched_template.is_some()
+                && node.kind == NodeKind::Book
+                && node.parent_id == Some(lang_root_id)
+            {
+                return matched_template;
+            }
+            cur = node.parent_id.and_then(|id| self.hierarchy.get(id));
+        }
+        None
+    }
+
     /// Insert-after variant: walks up from the tree cursor to find a node of
     /// the same `kind` as the one being added; if found, the new node will be
     /// placed immediately after it. Falls back to append-at-end if no
@@ -14301,6 +14378,68 @@ impl App {
         };
 
         let parent = parent_id.and_then(|id| self.hierarchy.get(id)).cloned();
+
+        // 1.2.13+ Phase D.1 hotfix — Dictionary entries
+        // land under an alphabet-bucket subchapter, not
+        // directly under the Dictionary chapter the user
+        // pointed at.  Intercept Paragraph adds whose
+        // parent ancestry includes a `Language/<X>/Dictionary`
+        // chapter and route through
+        // `add_dictionary_entry_impl` (which handles the
+        // bucket derivation + duplicate check + body
+        // seeding the same way `inkhaven language
+        // add-word` does).
+        if kind == crate::store::NodeKind::Paragraph {
+            if let Some(lang_book) = self.find_language_book_for_dictionary_paragraph(parent.as_ref()) {
+                self.status = format!(
+                    "adding `{}` to {}/Dictionary...",
+                    title, lang_book.title
+                );
+                match crate::cli::language::add_dictionary_entry_impl(
+                    &self.store,
+                    &self.cfg,
+                    &lang_book,
+                    &title,
+                    "",
+                    "",
+                    None,
+                ) {
+                    Ok((entry, bucket)) => {
+                        let new_id = entry.id;
+                        self.status = format!(
+                            "added `{}` to {}/Dictionary/{} — open the paragraph to fill POS / translation",
+                            title, lang_book.title, bucket
+                        );
+                        self.modal = Modal::None;
+                        self.reload_hierarchy();
+                        if let Some(i) =
+                            self.rows.iter().position(|(id, _)| *id == new_id)
+                        {
+                            self.tree_cursor = i;
+                        }
+                    }
+                    Err(e) => {
+                        self.status = format!("add word failed: {e}");
+                    }
+                }
+                return;
+            }
+        }
+
+        // 1.2.13+ Phase D.1 hotfix — Grammar / Phonology
+        // paragraphs created via the tree-pane Add
+        // Paragraph chord get the schema-aware HJSON
+        // template seeded into their body so authors
+        // don't have to remember the field names.  Falls
+        // through to the normal create_node flow; the
+        // body update fires in the Ok branch below.
+        let seed_body_after_create: Option<&'static str> =
+            if kind == crate::store::NodeKind::Paragraph {
+                self.language_rule_chapter_for_paragraph(parent.as_ref())
+            } else {
+                None
+            };
+
         match self.store.create_node(
             &self.cfg,
             &self.hierarchy,
@@ -14310,8 +14449,17 @@ impl App {
             None,
             position,
         ) {
-            Ok(node) => {
+            Ok(mut node) => {
                 let new_id = node.id;
+                // Seed body if a rule-chapter template
+                // applies.  Errors are swallowed — the
+                // node is created either way; the author
+                // can re-edit if the seed fails.
+                if let Some(body) = seed_body_after_create {
+                    let _ = self
+                        .store
+                        .update_paragraph_content(&mut node, body.as_bytes());
+                }
                 // 1.2.13+ Phase D.1 — when the new book lands
                 // directly under the `Language` system book the
                 // tree-pane Add Book chord (`A` in tree, `+` etc.)
@@ -14367,6 +14515,17 @@ impl App {
                             );
                         }
                     }
+                } else if seed_body_after_create.is_some() {
+                    // Grammar / Phonology rule paragraph
+                    // with the schema-aware template
+                    // seeded.  Confirm in the status
+                    // bar so the author knows the body
+                    // already has the right fields.
+                    self.status = format!(
+                        "added {} `{}` — HJSON template seeded; open the paragraph to fill the fields",
+                        kind.as_str(),
+                        node.title
+                    );
                 } else {
                     // For root-level user books: provision the artefacts
                     // subdirectory and the Typst-book skeleton (chapter +

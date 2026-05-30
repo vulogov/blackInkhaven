@@ -280,6 +280,51 @@ fn add_word(
             ))
         })?;
 
+    let (entry, bucket) = add_dictionary_entry_impl(
+        &store,
+        &cfg,
+        &lang_book,
+        word,
+        pos,
+        translation,
+        example,
+    )?;
+    let _ = entry;
+    eprintln!(
+        "added `{word}` to `{language}/Dictionary/{bucket}` ({pos} · {translation})"
+    );
+    Ok(())
+}
+
+/// 1.2.13+ Phase D.1 hotfix — shared "add dictionary
+/// entry" implementation used by:
+///   * the CLI `add-word` subcommand (above);
+///   * the in-TUI tree-pane Add Paragraph (`+`) commit
+///     handler when the cursor sits anywhere under
+///     `Language/<lang>/Dictionary`.
+///
+/// Caller supplies the per-language Book; we look up
+/// the Dictionary chapter, derive the alphabet bucket
+/// (consulting Meta/overview first, first-char
+/// uppercase as fallback), find-or-create the bucket
+/// subchapter, reject duplicates, create the entry
+/// paragraph, and seed its body with the HJSON
+/// template (POS / translation / example fields are
+/// left empty in the TUI flow — the author fills them
+/// in by editing the paragraph).
+///
+/// Returns `(entry_node, bucket_name)` so callers can
+/// surface a status message or move the tree cursor.
+pub(crate) fn add_dictionary_entry_impl(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    word: &str,
+    pos: &str,
+    translation: &str,
+    example: Option<&str>,
+) -> Result<(crate::store::node::Node, String)> {
+    let hierarchy = Hierarchy::load(store)?;
     let dictionary = hierarchy
         .children_of(Some(lang_book.id))
         .into_iter()
@@ -289,76 +334,49 @@ fn add_word(
         .cloned()
         .ok_or_else(|| {
             Error::Config(format!(
-                "language `{language}` has no `Dictionary` chapter — likely scaffolded with a pre-Phase-A inkhaven"
+                "language `{}` has no `Dictionary` chapter — likely scaffolded with a pre-Phase-A inkhaven",
+                lang_book.title
             ))
         })?;
-
-    // Alphabet bucket — consult the language's
-    // `Meta/overview.alphabet` first so authors with
-    // non-Latin orthographies (Hebrew letter names,
-    // paired-case Latin, Greek) get bucket subchapters
-    // titled by their declared groupings rather than
-    // the naive first-char uppercase.  Falls back to
-    // first-char uppercase when:
-    //   * the language has no Meta chapter (pre-Phase-A
-    //     scaffold);
-    //   * the Meta chapter has no overview paragraph;
-    //   * the overview body has no HJSON block;
-    //   * the alphabet list is empty;
-    //   * the word's first char isn't covered by any
-    //     declared entry.
-    let bucket = derive_alphabet_bucket(&store, &hierarchy, &lang_book, word)?
+    let bucket = derive_alphabet_bucket(store, &hierarchy, lang_book, word)?
         .or_else(|| alphabet_bucket(word))
         .ok_or_else(|| {
             Error::Config(format!("could not derive alphabet bucket from `{word}`"))
         })?;
-
-    // Find or create the bucket subchapter.
     let dictionary_kids = hierarchy.children_of(Some(dictionary.id));
     let subchapter = match dictionary_kids
         .iter()
-        .find(|n| {
-            n.kind == NodeKind::Subchapter && n.title == bucket
-        })
+        .find(|n| n.kind == NodeKind::Subchapter && n.title == bucket)
         .cloned()
     {
-        Some(existing) => {
-            eprintln!("using existing subchapter `{bucket}`");
-            existing.clone()
-        }
+        Some(existing) => existing.clone(),
         None => {
-            let hierarchy = Hierarchy::load(&store)?;
-            let created = store.create_node(
-                &cfg,
+            let hierarchy = Hierarchy::load(store)?;
+            store.create_node(
+                cfg,
                 &hierarchy,
                 NodeKind::Subchapter,
                 &bucket,
                 Some(&dictionary),
                 None,
                 InsertPosition::End,
-            )?;
-            eprintln!("created subchapter `{bucket}`");
-            created
+            )?
         }
     };
-
-    // Reject duplicate.
-    let hierarchy = Hierarchy::load(&store)?;
+    let hierarchy = Hierarchy::load(store)?;
     if hierarchy
         .children_of(Some(subchapter.id))
         .iter()
         .any(|n| n.title.eq_ignore_ascii_case(word))
     {
         return Err(Error::Config(format!(
-            "word `{word}` already defined under `{language}/Dictionary/{bucket}`"
+            "word `{word}` already defined under `{}/Dictionary/{bucket}`",
+            lang_book.title
         )));
     }
-
-    // Create the entry paragraph + seed its HJSON
-    // body.
-    let hierarchy = Hierarchy::load(&store)?;
+    let hierarchy = Hierarchy::load(store)?;
     let mut entry = store.create_node(
-        &cfg,
+        cfg,
         &hierarchy,
         NodeKind::Paragraph,
         word,
@@ -370,12 +388,64 @@ fn add_word(
     store
         .update_paragraph_content(&mut entry, body.as_bytes())
         .map_err(|e| Error::Store(format!("seed entry: {e}")))?;
-
-    eprintln!(
-        "added `{word}` to `{language}/Dictionary/{bucket}` ({pos} · {translation})"
-    );
-    Ok(())
+    Ok((entry, bucket))
 }
+
+/// 1.2.13+ Phase D.1 hotfix — seed body for a grammar
+/// rule paragraph created in the TUI.  Mirrors the
+/// proposal §4 schema so future Phase D.2 work
+/// (`--format grammar` exporter, `language define-rule`
+/// CLI) can parse it the same way the dictionary entry
+/// parser handles entries today.  Authors edit the
+/// HJSON to fill in `category`, `applies_when`, etc.
+pub(crate) const GRAMMAR_RULE_SEED_BODY: &str = "\
+```hjson
+{
+  // Identifier the AI translation prompt references in
+  // applied-rules lists.  Lowercase + hyphens.
+  rule_id: \"\"
+  // morphology | syntax | phonology — drives Phase D.2
+  // grammar export sectioning.
+  category: \"\"
+  // RAG trigger sentence — the AI translation prompt
+  // includes this rule only when the source matches
+  // this condition.  Default cap is 6 rules; tight
+  // applies_when keeps the prompt focused.
+  applies_when: \"\"
+  // Sibling rules this one builds on, by rule_id.
+  depends_on: []
+  // Source / gloss / target triples for the rule's
+  // canonical examples.
+  examples: [
+    // { source: \"\", gloss: \"\", target: \"\" }
+  ]
+}
+```
+
+# Prose explanation
+
+Human-readable rule description.  This block isn't
+read by the LLM; it's for the author's notes.
+";
+
+/// 1.2.13+ Phase D.1 hotfix — seed body for a
+/// phonology rule paragraph.  Lighter than the
+/// grammar template because phonology rules tend to
+/// be more declarative (allowed onsets, vowel
+/// harmony patterns) than triggered.
+pub(crate) const PHONOLOGY_RULE_SEED_BODY: &str = "\
+```hjson
+{
+  rule_id: \"\"
+  // syllable | onset | coda | vowel-harmony | stress
+  category: \"\"
+  pattern: \"\"     // C(C)V(C)(C) etc.
+  notes: \"\"
+}
+```
+
+# Prose explanation
+";
 
 /// Derive the alphabet-bucket subchapter name for a
 /// word.  Uses the first non-whitespace character,
