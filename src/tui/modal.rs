@@ -827,6 +827,38 @@ pub(super) enum Modal {
         /// into `data.entries`.
         visible: Vec<usize>,
     },
+    /// 1.2.13+ Phase C.2 — `Ctrl+B Q` / `Ctrl+B Shift+Q`
+    /// disambiguation picker.  Pops only when 2+ Language
+    /// sub-books exist; with 0 the chord errors out, with
+    /// exactly 1 the translation kicks off directly without
+    /// the modal.  Carries the parsed source body + title
+    /// + direction so the commit handler can spawn the
+    /// inference without re-reading editor state (the editor
+    /// may have moved between open and commit).
+    TranslationLanguagePicker {
+        /// (language-sub-book uuid, display name) pairs in
+        /// canonical hierarchy order — matches the order the
+        /// per-language sub-letter sub-chord will assume in
+        /// a future iteration.
+        entries: Vec<(Uuid, String)>,
+        cursor: usize,
+        direction: TranslationDirection,
+        source_title: String,
+        source_body: String,
+    },
+}
+
+/// 1.2.13+ Phase C.2 — direction the translation flow runs in.
+/// `ToInvented` is the headline `Ctrl+B Q` ("translate INTO the
+/// invented language for the manuscript"); `FromInvented` is the
+/// reverse-direction `Ctrl+B Shift+Q` for roundtrip testing
+/// ("does the LLM understand its own grammar?").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TranslationDirection {
+    /// Working language → invented language.
+    ToInvented,
+    /// Invented language → working language.
+    FromInvented,
 }
 
 #[cfg(test)]

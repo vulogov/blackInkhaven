@@ -487,6 +487,29 @@ pub(super) fn select_apply_text(
 ///
 /// Returns `None` if none of those patterns match so callers
 /// can refuse rather than paste commentary by mistake.
+/// 1.2.13+ Phase C.2 — extract only the
+/// `<<<TRANSLATION>>> … <<<END>>>` block from a translation
+/// response.  Used by the Insert apply path when
+/// `pending_translation` is set so the manuscript receives
+/// only the target-language prose, not the gloss table or
+/// applied-rules list that surround it.  Returns `None`
+/// when the markers are missing — caller falls back to
+/// pasting the full response so the user sees something
+/// rather than silent dropping.
+pub(super) fn extract_translation_text(response: &str) -> Option<String> {
+    let begin = response.find(TRANSLATION_BEGIN)?;
+    let after = &response[begin + TRANSLATION_BEGIN.len()..];
+    let end_offset = after.find(CORRECTED_END)?;
+    let inner = &after[..end_offset];
+    let cleaned =
+        inner.trim_matches(|c: char| c == '\n' || c == '\r' || c == ' ');
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned.to_string())
+    }
+}
+
 pub(super) fn extract_corrected_text(response: &str) -> Option<String> {
     if let Some(begin) = response.find(CORRECTED_BEGIN) {
         let after = &response[begin + CORRECTED_BEGIN.len()..];
@@ -718,6 +741,45 @@ mod corrected_tests {
                  <<>> The little boy plays the fiddle. <<>>\n";
         let got = extract_corrected_text(r).unwrap();
         assert_eq!(got, "The little boy plays the fiddle.");
+    }
+
+    // 1.2.13+ Phase C.2 — translation extractor.  Lifts
+    // the `<<<TRANSLATION>>> … <<<END>>>` block.
+
+    #[test]
+    fn translation_extracts_marker_block() {
+        let r = "1. The translation.\n\n\
+                 <<<TRANSLATION>>>\n\
+                 Aiya, ñ'olor!\n\
+                 <<<END>>>\n\n\
+                 2. Gloss table…";
+        let got = extract_translation_text(r).unwrap();
+        assert_eq!(got, "Aiya, ñ'olor!");
+    }
+
+    #[test]
+    fn translation_extracts_multiline_prose() {
+        let r = "Intro.\n\n<<<TRANSLATION>>>\n\
+                 Line one.\n\
+                 Line two of the invented language.\n\
+                 <<<END>>>\nGloss.";
+        let got = extract_translation_text(r).unwrap();
+        assert_eq!(got, "Line one.\nLine two of the invented language.");
+    }
+
+    #[test]
+    fn translation_returns_none_when_markers_missing() {
+        assert!(extract_translation_text("").is_none());
+        assert!(extract_translation_text(
+            "Just the translation prose, no markers."
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn translation_returns_none_on_empty_block() {
+        let r = "<<<TRANSLATION>>>\n\n<<<END>>>\n";
+        assert!(extract_translation_text(r).is_none());
     }
 
     // 1.2.6+ — `select_apply_text` should auto-prefer a
@@ -1686,6 +1748,19 @@ pub(crate) struct App {
     /// an error path.
     pub(super) pending_rhythm_rewrite: bool,
 
+    /// 1.2.13+ Phase C.2 — set true when a translation
+    /// inference is in flight.  Drives translation-aware
+    /// `Insert` extraction: when the AI pane fires its
+    /// `I` apply chord on a finished translation
+    /// inference, the apply path lifts ONLY the
+    /// `<<<TRANSLATION>>> … <<<END>>>` block (the target-
+    /// language prose, no commentary, no gloss table)
+    /// rather than the full markdown→Typst converted
+    /// reply.  Cleared at extraction time so a second
+    /// `I` press lands the full body (escape hatch when
+    /// the LLM forgot the markers).
+    pub(super) pending_translation: bool,
+
     /// RAG context block (e.g. a place/character lookup) that the next
     /// AI-prompt submission should prepend to the user's typed query.
     /// Used by the Ctrl+B P / Ctrl+B C editor flows when the AI prompt is
@@ -1951,6 +2026,7 @@ impl App {
             pending_chat_user_msg: None,
             pending_paragraph_memory_target: None,
             pending_rhythm_rewrite: false,
+            pending_translation: false,
             pending_rag_prefix: None,
             layout_search: Rect::default(),
             layout_tree: Rect::default(),
@@ -7361,6 +7437,7 @@ impl App {
             A::AnalyseShowDontTell => self.start_show_dont_tell_scan(),
             A::AiRewriteRhythm => self.start_sentence_rhythm_rewrite(),
             A::TranslateToInvented => self.start_translate_to_invented(),
+            A::TranslateFromInvented => self.start_translate_from_invented(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
@@ -13229,6 +13306,8 @@ impl App {
         let is_credits = matches!(self.modal, Modal::Credits { .. });
         let is_book_info = matches!(self.modal, Modal::BookInfo { .. });
         let is_llm_picker = matches!(self.modal, Modal::LlmPicker { .. });
+        let is_translation_picker =
+            matches!(self.modal, Modal::TranslationLanguagePicker { .. });
         let is_image_picker = matches!(self.modal, Modal::ImagePicker { .. });
         let is_function_picker = matches!(self.modal, Modal::FunctionPicker { .. });
         let is_status_filter = matches!(self.modal, Modal::StatusFilter { .. });
@@ -13285,6 +13364,10 @@ impl App {
         }
         if is_llm_picker {
             self.llm_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_translation_picker {
+            self.translation_picker_handle_key(key);
             return Ok(false);
         }
         if is_image_picker {
@@ -18005,6 +18088,15 @@ paragraph buffer with it.";
 /// the prompt stay in sync.
 pub(super) const CORRECTED_BEGIN: &str = "<<<CORRECTED>>>";
 pub(super) const CORRECTED_END: &str = "<<<END>>>";
+/// 1.2.13+ Phase C.2 — markers the translation envelope
+/// wraps the target-language block in.  The Insert apply
+/// chord lifts only this block when `pending_translation`
+/// is set, so the gloss table + applied-rules list stay
+/// in the AI pane but the manuscript only gets the prose.
+/// Sharing `CORRECTED_END` keeps a single sentinel — the
+/// LLM is more reliable when both close markers are the
+/// same token across prompt families.
+pub(super) const TRANSLATION_BEGIN: &str = "<<<TRANSLATION>>>";
 
 /// 1.2.12+ Phase B — promoted to a 5-arm language match.
 /// Caller passes the ISO 639-1 code from

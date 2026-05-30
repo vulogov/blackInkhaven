@@ -55,6 +55,10 @@ impl super::App {
             self.draw_llm_picker_modal(f, area);
             return;
         }
+        if let Modal::TranslationLanguagePicker { .. } = &self.modal {
+            self.draw_translation_picker_modal(f, area);
+            return;
+        }
         if let Modal::ImagePicker { .. } = &self.modal {
             self.draw_image_picker_modal(f, area);
             return;
@@ -210,6 +214,8 @@ impl super::App {
                 unreachable!("writing-streak heatmap handled above"),
             Modal::Concordance { .. } =>
                 unreachable!("concordance handled above"),
+            Modal::TranslationLanguagePicker { .. } =>
+                unreachable!("translation picker handled above"),
             Modal::SentenceRhythm { .. } =>
                 unreachable!("sentence rhythm handled above"),
             Modal::RenderedPreview { .. } =>

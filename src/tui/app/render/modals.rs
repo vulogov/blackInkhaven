@@ -286,6 +286,99 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 
+    /// 1.2.13+ Phase C.2 — `Ctrl+B Q` / `Ctrl+B Shift+Q`
+    /// language picker.  Pops only when 2+ Language sub-
+    /// books exist (single-language projects skip the
+    /// modal entirely).  Layout mirrors the LlmPicker
+    /// modal — small centred list with first-letter
+    /// shortcut hint in the footer.
+    pub(in crate::tui::app) fn draw_translation_picker_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::TranslationLanguagePicker {
+            entries,
+            cursor,
+            direction,
+            ..
+        } = &self.modal
+        else {
+            return;
+        };
+        let header_lines = 2;
+        let footer_lines = 2;
+        let body_lines = entries.len();
+        let height = (header_lines + body_lines + footer_lines + 2) as u16;
+        let height = height.clamp(8, area.height.saturating_sub(2));
+
+        let max_name = entries
+            .iter()
+            .map(|(_, n)| n.chars().count())
+            .max()
+            .unwrap_or(8);
+        let width = (max_name + 14) as u16;
+        let width = width.clamp(40, area.width.saturating_sub(6));
+
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let arrow = match direction {
+            super::super::super::modal::TranslationDirection::ToInvented =>
+                " Translate INTO · Ctrl+B Q ",
+            super::super::super::modal::TranslationDirection::FromInvented =>
+                " Translate FROM · Ctrl+B Shift+Q ",
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(arrow)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(""));
+        for (i, (_, name)) in entries.iter().enumerate() {
+            let marker = if i == *cursor { "›" } else { " " };
+            let first_letter = name
+                .chars()
+                .next()
+                .map(|c| c.to_ascii_uppercase().to_string())
+                .unwrap_or_else(|| "?".into());
+            // Highlight the first letter so the
+            // "press the letter to jump+commit" hint
+            // in the footer is obvious from the rows
+            // themselves.
+            let style = if i == *cursor {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            let row = format!("  {marker} [{first_letter}] {name}");
+            lines.push(Line::from(Span::styled(row, style)));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  ↑↓ Enter · type first letter to jump-and-commit · Esc to cancel"
+                .to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
     pub(in crate::tui::app) fn draw_image_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
         let Modal::ImagePicker {
             entries, cursor, ..

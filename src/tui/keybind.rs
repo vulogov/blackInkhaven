@@ -600,14 +600,24 @@ pub enum Action {
     /// Dictionary (RAG-filtered to words present in the
     /// source), Grammar (all rules), Phonology (all rules),
     /// and Sample-text chapters, then streams the response
-    /// into the AI pane.  If the project has zero Language
-    /// sub-books the chord errors out; with exactly one it
-    /// translates directly; with two or more the chord
-    /// targets the first by canonical order and the status
-    /// bar warns — per-language sub-letter chord (`Ctrl+B Q
-    /// Q` for Quenya etc.) is a Phase C.2 follow-up.
+    /// into the AI pane.  With zero Language sub-books the
+    /// chord errors out; with exactly one it translates
+    /// directly; with two or more it pops a picker (1.2.13
+    /// Phase C.2 — ↑↓ + Enter, or type the first letter to
+    /// jump-and-commit).
     #[serde(rename = "ai.translate_to_invented")]
     TranslateToInvented,
+    /// 1.2.13+ Phase C.2 — Ctrl+B Shift+Q.  Reverse
+    /// direction: translate the open paragraph FROM an
+    /// invented language back into the working language.
+    /// Same envelope shape, flipped direction labels.  The
+    /// natural roundtrip workflow is `Ctrl+B Q` → copy the
+    /// translation into the next paragraph → `Ctrl+B Shift+Q`
+    /// — when the resulting working-language text matches
+    /// the original the grammar rules + dictionary entries
+    /// hold together end-to-end.
+    #[serde(rename = "ai.translate_from_invented")]
+    TranslateFromInvented,
 
     /// Runtime-only: a Bund lambda registered under the given
     /// name via `ink.key.bind_lambda`. Dispatch routes to
@@ -721,7 +731,8 @@ impl Action {
             Action::OpenSentenceRhythm => "rhythm".into(),
             Action::AiRewriteRhythm => "rhythm rewrite".into(),
             Action::AnalyseShowDontTell => "show↛tell AI".into(),
-            Action::TranslateToInvented => "translate".into(),
+            Action::TranslateToInvented => "translate →".into(),
+            Action::TranslateFromInvented => "translate ←".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -941,7 +952,9 @@ impl Action {
             Action::AnalyseShowDontTell =>
                 "AI-driven show-don't-tell scan of the open paragraph (1.2.9+, Ctrl+B Shift+T). Sends the paragraph to the configured LLM with a system prompt asking for telling passages plus suggested rewrites. The response streams into the AI pane. Complements the always-on regex overlay (`editor.style_warnings.show_dont_tell`) with deeper analysis — the regex catches the obvious 2-grams (`was angry`, `realised`); the AI scan catches subtler instances and proposes alternatives. Mnemonic: T for tell.".into(),
             Action::TranslateToInvented =>
-                "AI-driven translation of the open paragraph from the project's working language INTO an invented language defined under the Language system book (1.2.13+, Ctrl+B Q). Composes a prompt envelope from the language's Dictionary (RAG-filtered to words present in the source), Grammar (all rules), Phonology (all rules), and Sample-text chapters, then streams the response into the AI pane. With zero Language sub-books the chord errors out; with exactly one it translates directly; with two or more it targets the first by canonical order and the status bar warns — the per-language sub-letter chord (Ctrl+B Q Q for Quenya etc.) is a Phase C.2 follow-up.".into(),
+                "AI-driven translation of the open paragraph from the project's working language INTO an invented language defined under the Language system book (1.2.13+, Ctrl+B Q). Composes a prompt envelope from the language's Dictionary (RAG-filtered to words present in the source), Grammar (all rules), Phonology (all rules), and Sample-text chapters, then streams the response into the AI pane. With zero Language sub-books the chord errors out; with exactly one it translates directly; with two or more it pops a picker — ↑↓ + Enter, or type the first letter to jump-and-commit (the proposal's Ctrl+B Q Q for Quenya sub-letter pattern, unbundled). The translation block is wrapped between <<<TRANSLATION>>> / <<<END>>> markers so the I apply chord in the AI pane lifts only the target-language prose, no gloss table or commentary.".into(),
+            Action::TranslateFromInvented =>
+                "Reverse-direction AI translation (1.2.13+, Ctrl+B Shift+Q). Translate the open paragraph FROM an invented language defined under the Language system book back into the project's working language. Same prompt envelope shape and language-picker semantics as Ctrl+B Q. The natural roundtrip-test workflow is Ctrl+B Q → copy the translation into the next paragraph → Ctrl+B Shift+Q: when the resulting working-language text matches the original, the grammar rules and dictionary entries hold together end-to-end — exposes grammar drift before it bites in the manuscript.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -1143,6 +1156,11 @@ impl KeyBindings {
                 // an invented language defined under
                 // the Language system book.
                 entry("q", Action::TranslateToInvented, Scope::Editor),
+                // 1.2.13+ Phase C.2 — Ctrl+B Shift+Q.
+                // Reverse direction: translate FROM
+                // invented back to the working
+                // language.  Roundtrip test.
+                entry("Shift+q", Action::TranslateFromInvented, Scope::Editor),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),
