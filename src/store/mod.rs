@@ -33,6 +33,7 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("places", "Places"),
     ("characters", "Characters"),
     ("artefacts", "Artefacts"),
+    ("language", "Language"),
     ("typst", "Typst"),
     ("scripts", "Scripts"),
     ("help", "Help"),
@@ -43,6 +44,20 @@ pub const SYSTEM_TAG_PROMPTS: &str = "prompts";
 pub const SYSTEM_TAG_PLACES: &str = "places";
 pub const SYSTEM_TAG_CHARACTERS: &str = "characters";
 pub const SYSTEM_TAG_ARTEFACTS: &str = "artefacts";
+/// 1.2.13+ — top-level container for invented-
+/// language books (Quenya / Drow / Klingon / …).
+/// Per-language children are `NodeKind::Book` nodes
+/// scaffolded with `Meta / Dictionary / Grammar /
+/// Phonology / Sample texts` chapters by the
+/// `inkhaven language init <name>` CLI.  Dictionary-
+/// entry paragraphs live under alphabet
+/// subchapters whose names come from the language's
+/// `Meta/overview.alphabet` HJSON field — author-
+/// defined so non-Latin orthographies (Hebrew,
+/// Arabic, Asian scripts) can use logical
+/// groupings instead of per-letter sections.
+/// See `Documentation/PROPOSALS/LANGUAGE_BOOK.md`.
+pub const SYSTEM_TAG_LANGUAGES: &str = "language";
 pub const SYSTEM_TAG_TYPST: &str = "typst";
 pub const SYSTEM_TAG_SCRIPTS: &str = "scripts";
 pub const SYSTEM_TAG_HELP: &str = "help";
