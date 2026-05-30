@@ -544,30 +544,35 @@ impl super::super::App {
             return;
         }
 
-        // Per-paragraph goal footer (1.2.4+). Carve one row off
-        // the bottom of the editor area when the open paragraph
-        // has a target word-count set. Provides reliable space
-        // for the gauge — the tree pane can't fit it for long
-        // auto-derived titles.
+        // Per-paragraph goal footer (1.2.4+).  Plus the
+        // 1.2.13 Phase B.2 Language chip
+        // `[word · POS · translation]` when the cursor
+        // sits on a Language lexicon hit — the chip wins
+        // the footer slot because it's transient,
+        // cursor-position-relative info that the user
+        // explicitly asked for by navigating to that
+        // word.  Goal gauge comes back the moment the
+        // cursor moves off.
         let goal_footer = self.editor_goal_footer_text();
-        let (editor_rect, footer_rect) = match goal_footer.as_ref() {
-            Some(_) => {
-                let footer_h: u16 = 1;
-                let er = Rect {
-                    x: inner.x,
-                    y: inner.y,
-                    width: inner.width,
-                    height: inner.height.saturating_sub(footer_h),
-                };
-                let fr = Rect {
-                    x: inner.x,
-                    y: inner.y + inner.height.saturating_sub(footer_h),
-                    width: inner.width,
-                    height: footer_h,
-                };
-                (er, Some(fr))
-            }
-            None => (inner, None),
+        let language_chip = self.language_hit_chip();
+        let need_footer = goal_footer.is_some() || language_chip.is_some();
+        let (editor_rect, footer_rect) = if need_footer {
+            let footer_h: u16 = 1;
+            let er = Rect {
+                x: inner.x,
+                y: inner.y,
+                width: inner.width,
+                height: inner.height.saturating_sub(footer_h),
+            };
+            let fr = Rect {
+                x: inner.x,
+                y: inner.y + inner.height.saturating_sub(footer_h),
+                width: inner.width,
+                height: footer_h,
+            };
+            (er, Some(fr))
+        } else {
+            (inner, None)
         };
         let inner = editor_rect;
 
@@ -593,29 +598,43 @@ impl super::super::App {
             self.draw_editor_unwrapped(f, inner);
         }
 
-        // Render the goal footer last so it sits on top of the
-        // textarea's bottom row (the carve-out above shrunk the
-        // textarea, leaving exactly one free row for us).
-        if let (Some((gauge, words, target)), Some(rect)) =
-            (goal_footer, footer_rect)
-        {
-            let pct = (words.max(0) * 100 / target.max(1)).clamp(0, 999);
-            let (gauge_str, _pct, gauge_style) =
-                format_progress_gauge(words, target);
-            let pct_str = format!(" {pct}%");
-            let counts =
-                format!("  {words}/{target} words");
-            let line = Line::from(vec![
-                Span::raw(" "),
-                Span::styled(gauge_str, gauge_style),
-                Span::styled(pct_str, gauge_style),
-                Span::styled(
-                    counts,
-                    Style::default().add_modifier(Modifier::DIM),
-                ),
-                Span::raw(format!("  · goal: {gauge}")),
-            ]);
-            f.render_widget(Paragraph::new(line), rect);
+        // Render the footer last so it sits on top of the
+        // textarea's bottom row (the carve-out above shrunk
+        // the textarea, leaving exactly one free row).
+        // Priority: Language chip > goal gauge.  The chip
+        // is italic + Language colour to mirror the
+        // editor overlay style — keeps the visual link
+        // between the highlighted word and the chip
+        // describing it.
+        if let Some(rect) = footer_rect {
+            if let Some(chip) = language_chip {
+                let style = Style::default()
+                    .fg(self.theme.language_word_fg)
+                    .add_modifier(Modifier::ITALIC);
+                let line = Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled(chip, style),
+                ]);
+                f.render_widget(Paragraph::new(line), rect);
+            } else if let Some((gauge, words, target)) = goal_footer {
+                let pct = (words.max(0) * 100 / target.max(1)).clamp(0, 999);
+                let (gauge_str, _pct, gauge_style) =
+                    format_progress_gauge(words, target);
+                let pct_str = format!(" {pct}%");
+                let counts =
+                    format!("  {words}/{target} words");
+                let line = Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled(gauge_str, gauge_style),
+                    Span::styled(pct_str, gauge_style),
+                    Span::styled(
+                        counts,
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                    Span::raw(format!("  · goal: {gauge}")),
+                ]);
+                f.render_widget(Paragraph::new(line), rect);
+            }
         }
     }
 

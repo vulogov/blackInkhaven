@@ -1624,6 +1624,16 @@ pub(crate) struct App {
     /// lexicon — render path skips work.
     lexicon: super::lexicon::Lexicon,
 
+    /// 1.2.13+ Phase B.2 — side-product of `build_lexicon`.
+    /// Maps lowercased surface forms (lemma + every
+    /// paradigm form parsed out of dictionary entry HJSON
+    /// bodies) to the `DictionaryEntry` it came from, so
+    /// the editor footer can render a
+    /// `[word · POS · translation]` chip when the cursor
+    /// lands on a Language hit.  Rebuilt alongside
+    /// `lexicon`.
+    language_entries: super::lexicon_build::LanguageEntryIndex,
+
     inference: Option<Inference>,
     show_prompt_picker: bool,
     prompt_picker_cursor: usize,
@@ -1806,7 +1816,7 @@ impl App {
         .map_err(|e| Error::Config(format!("keys.bindings: {e}")))?;
         super::keybind::install(keys);
         let hierarchy = Hierarchy::load(&store).map_err(anyhow::Error::from)?;
-        let lexicon = build_lexicon(&hierarchy, &cfg);
+        let (lexicon, language_entries) = build_lexicon(&hierarchy, &cfg, &store);
         let collapsed_nodes: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
         let rows: Vec<(Uuid, usize)> = hierarchy
             .flatten_with_collapsed(&collapsed_nodes)
@@ -1931,6 +1941,7 @@ impl App {
                 .map_err(|e| anyhow::anyhow!("typst highlighter init: {e}"))?,
             theme,
             lexicon,
+            language_entries,
             inference: None,
             show_prompt_picker: false,
             prompt_picker_cursor: 0,
