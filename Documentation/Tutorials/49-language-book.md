@@ -84,10 +84,13 @@ already is.
 
 ## Step 2 — populate `Meta/overview`
 
-Open `Language/Quenya/Meta/overview` and edit
-the HJSON block.  The defaults assume a Latin
-A-Z alphabet; non-Latin authors override
-`alphabet` with the groupings they want:
+Open `Language/Quenya/Meta/overview` in the
+editor — it renders as syntax-highlighted HJSON
+because the paragraph's `content_type` is set to
+`"hjson"`.  Edit the fields directly.  The
+defaults assume a Latin A-Z alphabet; non-Latin
+authors override `alphabet` with the groupings
+they want:
 
 ```hjson
 {
@@ -157,7 +160,9 @@ authoring (script a CSV → loop `add-word`).  TUI
 authoring (you'll be in the paragraph anyway to
 fill etymology, notes, inflection).
 
-The created entry looks like this:
+The created entry looks like this (the body is
+pure HJSON; the editor renders with HJSON syntax
+highlighting):
 
 ```hjson
 {
@@ -165,14 +170,14 @@ The created entry looks like this:
   type:         "interjection"
   translation:  "hail"
   example:      "Aiya Eärendil!"
+  notes:        ""
 }
 ```
 
 Open the entry paragraph in the editor to add
-optional fields the seed leaves blank — most
-useful are `inflection` (paradigm forms) and
-`notes` (etymology, register, related
-entries):
+optional fields the seed leaves as commented
+hints — most useful is `inflection` (paradigm
+forms):
 
 ```hjson
 {
@@ -184,6 +189,7 @@ entries):
     plural:    "aiyar"
     emphatic:  "aiyala"
   }
+  notes:        "Greeting used by elves of Aman."
 }
 ```
 

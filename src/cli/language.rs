@@ -79,39 +79,53 @@ const STANDARD_CHAPTERS: &[&str] = &[
     "Sample texts",
 ];
 
-/// Seed body for `Meta/overview` — a starter HJSON
-/// paragraph the author edits to populate the
-/// language's metadata.  Defaults assume a Latin-
-/// alphabet constructed language; non-Latin
-/// authors override `alphabet`.
-const META_OVERVIEW_BODY: &str = "\
-= overview
-
-```hjson
-{
+/// Seed body for `Meta/overview` — pure HJSON so the
+/// editor renders with HJSON syntax highlighting.
+/// The paragraph's `content_type` is set to `"hjson"`
+/// at create time; the body is just the metadata
+/// object (no Typst headings, no markdown fences).
+///
+/// 1.2.13+ Phase D.1 hotfix — switched FROM the Typst-
+/// with-fenced-HJSON format to pure HJSON because the
+/// Typst editor mode rendered the body as a heading +
+/// opaque code fence instead of as structured config.
+/// The translation prompt composer + parser handle
+/// both formats; new entries use pure HJSON, legacy
+/// Typst-wrapped entries still parse via the fence
+/// extractor.
+const META_OVERVIEW_BODY: &str = "{
   // Language metadata.  Edit before adding entries —
   // `alphabet` drives the Dictionary's subchapter
   // auto-creation.
   name: \"\"
-  language_kind: constructed     // \"constructed\" | \"natural\"
-  family:                         // sibling languages (e.g. Elvish)
-  iso_code:                       // optional ISO 639-3
+  // \"constructed\" | \"natural\"
+  language_kind: constructed
+  // Sibling languages (e.g. Elvish).
+  family: \"\"
+  // Optional ISO 639-3 code.
+  iso_code: \"\"
+  // Alphabet entries — for non-Latin orthographies,
+  // override with the author's declared groupings
+  // (e.g. [\"Aleph\", \"Beth\", \"Gimel\"] for Hebrew
+  // letter names; [\"Aa\", \"Bb\"] for paired-case
+  // Latin).  Drives Dictionary bucket auto-creation
+  // in `inkhaven language add-word` and the in-TUI
+  // `+` chord.
   alphabet: [\"A\", \"B\", \"C\", \"D\", \"E\", \"F\", \"G\", \"H\", \"I\",
              \"J\", \"K\", \"L\", \"M\", \"N\", \"O\", \"P\", \"Q\", \"R\",
              \"S\", \"T\", \"U\", \"V\", \"W\", \"X\", \"Y\", \"Z\"]
-  reading_direction: ltr         // \"ltr\" | \"rtl\"
-  stemmer:                        // optional Snowball algo (rare for conlangs)
-  example_corpus_ref:             // free-form citation
+  // \"ltr\" | \"rtl\"
+  reading_direction: ltr
+  // Optional Snowball stemmer algo (rare for conlangs).
+  stemmer: \"\"
+  // Free-form citation for the canonical sample corpus.
+  example_corpus_ref: \"\"
+  // Worldbuilding context — who speaks the language,
+  // where, in what era, what register.  Read by the
+  // human author; the LLM only consumes the structured
+  // fields above when composing translation prompts.
+  notes: \"\"
 }
-```
-
-# Free-form notes
-
-Worldbuilding context for this language: who speaks
-it, where, in what era, what register.  This block
-is read by the human author; the LLM only consumes
-the HJSON above when composing translation
-prompts.
 ";
 
 fn init(project: &Path, name: &str) -> Result<()> {
@@ -225,6 +239,16 @@ pub(crate) fn scaffold_language_chapters(
                 None,
                 InsertPosition::End,
             )?;
+            // Switch to HJSON content type so the editor
+            // renders with syntax highlighting + the
+            // paragraph status bar shows `[hjson]` to
+            // match the rest of the project's HJSON
+            // configuration paragraphs.  Mutating
+            // `node.content_type` before
+            // `update_paragraph_content` lets the
+            // metadata write inside that call persist
+            // the change.
+            overview.content_type = Some("hjson".to_string());
             store
                 .update_paragraph_content(&mut overview, META_OVERVIEW_BODY.as_bytes())
                 .map_err(|e| Error::Store(format!("seed overview: {e}")))?;
@@ -385,6 +409,7 @@ pub(crate) fn add_dictionary_entry_impl(
         InsertPosition::End,
     )?;
     let body = seed_dictionary_entry_body(word, pos, translation, example);
+    entry.content_type = Some("hjson".to_string());
     store
         .update_paragraph_content(&mut entry, body.as_bytes())
         .map_err(|e| Error::Store(format!("seed entry: {e}")))?;
@@ -398,9 +423,7 @@ pub(crate) fn add_dictionary_entry_impl(
 /// CLI) can parse it the same way the dictionary entry
 /// parser handles entries today.  Authors edit the
 /// HJSON to fill in `category`, `applies_when`, etc.
-pub(crate) const GRAMMAR_RULE_SEED_BODY: &str = "\
-```hjson
-{
+pub(crate) const GRAMMAR_RULE_SEED_BODY: &str = "{
   // Identifier the AI translation prompt references in
   // applied-rules lists.  Lowercase + hyphens.
   rule_id: \"\"
@@ -419,13 +442,10 @@ pub(crate) const GRAMMAR_RULE_SEED_BODY: &str = "\
   examples: [
     // { source: \"\", gloss: \"\", target: \"\" }
   ]
+  // Human-readable rule description.  Not consumed by
+  // the LLM; for the author's notes.
+  notes: \"\"
 }
-```
-
-# Prose explanation
-
-Human-readable rule description.  This block isn't
-read by the LLM; it's for the author's notes.
 ";
 
 /// 1.2.13+ Phase D.1 hotfix — seed body for a
@@ -433,18 +453,14 @@ read by the LLM; it's for the author's notes.
 /// grammar template because phonology rules tend to
 /// be more declarative (allowed onsets, vowel
 /// harmony patterns) than triggered.
-pub(crate) const PHONOLOGY_RULE_SEED_BODY: &str = "\
-```hjson
-{
+pub(crate) const PHONOLOGY_RULE_SEED_BODY: &str = "{
   rule_id: \"\"
   // syllable | onset | coda | vowel-harmony | stress
   category: \"\"
-  pattern: \"\"     // C(C)V(C)(C) etc.
+  // C(C)V(C)(C) etc.
+  pattern: \"\"
   notes: \"\"
 }
-```
-
-# Prose explanation
 ";
 
 /// Derive the alphabet-bucket subchapter name for a
@@ -513,42 +529,46 @@ fn derive_alphabet_bucket(
 }
 
 /// Build the seeded body for a freshly-added
-/// dictionary entry.  Title line + HJSON
-/// frontmatter block + a free-form notes section
-/// the author fills in.
+/// dictionary entry.  Pure HJSON — no Typst wrappers
+/// — so the editor renders with HJSON syntax
+/// highlighting.  The paragraph's `content_type` is
+/// set to `"hjson"` at create time.
+///
+/// 1.2.13+ Phase D.1 hotfix — switched FROM Typst-
+/// with-fenced-HJSON to pure HJSON.  The translation
+/// prompt composer + parser handle both formats; new
+/// entries use pure HJSON.
 fn seed_dictionary_entry_body(
     word: &str,
     pos: &str,
     translation: &str,
     example: Option<&str>,
 ) -> String {
-    let example_line = match example {
-        Some(s) if !s.trim().is_empty() => {
-            format!("  example:      \"{}\"\n", escape_hjson(s))
-        }
-        _ => "  example:      \"\"\n".to_string(),
-    };
+    let example_value = example.unwrap_or("").trim();
     format!(
-        "= {word}\n\
-         \n\
-         ```hjson\n\
-         {{\n\
-         {core}\
-         {example_line}\
-         }}\n\
-         ```\n\
-         \n\
-         # Free-form notes\n\
-         \n\
-         Usage, register, etymology, related entries.\n",
-        word = word,
-        core = format!(
-            "  word:         \"{}\"\n  type:         \"{}\"\n  translation:  \"{}\"\n",
-            escape_hjson(word),
-            escape_hjson(pos),
-            escape_hjson(translation),
-        ),
-        example_line = example_line,
+        "{{\n  \
+         word:         \"{}\"\n  \
+         // Part of speech — noun | verb | adjective |\n  \
+         // adverb | pronoun | preposition | conjunction |\n  \
+         // interjection | particle (free-form; the language\n  \
+         // can use its own categories).\n  \
+         type:         \"{}\"\n  \
+         translation:  \"{}\"\n  \
+         example:      \"{}\"\n  \
+         // Optional: paradigm forms.  Every value here gets\n  \
+         // added to the lexicon overlay so inflected words\n  \
+         // light up in prose alongside the lemma.\n  \
+         // inflection: {{\n  \
+         //   plural:   \"\"\n  \
+         //   genitive: \"\"\n  \
+         // }}\n  \
+         // Optional: free-form etymology / register / notes.\n  \
+         notes:        \"\"\n\
+         }}\n",
+        escape_hjson(word),
+        escape_hjson(pos),
+        escape_hjson(translation),
+        escape_hjson(example_value),
     )
 }
 

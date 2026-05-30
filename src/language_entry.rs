@@ -85,12 +85,10 @@ impl DictionaryEntry {
 /// that's an actual schema error, surfaced upward so it can
 /// be reported.
 pub fn parse(body: &str) -> Result<Option<DictionaryEntry>, String> {
-    let Some(block) = extract_hjson_block(body) else {
-        return Ok(None);
-    };
-    let entry: DictionaryEntry = serde_hjson::from_str(block)
-        .map_err(|e| format!("dictionary entry HJSON parse failed: {e}"))?;
-    Ok(Some(entry))
+    parse_with::<DictionaryEntry>(
+        body,
+        |e| format!("dictionary entry HJSON parse failed: {e}"),
+    )
 }
 
 /// Parsed view of a Language sub-book's `Meta/overview`
@@ -129,12 +127,40 @@ pub struct MetaOverview {
 /// dictionary entry.  Identical fence semantics, different
 /// schema.
 pub fn parse_meta_overview(body: &str) -> Result<Option<MetaOverview>, String> {
+    parse_with::<MetaOverview>(
+        body,
+        |e| format!("meta overview HJSON parse failed: {e}"),
+    )
+}
+
+/// Shared parse path: try the whole body as HJSON first
+/// (the pure-HJSON content_type=`"hjson"` format the
+/// 1.2.13 Phase D.1 hotfix switched to); fall back to
+/// the fenced extractor for legacy Typst-wrapped bodies
+/// authored before the hotfix.  Empty / whitespace-only
+/// bodies return `Ok(None)` so a freshly-stubbed
+/// paragraph the author hasn't filled in yet doesn't
+/// surface as a parse error.
+fn parse_with<T: serde::de::DeserializeOwned>(
+    body: &str,
+    err: impl Fn(serde_hjson::Error) -> String,
+) -> Result<Option<T>, String> {
+    if body.trim().is_empty() {
+        return Ok(None);
+    }
+    // Pure HJSON — try the whole body first.  Pure
+    // HJSON paragraphs (the new format) parse cleanly;
+    // Typst-wrapped paragraphs fail this attempt and
+    // we fall through to fence extraction.
+    if let Ok(v) = serde_hjson::from_str::<T>(body) {
+        return Ok(Some(v));
+    }
+    // Legacy fenced format — locate the ```hjson block.
     let Some(block) = extract_hjson_block(body) else {
         return Ok(None);
     };
-    let meta: MetaOverview = serde_hjson::from_str(block)
-        .map_err(|e| format!("meta overview HJSON parse failed: {e}"))?;
-    Ok(Some(meta))
+    let v: T = serde_hjson::from_str(block).map_err(err)?;
+    Ok(Some(v))
 }
 
 impl MetaOverview {
@@ -233,6 +259,39 @@ Greeting used by elves of Aman.
 }
 ```
 ";
+
+    /// 1.2.13+ Phase D.1 hotfix — new pure-HJSON seed
+    /// shape (no Typst wrapper, no fence) authored by
+    /// the hotfix's `seed_dictionary_entry_body` +
+    /// stored under `content_type: "hjson"`.
+    #[test]
+    fn parses_pure_hjson_entry() {
+        let body = r#"{
+  word: "aiya"
+  type: "interjection"
+  translation: "hail"
+  example: ""
+}
+"#;
+        let entry = parse(body).unwrap().unwrap();
+        assert_eq!(entry.word, "aiya");
+        assert_eq!(entry.pos, "interjection");
+        assert_eq!(entry.translation, "hail");
+    }
+
+    #[test]
+    fn parses_pure_hjson_meta_overview() {
+        let body = r#"{
+  name: "Quenya"
+  language_kind: "constructed"
+  alphabet: ["A", "B", "C"]
+}
+"#;
+        let meta = parse_meta_overview(body).unwrap().unwrap();
+        assert_eq!(meta.name, "Quenya");
+        assert_eq!(meta.language_kind, "constructed");
+        assert_eq!(meta.alphabet, vec!["A".to_string(), "B".to_string(), "C".to_string()]);
+    }
 
     #[test]
     fn parses_core_fields_from_seeded_body() {
