@@ -22,7 +22,7 @@ use crate::store::{
     InsertPosition, NodeKind, Store, SYSTEM_TAG_LANGUAGES,
 };
 
-use super::LanguageCommand;
+use super::{LanguageCommand, LanguageExportFormat};
 
 pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
     match cmd {
@@ -41,6 +41,12 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             &translation,
             example.as_deref(),
         ),
+        LanguageCommand::Doctor { language } => doctor(project, &language),
+        LanguageCommand::Export {
+            language,
+            format,
+            output,
+        } => export(project, &language, format, output.as_deref()),
     }
 }
 
@@ -470,6 +476,641 @@ fn escape_hjson(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// 1.2.13+ Phase D — health report for a language
+/// sub-book.  Walks every chapter, counts entries +
+/// rules + samples, computes coverage metrics, and
+/// emits a human-readable summary on stdout.  Exit
+/// code 0 always — informational, not a gate.
+///
+/// Coverage gap analysis (§13 of the proposal):
+///   * count manuscript words (working language) that
+///     don't appear as translations in this language's
+///     dictionary.  Surfaces vocabulary the author has
+///     written in prose but hasn't yet defined a
+///     translation for.
+///   * count dictionary entries that lack examples —
+///     half-finished work.
+///   * count entries that lack inflection paradigms —
+///     hint that the lexicon overlay won't catch
+///     inflected forms for those words.
+fn doctor(project: &Path, language: &str) -> Result<()> {
+    use crate::store::node::NodeKind;
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+
+    let lang_root = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Store(
+                "Language system book missing — re-open the project to seed it".into(),
+            )
+        })?;
+    let lang_book = hierarchy
+        .children_of(Some(lang_root.id))
+        .into_iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "language `{language}` not found — run `inkhaven language init {language}` first"
+            ))
+        })?;
+
+    // Walk each chapter's paragraphs.  We don't reach
+    // for the in-memory TUI helpers because doctor /
+    // export need to run from a headless CLI process.
+    let chapters = hierarchy.children_of(Some(lang_book.id));
+    let mut dict_entries: Vec<(String, crate::language_entry::DictionaryEntry)> =
+        Vec::new();
+    let mut dict_unparseable = 0usize;
+    let mut grammar_count = 0usize;
+    let mut phonology_count = 0usize;
+    let mut sample_count = 0usize;
+    let mut meta: Option<crate::language_entry::MetaOverview> = None;
+    for chapter in &chapters {
+        let title_lc = chapter.title.to_lowercase();
+        let paragraphs: Vec<_> = hierarchy
+            .collect_subtree(chapter.id)
+            .into_iter()
+            .filter_map(|id| hierarchy.get(id))
+            .filter(|n| n.kind == NodeKind::Paragraph)
+            .cloned()
+            .collect();
+        match title_lc.as_str() {
+            "dictionary" => {
+                for p in &paragraphs {
+                    let Ok(Some(bytes)) = store.get_content(p.id) else {
+                        continue;
+                    };
+                    let Ok(body) = std::str::from_utf8(&bytes) else {
+                        continue;
+                    };
+                    match crate::language_entry::parse(body) {
+                        Ok(Some(e)) => dict_entries.push((p.title.clone(), e)),
+                        Ok(None) => dict_unparseable += 1,
+                        Err(_) => dict_unparseable += 1,
+                    }
+                }
+            }
+            "grammar" => grammar_count = paragraphs.len(),
+            "phonology" => phonology_count = paragraphs.len(),
+            "sample texts" => sample_count = paragraphs.len(),
+            "meta" => {
+                for p in &paragraphs {
+                    if p.title.eq_ignore_ascii_case("overview") {
+                        let Ok(Some(bytes)) = store.get_content(p.id) else {
+                            continue;
+                        };
+                        if let Ok(body) = std::str::from_utf8(&bytes) {
+                            if let Ok(Some(m)) =
+                                crate::language_entry::parse_meta_overview(body)
+                            {
+                                meta = Some(m);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let total_entries = dict_entries.len();
+    let with_examples = dict_entries
+        .iter()
+        .filter(|(_, e)| !e.example.trim().is_empty())
+        .count();
+    let with_inflection = dict_entries
+        .iter()
+        .filter(|(_, e)| !e.inflection.is_empty())
+        .count();
+    let missing_examples = total_entries.saturating_sub(with_examples);
+    let missing_inflection = total_entries.saturating_sub(with_inflection);
+
+    // Coverage-gap analysis: which working-language
+    // words in the manuscript have no dictionary
+    // translation?  Walk every paragraph in user
+    // books (skip system books — Notes / Places /
+    // Characters / Artefacts / Prompts / Language /
+    // Typst are reference material, not manuscript
+    // prose) and collect their words.
+    use unicode_segmentation::UnicodeSegmentation;
+    let dictionary_translations: std::collections::HashSet<String> = dict_entries
+        .iter()
+        .filter_map(|(_, e)| {
+            let t = e.translation.trim().to_lowercase();
+            if t.is_empty() { None } else { Some(t) }
+        })
+        .collect();
+    let mut manuscript_words: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    for node in hierarchy.iter() {
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        // Skip system-book content.
+        let mut cursor = Some(node.id);
+        let mut is_system = false;
+        while let Some(id) = cursor {
+            if let Some(n) = hierarchy.get(id) {
+                if n.system_tag.is_some() {
+                    is_system = true;
+                    break;
+                }
+                cursor = n.parent_id;
+            } else {
+                break;
+            }
+        }
+        if is_system {
+            continue;
+        }
+        if let Ok(Some(bytes)) = store.get_content(node.id) {
+            if let Ok(body) = std::str::from_utf8(&bytes) {
+                for w in UnicodeSegmentation::unicode_words(body) {
+                    let lc = w.to_lowercase();
+                    // Stop-word-ish filter: drop
+                    // 1-letter "words" (a, I) — most
+                    // are noise; the rest are too
+                    // common to be worth flagging.
+                    if lc.chars().count() < 2 {
+                        continue;
+                    }
+                    manuscript_words.insert(lc);
+                }
+            }
+        }
+    }
+    let manuscript_word_count = manuscript_words.len();
+    let undefined_words: Vec<String> = manuscript_words
+        .difference(&dictionary_translations)
+        .cloned()
+        .collect();
+
+    // Emit the report.
+    println!("Language doctor — `{}`", lang_book.title);
+    println!();
+    if let Some(m) = meta.as_ref() {
+        if !m.name.is_empty() {
+            println!("  name           : {}", m.name);
+        }
+        if !m.language_kind.is_empty() {
+            println!("  kind           : {}", m.language_kind);
+        }
+        if !m.family.is_empty() {
+            println!("  family         : {}", m.family);
+        }
+        if !m.iso_code.is_empty() {
+            println!("  iso_code       : {}", m.iso_code);
+        }
+        if !m.alphabet.is_empty() {
+            println!("  alphabet       : {} entries", m.alphabet.len());
+        }
+        if !m.reading_direction.is_empty() {
+            println!("  direction      : {}", m.reading_direction);
+        }
+        println!();
+    } else {
+        println!("  Meta/overview  : MISSING or unparseable");
+        println!();
+    }
+    println!("Chapters");
+    println!("  Dictionary     : {total_entries} parseable entries");
+    if dict_unparseable > 0 {
+        println!(
+            "                   {dict_unparseable} unparseable (no HJSON block — pre-Phase-B authoring)"
+        );
+    }
+    println!("  Grammar        : {grammar_count} rules");
+    println!("  Phonology      : {phonology_count} rules");
+    println!("  Sample texts   : {sample_count} samples");
+    println!();
+    println!("Dictionary coverage");
+    if total_entries > 0 {
+        let example_pct = with_examples * 100 / total_entries;
+        let inflection_pct = with_inflection * 100 / total_entries;
+        println!(
+            "  with example   : {with_examples}/{total_entries} ({example_pct}%)"
+        );
+        println!(
+            "  with paradigm  : {with_inflection}/{total_entries} ({inflection_pct}%)"
+        );
+        if missing_examples > 0 {
+            println!("  missing example: {missing_examples}");
+        }
+        if missing_inflection > 0 {
+            println!(
+                "  missing paradigm: {missing_inflection} (overlay won't catch inflected forms)"
+            );
+        }
+    } else {
+        println!("  no dictionary entries yet — try `inkhaven language add-word`");
+    }
+    println!();
+    println!("Manuscript gap analysis");
+    println!("  unique words (≥2 chars) in manuscript prose: {manuscript_word_count}");
+    let undefined_count = undefined_words.len();
+    if total_entries > 0 {
+        let covered = manuscript_word_count.saturating_sub(undefined_count);
+        let pct = if manuscript_word_count > 0 {
+            covered * 100 / manuscript_word_count
+        } else {
+            0
+        };
+        println!("  covered by dictionary: {covered}/{manuscript_word_count} ({pct}%)");
+        if undefined_count > 0 {
+            println!("  uncovered words (sample, max 15):");
+            let mut sample: Vec<&String> = undefined_words.iter().take(15).collect();
+            sample.sort();
+            for w in sample {
+                println!("    · {w}");
+            }
+            if undefined_count > 15 {
+                println!("    ... and {} more", undefined_count - 15);
+            }
+        }
+    } else {
+        println!("  (skipping — no dictionary entries to compare against)");
+    }
+    Ok(())
+}
+
+/// 1.2.13+ Phase D — export a language's content
+/// to a portable artefact.  Three formats land in
+/// Phase D; `grammar` and `phrasebook` from the
+/// proposal §12 are deferred to D.2.
+fn export(
+    project: &Path,
+    language: &str,
+    format: LanguageExportFormat,
+    output: Option<&Path>,
+) -> Result<()> {
+    use crate::store::node::NodeKind;
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+
+    let lang_root = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Store(
+                "Language system book missing — re-open the project to seed it".into(),
+            )
+        })?;
+    let lang_book = hierarchy
+        .children_of(Some(lang_root.id))
+        .into_iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "language `{language}` not found"
+            ))
+        })?;
+
+    // Collect data once; per-format renderers fan
+    // out from a single walk.
+    let chapters = hierarchy.children_of(Some(lang_book.id));
+    let mut entries: Vec<(String, crate::language_entry::DictionaryEntry)> = Vec::new();
+    let mut meta: Option<crate::language_entry::MetaOverview> = None;
+    let mut grammar_bodies: Vec<(String, String)> = Vec::new();
+    let mut phonology_bodies: Vec<(String, String)> = Vec::new();
+    let mut sample_bodies: Vec<(String, String)> = Vec::new();
+    for chapter in &chapters {
+        let title_lc = chapter.title.to_lowercase();
+        // For Dictionary, walk the subtree (entries
+        // live one level deeper, under the alphabet
+        // subchapter).  For the flat chapters
+        // (Grammar / Phonology / Sample texts / Meta),
+        // a children_of(chapter) is enough.
+        match title_lc.as_str() {
+            "dictionary" => {
+                for id in hierarchy.collect_subtree(chapter.id) {
+                    let Some(n) = hierarchy.get(id) else { continue; };
+                    if n.kind != NodeKind::Paragraph {
+                        continue;
+                    }
+                    let Ok(Some(bytes)) = store.get_content(n.id) else { continue; };
+                    let Ok(body) = std::str::from_utf8(&bytes) else { continue; };
+                    if let Ok(Some(e)) = crate::language_entry::parse(body) {
+                        entries.push((n.title.clone(), e));
+                    }
+                }
+            }
+            "grammar" | "phonology" | "sample texts" => {
+                let bucket = match title_lc.as_str() {
+                    "grammar" => &mut grammar_bodies,
+                    "phonology" => &mut phonology_bodies,
+                    _ => &mut sample_bodies,
+                };
+                for n in hierarchy
+                    .children_of(Some(chapter.id))
+                    .into_iter()
+                    .filter(|n| n.kind == NodeKind::Paragraph)
+                {
+                    if let Ok(Some(bytes)) = store.get_content(n.id) {
+                        if let Ok(body) = std::str::from_utf8(&bytes) {
+                            bucket.push((n.title.clone(), body.to_string()));
+                        }
+                    }
+                }
+            }
+            "meta" => {
+                if let Some(overview) = hierarchy
+                    .children_of(Some(chapter.id))
+                    .into_iter()
+                    .find(|n| {
+                        n.kind == NodeKind::Paragraph
+                            && n.title.eq_ignore_ascii_case("overview")
+                    })
+                {
+                    if let Ok(Some(bytes)) = store.get_content(overview.id) {
+                        if let Ok(body) = std::str::from_utf8(&bytes) {
+                            if let Ok(Some(m)) =
+                                crate::language_entry::parse_meta_overview(body)
+                            {
+                                meta = Some(m);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // Sort entries by lemma so every format renders
+    // in a stable order.
+    entries.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+
+    let rendered: Vec<u8> = match format {
+        LanguageExportFormat::Json => render_json(
+            &lang_book.title,
+            meta.as_ref(),
+            &entries,
+            &grammar_bodies,
+            &phonology_bodies,
+            &sample_bodies,
+        )?,
+        LanguageExportFormat::Anki => render_anki(&entries)?,
+        LanguageExportFormat::DictionaryTwocol => render_dictionary_twocol(
+            &lang_book.title,
+            meta.as_ref(),
+            &entries,
+        ),
+    };
+
+    match (output, format) {
+        (Some(path), _) => {
+            std::fs::write(path, &rendered).map_err(|e| {
+                Error::Config(format!("write {}: {e}", path.display()))
+            })?;
+            eprintln!("wrote {} bytes to {}", rendered.len(), path.display());
+        }
+        (None, LanguageExportFormat::DictionaryTwocol) => {
+            return Err(Error::Config(
+                "dictionary-twocol export needs --output <path.typ> — \
+                 the Typst renderer doesn't stream to stdout"
+                    .into(),
+            ));
+        }
+        (None, _) => {
+            use std::io::Write;
+            std::io::stdout()
+                .write_all(&rendered)
+                .map_err(|e| Error::Config(format!("stdout write: {e}")))?;
+        }
+    }
+    Ok(())
+}
+
+fn render_json(
+    language_name: &str,
+    meta: Option<&crate::language_entry::MetaOverview>,
+    entries: &[(String, crate::language_entry::DictionaryEntry)],
+    grammar: &[(String, String)],
+    phonology: &[(String, String)],
+    samples: &[(String, String)],
+) -> Result<Vec<u8>> {
+    use serde_json::{json, Map, Value};
+    let mut root = Map::new();
+    root.insert("language".into(), Value::String(language_name.to_string()));
+    if let Some(m) = meta {
+        root.insert("meta".into(), json!({
+            "name": m.name,
+            "language_kind": m.language_kind,
+            "family": m.family,
+            "iso_code": m.iso_code,
+            "alphabet": m.alphabet,
+            "reading_direction": m.reading_direction,
+            "stemmer": m.stemmer,
+            "example_corpus_ref": m.example_corpus_ref,
+        }));
+    }
+    let entries_json: Vec<Value> = entries
+        .iter()
+        .map(|(title, e)| {
+            json!({
+                "title": title,
+                "word": e.word,
+                "type": e.pos,
+                "translation": e.translation,
+                "example": e.example,
+                "inflection": e.inflection,
+            })
+        })
+        .collect();
+    root.insert("dictionary".into(), Value::Array(entries_json));
+    root.insert(
+        "grammar".into(),
+        Value::Array(
+            grammar
+                .iter()
+                .map(|(t, b)| json!({ "title": t, "body": b }))
+                .collect(),
+        ),
+    );
+    root.insert(
+        "phonology".into(),
+        Value::Array(
+            phonology
+                .iter()
+                .map(|(t, b)| json!({ "title": t, "body": b }))
+                .collect(),
+        ),
+    );
+    root.insert(
+        "sample_texts".into(),
+        Value::Array(
+            samples
+                .iter()
+                .map(|(t, b)| json!({ "title": t, "body": b }))
+                .collect(),
+        ),
+    );
+    let mut buf = serde_json::to_vec_pretty(&Value::Object(root))
+        .map_err(|e| Error::Config(format!("json serialise: {e}")))?;
+    buf.push(b'\n');
+    Ok(buf)
+}
+
+fn render_anki(
+    entries: &[(String, crate::language_entry::DictionaryEntry)],
+) -> Result<Vec<u8>> {
+    // CSV columns: word, translation, type, example,
+    // inflection.  Anki / SuperMemo / Mochi all parse
+    // comma-separated; quoting handled by the
+    // standard escape rules.  Header row included so
+    // the user can map columns in the import wizard.
+    let mut out = String::new();
+    out.push_str("word,translation,type,example,inflection\n");
+    for (_, e) in entries {
+        let infl: String = e
+            .inflection
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        out.push_str(&format!(
+            "{},{},{},{},{}\n",
+            csv_field(&e.word),
+            csv_field(&e.translation),
+            csv_field(&e.pos),
+            csv_field(&e.example),
+            csv_field(&infl),
+        ));
+    }
+    Ok(out.into_bytes())
+}
+
+/// Standard RFC 4180-style CSV quoting: wrap the
+/// field in `"…"` and double any embedded `"` when
+/// the field contains comma / newline / quote;
+/// otherwise emit verbatim.
+fn csv_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+fn render_dictionary_twocol(
+    language_name: &str,
+    meta: Option<&crate::language_entry::MetaOverview>,
+    entries: &[(String, crate::language_entry::DictionaryEntry)],
+) -> Vec<u8> {
+    // Group entries by alphabet bucket.  Use the
+    // first character of the entry's title
+    // (uppercased) as the bucket key — same logic as
+    // the add-word fallback.  Authors with non-
+    // Latin alphabets get sensible grouping for free.
+    let mut by_bucket: std::collections::BTreeMap<String, Vec<&(String, crate::language_entry::DictionaryEntry)>> =
+        std::collections::BTreeMap::new();
+    for entry in entries {
+        let bucket = entry
+            .0
+            .chars()
+            .find(|c| !c.is_whitespace())
+            .map(|c| c.to_uppercase().to_string())
+            .unwrap_or_else(|| "?".into());
+        by_bucket.entry(bucket).or_default().push(entry);
+    }
+
+    let mut s = String::new();
+    s.push_str(&format!("#set page(paper: \"a4\", columns: 2)\n"));
+    s.push_str("#set text(font: \"New Computer Modern\", size: 10pt)\n");
+    s.push_str("#set par(justify: true)\n");
+    s.push('\n');
+    s.push_str(&format!("#align(center)[= {} dictionary]\n", language_name));
+    if let Some(m) = meta {
+        if !m.language_kind.is_empty() || !m.family.is_empty() {
+            s.push_str("#align(center)[#text(style: \"italic\")[");
+            if !m.language_kind.is_empty() {
+                s.push_str(&m.language_kind);
+            }
+            if !m.family.is_empty() {
+                if !m.language_kind.is_empty() {
+                    s.push_str(" · ");
+                }
+                s.push_str(&m.family);
+            }
+            s.push_str("]]\n");
+        }
+    }
+    s.push('\n');
+    for (bucket, group) in &by_bucket {
+        s.push_str(&format!(
+            "#align(center)[#text(size: 14pt, weight: \"bold\")[— {bucket} —]]\n"
+        ));
+        s.push('\n');
+        for (title, e) in group {
+            s.push_str(&format!(
+                "*{title}*  #text(style: \"italic\")[{}]  {}\n",
+                typst_escape(&e.pos),
+                typst_escape(&e.translation),
+            ));
+            if !e.example.trim().is_empty() {
+                s.push_str(&format!(
+                    "  #pad(left: 2em)[#text(style: \"italic\")[{}]]\n",
+                    typst_escape(e.example.trim()),
+                ));
+            }
+            if !e.inflection.is_empty() {
+                let pretty: Vec<String> = e
+                    .inflection
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {v}"))
+                    .collect();
+                s.push_str(&format!(
+                    "  #pad(left: 2em)[#text(size: 8pt)[forms — {}]]\n",
+                    typst_escape(&pretty.join(", ")),
+                ));
+            }
+            s.push('\n');
+        }
+    }
+    s.into_bytes()
+}
+
+/// Minimal Typst-content escape: `*`, `_`, `#`, `[`,
+/// `]`, `\` are the only markup-bearing
+/// characters in body-text context.  Sufficient for
+/// dictionary-entry content; authors with
+/// adversarial input (raw Typst inside translations)
+/// should use the `json` format instead.
+fn typst_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '*' | '_' | '#' | '[' | ']' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,6 +1180,85 @@ mod tests {
         assert!(body.contains("interjection"));
         assert!(body.contains("hail"));
         assert!(body.contains("Aiya Eärendil!"));
+    }
+
+    #[test]
+    fn csv_field_quotes_when_needed() {
+        // Plain field — emit verbatim.
+        assert_eq!(csv_field("aiya"), "aiya");
+        // Comma triggers quoting.
+        assert_eq!(csv_field("hail, friend"), "\"hail, friend\"");
+        // Embedded quote doubles + wraps.
+        assert_eq!(csv_field("he said \"hi\""), "\"he said \"\"hi\"\"\"");
+        // Newline triggers quoting too.
+        assert_eq!(csv_field("line1\nline2"), "\"line1\nline2\"");
+    }
+
+    #[test]
+    fn typst_escape_handles_markup_chars() {
+        // Markup-bearing characters get backslashed
+        // so the renderer doesn't apply emphasis /
+        // code / link semantics to dictionary
+        // content.
+        assert_eq!(typst_escape("plain"), "plain");
+        assert_eq!(typst_escape("a*b"), "a\\*b");
+        assert_eq!(typst_escape("[bracket]"), "\\[bracket\\]");
+        assert_eq!(typst_escape("#hash"), "\\#hash");
+        assert_eq!(typst_escape("with_under"), "with\\_under");
+        // Non-Latin / Unicode passes through.
+        assert_eq!(typst_escape("ñ'olor"), "ñ'olor");
+    }
+
+    #[test]
+    fn render_anki_emits_header_row() {
+        let out = render_anki(&[]).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.starts_with("word,translation,type,example,inflection\n"));
+    }
+
+    #[test]
+    fn render_anki_renders_entry_row() {
+        let mut entry = crate::language_entry::DictionaryEntry::default();
+        entry.word = "aiya".into();
+        entry.translation = "hail".into();
+        entry.pos = "interjection".into();
+        entry.example = "Aiya Eärendil!".into();
+        let out = render_anki(&[("aiya".into(), entry)]).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        // Header on line 1, entry on line 2.
+        let lines: Vec<&str> = s.lines().collect();
+        assert_eq!(lines.len(), 2, "got: {s:?}");
+        assert!(lines[1].contains("aiya"));
+        assert!(lines[1].contains("hail"));
+        assert!(lines[1].contains("interjection"));
+        assert!(lines[1].contains("Aiya Eärendil!"));
+    }
+
+    #[test]
+    fn render_dictionary_twocol_groups_by_alphabet() {
+        let mut a_entry = crate::language_entry::DictionaryEntry::default();
+        a_entry.word = "aiya".into();
+        a_entry.pos = "interj.".into();
+        a_entry.translation = "hail".into();
+        let mut b_entry = crate::language_entry::DictionaryEntry::default();
+        b_entry.word = "bara".into();
+        b_entry.pos = "noun".into();
+        b_entry.translation = "fire".into();
+        let out = render_dictionary_twocol(
+            "Quenya",
+            None,
+            &[("aiya".into(), a_entry), ("bara".into(), b_entry)],
+        );
+        let s = String::from_utf8(out).unwrap();
+        // Bucket headers for both A and B sections.
+        assert!(s.contains("— A —"), "got: {s}");
+        assert!(s.contains("— B —"), "got: {s}");
+        // Page setup + entries appear.
+        assert!(s.contains("#set page(paper: \"a4\", columns: 2)"));
+        assert!(s.contains("*aiya*"));
+        assert!(s.contains("*bara*"));
+        // Title shows the language name.
+        assert!(s.contains("Quenya dictionary"));
     }
 
     #[test]

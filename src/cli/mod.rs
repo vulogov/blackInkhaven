@@ -580,6 +580,64 @@ pub enum LanguageCommand {
         #[arg(long)]
         example: Option<String>,
     },
+    /// 1.2.13+ Phase D — health report for a language
+    /// sub-book.  Counts dictionary entries, entries
+    /// with examples, entries with inflection
+    /// paradigms, grammar / phonology rule counts,
+    /// sample-text count, and (when the project has
+    /// authored prose) the manuscript words that
+    /// appear as translations in the dictionary versus
+    /// the working-language words in the manuscript
+    /// that have no dictionary coverage.  Exit code
+    /// 0 always — the report is informational, not a
+    /// pass/fail gate.  See the proposal §13.
+    Doctor {
+        /// Language to inspect (case-insensitive
+        /// match against existing Language sub-book
+        /// titles).
+        language: String,
+    },
+    /// 1.2.13+ Phase D — export a language's content
+    /// to a portable artefact.  See the proposal §12.
+    /// Three formats land in Phase D; the remaining
+    /// two (grammar reference + phrasebook) are
+    /// Phase D.2.
+    Export {
+        /// Language to export (case-insensitive
+        /// match against existing Language sub-book
+        /// titles).
+        language: String,
+        /// Output format.  `json` is structured data
+        /// for downstream tooling; `anki` is a CSV
+        /// flash-card deck; `dictionary-twocol` is a
+        /// printable two-column Typst dictionary.
+        #[arg(long, short = 'f', default_value = "json")]
+        format: LanguageExportFormat,
+        /// Output path.  Defaults to stdout when
+        /// omitted (json + anki only — typst always
+        /// needs a path because the renderer doesn't
+        /// stream).
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
+    },
+}
+
+/// 1.2.13+ Phase D — output format selector for
+/// `inkhaven language export`.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum LanguageExportFormat {
+    /// Full structured dump — overview, dictionary,
+    /// grammar, phonology, sample-text content.
+    Json,
+    /// CSV deck importable by Anki / SuperMemo /
+    /// Mochi.  Columns: `word`, `translation`,
+    /// `type`, `example`, `inflection`.
+    Anki,
+    /// Two-column printable Typst dictionary.
+    /// Alphabet headers between sections; entries
+    /// formatted as: bold headword + POS italic +
+    /// translation + examples indented.
+    DictionaryTwocol,
 }
 
 /// 1.2.11+ — sub-subcommands under
