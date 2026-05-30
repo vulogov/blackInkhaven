@@ -112,6 +112,36 @@ paired-case Latin, `["Aa", "Bb", ...]`.
 
 ## Step 3 — add dictionary entries
 
+Two ways:
+
+**From the TUI** — tree pane focused (F8), cursor
+anywhere under `Language/Quenya/Dictionary` (the
+chapter itself or any existing bucket subchapter),
+press `+` (Add Paragraph).  Type the word (`aiya`)
+and hit Enter.  The commit handler:
+
+1. Walks the parent chain to find the language
+   sub-book (`Quenya`).
+2. Derives the alphabet bucket from the word's
+   first character (consulting
+   `Meta/overview.alphabet` first, first-char
+   uppercase as fallback).
+3. Auto-creates the bucket subchapter (`A`) if it
+   doesn't exist.
+4. Creates the entry paragraph under the bucket.
+5. Seeds the body with the four-field HJSON
+   template — `word` is pre-filled with the
+   title; `type` / `translation` / `example` are
+   empty.
+
+Open the new paragraph and fill in POS,
+translation, and example by editing the HJSON
+fields directly.  Status bar confirms with
+`added \`aiya\` to Quenya/Dictionary/A — open
+the paragraph to fill POS / translation`.
+
+**From the shell** —
+
 ```
 $ inkhaven language add-word Quenya aiya \
     --type interjection \
@@ -121,16 +151,11 @@ created subchapter `A`
 added `aiya` to `Quenya/Dictionary/A` (interjection · hail)
 ```
 
-`add-word` resolves the language sub-book by
-case-insensitive title, finds the Dictionary
-chapter, derives the alphabet bucket from the
-word's first character (consulting the
-`Meta/overview.alphabet` list first for non-
-Latin orthographies, falling back to first-
-char uppercase for Latin / Cyrillic / Greek),
-auto-creates the bucket subchapter when
-missing, and seeds the entry paragraph with
-four HJSON fields.
+Shell `add-word` is the better path for bulk
+authoring (script a CSV → loop `add-word`).  TUI
+`+` is the better path for thinking-while-typing
+authoring (you'll be in the paragraph anyway to
+fill etymology, notes, inflection).
 
 The created entry looks like this:
 
@@ -348,8 +373,10 @@ $ inkhaven language export Quenya \
 |-|-|
 | Scaffold a new language (TUI) | Tree pane (F8) → cursor on `Language` → `b` |
 | Scaffold a new language (shell) | `inkhaven language init <name>` |
-| Add a dictionary entry | `inkhaven language add-word <lang> <word> --type <pos> --translation <text>` |
+| Add a dictionary entry (TUI) | Cursor under `<lang>/Dictionary` → `+` → type word → Enter (bucket auto-derived, HJSON seeded) |
+| Add a dictionary entry (shell) | `inkhaven language add-word <lang> <word> --type <pos> --translation <text>` |
 | Remove a dictionary entry | `inkhaven language remove-word <lang> <word>` |
+| Add a grammar / phonology rule (TUI) | Cursor under `<lang>/Grammar` or `<lang>/Phonology` → `+` → type rule_id → Enter (schema-aware HJSON seeded) |
 | Translate INTO the language | `Ctrl+B Q` in editor |
 | Translate FROM the language | `Ctrl+B Shift+Q` in editor |
 | Insert translation at cursor | `I` in AI pane (lifts only the marker block) |
