@@ -316,6 +316,20 @@ pub(crate) fn scaffold_language_chapters(
             // metadata write inside that call persist
             // the change.
             overview.content_type = Some("hjson".to_string());
+            // `update_paragraph_content` only writes
+            // to bdslib — the on-disk `.typ` file
+            // (already created with the default
+            // `= overview\n\n` template by
+            // `create_node`) needs an explicit
+            // overwrite so the editor (which reads
+            // from disk) sees the seeded body.  Same
+            // pattern `ensure_system_books` uses for
+            // its seeded paragraphs.
+            if let Some(rel) = &overview.file {
+                let abs = store.project_root().join(rel);
+                std::fs::write(&abs, META_OVERVIEW_BODY.as_bytes())
+                    .map_err(|e| Error::Store(format!("write overview: {e}")))?;
+            }
             store
                 .update_paragraph_content(&mut overview, META_OVERVIEW_BODY.as_bytes())
                 .map_err(|e| Error::Store(format!("seed overview: {e}")))?;
@@ -477,6 +491,14 @@ pub(crate) fn add_dictionary_entry_impl(
     )?;
     let body = seed_dictionary_entry_body(word, pos, translation, example);
     entry.content_type = Some("hjson".to_string());
+    // Disk write FIRST — `update_paragraph_content`
+    // is bdslib-only; the editor reads the .typ file
+    // off disk so the on-disk content has to match.
+    if let Some(rel) = &entry.file {
+        let abs = store.project_root().join(rel);
+        std::fs::write(&abs, body.as_bytes())
+            .map_err(|e| Error::Store(format!("write entry: {e}")))?;
+    }
     store
         .update_paragraph_content(&mut entry, body.as_bytes())
         .map_err(|e| Error::Store(format!("seed entry: {e}")))?;
