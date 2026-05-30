@@ -301,7 +301,14 @@ etc.) that the shell command doesn't accept.
 
 The fastest path when you've prepared vocabulary
 in a spreadsheet or generated it from another
-tool: bulk-import a CSV.
+tool: bulk-import a CSV.  This section summarises
+the surface; **[Tutorial 50 — Bulk-importing a
+dictionary from CSV](50-dictionary-csv-import.md)**
+covers the full workflow including `--new`
+wipe-and-replace, pre-flight alphabet + phonology
+validation, `--force` bypass, CI patterns, and a
+ready-to-copy sample CSV
+([`49-language-book-tira-starter.csv`](49-language-book-tira-starter.csv)).
 
 ```
 $ inkhaven language add-word Tira --import tira-starter.csv

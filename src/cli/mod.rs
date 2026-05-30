@@ -604,6 +604,29 @@ pub enum LanguageCommand {
         /// Tally printed at end.
         #[arg(long, value_name = "PATH")]
         import: Option<PathBuf>,
+        /// 1.2.13+ Phase D.1 — when used with --import,
+        /// WIPE the language's existing Dictionary
+        /// chapter (every bucket subchapter + every
+        /// entry paragraph) before importing the CSV.
+        /// The Dictionary chapter itself is preserved
+        /// — only its contents are cleared.  Without
+        /// --new, existing entries are kept and the
+        /// import is "update / add" semantics (duplicate
+        /// words skipped, new rows added).
+        #[arg(long, requires = "import")]
+        new: bool,
+        /// 1.2.13+ Phase D.1 — skip the pre-flight
+        /// alphabet + phonology validation that
+        /// normally aborts an import when any word
+        /// uses characters outside the language's
+        /// declared alphabet OR uses phonemes
+        /// outside the declared phoneme inventories.
+        /// Use when intentionally importing words
+        /// that exceed the current Meta/overview
+        /// declaration (e.g. you're seeding the
+        /// alphabet from the CSV itself).
+        #[arg(long, requires = "import")]
+        force: bool,
     },
     /// 1.2.13+ Phase D — health report for a language
     /// sub-book.  Counts dictionary entries, entries
