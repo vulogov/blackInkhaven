@@ -14325,6 +14325,23 @@ impl App {
                         && parent.as_ref().and_then(|p| p.system_tag.as_deref())
                             == Some(crate::store::SYSTEM_TAG_LANGUAGES);
                 if parent_is_language {
+                    // Scaffold makes 6 sequential
+                    // create_node calls + hierarchy
+                    // reloads — on a large project this
+                    // can block the render loop for
+                    // several seconds.  Set an
+                    // intermediate status (it'll only
+                    // become visible after the scaffold
+                    // returns, but at least the next
+                    // frame shows the intent if the user
+                    // glances mid-operation; better than
+                    // leaving the previous "new
+                    // language..." prompt up while the
+                    // scaffold churns) so the user sees
+                    // progress rather than silence.
+                    self.status =
+                        format!("scaffolding language `{}` (this may take a moment)...",
+                            node.title);
                     match crate::cli::language::scaffold_language_chapters(
                         &self.store,
                         &self.cfg,
