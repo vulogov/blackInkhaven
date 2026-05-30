@@ -7360,6 +7360,7 @@ impl App {
             A::OpenSentenceRhythm => self.open_sentence_rhythm(),
             A::AnalyseShowDontTell => self.start_show_dont_tell_scan(),
             A::AiRewriteRhythm => self.start_sentence_rhythm_rewrite(),
+            A::TranslateToInvented => self.start_translate_to_invented(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),

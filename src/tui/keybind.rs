@@ -593,6 +593,22 @@ pub enum Action {
     #[serde(rename = "none")]
     None,
 
+    /// 1.2.13+ Phase C — Ctrl+B Q.  Translate the open
+    /// paragraph from the project's working language INTO an
+    /// invented language defined under the `Language` system
+    /// book.  Composes a prompt envelope from the language's
+    /// Dictionary (RAG-filtered to words present in the
+    /// source), Grammar (all rules), Phonology (all rules),
+    /// and Sample-text chapters, then streams the response
+    /// into the AI pane.  If the project has zero Language
+    /// sub-books the chord errors out; with exactly one it
+    /// translates directly; with two or more the chord
+    /// targets the first by canonical order and the status
+    /// bar warns — per-language sub-letter chord (`Ctrl+B Q
+    /// Q` for Quenya etc.) is a Phase C.2 follow-up.
+    #[serde(rename = "ai.translate_to_invented")]
+    TranslateToInvented,
+
     /// Runtime-only: a Bund lambda registered under the given
     /// name via `ink.key.bind_lambda`. Dispatch routes to
     /// `scripting::hooks::fire(name, vec![])`. `#[serde(skip)]` —
@@ -705,6 +721,7 @@ impl Action {
             Action::OpenSentenceRhythm => "rhythm".into(),
             Action::AiRewriteRhythm => "rhythm rewrite".into(),
             Action::AnalyseShowDontTell => "show↛tell AI".into(),
+            Action::TranslateToInvented => "translate".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -923,6 +940,8 @@ impl Action {
                 "AI-driven sentence-rhythm rewrite of the open paragraph (1.2.11+, Ctrl+B Shift+M). Sends the paragraph to the configured LLM with a prompt asking it to break monotonous rhythm by mixing short and long sentences while preserving voice + meaning. Prompt resolution follows the standard pattern: the project's Prompts book first (look up by slug or title `sentence-rhythm-rewrite`), then prompts.hjson, then an embedded multilingual fallback that respects the project's `language` setting. When the stream completes, an AI diff modal pops automatically so the user can review the rewrite line by line. Accept commits the rewrite into the buffer AND creates a snapshot annotated `Sentence rhythm rewrite` first; reject leaves the buffer untouched. Mnemonic: M for Modulate / Mix it up. Pairs with the Ctrl+B Shift+H rhythm gauge — and the chord ALSO fires from inside that gauge modal, so the natural diagnose-then-rewrite workflow needs no extra keystrokes: open the gauge, see MONOTONE, press Ctrl+B Shift+M to fix it. The gauge dismisses automatically as the rewrite spawns.".into(),
             Action::AnalyseShowDontTell =>
                 "AI-driven show-don't-tell scan of the open paragraph (1.2.9+, Ctrl+B Shift+T). Sends the paragraph to the configured LLM with a system prompt asking for telling passages plus suggested rewrites. The response streams into the AI pane. Complements the always-on regex overlay (`editor.style_warnings.show_dont_tell`) with deeper analysis — the regex catches the obvious 2-grams (`was angry`, `realised`); the AI scan catches subtler instances and proposes alternatives. Mnemonic: T for tell.".into(),
+            Action::TranslateToInvented =>
+                "AI-driven translation of the open paragraph from the project's working language INTO an invented language defined under the Language system book (1.2.13+, Ctrl+B Q). Composes a prompt envelope from the language's Dictionary (RAG-filtered to words present in the source), Grammar (all rules), Phonology (all rules), and Sample-text chapters, then streams the response into the AI pane. With zero Language sub-books the chord errors out; with exactly one it translates directly; with two or more it targets the first by canonical order and the status bar warns — the per-language sub-letter chord (Ctrl+B Q Q for Quenya etc.) is a Phase C.2 follow-up.".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -1119,6 +1138,11 @@ impl KeyBindings {
                 // annotated "Sentence rhythm
                 // rewrite" on accept.
                 entry("Shift+m", Action::AiRewriteRhythm, Scope::Editor),
+                // 1.2.13+ Phase C — Ctrl+B Q.
+                // Translate the open paragraph INTO
+                // an invented language defined under
+                // the Language system book.
+                entry("q", Action::TranslateToInvented, Scope::Editor),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),

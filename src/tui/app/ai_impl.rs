@@ -1266,6 +1266,349 @@ impl super::App {
         );
     }
 
+    /// 1.2.13+ Phase C — Ctrl+B Q.  Translate the open
+    /// paragraph from the project's working language INTO an
+    /// invented language defined under the `Language` system
+    /// book.
+    ///
+    /// Scope decisions for the MVP:
+    ///   * Zero Language sub-books → status error.
+    ///   * Exactly one → translate directly.
+    ///   * Two or more → translate into the first by canonical
+    ///     order and warn the user; per-language sub-letter
+    ///     chord (`Ctrl+B Q Q` for Quenya etc.) lands in
+    ///     Phase C.2.
+    ///
+    /// The prompt envelope is composed at fire time from the
+    /// language sub-book's chapters: every Grammar + every
+    /// Phonology rule for context; a RAG-filtered slice of
+    /// Dictionary entries (lemma OR any paradigm form appears
+    /// in the source); up to three Sample-text paragraphs as
+    /// few-shot anchors.  Streams into the AI pane via the
+    /// shared `Inference` machinery.
+    pub(super) fn start_translate_to_invented(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "translate: no paragraph open".into();
+            return;
+        };
+        let body = doc.textarea.lines().join("\n");
+        if body.trim().is_empty() {
+            self.status = "translate: paragraph is empty".into();
+            return;
+        }
+        let title = doc.title.clone();
+
+        // Find Language sub-books.
+        let lang_root = self.hierarchy.iter().find(|n| {
+            n.system_tag.as_deref()
+                == Some(crate::store::SYSTEM_TAG_LANGUAGES)
+        });
+        let Some(lang_root) = lang_root else {
+            self.status = "translate: Language system book missing — \
+                           re-open the project to seed it"
+                .into();
+            return;
+        };
+        let lang_books: Vec<_> =
+            self.hierarchy.children_of(Some(lang_root.id));
+        if lang_books.is_empty() {
+            self.status = "translate: no invented languages defined — \
+                           run `inkhaven language init <name>` first"
+                .into();
+            return;
+        }
+        let target_book = (*lang_books.first().unwrap()).clone();
+        let target_name = target_book.title.clone();
+        let multi_warn = if lang_books.len() > 1 {
+            format!(" (warn: {} languages defined; targeting `{target_name}` — \
+                    per-language chord is Phase C.2)",
+                lang_books.len())
+        } else {
+            String::new()
+        };
+
+        // Compose the prompt envelope.
+        let source_lang = self.cfg.language.clone();
+        let envelope = match self.compose_translation_prompt(
+            &target_book,
+            &target_name,
+            &source_lang,
+            &title,
+            &body,
+        ) {
+            Ok(text) => text,
+            Err(e) => {
+                self.status = format!("translate: {e}");
+                return;
+            }
+        };
+
+        let (model, _env_var) = match self
+            .ai
+            .resolve_provider(&self.cfg.llm, None)
+        {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("translate: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            None,
+            Vec::new(),
+            envelope,
+        );
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        self.change_focus(Focus::Ai);
+        self.status = format!(
+            "translate → {target_name}: streaming from {provider}…{multi_warn}"
+        );
+    }
+
+    /// Build the translation prompt envelope.
+    ///
+    /// Structure:
+    ///   1. System prompt: explains the LLM's role.
+    ///   2. Target-language overview (Meta/overview HJSON).
+    ///   3. Grammar rules — all of them, capped by §13's
+    ///      typical 4-8K token budget.
+    ///   4. Phonology rules — all of them.
+    ///   5. Dictionary entries — RAG-filtered to words present
+    ///      in the source text (case-insensitive lookup against
+    ///      the LanguageEntryIndex's surface forms).  Falls
+    ///      back to all entries when the index is empty (no
+    ///      parseable HJSON bodies yet — early in the language's
+    ///      life).
+    ///   6. Sample texts — up to 3 most recent paragraphs from
+    ///      the Sample-texts chapter, as few-shot register
+    ///      anchors.
+    ///   7. User prompt: the source text + direction.
+    fn compose_translation_prompt(
+        &self,
+        target_book: &crate::store::node::Node,
+        target_name: &str,
+        source_lang: &str,
+        source_title: &str,
+        source_body: &str,
+    ) -> std::result::Result<String, String> {
+        use crate::store::node::NodeKind;
+
+        // Section 2 — overview.
+        let overview = self
+            .read_chapter_body(target_book.id, "Meta", "overview")
+            .unwrap_or_default();
+
+        // Section 3 + 4 — Grammar + Phonology.
+        let grammar = self.collect_chapter_bodies(target_book.id, "Grammar");
+        let phonology = self.collect_chapter_bodies(target_book.id, "Phonology");
+
+        // Section 5 — Dictionary entries, RAG-filtered.
+        use unicode_segmentation::UnicodeSegmentation;
+        let source_words_lc: std::collections::HashSet<String> =
+            UnicodeSegmentation::unicode_words(source_body)
+                .map(|w: &str| w.to_lowercase())
+                .collect();
+        // Collect every Dictionary entry once, owned.  Then
+        // RAG-filter — single-word translations hit when the
+        // translation appears as a tokenised word in the
+        // source; multi-word translations need a substring
+        // check on the lowercased body.
+        let body_lc = source_body.to_lowercase();
+        let mut all_entries: Vec<crate::language_entry::DictionaryEntry> =
+            Vec::new();
+        for id in self.hierarchy.collect_subtree(target_book.id) {
+            let Some(node) = self.hierarchy.get(id) else { continue; };
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let path = self.hierarchy.slug_path(node);
+            if !path.contains("/dictionary/") {
+                continue;
+            }
+            let bytes = match self.store.get_content(id) {
+                Ok(Some(b)) => b,
+                _ => continue,
+            };
+            let body_str = match std::str::from_utf8(&bytes) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            if let Ok(Some(entry)) = crate::language_entry::parse(body_str) {
+                all_entries.push(entry);
+            }
+        }
+        let mut seen: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let relevant: Vec<&crate::language_entry::DictionaryEntry> = all_entries
+            .iter()
+            .filter(|entry| {
+                let translation = entry.translation.trim().to_lowercase();
+                if translation.is_empty() {
+                    return false;
+                }
+                let hit = if translation.contains(' ') {
+                    body_lc.contains(&translation)
+                } else {
+                    source_words_lc.contains(&translation)
+                };
+                hit && seen.insert(entry.word.clone())
+            })
+            .collect();
+        let dictionary_section = if relevant.is_empty() {
+            "(no matching dictionary entries — translate by analogy + ask if uncertain)".to_string()
+        } else {
+            let mut s = String::new();
+            for entry in &relevant {
+                s.push_str(&format!(
+                    "* `{}` ({}): {}",
+                    entry.word, entry.pos, entry.translation
+                ));
+                if !entry.example.trim().is_empty() {
+                    s.push_str(&format!(" — _{}_", entry.example));
+                }
+                if !entry.inflection.is_empty() {
+                    let forms: Vec<String> = entry
+                        .inflection
+                        .iter()
+                        .map(|(k, v)| format!("{k}={v}"))
+                        .collect();
+                    s.push_str(&format!(" [forms: {}]", forms.join(", ")));
+                }
+                s.push('\n');
+            }
+            s
+        };
+
+        // Section 6 — Sample texts.
+        let sample_texts = self
+            .collect_chapter_bodies(target_book.id, "Sample texts")
+            .into_iter()
+            .take(3)
+            .collect::<Vec<_>>()
+            .join("\n\n---\n\n");
+
+        // Section 1 + 7 — system + user prompt.
+        let envelope = format!(
+            "You are a translator between {source_or} and {target_name}, an invented \
+             language defined by the author of this manuscript.  Translate the source \
+             paragraph FROM the working language INTO {target_name}, using the \
+             authoritative grammar, phonology, dictionary, and sample texts below.  \
+             Respond with:\n\
+             1. The translation.\n\
+             2. A per-token gloss table (source · gloss · target).\n\
+             3. A short list of which grammar rules fired and which dictionary entries \
+                you applied.\n\
+             4. Confidence flags — call out any word for which the dictionary was \
+                missing or ambiguous, with a suggested entry the author can add.\n\
+             \n\
+             ── Language overview ──\n\
+             {overview}\n\
+             \n\
+             ── Grammar rules ──\n\
+             {grammar}\n\
+             \n\
+             ── Phonology rules ──\n\
+             {phonology}\n\
+             \n\
+             ── Dictionary (filtered to source-relevant entries) ──\n\
+             {dictionary_section}\n\
+             \n\
+             ── Sample texts (register anchors) ──\n\
+             {sample_texts}\n\
+             \n\
+             ── Source paragraph: {source_title} ──\n\
+             {source_body}\n\
+             ── end source ──",
+            source_or = if source_lang.trim().is_empty() {
+                "the project's working language"
+            } else {
+                source_lang
+            },
+            grammar = grammar.join("\n\n---\n\n"),
+            phonology = phonology.join("\n\n---\n\n"),
+        );
+        Ok(envelope)
+    }
+
+    /// Read one paragraph by title under one chapter title
+    /// under a language sub-book.  Used for `Meta/overview`.
+    fn read_chapter_body(
+        &self,
+        book_id: uuid::Uuid,
+        chapter_title: &str,
+        paragraph_title: &str,
+    ) -> Option<String> {
+        use crate::store::node::NodeKind;
+        let chapter = self
+            .hierarchy
+            .children_of(Some(book_id))
+            .into_iter()
+            .find(|n| {
+                n.kind == NodeKind::Chapter
+                    && n.title.eq_ignore_ascii_case(chapter_title)
+            })?
+            .clone();
+        let paragraph = self
+            .hierarchy
+            .collect_subtree(chapter.id)
+            .into_iter()
+            .filter_map(|id| self.hierarchy.get(id))
+            .find(|n| {
+                n.kind == NodeKind::Paragraph
+                    && n.title.eq_ignore_ascii_case(paragraph_title)
+            })?
+            .clone();
+        let bytes = self.store.get_content(paragraph.id).ok().flatten()?;
+        String::from_utf8(bytes).ok()
+    }
+
+    /// Read every paragraph body under one chapter title
+    /// of a language sub-book.  Used for Grammar / Phonology /
+    /// Sample texts.
+    fn collect_chapter_bodies(
+        &self,
+        book_id: uuid::Uuid,
+        chapter_title: &str,
+    ) -> Vec<String> {
+        use crate::store::node::NodeKind;
+        let Some(chapter) = self
+            .hierarchy
+            .children_of(Some(book_id))
+            .into_iter()
+            .find(|n| {
+                n.kind == NodeKind::Chapter
+                    && n.title.eq_ignore_ascii_case(chapter_title)
+            })
+            .cloned()
+        else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for id in self.hierarchy.collect_subtree(chapter.id) {
+            let Some(node) = self.hierarchy.get(id) else { continue; };
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let Ok(Some(bytes)) = self.store.get_content(id) else { continue; };
+            if let Ok(s) = String::from_utf8(bytes) {
+                out.push(s);
+            }
+        }
+        out
+    }
+
     pub(super) fn ai_diff_review_handle_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up => {
