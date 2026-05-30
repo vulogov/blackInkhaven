@@ -42,6 +42,13 @@ pub enum LexCategory {
     Character,
     Note,
     Artefact,
+    /// 1.2.13+ — invented-language dictionary entry.
+    /// Walked from the `Language/<name>/Dictionary`
+    /// subtree.  Hits drive the status-bar preview
+    /// (`[word · POS · translation]`) when the cursor
+    /// lands on a recognised invented word.  See
+    /// `Documentation/PROPOSALS/LANGUAGE_BOOK.md`.
+    Language,
 }
 
 /// One match on a row of editor text, in character (not byte) coordinates.

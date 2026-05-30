@@ -284,9 +284,18 @@ fn lex_style_at(
     use super::lexicon::LexCategory;
     fn rank(c: LexCategory) -> u8 {
         match c {
-            LexCategory::Place => 4,
-            LexCategory::Character => 3,
-            LexCategory::Artefact => 2,
+            LexCategory::Place => 5,
+            LexCategory::Character => 4,
+            LexCategory::Artefact => 3,
+            // 1.2.13+ — Language hits rank just above
+            // Notes so they win the per-cell style
+            // dispatch against the dim Note underline.
+            // Could go higher if invented-language
+            // overlay is more important to the author
+            // than character / place chips; users
+            // tune via Phase D's per-category
+            // priority HJSON knobs.
+            LexCategory::Language => 2,
             LexCategory::Note => 1,
         }
     }
@@ -312,6 +321,17 @@ fn lex_style_at(
         LexCategory::Note => Style::default()
             .fg(theme.notes_underline_fg)
             .add_modifier(Modifier::UNDERLINED),
+        // 1.2.13+ — invented-language dictionary
+        // hits.  Italic + colour (default soft
+        // teal-mauve) distinguishes them from the
+        // bold place / character chips.  Italic is
+        // mnemonic for "this is a word in another
+        // language" — same convention typesetters
+        // use for foreign-language inclusions in
+        // English prose.
+        LexCategory::Language => Style::default()
+            .fg(theme.language_word_fg)
+            .add_modifier(Modifier::ITALIC),
     })
 }
 

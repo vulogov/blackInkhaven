@@ -44,6 +44,19 @@ pub struct Theme {
     /// so the three overlays stay distinguishable
     /// when adjacent.
     pub style_warning_show_dont_tell_fg: Color,
+    /// 1.2.13+ — colour for invented-language
+    /// dictionary-entry overlays.  Painted on
+    /// invented words in the manuscript when a
+    /// language book's Dictionary chapter contains
+    /// a matching headword.  Default is a soft
+    /// teal-mauve picked to stay distinct from the
+    /// existing places (cyan) / characters
+    /// (amber) / artefacts (peach) chips and from
+    /// the show-don't-tell teal.  Phase D adds
+    /// per-language overrides — one colour per
+    /// Language sub-book — so multi-language
+    /// projects can colour-code in the manuscript.
+    pub language_word_fg: Color,
     /// 1.2.12+ — per-detector style modifier for
     /// the three style-warning overlays.  Defaults to
     /// `Modifier::UNDERLINED` for all three
@@ -153,6 +166,13 @@ impl Theme {
                 // when adjacent.
                 Color::Rgb(0x94, 0xe2, 0xd5),
             ),
+            // 1.2.13+ — invented-language overlay.
+            // Soft mauve-teal mix; distinct from the
+            // four existing entity-overlay colours.
+            language_word_fg: color_or(
+                &cfg.language_word_fg,
+                Color::Rgb(0xb4, 0xa8, 0xe1),
+            ),
             // 1.2.12+ — per-detector modifier overrides;
             // default is UNDERLINED for all three (1.2.9
             // baseline).  See `parse_style_modifier`.
@@ -253,6 +273,7 @@ impl Theme {
             "style_warning_filter_word_fg" => self.style_warning_filter_word_fg = parsed,
             "style_warning_repeated_phrase_fg" => self.style_warning_repeated_phrase_fg = parsed,
             "style_warning_show_dont_tell_fg" => self.style_warning_show_dont_tell_fg = parsed,
+            "language_word_fg" => self.language_word_fg = parsed,
             "pov_chip_bg" => self.pov_chip_bg = parsed,
             "pov_chip_fg" => self.pov_chip_fg = parsed,
             "search_match_bg" => self.search_match_bg = parsed,
