@@ -14266,19 +14266,59 @@ impl App {
         ) {
             Ok(node) => {
                 let new_id = node.id;
-                // For root-level user books: provision the artefacts
-                // subdirectory and the Typst-book skeleton (chapter +
-                // index/settings/globals paragraphs). No-op for other
-                // kinds; failure logs to status but doesn't roll back
-                // the just-created book.
-                if let Err(e) = self.store.provision_user_book(&self.cfg, &node) {
-                    self.status = format!(
-                        "added {} `{}` — but Typst skeleton failed: {e}",
-                        kind.as_str(),
-                        node.title
-                    );
+                // 1.2.13+ Phase D.1 — when the new book lands
+                // directly under the `Language` system book the
+                // tree-pane Add Book chord (`A` in tree, `+` etc.)
+                // should produce a fully-scaffolded language
+                // sub-book matching what `inkhaven language init`
+                // emits, not an empty book the author would then
+                // have to hand-populate with the 5 standard
+                // chapters.  Detected by parent's `system_tag`.
+                let parent_is_language =
+                    kind == crate::store::NodeKind::Book
+                        && parent.as_ref().and_then(|p| p.system_tag.as_deref())
+                            == Some(crate::store::SYSTEM_TAG_LANGUAGES);
+                if parent_is_language {
+                    match crate::cli::language::scaffold_language_chapters(
+                        &self.store,
+                        &self.cfg,
+                        &node,
+                        |_| {},
+                    ) {
+                        Ok(()) => {
+                            self.status = format!(
+                                "added language `{}` — 5 chapters scaffolded; \
+                                 edit Meta/overview to set the alphabet",
+                                node.title
+                            );
+                        }
+                        Err(e) => {
+                            // The book itself was created; the
+                            // scaffold partial-failed.  Surface the
+                            // error but don't roll back — the user
+                            // can re-run init OR hand-populate the
+                            // remaining chapters.
+                            self.status = format!(
+                                "added language `{}` — but scaffold partial: {e}",
+                                node.title
+                            );
+                        }
+                    }
                 } else {
-                    self.status = format!("added {} `{}`", kind.as_str(), node.title);
+                    // For root-level user books: provision the artefacts
+                    // subdirectory and the Typst-book skeleton (chapter +
+                    // index/settings/globals paragraphs). No-op for other
+                    // kinds; failure logs to status but doesn't roll back
+                    // the just-created book.
+                    if let Err(e) = self.store.provision_user_book(&self.cfg, &node) {
+                        self.status = format!(
+                            "added {} `{}` — but Typst skeleton failed: {e}",
+                            kind.as_str(),
+                            node.title
+                        );
+                    } else {
+                        self.status = format!("added {} `{}`", kind.as_str(), node.title);
+                    }
                 }
                 self.modal = Modal::None;
                 self.reload_hierarchy();

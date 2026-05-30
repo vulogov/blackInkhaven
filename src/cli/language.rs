@@ -41,12 +41,16 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             &translation,
             example.as_deref(),
         ),
-        LanguageCommand::Doctor { language } => doctor(project, &language),
+        LanguageCommand::Doctor { language, json } => doctor(project, &language, json),
         LanguageCommand::Export {
             language,
             format,
             output,
         } => export(project, &language, format, output.as_deref()),
+        LanguageCommand::List => list(project),
+        LanguageCommand::RemoveWord { language, word } => {
+            remove_word(project, &language, &word)
+        }
     }
 }
 
@@ -115,12 +119,6 @@ fn init(project: &Path, name: &str) -> Result<()> {
     layout.require_initialized()?;
     let cfg = Config::load(&layout.config_path())?;
     let store = Store::open(layout, &cfg)?;
-
-    // Locate the top-level Language system book.
-    // `ensure_system_books` (called inside
-    // `Store::open`) seeds it on every project
-    // open so the lookup never fails on a healthy
-    // project.
     let hierarchy = Hierarchy::load(&store)?;
     let lang_book = hierarchy
         .iter()
@@ -136,9 +134,8 @@ fn init(project: &Path, name: &str) -> Result<()> {
             )
         })?;
 
-    // Reject duplicate.  Slug collision is what
-    // `create_node` would normally catch, but
-    // explicit rejection is friendlier than a
+    // Reject duplicate before the create so the
+    // failure mode is a friendly error, not a
     // silent `-2` slug suffix on the second
     // attempt.
     if hierarchy
@@ -151,7 +148,6 @@ fn init(project: &Path, name: &str) -> Result<()> {
         )));
     }
 
-    // Per-language book — child of Language.
     let hierarchy = Hierarchy::load(&store)?;
     let per_lang = store.create_node(
         &cfg,
@@ -167,43 +163,9 @@ fn init(project: &Path, name: &str) -> Result<()> {
         hierarchy.slug_path(&per_lang),
     );
 
-    // Five standard chapters under the per-language
-    // book.  Reload hierarchy between creates so
-    // each subsequent create sees the previous
-    // create's slug + order.
-    for title in STANDARD_CHAPTERS {
-        let hierarchy = Hierarchy::load(&store)?;
-        let chapter = store.create_node(
-            &cfg,
-            &hierarchy,
-            NodeKind::Chapter,
-            title,
-            Some(&per_lang),
-            None,
-            InsertPosition::End,
-        )?;
-        eprintln!("  · {title}");
-        // Seed `Meta/overview` with the starter
-        // HJSON.  Other chapters stay empty —
-        // they fill with entries via Phase B's
-        // `add-word` and the in-TUI tree-pane
-        // workflow.
-        if *title == "Meta" {
-            let hierarchy = Hierarchy::load(&store)?;
-            let mut overview = store.create_node(
-                &cfg,
-                &hierarchy,
-                NodeKind::Paragraph,
-                "overview",
-                Some(&chapter),
-                None,
-                InsertPosition::End,
-            )?;
-            store
-                .update_paragraph_content(&mut overview, META_OVERVIEW_BODY.as_bytes())
-                .map_err(|e| Error::Store(format!("seed overview: {e}")))?;
-        }
-    }
+    scaffold_language_chapters(&store, &cfg, &per_lang, |chapter_title| {
+        eprintln!("  · {chapter_title}");
+    })?;
 
     eprintln!("\nNext steps:");
     eprintln!(
@@ -216,6 +178,58 @@ fn init(project: &Path, name: &str) -> Result<()> {
         "  · add grammar rules under `Language/{name}/Grammar` for the Phase C AI translation flow"
     );
 
+    Ok(())
+}
+
+/// 1.2.13+ Phase D.1 — shared scaffold helper.
+/// Creates the 5 standard chapters under an already-
+/// existing per-language book + seeds
+/// `Meta/overview` with the starter HJSON.  Used by
+/// both the CLI `init` path and the in-TUI tree-pane
+/// commit path (see `App::provision_language_book`)
+/// so the two entry points produce identical
+/// scaffolds.
+///
+/// `on_chapter` is called for each chapter at create
+/// time so the caller can emit progress (CLI prints
+/// `· Meta`; the TUI updates the status bar).
+pub(crate) fn scaffold_language_chapters(
+    store: &Store,
+    cfg: &Config,
+    per_lang: &crate::store::node::Node,
+    mut on_chapter: impl FnMut(&str),
+) -> Result<()> {
+    for title in STANDARD_CHAPTERS {
+        // Reload between creates so each subsequent
+        // create sees the previous create's slug +
+        // order.
+        let hierarchy = Hierarchy::load(store)?;
+        let chapter = store.create_node(
+            cfg,
+            &hierarchy,
+            NodeKind::Chapter,
+            title,
+            Some(per_lang),
+            None,
+            InsertPosition::End,
+        )?;
+        on_chapter(title);
+        if *title == "Meta" {
+            let hierarchy = Hierarchy::load(store)?;
+            let mut overview = store.create_node(
+                cfg,
+                &hierarchy,
+                NodeKind::Paragraph,
+                "overview",
+                Some(&chapter),
+                None,
+                InsertPosition::End,
+            )?;
+            store
+                .update_paragraph_content(&mut overview, META_OVERVIEW_BODY.as_bytes())
+                .map_err(|e| Error::Store(format!("seed overview: {e}")))?;
+        }
+    }
     Ok(())
 }
 
@@ -493,7 +507,7 @@ fn escape_hjson(s: &str) -> String {
 ///   * count entries that lack inflection paradigms —
 ///     hint that the lexicon overlay won't catch
 ///     inflected forms for those words.
-fn doctor(project: &Path, language: &str) -> Result<()> {
+fn doctor(project: &Path, language: &str, json: bool) -> Result<()> {
     use crate::store::node::NodeKind;
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
@@ -657,7 +671,84 @@ fn doctor(project: &Path, language: &str) -> Result<()> {
         .cloned()
         .collect();
 
-    // Emit the report.
+    // 1.2.13+ Phase D.1 — JSON mode emits the same
+    // numbers in a structured form so CI pipelines
+    // can gate on `coverage.with_example_pct < 80`
+    // etc.  Returns early; the text render below
+    // stays unchanged.
+    if json {
+        use serde_json::{json, Map, Value};
+        let mut sorted_undefined: Vec<String> =
+            undefined_words.iter().take(50).cloned().collect();
+        sorted_undefined.sort();
+        let example_pct = if total_entries > 0 {
+            with_examples * 100 / total_entries
+        } else {
+            0
+        };
+        let inflection_pct = if total_entries > 0 {
+            with_inflection * 100 / total_entries
+        } else {
+            0
+        };
+        let coverage_pct = if manuscript_word_count > 0 {
+            manuscript_word_count.saturating_sub(undefined_words.len()) * 100
+                / manuscript_word_count
+        } else {
+            0
+        };
+        let mut report = Map::new();
+        report.insert("language".into(), Value::String(lang_book.title.clone()));
+        report.insert(
+            "meta".into(),
+            meta.as_ref()
+                .map(|m| json!({
+                    "name": m.name,
+                    "language_kind": m.language_kind,
+                    "family": m.family,
+                    "iso_code": m.iso_code,
+                    "alphabet_count": m.alphabet.len(),
+                    "reading_direction": m.reading_direction,
+                }))
+                .unwrap_or(Value::Null),
+        );
+        report.insert(
+            "chapters".into(),
+            json!({
+                "dictionary_parseable": total_entries,
+                "dictionary_unparseable": dict_unparseable,
+                "grammar": grammar_count,
+                "phonology": phonology_count,
+                "sample_texts": sample_count,
+            }),
+        );
+        report.insert(
+            "coverage".into(),
+            json!({
+                "with_example": with_examples,
+                "with_example_pct": example_pct,
+                "with_paradigm": with_inflection,
+                "with_paradigm_pct": inflection_pct,
+                "missing_example": missing_examples,
+                "missing_paradigm": missing_inflection,
+            }),
+        );
+        report.insert(
+            "manuscript_gap".into(),
+            json!({
+                "unique_words": manuscript_word_count,
+                "uncovered_count": undefined_words.len(),
+                "coverage_pct": coverage_pct,
+                "uncovered_sample": sorted_undefined,
+            }),
+        );
+        let s = serde_json::to_string_pretty(&Value::Object(report))
+            .map_err(|e| Error::Config(format!("json serialise: {e}")))?;
+        println!("{s}");
+        return Ok(());
+    }
+
+    // Emit the human-readable report.
     println!("Language doctor — `{}`", lang_book.title);
     println!();
     if let Some(m) = meta.as_ref() {
@@ -1109,6 +1200,191 @@ fn typst_escape(s: &str) -> String {
         }
     }
     out
+}
+
+/// 1.2.13+ Phase D.1 — `inkhaven language list`.
+/// Walks the `Language` system book and emits one
+/// row per language with summary counts.  Quick
+/// at-a-glance complement to `language doctor`.
+fn list(project: &Path) -> Result<()> {
+    use crate::store::node::NodeKind;
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+
+    let lang_root = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Store(
+                "Language system book missing — re-open the project to seed it".into(),
+            )
+        })?;
+    let languages = hierarchy.children_of(Some(lang_root.id));
+    if languages.is_empty() {
+        eprintln!("no languages defined — run `inkhaven language init <name>`");
+        return Ok(());
+    }
+    // Compute counts up-front so the column widths
+    // can size to the data.  Tuple shape:
+    // (name, entries, grammar, phonology, samples).
+    let mut rows: Vec<(String, usize, usize, usize, usize)> =
+        Vec::with_capacity(languages.len());
+    for lang in &languages {
+        let chapters = hierarchy.children_of(Some(lang.id));
+        let mut entries = 0usize;
+        let mut grammar = 0usize;
+        let mut phonology = 0usize;
+        let mut samples = 0usize;
+        for chapter in &chapters {
+            let title_lc = chapter.title.to_lowercase();
+            let paragraph_count = hierarchy
+                .collect_subtree(chapter.id)
+                .into_iter()
+                .filter_map(|id| hierarchy.get(id))
+                .filter(|n| n.kind == NodeKind::Paragraph)
+                .count();
+            match title_lc.as_str() {
+                "dictionary" => entries = paragraph_count,
+                "grammar" => grammar = paragraph_count,
+                "phonology" => phonology = paragraph_count,
+                "sample texts" => samples = paragraph_count,
+                _ => {}
+            }
+        }
+        rows.push((lang.title.clone(), entries, grammar, phonology, samples));
+    }
+    let max_name = rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(8);
+    let name_w = max_name.max(8);
+    println!(
+        "  {:<width$}  {:>6}  {:>7}  {:>9}  {:>7}",
+        "name", "words", "grammar", "phonology", "samples",
+        width = name_w,
+    );
+    println!(
+        "  {}",
+        "-".repeat(name_w + 36)
+    );
+    for (name, entries, grammar, phonology, samples) in &rows {
+        println!(
+            "  {:<width$}  {:>6}  {:>7}  {:>9}  {:>7}",
+            name, entries, grammar, phonology, samples,
+            width = name_w,
+        );
+    }
+    Ok(())
+}
+
+/// 1.2.13+ Phase D.1 — `inkhaven language
+/// remove-word <language> <word>`.  Mirror of
+/// `add-word`: resolves the language sub-book by
+/// case-insensitive title; finds the Dictionary
+/// chapter; locates the bucket subchapter via the
+/// same alphabet-bucket derivation
+/// (`Meta/overview.alphabet` consultation first,
+/// first-char fallback); deletes the entry
+/// paragraph.  Errors when the entry doesn't
+/// exist rather than silently no-op-ing so the
+/// caller knows their `remove-word foo` against
+/// an already-removed entry needs no follow-up
+/// action.
+fn remove_word(project: &Path, language: &str, word: &str) -> Result<()> {
+    use crate::store::node::NodeKind;
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+
+    let lang_root = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
+        })
+        .ok_or_else(|| {
+            Error::Store(
+                "Language system book missing — re-open the project to seed it".into(),
+            )
+        })?
+        .clone();
+    let lang_book = hierarchy
+        .children_of(Some(lang_root.id))
+        .into_iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!("language `{language}` not found"))
+        })?;
+    let dictionary = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| {
+            n.kind == NodeKind::Chapter
+                && n.title.eq_ignore_ascii_case("Dictionary")
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "language `{language}` has no Dictionary chapter"
+            ))
+        })?;
+    // Same bucket derivation as add-word.
+    let bucket = derive_alphabet_bucket(&store, &hierarchy, &lang_book, word)?
+        .or_else(|| alphabet_bucket(word))
+        .ok_or_else(|| {
+            Error::Config(format!("could not derive alphabet bucket from `{word}`"))
+        })?;
+    let subchapter = hierarchy
+        .children_of(Some(dictionary.id))
+        .into_iter()
+        .find(|n| {
+            n.kind == NodeKind::Subchapter
+                && n.title.eq_ignore_ascii_case(&bucket)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "no bucket subchapter `{bucket}` under `{language}/Dictionary` — `{word}` isn't defined"
+            ))
+        })?;
+    let entry = hierarchy
+        .children_of(Some(subchapter.id))
+        .into_iter()
+        .find(|n| {
+            n.kind == NodeKind::Paragraph
+                && n.title.eq_ignore_ascii_case(word)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "word `{word}` not found under `{language}/Dictionary/{bucket}`"
+            ))
+        })?;
+    let ids = hierarchy.collect_subtree(entry.id);
+    // Entry is a Paragraph — its on-disk path lives
+    // in `entry.file` (no children to walk for the
+    // fs path).
+    let fs_rel = entry
+        .file
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default();
+    store
+        .delete_subtree(&fs_rel, &ids)
+        .map_err(|e| Error::Store(format!("delete entry: {e}")))?;
+    eprintln!(
+        "removed `{word}` from `{language}/Dictionary/{bucket}`"
+    );
+    Ok(())
 }
 
 #[cfg(test)]
