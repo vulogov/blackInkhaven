@@ -14452,10 +14452,15 @@ impl App {
             Ok(mut node) => {
                 let new_id = node.id;
                 // Seed body if a rule-chapter template
-                // applies.  Errors are swallowed — the
-                // node is created either way; the author
-                // can re-edit if the seed fails.
+                // applies.  Also flip content_type to
+                // `"hjson"` so the editor renders with
+                // HJSON syntax highlighting (matches the
+                // Meta/overview + dictionary-entry
+                // paragraphs).  Errors are swallowed —
+                // the node is created either way; the
+                // author can re-edit if the seed fails.
                 if let Some(body) = seed_body_after_create {
+                    node.content_type = Some("hjson".to_string());
                     let _ = self
                         .store
                         .update_paragraph_content(&mut node, body.as_bytes());
