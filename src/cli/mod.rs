@@ -560,25 +560,50 @@ pub enum LanguageCommand {
         language: String,
         /// The word being defined.  Title-case as
         /// the author prefers; the slug is
-        /// auto-derived.
-        word: String,
+        /// auto-derived.  Required UNLESS --import
+        /// is set, in which case this positional is
+        /// ignored.
+        word: Option<String>,
         /// Part of speech.  Free-form string; the
         /// proposal §3 suggests `noun | verb |
         /// adjective | adverb | pronoun |
         /// preposition | conjunction |
         /// interjection | particle` but the field
         /// is open so the author can use language-
-        /// specific categories.
+        /// specific categories.  Required unless
+        /// --import is set.
         #[arg(long, short = 't')]
-        r#type: String,
+        r#type: Option<String>,
         /// Translation into the project's working
-        /// language.
+        /// language.  Required unless --import is
+        /// set.
         #[arg(long)]
-        translation: String,
+        translation: Option<String>,
         /// Optional canonical sample sentence the
         /// author wants frozen into the entry.
         #[arg(long)]
         example: Option<String>,
+        /// 1.2.13+ Phase D.1 — bulk-import a CSV
+        /// dictionary.  When set, the positional
+        /// <word> + the --type / --translation /
+        /// --example flags are ignored; every row
+        /// of the CSV becomes an entry.
+        ///
+        /// CSV format: header row drives column
+        /// mapping (any subset / order accepted).
+        /// Required columns: `word`, `type`,
+        /// `translation`.  Optional: `example`,
+        /// `pronunciation`, `etymology`, `related`
+        /// (`;`-separated), `inflection`
+        /// (`;`-separated `key=value` pairs),
+        /// `examples` (`|`-separated additional
+        /// sentences), `register`, `era`, `notes`.
+        /// Comment rows: `word` starting with `#`.
+        /// Empty `word` rows: skipped silently.
+        /// Duplicate words: skipped with warning.
+        /// Tally printed at end.
+        #[arg(long, value_name = "PATH")]
+        import: Option<PathBuf>,
     },
     /// 1.2.13+ Phase D — health report for a language
     /// sub-book.  Counts dictionary entries, entries

@@ -33,14 +33,40 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             r#type,
             translation,
             example,
-        } => add_word(
-            project,
-            &language,
-            &word,
-            &r#type,
-            &translation,
-            example.as_deref(),
-        ),
+            import,
+        } => {
+            if let Some(csv_path) = import {
+                import_dictionary_csv(project, &language, &csv_path)
+            } else {
+                // Single-add mode requires word + type +
+                // translation positionals/flags.
+                let word = word.ok_or_else(|| {
+                    Error::Config(
+                        "missing <WORD> — pass a word argument OR use --import <PATH>"
+                            .into(),
+                    )
+                })?;
+                let pos = r#type.ok_or_else(|| {
+                    Error::Config(
+                        "missing --type — pass a part-of-speech OR use --import".into(),
+                    )
+                })?;
+                let translation = translation.ok_or_else(|| {
+                    Error::Config(
+                        "missing --translation — pass a working-language gloss OR use --import"
+                            .into(),
+                    )
+                })?;
+                add_word(
+                    project,
+                    &language,
+                    &word,
+                    &pos,
+                    &translation,
+                    example.as_deref(),
+                )
+            }
+        }
         LanguageCommand::Doctor { language, json } => doctor(project, &language, json),
         LanguageCommand::Export {
             language,
@@ -429,6 +455,60 @@ pub(crate) fn add_dictionary_entry_impl(
     translation: &str,
     example: Option<&str>,
 ) -> Result<(crate::store::node::Node, String)> {
+    let body = seed_dictionary_entry_body(word, pos, translation, example);
+    create_dictionary_entry(store, cfg, lang_book, word, &body)
+}
+
+/// 1.2.13+ Phase D.1 — fully-populated entry record
+/// used by the CSV import path.  Distinct from the
+/// `language_entry::DictionaryEntry` parser type
+/// because we own this one (mutable builder) and the
+/// parser one is immutable (deserialised view).
+#[derive(Debug, Default, Clone)]
+pub(crate) struct ImportEntry {
+    pub word: String,
+    pub pos: String,
+    pub translation: String,
+    pub example: String,
+    pub pronunciation: String,
+    pub etymology: String,
+    pub related: Vec<String>,
+    pub inflection: std::collections::BTreeMap<String, String>,
+    pub examples: Vec<String>,
+    pub register: String,
+    pub era: String,
+    pub notes: String,
+}
+
+/// Add a fully-populated dictionary entry from an
+/// import row.  Bypasses the verbose commented seed
+/// template and writes compact HJSON with only the
+/// populated fields.  Shares the bucket-derivation +
+/// duplicate-check + persistence machinery with the
+/// interactive `add_dictionary_entry_impl`.
+pub(crate) fn add_imported_dictionary_entry(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    entry: &ImportEntry,
+) -> Result<(crate::store::node::Node, String)> {
+    let body = build_imported_entry_body(entry);
+    create_dictionary_entry(store, cfg, lang_book, &entry.word, &body)
+}
+
+/// Shared bucket-derivation + duplicate-check +
+/// node-creation + disk/bdslib persistence for both
+/// the interactive and bulk-import paths.  Body is
+/// passed verbatim — callers pick whether they want
+/// the verbose commented template or a compact
+/// concrete entry.
+fn create_dictionary_entry(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    word: &str,
+    body: &str,
+) -> Result<(crate::store::node::Node, String)> {
     let hierarchy = Hierarchy::load(store)?;
     let dictionary = hierarchy
         .children_of(Some(lang_book.id))
@@ -489,11 +569,7 @@ pub(crate) fn add_dictionary_entry_impl(
         None,
         InsertPosition::End,
     )?;
-    let body = seed_dictionary_entry_body(word, pos, translation, example);
     entry.content_type = Some("hjson".to_string());
-    // Disk write FIRST — `update_paragraph_content`
-    // is bdslib-only; the editor reads the .typ file
-    // off disk so the on-disk content has to match.
     if let Some(rel) = &entry.file {
         let abs = store.project_root().join(rel);
         std::fs::write(&abs, body.as_bytes())
@@ -503,6 +579,82 @@ pub(crate) fn add_dictionary_entry_impl(
         .update_paragraph_content(&mut entry, body.as_bytes())
         .map_err(|e| Error::Store(format!("seed entry: {e}")))?;
     Ok((entry, bucket))
+}
+
+/// 1.2.13+ Phase D.1 — compact concrete HJSON for an
+/// imported entry.  Emits ONLY the fields the import
+/// row actually populated; skips empty optional
+/// fields entirely so the resulting paragraph reads
+/// cleanly when the author opens it.
+fn build_imported_entry_body(entry: &ImportEntry) -> String {
+    let mut out = String::from("{\n");
+    out.push_str(&format!("  word:         \"{}\"\n", escape_hjson(&entry.word)));
+    out.push_str(&format!("  type:         \"{}\"\n", escape_hjson(&entry.pos)));
+    out.push_str(&format!(
+        "  translation:  \"{}\"\n",
+        escape_hjson(&entry.translation)
+    ));
+    if !entry.example.is_empty() {
+        out.push_str(&format!(
+            "  example:      \"{}\"\n",
+            escape_hjson(&entry.example)
+        ));
+    }
+    if !entry.examples.is_empty() {
+        out.push_str("  examples: [\n");
+        for ex in &entry.examples {
+            out.push_str(&format!("    \"{}\"\n", escape_hjson(ex)));
+        }
+        out.push_str("  ]\n");
+    }
+    if !entry.pronunciation.is_empty() {
+        out.push_str(&format!(
+            "  pronunciation: \"{}\"\n",
+            escape_hjson(&entry.pronunciation)
+        ));
+    }
+    if !entry.etymology.is_empty() {
+        out.push_str(&format!(
+            "  etymology:    \"{}\"\n",
+            escape_hjson(&entry.etymology)
+        ));
+    }
+    if !entry.related.is_empty() {
+        let items: Vec<String> = entry
+            .related
+            .iter()
+            .map(|r| format!("\"{}\"", escape_hjson(r)))
+            .collect();
+        out.push_str(&format!("  related:      [{}]\n", items.join(", ")));
+    }
+    if !entry.inflection.is_empty() {
+        out.push_str("  inflection: {\n");
+        for (k, v) in &entry.inflection {
+            out.push_str(&format!(
+                "    {}: \"{}\"\n",
+                k,
+                escape_hjson(v)
+            ));
+        }
+        out.push_str("  }\n");
+    }
+    if !entry.register.is_empty() {
+        out.push_str(&format!(
+            "  register:     \"{}\"\n",
+            escape_hjson(&entry.register)
+        ));
+    }
+    if !entry.era.is_empty() {
+        out.push_str(&format!("  era:          \"{}\"\n", escape_hjson(&entry.era)));
+    }
+    if !entry.notes.is_empty() {
+        out.push_str(&format!(
+            "  notes:        \"{}\"\n",
+            escape_hjson(&entry.notes)
+        ));
+    }
+    out.push_str("}\n");
+    out
 }
 
 /// 1.2.13+ Phase D.1 hotfix — seed body for a grammar
@@ -1621,6 +1773,322 @@ fn typst_escape(s: &str) -> String {
 /// Walks the `Language` system book and emits one
 /// row per language with summary counts.  Quick
 /// at-a-glance complement to `language doctor`.
+/// 1.2.13+ Phase D.1 — `inkhaven language add-word
+/// <lang> --import <path.csv>`.  Bulk-load a CSV
+/// dictionary.  Format described in the CLI variant
+/// docstring; mechanically:
+///   * RFC 4180 quoting (`"…"` for fields with
+///     commas / quotes / newlines; `""` for embedded
+///     quotes).
+///   * Header row maps column NAMES to row positions
+///     so the CSV's columns can appear in any order
+///     and any subset.
+///   * Complex fields parsed inside the row:
+///       - `inflection`: `;`-separated `key=value` pairs
+///       - `examples`:   `|`-separated sentences
+///       - `related`:    `;`-separated word slugs
+///   * Skip rules: empty `word` cell + `word` starting
+///     with `#` both treated as skip-this-row; duplicate
+///     `word` (already in the dictionary) skipped with
+///     warning.
+///   * Tally printed at end (imported / skipped /
+///     failed counts).
+fn import_dictionary_csv(
+    project: &Path,
+    language: &str,
+    csv_path: &Path,
+) -> Result<()> {
+    use crate::store::node::NodeKind;
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+
+    let lang_root = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
+        })
+        .ok_or_else(|| {
+            Error::Store(
+                "Language system book missing — re-open the project to seed it".into(),
+            )
+        })?
+        .clone();
+    let lang_book = hierarchy
+        .children_of(Some(lang_root.id))
+        .into_iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "language `{language}` not found — run `inkhaven language init {language}` first"
+            ))
+        })?;
+
+    let raw = std::fs::read_to_string(csv_path).map_err(|e| {
+        Error::Config(format!(
+            "could not read CSV file {}: {e}",
+            csv_path.display()
+        ))
+    })?;
+    let rows = parse_csv(&raw)
+        .map_err(|e| Error::Config(format!("CSV parse error: {e}")))?;
+    let mut rows = rows.into_iter();
+    let header = rows
+        .next()
+        .ok_or_else(|| Error::Config("CSV is empty (no header row)".into()))?;
+    let columns = resolve_csv_columns(&header)?;
+
+    let mut imported = 0usize;
+    let mut skipped_blank = 0usize;
+    let mut skipped_comment = 0usize;
+    let mut skipped_duplicate = 0usize;
+    let mut failed = 0usize;
+
+    for (row_idx, row) in rows.enumerate() {
+        // Row 1 in user terms = header; data starts at row 2.
+        let display_row = row_idx + 2;
+        let entry = match build_import_entry_from_row(&columns, &row) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("row {display_row}: {e} — skipped");
+                failed += 1;
+                continue;
+            }
+        };
+        let trimmed = entry.word.trim();
+        if trimmed.is_empty() {
+            skipped_blank += 1;
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            skipped_comment += 1;
+            continue;
+        }
+        match add_imported_dictionary_entry(&store, &cfg, &lang_book, &entry) {
+            Ok((_, bucket)) => {
+                eprintln!("imported `{}` → {language}/Dictionary/{bucket}", entry.word);
+                imported += 1;
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                // The duplicate-detect message comes from
+                // `create_dictionary_entry`; surface as a
+                // skip rather than a failure so an
+                // idempotent re-import doesn't tally the
+                // pre-existing entries as errors.
+                if msg.contains("already defined") {
+                    eprintln!("row {display_row}: `{}` already exists — skipped", entry.word);
+                    skipped_duplicate += 1;
+                } else {
+                    eprintln!("row {display_row}: import `{}` failed: {msg}", entry.word);
+                    failed += 1;
+                }
+            }
+        }
+    }
+
+    eprintln!();
+    eprintln!("Import summary for `{language}`");
+    eprintln!("  imported:        {imported}");
+    if skipped_blank > 0 {
+        eprintln!("  skipped (blank): {skipped_blank}");
+    }
+    if skipped_comment > 0 {
+        eprintln!("  skipped (#):     {skipped_comment}");
+    }
+    if skipped_duplicate > 0 {
+        eprintln!("  skipped (dup):   {skipped_duplicate}");
+    }
+    if failed > 0 {
+        eprintln!("  failed:          {failed}");
+    }
+    Ok(())
+}
+
+/// Column-name → index mapping.  Built from the
+/// CSV's header row so columns can appear in any
+/// order and any subset (required columns enforced
+/// here).
+struct CsvColumns {
+    word: usize,
+    pos: usize,
+    translation: usize,
+    example: Option<usize>,
+    pronunciation: Option<usize>,
+    etymology: Option<usize>,
+    related: Option<usize>,
+    inflection: Option<usize>,
+    examples: Option<usize>,
+    register: Option<usize>,
+    era: Option<usize>,
+    notes: Option<usize>,
+}
+
+fn resolve_csv_columns(header: &[String]) -> Result<CsvColumns> {
+    let lookup = |name: &str| -> Option<usize> {
+        header.iter().position(|h| h.trim().eq_ignore_ascii_case(name))
+    };
+    let word = lookup("word").ok_or_else(|| {
+        Error::Config("CSV missing required column `word`".into())
+    })?;
+    let pos = lookup("type").ok_or_else(|| {
+        Error::Config("CSV missing required column `type`".into())
+    })?;
+    let translation = lookup("translation").ok_or_else(|| {
+        Error::Config("CSV missing required column `translation`".into())
+    })?;
+    Ok(CsvColumns {
+        word,
+        pos,
+        translation,
+        example: lookup("example"),
+        pronunciation: lookup("pronunciation"),
+        etymology: lookup("etymology"),
+        related: lookup("related"),
+        inflection: lookup("inflection"),
+        examples: lookup("examples"),
+        register: lookup("register"),
+        era: lookup("era"),
+        notes: lookup("notes"),
+    })
+}
+
+fn build_import_entry_from_row(
+    cols: &CsvColumns,
+    row: &[String],
+) -> std::result::Result<ImportEntry, String> {
+    let get = |idx: usize| -> String {
+        row.get(idx).cloned().unwrap_or_default()
+    };
+    let opt = |maybe_idx: Option<usize>| -> String {
+        maybe_idx.map(get).unwrap_or_default()
+    };
+    let inflection_raw = opt(cols.inflection);
+    let inflection = parse_inflection_field(&inflection_raw);
+    let examples_raw = opt(cols.examples);
+    let examples = split_pipe(&examples_raw);
+    let related_raw = opt(cols.related);
+    let related = split_semicolon(&related_raw);
+    Ok(ImportEntry {
+        word: get(cols.word).trim().to_string(),
+        pos: get(cols.pos).trim().to_string(),
+        translation: get(cols.translation).trim().to_string(),
+        example: opt(cols.example).trim().to_string(),
+        pronunciation: opt(cols.pronunciation).trim().to_string(),
+        etymology: opt(cols.etymology).trim().to_string(),
+        related,
+        inflection,
+        examples,
+        register: opt(cols.register).trim().to_string(),
+        era: opt(cols.era).trim().to_string(),
+        notes: opt(cols.notes).trim().to_string(),
+    })
+}
+
+/// `nominative=atal;genitive=atale;plural=atatal`
+/// → BTreeMap.  Bad entries (no `=`) are silently
+/// skipped — the import is best-effort row-by-row.
+fn parse_inflection_field(
+    raw: &str,
+) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    for pair in raw.split(';') {
+        let pair = pair.trim();
+        if pair.is_empty() {
+            continue;
+        }
+        if let Some(eq) = pair.find('=') {
+            let key = pair[..eq].trim().to_string();
+            let value = pair[eq + 1..].trim().to_string();
+            if !key.is_empty() && !value.is_empty() {
+                out.insert(key, value);
+            }
+        }
+    }
+    out
+}
+
+fn split_pipe(raw: &str) -> Vec<String> {
+    raw.split('|')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn split_semicolon(raw: &str) -> Vec<String> {
+    raw.split(';')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Minimal RFC 4180-style CSV reader.  Handles:
+///   * Quoted fields with embedded `,`, `\n`, `"`
+///     (`""` doubles to a single `"`).
+///   * Unquoted fields with neither.
+///   * CRLF + bare LF row separators.
+/// Returns `Vec<Vec<String>>` — one Vec per row.
+/// Errors only on truly malformed input (unclosed
+/// quote at end of file).
+fn parse_csv(raw: &str) -> std::result::Result<Vec<Vec<String>>, String> {
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut row: Vec<String> = Vec::new();
+    let mut field = String::new();
+    let mut in_quoted = false;
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_quoted {
+            match c {
+                '"' => {
+                    // `""` inside a quoted field = one literal quote.
+                    if chars.peek() == Some(&'"') {
+                        chars.next();
+                        field.push('"');
+                    } else {
+                        in_quoted = false;
+                    }
+                }
+                _ => field.push(c),
+            }
+        } else {
+            match c {
+                '"' => in_quoted = true,
+                ',' => {
+                    row.push(std::mem::take(&mut field));
+                }
+                '\r' => {
+                    if chars.peek() == Some(&'\n') {
+                        chars.next();
+                    }
+                    row.push(std::mem::take(&mut field));
+                    rows.push(std::mem::take(&mut row));
+                }
+                '\n' => {
+                    row.push(std::mem::take(&mut field));
+                    rows.push(std::mem::take(&mut row));
+                }
+                _ => field.push(c),
+            }
+        }
+    }
+    if in_quoted {
+        return Err("unclosed quote at end of file".into());
+    }
+    // Flush the trailing field/row when the file
+    // doesn't end with a newline.
+    if !field.is_empty() || !row.is_empty() {
+        row.push(field);
+        rows.push(row);
+    }
+    Ok(rows)
+}
+
 fn list(project: &Path) -> Result<()> {
     use crate::store::node::NodeKind;
     let layout = ProjectLayout::new(project);
@@ -1827,6 +2295,149 @@ mod tests {
     /// each template through serde_hjson directly to
     /// catch syntax regressions at test time, not at
     /// the user's first `+` press.
+    #[test]
+    fn csv_parser_handles_quoted_fields() {
+        let csv = "word,type,translation\n\
+                   atal,noun,river\n\
+                   sora,verb,\"to flow, swiftly\"\n\
+                   nan,pronoun,\"\"\"you\"\"\"\n";
+        let rows = parse_csv(csv).unwrap();
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0], vec!["word", "type", "translation"]);
+        assert_eq!(rows[1], vec!["atal", "noun", "river"]);
+        assert_eq!(rows[2], vec!["sora", "verb", "to flow, swiftly"]);
+        // Embedded "" doubles to one literal quote.
+        assert_eq!(rows[3], vec!["nan", "pronoun", "\"you\""]);
+    }
+
+    #[test]
+    fn csv_parser_handles_newlines_in_quoted_fields() {
+        let csv = "word,notes\natal,\"line1\nline2\"\n";
+        let rows = parse_csv(csv).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1], vec!["atal", "line1\nline2"]);
+    }
+
+    #[test]
+    fn csv_parser_handles_crlf_and_missing_trailing_newline() {
+        let csv = "a,b\r\nc,d";
+        let rows = parse_csv(csv).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], vec!["a", "b"]);
+        assert_eq!(rows[1], vec!["c", "d"]);
+    }
+
+    #[test]
+    fn csv_parser_errors_on_unclosed_quote() {
+        assert!(parse_csv("word\n\"unclosed").is_err());
+    }
+
+    #[test]
+    fn inflection_parser_extracts_pairs() {
+        let m = parse_inflection_field("nominative=atal;genitive=atale;plural=atatal");
+        assert_eq!(m.len(), 3);
+        assert_eq!(m.get("nominative"), Some(&"atal".to_string()));
+        assert_eq!(m.get("genitive"), Some(&"atale".to_string()));
+        assert_eq!(m.get("plural"), Some(&"atatal".to_string()));
+    }
+
+    #[test]
+    fn inflection_parser_tolerates_whitespace_and_skips_malformed() {
+        let m = parse_inflection_field(" plural = atatal ; bad-no-equals ; genitive=atale ");
+        assert_eq!(m.len(), 2);
+        assert!(m.contains_key("plural"));
+        assert!(m.contains_key("genitive"));
+    }
+
+    #[test]
+    fn split_helpers_filter_empty_tokens() {
+        assert_eq!(
+            split_pipe("a|b||c"),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+        assert_eq!(
+            split_semicolon("a;b;;c"),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+    }
+
+    #[test]
+    fn resolve_csv_columns_requires_word_type_translation() {
+        let header = vec!["word".into(), "type".into(), "translation".into()];
+        let cols = resolve_csv_columns(&header).unwrap();
+        assert_eq!(cols.word, 0);
+        assert_eq!(cols.pos, 1);
+        assert_eq!(cols.translation, 2);
+        assert!(cols.example.is_none());
+    }
+
+    #[test]
+    fn resolve_csv_columns_errors_on_missing_required() {
+        let header = vec!["word".into(), "type".into()];
+        assert!(resolve_csv_columns(&header).is_err());
+    }
+
+    #[test]
+    fn resolve_csv_columns_is_case_insensitive_and_order_independent() {
+        let header = vec![
+            "Notes".into(),
+            "Translation".into(),
+            "TYPE".into(),
+            "Word".into(),
+            "inflection".into(),
+        ];
+        let cols = resolve_csv_columns(&header).unwrap();
+        assert_eq!(cols.word, 3);
+        assert_eq!(cols.pos, 2);
+        assert_eq!(cols.translation, 1);
+        assert_eq!(cols.notes, Some(0));
+        assert_eq!(cols.inflection, Some(4));
+    }
+
+    #[test]
+    fn imported_entry_body_skips_empty_optionals() {
+        let entry = ImportEntry {
+            word: "atal".into(),
+            pos: "noun".into(),
+            translation: "river".into(),
+            ..Default::default()
+        };
+        let body = build_imported_entry_body(&entry);
+        assert!(body.contains("word:"));
+        assert!(body.contains("type:"));
+        assert!(body.contains("translation:"));
+        // Empty optionals must be absent — no `example:`,
+        // `pronunciation:`, `notes:` etc. in the body
+        // when the import didn't populate them.
+        assert!(!body.contains("example:"));
+        assert!(!body.contains("pronunciation:"));
+        assert!(!body.contains("notes:"));
+        assert!(!body.contains("inflection:"));
+    }
+
+    #[test]
+    fn imported_entry_body_emits_inflection_and_examples() {
+        let mut entry = ImportEntry {
+            word: "atal".into(),
+            pos: "noun".into(),
+            translation: "river".into(),
+            ..Default::default()
+        };
+        entry.inflection.insert("plural".into(), "atatal".into());
+        entry.inflection.insert("genitive".into(), "atale".into());
+        entry.examples = vec!["Atal sora-mi.".into(), "Atal kima.".into()];
+        let body = build_imported_entry_body(&entry);
+        assert!(body.contains("inflection: {"));
+        assert!(body.contains("plural: \"atatal\""));
+        assert!(body.contains("genitive: \"atale\""));
+        assert!(body.contains("examples: ["));
+        assert!(body.contains("\"Atal sora-mi.\""));
+        // Round-trips through the parser.
+        let parsed: serde_hjson::Value =
+            serde_hjson::from_str(&body).expect("imported entry body must parse");
+        let _ = parsed;
+    }
+
     #[test]
     fn meta_overview_seed_parses() {
         let _: serde_hjson::Value = serde_hjson::from_str(META_OVERVIEW_BODY)
