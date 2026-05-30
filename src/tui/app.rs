@@ -14456,11 +14456,19 @@ impl App {
                 // `"hjson"` so the editor renders with
                 // HJSON syntax highlighting (matches the
                 // Meta/overview + dictionary-entry
-                // paragraphs).  Errors are swallowed —
-                // the node is created either way; the
-                // author can re-edit if the seed fails.
+                // paragraphs).  Writes go to disk FIRST
+                // (the editor reads the .typ file off
+                // disk; `update_paragraph_content` only
+                // touches bdslib), then bdslib.  Errors
+                // are swallowed — the node is created
+                // either way; the author can re-edit if
+                // the seed fails.
                 if let Some(body) = seed_body_after_create {
                     node.content_type = Some("hjson".to_string());
+                    if let Some(rel) = &node.file {
+                        let abs = self.layout.root.join(rel);
+                        let _ = std::fs::write(&abs, body.as_bytes());
+                    }
                     let _ = self
                         .store
                         .update_paragraph_content(&mut node, body.as_bytes());
