@@ -297,7 +297,92 @@ Open each paragraph in the editor afterward to
 fill the optional fields (paradigms, etymology,
 etc.) that the shell command doesn't accept.
 
-### 3c. Remove an entry
+### 3c. The bulk-import path — CSV dictionary
+
+The fastest path when you've prepared vocabulary
+in a spreadsheet or generated it from another
+tool: bulk-import a CSV.
+
+```
+$ inkhaven language add-word Tira --import tira-starter.csv
+imported `atal` → Tira/Dictionary/A
+imported `sora` → Tira/Dictionary/S
+imported `mi`   → Tira/Dictionary/M
+imported `nan`  → Tira/Dictionary/N
+imported `ta`   → Tira/Dictionary/T
+imported `peli` → Tira/Dictionary/P
+imported `kima` → Tira/Dictionary/K
+
+Import summary for `Tira`
+  imported:        7
+```
+
+**CSV format.**  Header row maps column names to
+row positions, so columns can appear in **any
+order** and **any subset** (only the required
+ones must be present).
+
+| Column | Required? | Format |
+|-|-|-|
+| `word` | yes | invented-language word (becomes the entry slug + lemma) |
+| `type` | yes | part of speech (free-form string) |
+| `translation` | yes | working-language gloss |
+| `example` | no | canonical sample sentence |
+| `pronunciation` | no | IPA (`/.../` for phonemic, `[...]` for phonetic) |
+| `etymology` | no | derivation note (plain text) |
+| `related` | no | `;`-separated word slugs |
+| `inflection` | no | `;`-separated `key=value` paradigm pairs |
+| `examples` | no | `|`-separated additional sentences |
+| `register` | no | formal / informal / literary / archaic / sacred |
+| `era` | no | when the word entered the language |
+| `notes` | no | freeform usage notes |
+
+**Quoting.**  RFC 4180-style — wrap a cell in
+`"..."` if it contains commas, quotes, or
+newlines.  Double an embedded quote: `""`.
+
+**Skip rules:**
+- Row with empty `word` cell → skipped silently
+  (lets you leave blank rows for visual
+  grouping).
+- Row where `word` starts with `#` → comment,
+  skipped.
+- Duplicate `word` (already in the dictionary)
+  → skipped with `row N: \`X\` already exists`
+  warning.  Makes re-imports idempotent.
+
+**Worked Tira starter CSV** (`tira-starter.csv`):
+
+```csv
+word,type,translation,example,pronunciation,inflection,examples,etymology,notes
+atal,noun,river,"Atal nan ta-mi sora.",/ˈa.tal/,"nominative=atal;genitive=atale;plural=atatal","Atal sora-mi.|Pelele atal-e.","from proto-Tira *a-tal 'flowing water'","Central worldbuilding word"
+sora,verb,flow,"Atal sora-mi.",/ˈso.ɾa/,,,,
+mi,particle,(present tense marker),,,,,,
+# pronouns block
+nan,pronoun,you,,/nan/,"nominative=nan;genitive=nane",,,
+ta,particle,(subject/object marker),,,,,,
+peli,noun,mountain,"Peli kima-mi.",/ˈpe.li/,"nominative=peli;genitive=pelie;plural=pepeli",,,
+kima,adjective,green,,,"nominative=kima;plural=kikima",,,
+```
+
+**Tips:**
+- Generate the CSV from any spreadsheet (Excel,
+  Numbers, Google Sheets, LibreOffice Calc) —
+  export as CSV with UTF-8 encoding.
+- The `inflection` column gives the LLM the
+  paradigm forms it needs for translation AND
+  feeds the lexicon overlay so the inflected
+  forms light up in your manuscript prose.
+- After import, open the entries to add anything
+  the CSV doesn't carry (fields exist in the
+  schema for `frequency`, `era`, `register`
+  even if you didn't populate them in the CSV).
+- Re-importing the SAME CSV after edits is safe:
+  existing entries are skipped, new rows are
+  added.  To *update* an entry, `remove-word`
+  first, then re-import.
+
+### 3d. Remove an entry
 
 Mirror of `add-word`:
 
@@ -815,6 +900,7 @@ it":
 | Scaffold a new language (shell) | `inkhaven language init <name>` |
 | Add a dictionary entry (TUI) | Cursor under `<lang>/Dictionary` → `+` → type word → Enter |
 | Add a dictionary entry (shell) | `inkhaven language add-word <lang> <word> --type <pos> --translation <text>` |
+| Bulk-import a dictionary (CSV) | `inkhaven language add-word <lang> --import <path.csv>` |
 | Remove a dictionary entry | `inkhaven language remove-word <lang> <word>` |
 | Add a grammar / phonology rule (TUI) | Cursor under `<lang>/Grammar` or `<lang>/Phonology` → `+` → type rule_id → Enter |
 | Translate INTO the language | `Ctrl+B Q` in editor |
