@@ -5156,10 +5156,56 @@ impl App {
     // -------- modal -------------------------------------------------------
 
     fn open_add_modal(&mut self, kind: NodeKind) {
-        // User-added Books at root always slot ABOVE the system block
-        // ([Notes, Research, Prompts, Places, Characters, Help]) so the
-        // user's own content stays at the top of the tree.
+        // 1.2.13+ Phase D.1 — Add Book under the Language
+        // system book scaffolds a new conlang.  When the
+        // tree cursor sits on (or inside) the Language
+        // system book and the user hits `b`, we parent
+        // the new Book under Language directly — bypassing
+        // `pick_parent_for` which short-circuits any
+        // `Book` child to "no parent" (the assumption
+        // pre-dates the Language system book's nested
+        // Book-under-Book shape).  The `commit_add`
+        // handler then detects the Language parent and
+        // runs `scaffold_language_chapters` to populate
+        // the 5-chapter shell.
         if kind == NodeKind::Book {
+            if let Some(lang_root_id) =
+                self.system_book_id(crate::store::SYSTEM_TAG_LANGUAGES)
+            {
+                let cursor_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
+                let cursor_under_language = cursor_id
+                    .map(|id| {
+                        let mut cur = Some(id);
+                        while let Some(c) = cur {
+                            if c == lang_root_id {
+                                return true;
+                            }
+                            cur = self.hierarchy.get(c).and_then(|n| n.parent_id);
+                        }
+                        false
+                    })
+                    .unwrap_or(false);
+                if cursor_under_language {
+                    let lang_root = self.hierarchy.get(lang_root_id).cloned();
+                    let parent_label = lang_root
+                        .as_ref()
+                        .map(|n| self.hierarchy.slug_path(n))
+                        .unwrap_or_else(|| "language".into());
+                    self.modal = Modal::Adding {
+                        kind,
+                        parent_id: Some(lang_root_id),
+                        parent_label,
+                        input: TextInput::new(),
+                        position: InsertPosition::End,
+                    };
+                    self.status =
+                        "new language — type a name, Enter to scaffold; Esc to cancel".into();
+                    return;
+                }
+            }
+            // User-added Books at root always slot ABOVE the system block
+            // ([Notes, Research, Prompts, Places, Characters, Help, Language])
+            // so the user's own content stays at the top of the tree.
             if let Some(notes_id) = self.system_book_id(crate::store::SYSTEM_TAG_NOTES) {
                 self.open_add_modal_inner(kind, InsertPosition::Before(notes_id));
                 return;

@@ -40,15 +40,26 @@ other.
 
 Two equally valid entry points:
 
-**From the TUI** — open the project, navigate
-the tree pane to the `Language` system book, and
-press the Add Book chord.  When the parent is
-the Language system book the commit handler
-auto-creates the 5 standard chapters (`Meta`,
+**From the TUI** — open the project, focus the
+tree pane (F8), navigate to the `Language`
+system book (or any node already inside it),
+and press **`b`** (Add Book).  Status bar
+prompts `new language — type a name, Enter to
+scaffold; Esc to cancel`.  Type the language
+name, hit Enter.  The commit handler auto-
+creates the 5 standard chapters (`Meta`,
 `Dictionary`, `Grammar`, `Phonology`, `Sample
-texts`) and seeds `Meta/overview` with a starter
-HJSON template.  Status bar confirms with
-`added language ` + the name.
+texts`) and seeds `Meta/overview` with the
+starter HJSON template.  Confirmation: `added
+language ` + name ` — 5 chapters scaffolded;
+edit Meta/overview to set the alphabet`.
+
+(Pressing `b` from anywhere else in the tree
+still works the way it always has — slots a
+new top-level user book above the system block.
+The Language-scaffold path only fires when the
+cursor is on or inside the Language system
+book.)
 
 **From the shell** —
 
@@ -335,7 +346,7 @@ $ inkhaven language export Quenya \
 
 | Action | Chord / Command |
 |-|-|
-| Scaffold a new language (TUI) | Tree → cursor on `Language` → Add Book |
+| Scaffold a new language (TUI) | Tree pane (F8) → cursor on `Language` → `b` |
 | Scaffold a new language (shell) | `inkhaven language init <name>` |
 | Add a dictionary entry | `inkhaven language add-word <lang> <word> --type <pos> --translation <text>` |
 | Remove a dictionary entry | `inkhaven language remove-word <lang> <word>` |
