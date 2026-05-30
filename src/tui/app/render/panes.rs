@@ -1401,6 +1401,25 @@ impl super::super::App {
                 .fg(self.theme.ai_infer_fg)
                 .add_modifier(Modifier::BOLD),
         ));
+        // 1.2.13+ Phase D.1 — translation chip.  Visible
+        // only while a Ctrl+B Q / Ctrl+B Shift+Q stream
+        // is in flight (`pending_translation` flag set
+        // at spawn, cleared after the I-apply
+        // extraction).  Tells the author at a glance
+        // that the I key will lift only the
+        // <<<TRANSLATION>>> block, not the whole
+        // response.  Italic + Language colour to mirror
+        // the editor overlay's Language style.
+        if self.pending_translation {
+            spans.push(Span::raw(" · translate"));
+            spans.push(Span::styled(
+                "[on]".to_string(),
+                Style::default()
+                    .fg(self.theme.language_word_fg)
+                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::ITALIC),
+            ));
+        }
         if chat_turns > 0 {
             spans.push(Span::raw(format!(" · {chat_turns} turn(s)")));
         }

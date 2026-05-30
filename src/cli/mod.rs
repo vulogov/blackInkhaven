@@ -596,6 +596,35 @@ pub enum LanguageCommand {
         /// match against existing Language sub-book
         /// titles).
         language: String,
+        /// Emit the report as structured JSON instead
+        /// of the human-readable text format.  Useful
+        /// for CI gates and shell pipelines that want
+        /// to grep for `coverage.with_example_pct <
+        /// 80` etc.
+        #[arg(long)]
+        json: bool,
+    },
+    /// 1.2.13+ Phase D.1 — list every defined
+    /// language with summary counts (dictionary
+    /// entries, grammar / phonology rules, sample
+    /// texts).  Companion to `inkhaven language
+    /// doctor` for a quick at-a-glance overview of
+    /// every language in the project.
+    List,
+    /// 1.2.13+ Phase D.1 — remove a dictionary entry
+    /// from a language.  Mirror of `add-word`:
+    /// resolves the language sub-book by case-
+    /// insensitive title; finds the Dictionary
+    /// chapter + bucket subchapter (derived from the
+    /// word's first character); deletes the entry
+    /// paragraph.  Errors when the entry doesn't
+    /// exist rather than silently no-op-ing.
+    RemoveWord {
+        /// Target language name.
+        language: String,
+        /// The word to remove (case-insensitive
+        /// title match).
+        word: String,
     },
     /// 1.2.13+ Phase D — export a language's content
     /// to a portable artefact.  See the proposal §12.
