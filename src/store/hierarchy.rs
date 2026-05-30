@@ -263,9 +263,22 @@ impl Hierarchy {
         parent: Option<&Node>,
         child_kind: NodeKind,
     ) -> Result<()> {
+        // 1.2.13+ Phase D.1 / hotfix — per-language sub-
+        // books are nested Books under the `Language`
+        // system book.  The general "Book under any
+        // parent is disallowed" rule pre-dates the
+        // Language system book and silently broke every
+        // scaffold attempt (CLI `inkhaven language init`
+        // included) — this special case allows
+        // Book → Book ONLY when the parent carries
+        // `system_tag == "language"`.
+        let parent_is_language_root = parent
+            .and_then(|p| p.system_tag.as_deref())
+            == Some(crate::store::SYSTEM_TAG_LANGUAGES);
         let allowed = match (parent.map(|p| p.kind), child_kind) {
             (None, NodeKind::Book) => true,
             (None, _) => false,
+            (Some(NodeKind::Book), NodeKind::Book) => parent_is_language_root,
             (Some(_), NodeKind::Book) => false,
             (Some(NodeKind::Book), NodeKind::Chapter) => true,
             (Some(NodeKind::Book), NodeKind::Paragraph) => true,
@@ -296,5 +309,76 @@ impl Hierarchy {
                 parent_desc
             )))
         }
+    }
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::*;
+    use uuid::Uuid;
+
+    /// Minimal Book Node for placement tests.  Skips the
+    /// every-field expansion `make_event_node` does — only
+    /// the fields validate_placement reads (kind +
+    /// system_tag) need to be set; the rest fall through to
+    /// reasonable defaults via the Node struct's Serde
+    /// defaults (we use serde_json round-trip to avoid
+    /// listing every field manually).
+    fn book(system_tag: Option<&str>) -> Node {
+        let raw = serde_json::json!({
+            "id": Uuid::nil(),
+            "kind": "book",
+            "title": "test",
+            "slug": "test",
+            "path": [],
+            "parent_id": null,
+            "order": 0,
+            "file": null,
+            "modified_at": "2026-01-01T00:00:00Z",
+            "system_tag": system_tag,
+        });
+        serde_json::from_value(raw).expect("test node deserialises")
+    }
+
+    /// 1.2.13+ hotfix — Book-under-Book is allowed ONLY
+    /// when the parent is the Language system book.  This
+    /// is the special case that makes
+    /// `inkhaven language init` work; the general rule
+    /// against nested Books still applies for every other
+    /// parent (Notes, Places, user books, etc.).
+    #[test]
+    fn book_under_language_system_book_is_allowed() {
+        let cfg = Config::default();
+        let h = Hierarchy::default();
+        let parent = book(Some(crate::store::SYSTEM_TAG_LANGUAGES));
+        assert!(
+            h.validate_placement(&cfg, Some(&parent), NodeKind::Book).is_ok(),
+            "Book child under Language system book should be allowed (language sub-book)"
+        );
+    }
+
+    #[test]
+    fn book_under_regular_book_is_rejected() {
+        let cfg = Config::default();
+        let h = Hierarchy::default();
+        let parent = book(None);
+        assert!(
+            h.validate_placement(&cfg, Some(&parent), NodeKind::Book).is_err(),
+            "Book child under a non-system Book parent should still be rejected"
+        );
+    }
+
+    #[test]
+    fn book_under_non_language_system_book_is_rejected() {
+        let cfg = Config::default();
+        let h = Hierarchy::default();
+        // Notes is a system book, but it's not Language —
+        // the special case must NOT generalise to every
+        // system book.
+        let parent = book(Some(crate::store::SYSTEM_TAG_NOTES));
+        assert!(
+            h.validate_placement(&cfg, Some(&parent), NodeKind::Book).is_err(),
+            "Book child under Notes (a non-Language system book) should still be rejected"
+        );
     }
 }
