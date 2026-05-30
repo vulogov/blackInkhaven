@@ -18,6 +18,7 @@ pub mod restore;
 pub mod search;
 pub mod doctor;
 pub mod event;
+pub mod language;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -410,6 +411,18 @@ pub enum Command {
     /// `Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md`.
     #[command(subcommand)]
     Prompts(PromptsCommand),
+
+    /// 1.2.13+ Phase A — invented-language tooling.
+    /// Scaffolds the per-language sub-books inside
+    /// the top-level `Language` system book.  See
+    /// `Documentation/PROPOSALS/LANGUAGE_BOOK.md`
+    /// for the full design (dictionary entry HJSON
+    /// schema, grammar-rule schema, phonology,
+    /// sample-text, AI translation flow).  Phase A
+    /// ships `init` only; phases B-D add lexicon
+    /// overlay, AI translation, export, doctor.
+    #[command(subcommand)]
+    Language(LanguageCommand),
 }
 
 /// Sub-subcommands under `inkhaven event …`.
@@ -504,6 +517,29 @@ pub enum PromptsCommand {
         /// snippet to stdout and touches nothing.
         #[arg(long)]
         update: bool,
+    },
+}
+
+/// 1.2.13+ Phase A — sub-subcommands under
+/// `inkhaven language …`.
+#[derive(Debug, Subcommand)]
+pub enum LanguageCommand {
+    /// Scaffold a new language sub-book under the
+    /// top-level `Language` system book.  Creates
+    /// the per-language `<Name>` book plus the five
+    /// standard chapters (`Meta`, `Dictionary`,
+    /// `Grammar`, `Phonology`, `Sample texts`) and
+    /// seeds `Meta/overview.typ` with an empty
+    /// HJSON config the author fills in.  No
+    /// alphabet subchapters are created yet — they
+    /// auto-spawn on the first dictionary entry
+    /// once `add-word` lands in Phase B.
+    Init {
+        /// Display name for the language.  Becomes
+        /// the per-language book title — `Quenya`,
+        /// `Drow`, `Klingon`, etc.  Title-case
+        /// recommended; the slug is auto-derived.
+        name: String,
     },
 }
 
@@ -761,6 +797,9 @@ impl Cli {
             }
             Command::Prompts(cmd) => {
                 prompts::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Language(cmd) => {
+                language::run(&project, cmd).map_err(Into::into)
             }
         }
     }
