@@ -27,6 +27,20 @@ use super::LanguageCommand;
 pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
     match cmd {
         LanguageCommand::Init { name } => init(project, &name),
+        LanguageCommand::AddWord {
+            language,
+            word,
+            r#type,
+            translation,
+            example,
+        } => add_word(
+            project,
+            &language,
+            &word,
+            &r#type,
+            &translation,
+            example.as_deref(),
+        ),
     }
 }
 
@@ -199,6 +213,205 @@ fn init(project: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// 1.2.13+ Phase B — `inkhaven language add-word`.
+/// Resolves the target language sub-book by case-
+/// insensitive title; finds its Dictionary chapter;
+/// derives the alphabet bucket for the new word from
+/// the first character (auto-creates the subchapter
+/// when missing); rejects duplicate words.
+fn add_word(
+    project: &Path,
+    language: &str,
+    word: &str,
+    pos: &str,
+    translation: &str,
+    example: Option<&str>,
+) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+
+    let hierarchy = Hierarchy::load(&store)?;
+    let lang_root = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
+        })
+        .ok_or_else(|| {
+            Error::Store(
+                "Language system book missing — re-open the project to seed it"
+                    .into(),
+            )
+        })?
+        .clone();
+
+    let lang_book = hierarchy
+        .children_of(Some(lang_root.id))
+        .into_iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "language `{language}` not found — run `inkhaven language init {language}` first"
+            ))
+        })?;
+
+    let dictionary = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| {
+            n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary")
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "language `{language}` has no `Dictionary` chapter — likely scaffolded with a pre-Phase-A inkhaven"
+            ))
+        })?;
+
+    // Alphabet bucket — the first character of the
+    // word, uppercased.  Phase B reads the
+    // language's `Meta/overview.alphabet` field
+    // in a follow-up; the simple first-char
+    // bucketing covers Latin / Cyrillic / Greek
+    // out of the box.
+    let bucket = alphabet_bucket(word).ok_or_else(|| {
+        Error::Config(format!("could not derive alphabet bucket from `{word}`"))
+    })?;
+
+    // Find or create the bucket subchapter.
+    let dictionary_kids = hierarchy.children_of(Some(dictionary.id));
+    let subchapter = match dictionary_kids
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Subchapter && n.title == bucket
+        })
+        .cloned()
+    {
+        Some(existing) => {
+            eprintln!("using existing subchapter `{bucket}`");
+            existing.clone()
+        }
+        None => {
+            let hierarchy = Hierarchy::load(&store)?;
+            let created = store.create_node(
+                &cfg,
+                &hierarchy,
+                NodeKind::Subchapter,
+                &bucket,
+                Some(&dictionary),
+                None,
+                InsertPosition::End,
+            )?;
+            eprintln!("created subchapter `{bucket}`");
+            created
+        }
+    };
+
+    // Reject duplicate.
+    let hierarchy = Hierarchy::load(&store)?;
+    if hierarchy
+        .children_of(Some(subchapter.id))
+        .iter()
+        .any(|n| n.title.eq_ignore_ascii_case(word))
+    {
+        return Err(Error::Config(format!(
+            "word `{word}` already defined under `{language}/Dictionary/{bucket}`"
+        )));
+    }
+
+    // Create the entry paragraph + seed its HJSON
+    // body.
+    let hierarchy = Hierarchy::load(&store)?;
+    let mut entry = store.create_node(
+        &cfg,
+        &hierarchy,
+        NodeKind::Paragraph,
+        word,
+        Some(&subchapter),
+        None,
+        InsertPosition::End,
+    )?;
+    let body = seed_dictionary_entry_body(word, pos, translation, example);
+    store
+        .update_paragraph_content(&mut entry, body.as_bytes())
+        .map_err(|e| Error::Store(format!("seed entry: {e}")))?;
+
+    eprintln!(
+        "added `{word}` to `{language}/Dictionary/{bucket}` ({pos} · {translation})"
+    );
+    Ok(())
+}
+
+/// Derive the alphabet-bucket subchapter name for a
+/// word.  Uses the first non-whitespace character,
+/// uppercased.  Returns `None` only if the input is
+/// entirely whitespace — alphanumeric, Cyrillic,
+/// Greek, hyphen / apostrophe-prefix all map to
+/// their leading letter or symbol.
+///
+/// Phase B follow-up: read the language's
+/// `Meta/overview.alphabet` HJSON list and route
+/// edge cases (Hebrew final letters, Arabic
+/// connected-form variants) through the author's
+/// declared groupings.
+fn alphabet_bucket(word: &str) -> Option<String> {
+    let ch = word.chars().find(|c| !c.is_whitespace())?;
+    Some(ch.to_uppercase().to_string())
+}
+
+/// Build the seeded body for a freshly-added
+/// dictionary entry.  Title line + HJSON
+/// frontmatter block + a free-form notes section
+/// the author fills in.
+fn seed_dictionary_entry_body(
+    word: &str,
+    pos: &str,
+    translation: &str,
+    example: Option<&str>,
+) -> String {
+    let example_line = match example {
+        Some(s) if !s.trim().is_empty() => {
+            format!("  example:      \"{}\"\n", escape_hjson(s))
+        }
+        _ => "  example:      \"\"\n".to_string(),
+    };
+    format!(
+        "= {word}\n\
+         \n\
+         ```hjson\n\
+         {{\n\
+         {core}\
+         {example_line}\
+         }}\n\
+         ```\n\
+         \n\
+         # Free-form notes\n\
+         \n\
+         Usage, register, etymology, related entries.\n",
+        word = word,
+        core = format!(
+            "  word:         \"{}\"\n  type:         \"{}\"\n  translation:  \"{}\"\n",
+            escape_hjson(word),
+            escape_hjson(pos),
+            escape_hjson(translation),
+        ),
+        example_line = example_line,
+    )
+}
+
+/// Minimal HJSON string escape — backslash-quote +
+/// backslash-backslash.  Sufficient for the
+/// dictionary-entry seed body, which never sees
+/// control characters in practice.
+fn escape_hjson(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,5 +438,54 @@ mod tests {
         // drop it.
         assert!(META_OVERVIEW_BODY.contains("alphabet:"));
         assert!(META_OVERVIEW_BODY.contains("language_kind:"));
+    }
+
+    #[test]
+    fn alphabet_bucket_uppercases_first_char() {
+        assert_eq!(alphabet_bucket("aiya"), Some("A".to_string()));
+        assert_eq!(alphabet_bucket("Bran"), Some("B".to_string()));
+        assert_eq!(alphabet_bucket("  zeta"), Some("Z".to_string()));
+    }
+
+    #[test]
+    fn alphabet_bucket_handles_non_latin() {
+        // Cyrillic 'я' uppercases to 'Я'.
+        assert_eq!(alphabet_bucket("ярости"), Some("Я".to_string()));
+        // Greek 'α' uppercases to 'Α'.
+        assert_eq!(alphabet_bucket("αυτός"), Some("Α".to_string()));
+    }
+
+    #[test]
+    fn alphabet_bucket_returns_none_for_whitespace() {
+        assert_eq!(alphabet_bucket(""), None);
+        assert_eq!(alphabet_bucket("   "), None);
+    }
+
+    #[test]
+    fn seed_dictionary_entry_includes_core_fields() {
+        let body = seed_dictionary_entry_body(
+            "aiya",
+            "interjection",
+            "hail",
+            Some("Aiya Eärendil!"),
+        );
+        // The four core HJSON fields land in the
+        // body.  Locking presence stops a future
+        // schema rename from silently breaking the
+        // seed.
+        assert!(body.contains("word:"));
+        assert!(body.contains("type:"));
+        assert!(body.contains("translation:"));
+        assert!(body.contains("example:"));
+        assert!(body.contains("aiya"));
+        assert!(body.contains("interjection"));
+        assert!(body.contains("hail"));
+        assert!(body.contains("Aiya Eärendil!"));
+    }
+
+    #[test]
+    fn escape_hjson_handles_quotes_and_backslashes() {
+        assert_eq!(escape_hjson(r#"he said "hi""#), r#"he said \"hi\""#);
+        assert_eq!(escape_hjson(r"a\b"), r"a\\b");
     }
 }

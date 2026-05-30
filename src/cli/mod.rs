@@ -541,6 +541,45 @@ pub enum LanguageCommand {
         /// recommended; the slug is auto-derived.
         name: String,
     },
+    /// 1.2.13+ Phase B — add a dictionary entry to
+    /// a language's `Dictionary` chapter.  Auto-
+    /// creates the alphabet subchapter from the
+    /// language's `Meta/overview.alphabet` field
+    /// (or A-Z fallback) if it doesn't yet exist.
+    /// Seeds the entry paragraph with the four
+    /// core HJSON fields (`word`, `type`,
+    /// `translation`, `example`) — author edits
+    /// to add optional fields (`pronunciation`,
+    /// `etymology`, `related`, `inflection`,
+    /// `notes`).  Rejects duplicate words under
+    /// the same language.
+    AddWord {
+        /// Target language name (case-insensitive
+        /// match against existing Language sub-book
+        /// titles).
+        language: String,
+        /// The word being defined.  Title-case as
+        /// the author prefers; the slug is
+        /// auto-derived.
+        word: String,
+        /// Part of speech.  Free-form string; the
+        /// proposal §3 suggests `noun | verb |
+        /// adjective | adverb | pronoun |
+        /// preposition | conjunction |
+        /// interjection | particle` but the field
+        /// is open so the author can use language-
+        /// specific categories.
+        #[arg(long, short = 't')]
+        r#type: String,
+        /// Translation into the project's working
+        /// language.
+        #[arg(long)]
+        translation: String,
+        /// Optional canonical sample sentence the
+        /// author wants frozen into the entry.
+        #[arg(long)]
+        example: Option<String>,
+    },
 }
 
 /// 1.2.11+ — sub-subcommands under

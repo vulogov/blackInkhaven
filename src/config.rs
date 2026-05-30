@@ -1020,6 +1020,14 @@ pub struct ThemeConfig {
     /// 1.2.9+ — colour for show-don't-tell warnings.
     #[serde(default)]
     pub style_warning_show_dont_tell_fg: String,
+    /// 1.2.13+ — colour for invented-language
+    /// dictionary-entry overlays.  Empty falls back to
+    /// a soft mauve-teal mix distinct from the four
+    /// existing entity-overlay colours (places /
+    /// characters / artefacts / notes).  Phase D
+    /// extends with per-Language-sub-book overrides.
+    #[serde(default)]
+    pub language_word_fg: String,
     /// 1.2.12+ — per-detector style modifier for the
     /// three style-warning overlays.  Accepts
     /// `"underline"` (default), `"bold"`, `"dim"`,
@@ -1121,6 +1129,9 @@ impl Default for ThemeConfig {
             style_warning_filter_word_fg: "#f9c44e".into(),
             style_warning_repeated_phrase_fg: "#eb6f92".into(),
             style_warning_show_dont_tell_fg: "#94e2d5".into(),
+            // 1.2.13+ — invented-language overlay; empty
+            // falls back to a soft mauve-teal at runtime.
+            language_word_fg: String::new(),
             // 1.2.12+ — empty defaults map to UNDERLINED
             // (the historical hardcoded modifier).  Users
             // override to "bold", "dim", "reversed",

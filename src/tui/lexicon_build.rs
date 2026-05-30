@@ -24,12 +24,14 @@ pub(super) fn build_lexicon(
     let mut characters: Option<Uuid> = None;
     let mut notes: Option<Uuid> = None;
     let mut artefacts: Option<Uuid> = None;
+    let mut languages: Option<Uuid> = None;
     for node in hierarchy.iter() {
         match node.system_tag.as_deref() {
             Some(crate::store::SYSTEM_TAG_PLACES) => places = Some(node.id),
             Some(crate::store::SYSTEM_TAG_CHARACTERS) => characters = Some(node.id),
             Some(crate::store::SYSTEM_TAG_NOTES) => notes = Some(node.id),
             Some(crate::store::SYSTEM_TAG_ARTEFACTS) => artefacts = Some(node.id),
+            Some(crate::store::SYSTEM_TAG_LANGUAGES) => languages = Some(node.id),
             _ => {}
         }
     }
@@ -80,6 +82,27 @@ pub(super) fn build_lexicon(
     }
     if let Some(id) = notes {
         books.push((id, LexCategory::Note));
+    }
+    // 1.2.13+ — Language books.  Each per-language
+    // sub-book contributes its `Dictionary` chapter's
+    // subtree (skipping `Meta`, `Grammar`,
+    // `Phonology`, `Sample texts`) so only the
+    // dictionary entries become lexicon hits, not the
+    // grammar exposition or sample-text bodies.
+    // Dictionary chapter is located by exact title
+    // match — the title is fixed by the
+    // `inkhaven language init` scaffolder; renaming
+    // it would silently lose the overlay (Phase D
+    // adds `language doctor` to surface this kind of
+    // drift).
+    if let Some(lang_root) = languages {
+        for lang_book in hierarchy.children_of(Some(lang_root)) {
+            for chapter in hierarchy.children_of(Some(lang_book.id)) {
+                if chapter.title.eq_ignore_ascii_case("Dictionary") {
+                    books.push((chapter.id, LexCategory::Language));
+                }
+            }
+        }
     }
     super::lexicon::Lexicon::build(hierarchy, &books, algos)
 }
