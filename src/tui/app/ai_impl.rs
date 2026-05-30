@@ -14,9 +14,9 @@ use uuid::Uuid;
 
 use super::{
     critique_changes_default_prompt, critique_edit_default_prompt, current_word_or_selection,
-    explain_diagnostic_default_prompt, extract_corrected_text, grammar_check_default_prompt,
-    select_apply_text, sentence_rhythm_rewrite_default_prompt, FULL_SYSTEM_PROMPT,
-    GRAMMAR_CHECK_SYSTEM_PROMPT, HELP_SYSTEM_PROMPT, LOCAL_SYSTEM_PROMPT,
+    explain_diagnostic_default_prompt, extract_corrected_text, extract_translation_text,
+    grammar_check_default_prompt, select_apply_text, sentence_rhythm_rewrite_default_prompt,
+    FULL_SYSTEM_PROMPT, GRAMMAR_CHECK_SYSTEM_PROMPT, HELP_SYSTEM_PROMPT, LOCAL_SYSTEM_PROMPT,
 };
 
 use crate::ai::stream::{spawn_chat_stream, ChatTurn};
@@ -189,7 +189,36 @@ impl super::App {
                 doc.textarea.paste();
             }
             InferenceAction::Insert => {
-                doc.textarea.set_yank_text(text);
+                // 1.2.13+ Phase C.2 — translation-aware
+                // Insert.  When `pending_translation` is
+                // set the response was composed by the
+                // Ctrl+B Q envelope which instructs the
+                // LLM to wrap the translation block in
+                // `<<<TRANSLATION>>>` / `<<<END>>>`
+                // markers.  Lift ONLY that block so the
+                // gloss table + applied-rules list + any
+                // commentary stay in the AI pane for the
+                // author's reference but don't pollute
+                // the manuscript.  Clear the flag after
+                // extraction so a SECOND Insert press
+                // falls back to the full-body insert
+                // (escape hatch when the LLM forgot the
+                // markers).
+                let payload = if self.pending_translation {
+                    self.pending_translation = false;
+                    match extract_translation_text(&raw) {
+                        Some(t) => t,
+                        None => {
+                            self.status = "translation markers missing — inserted \
+                                           full response; press I again to redo"
+                                .into();
+                            text.clone()
+                        }
+                    }
+                } else {
+                    text
+                };
+                doc.textarea.set_yank_text(payload);
                 doc.textarea.paste();
             }
             InferenceAction::Top => {
@@ -1287,6 +1316,27 @@ impl super::App {
     /// few-shot anchors.  Streams into the AI pane via the
     /// shared `Inference` machinery.
     pub(super) fn start_translate_to_invented(&mut self) {
+        self.start_translate_in_direction(
+            super::super::modal::TranslationDirection::ToInvented,
+        );
+    }
+
+    /// 1.2.13+ Phase C.2 — Ctrl+B Shift+Q.  Reverse direction:
+    /// translate the open paragraph FROM an invented language
+    /// back to the project's working language.  Useful for
+    /// roundtrip testing — feeding an output from `Ctrl+B Q`
+    /// through this verifies the LLM can read back its own
+    /// grammar.
+    pub(super) fn start_translate_from_invented(&mut self) {
+        self.start_translate_in_direction(
+            super::super::modal::TranslationDirection::FromInvented,
+        );
+    }
+
+    fn start_translate_in_direction(
+        &mut self,
+        direction: super::super::modal::TranslationDirection,
+    ) {
         let Some(doc) = self.opened.as_ref() else {
             self.status = "translate: no paragraph open".into();
             return;
@@ -1317,24 +1367,175 @@ impl super::App {
                 .into();
             return;
         }
-        let target_book = (*lang_books.first().unwrap()).clone();
-        let target_name = target_book.title.clone();
-        let multi_warn = if lang_books.len() > 1 {
-            format!(" (warn: {} languages defined; targeting `{target_name}` — \
-                    per-language chord is Phase C.2)",
-                lang_books.len())
-        } else {
-            String::new()
-        };
 
-        // Compose the prompt envelope.
+        // 0 → error (handled above), 1 → direct, 2+ → picker.
+        if lang_books.len() == 1 {
+            let target_book = (*lang_books.first().unwrap()).clone();
+            self.spawn_translation_inference(
+                &target_book,
+                direction,
+                title,
+                body,
+            );
+            return;
+        }
+
+        // Multi-language project: pop the picker.  The picker
+        // commit handler dispatches back into
+        // `spawn_translation_inference` with the user's choice.
+        let entries: Vec<(uuid::Uuid, String)> = lang_books
+            .iter()
+            .map(|n| (n.id, n.title.clone()))
+            .collect();
+        let n = entries.len();
+        let dir_word = match direction {
+            super::super::modal::TranslationDirection::ToInvented => "into",
+            super::super::modal::TranslationDirection::FromInvented => "from",
+        };
+        self.modal = super::super::modal::Modal::TranslationLanguagePicker {
+            entries,
+            cursor: 0,
+            direction,
+            source_title: title,
+            source_body: body,
+        };
+        self.status = format!(
+            "translate {dir_word} which of {n} languages? · ↑↓ / Enter / first-letter · Esc to cancel"
+        );
+    }
+
+    /// 1.2.13+ Phase C.2 — picker key handler.  Esc cancels;
+    /// Enter commits with the highlighted language.  Plain
+    /// letter keys also commit when the language title starts
+    /// with that letter (the per-language sub-letter shortcut
+    /// the proposal calls out as `Ctrl+B Q Q` for Quenya etc.,
+    /// rolled into the picker rather than a separate sub-chord).
+    pub(super) fn translation_picker_handle_key(
+        &mut self,
+        key: crossterm::event::KeyEvent,
+    ) -> bool {
+        use crossterm::event::KeyCode;
+        let super::super::modal::Modal::TranslationLanguagePicker {
+            entries,
+            cursor,
+            ..
+        } = &mut self.modal
+        else {
+            return false;
+        };
+        let total = entries.len();
+        match key.code {
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+                true
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < total {
+                    *cursor += 1;
+                }
+                true
+            }
+            KeyCode::Home => {
+                *cursor = 0;
+                true
+            }
+            KeyCode::End => {
+                *cursor = total.saturating_sub(1);
+                true
+            }
+            KeyCode::Esc => {
+                self.modal = super::super::modal::Modal::None;
+                self.status = "translation cancelled".into();
+                true
+            }
+            KeyCode::Enter => {
+                self.commit_translation_picker();
+                true
+            }
+            KeyCode::Char(c) => {
+                // First-letter shortcut: jump to (and commit on)
+                // the first language whose name starts with the
+                // typed letter, case-insensitive.  Unambiguous
+                // single-letter ↦ language is the proposal's
+                // `Ctrl+B Q Q` for Quenya pattern, just
+                // unbundled.
+                if let Some(idx) = entries.iter().position(|(_, name)| {
+                    name.chars()
+                        .next()
+                        .map(|first| {
+                            first.to_ascii_lowercase()
+                                == c.to_ascii_lowercase()
+                        })
+                        .unwrap_or(false)
+                }) {
+                    *cursor = idx;
+                    self.commit_translation_picker();
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn commit_translation_picker(&mut self) {
+        let (target_id, direction, source_title, source_body) =
+            match std::mem::replace(
+                &mut self.modal,
+                super::super::modal::Modal::None,
+            ) {
+                super::super::modal::Modal::TranslationLanguagePicker {
+                    entries,
+                    cursor,
+                    direction,
+                    source_title,
+                    source_body,
+                } => {
+                    let Some((id, _)) = entries.get(cursor).cloned() else {
+                        return;
+                    };
+                    (id, direction, source_title, source_body)
+                }
+                other => {
+                    self.modal = other;
+                    return;
+                }
+            };
+        let Some(target_book) = self.hierarchy.get(target_id).cloned() else {
+            self.status = "translate: target language vanished — try again".into();
+            return;
+        };
+        self.spawn_translation_inference(
+            &target_book,
+            direction,
+            source_title,
+            source_body,
+        );
+    }
+
+    /// Compose the envelope, spawn the chat stream, and park
+    /// the resulting `Inference` into `self.inference` so the
+    /// AI pane picks it up.  Shared by the single-language
+    /// fast path and the picker-commit path.
+    fn spawn_translation_inference(
+        &mut self,
+        target_book: &crate::store::node::Node,
+        direction: super::super::modal::TranslationDirection,
+        source_title: String,
+        source_body: String,
+    ) {
+        let target_name = target_book.title.clone();
         let source_lang = self.cfg.language.clone();
         let envelope = match self.compose_translation_prompt(
-            &target_book,
+            target_book,
             &target_name,
             &source_lang,
-            &title,
-            &body,
+            &source_title,
+            &source_body,
+            direction,
         ) {
             Ok(text) => text,
             Err(e) => {
@@ -1342,7 +1543,6 @@ impl super::App {
                 return;
             }
         };
-
         let (model, _env_var) = match self
             .ai
             .resolve_provider(&self.cfg.llm, None)
@@ -1371,9 +1571,16 @@ impl super::App {
             started_at: std::time::Instant::now(),
         });
         self.pending_chat_user_msg = None;
+        self.pending_translation = true;
         self.change_focus(Focus::Ai);
+        let arrow = match direction {
+            super::super::modal::TranslationDirection::ToInvented =>
+                format!("→ {target_name}"),
+            super::super::modal::TranslationDirection::FromInvented =>
+                format!("{target_name} →"),
+        };
         self.status = format!(
-            "translate → {target_name}: streaming from {provider}…{multi_warn}"
+            "translate {arrow}: streaming from {provider}…"
         );
     }
 
@@ -1402,8 +1609,10 @@ impl super::App {
         source_lang: &str,
         source_title: &str,
         source_body: &str,
+        direction: super::super::modal::TranslationDirection,
     ) -> std::result::Result<String, String> {
         use crate::store::node::NodeKind;
+        use super::super::modal::TranslationDirection;
 
         // Section 2 — overview.
         let overview = self
@@ -1500,13 +1709,29 @@ impl super::App {
             .join("\n\n---\n\n");
 
         // Section 1 + 7 — system + user prompt.
+        let working_lang_label = if source_lang.trim().is_empty() {
+            "the project's working language"
+        } else {
+            source_lang
+        };
+        let (from_label, to_label) = match direction {
+            TranslationDirection::ToInvented =>
+                (working_lang_label, target_name),
+            TranslationDirection::FromInvented =>
+                (target_name, working_lang_label),
+        };
         let envelope = format!(
-            "You are a translator between {source_or} and {target_name}, an invented \
-             language defined by the author of this manuscript.  Translate the source \
-             paragraph FROM the working language INTO {target_name}, using the \
-             authoritative grammar, phonology, dictionary, and sample texts below.  \
-             Respond with:\n\
-             1. The translation.\n\
+            "You are a translator between {working_lang_label} and {target_name}, an \
+             invented language defined by the author of this manuscript.  Translate \
+             the source paragraph FROM {from_label} INTO {to_label}, using the \
+             authoritative grammar, phonology, dictionary, and sample texts below.\n\
+             \n\
+             Respond in this exact order:\n\
+             1. The translation, wrapped between `<<<TRANSLATION>>>` and `<<<END>>>` \
+                markers on lines by themselves.  This block is what the editor's \
+                insert chord lifts into the buffer, so it must contain ONLY the \
+                target-language prose — no commentary, no quotation marks, no \
+                trailing notes.\n\
              2. A per-token gloss table (source · gloss · target).\n\
              3. A short list of which grammar rules fired and which dictionary entries \
                 you applied.\n\
@@ -1528,14 +1753,9 @@ impl super::App {
              ── Sample texts (register anchors) ──\n\
              {sample_texts}\n\
              \n\
-             ── Source paragraph: {source_title} ──\n\
+             ── Source paragraph: {source_title} (in {from_label}) ──\n\
              {source_body}\n\
              ── end source ──",
-            source_or = if source_lang.trim().is_empty() {
-                "the project's working language"
-            } else {
-                source_lang
-            },
             grammar = grammar.join("\n\n---\n\n"),
             phonology = phonology.join("\n\n---\n\n"),
         );
