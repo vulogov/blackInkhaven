@@ -116,6 +116,43 @@ impl Lexicon {
         self.names.is_empty()
     }
 
+    /// Append extra surface forms after a `build()` — used
+    /// by the Language-book paradigm expansion (Phase B.2)
+    /// so each inflection form in a dictionary entry's
+    /// HJSON lights up alongside the lemma.  Each `form` is
+    /// tokenised the same way `build()` tokenises titles, so
+    /// multi-word inflection values (`"of the king"`) work
+    /// for grammatical particles too.
+    ///
+    /// Resorts the name list longest-first to preserve the
+    /// "longer phrases win" invariant from `row_hits`.
+    pub fn add_extra_forms<I>(&mut self, extras: I)
+    where
+        I: IntoIterator<Item = (String, LexCategory)>,
+    {
+        let algos = self.algos.clone();
+        for (form, category) in extras {
+            let trimmed = form.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let words = tokenize_words(trimmed);
+            if words.is_empty() {
+                continue;
+            }
+            let stems_per_word: Vec<Vec<String>> = words
+                .iter()
+                .map(|w| stems_for(w, &algos))
+                .collect();
+            self.names.push(CompiledName {
+                stems_per_word,
+                category,
+            });
+        }
+        self.names
+            .sort_by(|a, b| b.stems_per_word.len().cmp(&a.stems_per_word.len()));
+    }
+
     /// All hits on a single editor row. Returns non-overlapping hits in
     /// left-to-right order; on overlap, the longer phrase wins.
     pub fn row_hits(&self, line: &str) -> Vec<LexHit> {
@@ -406,6 +443,51 @@ mod tests {
         let lex = Lexicon::default();
         assert!(lex.is_empty());
         assert!(lex.row_hits("anything").is_empty());
+    }
+
+    #[test]
+    fn add_extra_forms_lights_up_paradigm_inflections() {
+        // Phase B.2 paradigm expansion: the lemma "aiya"
+        // is registered at build() time (in the Language
+        // category), and `add_extra_forms` appends the
+        // inflected variants from the entry's HJSON
+        // inflection map.  All three forms must light up
+        // in the same row.
+        let mut lex = build_test_lex_cats(
+            &[(LexCategory::Language, &["aiya"])],
+            vec![],
+        );
+        lex.add_extra_forms(vec![
+            ("aiyar".to_string(), LexCategory::Language),
+            ("aiyala".to_string(), LexCategory::Language),
+        ]);
+        let line = "Aiya, aiyar, and aiyala mark three registers.";
+        let hits = lex.row_hits(line);
+        assert_eq!(hits.len(), 3, "got: {hits:?}");
+        for h in &hits {
+            assert_eq!(h.category, LexCategory::Language);
+        }
+    }
+
+    #[test]
+    fn add_extra_forms_preserves_longest_match_invariant() {
+        // The Lexicon::row_hits longest-first preference
+        // is sort-order dependent — verify
+        // `add_extra_forms` resorts after appending so a
+        // single-word extra doesn't shadow a multi-word
+        // existing entry that starts with the same token.
+        let mut lex = build_test_lex_cats(
+            &[(LexCategory::Place, &["Hidden Vale"])],
+            vec![],
+        );
+        lex.add_extra_forms(vec![
+            ("hidden".to_string(), LexCategory::Note),
+        ]);
+        let hits = lex.row_hits("She walked through the Hidden Vale alone.");
+        assert_eq!(hits.len(), 1);
+        // Longest match wins — both words covered.
+        assert!(hits[0].col_end - hits[0].col_start >= "Hidden Vale".len());
+        assert_eq!(hits[0].category, LexCategory::Place);
     }
 
     #[test]

@@ -8,6 +8,7 @@ mod prompts_tui;
 mod error;
 mod export;
 mod grammar;
+mod language_entry;
 mod progress;
 mod project;
 mod scripting;

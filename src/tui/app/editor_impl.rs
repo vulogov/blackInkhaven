@@ -787,7 +787,10 @@ impl super::App {
                 // any hierarchy change is potentially a lexicon change. The
                 // recompute is cheap at literary scale (a few hundred names
                 // stemmed once per language).
-                self.lexicon = build_lexicon(&self.hierarchy, &self.cfg);
+                let (lex, lang_index) =
+                    build_lexicon(&self.hierarchy, &self.cfg, &self.store);
+                self.lexicon = lex;
+                self.language_entries = lang_index;
             }
             Err(e) => {
                 self.status = format!("hierarchy reload failed: {e}");
@@ -1115,6 +1118,63 @@ impl super::App {
                     .bg(self.theme.pane_bg)
                     .fg(self.theme.pane_fg),
             )
+    }
+
+    /// 1.2.13+ Phase B.2 — `[word · POS · translation]`
+    /// chip text for the editor footer when the cursor
+    /// lands on a Language lexicon hit.  Returns `None`
+    /// when:
+    ///   * no paragraph is open;
+    ///   * the cursor isn't on a lexicon hit;
+    ///   * the hit isn't Language-category;
+    ///   * the matched form isn't in the entry index
+    ///     (pre-Phase-B body with no HJSON block — the
+    ///     overlay still lights up but there's no parsed
+    ///     data to chip with).
+    pub(super) fn language_hit_chip(&self) -> Option<String> {
+        if self.language_entries.is_empty() {
+            return None;
+        }
+        let doc = self.opened.as_ref()?;
+        let (row, col) = doc.textarea.cursor();
+        let lines = doc.textarea.lines();
+        let line = lines.get(row)?;
+        let hits = self.lexicon.row_hits(line);
+        let hit = hits.iter().find(|h| {
+            // Lexicon hits are in character (not byte)
+            // coordinates; the cursor's `col` from
+            // tui-textarea is also character-based.
+            col >= h.col_start && col < h.col_end
+        })?;
+        if hit.category != super::super::lexicon::LexCategory::Language {
+            return None;
+        }
+        let matched: String = line
+            .chars()
+            .skip(hit.col_start)
+            .take(hit.col_end - hit.col_start)
+            .collect();
+        let entry = self.language_entries.lookup(&matched)?;
+        let lemma = entry.word.trim();
+        let pos = entry.pos.trim();
+        let translation = entry.translation.trim();
+        // Chip is best-effort — fields the author hasn't
+        // filled in get omitted rather than rendering
+        // empty dots that look like a parse error.
+        let mut parts: Vec<&str> = Vec::new();
+        if !lemma.is_empty() {
+            parts.push(lemma);
+        }
+        if !pos.is_empty() {
+            parts.push(pos);
+        }
+        if !translation.is_empty() {
+            parts.push(translation);
+        }
+        if parts.is_empty() {
+            return None;
+        }
+        Some(format!("[{}]", parts.join(" · ")))
     }
 
     /// Compute the editor-pane goal footer text from the open

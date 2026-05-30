@@ -273,15 +273,25 @@ fn add_word(
             ))
         })?;
 
-    // Alphabet bucket — the first character of the
-    // word, uppercased.  Phase B reads the
-    // language's `Meta/overview.alphabet` field
-    // in a follow-up; the simple first-char
-    // bucketing covers Latin / Cyrillic / Greek
-    // out of the box.
-    let bucket = alphabet_bucket(word).ok_or_else(|| {
-        Error::Config(format!("could not derive alphabet bucket from `{word}`"))
-    })?;
+    // Alphabet bucket — consult the language's
+    // `Meta/overview.alphabet` first so authors with
+    // non-Latin orthographies (Hebrew letter names,
+    // paired-case Latin, Greek) get bucket subchapters
+    // titled by their declared groupings rather than
+    // the naive first-char uppercase.  Falls back to
+    // first-char uppercase when:
+    //   * the language has no Meta chapter (pre-Phase-A
+    //     scaffold);
+    //   * the Meta chapter has no overview paragraph;
+    //   * the overview body has no HJSON block;
+    //   * the alphabet list is empty;
+    //   * the word's first char isn't covered by any
+    //     declared entry.
+    let bucket = derive_alphabet_bucket(&store, &hierarchy, &lang_book, word)?
+        .or_else(|| alphabet_bucket(word))
+        .ok_or_else(|| {
+            Error::Config(format!("could not derive alphabet bucket from `{word}`"))
+        })?;
 
     // Find or create the bucket subchapter.
     let dictionary_kids = hierarchy.children_of(Some(dictionary.id));
@@ -353,15 +363,63 @@ fn add_word(
 /// entirely whitespace — alphanumeric, Cyrillic,
 /// Greek, hyphen / apostrophe-prefix all map to
 /// their leading letter or symbol.
-///
-/// Phase B follow-up: read the language's
-/// `Meta/overview.alphabet` HJSON list and route
-/// edge cases (Hebrew final letters, Arabic
-/// connected-form variants) through the author's
-/// declared groupings.
 fn alphabet_bucket(word: &str) -> Option<String> {
     let ch = word.chars().find(|c| !c.is_whitespace())?;
     Some(ch.to_uppercase().to_string())
+}
+
+/// Consult the language sub-book's `Meta/overview`
+/// HJSON for the alphabet-bucket name.  The author's
+/// declared groupings override the naive first-char
+/// uppercase (Phase B's fallback).  Returns:
+///   * `Ok(Some(bucket))` — declared alphabet covers
+///     the word's first character.
+///   * `Ok(None)` — Meta chapter missing, overview
+///     paragraph missing, HJSON block absent, alphabet
+///     list empty, or first char not in any declared
+///     entry.  Caller falls back to `alphabet_bucket`.
+///   * `Err` — HJSON parse failure or store IO error.
+///     Surfaced rather than swallowed so a malformed
+///     overview is noisy enough to fix.
+fn derive_alphabet_bucket(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+    word: &str,
+) -> Result<Option<String>> {
+    let Some(meta_chapter) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| {
+            n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Meta")
+        })
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    let Some(overview) = hierarchy
+        .children_of(Some(meta_chapter.id))
+        .into_iter()
+        .find(|n| {
+            n.kind == NodeKind::Paragraph && n.title.eq_ignore_ascii_case("overview")
+        })
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    let Some(bytes) = store.get_content(overview.id)? else {
+        return Ok(None);
+    };
+    let body = std::str::from_utf8(&bytes).map_err(|e| {
+        Error::Config(format!("Meta/overview body is not UTF-8: {e}"))
+    })?;
+    let meta = match crate::language_entry::parse_meta_overview(body)
+        .map_err(Error::Config)?
+    {
+        Some(m) => m,
+        None => return Ok(None),
+    };
+    Ok(meta.bucket_for_word(word).map(|s| s.to_string()))
 }
 
 /// Build the seeded body for a freshly-added
