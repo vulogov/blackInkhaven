@@ -19,6 +19,7 @@ pub mod search;
 pub mod doctor;
 pub mod event;
 pub mod language;
+pub mod thread;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -423,6 +424,13 @@ pub enum Command {
     /// overlay, AI translation, export, doctor.
     #[command(subcommand)]
     Language(LanguageCommand),
+    /// 1.2.14+ — `inkhaven thread <subcommand>`.
+    /// Plot-thread management surface — add /
+    /// list narrative arcs stored as HJSON-fronted
+    /// paragraphs under the `Threads` system book.
+    /// See `Documentation/PROPOSALS/1.2.14_PLAN.md`.
+    #[command(subcommand)]
+    Thread(ThreadCommand),
 }
 
 /// Sub-subcommands under `inkhaven event …`.
@@ -717,6 +725,54 @@ pub enum LanguageExportFormat {
     DictionaryTwocol,
 }
 
+/// 1.2.14+ — sub-subcommands under
+/// `inkhaven thread …`.  Manages plot-thread
+/// paragraphs under the `Threads` system book.
+/// See `Documentation/PROPOSALS/1.2.14_PLAN.md`.
+#[derive(Debug, Subcommand)]
+pub enum ThreadCommand {
+    /// Add a new thread paragraph under the
+    /// `Threads` system book.  Seeds the body
+    /// with the full commented HJSON template;
+    /// the author opens the paragraph to fill in
+    /// arc shape, character / place links,
+    /// tension, etc.
+    Add {
+        /// Thread title — becomes the paragraph
+        /// slug + lemma.  Free-form; the
+        /// underlying slug is auto-derived.
+        name: String,
+        /// Optional display title for the card
+        /// renderer.  Falls back to `name` when
+        /// not set.
+        #[arg(long)]
+        title: Option<String>,
+        /// Arc status — `setup` | `develop` |
+        /// `payoff` | `resolved` | `abandoned`.
+        /// Default `setup`.
+        #[arg(long, default_value = "setup")]
+        status: String,
+        /// Weight — `major` | `subplot` |
+        /// `runner` | `bridge`.  Default `major`.
+        #[arg(long, default_value = "major")]
+        weight: String,
+    },
+    /// List every thread paragraph under the
+    /// `Threads` system book with summary
+    /// columns (status / weight / tension /
+    /// character + place link counts).
+    List {
+        /// Filter to threads with this status
+        /// (case-insensitive).  Omit to show all.
+        #[arg(long)]
+        status: Option<String>,
+        /// Filter to threads with this weight
+        /// (case-insensitive).  Omit to show all.
+        #[arg(long)]
+        weight: Option<String>,
+    },
+}
+
 /// 1.2.11+ — sub-subcommands under
 /// `inkhaven show-dont-tell …`.
 #[derive(Debug, Subcommand)]
@@ -974,6 +1030,9 @@ impl Cli {
             }
             Command::Language(cmd) => {
                 language::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Thread(cmd) => {
+                thread::run(&project, cmd).map_err(Into::into)
             }
         }
     }

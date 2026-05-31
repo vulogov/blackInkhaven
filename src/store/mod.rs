@@ -33,6 +33,7 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("places", "Places"),
     ("characters", "Characters"),
     ("artefacts", "Artefacts"),
+    ("threads", "Threads"),
     ("language", "Language"),
     ("typst", "Typst"),
     ("scripts", "Scripts"),
@@ -44,6 +45,18 @@ pub const SYSTEM_TAG_PROMPTS: &str = "prompts";
 pub const SYSTEM_TAG_PLACES: &str = "places";
 pub const SYSTEM_TAG_CHARACTERS: &str = "characters";
 pub const SYSTEM_TAG_ARTEFACTS: &str = "artefacts";
+/// 1.2.14+ — top-level container for narrative
+/// plot threads.  Each thread is an HJSON-fronted
+/// paragraph capturing one named arc (the
+/// inheritance subplot, the redemption arc, the
+/// secret-society reveal) with status / weight /
+/// arc-shape / character-and-place links / tension
+/// level.  Drives the thread weave view (`Ctrl+V
+/// Shift+H` → picker → `w` weave), the AI thread
+/// audit (`Ctrl+V Shift+A`), and the rebindable
+/// CLI surface (`inkhaven thread add` / `list`).
+/// See `Documentation/PROPOSALS/1.2.14_PLAN.md`.
+pub const SYSTEM_TAG_THREADS: &str = "threads";
 /// 1.2.13+ — top-level container for invented-
 /// language books (Quenya / Drow / Klingon / …).
 /// Per-language children are `NodeKind::Book` nodes
