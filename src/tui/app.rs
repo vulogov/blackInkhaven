@@ -5323,6 +5323,35 @@ impl App {
         None
     }
 
+    /// 1.2.14+ Phase A.1 — detect whether `parent` sits
+    /// anywhere under the `Threads` system book.  Drives
+    /// `commit_add`'s template-seeding for the
+    /// `+`-on-Threads tree-pane flow.  Returns true when
+    /// the parent is the Threads root itself, a Chapter
+    /// the author added beneath it for grouping, a
+    /// Subchapter under that Chapter, etc.
+    fn parent_is_under_threads(
+        &self,
+        parent: Option<&crate::store::node::Node>,
+    ) -> bool {
+        let Some(threads_root_id) =
+            self.system_book_id(crate::store::SYSTEM_TAG_THREADS)
+        else {
+            return false;
+        };
+        let Some(parent) = parent else {
+            return false;
+        };
+        let mut cur: Option<&crate::store::node::Node> = Some(parent);
+        while let Some(node) = cur {
+            if node.id == threads_root_id {
+                return true;
+            }
+            cur = node.parent_id.and_then(|id| self.hierarchy.get(id));
+        }
+        false
+    }
+
     /// Insert-after variant: walks up from the tree cursor to find a node of
     /// the same `kind` as the one being added; if found, the new node will be
     /// placed immediately after it. Falls back to append-at-end if no
@@ -14433,9 +14462,28 @@ impl App {
         // don't have to remember the field names.  Falls
         // through to the normal create_node flow; the
         // body update fires in the Ok branch below.
-        let seed_body_after_create: Option<&'static str> =
+        // 1.2.14+ Phase A.1 — paragraphs created under
+        // the Threads system book get a fully-seeded
+        // thread HJSON template too (same pattern as
+        // Language Grammar/Phonology).  Title comes
+        // from the typed name; status defaults to
+        // `setup`, weight to `major`.  The
+        // Language-rule detector takes precedence
+        // because the Language subtree carries its own
+        // chapter-specific templates.
+        let seed_body_after_create: Option<String> =
             if kind == crate::store::NodeKind::Paragraph {
                 self.language_rule_chapter_for_paragraph(parent.as_ref())
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        if self.parent_is_under_threads(parent.as_ref()) {
+                            Some(crate::cli::thread::seed_thread_body_for_tui(
+                                &title,
+                            ))
+                        } else {
+                            None
+                        }
+                    })
             } else {
                 None
             };
@@ -14463,7 +14511,7 @@ impl App {
                 // are swallowed — the node is created
                 // either way; the author can re-edit if
                 // the seed fails.
-                if let Some(body) = seed_body_after_create {
+                if let Some(body) = seed_body_after_create.as_deref() {
                     node.content_type = Some("hjson".to_string());
                     if let Some(rel) = &node.file {
                         let abs = self.layout.root.join(rel);
