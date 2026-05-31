@@ -1761,6 +1761,19 @@ pub(crate) struct App {
     /// the LLM forgot the markers).
     pub(super) pending_translation: bool,
 
+    /// 1.2.14+ Phase Q.3a — set true while a
+    /// `Ctrl+V d` continuation inference is in
+    /// flight.  Drives the AI pane's `I` apply to
+    /// lift only the `<<<DRAFT>>>` block.  Cleared
+    /// at extraction.
+    pub(super) pending_continuation_draft: bool,
+
+    /// 1.2.14+ Phase Q.4b — set true while a
+    /// `Ctrl+V y` style-transfer inference is in
+    /// flight.  Drives the AI pane's `I` apply to
+    /// lift only the `<<<REWRITE>>>` block.
+    pub(super) pending_style_transfer: bool,
+
     /// RAG context block (e.g. a place/character lookup) that the next
     /// AI-prompt submission should prepend to the user's typed query.
     /// Used by the Ctrl+B P / Ctrl+B C editor flows when the AI prompt is
@@ -1863,6 +1876,7 @@ mod ai_impl;
 mod backup_impl;
 mod comments_impl;
 mod editor_impl;
+mod q3_q4_impl;
 mod render;
 mod snapshot_impl;
 mod tag_impl;
@@ -2029,6 +2043,8 @@ impl App {
             pending_paragraph_memory_target: None,
             pending_rhythm_rewrite: false,
             pending_translation: false,
+            pending_continuation_draft: false,
+            pending_style_transfer: false,
             pending_rag_prefix: None,
             layout_search: Rect::default(),
             layout_tree: Rect::default(),
@@ -7655,6 +7671,10 @@ impl App {
             A::AiThreadAudit => self.start_thread_audit(),
             A::ViewAddComment => self.start_add_comment(),
             A::ViewCommentsPanel => self.open_comments_panel(),
+            A::AiContinuationDraft => self.start_continuation_draft(),
+            A::EditorInsertFootnote => self.start_insert_footnote(),
+            A::ViewProjectGoalModal => self.open_project_goal_modal(),
+            A::AiStyleTransferRewrite => self.start_style_transfer_picker(),
             A::OpenSnapshotPicker => self.open_snapshot_picker(),
             A::GrammarCheck => self.start_grammar_check(),
             A::CycleAiMode => self.cycle_ai_mode(),
@@ -13492,6 +13512,12 @@ impl App {
             matches!(self.modal, Modal::CommentEditor { .. });
         let is_comments_panel =
             matches!(self.modal, Modal::CommentsPanel { .. });
+        let is_footnote_editor =
+            matches!(self.modal, Modal::FootnoteEditor { .. });
+        let is_project_goal_modal =
+            matches!(self.modal, Modal::ProjectGoalModal { .. });
+        let is_style_transfer_picker =
+            matches!(self.modal, Modal::StyleTransferPicker { .. });
         let is_image_picker = matches!(self.modal, Modal::ImagePicker { .. });
         let is_function_picker = matches!(self.modal, Modal::FunctionPicker { .. });
         let is_status_filter = matches!(self.modal, Modal::StatusFilter { .. });
@@ -13568,6 +13594,18 @@ impl App {
         }
         if is_comments_panel {
             self.comments_panel_handle_key(key);
+            return Ok(false);
+        }
+        if is_footnote_editor {
+            self.footnote_editor_handle_key(key);
+            return Ok(false);
+        }
+        if is_project_goal_modal {
+            self.project_goal_handle_key(key);
+            return Ok(false);
+        }
+        if is_style_transfer_picker {
+            self.style_transfer_picker_handle_key(key);
             return Ok(false);
         }
         if is_image_picker {

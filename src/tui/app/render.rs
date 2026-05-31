@@ -75,6 +75,18 @@ impl super::App {
             self.draw_comments_panel_modal(f, area);
             return;
         }
+        if let Modal::FootnoteEditor { .. } = &self.modal {
+            self.draw_footnote_editor_modal(f, area);
+            return;
+        }
+        if let Modal::ProjectGoalModal { .. } = &self.modal {
+            self.draw_project_goal_modal(f, area);
+            return;
+        }
+        if let Modal::StyleTransferPicker { .. } = &self.modal {
+            self.draw_style_transfer_picker_modal(f, area);
+            return;
+        }
         if let Modal::ImagePicker { .. } = &self.modal {
             self.draw_image_picker_modal(f, area);
             return;
@@ -240,6 +252,12 @@ impl super::App {
                 unreachable!("comment editor handled above"),
             Modal::CommentsPanel { .. } =>
                 unreachable!("comments panel handled above"),
+            Modal::FootnoteEditor { .. } =>
+                unreachable!("footnote editor handled above"),
+            Modal::ProjectGoalModal { .. } =>
+                unreachable!("project goal modal handled above"),
+            Modal::StyleTransferPicker { .. } =>
+                unreachable!("style transfer picker handled above"),
             Modal::SentenceRhythm { .. } =>
                 unreachable!("sentence rhythm handled above"),
             Modal::RenderedPreview { .. } =>
