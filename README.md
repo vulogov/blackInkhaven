@@ -21,111 +21,142 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.13 — Language book
+## Latest release · 1.2.14 — Plot intelligence + inline comments + quick wins
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.13.md`](Documentation/RELEASE_NOTES/1.2.13.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.14.md`](Documentation/RELEASE_NOTES/1.2.14.md)
 
-1.2.13's headline is the **Language book** —
-a first-class invented-language workbench for
-secondary-world authors.  Five-chapter sub-book
-shape (Meta · Dictionary · Grammar · Phonology ·
-Sample texts), HJSON-fronted entries, lexicon
-overlay that lights up your conlang's words in
-manuscript prose, and an AI translation flow
-that round-trips between your working language
-and the conlang.
+1.2.14's headlines are the new **Threads system
+book** (a plot-intelligence workbench that ties
+narrative beats to manuscript paragraphs) and
+**inline sidecar comments** (margin notes that
+travel with the prose in git).  Around them sit
+a sweep of authoring quick-wins: 14 init
+templates, snippet expansion, AI continuation
+drafting, inline footnotes, a project word-count
+goal modal, and style-transfer rewrite.
 
-Shipped across seven phases (A → D.1) plus a
-batch of CSV-import polish.
+Shipped across 9 planned phases (A.1-A.3, C.1 +
+C.1.1 + C.2 + C.2.1, Q.1, Q.2 + Q.2.1, Q.3, Q.4)
+plus a 7-step tooling-polish round (D.1-D.7).
+Tests 565 → 637 (+72).
 
-### Five-chapter language sub-book
+### Threads — plot intelligence
 
-A new `Language` system book lives next to
-`Notes` / `Places` / `Characters` etc.  Scaffold
-a conlang from the TUI (cursor on `Language`,
-press `b`) or shell (`inkhaven language init
-Quenya`) and you get the five standard chapters
-plus a seeded `Meta/overview` HJSON paragraph.
+A new `Threads` system book sits next to
+`Characters` / `Places` / `Artefacts` and holds
+named arcs (each thread is a chapter with a
+`Meta` paragraph + waypoint paragraphs).
+Waypoints link to manuscript paragraphs, so the
+project knows which prose advances which arc.
 
-Every Dictionary entry is a paragraph with
-`content_type = "hjson"` — the editor renders
-each entry's fields with HJSON syntax
-highlighting.  Templates ship with the full
-schema commented (word / type / translation /
-example / pronunciation / etymology / related /
-inflection / register / era / notes) so authors
-fill rather than look up.
+* **`Ctrl+V Shift+H` — threads picker + weave
+  view.**  Fuzzy picker over every thread;
+  Enter opens a swim-lane weave view of the
+  selected thread plus its 4 closest neighbours
+  (by waypoint overlap) — manuscript paragraphs
+  on the horizontal axis, threads as lanes,
+  waypoints as `●`, gaps as `·`.
+* **`Ctrl+V Shift+A` — AI thread audit.**
+  Streams the configured LLM a structural view
+  of every thread + waypoints; asks for blind
+  spots (unfired payoffs, dormant arcs, gaps).
+* **`Ctrl+V Shift+D` — thread doctor modal.**
+  Deterministic version of the AI audit: flags
+  zero-links, payoff-unfired, dormant (last
+  waypoint > 30 days old).  TUI equivalent of
+  `inkhaven thread doctor`.
+* **`inkhaven thread` CLI** — `add` / `list` /
+  `doctor` / `export --format json|csv|markdown`
+  for the scripted side of the workflow.
 
-### Lexicon overlay + status-bar chip
+### Inline comments — margin notes that diff
 
-Words from every `Language/<lang>/Dictionary`
-chapter light up italic in the manuscript editor
-(default mauve-teal `#b4a8e1`, themable via
-`theme.language_word_fg`).  The overlay catches
-paradigm forms too — every value in an entry's
-`inflection: { plural: "X", genitive: "Y" }`
-map gets added as a recognised surface form.
-Cursor on a hit shows `[word · POS · translation]`
+A `Ctrl+V c` adds an inline comment to the
+current selection (or the cursor's word, if no
+selection); the body lives in a sidecar
+`<paragraph>.comments.json` so it travels with
+the prose in git and merges cleanly.  Char-offset
+spans (not byte) for UTF-8 safety.  The commented
+span renders with `theme.comment_span_modifier`
+(default underline + italic); cursor inside the
+span surfaces `comment by <author> · <age>: <text>`
 in the editor footer.
 
-### AI translation — `Ctrl+B Q` / `Ctrl+B Shift+Q`
+* **`Ctrl+V Shift+C` — comments panel.**
+  Project-wide panel walking every sidecar.
+  Columns: breadcrumb / author / age / snippet
+  plus a `(N/M in ¶)` dense indicator for
+  paragraphs carrying multiple comments.  Panel
+  chords: `Enter` open + jump cursor to the span,
+  `r` resolve, `R` toggle resolved-filter, `d`
+  delete, `/` filter, `a` AI digest (categorises
+  comments as STRUCTURAL / PROSE / FACTUAL /
+  QUESTION).
+* **`inkhaven comments` CLI** — `list` (with
+  `--paragraph`, `--resolved`, `--json` filters),
+  `resolve` / `reopen` / `delete`, `export
+  --format json|csv|markdown`.
 
-`Ctrl+B Q` translates the open paragraph from
-the working language INTO the conlang.  The
-prompt envelope composer reads the language's
-Meta/overview + every Grammar rule + every
-Phonology rule + Dictionary entries RAG-filtered
-to words present in the source + up to 3 Sample
-texts as register anchors.  Streams the response
-into the AI pane.
+### 14 init templates (5 Russian + 3 international new)
 
-Picker pops when 2+ languages are defined; type
-the first letter of the language name to jump-
-and-commit (`q` for Quenya, `d` for Drow).
+`inkhaven init <path> --template <name>`
+scaffolds a fresh project from a genre-aware
+template.  1.2.14 grows the registry to 14:
 
-`Ctrl+B Shift+Q` reverses the direction for
-roundtrip testing.
+* Original 6: `empty`, `novel`, `nonfiction`,
+  `rpg-sourcebook`, `technical`, `nanowrimo`
+* 5 Russian (Толстой / Пушкин / Стругацкий /
+  былины / Чернышевский traditions):
+  `russian-novel`, `russian-long-story`,
+  `russian-scifi`, `russian-lore`,
+  `russian-utopia`
+* 3 international: `epic-fantasy` (Tolkien /
+  Sanderson — Prologue + 3 Books + Epilogue +
+  Appendices with hero / shadow / mentor seeds),
+  `mystery` (Christie / Doyle — crime /
+  investigation / revelation with detective + 3
+  suspects), `french-novel` (Hugo / Flaubert /
+  Camus — Première / Deuxième / Troisième partie)
 
-The LLM wraps its translation in
-`<<<TRANSLATION>>>` / `<<<END>>>` markers; the
-AI pane's `I` apply chord lifts only that block
-so the gloss table + applied-rules list +
-confidence flags stay in the pane for reference
-but don't pollute the manuscript.
+`inkhaven template list` enumerates the full set
+with recommended word-count goals.
 
-### CLI surface
+### Snippet expansion (HJSON-driven)
 
-```
-inkhaven language init <name>
-inkhaven language add-word <lang> <word> --type <pos> --translation <text>
-inkhaven language add-word <lang> --import <path.csv> [--new] [--force]
-inkhaven language remove-word <lang> <word>
-inkhaven language list
-inkhaven language doctor <lang> [--json]
-inkhaven language export <lang> --format <json|anki|dictionary-twocol>
-```
+Snippets configured under the `snippets` block
+in `inkhaven.hjson` expand on Space inside the
+editor.  Built-in placeholders: `{date}`,
+`{time}`, `{datetime}`, `{slug}`, `{book}`,
+`{chapter}`, `{author}`, `{cursor}` (the cursor
+position after expansion — split-paste).
 
-CSV import handles the bulk-load case (header row drives column
-mapping, RFC 4180 quoting, `;`-separated inflection paradigms,
-`|`-separated example lists).  `--new` wipes the existing
-dictionary first; pre-flight alphabet + phonology validation
-hard-stops the import on violations (`--force` bypasses).
-`--json` doctor output gates CI workflows:
+### AI continuation, footnote, project goal, style transfer
 
-```
-$ inkhaven language doctor Quenya --json | jq -e '.coverage.with_paradigm_pct >= 80'
-```
+Four targeted authoring helpers:
 
-### Two new tutorials
-
-- [`49-language-book.md`](Documentation/Tutorials/49-language-book.md)
-  — end-to-end Language-book workflow with a full Tira worked example.
-- [`50-dictionary-csv-import.md`](Documentation/Tutorials/50-dictionary-csv-import.md)
-  — CSV bulk-import deep-dive.  Ships with a sample
-  [`49-language-book-tira-starter.csv`](Documentation/Tutorials/49-language-book-tira-starter.csv).
-
-The refreshed [`INKHAVEN_CHEAT_SHEET.typ`](Documentation/INKHAVEN_CHEAT_SHEET.typ)
-bumps to 1.2.13 with every new chord + the language CLI surface.
+* **`Ctrl+V d` — AI continuation drafting.**
+  LLM continues the open paragraph in the
+  author's voice; previous N paragraphs (config:
+  `editor.continuation_anchor_count`) anchor the
+  voice; the open paragraph's cursor position is
+  marked with `[[CURSOR_HERE]]`.  Response
+  wrapped in `<<<DRAFT>>>` markers.
+* **`Ctrl+V f` — inline footnote.**  Pops a body
+  input; inserts `#footnote[<body>]` (Typst,
+  default) or `[^id]` + reference line (markdown,
+  when `editor.footnote_style = "markdown"`).
+* **`Ctrl+V Shift+G` — project word-count goal
+  modal.**  Reads `project.word_count_goal` +
+  `project.target_date`; projects finish-date
+  from the 30-day word delta; renders a progress
+  bar + verdict (`✓ Ahead` / `· On track` / `✗
+  Behind` / `✓ Complete`).
+* **`Ctrl+V y` — style-transfer rewrite.**
+  Pops a recent-paragraph picker for the style
+  reference; LLM rewrites the open paragraph in
+  the reference's voice (sentence length /
+  register / distance / rhythm) while preserving
+  meaning + entities + facts.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
@@ -278,21 +309,25 @@ and put `inkhaven` somewhere on your `PATH`. Builds are produced by
 the [`release.yml`](.github/workflows/release.yml) workflow on every
 tag push.
 
-### 3. `cargo install --git` (compile from source)
+### 3. `cargo install inkhaven` (compile from crates.io)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v1.0.0
+cargo install inkhaven
 ```
 
-This works because every dependency (including `bdslib` and
-`tree-sitter-typst`) is vendored under `vendor/` — no separate registry
-fetches, no GitHub auth needed. The first build takes ~10 minutes on a
-modern laptop because of DuckDB + Tantivy + fastembed compilation; the
-release binary above is the fast path.
+Inkhaven is published on crates.io — every release tag pushes a
+new version (latest: 1.2.14).  The first build takes ~10 minutes on
+a modern laptop because of DuckDB + Tantivy + fastembed compilation;
+`cargo binstall` above is the fast path.
 
-> Inkhaven is **not** published on crates.io. See `Cargo.toml`'s
-> `publish = false` line and the [`Documentation/`](Documentation/)
-> notes for the rationale.
+### 4. `cargo install --git` (compile from a specific tag)
+
+```bash
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v1.2.14
+```
+
+Useful when you want a specific tag, a pre-release branch, or a
+local fork.
 
 ## Quick start
 
