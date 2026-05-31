@@ -246,6 +246,31 @@ pub struct RowHit {
     pub is_current: bool,
 }
 
+/// 1.2.14+ Phase C.1.1 — return the comment-span
+/// style modifier for `col`, or `None` if no
+/// comment touches this column.  Active
+/// (unresolved) comments use
+/// `theme.comment_span_modifier` (default
+/// `underline+italic`); resolved comments use a
+/// dim modifier so historical context stays
+/// visible without active-noise.
+fn comment_style_at(
+    comment_hits: &[super::comments::RowHit],
+    col: usize,
+    theme: &super::theme::Theme,
+) -> Option<Style> {
+    for hit in comment_hits {
+        if col >= hit.col_start && col < hit.col_end {
+            return Some(if hit.resolved {
+                Style::default().add_modifier(Modifier::DIM)
+            } else {
+                Style::default().add_modifier(theme.comment_span_modifier)
+            });
+        }
+    }
+    None
+}
+
 fn match_style_at(
     row_hits: &[RowHit],
     col: usize,
@@ -405,6 +430,7 @@ pub fn build_visual_row_spans(
     matches: &[RowHit],
     lex_hits: &[super::lexicon::LexHit],
     style_hits: &[super::style_warnings::StyleHit],
+    comment_hits: &[super::comments::RowHit],
     correction: AddedFlags,
     theme: &super::theme::Theme,
 ) -> Vec<ratatui::text::Span<'static>> {
@@ -468,6 +494,12 @@ pub fn build_visual_row_spans(
             if let Some(match_style) = match_style_at(matches, src_col, theme) {
                 style = style.patch(match_style);
             }
+            // 1.2.14+ Phase C.1.1 — comment span overlay.
+            if let Some(comment_style) =
+                comment_style_at(comment_hits, src_col, theme)
+            {
+                style = style.patch(comment_style);
+            }
             if is_selected || is_block {
                 style = style.add_modifier(Modifier::REVERSED);
             }
@@ -499,6 +531,7 @@ pub fn build_row_spans(
     matches: &[RowHit],
     lex_hits: &[super::lexicon::LexHit],
     style_hits: &[super::style_warnings::StyleHit],
+    comment_hits: &[super::comments::RowHit],
     correction: AddedFlags,
     theme: &super::theme::Theme,
 ) -> Vec<ratatui::text::Span<'static>> {
@@ -570,6 +603,12 @@ pub fn build_row_spans(
             }
             if let Some(match_style) = match_style_at(matches, src_col, theme) {
                 style = style.patch(match_style);
+            }
+            // 1.2.14+ Phase C.1.1 — comment span overlay.
+            if let Some(comment_style) =
+                comment_style_at(comment_hits, src_col, theme)
+            {
+                style = style.patch(comment_style);
             }
             if is_selected || is_block {
                 style = style.add_modifier(Modifier::REVERSED);
