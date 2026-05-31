@@ -45,6 +45,40 @@ struct ThreadBody {
     places: Vec<String>,
 }
 
+/// 1.2.14+ Phase A.3 — a paragraph inside the audit
+/// scope, materialised once at audit time so the
+/// envelope composer doesn't re-read bodies.
+struct ScopedParagraph {
+    #[allow(dead_code)] // future-proof for "jump to paragraph from audit"
+    id: Uuid,
+    title: String,
+    body: String,
+    linked: Vec<Uuid>,
+}
+
+/// 1.2.14+ Phase A.3 — a structural concern pre-
+/// computed before the LLM ever runs.  Surfaced
+/// in the prompt as a "blind-spots pre-pass" so
+/// the model has hard evidence to confirm or
+/// refute rather than guessing from the prose
+/// alone.
+struct BlindSpot {
+    thread_title: String,
+    kind: BlindSpotKind,
+}
+
+enum BlindSpotKind {
+    /// Thread has links project-wide but zero in
+    /// the current scope.
+    DormantInScope,
+    /// Status `payoff` but no paragraph links to
+    /// the thread anywhere.
+    PayoffUnfired,
+    /// Status past `setup` but no project-wide
+    /// links.
+    ZeroLinks,
+}
+
 impl App {
     /// 1.2.14+ Phase A.2 — `Ctrl+V Shift+H` handler.
     /// Walk the Threads system book subtree,
@@ -347,6 +381,320 @@ impl App {
         };
         self.status =
             "weave: ↑↓ thread · ←→ chapter · Enter jump to ¶ · Esc back to picker".into();
+    }
+
+    /// 1.2.14+ Phase A.3 — `Ctrl+V Shift+A` handler.
+    /// Resolves the audit scope from the F9 AiMode,
+    /// composes the prompt envelope from every
+    /// thread's HJSON + a blind-spots pre-pass +
+    /// the scope's paragraph contents, then
+    /// streams the response into the AI pane.
+    ///
+    /// Scope resolution:
+    ///   * `AiMode::Book` / `Chapter` / `Subchapter`
+    ///     → walk up from the cursor to find that
+    ///     scope.
+    ///   * `AiMode::Paragraph` / `Selection` /
+    ///     `None` → fall back to the cursor's
+    ///     containing Chapter (audits over a
+    ///     single paragraph are too narrow to be
+    ///     useful).
+    pub(super) fn start_thread_audit(&mut self) {
+        let Some(threads_root_id) = self.system_book_id(SYSTEM_TAG_THREADS)
+        else {
+            self.status = "thread audit: Threads system book missing".into();
+            return;
+        };
+        let entries = self.collect_thread_picker_entries(threads_root_id);
+        if entries.is_empty() {
+            self.status =
+                "thread audit: no threads defined — run `inkhaven thread add <name>`"
+                    .into();
+            return;
+        }
+
+        // Resolve scope.
+        let scope_node = match self.resolve_thread_audit_scope() {
+            Some(n) => n,
+            None => {
+                self.status = "thread audit: no scope under cursor (open a paragraph or place the tree cursor on a book/chapter)".into();
+                return;
+            }
+        };
+
+        // Collect scope content + blind-spots.
+        let scope_paragraphs = self.collect_scope_paragraphs(scope_node.id);
+        let blind_spots = self.compute_blind_spots(&entries, &scope_paragraphs);
+        let thread_bodies = self.collect_thread_bodies_full(threads_root_id);
+
+        let envelope = self.compose_thread_audit_prompt(
+            &scope_node,
+            &thread_bodies,
+            &blind_spots,
+            &scope_paragraphs,
+        );
+
+        let (model, _env_var) = match self
+            .ai
+            .resolve_provider(&self.cfg.llm, None)
+        {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("thread audit: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let rx = super::super::super::ai::stream::spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            None,
+            Vec::new(),
+            envelope,
+        );
+        self.inference = Some(super::super::inference::Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: super::super::inference::InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        self.change_focus(super::super::focus::Focus::Ai);
+        self.status = format!(
+            "thread audit ({}): streaming from {provider}...",
+            scope_node.title
+        );
+    }
+
+    /// Walk up from the cursor (open paragraph
+    /// when there is one, otherwise the tree
+    /// cursor's node) until we find a Book /
+    /// Chapter / Subchapter matching the F9 AiMode.
+    /// Falls back to the cursor's containing
+    /// Chapter when AiMode is too narrow.
+    fn resolve_thread_audit_scope(&self) -> Option<crate::store::node::Node> {
+        use super::super::inference::AiMode;
+        let starting_id = self
+            .opened
+            .as_ref()
+            .map(|d| d.id)
+            .or_else(|| self.rows.get(self.tree_cursor).map(|(id, _)| *id))?;
+        let target = match self.ai_mode {
+            AiMode::Book => Some(NodeKind::Book),
+            AiMode::Chapter => Some(NodeKind::Chapter),
+            AiMode::Subchapter => Some(NodeKind::Subchapter),
+            // Paragraph / Selection / None — audit
+            // over a single paragraph is too narrow;
+            // walk up to the containing Chapter
+            // instead.
+            _ => Some(NodeKind::Chapter),
+        };
+        let mut cur = Some(starting_id);
+        while let Some(id) = cur {
+            let node = self.hierarchy.get(id)?;
+            if Some(node.kind) == target {
+                // Skip system-tagged books — auditing
+                // Threads against the Threads book is
+                // a noop.
+                if node.system_tag.is_some() {
+                    cur = node.parent_id;
+                    continue;
+                }
+                return Some(node.clone());
+            }
+            cur = node.parent_id;
+        }
+        None
+    }
+
+    /// Collect every paragraph under `root` in
+    /// pre-order, with body bytes + the existing
+    /// outgoing-link UUIDs.  Filters out
+    /// non-paragraph nodes (chapters, subchapters,
+    /// images) so the audit only sees prose.
+    fn collect_scope_paragraphs(&self, root: Uuid) -> Vec<ScopedParagraph> {
+        let mut out: Vec<ScopedParagraph> = Vec::new();
+        for id in self.hierarchy.collect_subtree(root) {
+            let Some(node) = self.hierarchy.get(id) else { continue; };
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let body = match self.store.get_content(id) {
+                Ok(Some(b)) => b,
+                _ => continue,
+            };
+            let body_str = std::str::from_utf8(&body)
+                .unwrap_or("")
+                .to_string();
+            out.push(ScopedParagraph {
+                id,
+                title: node.title.clone(),
+                body: body_str,
+                linked: node.linked_paragraphs.clone(),
+            });
+        }
+        out
+    }
+
+    /// Pre-compute the structural concerns the
+    /// audit prompt feeds the LLM up front:
+    ///   * Link counts (so the LLM doesn't have
+    ///     to count manually).
+    ///   * Threads marked `payoff` whose payoff
+    ///     paragraph hasn't been linked.
+    ///   * Threads with zero links in the scope
+    ///     (dormant for this section of the
+    ///     manuscript).
+    fn compute_blind_spots(
+        &self,
+        threads: &[super::super::modal::ThreadsPickerEntry],
+        scope_paragraphs: &[ScopedParagraph],
+    ) -> Vec<BlindSpot> {
+        let mut out: Vec<BlindSpot> = Vec::new();
+        for t in threads {
+            // Project-wide link count (cached on
+            // the entry).
+            let total_links = t.link_count;
+            // In-scope link count.
+            let in_scope: usize = scope_paragraphs
+                .iter()
+                .filter(|p| p.linked.contains(&t.id))
+                .count();
+            // Stale-in-scope check.
+            if total_links > 0 && in_scope == 0 {
+                out.push(BlindSpot {
+                    thread_title: t.title_field.clone(),
+                    kind: BlindSpotKind::DormantInScope,
+                });
+            }
+            // Payoff-marked but unfired.
+            if t.status.eq_ignore_ascii_case("payoff") && total_links == 0 {
+                out.push(BlindSpot {
+                    thread_title: t.title_field.clone(),
+                    kind: BlindSpotKind::PayoffUnfired,
+                });
+            }
+            // Brand-new thread with zero links
+            // anywhere.
+            if !t.status.eq_ignore_ascii_case("setup") && total_links == 0 {
+                out.push(BlindSpot {
+                    thread_title: t.title_field.clone(),
+                    kind: BlindSpotKind::ZeroLinks,
+                });
+            }
+        }
+        out
+    }
+
+    /// Read every Thread paragraph's full HJSON
+    /// body for inclusion in the prompt
+    /// envelope.  Returns `(thread_title, body)`
+    /// tuples in canonical order.
+    fn collect_thread_bodies_full(
+        &self,
+        threads_root_id: Uuid,
+    ) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        for id in self.hierarchy.collect_subtree(threads_root_id) {
+            if id == threads_root_id {
+                continue;
+            }
+            let Some(node) = self.hierarchy.get(id) else { continue; };
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let Ok(Some(bytes)) = self.store.get_content(id) else { continue; };
+            let Ok(body) = std::str::from_utf8(&bytes) else { continue; };
+            out.push((node.title.clone(), body.to_string()));
+        }
+        out
+    }
+
+    fn compose_thread_audit_prompt(
+        &self,
+        scope_node: &crate::store::node::Node,
+        thread_bodies: &[(String, String)],
+        blind_spots: &[BlindSpot],
+        scope_paragraphs: &[ScopedParagraph],
+    ) -> String {
+        let scope_kind = scope_node.kind.as_str();
+        let scope_title = &scope_node.title;
+        let blind_spots_text = if blind_spots.is_empty() {
+            "(no structural blind spots detected)".to_string()
+        } else {
+            let mut s = String::new();
+            for bs in blind_spots {
+                let label = match bs.kind {
+                    BlindSpotKind::DormantInScope =>
+                        "DORMANT IN SCOPE — has links elsewhere but not in this scope",
+                    BlindSpotKind::PayoffUnfired =>
+                        "PAYOFF UNFIRED — status `payoff` but no paragraph links to it yet",
+                    BlindSpotKind::ZeroLinks =>
+                        "ZERO LINKS — status is past `setup` but no paragraph links to it anywhere",
+                };
+                s.push_str(&format!("  · {} — {}\n", bs.thread_title, label));
+            }
+            s
+        };
+        let threads_text = thread_bodies
+            .iter()
+            .map(|(title, body)| format!("── Thread: {title} ──\n{body}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let scope_paragraphs_text = scope_paragraphs
+            .iter()
+            .map(|p| {
+                let linked = if p.linked.is_empty() {
+                    "(no outgoing links)".to_string()
+                } else {
+                    format!("(links to: {})", p.linked.len())
+                };
+                format!(
+                    "── Paragraph: {} {} ──\n{}",
+                    p.title, linked, p.body
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        format!(
+            "You are auditing a manuscript against a set of named plot threads.  \
+             Each thread is an HJSON-fronted paragraph capturing one named narrative \
+             arc with status (setup / develop / payoff / resolved / abandoned), weight \
+             (major / subplot / runner / bridge), arc shape (opening / midpoint / \
+             payoff), character + place connections, and tension.\n\
+             \n\
+             Your task: read the scope (a {scope_kind} titled `{scope_title}`) and \
+             score each scope paragraph against the thread inventory.  Specifically:\n\
+             \n\
+             1. For each scope paragraph, list which threads it ADVANCES (moves toward \
+                the next arc beat), which it TOUCHES INCIDENTALLY (mentions or echoes \
+                without advancing), and which it SHOULD advance but doesn't (given the \
+                thread's current status + connections).\n\
+             2. Call out the structural blind spots pre-computed below.  Confirm or \
+                refute each.\n\
+             3. Flag any thread whose declared status looks wrong given the manuscript \
+                evidence (e.g. status `payoff` but the in-scope payoff hasn't landed; \
+                status `setup` but the thread has many incidental touches already).\n\
+             4. End with a one-paragraph summary of the scope's narrative health: which \
+                threads dominate, which are dormant, what's working, what's drifting.\n\
+             \n\
+             Be specific.  Reference paragraph titles when you make claims.  Don't \
+             rewrite prose; analyse it.\n\
+             \n\
+             ── Thread inventory ──\n\
+             {threads_text}\n\
+             \n\
+             ── Blind-spots pre-pass ──\n\
+             {blind_spots_text}\n\
+             \n\
+             ── Scope: {scope_kind} `{scope_title}` ──\n\
+             {scope_paragraphs_text}\n\
+             ── end scope ──",
+        )
     }
 
     /// 1.2.14+ Phase A.2 — weave view key handler.

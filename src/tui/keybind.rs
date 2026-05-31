@@ -240,6 +240,20 @@ pub enum Action {
     /// `Documentation/PROPOSALS/1.2.14_PLAN.md` §3.
     #[serde(rename = "view.threads_picker")]
     ViewThreadsPicker,
+    /// 1.2.14+ Phase A.3 — Ctrl+V Shift+A.  AI
+    /// thread audit.  Resolves the cursor's scope
+    /// from the F9 AiMode (chapter / subchapter /
+    /// book; defaults to chapter when AiMode is
+    /// None / Selection / Paragraph).  Composes a
+    /// prompt envelope reading every Thread
+    /// paragraph's HJSON + a blind-spots pre-pass
+    /// (link counts, payoff-marked threads whose
+    /// payoff hasn't fired) + the scope's
+    /// paragraph contents.  Streams into the AI
+    /// pane.  See `Documentation/PROPOSALS/1.2.14_PLAN.md`
+    /// §3.4.
+    #[serde(rename = "ai.thread_audit")]
+    AiThreadAudit,
     /// Ctrl+F4 in Editor — accept the snapshot pane into the
     /// live buffer.
     #[serde(rename = "editor.accept_split_snapshot")]
@@ -702,6 +716,7 @@ impl Action {
             Action::ToggleSplitView => "split view".into(),
             Action::ViewSiblingBookLookup => "sibling book".into(),
             Action::ViewThreadsPicker => "threads".into(),
+            Action::AiThreadAudit => "thread audit".into(),
             Action::OpenSnapshotPicker => "snapshots".into(),
             Action::GrammarCheck => "grammar".into(),
             Action::DiagnosticsList => "diags".into(),
@@ -883,6 +898,8 @@ impl Action {
                 "Sibling-book lookup for the split-view secondary pane (Ctrl+V Shift+B, 1.2.12+). Given the open paragraph's slug, walks the project hierarchy for paragraphs with the same slug under a different top-level book. Zero matches → status message names the slug. Single match → auto-pin to secondary. Multiple matches → open a fuzzy picker. Primary translation-workflow chord: from `manuscript-en/03-rain`, finds `manuscript-ru/03-rain` and pins it for side-by-side review via Shift+F4.".into(),
             Action::ViewThreadsPicker =>
                 "Open the Threads picker (Ctrl+V Shift+H, 1.2.14+). Lists every plot-thread paragraph under the `Threads` system book with status (setup/develop/payoff/resolved/abandoned) / weight (major/subplot/runner/bridge) / tension (0-10) / character + place + linked-paragraph counts. Picker chords: ↑↓ navigate, Enter opens the thread entry in the editor, Shift+Enter pins to the split-view secondary slot, w opens the swim-lane weave view (threads × chapters with marks at every paragraph that links to the thread), `/` filters the list by typed substring (status, weight, or title), Esc closes. The weave view's chord set: ↑↓ moves between threads, ←→ moves between chapters, Enter on a cell jumps to a linking paragraph, Esc returns to the picker.".into(),
+            Action::AiThreadAudit =>
+                "AI thread audit (Ctrl+V Shift+A, 1.2.14+). Resolves the cursor's scope from the F9 AiMode (Chapter / Subchapter / Book; Selection / Paragraph / None default to the cursor's containing Chapter). Composes a prompt envelope reading every Thread paragraph's HJSON (title / status / weight / opening / midpoint / payoff / connections / tension), a blind-spots pre-pass (link counts per thread, payoff-marked threads whose payoff hasn't yet been linked, stale threads not advanced in the scope), and every paragraph in the scope (paragraph_id + title + body + linked_paragraphs). Streams the response into the AI pane.  Asks the model to score each scope paragraph for which threads it advances / touches incidentally / should advance but doesn't, then call out structural concerns (dormant arcs, premature payoffs, miscategorised weights).".into(),
             Action::OpenSnapshotPicker =>
                 "Open the snapshot picker for the current paragraph (↑↓ navigate · Enter loads · V diff · D delete).".into(),
             Action::GrammarCheck =>
@@ -1247,6 +1264,11 @@ impl KeyBindings {
                 // (lowercase h is already
                 // ViewHiddenCharsReport).
                 entry("Shift+h", Action::ViewThreadsPicker, Scope::Any),
+                // 1.2.14+ Phase A.3 — Ctrl+V Shift+A
+                // fires the AI thread audit. A for
+                // thread Audit (lowercase a is
+                // ViewAddLink).
+                entry("Shift+a", Action::AiThreadAudit, Scope::Any),
             ],
             top_level: vec![
                 // F1 anywhere: Help-book RAG modal.
