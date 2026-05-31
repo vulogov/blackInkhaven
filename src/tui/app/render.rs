@@ -67,6 +67,10 @@ impl super::App {
             self.draw_thread_weave_modal(f, area);
             return;
         }
+        if let Modal::ThreadDoctor { .. } = &self.modal {
+            self.draw_thread_doctor_modal(f, area);
+            return;
+        }
         if let Modal::CommentEditor { .. } = &self.modal {
             self.draw_comment_editor_modal(f, area);
             return;
@@ -248,6 +252,8 @@ impl super::App {
                 unreachable!("threads picker handled above"),
             Modal::ThreadWeaveView { .. } =>
                 unreachable!("thread weave view handled above"),
+            Modal::ThreadDoctor { .. } =>
+                unreachable!("thread doctor handled above"),
             Modal::CommentEditor { .. } =>
                 unreachable!("comment editor handled above"),
             Modal::CommentsPanel { .. } =>

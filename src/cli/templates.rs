@@ -87,6 +87,19 @@ pub const TEMPLATES: &[ProjectTemplate] = &[
     RPG_SOURCEBOOK,
     TECHNICAL,
     NANOWRIMO,
+    // 1.2.14+ Phase D.5 — Russian-literature
+    // templates.  Each carries genre-authentic
+    // chapter structure + Russian-language book
+    // / chapter / seed-paragraph titles.  Post-
+    // init message recommends setting
+    // `language: "russian"` in inkhaven.hjson
+    // so the Snowball stemmer + multilingual
+    // prompt resolver flip to Russian.
+    RUSSIAN_NOVEL,
+    RUSSIAN_LONG_STORY,
+    RUSSIAN_SCIFI,
+    RUSSIAN_LORE,
+    RUSSIAN_UTOPIA,
 ];
 
 pub const EMPTY: ProjectTemplate = ProjectTemplate {
@@ -285,6 +298,331 @@ pub const NANOWRIMO: ProjectTemplate = ProjectTemplate {
          · Set `project.word_count_goal: 50000` in inkhaven.hjson\n  \
          · Set `project.target_date: \"2026-11-30\"` (adjust to your year)\n  \
          · Daily streak heatmap: Ctrl+B Shift+G\n",
+};
+
+// ──────────────────────────────────────────────────
+// 1.2.14+ Phase D.5 — Russian-literature templates.
+//
+// Genre conventions researched from canonical
+// works:
+//
+// * Russian novel (роман) — Tolstoy / Dostoyevsky
+//   tradition uses `Часть Первая` / `Часть Вторая` /
+//   `Часть Третья` + `Эпилог`.  Word-count range
+//   80K–500K+; we recommend 100K as a sensible
+//   anchor (matches Чехов's smaller novels rather
+//   than `Война и мир`'s scale).
+//
+// * Russian long story (повесть) — Pushkin / Bunin /
+//   Gogol tradition.  Single-arc, 5–8 numbered
+//   chapters in Roman numerals (I, II, III…), short
+//   epilogue, frame narrative common.  Word-count
+//   range 20K–50K.
+//
+// * Russian sci-fi (научная фантастика) — Strugatsky /
+//   Belyaev / Lukyanenko tradition.  `Пролог` + 2–3
+//   parts + `Эпилог` + `Глоссарий` for invented
+//   terms.  Word-count anchor 80K.
+//
+// * Russian lore (мифология) — былины / collection
+//   structure.  Sections per category
+//   (`Происхождение мира` / `Боги` / `Герои` /
+//   `Чудовища` / `Мифы и сказания`).  Standalone
+//   tales, not continuous narrative.
+//
+// * Russian utopia (утопия) — Чернышевский
+//   `Что делать?` / Богданов `Красная звезда`
+//   tradition.  Frame narrative (`Прибытие`), then
+//   topic-organised chapters per aspect of society.
+//
+// All five templates pre-seed character / place /
+// thread names in Russian (Cyrillic) and recommend
+// setting `language: "russian"` in the project
+// HJSON so the Snowball stemmer + multilingual
+// prompt resolver flip to Russian.
+// ──────────────────────────────────────────────────
+
+pub const RUSSIAN_NOVEL: ProjectTemplate = ProjectTemplate {
+    name: "russian-novel",
+    description:
+        "Русский роман.  Three-act `Часть Первая` / `Часть Вторая` / `Часть Третья` + \
+         `Эпилог` (Tolstoy / Dostoyevsky tradition).  Seeds Characters with \
+         главный герой / антагонист / наперсник stubs.  Recommended goal 100000 \
+         words; set `language: \"russian\"` in inkhaven.hjson.",
+    manuscript_book: Some(ManuscriptBook {
+        title: "Рукопись",
+        chapters: &[
+            "Часть Первая",
+            "Часть Вторая",
+            "Часть Третья",
+            "Эпилог",
+        ],
+        paragraph_content_type: None,
+    }),
+    seeds: &[SystemBookSeed {
+        system_tag: "characters",
+        paragraphs: &[
+            (
+                "главный герой",
+                "= главный герой\n\n\
+                 Персонаж, чью внутреннюю и внешнюю траекторию проходит весь\n\
+                 роман.\n\n\
+                 // Заполните: голос, желание (внешняя цель), потребность\n\
+                 // (внутренняя цель), внутренний конфликт, поворотные сцены.\n",
+            ),
+            (
+                "антагонист",
+                "= антагонист\n\n\
+                 Сила, противостоящая желанию или потребности главного героя.\n\n\
+                 // Не обязательно человек — это может быть система, институт,\n\
+                 // эпоха или часть психики самого героя.\n",
+            ),
+            (
+                "наперсник",
+                "= наперсник\n\n\
+                 Персонаж, которому главный герой доверяет внутренний\n\
+                 монолог — устами наперсника читатель слышит то, что иначе\n\
+                 осталось бы за кадром.\n",
+            ),
+        ],
+    }],
+    post_init_message:
+        "Рекомендуемые следующие шаги:\n  \
+         · Откройте `Рукопись/Часть Первая` и начните завязку\n  \
+         · Заполните `Characters/главный герой` (голос, желание, потребность)\n  \
+         · Установите `language: \"russian\"` в inkhaven.hjson (стеммер + многоязычные промпты)\n  \
+         · Установите `project.word_count_goal: 100000` (роман по умолчанию)\n",
+};
+
+pub const RUSSIAN_LONG_STORY: ProjectTemplate = ProjectTemplate {
+    name: "russian-long-story",
+    description:
+        "Русская повесть.  Single-arc, 7-chapter scaffolding (I / II / III / IV / V / VI / VII) + \
+         `Эпилог` (Pushkin / Bunin / Gogol tradition).  Recommended goal 35000 words.",
+    manuscript_book: Some(ManuscriptBook {
+        title: "Повесть",
+        chapters: &[
+            "I",
+            "II",
+            "III",
+            "IV",
+            "V",
+            "VI",
+            "VII",
+            "Эпилог",
+        ],
+        paragraph_content_type: None,
+    }),
+    seeds: &[SystemBookSeed {
+        system_tag: "characters",
+        paragraphs: &[(
+            "главный герой",
+            "= главный герой\n\n\
+             Повесть традиционно сосредоточена на одном персонаже и одной\n\
+             линии: внутреннее изменение, не масштабная фабула.\n\n\
+             // Заполните: голос, внутренний слом, рамочная подача\n\
+             // (рассказчик-свидетель или сам герой).\n",
+        )],
+    }],
+    post_init_message:
+        "Рекомендуемые следующие шаги:\n  \
+         · Подумайте над рамкой: рассказчик-свидетель или сам герой\n  \
+         · Откройте `Повесть/I` и установите тон + место действия\n  \
+         · Установите `language: \"russian\"` в inkhaven.hjson\n  \
+         · Установите `project.word_count_goal: 35000` (типичный объём повести)\n",
+};
+
+pub const RUSSIAN_SCIFI: ProjectTemplate = ProjectTemplate {
+    name: "russian-scifi",
+    description:
+        "Русская научная фантастика.  `Пролог` + three parts + `Эпилог` + `Глоссарий` \
+         (Strugatsky / Belyaev tradition).  Pre-seeds Places + Artefacts with \
+         genre stubs.  Recommended goal 80000 words.",
+    manuscript_book: Some(ManuscriptBook {
+        title: "Научная фантастика",
+        chapters: &[
+            "Пролог",
+            "Часть Первая: Земля",
+            "Часть Вторая: Полёт",
+            "Часть Третья: Звёзды",
+            "Эпилог",
+            "Глоссарий",
+        ],
+        paragraph_content_type: None,
+    }),
+    seeds: &[
+        SystemBookSeed {
+            system_tag: "places",
+            paragraphs: &[
+                (
+                    "звёздная база",
+                    "= звёздная база\n\n\
+                     Опорный пункт, к которому возвращаются герои.\n\n\
+                     // Заполните: расположение (система, год основания), \n\
+                     // население, режим (научный / военный / колониальный).\n",
+                ),
+                (
+                    "колония",
+                    "= колония\n\n\
+                     Поселение на чужой планете — место конфликта между\n\
+                     старым (Земля) и новым (среда).\n",
+                ),
+            ],
+        },
+        SystemBookSeed {
+            system_tag: "artefacts",
+            paragraphs: &[(
+                "артефакт",
+                "= артефакт\n\n\
+                 Предмет, чья природа двигает фабулу: реликвия исчезнувшей\n\
+                 цивилизации, прототип технологии, символ власти.\n",
+            )],
+        },
+    ],
+    post_init_message:
+        "Рекомендуемые следующие шаги:\n  \
+         · Пролог: введите ключевую концепцию мира одним сценарным стрелком\n  \
+         · Глоссарий: добавляйте по мере появления изобретённых терминов\n  \
+         · Установите `language: \"russian\"` в inkhaven.hjson\n  \
+         · Установите `project.word_count_goal: 80000` (средний роман-НФ)\n",
+};
+
+pub const RUSSIAN_LORE: ProjectTemplate = ProjectTemplate {
+    name: "russian-lore",
+    description:
+        "Русский лор / мифология.  Section-per-category structure \
+         (`Происхождение мира` / `Боги` / `Герои` / `Чудовища` / `Мифы и сказания`) \
+         — collection of legends, not continuous narrative.  Pre-seeds \
+         Places + Artefacts + Threads with worldbuilding stubs.",
+    manuscript_book: Some(ManuscriptBook {
+        title: "Лор",
+        chapters: &[
+            "Происхождение мира",
+            "Боги",
+            "Герои",
+            "Чудовища",
+            "Мифы и сказания",
+        ],
+        paragraph_content_type: None,
+    }),
+    seeds: &[
+        SystemBookSeed {
+            system_tag: "places",
+            paragraphs: &[(
+                "священная гора",
+                "= священная гора\n\n\
+                 Сакральный центр мира — место, к которому возвращаются\n\
+                 главные мифы.\n",
+            )],
+        },
+        SystemBookSeed {
+            system_tag: "artefacts",
+            paragraphs: &[(
+                "реликвия",
+                "= реликвия\n\n\
+                 Старинная вещь силы — обычно связана с историей сотворения\n\
+                 мира или великой войны богов.\n",
+            )],
+        },
+        SystemBookSeed {
+            system_tag: "threads",
+            paragraphs: &[(
+                "сотворение мира",
+                "{\n  \
+                 title:         \"Сотворение мира\"\n  \
+                 status:        \"setup\"\n  \
+                 weight:        \"major\"\n  \
+                 opening:       \"В начале времён не было ни Неба, ни Земли.\"\n  \
+                 midpoint:      \"\"\n  \
+                 payoff:        \"\"\n  \
+                 characters:    []\n  \
+                 places:        []\n  \
+                 artefacts:     []\n  \
+                 related_threads: []\n  \
+                 tension:       0\n  \
+                 register:      \"sacred\"\n  \
+                 notes:         \"Главный космогонический миф; задаёт правила вселенной.\"\n\
+                 }\n",
+            )],
+        },
+    ],
+    post_init_message:
+        "Рекомендуемые следующие шаги:\n  \
+         · Происхождение мира: космогония, первичное разделение, имена сил\n  \
+         · Боги: пантеон с областями ответственности и взаимными конфликтами\n  \
+         · Герои: смертные, чьи деяния стали мифами\n  \
+         · Установите `language: \"russian\"` в inkhaven.hjson\n  \
+         · Установите `project.word_count_goal: 50000` (сборник легенд)\n",
+};
+
+pub const RUSSIAN_UTOPIA: ProjectTemplate = ProjectTemplate {
+    name: "russian-utopia",
+    description:
+        "Русская утопия.  Frame narrative (`Прибытие`) + topic-organised chapters \
+         per aspect of society (`Труд` / `Семья` / `Образование` / `Искусство` / `Будущее`) \
+         — Чернышевский / Богданов tradition.  Recommended goal 60000 words.",
+    manuscript_book: Some(ManuscriptBook {
+        title: "Утопия",
+        chapters: &[
+            "Прибытие",
+            "Труд",
+            "Семья",
+            "Образование",
+            "Искусство",
+            "Будущее",
+        ],
+        paragraph_content_type: None,
+    }),
+    seeds: &[
+        SystemBookSeed {
+            system_tag: "places",
+            paragraphs: &[(
+                "город будущего",
+                "= город будущего\n\n\
+                 Главное пространство утопии — место, где принципы\n\
+                 нового общества видны на каждом шагу.\n\n\
+                 // Заполните: архитектура, ритм жизни, видимые отличия\n\
+                 // от старого мира.\n",
+            )],
+        },
+        SystemBookSeed {
+            system_tag: "characters",
+            paragraphs: &[(
+                "проводник",
+                "= проводник\n\n\
+                 Местный житель утопии, который объясняет герою (и читателю)\n\
+                 устройство нового общества.\n",
+            )],
+        },
+        SystemBookSeed {
+            system_tag: "threads",
+            paragraphs: &[(
+                "принятие утопии",
+                "{\n  \
+                 title:         \"Принятие утопии\"\n  \
+                 status:        \"setup\"\n  \
+                 weight:        \"major\"\n  \
+                 opening:       \"Герой прибывает; всё кажется чудом.\"\n  \
+                 midpoint:      \"Герой замечает, что цена утопии не нулевая.\"\n  \
+                 payoff:        \"Герой делает выбор: остаться или вернуться.\"\n  \
+                 characters:    [\"проводник\"]\n  \
+                 places:        [\"город будущего\"]\n  \
+                 artefacts:     []\n  \
+                 related_threads: []\n  \
+                 tension:       5\n  \
+                 register:      \"\"\n  \
+                 notes:         \"Центральная арка традиционной русской утопии.\"\n\
+                 }\n",
+            )],
+        },
+    ],
+    post_init_message:
+        "Рекомендуемые следующие шаги:\n  \
+         · Прибытие: первая встреча героя с утопией, что он замечает первым\n  \
+         · Каждая следующая глава — один аспект общества, по образцу\n   \
+            «Что делать?» Чернышевского и «Красной звезды» Богданова\n  \
+         · Установите `language: \"russian\"` в inkhaven.hjson\n  \
+         · Установите `project.word_count_goal: 60000` (стандартный размер утопии)\n",
 };
 
 /// 1.2.14+ Phase Q.1 — apply the named template to
@@ -553,6 +891,128 @@ mod tests {
         assert!(tags.contains(&"places"));
         assert!(tags.contains(&"artefacts"));
         assert!(tags.contains(&"threads"));
+    }
+
+    #[test]
+    fn russian_templates_all_registered() {
+        let names: Vec<&str> = TEMPLATES.iter().map(|t| t.name).collect();
+        for required in [
+            "russian-novel",
+            "russian-long-story",
+            "russian-scifi",
+            "russian-lore",
+            "russian-utopia",
+        ] {
+            assert!(
+                names.contains(&required),
+                "missing template `{required}` in TEMPLATES"
+            );
+        }
+    }
+
+    #[test]
+    fn russian_novel_has_three_parts_plus_epilogue() {
+        let t = TEMPLATES
+            .iter()
+            .find(|t| t.name == "russian-novel")
+            .unwrap();
+        let book = t.manuscript_book.as_ref().unwrap();
+        assert_eq!(book.chapters.len(), 4);
+        assert!(book.chapters[0].contains("Часть Первая"));
+        assert!(book.chapters[3].contains("Эпилог"));
+        assert_eq!(book.title, "Рукопись");
+        // Seeds Characters with 3 standard roles.
+        let chars = t
+            .seeds
+            .iter()
+            .find(|s| s.system_tag == "characters")
+            .unwrap();
+        assert_eq!(chars.paragraphs.len(), 3);
+    }
+
+    #[test]
+    fn russian_long_story_uses_roman_numerals() {
+        let t = TEMPLATES
+            .iter()
+            .find(|t| t.name == "russian-long-story")
+            .unwrap();
+        let book = t.manuscript_book.as_ref().unwrap();
+        // Roman numerals I..VII + Эпилог = 8 chapters.
+        assert_eq!(book.chapters.len(), 8);
+        for ch in ["I", "II", "III", "IV", "V", "VI", "VII"] {
+            assert!(book.chapters.contains(&ch));
+        }
+        assert!(book.chapters.contains(&"Эпилог"));
+    }
+
+    #[test]
+    fn russian_scifi_includes_glossary_and_places_seeds() {
+        let t = TEMPLATES
+            .iter()
+            .find(|t| t.name == "russian-scifi")
+            .unwrap();
+        let book = t.manuscript_book.as_ref().unwrap();
+        assert!(book.chapters.iter().any(|c| c == &"Пролог"));
+        assert!(book.chapters.iter().any(|c| c == &"Эпилог"));
+        assert!(book.chapters.iter().any(|c| c == &"Глоссарий"));
+        let tags: Vec<&str> = t.seeds.iter().map(|s| s.system_tag).collect();
+        assert!(tags.contains(&"places"));
+        assert!(tags.contains(&"artefacts"));
+    }
+
+    #[test]
+    fn russian_lore_thread_seed_parses_as_hjson() {
+        let t = TEMPLATES
+            .iter()
+            .find(|t| t.name == "russian-lore")
+            .unwrap();
+        let threads = t
+            .seeds
+            .iter()
+            .find(|s| s.system_tag == "threads")
+            .expect("russian-lore seeds Threads system book");
+        let (_, body) = threads.paragraphs[0];
+        let _: serde_hjson::Value = serde_hjson::from_str(body)
+            .expect("russian-lore threads seed must be valid HJSON");
+    }
+
+    #[test]
+    fn russian_utopia_thread_seed_parses_as_hjson() {
+        let t = TEMPLATES
+            .iter()
+            .find(|t| t.name == "russian-utopia")
+            .unwrap();
+        let threads = t
+            .seeds
+            .iter()
+            .find(|s| s.system_tag == "threads")
+            .expect("russian-utopia seeds Threads system book");
+        let (_, body) = threads.paragraphs[0];
+        let _: serde_hjson::Value = serde_hjson::from_str(body)
+            .expect("russian-utopia threads seed must be valid HJSON");
+    }
+
+    #[test]
+    fn russian_utopia_chapters_match_topic_structure() {
+        let t = TEMPLATES
+            .iter()
+            .find(|t| t.name == "russian-utopia")
+            .unwrap();
+        let book = t.manuscript_book.as_ref().unwrap();
+        // Frame chapter + 4 topic chapters + future = 6.
+        for ch in [
+            "Прибытие",
+            "Труд",
+            "Семья",
+            "Образование",
+            "Искусство",
+            "Будущее",
+        ] {
+            assert!(
+                book.chapters.contains(&ch),
+                "Russian utopia chapters missing `{ch}`"
+            );
+        }
     }
 
     #[test]

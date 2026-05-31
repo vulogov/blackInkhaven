@@ -4761,6 +4761,127 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 
+    /// 1.2.14+ Phase D.4 — TUI thread doctor
+    /// modal (`Ctrl+V Shift+D`).  Read-only;
+    /// renders the snapshot computed at modal
+    /// open.
+    pub(in crate::tui::app) fn draw_thread_doctor_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::ThreadDoctor { data } = &self.modal else {
+            return;
+        };
+        let width = (area.width.saturating_sub(4)).min(70).max(50);
+        let extra_rows = data.status_distribution.len()
+            + data.weight_distribution.len()
+            + data.zero_links.len()
+            + data.payoff_unfired.len()
+            + data.dormant.len();
+        let height = ((10 + extra_rows) as u16)
+            .clamp(14, area.height.saturating_sub(2));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let title = format!(
+            " Thread doctor · {} threads · Ctrl+V Shift+D ",
+            data.thread_count
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::raw("  avg tension: "),
+            Span::styled(format!("{:.1}", data.avg_tension), bold),
+        ]));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("  status:".to_string(), dim)));
+        for (k, v) in &data.status_distribution {
+            lines.push(Line::from(format!("    {:<10} {}", k, v)));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("  weight:".to_string(), dim)));
+        for (k, v) in &data.weight_distribution {
+            lines.push(Line::from(format!("    {:<10} {}", k, v)));
+        }
+        lines.push(Line::from(""));
+        let no_blind = data.zero_links.is_empty()
+            && data.payoff_unfired.is_empty()
+            && data.dormant.is_empty();
+        if no_blind {
+            lines.push(Line::from(Span::styled(
+                "  Blind spots: (none detected)".to_string(),
+                dim,
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                "  Blind spots:".to_string(),
+                bold,
+            )));
+            if !data.zero_links.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "    ZERO LINKS — status past `setup`, no project links:".to_string(),
+                    dim,
+                )));
+                for t in &data.zero_links {
+                    lines.push(Line::from(format!(
+                        "      · {}",
+                        truncate_to(t, 60)
+                    )));
+                }
+            }
+            if !data.payoff_unfired.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "    PAYOFF UNFIRED — status `payoff`, no project links:".to_string(),
+                    dim,
+                )));
+                for t in &data.payoff_unfired {
+                    lines.push(Line::from(format!(
+                        "      · {}",
+                        truncate_to(t, 60)
+                    )));
+                }
+            }
+            if !data.dormant.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "    DORMANT — status `develop`, ≤1 link:".to_string(),
+                    dim,
+                )));
+                for t in &data.dormant {
+                    lines.push(Line::from(format!(
+                        "      · {}",
+                        truncate_to(t, 60)
+                    )));
+                }
+            }
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Esc to close".to_string(),
+            dim,
+        )));
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
     /// 1.2.14+ Phase Q.3b — `Ctrl+V f` footnote
     /// editor.  Multi-line input box, much like
     /// the comment editor.
