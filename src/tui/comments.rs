@@ -158,7 +158,12 @@ pub fn save_to_sidecar(
     }
     let raw = serde_json::to_string_pretty(file)
         .map_err(|e| format!("serialise: {e}"))?;
-    std::fs::write(&path, raw)
+    // 1.2.15+ Phase S.4 — atomic write so a panic
+    // or power loss mid-save can't truncate the user's
+    // comment history.  Comments are user data — the
+    // "no data loss" goal makes atomic the right
+    // default here.
+    crate::io_atomic::write(&path, raw.as_bytes())
         .map_err(|e| format!("write {}: {e}", path.display()))
 }
 

@@ -262,50 +262,11 @@ fn report_target_path() -> PathBuf {
 }
 
 /// Atomic write helper used by both the report writer
-/// and the rescue flush.  Writes to `<target>.tmp`,
-/// fsyncs the file handle, renames into place, then
-/// best-effort-fsyncs the parent directory on Unix.
-///
-/// Failures at any step are returned to the caller —
-/// the panic hook uses `let _ = …` so the higher-level
-/// best-effort guarantee still holds.
+/// and the rescue flush.  Delegates to the shared
+/// [`crate::io_atomic::write`] primitive so the
+/// editor + sidecar saves use the same code path.
 pub(crate) fn write_atomic(target: &std::path::Path, body: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-
-    let parent = target.parent().unwrap_or(std::path::Path::new("."));
-    let tmp_name = match target.file_name() {
-        Some(name) => {
-            let mut s = name.to_os_string();
-            s.push(".tmp");
-            s
-        }
-        None => return Err(std::io::Error::other("crash: target has no file_name")),
-    };
-    let tmp = parent.join(tmp_name);
-
-    // Write + fsync the file.
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&tmp)?;
-    f.write_all(body)?;
-    f.sync_all()?;
-    drop(f);
-
-    // Rename into place.
-    std::fs::rename(&tmp, target)?;
-
-    // Best-effort fsync the parent dir on Unix.  Windows
-    // doesn't support opening a directory as a file.
-    #[cfg(unix)]
-    {
-        if let Ok(d) = std::fs::File::open(parent) {
-            let _ = d.sync_all();
-        }
-    }
-
-    Ok(())
+    crate::io_atomic::write(target, body)
 }
 
 #[cfg(test)]

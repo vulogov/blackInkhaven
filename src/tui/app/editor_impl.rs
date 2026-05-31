@@ -300,7 +300,10 @@ impl super::App {
         let body = doc.textarea.lines().join("\n");
         let prev_words =
             crate::progress::count_words(&doc.saved_lines.join("\n"));
-        std::fs::write(&abs, body.as_bytes())
+        // 1.2.15+ Phase S.4 — atomic write so a crash
+        // mid-save can't leave the paragraph file
+        // truncated on disk.  Matches save_current.
+        crate::io_atomic::write(&abs, body.as_bytes())
             .map_err(|e| format!("write {}: {e}", abs.display()))?;
         // Refresh the store so subsequent searches see the new
         // text. We deliberately skip the snapshot machinery —
@@ -620,7 +623,15 @@ impl super::App {
         let abs = self.layout.root.join(&doc.rel_path);
 
         // Filesystem write first; if that fails, abort before touching the store.
-        if let Err(e) = std::fs::write(&abs, body.as_bytes()) {
+        //
+        // 1.2.15+ Phase S.4 — atomic write so a panic
+        // or power loss mid-save preserves either the
+        // last-saved version on disk or the new one,
+        // never a half-written truncated file.  THIS
+        // is the manuscript-prose save path — the
+        // single most important durability surface in
+        // inkhaven.
+        if let Err(e) = crate::io_atomic::write(&abs, body.as_bytes()) {
             self.status = format!("write {}: {e}", abs.display());
             return Ok(());
         }

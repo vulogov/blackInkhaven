@@ -105,6 +105,14 @@ impl SessionState {
     pub fn save(&self, project_root: &Path) -> std::io::Result<()> {
         let path = project_root.join(SESSION_FILE);
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, json)
+        // 1.2.15+ Phase S.4 — atomic write.  Session
+        // state (cursor pos, scroll, history) isn't
+        // load-bearing, but a corrupt session file
+        // surfaces as `Session::load returned None`
+        // which silently resets every per-paragraph
+        // cursor to (0, 0).  The user would never
+        // know — atomic write avoids the data loss
+        // entirely.
+        crate::io_atomic::write(&path, json.as_bytes())
     }
 }

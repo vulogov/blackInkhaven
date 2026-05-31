@@ -5,6 +5,7 @@ mod cli;
 mod config;
 mod config_tui;
 mod crash;
+mod io_atomic;
 mod prompts_tui;
 mod error;
 mod export;
