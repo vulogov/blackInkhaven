@@ -4,6 +4,7 @@ pub mod backup;
 pub mod build;
 pub mod bund;
 pub mod delete;
+pub mod recover;
 pub mod export;
 pub mod export_concordance;
 pub mod export_timeline;
@@ -463,6 +464,30 @@ pub enum Command {
     /// `Ctrl+V Shift+C` panel.
     #[command(subcommand)]
     Comments(CommentsCommand),
+
+    /// `inkhaven recover <crash-report.hjson>` —
+    /// pick up an inkhaven crash report and walk the
+    /// rescued-buffer manifest, optionally applying
+    /// each rescue back to its on-disk paragraph file
+    /// after writing a `.pre-recover-<UTC>` rollback
+    /// backup.  Default behaviour prompts y/N/diff
+    /// per buffer; `--yes` bypasses the prompt and
+    /// applies every rescue.  `--keep` leaves the
+    /// report + rescue files in place; default moves
+    /// them into `<project>/.inkhaven/recovered/`.
+    Recover {
+        /// Path to the `inkhaven-crash-<ts>.hjson`
+        /// report written by the panic hook.
+        report: PathBuf,
+        /// Skip prompts; apply every rescue.
+        #[arg(long)]
+        yes: bool,
+        /// Leave the report + rescue files in place
+        /// after the walk.  Default moves them into
+        /// `<project>/.inkhaven/recovered/`.
+        #[arg(long)]
+        keep: bool,
+    },
 }
 
 /// sub-subcommands under
@@ -1176,6 +1201,9 @@ impl Cli {
             }
             Command::Comments(cmd) => {
                 comments::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Recover { report, yes, keep } => {
+                recover::run(&report, yes, keep)
             }
         }
     }
