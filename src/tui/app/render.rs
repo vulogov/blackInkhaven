@@ -59,6 +59,14 @@ impl super::App {
             self.draw_translation_picker_modal(f, area);
             return;
         }
+        if let Modal::ThreadsPicker { .. } = &self.modal {
+            self.draw_threads_picker_modal(f, area);
+            return;
+        }
+        if let Modal::ThreadWeaveView { .. } = &self.modal {
+            self.draw_thread_weave_modal(f, area);
+            return;
+        }
         if let Modal::ImagePicker { .. } = &self.modal {
             self.draw_image_picker_modal(f, area);
             return;
@@ -216,6 +224,10 @@ impl super::App {
                 unreachable!("concordance handled above"),
             Modal::TranslationLanguagePicker { .. } =>
                 unreachable!("translation picker handled above"),
+            Modal::ThreadsPicker { .. } =>
+                unreachable!("threads picker handled above"),
+            Modal::ThreadWeaveView { .. } =>
+                unreachable!("thread weave view handled above"),
             Modal::SentenceRhythm { .. } =>
                 unreachable!("sentence rhythm handled above"),
             Modal::RenderedPreview { .. } =>

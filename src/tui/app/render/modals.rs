@@ -4634,6 +4634,367 @@ impl super::super::App {
         f.render_widget(Paragraph::new(footer_lines), footer_rect);
     }
 
+    /// 1.2.14+ Phase A.2 — `Ctrl+V Shift+H` Threads
+    /// picker.  Centred modal listing every plot
+    /// thread with status / weight / tension /
+    /// counts.  Filter input visible at the top
+    /// when `filter_active`.
+    pub(in crate::tui::app) fn draw_threads_picker_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::ThreadsPicker {
+            entries,
+            cursor,
+            filter,
+            filter_active,
+            visible,
+        } = &self.modal
+        else {
+            return;
+        };
+
+        let max_name = visible
+            .iter()
+            .filter_map(|i| entries.get(*i))
+            .map(|e| e.title_field.chars().count())
+            .max()
+            .unwrap_or(8)
+            .max(8);
+        let name_w = max_name.min(40);
+
+        // Layout columns: name | status | weight | tension | ch | pl | ←
+        // header / body / footer row counts.
+        let header_lines = 3usize;
+        let body_lines = visible.len().min(20).max(1);
+        let footer_lines = 3usize;
+        let height = ((header_lines + body_lines + footer_lines + 2) as u16)
+            .clamp(10, area.height.saturating_sub(2));
+        let width = (name_w as u16 + 60).min(area.width.saturating_sub(4)).max(70);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let title = format!(
+            " Threads · {} of {} · Ctrl+V Shift+H ",
+            visible.len(),
+            entries.len()
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        // Header row: filter input (if active) or
+        // column legend.
+        if *filter_active {
+            let prompt = format!(" / {}_ ", filter.as_str());
+            lines.push(Line::from(Span::styled(
+                prompt,
+                Style::default()
+                    .fg(self.theme.editor_position_fg)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "   {:<width$}  {:>8}  {:>8}  {:>5}  {:>3}  {:>3}  {:>4}",
+                    "name", "status", "weight", "ten.", "ch", "pl", "link",
+                    width = name_w,
+                ),
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        }
+        lines.push(Line::from(""));
+
+        // Body rows.
+        for (display_idx, src_idx) in visible.iter().enumerate() {
+            let Some(e) = entries.get(*src_idx) else { continue; };
+            let marker = if display_idx == *cursor { "›" } else { " " };
+            let row = format!(
+                "  {marker} {name:<width$}  {status:>8}  {weight:>8}  {ten:>5}  {ch:>3}  {pl:>3}  {link:>4}",
+                marker = marker,
+                name = truncate_to(&e.title_field, name_w),
+                status = truncate_to(&e.status, 8),
+                weight = truncate_to(&e.weight, 8),
+                ten = e.tension,
+                ch = e.character_count,
+                pl = e.place_count,
+                link = e.link_count,
+                width = name_w,
+            );
+            let style = if display_idx == *cursor {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(row, style)));
+        }
+
+        lines.push(Line::from(""));
+        let hint = if *filter_active {
+            " Enter / Esc exit filter · Backspace edits "
+        } else {
+            " ↑↓ Enter open · Shift+Enter pin · w weave · / filter · Esc close "
+        };
+        lines.push(Line::from(Span::styled(
+            hint.to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
+    /// 1.2.14+ Phase A.2 — swim-lane weave view.
+    /// Rendered as a table with one row per thread
+    /// (down the side) and one column per chapter
+    /// (across the top).  Each cell shows a count
+    /// of paragraphs in that chapter that link to
+    /// that thread; the cursor cell is reversed.
+    /// Books are visually separated by a thin gap
+    /// in the column headers.
+    pub(in crate::tui::app) fn draw_thread_weave_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::ThreadWeaveView {
+            threads,
+            chapters,
+            grid,
+            cursor_row,
+            cursor_col,
+            scroll_row,
+            scroll_col,
+            ..
+        } = &self.modal
+        else {
+            return;
+        };
+
+        let max_thread_name = threads
+            .iter()
+            .map(|t| t.title_field.chars().count())
+            .max()
+            .unwrap_or(12)
+            .max(12)
+            .min(24);
+        let cell_width = 4usize;
+        let label_w = max_thread_name + 2;
+
+        let width = area.width.saturating_sub(2);
+        let height = area.height.saturating_sub(2);
+        let rect = Rect { x: area.x + 1, y: area.y + 1, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let title = format!(
+            " Thread weave · {} threads × {} chapters · Esc back ",
+            threads.len(),
+            chapters.len()
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // How many chapter columns fit?  Use that
+        // to drive horizontal scroll.
+        let cols_visible = (inner.width as usize).saturating_sub(label_w)
+            / cell_width;
+        let cols_visible = cols_visible.max(1);
+        let start_col = (*scroll_col).min(chapters.len().saturating_sub(cols_visible));
+        let end_col = (start_col + cols_visible).min(chapters.len());
+
+        // Vertical scroll.
+        let rows_visible = (inner.height as usize).saturating_sub(4); // header + book row + hint + spacer
+        let rows_visible = rows_visible.max(1);
+        let start_row = (*scroll_row).min(threads.len().saturating_sub(rows_visible));
+        let end_row = (start_row + rows_visible).min(threads.len());
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        // Header row 1: book grouping (one cell per
+        // chapter, showing book initial when the
+        // chapter changes book).
+        let mut book_row = String::with_capacity(inner.width as usize);
+        book_row.push_str(&" ".repeat(label_w));
+        let mut last_book: Option<&str> = None;
+        for (idx, (_, book, _)) in chapters[start_col..end_col].iter().enumerate() {
+            let cell = if last_book.map(|b| b == book.as_str()).unwrap_or(false) {
+                "    ".to_string()
+            } else {
+                let _ = idx;
+                let abbr: String = book.chars().take(3).collect();
+                format!(" {:<3.3}", abbr)
+            };
+            book_row.push_str(&cell);
+            last_book = Some(book.as_str());
+        }
+        lines.push(Line::from(Span::styled(
+            book_row,
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+
+        // Header row 2: chapter index across the
+        // top.  Two-digit indices.
+        let mut chapter_row = String::with_capacity(inner.width as usize);
+        chapter_row.push_str(&" ".repeat(label_w));
+        for (idx, _) in chapters[start_col..end_col].iter().enumerate() {
+            let global_idx = start_col + idx;
+            chapter_row.push_str(&format!(" {:>2} ", global_idx + 1));
+        }
+        lines.push(Line::from(Span::styled(
+            chapter_row,
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+
+        // Body rows.
+        for r in start_row..end_row {
+            let t = &threads[r];
+            let mut row_cells: Vec<Span<'static>> = Vec::new();
+            // Thread label.
+            let label = format!(
+                "{:<width$}  ",
+                truncate_to(&t.title_field, max_thread_name),
+                width = max_thread_name,
+            );
+            row_cells.push(Span::styled(
+                label,
+                if r == *cursor_row {
+                    Style::default()
+                        .fg(self.theme.modal_fg)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                },
+            ));
+            for c in start_col..end_col {
+                let cell_count = grid
+                    .get(r)
+                    .and_then(|row| row.get(c))
+                    .map(|cell| cell.len())
+                    .unwrap_or(0);
+                let text = if cell_count == 0 {
+                    "  ·".to_string()
+                } else if cell_count == 1 {
+                    "  ●".to_string()
+                } else {
+                    format!("  {cell_count}")
+                };
+                let style = if r == *cursor_row && c == *cursor_col {
+                    Style::default()
+                        .add_modifier(Modifier::REVERSED)
+                        .add_modifier(Modifier::BOLD)
+                } else if cell_count > 0 {
+                    Style::default().fg(self.theme.places_fg)
+                } else {
+                    Style::default().add_modifier(Modifier::DIM)
+                };
+                row_cells.push(Span::styled(format!("{text:>4}"), style));
+            }
+            lines.push(Line::from(row_cells));
+        }
+
+        lines.push(Line::from(""));
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        // Highlight the cell coordinate context.
+        if let Some(t) = threads.get(*cursor_row) {
+            if let Some((_, book, chapter)) = chapters.get(*cursor_col) {
+                let cell_count = grid
+                    .get(*cursor_row)
+                    .and_then(|row| row.get(*cursor_col))
+                    .map(|cell| cell.len())
+                    .unwrap_or(0);
+                let footer = format!(
+                    " {} · {}/{} · {} linking paragraph{}",
+                    truncate_to(&t.title_field, 30),
+                    truncate_to(book, 20),
+                    truncate_to(chapter, 24),
+                    cell_count,
+                    if cell_count == 1 { "" } else { "s" },
+                );
+                lines.push(Line::from(Span::styled(footer, dim)));
+            }
+        }
+        lines.push(Line::from(Span::styled(
+            " ↑↓ thread · ←→ chapter · Enter jump · Esc back to picker ".to_string(),
+            dim,
+        )));
+
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+}
+
+/// Truncate `s` to at most `max` characters,
+/// appending an ellipsis when truncation happens.
+/// Unicode-safe.
+fn truncate_to(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else if max <= 1 {
+        s.chars().take(max).collect()
+    } else {
+        let mut out: String = s.chars().take(max - 1).collect();
+        out.push('…');
+        out
+    }
+}
+
+#[cfg(test)]
+mod truncate_tests {
+    use super::truncate_to;
+
+    #[test]
+    fn keeps_short_strings_intact() {
+        assert_eq!(truncate_to("aiya", 10), "aiya");
+        assert_eq!(truncate_to("", 5), "");
+    }
+
+    #[test]
+    fn truncates_with_ellipsis() {
+        assert_eq!(truncate_to("inheritance subplot", 10), "inheritan…");
+    }
+
+    #[test]
+    fn handles_max_one_or_zero() {
+        assert_eq!(truncate_to("aiya", 1), "a");
+        assert_eq!(truncate_to("aiya", 0), "");
+    }
+
+    #[test]
+    fn unicode_safe_no_byte_split() {
+        // Cyrillic — each char is 2 bytes in UTF-8.
+        // Slice-by-byte would panic; we slice by
+        // char-count.
+        assert_eq!(truncate_to("Москва", 4), "Мос…");
+    }
 }
 
 /// 1.2.8+ — restart-required overlay painted on top of

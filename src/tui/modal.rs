@@ -846,6 +846,87 @@ pub(super) enum Modal {
         source_title: String,
         source_body: String,
     },
+    /// 1.2.14+ Phase A.2 — `Ctrl+V Shift+H` picker.
+    /// Lists every plot-thread paragraph under the
+    /// `Threads` system book with summary columns.
+    /// `↑↓` navigate; `Enter` open in editor;
+    /// `Shift+Enter` pin to secondary; `w` open the
+    /// weave-view sub-modal; `/` filter by typed
+    /// substring; `Esc` close.
+    ThreadsPicker {
+        /// Summary rows materialised at open time so
+        /// scrolling doesn't re-parse HJSON.  Built by
+        /// `App::collect_thread_picker_entries`.
+        entries: Vec<ThreadsPickerEntry>,
+        cursor: usize,
+        /// Substring filter typed via `/`.  Empty →
+        /// every entry visible.  Match is
+        /// case-insensitive against name + status +
+        /// weight.
+        filter: super::input::TextInput,
+        /// True while `/` filter input is active —
+        /// keystrokes go to the filter, `Enter` /
+        /// `Esc` exit filter mode (not the modal).
+        filter_active: bool,
+        /// Cached indices into `entries` matching the
+        /// current filter.  Rebuilt on filter edits.
+        visible: Vec<usize>,
+    },
+    /// 1.2.14+ Phase A.2 — swim-lane weave view.
+    /// Pushed by `w` from inside `ThreadsPicker`;
+    /// `Esc` returns to the picker (stored in
+    /// `return_to`).  Rendered as a row-per-thread
+    /// table with one column per Chapter across every
+    /// user book; each cell shows a count of
+    /// paragraphs in that chapter that link to the
+    /// thread, with `Enter` jumping to the first
+    /// linking paragraph in the cell.
+    ThreadWeaveView {
+        /// Threads down the side, in the same order
+        /// the picker showed them.
+        threads: Vec<ThreadsPickerEntry>,
+        /// Chapter columns across the top, in
+        /// canonical hierarchy order.  `(chapter_id,
+        /// book_title, chapter_title)`.
+        chapters: Vec<(Uuid, String, String)>,
+        /// `grid[thread_idx][chapter_idx]` is the set
+        /// of paragraph UUIDs in that chapter that
+        /// link to that thread.  Pre-computed at
+        /// open time so navigation is pure cursor
+        /// math.
+        grid: Vec<Vec<Vec<Uuid>>>,
+        cursor_row: usize,
+        cursor_col: usize,
+        scroll_row: usize,
+        scroll_col: usize,
+        return_to: Box<Modal>,
+    },
+}
+
+/// 1.2.14+ Phase A.2 — one row of the Threads
+/// picker.  Mirrors the summary fields the CLI
+/// `inkhaven thread list` reads.  Built once at
+/// picker-open time + cached for the lifetime of
+/// the modal so HJSON parsing happens only once
+/// per session.
+#[derive(Debug, Clone)]
+pub(super) struct ThreadsPickerEntry {
+    pub id: Uuid,
+    /// Paragraph slug-derived title — what the tree
+    /// pane shows.
+    pub name: String,
+    /// `title:` field from the HJSON body.  Falls
+    /// back to `name` when the HJSON lacks one.
+    pub title_field: String,
+    pub status: String,
+    pub weight: String,
+    pub tension: i32,
+    pub character_count: usize,
+    pub place_count: usize,
+    /// Reverse-link count — paragraphs anywhere in
+    /// the project whose `linked_paragraphs`
+    /// includes this thread's UUID.
+    pub link_count: usize,
 }
 
 /// 1.2.13+ Phase C.2 — direction the translation flow runs in.

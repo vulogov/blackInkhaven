@@ -229,6 +229,17 @@ pub enum Action {
     /// §10 Phase D.
     #[serde(rename = "view.sibling_book_lookup")]
     ViewSiblingBookLookup,
+    /// 1.2.14+ Phase A.2 — Ctrl+V Shift+H.  Open the
+    /// Threads picker: list every plot-thread paragraph
+    /// under the `Threads` system book with status /
+    /// weight / tension / link-count columns.  `↑↓`
+    /// navigate; `Enter` opens the entry; `Shift+Enter`
+    /// pins to the split-view secondary slot; `w`
+    /// opens the swim-lane weave view sub-modal; `/`
+    /// filters by typed substring; `Esc` closes.  See
+    /// `Documentation/PROPOSALS/1.2.14_PLAN.md` §3.
+    #[serde(rename = "view.threads_picker")]
+    ViewThreadsPicker,
     /// Ctrl+F4 in Editor — accept the snapshot pane into the
     /// live buffer.
     #[serde(rename = "editor.accept_split_snapshot")]
@@ -690,6 +701,7 @@ impl Action {
             Action::AcceptSplitSnapshot => "accept snap".into(),
             Action::ToggleSplitView => "split view".into(),
             Action::ViewSiblingBookLookup => "sibling book".into(),
+            Action::ViewThreadsPicker => "threads".into(),
             Action::OpenSnapshotPicker => "snapshots".into(),
             Action::GrammarCheck => "grammar".into(),
             Action::DiagnosticsList => "diags".into(),
@@ -869,6 +881,8 @@ impl Action {
                 "Toggle fullscreen split-view (Shift+F4, 1.2.12+). Left pane is the primary buffer; right pane is the `secondary` slot (populated by pickers — Phase B). Tab swaps focus. Tree + AI response panes are hidden; AI prompt input bar still spans the bottom so Ctrl+I works from either pane. Existing F4 (same-paragraph snapshot split) and Ctrl+F4 (accept snapshot) are untouched.".into(),
             Action::ViewSiblingBookLookup =>
                 "Sibling-book lookup for the split-view secondary pane (Ctrl+V Shift+B, 1.2.12+). Given the open paragraph's slug, walks the project hierarchy for paragraphs with the same slug under a different top-level book. Zero matches → status message names the slug. Single match → auto-pin to secondary. Multiple matches → open a fuzzy picker. Primary translation-workflow chord: from `manuscript-en/03-rain`, finds `manuscript-ru/03-rain` and pins it for side-by-side review via Shift+F4.".into(),
+            Action::ViewThreadsPicker =>
+                "Open the Threads picker (Ctrl+V Shift+H, 1.2.14+). Lists every plot-thread paragraph under the `Threads` system book with status (setup/develop/payoff/resolved/abandoned) / weight (major/subplot/runner/bridge) / tension (0-10) / character + place + linked-paragraph counts. Picker chords: ↑↓ navigate, Enter opens the thread entry in the editor, Shift+Enter pins to the split-view secondary slot, w opens the swim-lane weave view (threads × chapters with marks at every paragraph that links to the thread), `/` filters the list by typed substring (status, weight, or title), Esc closes. The weave view's chord set: ↑↓ moves between threads, ←→ moves between chapters, Enter on a cell jumps to a linking paragraph, Esc returns to the picker.".into(),
             Action::OpenSnapshotPicker =>
                 "Open the snapshot picker for the current paragraph (↑↓ navigate · Enter loads · V diff · D delete).".into(),
             Action::GrammarCheck =>
@@ -1228,6 +1242,11 @@ impl KeyBindings {
                 // earlier-listed `ViewOpenParagraphTarget`
                 // shadowing this entry entirely.
                 entry("Shift+t", Action::ViewTimeline, Scope::Any),
+                // 1.2.14+ Phase A.2 — Ctrl+V Shift+H
+                // opens the Threads picker.  H for tHread
+                // (lowercase h is already
+                // ViewHiddenCharsReport).
+                entry("Shift+h", Action::ViewThreadsPicker, Scope::Any),
             ],
             top_level: vec![
                 // F1 anywhere: Help-book RAG modal.
