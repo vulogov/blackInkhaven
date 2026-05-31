@@ -977,3 +977,117 @@ leaves the on-disk DB alone.  Full reset is manual:
 
 See [`Tutorials/35-embedded-shell.md`](Tutorials/35-embedded-shell.md)
 for the full chord ladder + use-case walkthrough.
+
+## 1.2.14 — new HJSON blocks
+
+### `project` (1.2.14+) — project word-count goal
+
+Drives the `Ctrl+V Shift+G` project-goal modal.
+Optional block — when omitted, the modal explains
+how to add it.
+
+```hjson
+{
+  project: {
+    // Total word count target across the books named
+    // in `counted_books` (empty list = all user books).
+    word_count_goal: 80000
+
+    // ISO date the goal should be hit by.  Used to
+    // project finish-date deltas in the modal verdict.
+    target_date: "2026-12-31"
+
+    // Books that count toward the goal.  Empty list
+    // means "every top-level user book" (right for
+    // single-novel projects).  Name explicit books for
+    // RPG sourcebooks or anthology projects.
+    counted_books: []
+  }
+}
+```
+
+Verdict glyphs in the modal: `✓ Ahead` (projected
+finish < target), `· On track` (within 7 days),
+`✗ Behind` (projected finish > target + 7), `✓
+Complete` (current count ≥ goal).  Projection uses
+the 30-day word delta from `progress_cache.sparkline`
+— a rolling rate that matches the writing-progress
+modal's pace calculation.
+
+### `editor.continuation_anchor_count` (1.2.14+)
+
+How many previous paragraphs the `Ctrl+V d` AI
+continuation envelope sends as voice anchors.
+Default: `3`.  Higher = the LLM has more voice
+context but the envelope grows; cap around 5-6 for
+typical paragraph sizes.
+
+```hjson
+{
+  editor: {
+    continuation_anchor_count: 3
+  }
+}
+```
+
+### `editor.footnote_style` (1.2.14+)
+
+Inline footnote markup style for the `Ctrl+V f`
+insertion.  Two values:
+
+* `"typst"` (default) — inserts `#footnote[<body>]`
+  at the cursor.  The assembled-book renderer
+  honours this directly.
+* `"markdown"` — inserts `[^id]` at the cursor and
+  appends `[^id]: <body>` after the paragraph.
+  Use when exporting to markdown-only targets.
+
+```hjson
+{
+  editor: {
+    footnote_style: "typst"
+  }
+}
+```
+
+### `snippets` (1.2.14+) — editor snippet expansion
+
+Trigger-keyed text expansions.  When the editor
+sees a trigger followed by Space, it replaces the
+trigger with the expansion.  Trigger keys
+conventionally start with `\` to avoid clashes
+with prose.
+
+```hjson
+{
+  snippets: {
+    "\\dt": "{datetime}"
+    "\\sl": "{slug}"
+    "\\au": "— {author}"
+    "\\todo": "TODO ({date}): {cursor}"
+  }
+}
+```
+
+Built-in placeholders:
+
+| Placeholder | Expands to |
+|-------------|------------|
+| `{date}` | Today's date, ISO 8601 (`2026-05-31`) |
+| `{time}` | Now, 24h (`14:23`) |
+| `{datetime}` | `{date} {time}` |
+| `{slug}` | Open paragraph's slug |
+| `{book}` | Containing book's title |
+| `{chapter}` | Containing chapter's title |
+| `{author}` | `top_level.author` from inkhaven.hjson |
+| `{cursor}` | Marker that controls post-expansion cursor position.  After the expansion pastes, the cursor jumps to where `{cursor}` was (instead of ending at the tail of the pasted text). |
+
+Snippets without `{cursor}` paste atomically.  See
+Tutorial 51 for the full snippet workflow.
+
+Three picker-based placeholders (`{char_lookup}` /
+`{place_lookup}` / `{artefact_lookup}`) and the
+`bund:` prefix for Bund-VM expansion are queued for
+a future release — they need an async snippet state
+machine the current synchronous pipeline doesn't
+yet have.
