@@ -30,7 +30,7 @@ use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::{InsertPosition, NodeKind, Store, SYSTEM_TAG_THREADS};
 
-use super::ThreadCommand;
+use super::{ThreadCommand, ThreadExportFormat};
 
 pub fn run(project: &Path, cmd: ThreadCommand) -> Result<()> {
     match cmd {
@@ -42,6 +42,10 @@ pub fn run(project: &Path, cmd: ThreadCommand) -> Result<()> {
         } => add(project, &name, title.as_deref(), &status, &weight),
         ThreadCommand::List { status, weight } => {
             list(project, status.as_deref(), weight.as_deref())
+        }
+        ThreadCommand::Doctor { json } => doctor(project, json),
+        ThreadCommand::Export { format, output } => {
+            export(project, format, output.as_deref())
         }
     }
 }
@@ -339,6 +343,380 @@ fn list(
     Ok(())
 }
 
+/// 1.2.14+ Phase D.1 — full thread record used by
+/// export + doctor.  Mirrors the proposal §3
+/// schema fully (vs the lighter `ThreadSummary`
+/// the `list` subcommand reads).
+#[derive(Debug, Default, Clone, serde::Deserialize, serde::Serialize)]
+struct ThreadFull {
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    weight: String,
+    #[serde(default)]
+    opening: String,
+    #[serde(default)]
+    midpoint: String,
+    #[serde(default)]
+    payoff: String,
+    #[serde(default)]
+    characters: Vec<String>,
+    #[serde(default)]
+    places: Vec<String>,
+    #[serde(default)]
+    artefacts: Vec<String>,
+    #[serde(default)]
+    related_threads: Vec<String>,
+    #[serde(default)]
+    tension: i32,
+    #[serde(default)]
+    register: String,
+    #[serde(default)]
+    notes: String,
+}
+
+fn parse_thread_full(body: &str) -> Option<ThreadFull> {
+    if body.trim().is_empty() {
+        return None;
+    }
+    serde_hjson::from_str(body).ok()
+}
+
+/// 1.2.14+ Phase D.1 — `inkhaven thread doctor`.
+fn doctor(project: &Path, json: bool) -> Result<()> {
+    use crate::store::node::NodeKind;
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+
+    let threads_book = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(SYSTEM_TAG_THREADS)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Store(
+                "Threads system book missing — re-open the project to seed it".into(),
+            )
+        })?;
+    // Collect every thread + its reverse-link
+    // count.  Mirrors the picker's tally in
+    // tui::app::threads_impl.
+    let mut threads: Vec<(String, ThreadFull, uuid::Uuid)> = Vec::new();
+    for id in hierarchy.collect_subtree(threads_book.id) {
+        if id == threads_book.id {
+            continue;
+        }
+        let Some(node) = hierarchy.get(id) else { continue; };
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(id) else { continue; };
+        let body = std::str::from_utf8(&bytes).unwrap_or("");
+        let parsed = parse_thread_full(body).unwrap_or_default();
+        threads.push((node.title.clone(), parsed, id));
+    }
+    let mut link_tally: std::collections::HashMap<uuid::Uuid, usize> =
+        std::collections::HashMap::new();
+    for node in hierarchy.iter() {
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        for target in &node.linked_paragraphs {
+            *link_tally.entry(*target).or_insert(0) += 1;
+        }
+    }
+    // Distributions + blind spots.
+    let mut status_counts: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    let mut weight_counts: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    let mut zero_links: Vec<&str> = Vec::new();
+    let mut payoff_unfired: Vec<&str> = Vec::new();
+    let mut dormant: Vec<&str> = Vec::new();
+    let mut tension_avg_sum = 0i64;
+    let mut tension_avg_n = 0usize;
+    for (name, t, id) in &threads {
+        let status_key = if t.status.is_empty() {
+            "(empty)".to_string()
+        } else {
+            t.status.clone()
+        };
+        *status_counts.entry(status_key).or_insert(0) += 1;
+        let weight_key = if t.weight.is_empty() {
+            "(empty)".to_string()
+        } else {
+            t.weight.clone()
+        };
+        *weight_counts.entry(weight_key).or_insert(0) += 1;
+        let links = link_tally.get(id).copied().unwrap_or(0);
+        if links == 0 && !t.status.eq_ignore_ascii_case("setup") {
+            zero_links.push(name.as_str());
+        }
+        if t.status.eq_ignore_ascii_case("payoff") && links == 0 {
+            payoff_unfired.push(name.as_str());
+        }
+        // Dormant = status implies activity but
+        // few links project-wide.  Heuristic: 0
+        // or 1 link for a `develop` thread.
+        if t.status.eq_ignore_ascii_case("develop") && links <= 1 {
+            dormant.push(name.as_str());
+        }
+        tension_avg_sum += t.tension as i64;
+        tension_avg_n += 1;
+    }
+    let tension_avg = if tension_avg_n > 0 {
+        tension_avg_sum as f32 / tension_avg_n as f32
+    } else {
+        0.0
+    };
+
+    if json {
+        use serde_json::json;
+        let report = json!({
+            "thread_count": threads.len(),
+            "status_distribution": status_counts,
+            "weight_distribution": weight_counts,
+            "tension_avg": tension_avg,
+            "blind_spots": {
+                "zero_links": zero_links,
+                "payoff_unfired": payoff_unfired,
+                "dormant": dormant,
+            },
+        });
+        println!("{}", serde_json::to_string_pretty(&report).unwrap());
+        return Ok(());
+    }
+
+    println!("Thread doctor");
+    println!();
+    println!("  threads defined : {}", threads.len());
+    println!("  avg tension     : {:.1}", tension_avg);
+    println!();
+    println!("  status:");
+    for (k, v) in &status_counts {
+        println!("    {k:<10} {v}");
+    }
+    println!();
+    println!("  weight:");
+    for (k, v) in &weight_counts {
+        println!("    {k:<10} {v}");
+    }
+    println!();
+    println!("Blind spots");
+    if zero_links.is_empty() && payoff_unfired.is_empty() && dormant.is_empty() {
+        println!("  (none detected)");
+    } else {
+        if !zero_links.is_empty() {
+            println!("  ZERO LINKS — status past `setup` but no paragraph links:");
+            for t in &zero_links {
+                println!("    · {t}");
+            }
+        }
+        if !payoff_unfired.is_empty() {
+            println!("  PAYOFF UNFIRED — status `payoff` but no paragraph links:");
+            for t in &payoff_unfired {
+                println!("    · {t}");
+            }
+        }
+        if !dormant.is_empty() {
+            println!("  DORMANT — status `develop` but 0-1 links project-wide:");
+            for t in &dormant {
+                println!("    · {t}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 1.2.14+ Phase D.1 — `inkhaven thread export`.
+fn export(
+    project: &Path,
+    format: ThreadExportFormat,
+    output: Option<&Path>,
+) -> Result<()> {
+    use crate::store::node::NodeKind;
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+
+    let threads_book = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(SYSTEM_TAG_THREADS)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Store(
+                "Threads system book missing — re-open the project to seed it".into(),
+            )
+        })?;
+    let mut threads: Vec<(String, ThreadFull)> = Vec::new();
+    for id in hierarchy.collect_subtree(threads_book.id) {
+        if id == threads_book.id {
+            continue;
+        }
+        let Some(node) = hierarchy.get(id) else { continue; };
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(id) else { continue; };
+        let body = std::str::from_utf8(&bytes).unwrap_or("");
+        let parsed = parse_thread_full(body).unwrap_or_default();
+        threads.push((node.title.clone(), parsed));
+    }
+    threads.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+
+    let rendered: Vec<u8> = match format {
+        ThreadExportFormat::Json => {
+            let json: Vec<serde_json::Value> = threads
+                .iter()
+                .map(|(name, t)| {
+                    serde_json::json!({
+                        "name": name,
+                        "title": t.title,
+                        "status": t.status,
+                        "weight": t.weight,
+                        "opening": t.opening,
+                        "midpoint": t.midpoint,
+                        "payoff": t.payoff,
+                        "characters": t.characters,
+                        "places": t.places,
+                        "artefacts": t.artefacts,
+                        "related_threads": t.related_threads,
+                        "tension": t.tension,
+                        "register": t.register,
+                        "notes": t.notes,
+                    })
+                })
+                .collect();
+            let mut out = serde_json::to_vec_pretty(&json)
+                .map_err(|e| Error::Config(format!("json serialise: {e}")))?;
+            out.push(b'\n');
+            out
+        }
+        ThreadExportFormat::Csv => {
+            let mut s = String::new();
+            s.push_str(
+                "name,title,status,weight,tension,opening,midpoint,payoff,characters,places,artefacts,related_threads,register,notes\n",
+            );
+            for (name, t) in &threads {
+                s.push_str(&format!(
+                    "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+                    csv_field(name),
+                    csv_field(&t.title),
+                    csv_field(&t.status),
+                    csv_field(&t.weight),
+                    t.tension,
+                    csv_field(&t.opening),
+                    csv_field(&t.midpoint),
+                    csv_field(&t.payoff),
+                    csv_field(&t.characters.join(";")),
+                    csv_field(&t.places.join(";")),
+                    csv_field(&t.artefacts.join(";")),
+                    csv_field(&t.related_threads.join(";")),
+                    csv_field(&t.register),
+                    csv_field(&t.notes),
+                ));
+            }
+            s.into_bytes()
+        }
+        ThreadExportFormat::Markdown => {
+            let mut s = String::new();
+            s.push_str("# Thread inventory\n\n");
+            for (name, t) in &threads {
+                let title = if t.title.is_empty() {
+                    name.clone()
+                } else {
+                    t.title.clone()
+                };
+                s.push_str(&format!("## {title}\n\n"));
+                if !t.status.is_empty() || !t.weight.is_empty() {
+                    s.push_str(&format!(
+                        "* **status**: {} · **weight**: {} · **tension**: {}\n",
+                        t.status, t.weight, t.tension
+                    ));
+                }
+                if !t.opening.is_empty() {
+                    s.push_str(&format!("* **opening**: {}\n", t.opening));
+                }
+                if !t.midpoint.is_empty() {
+                    s.push_str(&format!("* **midpoint**: {}\n", t.midpoint));
+                }
+                if !t.payoff.is_empty() {
+                    s.push_str(&format!("* **payoff**: {}\n", t.payoff));
+                }
+                if !t.characters.is_empty() {
+                    s.push_str(&format!(
+                        "* characters: {}\n",
+                        t.characters.join(", ")
+                    ));
+                }
+                if !t.places.is_empty() {
+                    s.push_str(&format!(
+                        "* places: {}\n",
+                        t.places.join(", ")
+                    ));
+                }
+                if !t.artefacts.is_empty() {
+                    s.push_str(&format!(
+                        "* artefacts: {}\n",
+                        t.artefacts.join(", ")
+                    ));
+                }
+                if !t.related_threads.is_empty() {
+                    s.push_str(&format!(
+                        "* related: {}\n",
+                        t.related_threads.join(", ")
+                    ));
+                }
+                if !t.register.is_empty() {
+                    s.push_str(&format!("* register: {}\n", t.register));
+                }
+                if !t.notes.is_empty() {
+                    s.push_str(&format!("\n{}\n", t.notes));
+                }
+                s.push('\n');
+            }
+            s.into_bytes()
+        }
+    };
+
+    match output {
+        Some(path) => {
+            std::fs::write(path, &rendered).map_err(|e| {
+                Error::Config(format!("write {}: {e}", path.display()))
+            })?;
+            eprintln!("wrote {} bytes to {}", rendered.len(), path.display());
+        }
+        None => {
+            use std::io::Write;
+            std::io::stdout()
+                .write_all(&rendered)
+                .map_err(|e| Error::Config(format!("stdout write: {e}")))?;
+        }
+    }
+    Ok(())
+}
+
+/// CSV quoting for the export — RFC 4180.
+fn csv_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,5 +810,51 @@ mod tests {
     fn escape_hjson_handles_quotes_and_backslashes() {
         assert_eq!(escape_hjson(r#"he said "hi""#), r#"he said \"hi\""#);
         assert_eq!(escape_hjson(r"a\b"), r"a\\b");
+    }
+
+    #[test]
+    fn csv_field_quotes_when_needed() {
+        assert_eq!(csv_field("plain"), "plain");
+        assert_eq!(csv_field("with, comma"), "\"with, comma\"");
+        assert_eq!(csv_field("with \"quote\""), "\"with \"\"quote\"\"\"");
+    }
+
+    #[test]
+    fn parse_thread_full_extracts_every_field() {
+        let body = r#"{
+  title: "Inheritance subplot"
+  status: "develop"
+  weight: "subplot"
+  opening: "An heir arrives"
+  midpoint: "Will is contested"
+  payoff: "Truth revealed"
+  characters: ["aerin", "filip"]
+  places: ["marketplace"]
+  artefacts: ["the seal"]
+  related_threads: ["redemption-arc"]
+  tension: 7
+  register: "literary"
+  notes: "Worldbuilding rationale"
+}"#;
+        let t = parse_thread_full(body).unwrap();
+        assert_eq!(t.title, "Inheritance subplot");
+        assert_eq!(t.status, "develop");
+        assert_eq!(t.weight, "subplot");
+        assert_eq!(t.opening, "An heir arrives");
+        assert_eq!(t.midpoint, "Will is contested");
+        assert_eq!(t.payoff, "Truth revealed");
+        assert_eq!(t.tension, 7);
+        assert_eq!(t.characters.len(), 2);
+        assert_eq!(t.places.len(), 1);
+        assert_eq!(t.artefacts, vec!["the seal".to_string()]);
+        assert_eq!(t.related_threads, vec!["redemption-arc".to_string()]);
+        assert_eq!(t.register, "literary");
+        assert_eq!(t.notes, "Worldbuilding rationale");
+    }
+
+    #[test]
+    fn parse_thread_full_returns_none_on_empty() {
+        assert!(parse_thread_full("").is_none());
+        assert!(parse_thread_full("  \n").is_none());
     }
 }

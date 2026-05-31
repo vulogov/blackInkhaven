@@ -5155,7 +5155,7 @@ impl super::super::App {
         let hint = if *filter_active {
             " Enter / Esc exit filter · Backspace edits "
         } else {
-            " ↑↓ Enter open · r resolve · u reopen · R toggle resolved · d delete · / filter · Esc "
+            " ↑↓ Enter open · r resolve · u reopen · R toggle resolved · d delete · a AI digest · / filter · Esc "
         };
         lines.push(Line::from(Span::styled(
             hint.to_string(),

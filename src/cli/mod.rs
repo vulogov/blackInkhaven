@@ -808,12 +808,63 @@ pub enum LanguageExportFormat {
     DictionaryTwocol,
 }
 
+/// 1.2.14+ Phase D.1 — output format selector for
+/// `inkhaven thread export`.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ThreadExportFormat {
+    /// Full structured dump.
+    Json,
+    /// Flat CSV with paradigm fields collapsed
+    /// (characters / places / artefacts joined by
+    /// `;`).
+    Csv,
+    /// Printable markdown summary — one section
+    /// per thread with arc-shape + connections +
+    /// notes.
+    Markdown,
+}
+
 /// 1.2.14+ — sub-subcommands under
 /// `inkhaven thread …`.  Manages plot-thread
 /// paragraphs under the `Threads` system book.
 /// See `Documentation/PROPOSALS/1.2.14_PLAN.md`.
 #[derive(Debug, Subcommand)]
 pub enum ThreadCommand {
+    /// 1.2.14+ Phase D.1 — print a health report
+    /// for every thread under the `Threads` system
+    /// book.  Same shape as
+    /// `inkhaven language doctor`: status
+    /// distribution, weight distribution, link
+    /// coverage statistics, blind-spot detector
+    /// passes (dormant threads, payoff-marked-but-
+    /// unfired, status-vs-evidence mismatches).
+    /// Exit code 0 always — informational, not a
+    /// pass/fail gate.  Add `--json` for CI-
+    /// friendly structured output.
+    Doctor {
+        /// Emit the report as structured JSON
+        /// instead of the human-readable text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// 1.2.14+ Phase D.1 — export every thread's
+    /// data to a portable artefact.  See
+    /// `Documentation/PROPOSALS/1.2.14_PLAN.md`
+    /// §3 for the field shape.
+    Export {
+        /// Output format.  `json` is structured
+        /// data for downstream tooling; `csv` is
+        /// a flat table (paradigm fields
+        /// flattened to `key=value` pairs);
+        /// `markdown` is a printable summary
+        /// document.
+        #[arg(long, short = 'f', default_value = "json")]
+        format: ThreadExportFormat,
+        /// Output path.  Defaults to stdout when
+        /// omitted.
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
+    },
     /// Add a new thread paragraph under the
     /// `Threads` system book.  Seeds the body
     /// with the full commented HJSON template;

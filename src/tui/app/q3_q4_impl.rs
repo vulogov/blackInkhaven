@@ -374,12 +374,30 @@ impl App {
     }
 
     fn compute_recent_words_per_day(&self) -> Option<u64> {
-        // 1.2.14+ Phase Q.4.1 hook — wire the
-        // existing progress event log (the one
-        // driving the daily-streak heatmap) so the
-        // projection date is real.  Until then,
-        // the modal shows "no recent data" hint.
-        None
+        // 1.2.14+ Phase D.2 — read the existing
+        // ProgressSnapshot sparkline (last 30 days,
+        // oldest first, project-wide).  Average
+        // the non-zero days so a stretch of vacation
+        // doesn't drag the rate down to "you'll
+        // never finish" status.  Returns `None`
+        // when the cache hasn't built yet (no save
+        // events recorded) or every day is zero.
+        let snap = self.progress_cache.as_ref()?;
+        if snap.sparkline.is_empty() {
+            return None;
+        }
+        let mut sum: i64 = 0;
+        let mut active_days = 0u64;
+        for delta in &snap.sparkline {
+            if *delta > 0 {
+                sum += *delta;
+                active_days += 1;
+            }
+        }
+        if active_days == 0 {
+            return None;
+        }
+        Some((sum as u64) / active_days)
     }
 
     // ─────────────────────────────────────────
