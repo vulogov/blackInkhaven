@@ -244,16 +244,33 @@ pub fn run(project: &Path) -> Result<()> {
         crate::crash::ActionRecord::new("tui.project_opened"),
     );
 
-    // 1.2.15+ Phase H.1 — spawn the background
-    // health monitor.  `health.enabled` gates the
-    // spawn; the monitor returns `None` when
-    // disabled and the chip stays hidden.  Pinned
-    // to the current tokio runtime (inherited from
-    // `main.rs`).
+    // 1.2.15+ Phase H.1 + H.2 — spawn the
+    // background health monitor.  `health.enabled`
+    // gates the spawn; the monitor returns `None`
+    // when disabled and the chip stays hidden.
+    // Pinned to the current tokio runtime
+    // (inherited from `main.rs`).  Resolves the
+    // backup dir the same way `Store::resolve_
+    // backup_dir` does — empty `backup.out_dir` →
+    // sibling `inkhaven-backups/<basename>/`
+    // directory.
+    let backup_dir = if cfg.backup.out_dir.is_empty() {
+        crate::store::default_user_backup_dir(&layout.root)
+    } else {
+        let p = std::path::PathBuf::from(&cfg.backup.out_dir);
+        if p.is_absolute() {
+            p
+        } else {
+            layout.root.join(&p)
+        }
+    };
     let health_rx = crate::health::spawn_monitor(
-        layout.root.clone(),
+        crate::health::MonitorSetup {
+            project_root: layout.root.clone(),
+            backup_dir,
+            backup_max_age: cfg.backup.max_age,
+        },
         cfg.health.enabled,
-        cfg.health.cadence_seconds,
     );
 
     // 1.2.6+ — idempotent re-seed of the Prompts book with the
