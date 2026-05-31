@@ -13389,7 +13389,12 @@ impl App {
         )?;
         if let Some(rel) = &created.file {
             let abs = self.layout.root.join(rel);
-            std::fs::write(&abs, &bytes).map_err(Error::Io)?;
+            // 1.2.15+ Phase S.4 — atomic write so an
+            // interrupted directory import leaves
+            // either nothing on disk for this
+            // paragraph or its full body, never a
+            // half-written file.
+            crate::io_atomic::write(&abs, &bytes).map_err(Error::Io)?;
             let mut node = created.clone();
             self.store.update_paragraph_content(&mut node, &bytes)?;
         }
