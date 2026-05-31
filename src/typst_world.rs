@@ -66,7 +66,20 @@ fn loaded_fonts(settings: &WorldSettings) -> Arc<LoadedFonts> {
     let key = (settings.bundle_fonts, settings.use_system_fonts);
     let cache = FONT_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     {
-        if let Some(hit) = cache.lock().unwrap().get(&key).cloned() {
+        // 1.2.15+ Phase S.5 — recover from a
+        // poisoned mutex via `into_inner()` so a
+        // panic in a previous font-load attempt
+        // doesn't take down every subsequent
+        // typst compile.  The cache's invariants
+        // (HashMap<key, Arc<LoadedFonts>>) survive
+        // partial mutation cleanly; nothing
+        // user-visible is corrupted.
+        if let Some(hit) = cache
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&key)
+            .cloned()
+        {
             return hit;
         }
     }
@@ -78,7 +91,10 @@ fn loaded_fonts(settings: &WorldSettings) -> Arc<LoadedFonts> {
         book: LazyHash::new(kit.book),
         fonts: kit.fonts,
     });
-    cache.lock().unwrap().insert(key, loaded.clone());
+    cache
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(key, loaded.clone());
     loaded
 }
 
@@ -250,11 +266,24 @@ impl World for InkhavenWorld {
                 return Ok(Source::new(id, text.clone()));
             }
         }
-        if let Some(src) = self.sources.lock().unwrap().get(&id).cloned() {
+        // 1.2.15+ Phase S.5 — poisoned-lock recovery
+        // for the per-World source cache.  Same shape
+        // as `loaded_fonts`; the cache's invariants
+        // tolerate partial state cleanly.
+        if let Some(src) = self
+            .sources
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&id)
+            .cloned()
+        {
             return Ok(src);
         }
         let loaded = self.load_source(id)?;
-        self.sources.lock().unwrap().insert(id, loaded.clone());
+        self.sources
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(id, loaded.clone());
         Ok(loaded)
     }
 

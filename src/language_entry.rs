@@ -213,9 +213,17 @@ fn extract_hjson_block(body: &str) -> Option<&str> {
             // Closing fence: must be exactly "```" so we
             // don't accidentally close on "```typst".
             if trimmed == "```" {
-                let open = open_end.unwrap();
-                // Content sits between open and line_start.
-                return Some(&body[open..line_start]);
+                // 1.2.15+ Phase S.5 — `if let Some`
+                // pattern-match instead of `.unwrap()`.
+                // The else-branch can't fire (open_end
+                // is Some by construction of this
+                // arm), but the match makes the
+                // invariant local + the panic surface
+                // disappears at the type level.
+                if let Some(open) = open_end {
+                    // Content sits between open and line_start.
+                    return Some(&body[open..line_start]);
+                }
             }
         }
     }

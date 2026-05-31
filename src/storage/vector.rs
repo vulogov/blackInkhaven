@@ -170,7 +170,15 @@ impl VectorEngine {
                     .map_err(|e| anyhow!("failed to open vector store at {:?}: {e}", self.path))?,
             );
         }
-        f(guard.as_mut().unwrap())
+        // 1.2.15+ Phase S.5 — `.expect()` instead of
+        // `.unwrap()` so the invariant is captured in
+        // the message ("set in the block immediately
+        // above").  Functionally identical; the panic
+        // surface only fires if the invariant is
+        // broken — and now the panic message tells
+        // future-us why.
+        let store = guard.as_mut().expect("set immediately above when None");
+        f(store)
     }
 }
 
