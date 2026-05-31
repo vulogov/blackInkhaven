@@ -195,7 +195,6 @@ pub fn resolve_author(configured: Option<&str>) -> String {
 /// Counting matches `tui-textarea`'s convention:
 /// each line is one row, `\n` separators count as
 /// one character between rows.
-#[allow(dead_code)] // consumed by Phase C.1.1 inline-span overlay
 pub fn char_offset_to_row_col(
     lines: &[String],
     offset: usize,
@@ -297,7 +296,6 @@ pub fn derive_anchor_span(
 /// `col_end == usize::MAX` signals the span
 /// continues past the visible row width — the
 /// renderer clamps.
-#[allow(dead_code)] // consumed by Phase C.1.1 inline-span overlay
 pub fn per_row_hits(
     lines: &[String],
     comments: &[Comment],
@@ -337,6 +335,7 @@ pub fn per_row_hits(
                 col_start: start_col,
                 col_end: end_col,
                 comment_idx: idx,
+                resolved: c.resolved,
             });
         }
     }
@@ -344,11 +343,16 @@ pub fn per_row_hits(
 }
 
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)] // consumed by Phase C.1.1 inline-span overlay
 pub struct RowHit {
     pub col_start: usize,
     pub col_end: usize,
+    /// Index into the paragraph's
+    /// `CommentsFile.comments` vector — used by
+    /// Phase C.2 panel navigation to map a cell
+    /// back to its source comment.
+    #[allow(dead_code)]
     pub comment_idx: usize,
+    pub resolved: bool,
 }
 
 /// 1.2.14+ Phase C.1 — find the comment whose
@@ -492,6 +496,16 @@ mod tests {
         assert_eq!(hits[0].len(), 1);
         assert_eq!(hits[0][0].col_start, 6);
         assert_eq!(hits[0][0].col_end, 11);
+        assert!(!hits[0][0].resolved);
+    }
+
+    #[test]
+    fn per_row_hits_propagates_resolved_flag() {
+        let lines = mk_lines(&["hello world"]);
+        let mut c = mk_comment(6, 11);
+        c.resolved = true;
+        let hits = per_row_hits(&lines, &[c]);
+        assert!(hits[0][0].resolved);
     }
 
     #[test]

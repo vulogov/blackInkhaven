@@ -933,6 +933,21 @@ impl super::super::App {
                 })
                 .collect();
 
+        // 1.2.14+ Phase C.1.1 — comment-span hits
+        // per editor row.  Empty fast-path when the
+        // open paragraph has no comments (the
+        // common case — most paragraphs carry
+        // none).
+        let comment_per_row: Vec<Vec<super::super::super::comments::RowHit>> =
+            if opened.comments.comments.is_empty() {
+                vec![Vec::new(); current_lines.len()]
+            } else {
+                super::super::super::comments::per_row_hits(
+                    &current_lines,
+                    &opened.comments.comments,
+                )
+            };
+
         let (cur_row, cur_col) = opened.textarea.cursor();
         let selection = opened.textarea.selection_range();
 
@@ -1010,6 +1025,10 @@ impl super::super::App {
                 .get(row)
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
+            let comment_hits = comment_per_row
+                .get(row)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             let mut text_spans = build_row_spans(
                 &highlighted[row],
                 row,
@@ -1021,6 +1040,7 @@ impl super::super::App {
                 row_hits,
                 lex_hits,
                 style_hits,
+                comment_hits,
                 correction_flags,
                 theme,
             );
@@ -1204,6 +1224,21 @@ impl super::super::App {
                 })
                 .collect();
 
+        // 1.2.14+ Phase C.1.1 — comment-span hits
+        // per editor row.  Empty fast-path when the
+        // open paragraph has no comments (the
+        // common case — most paragraphs carry
+        // none).
+        let comment_per_row: Vec<Vec<super::super::super::comments::RowHit>> =
+            if opened.comments.comments.is_empty() {
+                vec![Vec::new(); current_lines.len()]
+            } else {
+                super::super::super::comments::per_row_hits(
+                    &current_lines,
+                    &opened.comments.comments,
+                )
+            };
+
         let (cur_row, cur_col) = opened.textarea.cursor();
         let selection = opened.textarea.selection_range();
 
@@ -1294,6 +1329,10 @@ impl super::super::App {
                 .get(v.src_row)
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
+            let comment_hits = comment_per_row
+                .get(v.src_row)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             let mut text_spans = build_visual_row_spans(
                 v,
                 selection,
@@ -1302,6 +1341,7 @@ impl super::super::App {
                 row_hits,
                 lex_hits,
                 style_hits,
+                comment_hits,
                 correction_flags,
                 theme,
             );
