@@ -2407,13 +2407,19 @@ impl super::super::App {
         );
 
         let body_h = body_rect.height as usize;
+        // 1.2.15+ Phase S.2 — `.get(*idx)` instead
+        // of `entries[*idx]` so a stale match index
+        // (e.g. after a tree mutation invalidated
+        // `entries` but the picker still holds the
+        // old `matches` ring) skips that row instead
+        // of panicking the renderer.
         let lines: Vec<Line<'_>> = matches
             .iter()
             .enumerate()
             .skip(*scroll)
             .take(body_h)
-            .map(|(i, idx)| {
-                let e = &entries[*idx];
+            .filter_map(|(i, idx)| {
+                let e = entries.get(*idx)?;
                 let head = format!(" {}", e.title);
                 let path = format!("    {}", e.slug_path);
                 let spans: Vec<Span> = vec![
@@ -2427,7 +2433,7 @@ impl super::super::App {
                 if i == *cursor {
                     line = line.style(Style::default().add_modifier(Modifier::REVERSED));
                 }
-                line
+                Some(line)
             })
             .collect();
         f.render_widget(Paragraph::new(lines), body_rect);
@@ -3434,7 +3440,16 @@ impl super::super::App {
                 &self.theme,
             );
 
-        let total_lines = highlighted.len().max(1);
+        // 1.2.15+ Phase S.2 — bound `row_end` against
+        // the actual `highlighted.len()`, not the
+        // `.max(1)`-clamped `total_lines`.  The clamp
+        // was needed for "show 1 empty line when the
+        // buffer is empty" semantics, but with it
+        // active, an empty buffer would index
+        // `highlighted[0]` below and crash.  Skip the
+        // loop instead when the buffer is genuinely
+        // empty.
+        let total_lines = highlighted.len();
         let row_end = (new_scroll_row + body_h_us).min(total_lines);
         let mut painted: Vec<Line<'_>> = Vec::with_capacity(body_h_us);
         for row in new_scroll_row..row_end {
@@ -3446,7 +3461,16 @@ impl super::super::App {
             // Concat the highlighted runs into a single
             // string + parallel style list so we can slice
             // by column for horizontal scroll.
-            let runs = &highlighted[row];
+            //
+            // 1.2.15+ Phase S.2 — defensive read.  The
+            // loop bound guarantees `row < highlighted.
+            // len()`, but a future refactor could break
+            // that; use `.get(row)` + early-continue so
+            // a stray miscalculation skips a row
+            // instead of panicking the renderer.
+            let Some(runs) = highlighted.get(row) else {
+                continue;
+            };
             let mut cells: Vec<(char, Style)> = Vec::new();
             for run in runs {
                 for ch in run.text.chars() {
