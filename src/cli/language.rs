@@ -113,7 +113,7 @@ const STANDARD_CHAPTERS: &[&str] = &[
 /// at create time; the body is just the metadata
 /// object (no Typst headings, no markdown fences).
 ///
-/// 1.2.13+ Phase D.1 hotfix — switched FROM the Typst-
+/// switched FROM the Typst-
 /// with-fenced-HJSON format to pure HJSON because the
 /// Typst editor mode rendered the body as a heading +
 /// opaque code fence instead of as structured config.
@@ -281,16 +281,16 @@ fn init(project: &Path, name: &str) -> Result<()> {
         "  · edit `Language/{name}/Meta/overview` to set the alphabet + metadata"
     );
     eprintln!(
-        "  · add dictionary entries under `Language/{name}/Dictionary` (Phase B: `inkhaven language add-word`)"
+        "  · add dictionary entries under `Language/{name}/Dictionary` (`inkhaven language add-word`)"
     );
     eprintln!(
-        "  · add grammar rules under `Language/{name}/Grammar` for the Phase C AI translation flow"
+        "  · add grammar rules under `Language/{name}/Grammar` for the AI translation flow"
     );
 
     Ok(())
 }
 
-/// 1.2.13+ Phase D.1 — shared scaffold helper.
+/// shared scaffold helper.
 /// Creates the 5 standard chapters under an already-
 /// existing per-language book + seeds
 /// `Meta/overview` with the starter HJSON.  Used by
@@ -366,7 +366,7 @@ pub(crate) fn scaffold_language_chapters(
     Ok(())
 }
 
-/// 1.2.13+ Phase B — `inkhaven language add-word`.
+/// `inkhaven language add-word`.
 /// Resolves the target language sub-book by case-
 /// insensitive title; finds its Dictionary chapter;
 /// derives the alphabet bucket for the new word from
@@ -429,7 +429,7 @@ fn add_word(
     Ok(())
 }
 
-/// 1.2.13+ Phase D.1 hotfix — shared "add dictionary
+/// shared "add dictionary
 /// entry" implementation used by:
 ///   * the CLI `add-word` subcommand (above);
 ///   * the in-TUI tree-pane Add Paragraph (`+`) commit
@@ -461,7 +461,7 @@ pub(crate) fn add_dictionary_entry_impl(
     create_dictionary_entry(store, cfg, lang_book, word, &body)
 }
 
-/// 1.2.13+ Phase D.1 — fully-populated entry record
+/// fully-populated entry record
 /// used by the CSV import path.  Distinct from the
 /// `language_entry::DictionaryEntry` parser type
 /// because we own this one (mutable builder) and the
@@ -583,7 +583,7 @@ fn create_dictionary_entry(
     Ok((entry, bucket))
 }
 
-/// 1.2.13+ Phase D.1 — compact concrete HJSON for an
+/// compact concrete HJSON for an
 /// imported entry.  Emits ONLY the fields the import
 /// row actually populated; skips empty optional
 /// fields entirely so the resulting paragraph reads
@@ -659,7 +659,7 @@ fn build_imported_entry_body(entry: &ImportEntry) -> String {
     out
 }
 
-/// 1.2.13+ Phase D.1 hotfix — seed body for a grammar
+/// seed body for a grammar
 /// rule paragraph created in the TUI.  Mirrors the
 /// proposal §4 schema so future Phase D.2 work
 /// (`--format grammar` exporter, `language define-rule`
@@ -770,7 +770,7 @@ pub(crate) const GRAMMAR_RULE_SEED_BODY: &str = "{
 }
 ";
 
-/// 1.2.13+ Phase D.1 hotfix — seed body for a
+/// seed body for a
 /// phonology rule paragraph.  Lighter than the
 /// grammar template because phonology rules tend to
 /// be more declarative (allowed onsets, vowel
@@ -946,7 +946,7 @@ fn derive_alphabet_bucket(
 /// highlighting.  The paragraph's `content_type` is
 /// set to `"hjson"` at create time.
 ///
-/// 1.2.13+ Phase D.1 hotfix — switched FROM Typst-
+/// switched FROM Typst-
 /// with-fenced-HJSON to pure HJSON.  The translation
 /// prompt composer + parser handle both formats; new
 /// entries use pure HJSON.
@@ -1059,7 +1059,7 @@ fn escape_hjson(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// 1.2.13+ Phase D — health report for a language
+/// health report for a language
 /// sub-book.  Walks every chapter, counts entries +
 /// rules + samples, computes coverage metrics, and
 /// emits a human-readable summary on stdout.  Exit
@@ -1405,7 +1405,7 @@ fn doctor(project: &Path, language: &str, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// 1.2.13+ Phase D — export a language's content
+/// export a language's content
 /// to a portable artefact.  Three formats land in
 /// Phase D; `grammar` and `phrasebook` from the
 /// proposal §12 are deferred to D.2.
@@ -1771,11 +1771,11 @@ fn typst_escape(s: &str) -> String {
     out
 }
 
-/// 1.2.13+ Phase D.1 — `inkhaven language list`.
+/// `inkhaven language list`.
 /// Walks the `Language` system book and emits one
 /// row per language with summary counts.  Quick
 /// at-a-glance complement to `language doctor`.
-/// 1.2.13+ Phase D.1 — `inkhaven language add-word
+/// `inkhaven language add-word
 /// <lang> --import <path.csv>`.  Bulk-load a CSV
 /// dictionary.  Format described in the CLI variant
 /// docstring; mechanically:
@@ -2126,7 +2126,7 @@ fn split_semicolon(raw: &str) -> Vec<String> {
 /// Returns `Vec<Vec<String>>` — one Vec per row.
 /// Errors only on truly malformed input (unclosed
 /// quote at end of file).
-/// 1.2.13+ Phase D.1 — read + parse the language
+/// read + parse the language
 /// sub-book's `Meta/overview` body.  Returns `None`
 /// when the chapter / paragraph is missing or the
 /// body has no parseable HJSON (pre-Phase-A
@@ -2168,7 +2168,7 @@ fn read_meta_overview(
         .map_err(Error::Config)?)
 }
 
-/// 1.2.13+ Phase D.1 — collect the union of every
+/// collect the union of every
 /// Phonology rule's `phonemes` field as a single
 /// list of allowed grapheme strings.  Used as the
 /// reference inventory the CSV import validates
@@ -2241,7 +2241,7 @@ fn collect_phonology_inventories(
     Ok(out)
 }
 
-/// 1.2.13+ Phase D.1 — find the first character in
+/// find the first character in
 /// `word` that doesn't match any entry in `inventory`.
 /// Returns the offending character so the error
 /// message can name it.  Case-insensitive: `'a'`
@@ -2269,7 +2269,7 @@ fn first_unknown_letter(word: &str, inventory: &[String]) -> Option<char> {
     None
 }
 
-/// 1.2.13+ Phase D.1 — `--new` wipe.  Deletes every
+/// `--new` wipe.  Deletes every
 /// paragraph + bucket subchapter under the
 /// language's Dictionary chapter, preserving the
 /// Dictionary chapter itself so the subsequent
@@ -2452,7 +2452,7 @@ fn list(project: &Path) -> Result<()> {
     Ok(())
 }
 
-/// 1.2.13+ Phase D.1 — `inkhaven language
+/// `inkhaven language
 /// remove-word <language> <word>`.  Mirror of
 /// `add-word`: resolves the language sub-book by
 /// case-insensitive title; finds the Dictionary
@@ -2574,7 +2574,7 @@ mod tests {
         );
     }
 
-    /// 1.2.13+ Phase D.1 hotfix — the verbose seed
+    /// the verbose seed
     /// templates use HJSON multi-line strings (`'''`)
     /// and a generous amount of commented-out
     /// optional fields.  A typo or unbalanced bracket

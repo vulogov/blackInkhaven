@@ -144,7 +144,7 @@ fn escape_hjson(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// 1.2.14+ Phase A.1 — public shim for the TUI's
+/// public shim for the TUI's
 /// `commit_add` to call when `+` fires under the
 /// Threads system book.  The TUI typed-name
 /// becomes the thread's `title` field; status
@@ -343,7 +343,7 @@ fn list(
     Ok(())
 }
 
-/// 1.2.14+ Phase D.1 — full thread record used by
+/// full thread record used by
 /// export + doctor.  Mirrors the proposal §3
 /// schema fully (vs the lighter `ThreadSummary`
 /// the `list` subcommand reads).
@@ -384,7 +384,7 @@ fn parse_thread_full(body: &str) -> Option<ThreadFull> {
     serde_hjson::from_str(body).ok()
 }
 
-/// 1.2.14+ Phase D.1 — `inkhaven thread doctor`.
+/// `inkhaven thread doctor`.
 fn doctor(project: &Path, json: bool) -> Result<()> {
     use crate::store::node::NodeKind;
     let layout = ProjectLayout::new(project);
@@ -535,7 +535,7 @@ fn doctor(project: &Path, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// 1.2.14+ Phase D.1 — `inkhaven thread export`.
+/// `inkhaven thread export`.
 fn export(
     project: &Path,
     format: ThreadExportFormat,

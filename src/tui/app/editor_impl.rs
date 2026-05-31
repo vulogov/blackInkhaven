@@ -1331,14 +1331,32 @@ impl super::App {
         // content by overwriting the yank with the
         // expansion text + pasting.
         doc.textarea.cut();
-        // Paste the expansion.  `set_yank_text` +
-        // `paste` is the textarea API that handles
-        // multi-line strings correctly (insert_str
-        // would, too, but yank/paste is the
-        // canonical "replace" pattern in the rest
-        // of this crate).
-        doc.textarea.set_yank_text(expansion);
-        doc.textarea.paste();
+        // {cursor} placeholder support: split the
+        // expansion at the first `{cursor}` marker;
+        // paste the head, remember position, paste
+        // the tail, then move cursor back to the
+        // remembered position so the author lands
+        // INSIDE the snippet.  Snippets without
+        // `{cursor}` paste atomically — cursor
+        // ends after the last char as before.
+        if let Some((head, tail)) = expansion.split_once("{cursor}") {
+            if !head.is_empty() {
+                doc.textarea.set_yank_text(head.to_string());
+                doc.textarea.paste();
+            }
+            let cursor_after_head = doc.textarea.cursor();
+            if !tail.is_empty() {
+                doc.textarea.set_yank_text(tail.to_string());
+                doc.textarea.paste();
+            }
+            doc.textarea.move_cursor(CursorMove::Jump(
+                cursor_after_head.0 as u16,
+                cursor_after_head.1 as u16,
+            ));
+        } else {
+            doc.textarea.set_yank_text(expansion);
+            doc.textarea.paste();
+        }
         doc.dirty = true;
     }
 }

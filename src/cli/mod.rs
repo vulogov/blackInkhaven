@@ -56,9 +56,9 @@ pub enum Command {
         /// Overwrite existing configuration if present.
         #[arg(long)]
         force: bool,
-        /// 1.2.14+ Phase Q.1 — project template to
-        /// scaffold the manuscript book + chapters
-        /// + system-book seed entries.  Accepts:
+        /// Project template to scaffold the
+        /// manuscript book + chapters + system-book
+        /// seed entries.  Accepts:
         /// `empty` (default, current behavior),
         /// `novel` (three-act manuscript + Characters
         /// stubs), `nonfiction` (intro/parts/
@@ -432,7 +432,7 @@ pub enum Command {
     #[command(subcommand)]
     Prompts(PromptsCommand),
 
-    /// 1.2.13+ Phase A — invented-language tooling.
+    /// invented-language tooling.
     /// Scaffolds the per-language sub-books inside
     /// the top-level `Language` system book.  See
     /// `Documentation/PROPOSALS/LANGUAGE_BOOK.md`
@@ -450,13 +450,13 @@ pub enum Command {
     /// See `Documentation/PROPOSALS/1.2.14_PLAN.md`.
     #[command(subcommand)]
     Thread(ThreadCommand),
-    /// 1.2.14+ Phase Q.1 — `inkhaven template
+    /// `inkhaven template
     /// <subcommand>`.  Surfaces information about
     /// the project templates available to
     /// `inkhaven init --template <name>`.
     #[command(subcommand)]
     Template(TemplateCommand),
-    /// 1.2.14+ Phase C.2 — `inkhaven comments
+    /// `inkhaven comments
     /// <subcommand>`.  Headless manipulation of
     /// the per-paragraph sidecar comment files
     /// (`.comments.json`).  Mirrors the in-TUI
@@ -465,7 +465,7 @@ pub enum Command {
     Comments(CommentsCommand),
 }
 
-/// 1.2.14+ Phase C.2 — sub-subcommands under
+/// sub-subcommands under
 /// `inkhaven comments …`.
 #[derive(Debug, Subcommand)]
 pub enum CommentsCommand {
@@ -505,7 +505,7 @@ pub enum CommentsCommand {
     },
 }
 
-/// 1.2.14+ Phase Q.1 — sub-subcommands under
+/// sub-subcommands under
 /// `inkhaven template …`.
 #[derive(Debug, Subcommand)]
 pub enum TemplateCommand {
@@ -611,7 +611,7 @@ pub enum PromptsCommand {
     },
 }
 
-/// 1.2.13+ Phase A — sub-subcommands under
+/// sub-subcommands under
 /// `inkhaven language …`.
 #[derive(Debug, Subcommand)]
 pub enum LanguageCommand {
@@ -632,7 +632,7 @@ pub enum LanguageCommand {
         /// recommended; the slug is auto-derived.
         name: String,
     },
-    /// 1.2.13+ Phase B — add a dictionary entry to
+    /// add a dictionary entry to
     /// a language's `Dictionary` chapter.  Auto-
     /// creates the alphabet subchapter from the
     /// language's `Meta/overview.alphabet` field
@@ -674,7 +674,7 @@ pub enum LanguageCommand {
         /// author wants frozen into the entry.
         #[arg(long)]
         example: Option<String>,
-        /// 1.2.13+ Phase D.1 — bulk-import a CSV
+        /// bulk-import a CSV
         /// dictionary.  When set, the positional
         /// <word> + the --type / --translation /
         /// --example flags are ignored; every row
@@ -695,7 +695,7 @@ pub enum LanguageCommand {
         /// Tally printed at end.
         #[arg(long, value_name = "PATH")]
         import: Option<PathBuf>,
-        /// 1.2.13+ Phase D.1 — when used with --import,
+        /// when used with --import,
         /// WIPE the language's existing Dictionary
         /// chapter (every bucket subchapter + every
         /// entry paragraph) before importing the CSV.
@@ -706,7 +706,7 @@ pub enum LanguageCommand {
         /// words skipped, new rows added).
         #[arg(long, requires = "import")]
         new: bool,
-        /// 1.2.13+ Phase D.1 — skip the pre-flight
+        /// skip the pre-flight
         /// alphabet + phonology validation that
         /// normally aborts an import when any word
         /// uses characters outside the language's
@@ -719,7 +719,7 @@ pub enum LanguageCommand {
         #[arg(long, requires = "import")]
         force: bool,
     },
-    /// 1.2.13+ Phase D — health report for a language
+    /// health report for a language
     /// sub-book.  Counts dictionary entries, entries
     /// with examples, entries with inflection
     /// paradigms, grammar / phonology rule counts,
@@ -743,14 +743,14 @@ pub enum LanguageCommand {
         #[arg(long)]
         json: bool,
     },
-    /// 1.2.13+ Phase D.1 — list every defined
+    /// list every defined
     /// language with summary counts (dictionary
     /// entries, grammar / phonology rules, sample
     /// texts).  Companion to `inkhaven language
     /// doctor` for a quick at-a-glance overview of
     /// every language in the project.
     List,
-    /// 1.2.13+ Phase D.1 — remove a dictionary entry
+    /// remove a dictionary entry
     /// from a language.  Mirror of `add-word`:
     /// resolves the language sub-book by case-
     /// insensitive title; finds the Dictionary
@@ -765,7 +765,7 @@ pub enum LanguageCommand {
         /// title match).
         word: String,
     },
-    /// 1.2.13+ Phase D — export a language's content
+    /// export a language's content
     /// to a portable artefact.  See the proposal §12.
     /// Three formats land in Phase D; the remaining
     /// two (grammar reference + phrasebook) are
@@ -790,7 +790,7 @@ pub enum LanguageCommand {
     },
 }
 
-/// 1.2.13+ Phase D — output format selector for
+/// output format selector for
 /// `inkhaven language export`.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum LanguageExportFormat {
@@ -808,7 +808,7 @@ pub enum LanguageExportFormat {
     DictionaryTwocol,
 }
 
-/// 1.2.14+ Phase D.1 — output format selector for
+/// output format selector for
 /// `inkhaven thread export`.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ThreadExportFormat {
@@ -830,7 +830,7 @@ pub enum ThreadExportFormat {
 /// See `Documentation/PROPOSALS/1.2.14_PLAN.md`.
 #[derive(Debug, Subcommand)]
 pub enum ThreadCommand {
-    /// 1.2.14+ Phase D.1 — print a health report
+    /// print a health report
     /// for every thread under the `Threads` system
     /// book.  Same shape as
     /// `inkhaven language doctor`: status
@@ -847,7 +847,7 @@ pub enum ThreadCommand {
         #[arg(long)]
         json: bool,
     },
-    /// 1.2.14+ Phase D.1 — export every thread's
+    /// export every thread's
     /// data to a portable artefact.  See
     /// `Documentation/PROPOSALS/1.2.14_PLAN.md`
     /// §3 for the field shape.

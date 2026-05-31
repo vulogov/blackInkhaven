@@ -20,11 +20,19 @@
 //! | `{paragraph_slug}` | The open paragraph's slug |
 //! | `{selection}` | The active selection text (empty when none) |
 //! | `{author}` | Resolved comment author (mirror of `editor.comment_author`) |
+//! | `{cursor}` | Position the editor cursor at this point in the expansion (split-paste) |
 //!
-//! Cursor-positioning (`{cursor}`), picker-based
-//! placeholders (`{char_lookup}` etc.), and the
+//! `{cursor}` is processed by the editor's
+//! `maybe_expand_snippet` after `expand_placeholders`
+//! returns — the expansion gets split at the
+//! marker, the head pasted, cursor position
+//! captured, tail pasted, cursor moved back.
+//! Picker-based placeholders (`{char_lookup}`,
+//! `{place_lookup}`, `{artefact_lookup}`) and the
 //! `bund:` prefix for advanced expansion are
-//! queued for Phase Q.2.1.
+//! still queued (the picker route needs a modal
+//! state machine the snippet pipeline doesn't yet
+//! have).
 //!
 //! See `Documentation/PROPOSALS/1.2.14_PLAN.md`
 //! §6.
@@ -237,6 +245,23 @@ mod tests {
     fn expand_unmatched_brace_passes_through() {
         let out = expand_placeholders("{unterminated", &ExpansionContext::default());
         assert_eq!(out, "{unterminated");
+    }
+
+    #[test]
+    fn expand_cursor_placeholder_passes_through() {
+        // `{cursor}` is intentionally an unknown
+        // placeholder to `expand_placeholders` so
+        // the editor's split-paste logic can find
+        // and consume it.  Verify the marker
+        // survives expansion verbatim.
+        let body = "TODO: {cursor}\nresolved by {author}";
+        let ctx = ExpansionContext {
+            author: "vladimir".into(),
+            ..Default::default()
+        };
+        let out = expand_placeholders(body, &ctx);
+        assert!(out.contains("{cursor}"));
+        assert!(out.contains("vladimir"));
     }
 
     #[test]

@@ -29,7 +29,7 @@ use crate::error::{Error, Result};
 use crate::store::hierarchy::Hierarchy;
 use crate::store::{InsertPosition, NodeKind, Store};
 
-/// 1.2.14+ Phase Q.1 — one project template.
+/// one project template.
 /// Captures the book structure + system-book seed
 /// entries the template adds on top of the
 /// standard init scaffolding.
@@ -87,19 +87,24 @@ pub const TEMPLATES: &[ProjectTemplate] = &[
     RPG_SOURCEBOOK,
     TECHNICAL,
     NANOWRIMO,
-    // 1.2.14+ Phase D.5 — Russian-literature
-    // templates.  Each carries genre-authentic
-    // chapter structure + Russian-language book
-    // / chapter / seed-paragraph titles.  Post-
-    // init message recommends setting
-    // `language: "russian"` in inkhaven.hjson
-    // so the Snowball stemmer + multilingual
-    // prompt resolver flip to Russian.
+    // Russian-literature templates.  Each carries
+    // genre-authentic chapter structure +
+    // Russian-language book / chapter / seed-
+    // paragraph titles.  Post-init message
+    // recommends setting `language: "russian"` in
+    // inkhaven.hjson so the Snowball stemmer +
+    // multilingual prompt resolver flip to
+    // Russian.
     RUSSIAN_NOVEL,
     RUSSIAN_LONG_STORY,
     RUSSIAN_SCIFI,
     RUSSIAN_LORE,
     RUSSIAN_UTOPIA,
+    // Additional genre templates beyond the
+    // mainstream `novel`.
+    EPIC_FANTASY,
+    MYSTERY,
+    FRENCH_NOVEL,
 ];
 
 pub const EMPTY: ProjectTemplate = ProjectTemplate {
@@ -159,7 +164,7 @@ pub const NOVEL: ProjectTemplate = ProjectTemplate {
          · Open the Manuscript book and start Act I\n  \
          · Edit Characters/protagonist (etc.) to capture voice + arc\n  \
          · Set `project.word_count_goal: 80000` in inkhaven.hjson \
-            (1.2.14 Phase Q.4 will surface the projection modal)\n",
+            (Ctrl+V Shift+G shows the projection modal)\n",
 };
 
 pub const NONFICTION: ProjectTemplate = ProjectTemplate {
@@ -625,7 +630,395 @@ pub const RUSSIAN_UTOPIA: ProjectTemplate = ProjectTemplate {
          · Установите `project.word_count_goal: 60000` (стандартный размер утопии)\n",
 };
 
-/// 1.2.14+ Phase Q.1 — apply the named template to
+// ──────────────────────────────────────────────────
+// Additional English-language + French genre
+// templates.
+//
+// * Epic fantasy — Tolkien / Sanderson / Jordan
+//   tradition.  Big book series structure with
+//   front-matter (map, dramatis personae,
+//   glossary) and back-matter (appendices).
+//   Single-volume scaffold; author duplicates the
+//   book for sequels.  Recommended goal 150K
+//   (volume one of a trilogy).
+//
+// * Mystery — Christie / Doyle / modern
+//   procedural tradition.  Clue-tracking matters
+//   — pre-seeds Threads with `the-crime`,
+//   `the-misdirection`, `the-solution` arcs.
+//   Characters include detective + victim +
+//   suspects (3).  Places include the crime
+//   scene + the detective's HQ.  Recommended
+//   goal 70K.
+//
+// * French novel — `roman` tradition.  Often
+//   structured as numbered `Première partie` /
+//   `Deuxième partie` / `Troisième partie` with
+//   chapter sub-divisions (`Chapitre I`, etc.).
+//   Recommended goal 90K.  Post-init message
+//   recommends `language: "french"` for the
+//   Snowball stemmer.
+// ──────────────────────────────────────────────────
+
+pub const EPIC_FANTASY: ProjectTemplate = ProjectTemplate {
+    name: "epic-fantasy",
+    description:
+        "Epic fantasy manuscript.  Volume-one scaffold (Prologue / Three Books / \
+         Epilogue) + Appendices.  Pre-seeds Characters (hero / shadow / mentor / \
+         herald), Places (the homeland / the wilds / the dark tower), Artefacts \
+         (the artefact / the mentor's gift), Threads (the call / the descent / \
+         the return).  Recommended goal 150000 words.",
+    manuscript_book: Some(ManuscriptBook {
+        title: "Manuscript",
+        chapters: &[
+            "Prologue",
+            "Book One — The Homeland",
+            "Book Two — The Road",
+            "Book Three — The Tower",
+            "Epilogue",
+            "Appendix A — Dramatis Personae",
+            "Appendix B — Glossary",
+            "Appendix C — Maps",
+        ],
+        paragraph_content_type: None,
+    }),
+    seeds: &[
+        SystemBookSeed {
+            system_tag: "characters",
+            paragraphs: &[
+                (
+                    "hero",
+                    "= hero\n\n\
+                     The protagonist who answers the call.  Ordinary at the\n\
+                     start; transformed by the end.\n\n\
+                     // Fill in: voice, want, need, internal conflict,\n\
+                     // mentor relationship.\n",
+                ),
+                (
+                    "shadow",
+                    "= shadow\n\n\
+                     The antagonist who embodies the hero's fear or\n\
+                     temptation — what the hero could become.\n",
+                ),
+                (
+                    "mentor",
+                    "= mentor\n\n\
+                     The figure who gives the hero what they need to face\n\
+                     the shadow.  Often gone or absent by the midpoint.\n",
+                ),
+                (
+                    "herald",
+                    "= herald\n\n\
+                     The character or event that delivers the call to\n\
+                     adventure.  Doesn't have to be a person.\n",
+                ),
+            ],
+        },
+        SystemBookSeed {
+            system_tag: "places",
+            paragraphs: &[
+                (
+                    "the homeland",
+                    "= the homeland\n\n\
+                     Where the hero begins.  Establish what's normal here\n\
+                     so the reader feels the loss when the hero leaves.\n",
+                ),
+                (
+                    "the wilds",
+                    "= the wilds\n\n\
+                     The threshold between the ordinary and the dangerous.\n\
+                     Tests of fitness happen here.\n",
+                ),
+                (
+                    "the dark tower",
+                    "= the dark tower\n\n\
+                     The shadow's seat of power.  Where the climax lands.\n",
+                ),
+            ],
+        },
+        SystemBookSeed {
+            system_tag: "artefacts",
+            paragraphs: &[
+                (
+                    "the artefact",
+                    "= the artefact\n\n\
+                     The object the hero must obtain, destroy, or wield.\n\
+                     Whose existence sets the plot in motion.\n",
+                ),
+                (
+                    "the mentor's gift",
+                    "= the mentor's gift\n\n\
+                     What the mentor leaves behind.  Small, easily-carried,\n\
+                     load-bearing at the climax.\n",
+                ),
+            ],
+        },
+        SystemBookSeed {
+            system_tag: "threads",
+            paragraphs: &[
+                (
+                    "the call",
+                    "{\n  \
+                     title:         \"The Call\"\n  \
+                     status:        \"setup\"\n  \
+                     weight:        \"major\"\n  \
+                     opening:       \"Hero is summoned (or refuses, then summoned again).\"\n  \
+                     midpoint:      \"Hero crosses the threshold.\"\n  \
+                     payoff:        \"Hero commits to the road; no turning back.\"\n  \
+                     characters:    [\"hero\", \"herald\"]\n  \
+                     places:        [\"the homeland\"]\n  \
+                     artefacts:     []\n  \
+                     related_threads: [\"the descent\"]\n  \
+                     tension:       3\n  \
+                     register:      \"\"\n  \
+                     notes:         \"Act I structural arc.\"\n\
+                     }\n",
+                ),
+                (
+                    "the descent",
+                    "{\n  \
+                     title:         \"The Descent\"\n  \
+                     status:        \"setup\"\n  \
+                     weight:        \"major\"\n  \
+                     opening:       \"Hero meets the wilds and is tested.\"\n  \
+                     midpoint:      \"Mentor falls; hero is alone.\"\n  \
+                     payoff:        \"Hero confronts the shadow at the tower.\"\n  \
+                     characters:    [\"hero\", \"shadow\", \"mentor\"]\n  \
+                     places:        [\"the wilds\", \"the dark tower\"]\n  \
+                     artefacts:     [\"the artefact\"]\n  \
+                     related_threads: [\"the return\"]\n  \
+                     tension:       8\n  \
+                     register:      \"\"\n  \
+                     notes:         \"Acts II-III; the bulk of the manuscript.\"\n\
+                     }\n",
+                ),
+                (
+                    "the return",
+                    "{\n  \
+                     title:         \"The Return\"\n  \
+                     status:        \"setup\"\n  \
+                     weight:        \"major\"\n  \
+                     opening:       \"\"\n  \
+                     midpoint:      \"\"\n  \
+                     payoff:        \"Hero brings the boon home; homeland is transformed.\"\n  \
+                     characters:    [\"hero\"]\n  \
+                     places:        [\"the homeland\"]\n  \
+                     artefacts:     [\"the artefact\"]\n  \
+                     related_threads: []\n  \
+                     tension:       4\n  \
+                     register:      \"\"\n  \
+                     notes:         \"Epilogue arc; closes the call.\"\n\
+                     }\n",
+                ),
+            ],
+        },
+    ],
+    post_init_message:
+        "Recommended next steps:\n  \
+         · Prologue: set the mythic register; foreshadow the artefact\n  \
+         · Book One: ordinary world + the call (Threads/the call)\n  \
+         · Books Two-Three: the descent + climb to the tower\n  \
+         · Epilogue + Appendices: pay off the trilogy hooks\n  \
+         · Set `project.word_count_goal: 150000` for a volume one\n  \
+         · Story view (Ctrl+V Shift+W) is your friend for tracking thread coverage\n",
+};
+
+pub const MYSTERY: ProjectTemplate = ProjectTemplate {
+    name: "mystery",
+    description:
+        "Mystery manuscript.  Crime-investigation-revelation structure with \
+         clue-tracking.  Pre-seeds Characters (detective, victim, 3 suspects), \
+         Places (crime scene, HQ), Threads (the crime, the misdirection, \
+         the solution).  Recommended goal 70000 words.",
+    manuscript_book: Some(ManuscriptBook {
+        title: "Manuscript",
+        chapters: &[
+            "Part I — The Crime",
+            "Part II — The Investigation",
+            "Part III — The Misdirection",
+            "Part IV — The Solution",
+            "Epilogue",
+        ],
+        paragraph_content_type: None,
+    }),
+    seeds: &[
+        SystemBookSeed {
+            system_tag: "characters",
+            paragraphs: &[
+                (
+                    "the detective",
+                    "= the detective\n\n\
+                     The investigator.  Idiosyncratic method matters as\n\
+                     much as the case — readers want to spend time with\n\
+                     this person.\n\n\
+                     // Fill in: distinctive method, blind spot, vice or\n\
+                     // virtue that complicates the case.\n",
+                ),
+                (
+                    "the victim",
+                    "= the victim\n\n\
+                     The person whose absence drives the plot.  Their\n\
+                     secrets matter as much as the crime itself.\n",
+                ),
+                (
+                    "suspect 1",
+                    "= suspect 1\n\n\
+                     Has motive AND opportunity.  Probably guilty of\n\
+                     SOMETHING, but maybe not THIS.\n",
+                ),
+                (
+                    "suspect 2",
+                    "= suspect 2\n\n\
+                     Looks innocent — maybe is.  Has secrets the\n\
+                     investigation surfaces.\n",
+                ),
+                (
+                    "suspect 3",
+                    "= suspect 3\n\n\
+                     The misdirection.  Detective and reader both\n\
+                     suspect this person around the midpoint.\n",
+                ),
+            ],
+        },
+        SystemBookSeed {
+            system_tag: "places",
+            paragraphs: &[
+                (
+                    "the crime scene",
+                    "= the crime scene\n\n\
+                     Where it happened.  Detail matters — physical clues\n\
+                     left here are the spine of the investigation.\n",
+                ),
+                (
+                    "the detective's hq",
+                    "= the detective's hq\n\n\
+                     Where the investigation regroups.  Conversation +\n\
+                     evidence pinboard happen here.\n",
+                ),
+            ],
+        },
+        SystemBookSeed {
+            system_tag: "threads",
+            paragraphs: &[
+                (
+                    "the crime",
+                    "{\n  \
+                     title:         \"The Crime\"\n  \
+                     status:        \"setup\"\n  \
+                     weight:        \"major\"\n  \
+                     opening:       \"The crime is discovered.\"\n  \
+                     midpoint:      \"What looked simple is revealed as complex.\"\n  \
+                     payoff:        \"The actual sequence of events is revealed.\"\n  \
+                     characters:    [\"the detective\", \"the victim\"]\n  \
+                     places:        [\"the crime scene\"]\n  \
+                     artefacts:     []\n  \
+                     related_threads: [\"the misdirection\", \"the solution\"]\n  \
+                     tension:       7\n  \
+                     register:      \"\"\n  \
+                     notes:         \"Central arc.\"\n\
+                     }\n",
+                ),
+                (
+                    "the misdirection",
+                    "{\n  \
+                     title:         \"The Misdirection\"\n  \
+                     status:        \"setup\"\n  \
+                     weight:        \"subplot\"\n  \
+                     opening:       \"Evidence points at a plausible wrong suspect.\"\n  \
+                     midpoint:      \"Investigator commits to the wrong theory.\"\n  \
+                     payoff:        \"Investigator realises the mistake.\"\n  \
+                     characters:    [\"the detective\", \"suspect 3\"]\n  \
+                     places:        []\n  \
+                     artefacts:     []\n  \
+                     related_threads: [\"the crime\"]\n  \
+                     tension:       6\n  \
+                     register:      \"\"\n  \
+                     notes:         \"Reader must be misled in the SAME way the detective is.\"\n\
+                     }\n",
+                ),
+                (
+                    "the solution",
+                    "{\n  \
+                     title:         \"The Solution\"\n  \
+                     status:        \"setup\"\n  \
+                     weight:        \"major\"\n  \
+                     opening:       \"\"\n  \
+                     midpoint:      \"\"\n  \
+                     payoff:        \"Detective explains the crime — clues retroactively snap into place.\"\n  \
+                     characters:    [\"the detective\"]\n  \
+                     places:        []\n  \
+                     artefacts:     []\n  \
+                     related_threads: [\"the crime\", \"the misdirection\"]\n  \
+                     tension:       9\n  \
+                     register:      \"\"\n  \
+                     notes:         \"All clues must be visible to the reader BEFORE this point.\"\n\
+                     }\n",
+                ),
+            ],
+        },
+    ],
+    post_init_message:
+        "Recommended next steps:\n  \
+         · Part I: stage the crime with EVERY clue physically present in the prose\n  \
+         · Part III: commit to the wrong theory long enough for the reader to follow\n  \
+         · Part IV: the reveal must use ONLY clues the reader has already seen\n  \
+         · Set `project.word_count_goal: 70000`\n  \
+         · Concordance (Ctrl+B Shift+L) is your friend for tracking clue mentions\n",
+};
+
+pub const FRENCH_NOVEL: ProjectTemplate = ProjectTemplate {
+    name: "french-novel",
+    description:
+        "Roman français.  `Première partie` / `Deuxième partie` / `Troisième partie` \
+         + `Épilogue` (Hugo / Flaubert / Camus tradition).  Pre-seeds Characters \
+         (protagoniste / antagoniste / confident).  Recommended goal 90000 words; \
+         set `language: \"french\"` in inkhaven.hjson.",
+    manuscript_book: Some(ManuscriptBook {
+        title: "Manuscrit",
+        chapters: &[
+            "Première partie",
+            "Deuxième partie",
+            "Troisième partie",
+            "Épilogue",
+        ],
+        paragraph_content_type: None,
+    }),
+    seeds: &[SystemBookSeed {
+        system_tag: "characters",
+        paragraphs: &[
+            (
+                "protagoniste",
+                "= protagoniste\n\n\
+                 Le personnage dont le roman suit la trajectoire intérieure\n\
+                 et extérieure.\n\n\
+                 // À remplir : voix, désir, besoin, conflit intérieur,\n\
+                 // scènes-clés.\n",
+            ),
+            (
+                "antagoniste",
+                "= antagoniste\n\n\
+                 La force qui s'oppose au désir ou au besoin du protagoniste.\n\n\
+                 // Pas nécessairement une personne — institution, époque,\n\
+                 // ou part de la psyché du héros.\n",
+            ),
+            (
+                "confident",
+                "= confident\n\n\
+                 Personnage à qui le protagoniste confie son monologue\n\
+                 intérieur — c'est par lui que le lecteur entend ce qui\n\
+                 resterait autrement non dit.\n",
+            ),
+        ],
+    }],
+    post_init_message:
+        "Étapes recommandées :\n  \
+         · Ouvrez `Manuscrit/Première partie` et établissez le ton\n  \
+         · Caractérisez `protagoniste` (voix, désir, besoin) dans Characters\n  \
+         · Réglez `language: \"french\"` dans inkhaven.hjson (stemmer + prompts multilingues)\n  \
+         · Réglez `project.word_count_goal: 90000`\n",
+};
+
+/// apply the named template to
 /// a freshly-initialised project.  Called by
 /// `cli::init::run` after the standard
 /// `Store::open` returns.  Errors are surfaced
@@ -765,7 +1158,7 @@ fn apply_system_seed(
     Ok(())
 }
 
-/// 1.2.14+ Phase Q.1 — `inkhaven template list`.
+/// `inkhaven template list`.
 /// Prints a two-column table: name → description.
 /// Column widths size to the longest name.
 pub fn list_templates() {
@@ -1011,6 +1404,92 @@ mod tests {
             assert!(
                 book.chapters.contains(&ch),
                 "Russian utopia chapters missing `{ch}`"
+            );
+        }
+    }
+
+    #[test]
+    fn epic_fantasy_has_full_scaffolding() {
+        let t = TEMPLATES
+            .iter()
+            .find(|t| t.name == "epic-fantasy")
+            .unwrap();
+        let book = t.manuscript_book.as_ref().unwrap();
+        // Prologue + 3 books + epilogue + 3 appendices = 8 chapters.
+        assert_eq!(book.chapters.len(), 8);
+        assert!(book.chapters[0].contains("Prologue"));
+        assert!(book.chapters[4].contains("Epilogue"));
+        let tags: Vec<&str> =
+            t.seeds.iter().map(|s| s.system_tag).collect();
+        assert!(tags.contains(&"characters"));
+        assert!(tags.contains(&"places"));
+        assert!(tags.contains(&"artefacts"));
+        assert!(tags.contains(&"threads"));
+        // Three thread seeds for the three-act
+        // call-descent-return shape.
+        let threads = t
+            .seeds
+            .iter()
+            .find(|s| s.system_tag == "threads")
+            .unwrap();
+        assert_eq!(threads.paragraphs.len(), 3);
+    }
+
+    #[test]
+    fn mystery_threads_parse_as_valid_hjson() {
+        let t = TEMPLATES
+            .iter()
+            .find(|t| t.name == "mystery")
+            .unwrap();
+        let threads = t
+            .seeds
+            .iter()
+            .find(|s| s.system_tag == "threads")
+            .unwrap();
+        for (name, body) in threads.paragraphs {
+            let _: serde_hjson::Value = serde_hjson::from_str(body)
+                .unwrap_or_else(|e| {
+                    panic!("mystery thread seed `{name}` invalid HJSON: {e}")
+                });
+        }
+    }
+
+    #[test]
+    fn mystery_seeds_three_suspects() {
+        let t = TEMPLATES
+            .iter()
+            .find(|t| t.name == "mystery")
+            .unwrap();
+        let chars = t
+            .seeds
+            .iter()
+            .find(|s| s.system_tag == "characters")
+            .unwrap();
+        let suspect_count = chars
+            .paragraphs
+            .iter()
+            .filter(|(name, _)| name.starts_with("suspect"))
+            .count();
+        assert_eq!(suspect_count, 3);
+    }
+
+    #[test]
+    fn french_novel_uses_french_partition_names() {
+        let t = TEMPLATES
+            .iter()
+            .find(|t| t.name == "french-novel")
+            .unwrap();
+        let book = t.manuscript_book.as_ref().unwrap();
+        assert_eq!(book.title, "Manuscrit");
+        for ch in [
+            "Première partie",
+            "Deuxième partie",
+            "Troisième partie",
+            "Épilogue",
+        ] {
+            assert!(
+                book.chapters.contains(&ch),
+                "missing chapter `{ch}`"
             );
         }
     }

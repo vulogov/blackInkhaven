@@ -257,7 +257,7 @@ fn export(project: &Path, output: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-/// 1.2.14+ Phase C.2 — human-readable comment age
+/// human-readable comment age
 /// for the CLI list table.  Same shape the TUI
 /// panel uses; duplicated rather than re-exported
 /// to keep the CLI module independent.
