@@ -256,6 +256,46 @@ fn comment_span_label(char_count: usize) -> String {
     }
 }
 
+/// 1.2.14+ Phase D.3 — compose the AI digest
+/// prompt envelope.  Bundles comment text +
+/// paragraph breadcrumbs so the model can
+/// thematically group concerns.
+fn compose_comments_digest_prompt(
+    comments_in: &[comments::Comment],
+    breadcrumbs: &[String],
+) -> String {
+    let mut comments_text = String::new();
+    for (i, c) in comments_in.iter().enumerate() {
+        let bc = breadcrumbs.get(i).cloned().unwrap_or_default();
+        let resolved = if c.resolved { " [resolved]" } else { "" };
+        comments_text.push_str(&format!(
+            "── {} · {}{} ──\n{}\n\n",
+            bc, c.author, resolved, c.text
+        ));
+    }
+    format!(
+        "You are summarising beta-reader / co-author comments on a manuscript.\n\
+         \n\
+         Group the comments below into thematic categories — typical buckets:\n\
+           · STRUCTURAL — pacing, scene order, arc shape, what's missing\n\
+           · PROSE — sentence rhythm, register, voice, word choice\n\
+           · FACTUAL — continuity, fact-checks, character / place consistency\n\
+           · QUESTION — reviewer is asking the author for clarification\n\
+         \n\
+         For each category, list the SHORT theme + reference the paragraph\n\
+         breadcrumbs that surfaced it.  End with a one-sentence overall\n\
+         verdict: what's the dominant concern, what's the most actionable\n\
+         next pass.\n\
+         \n\
+         Be concise.  Don't quote comment text verbatim — paraphrase.\n\
+         \n\
+         ── Comments ({} total) ──\n\
+         {comments_text}\n\
+         ── end comments ──",
+        comments_in.len(),
+    )
+}
+
 pub(crate) fn humanise_age(when: chrono::DateTime<chrono::Utc>) -> String {
     let now = chrono::Utc::now();
     let delta = now.signed_duration_since(when);
@@ -495,8 +535,109 @@ impl App {
                 self.comments_panel_resolve_current(false);
                 true
             }
+            KeyCode::Char('a') => {
+                // 1.2.14+ Phase D.3 — AI digest of
+                // the visible (unresolved by
+                // default) comments.  Closes the
+                // panel; streams the digest into
+                // the AI pane.
+                self.start_comments_digest();
+                true
+            }
             _ => false,
         }
+    }
+
+    /// 1.2.14+ Phase D.3 — compose a digest prompt
+    /// envelope from the panel's currently-visible
+    /// comments + the source paragraphs they
+    /// anchor to.  Asks the LLM for a thematic
+    /// summary (structural / prose / factual /
+    /// register concerns).  Closes the panel and
+    /// streams into the AI pane via the standard
+    /// `Inference` machinery.
+    pub(super) fn start_comments_digest(&mut self) {
+        // Snapshot the visible comments before
+        // closing the panel.
+        let comments_for_digest: Vec<comments::Comment> = {
+            let Modal::CommentsPanel {
+                entries, visible, ..
+            } = &self.modal
+            else {
+                return;
+            };
+            visible
+                .iter()
+                .filter_map(|i| entries.get(*i))
+                .map(|e| comments::Comment {
+                    id: uuid::Uuid::nil(),
+                    char_start: e.char_start,
+                    char_end: e.char_end,
+                    author: e.author.clone(),
+                    created_at: e.created_at,
+                    resolved: e.resolved,
+                    resolved_at: None,
+                    text: e.text.clone(),
+                    replies: Vec::new(),
+                })
+                .collect()
+        };
+        let breadcrumbs: Vec<String> = {
+            let Modal::CommentsPanel {
+                entries, visible, ..
+            } = &self.modal
+            else {
+                return;
+            };
+            visible
+                .iter()
+                .filter_map(|i| entries.get(*i))
+                .map(|e| e.paragraph_breadcrumb.clone())
+                .collect()
+        };
+        if comments_for_digest.is_empty() {
+            self.status =
+                "comments digest: no comments visible in the panel".into();
+            return;
+        }
+        self.modal = Modal::None;
+        let envelope = compose_comments_digest_prompt(
+            &comments_for_digest,
+            &breadcrumbs,
+        );
+        let (model, _env) = match self
+            .ai
+            .resolve_provider(&self.cfg.llm, None)
+        {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!("comments digest: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let rx = super::super::super::ai::stream::spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            None,
+            Vec::new(),
+            envelope,
+        );
+        self.inference = Some(super::super::inference::Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: super::super::inference::InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        self.change_focus(super::super::focus::Focus::Ai);
+        self.status = format!(
+            "comments digest ({} comments): streaming from {provider}…",
+            comments_for_digest.len()
+        );
     }
 
     fn comments_panel_resolve_current(&mut self, resolve: bool) {
