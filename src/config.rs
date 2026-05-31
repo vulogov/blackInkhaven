@@ -1412,6 +1412,59 @@ pub struct EditorConfig {
     /// authors and per-author attribution matters.
     #[serde(default)]
     pub comment_author: Option<String>,
+    /// 1.2.14+ Phase Q.2 — HJSON-driven snippet
+    /// expansion table.  When `enabled`, the editor
+    /// watches for non-word characters typed after a
+    /// trigger string and replaces the trigger
+    /// inline with the resolved expansion body.
+    /// Empty `triggers` map → no expansion fires.
+    /// See `Documentation/PROPOSALS/1.2.14_PLAN.md`
+    /// §6.
+    #[serde(default)]
+    pub snippets: SnippetsConfig,
+}
+
+/// 1.2.14+ Phase Q.2 — `editor.snippets` HJSON
+/// stanza.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnippetsConfig {
+    /// Master switch.  When false, no snippet
+    /// expansion fires regardless of the `triggers`
+    /// map.  Defaults to true so the templates
+    /// inkhaven ships with (project-level HJSON
+    /// gets `\dt` / `\time` / `\sig` etc.) work
+    /// without a flag flip.
+    #[serde(default = "default_snippets_enabled")]
+    pub enabled: bool,
+    /// Map of trigger string → expansion body.
+    /// Triggers are matched as substrings at the
+    /// END of the buffer up to the cursor — when
+    /// the user types a non-word char (space,
+    /// punctuation, newline) immediately after a
+    /// trigger string, the trigger gets replaced
+    /// by the expansion body and the non-word
+    /// char stays.  Placeholder syntax inside the
+    /// body: `{today}`, `{today:%Y-%m-%d}`,
+    /// `{now}`, `{paragraph_title}`,
+    /// `{paragraph_slug}`, `{selection}`,
+    /// `{author}`.  Unknown placeholders pass
+    /// through verbatim so the author can spot
+    /// typos.
+    #[serde(default)]
+    pub triggers: std::collections::HashMap<String, String>,
+}
+
+impl Default for SnippetsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_snippets_enabled(),
+            triggers: std::collections::HashMap::new(),
+        }
+    }
+}
+
+fn default_snippets_enabled() -> bool {
+    true
 }
 
 fn default_pov_chip_enabled() -> bool {
@@ -2280,6 +2333,7 @@ impl Default for EditorConfig {
             prompt_language_detection_min_chars:
                 default_prompt_language_detection_min_chars(),
             comment_author: None,
+            snippets: SnippetsConfig::default(),
         }
     }
 }

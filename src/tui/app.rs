@@ -3863,6 +3863,24 @@ impl App {
                 doc.dirty = true;
             }
         }
+        // 1.2.14+ Phase Q.2 — snippet expansion.
+        // Fires AFTER the textarea has processed the
+        // keystroke (the just-typed char is already
+        // in the buffer + the cursor is past it).
+        // The handler short-circuits when snippets
+        // are disabled, no triggers are configured,
+        // the key wasn't a trigger character, or no
+        // configured trigger matches the prefix.
+        if let crossterm::event::KeyCode::Char(c) = key.code {
+            if super::snippets::is_expansion_trigger_char(c) {
+                self.maybe_expand_snippet();
+            }
+        } else if matches!(
+            key.code,
+            crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Tab
+        ) {
+            self.maybe_expand_snippet();
+        }
         Ok(false)
     }
 
