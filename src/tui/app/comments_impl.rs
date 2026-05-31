@@ -21,7 +21,8 @@ use uuid::Uuid;
 use super::super::comments::{
     self, comment_at_cursor, Comment,
 };
-use super::super::modal::Modal;
+use super::super::modal::{CommentsPanelEntry, Modal};
+use super::super::input::TextInput;
 use super::App;
 
 impl App {
@@ -255,7 +256,7 @@ fn comment_span_label(char_count: usize) -> String {
     }
 }
 
-fn humanise_age(when: chrono::DateTime<chrono::Utc>) -> String {
+pub(crate) fn humanise_age(when: chrono::DateTime<chrono::Utc>) -> String {
     let now = chrono::Utc::now();
     let delta = now.signed_duration_since(when);
     let secs = delta.num_seconds();
@@ -269,5 +270,381 @@ fn humanise_age(when: chrono::DateTime<chrono::Utc>) -> String {
         format!("{}d ago", delta.num_days())
     } else {
         when.format("%Y-%m-%d").to_string()
+    }
+}
+
+impl App {
+    /// 1.2.14+ Phase C.2 — `Ctrl+V Shift+C` handler.
+    /// Walks every paragraph in the hierarchy +
+    /// loads its sidecar; pops the panel with all
+    /// comments listed (filtered to unresolved by
+    /// default).
+    pub(super) fn open_comments_panel(&mut self) {
+        let entries = self.collect_all_comments_for_panel();
+        if entries.is_empty() {
+            self.status =
+                "comments panel: no comments anywhere — Ctrl+V c to add one".into();
+            return;
+        }
+        let total = entries.len();
+        let visible: Vec<usize> = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| !e.resolved)
+            .map(|(i, _)| i)
+            .collect();
+        let unresolved = visible.len();
+        self.modal = Modal::CommentsPanel {
+            entries,
+            cursor: 0,
+            filter: TextInput::new(),
+            filter_active: false,
+            hide_resolved: true,
+            visible,
+        };
+        self.status = format!(
+            "comments · {unresolved} unresolved · {} hidden resolved · ↑↓ Enter open · r resolve · R show resolved · d delete · / filter · Esc",
+            total.saturating_sub(unresolved)
+        );
+    }
+
+    fn collect_all_comments_for_panel(&self) -> Vec<CommentsPanelEntry> {
+        use crate::store::node::NodeKind;
+        let mut out: Vec<CommentsPanelEntry> = Vec::new();
+        for node in self.hierarchy.iter() {
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let Some(rel) = &node.file else { continue; };
+            let typ_abs = self.layout.root.join(rel);
+            let file = match comments::load_from_sidecar(&typ_abs) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+            if file.comments.is_empty() {
+                continue;
+            }
+            let total = file.comments.len();
+            let breadcrumb = self.hierarchy.slug_path(node);
+            for (idx, c) in file.comments.iter().enumerate() {
+                out.push(CommentsPanelEntry {
+                    paragraph_id: node.id,
+                    paragraph_breadcrumb: breadcrumb.clone(),
+                    typ_abs_path: typ_abs.clone(),
+                    comment_index: idx,
+                    author: c.author.clone(),
+                    created_at: c.created_at,
+                    resolved: c.resolved,
+                    text: c.text.clone(),
+                    char_start: c.char_start,
+                    char_end: c.char_end,
+                    paragraph_total_comments: total,
+                });
+            }
+        }
+        // Newest first within each paragraph; older
+        // groups bubble down.  Trivially sortable
+        // here because the panel never re-sorts at
+        // runtime.
+        out.sort_by(|a, b| {
+            a.paragraph_breadcrumb
+                .cmp(&b.paragraph_breadcrumb)
+                .then(b.created_at.cmp(&a.created_at))
+        });
+        out
+    }
+
+    /// Recompute `visible` after a filter / hide-
+    /// resolved edit.
+    fn comments_panel_refilter(&mut self) {
+        let Modal::CommentsPanel {
+            entries,
+            cursor,
+            filter,
+            visible,
+            hide_resolved,
+            ..
+        } = &mut self.modal
+        else {
+            return;
+        };
+        let f = filter.as_str().to_lowercase();
+        let f = f.trim();
+        *visible = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| {
+                if *hide_resolved && e.resolved {
+                    return false;
+                }
+                if f.is_empty() {
+                    return true;
+                }
+                e.text.to_lowercase().contains(f)
+                    || e.author.to_lowercase().contains(f)
+                    || e.paragraph_breadcrumb.to_lowercase().contains(f)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        if *cursor >= visible.len() {
+            *cursor = visible.len().saturating_sub(1);
+        }
+    }
+
+    /// 1.2.14+ Phase C.2 — panel key handler.
+    pub(super) fn comments_panel_handle_key(
+        &mut self,
+        key: crossterm::event::KeyEvent,
+    ) -> bool {
+        use crossterm::event::KeyCode;
+        let Modal::CommentsPanel {
+            entries,
+            cursor,
+            filter,
+            filter_active,
+            hide_resolved,
+            visible,
+        } = &mut self.modal
+        else {
+            return false;
+        };
+        // ── filter-input mode ──────────────────
+        if *filter_active {
+            match key.code {
+                KeyCode::Esc | KeyCode::Enter => {
+                    *filter_active = false;
+                    return true;
+                }
+                KeyCode::Backspace => {
+                    filter.backspace();
+                    self.comments_panel_refilter();
+                    return true;
+                }
+                KeyCode::Char(c) => {
+                    filter.insert_char(c);
+                    self.comments_panel_refilter();
+                    return true;
+                }
+                _ => return true,
+            }
+        }
+        // ── navigation mode ───────────────────
+        let visible_len = visible.len();
+        match key.code {
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+                true
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < visible_len {
+                    *cursor += 1;
+                }
+                true
+            }
+            KeyCode::Home => {
+                *cursor = 0;
+                true
+            }
+            KeyCode::End => {
+                *cursor = visible_len.saturating_sub(1);
+                true
+            }
+            KeyCode::Char('/') => {
+                *filter_active = true;
+                true
+            }
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                true
+            }
+            KeyCode::Enter => {
+                let target = visible
+                    .get(*cursor)
+                    .and_then(|i| entries.get(*i))
+                    .map(|e| (e.paragraph_id, e.char_start));
+                self.modal = Modal::None;
+                if let Some((id, _char_start)) = target {
+                    if let Some(node) = self.hierarchy.get(id).cloned() {
+                        let _ = self.load_paragraph(&node);
+                        // Phase C.2.1 candidate:
+                        // jump the cursor to
+                        // char_start via
+                        // textarea.move_cursor.
+                    }
+                }
+                true
+            }
+            KeyCode::Char('r') => {
+                self.comments_panel_resolve_current(true);
+                true
+            }
+            KeyCode::Char('R') => {
+                *hide_resolved = !*hide_resolved;
+                self.comments_panel_refilter();
+                true
+            }
+            KeyCode::Char('d') => {
+                self.comments_panel_delete_current();
+                true
+            }
+            KeyCode::Char('u') => {
+                // Unresolve — flip resolved comment
+                // back to unresolved.
+                self.comments_panel_resolve_current(false);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn comments_panel_resolve_current(&mut self, resolve: bool) {
+        let entry = {
+            let Modal::CommentsPanel {
+                entries,
+                cursor,
+                visible,
+                ..
+            } = &self.modal
+            else {
+                return;
+            };
+            let Some(src_idx) = visible.get(*cursor) else {
+                return;
+            };
+            entries.get(*src_idx).cloned()
+        };
+        let Some(entry) = entry else { return; };
+        // Re-load the sidecar from disk so we
+        // don't clobber an out-of-process edit.
+        let mut file = match comments::load_from_sidecar(&entry.typ_abs_path) {
+            Ok(f) => f,
+            Err(e) => {
+                self.status = format!("comments: load sidecar: {e}");
+                return;
+            }
+        };
+        let Some(c) = file.comments.get_mut(entry.comment_index) else {
+            self.status =
+                "comments: sidecar drifted — reload the panel".into();
+            return;
+        };
+        c.resolved = resolve;
+        c.resolved_at = if resolve {
+            Some(chrono::Utc::now())
+        } else {
+            None
+        };
+        if let Err(e) = comments::save_to_sidecar(&entry.typ_abs_path, &file) {
+            self.status = format!("comments: save sidecar: {e}");
+            return;
+        }
+        // Update the in-memory entry + refilter.
+        if let Modal::CommentsPanel { entries, .. } = &mut self.modal {
+            for e in entries.iter_mut() {
+                if e.typ_abs_path == entry.typ_abs_path
+                    && e.comment_index == entry.comment_index
+                {
+                    e.resolved = resolve;
+                }
+            }
+        }
+        // If the panel's open paragraph is the one
+        // we just touched, refresh its in-memory
+        // comments cache so the editor overlay
+        // matches.
+        if let Some(doc) = self.opened.as_mut() {
+            if doc.id == entry.paragraph_id {
+                doc.comments = file;
+            }
+        }
+        self.comments_panel_refilter();
+        self.status = if resolve {
+            "comment resolved".into()
+        } else {
+            "comment reopened".into()
+        };
+    }
+
+    fn comments_panel_delete_current(&mut self) {
+        let entry = {
+            let Modal::CommentsPanel {
+                entries,
+                cursor,
+                visible,
+                ..
+            } = &self.modal
+            else {
+                return;
+            };
+            let Some(src_idx) = visible.get(*cursor) else {
+                return;
+            };
+            entries.get(*src_idx).cloned()
+        };
+        let Some(entry) = entry else { return; };
+        let mut file = match comments::load_from_sidecar(&entry.typ_abs_path) {
+            Ok(f) => f,
+            Err(e) => {
+                self.status = format!("comments: load sidecar: {e}");
+                return;
+            }
+        };
+        if entry.comment_index >= file.comments.len() {
+            self.status =
+                "comments: sidecar drifted — reload the panel".into();
+            return;
+        }
+        file.comments.remove(entry.comment_index);
+        if let Err(e) = comments::save_to_sidecar(&entry.typ_abs_path, &file) {
+            self.status = format!("comments: save sidecar: {e}");
+            return;
+        }
+        // Refresh open-doc cache.
+        if let Some(doc) = self.opened.as_mut() {
+            if doc.id == entry.paragraph_id {
+                doc.comments = file;
+            }
+        }
+        // Rebuild the panel entries (indices
+        // shifted) — simpler than walking and
+        // patching in place.
+        let fresh = self.collect_all_comments_for_panel();
+        if let Modal::CommentsPanel {
+            entries,
+            cursor,
+            visible,
+            hide_resolved,
+            filter,
+            ..
+        } = &mut self.modal
+        {
+            *entries = fresh;
+            *cursor = (*cursor).min(entries.len().saturating_sub(1));
+            // Reapply filter.
+            let f = filter.as_str().to_lowercase();
+            let f = f.trim().to_string();
+            *visible = entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| {
+                    if *hide_resolved && e.resolved {
+                        return false;
+                    }
+                    if f.is_empty() {
+                        return true;
+                    }
+                    e.text.to_lowercase().contains(&f)
+                        || e.author.to_lowercase().contains(&f)
+                        || e.paragraph_breadcrumb.to_lowercase().contains(&f)
+                })
+                .map(|(i, _)| i)
+                .collect();
+            if *cursor >= visible.len() {
+                *cursor = visible.len().saturating_sub(1);
+            }
+        }
+        self.status = "comment deleted".into();
     }
 }

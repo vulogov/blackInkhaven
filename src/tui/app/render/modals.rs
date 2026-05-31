@@ -4761,6 +4761,133 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 
+    /// 1.2.14+ Phase C.2 — project-wide comments
+    /// panel (`Ctrl+V Shift+C`).
+    pub(in crate::tui::app) fn draw_comments_panel_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::CommentsPanel {
+            entries,
+            cursor,
+            filter,
+            filter_active,
+            hide_resolved,
+            visible,
+        } = &self.modal
+        else {
+            return;
+        };
+        let width = (area.width.saturating_sub(4)).min(110).max(70);
+        let height = (area.height.saturating_sub(4)).min(28).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let title = format!(
+            " Comments · {} of {} · Ctrl+V Shift+C ",
+            visible.len(),
+            entries.len()
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        // Filter input or status row.
+        if *filter_active {
+            let prompt = format!(" / {}_ ", filter.as_str());
+            lines.push(Line::from(Span::styled(
+                prompt,
+                Style::default()
+                    .fg(self.theme.editor_position_fg)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        } else {
+            let hide = if *hide_resolved {
+                " (resolved hidden — R to show)"
+            } else {
+                " (showing all — R to hide resolved)"
+            };
+            lines.push(Line::from(Span::styled(
+                hide.to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        }
+        lines.push(Line::from(""));
+
+        // Body rows.
+        let max_breadcrumb = 36usize;
+        let max_author = 12usize;
+        for (display_idx, src_idx) in visible.iter().enumerate() {
+            let Some(e) = entries.get(*src_idx) else { continue; };
+            let marker = if display_idx == *cursor { "›" } else { " " };
+            let age = super::super::comments_impl::humanise_age(e.created_at);
+            let breadcrumb =
+                truncate_to(&e.paragraph_breadcrumb, max_breadcrumb);
+            let author = truncate_to(&e.author, max_author);
+            let snippet: String = e.text.chars().take(60).collect();
+            let snippet = if e.text.chars().count() > 60 {
+                format!("{snippet}…")
+            } else {
+                snippet
+            };
+            let resolved_label = if e.resolved { " [r]" } else { "" };
+            let header = format!(
+                "  {marker} {breadcrumb:<bc_w$}  {author:<au_w$}  {age:>10}{resolved_label}",
+                bc_w = max_breadcrumb,
+                au_w = max_author,
+            );
+            let style = if display_idx == *cursor {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED)
+                    .add_modifier(Modifier::BOLD)
+            } else if e.resolved {
+                Style::default().add_modifier(Modifier::DIM)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(header, style)));
+            // Secondary indent line for the snippet.
+            let snippet_line = format!("       {snippet}");
+            let snippet_style = if e.resolved {
+                Style::default().add_modifier(Modifier::DIM).add_modifier(Modifier::ITALIC)
+            } else if display_idx == *cursor {
+                Style::default().add_modifier(Modifier::ITALIC).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().add_modifier(Modifier::ITALIC)
+            };
+            lines.push(Line::from(Span::styled(snippet_line, snippet_style)));
+        }
+
+        lines.push(Line::from(""));
+        let hint = if *filter_active {
+            " Enter / Esc exit filter · Backspace edits "
+        } else {
+            " ↑↓ Enter open · r resolve · u reopen · R toggle resolved · d delete · / filter · Esc "
+        };
+        lines.push(Line::from(Span::styled(
+            hint.to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
     /// 1.2.14+ Phase C.1 — `Ctrl+V c` comment editor.
     /// Header shows the anchor span snippet so the
     /// author sees what they're commenting on.

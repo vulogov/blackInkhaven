@@ -872,6 +872,38 @@ pub(super) enum Modal {
         /// current filter.  Rebuilt on filter edits.
         visible: Vec<usize>,
     },
+    /// 1.2.14+ Phase C.2 — project-wide comments
+    /// panel.  Materialises every paragraph's
+    /// `.comments.json` sidecar at open time so
+    /// scrolling is pure cursor math; resolve /
+    /// delete / unresolve write through to disk
+    /// IMMEDIATELY (no batch-on-close) so a
+    /// crash mid-review doesn't lose decisions.
+    /// Pops on `Ctrl+V Shift+C` from any pane.
+    CommentsPanel {
+        /// All comments, paragraph-grouped, in
+        /// hierarchy / created-at order.
+        entries: Vec<CommentsPanelEntry>,
+        cursor: usize,
+        /// Substring filter typed via `/`.  Empty
+        /// → every visible entry.  Match is
+        /// case-insensitive against the comment
+        /// text + author + paragraph breadcrumb.
+        filter: super::input::TextInput,
+        /// True while `/` filter input is active —
+        /// keystrokes go to the filter, `Enter` /
+        /// `Esc` exit filter mode (not the
+        /// modal).
+        filter_active: bool,
+        /// When true, resolved comments are
+        /// hidden.  Toggled with `R`.  Default
+        /// `true` — focused on actionable work.
+        hide_resolved: bool,
+        /// Cached indices into `entries` after
+        /// applying the `filter` + `hide_resolved`
+        /// pass.
+        visible: Vec<usize>,
+    },
     /// 1.2.14+ Phase C.1 — comment editor.  Pops on
     /// `Ctrl+V c` once the anchor span has been
     /// resolved (selection range or word-at-cursor).
@@ -926,6 +958,46 @@ pub(super) enum Modal {
         scroll_col: usize,
         return_to: Box<Modal>,
     },
+}
+
+/// 1.2.14+ Phase C.2 — one row of the project-
+/// wide comments panel.  Snapshots the comment
+/// data + the surrounding paragraph metadata so
+/// the panel can render + navigate without
+/// re-walking the hierarchy / re-reading
+/// sidecars per keystroke.
+#[derive(Debug, Clone)]
+pub(super) struct CommentsPanelEntry {
+    pub paragraph_id: Uuid,
+    /// Paragraph slug-path breadcrumb shown in the
+    /// panel ("manuscript-en/chapter-3/03-rain").
+    pub paragraph_breadcrumb: String,
+    /// Absolute path to the paragraph's `.typ` —
+    /// resolved once at open time so the resolve /
+    /// delete dispatchers can re-load + re-write
+    /// the sidecar without walking the hierarchy
+    /// again.
+    pub typ_abs_path: std::path::PathBuf,
+    /// Index of this comment inside the sidecar's
+    /// `comments` Vec.  Used by the
+    /// resolve / delete dispatchers to locate the
+    /// right comment when the sidecar is
+    /// reloaded.
+    pub comment_index: usize,
+    pub author: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub resolved: bool,
+    pub text: String,
+    pub char_start: usize,
+    /// Span end character offset — kept for Phase
+    /// C.2.1 "open paragraph + select span" jump.
+    #[allow(dead_code)]
+    pub char_end: usize,
+    /// Total comments in this paragraph — kept for
+    /// the Phase C.2.1 dense-paragraph indicator
+    /// ("2/5 in ¶") in the panel render.
+    #[allow(dead_code)]
+    pub paragraph_total_comments: usize,
 }
 
 /// 1.2.14+ Phase A.2 — one row of the Threads
