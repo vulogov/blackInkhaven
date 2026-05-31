@@ -19,6 +19,7 @@ pub mod search;
 pub mod doctor;
 pub mod event;
 pub mod language;
+pub mod templates;
 pub mod thread;
 pub mod prompts;
 pub mod show_dont_tell;
@@ -54,6 +55,23 @@ pub enum Command {
         /// Overwrite existing configuration if present.
         #[arg(long)]
         force: bool,
+        /// 1.2.14+ Phase Q.1 — project template to
+        /// scaffold the manuscript book + chapters
+        /// + system-book seed entries.  Accepts:
+        /// `empty` (default, current behavior),
+        /// `novel` (three-act manuscript + Characters
+        /// stubs), `nonfiction` (intro/parts/
+        /// conclusion + Research methodology),
+        /// `rpg-sourcebook` (Setting/Rules/
+        /// Adventures/Appendices + Places +
+        /// Artefacts + Threads seeds), `technical`
+        /// (Overview/Reference/Tutorials/Index),
+        /// `nanowrimo` (like `novel` but with a
+        /// 50000-word goal + next-November pacing).
+        /// Run `inkhaven template list` to see all
+        /// available templates with descriptions.
+        #[arg(long, default_value = "empty")]
+        template: String,
     },
 
     /// Add a node (book / chapter / subchapter / paragraph) to the hierarchy.
@@ -431,6 +449,23 @@ pub enum Command {
     /// See `Documentation/PROPOSALS/1.2.14_PLAN.md`.
     #[command(subcommand)]
     Thread(ThreadCommand),
+    /// 1.2.14+ Phase Q.1 — `inkhaven template
+    /// <subcommand>`.  Surfaces information about
+    /// the project templates available to
+    /// `inkhaven init --template <name>`.
+    #[command(subcommand)]
+    Template(TemplateCommand),
+}
+
+/// 1.2.14+ Phase Q.1 — sub-subcommands under
+/// `inkhaven template …`.
+#[derive(Debug, Subcommand)]
+pub enum TemplateCommand {
+    /// List every available project template with
+    /// a one-line description.  Use the `name`
+    /// column as the `--template <name>` value for
+    /// `inkhaven init`.
+    List,
 }
 
 /// Sub-subcommands under `inkhaven event …`.
@@ -916,7 +951,9 @@ impl Cli {
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
         match self.command.unwrap_or(Command::Tui) {
-            Command::Init { path, force } => init::run(&path, force).map_err(Into::into),
+            Command::Init { path, force, template } => {
+                init::run(&path, force, &template).map_err(Into::into)
+            }
             Command::Add {
                 kind,
                 title,
@@ -1033,6 +1070,10 @@ impl Cli {
             }
             Command::Thread(cmd) => {
                 thread::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Template(TemplateCommand::List) => {
+                templates::list_templates();
+                Ok(())
             }
         }
     }
