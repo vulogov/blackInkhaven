@@ -21,106 +21,111 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.12 — Fullscreen split view, translation workflow, polish
+## Latest release · 1.2.13 — Language book
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.12.md`](Documentation/RELEASE_NOTES/1.2.12.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.13.md`](Documentation/RELEASE_NOTES/1.2.13.md)
 
-1.2.12's headline is a four-phase rework of how
-inkhaven handles two-paragraph workflows — the
-long-deferred fullscreen split view feature.
-Plus a clutch of carryover polish: concordance
-export, HJSON-editor LLM review, per-detector
-underline modifiers, snapshot side-by-side.
+1.2.13's headline is the **Language book** —
+a first-class invented-language workbench for
+secondary-world authors.  Five-chapter sub-book
+shape (Meta · Dictionary · Grammar · Phonology ·
+Sample texts), HJSON-fronted entries, lexicon
+overlay that lights up your conlang's words in
+manuscript prose, and an AI translation flow
+that round-trips between your working language
+and the conlang.
 
-### Fullscreen split view — `Shift+F4`
+Shipped across seven phases (A → D.1) plus a
+batch of CSV-import polish.
 
-`Shift+F4` toggles a three-column layout: tree
-pane on the left, primary editor in the middle,
-secondary editor on the right.  AI response pane
-hides (the two editors need the room); AI prompt
-input still spans the bottom so `Ctrl+I` works
-from either pane.  `Tab` swaps focus between the
-two editors.
+### Five-chapter language sub-book
 
-**Universal `Shift+Enter` pin modifier.**  Every
-paragraph picker that targets the primary slot
-now also accepts `Shift+Enter` as a "pin to the
-right pane instead" modifier.  Same picker, same
-filter, same selection — the modifier changes the
-destination.  Works from:
+A new `Language` system book lives next to
+`Notes` / `Places` / `Characters` etc.  Scaffold
+a conlang from the TUI (cursor on `Language`,
+press `b`) or shell (`inkhaven language init
+Quenya`) and you get the five standard chapters
+plus a seeded `Meta/overview` HJSON paragraph.
 
-- Tree-pane Enter
-- `Ctrl+V P` (fuzzy paragraph picker)
-- `Ctrl+V Shift+P` (recent paragraphs)
-- `Ctrl+V M` (bookmarks)
-- `F6` snapshot picker (pins as read-only
-  historical view)
+Every Dictionary entry is a paragraph with
+`content_type = "hjson"` — the editor renders
+each entry's fields with HJSON syntax
+highlighting.  Templates ship with the full
+schema commented (word / type / translation /
+example / pronunciation / etymology / related /
+inflection / register / era / notes) so authors
+fill rather than look up.
 
-**Sibling-book lookup — `Ctrl+V Shift+B`.**  The
-translation-workflow chord.  Given the open
-paragraph's slug, walks the project's hierarchy
-for paragraphs with the same slug under a
-*different* top-level book.  Single match →
-auto-pin.  Multi-match → fuzzy picker scoped to
-the matches.  Designed for parallel manuscripts:
-from `manuscript-en/chapter-3/03-rain`, finds
-`manuscript-ru/chapter-3/03-rain` and pins it.
+### Lexicon overlay + status-bar chip
 
-**F12 `critique-compare`.**  When the split is on
-AND both panes hold distinct paragraphs, F12
-fires the new `critique-compare` embedded prompt
-— eighth named flow, five-language match
-(en / ru / es / de / fr) routed through the
-1.2.11 multilingual resolver.  The model
-compares the two paragraphs substantively: what
-overlaps, what diverges, which one lands the
-beat harder.  Specifically covers translation
-review (source vs translation: does it carry
-meaning, voice, register?) and draft comparison
-(snapshot vs current: which is stronger?).
+Words from every `Language/<lang>/Dictionary`
+chapter light up italic in the manuscript editor
+(default mauve-teal `#b4a8e1`, themable via
+`theme.language_word_fg`).  The overlay catches
+paradigm forms too — every value in an entry's
+`inflection: { plural: "X", genitive: "Y" }`
+map gets added as a recognised surface form.
+Cursor on a hit shows `[word · POS · translation]`
+in the editor footer.
 
-The `Documentation/PROPOSALS/SPLIT_VIEW.md`
-proposal captures the four-phase design.
+### AI translation — `Ctrl+B Q` / `Ctrl+B Shift+Q`
 
-### Polish across the board
+`Ctrl+B Q` translates the open paragraph from
+the working language INTO the conlang.  The
+prompt envelope composer reads the language's
+Meta/overview + every Grammar rule + every
+Phonology rule + Dictionary entries RAG-filtered
+to words present in the source + up to 3 Sample
+texts as register anchors.  Streams the response
+into the AI pane.
 
-- **`inkhaven export-concordance` CLI.**  Same
-  data the `Ctrl+B Shift+L` modal shows, written
-  to disk for use in spreadsheets / analysis
-  pipelines.  CSV (one row per stem) and JSON
-  (structured form with KWIC snippets, line
-  numbers) formats; `--min-count` flag drops the
-  long tail.
-- **`Ctrl+R` LLM review inside the `Ctrl+B 0`
-  HJSON editor.**  Mirrors the 1.2.10
-  prompts-editor TUI's reviewer-LLM pattern: the
-  model critiques the project config as a piece
-  of work, not by executing it.  Asks for
-  dotted-path-specific critique (e.g.
-  `editor.style_warnings.show_dont_tell.enabled`,
-  not "the SDT field").  Use as a "second
-  opinion" before saving a config change.
-- **Per-detector underline-style overrides.**
-  Three new HJSON theme knobs
-  (`style_warning_*_modifier`) let users dial the
-  filter-word / repeated-phrase / show-don't-tell
-  overlay's modifier from the hardcoded `UNDERLINED`
-  to `bold` / `dim` / `reversed` / `italic` /
-  `none` / `+`-combined.  Empty preserves the
-  baseline.  Useful on terminal palettes where
-  the teal underline reads faint.
-- **Build-time doc-comment extractor polish.**
-  `Option<HashMap<K, V>>`, `Box<T>`, `Arc<T>`,
-  `Rc<T>` wrappers all descend cleanly now;
-  nested-map shapes preserve the `is_map` flag
-  through every recursion level.
+Picker pops when 2+ languages are defined; type
+the first letter of the language name to jump-
+and-commit (`q` for Quenya, `d` for Drow).
 
-Plus a new tutorial
-([`48-split-view.md`](Documentation/Tutorials/48-split-view.md));
-the refreshed
-[`INKHAVEN_CHEAT_SHEET.typ`](Documentation/INKHAVEN_CHEAT_SHEET.typ)
-bumps from 1.2.6 to 1.2.12 with every chord added
-since.
+`Ctrl+B Shift+Q` reverses the direction for
+roundtrip testing.
+
+The LLM wraps its translation in
+`<<<TRANSLATION>>>` / `<<<END>>>` markers; the
+AI pane's `I` apply chord lifts only that block
+so the gloss table + applied-rules list +
+confidence flags stay in the pane for reference
+but don't pollute the manuscript.
+
+### CLI surface
+
+```
+inkhaven language init <name>
+inkhaven language add-word <lang> <word> --type <pos> --translation <text>
+inkhaven language add-word <lang> --import <path.csv> [--new] [--force]
+inkhaven language remove-word <lang> <word>
+inkhaven language list
+inkhaven language doctor <lang> [--json]
+inkhaven language export <lang> --format <json|anki|dictionary-twocol>
+```
+
+CSV import handles the bulk-load case (header row drives column
+mapping, RFC 4180 quoting, `;`-separated inflection paradigms,
+`|`-separated example lists).  `--new` wipes the existing
+dictionary first; pre-flight alphabet + phonology validation
+hard-stops the import on violations (`--force` bypasses).
+`--json` doctor output gates CI workflows:
+
+```
+$ inkhaven language doctor Quenya --json | jq -e '.coverage.with_paradigm_pct >= 80'
+```
+
+### Two new tutorials
+
+- [`49-language-book.md`](Documentation/Tutorials/49-language-book.md)
+  — end-to-end Language-book workflow with a full Tira worked example.
+- [`50-dictionary-csv-import.md`](Documentation/Tutorials/50-dictionary-csv-import.md)
+  — CSV bulk-import deep-dive.  Ships with a sample
+  [`49-language-book-tira-starter.csv`](Documentation/Tutorials/49-language-book-tira-starter.csv).
+
+The refreshed [`INKHAVEN_CHEAT_SHEET.typ`](Documentation/INKHAVEN_CHEAT_SHEET.typ)
+bumps to 1.2.13 with every new chord + the language CLI surface.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
