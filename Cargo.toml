@@ -1,6 +1,6 @@
 [package]
 name = "inkhaven"
-version = "1.2.13"
+version = "1.2.14-dev"
 edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
