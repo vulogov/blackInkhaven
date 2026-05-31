@@ -177,9 +177,22 @@ fn adopt_orphans(
             warn!(orphan = %orphan_abs.display(), "no branch in hierarchy matches the orphan's parent dir; skipping");
             continue;
         };
-        let parent_node = hierarchy
-            .get(parent_id)
-            .expect("parent_id came from hierarchy");
+        // 1.2.15+ Phase S.3 — `parent_id` was looked
+        // up via `branches.get(&parent_dir)` whose
+        // values come from a hierarchy walk above, so
+        // this lookup "can't fail".  But a future
+        // refactor could surface a race (a concurrent
+        // delete between walk + lookup) — degrade the
+        // orphan import by skipping it, not by
+        // panicking the whole `reindex` run.
+        let Some(parent_node) = hierarchy.get(parent_id) else {
+            warn!(
+                parent_id = %parent_id,
+                orphan = %orphan_abs.display(),
+                "hierarchy lookup for parent_id failed mid-reindex — skipping orphan",
+            );
+            continue;
+        };
 
         let (title, slug) = derive_title_and_slug(orphan_abs);
 

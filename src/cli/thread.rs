@@ -490,7 +490,17 @@ fn doctor(project: &Path, json: bool) -> Result<()> {
                 "dormant": dormant,
             },
         });
-        println!("{}", serde_json::to_string_pretty(&report).unwrap());
+        // 1.2.15+ Phase S.3 — `serde_json::Value`
+        // round-trips through `to_string_pretty`
+        // without failure in practice (no foreign
+        // types, no recursion limits hit), but the
+        // unwrap is a panic surface for no benefit.
+        // Map the error to our Result type so a
+        // serialise failure bubbles as a Store error
+        // instead of taking down the process.
+        let rendered = serde_json::to_string_pretty(&report)
+            .map_err(|e| Error::Store(format!("doctor JSON serialise: {e}")))?;
+        println!("{rendered}");
         return Ok(());
     }
 
