@@ -772,4 +772,125 @@ impl App {
             _ => false,
         }
     }
+
+    /// 1.2.14+ Phase D.4 — `Ctrl+V Shift+D` handler.
+    /// Walk every thread + its reverse-link count;
+    /// compute the same distributions + blind-
+    /// spot lists `inkhaven thread doctor` prints,
+    /// pop the modal.
+    pub(super) fn open_thread_doctor(&mut self) {
+        let Some(threads_root_id) =
+            self.system_book_id(SYSTEM_TAG_THREADS)
+        else {
+            self.status = "thread doctor: Threads system book missing".into();
+            return;
+        };
+        let data = self.compute_thread_doctor_data(threads_root_id);
+        if data.thread_count == 0 {
+            self.status =
+                "thread doctor: no threads defined — `inkhaven thread add <name>` to start"
+                    .into();
+            return;
+        }
+        self.modal = Modal::ThreadDoctor { data };
+        self.status = "thread doctor · Esc to close".into();
+    }
+
+    fn compute_thread_doctor_data(
+        &self,
+        threads_root_id: Uuid,
+    ) -> super::super::modal::ThreadDoctorData {
+        // Per-thread reverse-link tally (same shape
+        // as the picker walker).
+        let mut link_tally: std::collections::HashMap<Uuid, usize> =
+            std::collections::HashMap::new();
+        for node in self.hierarchy.iter() {
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            for target in &node.linked_paragraphs {
+                *link_tally.entry(*target).or_insert(0) += 1;
+            }
+        }
+        let mut status_counts: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        let mut weight_counts: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        let mut zero_links: Vec<String> = Vec::new();
+        let mut payoff_unfired: Vec<String> = Vec::new();
+        let mut dormant: Vec<String> = Vec::new();
+        let mut tension_sum: i64 = 0;
+        let mut tension_n = 0usize;
+        let mut thread_count = 0usize;
+        for id in self.hierarchy.collect_subtree(threads_root_id) {
+            if id == threads_root_id {
+                continue;
+            }
+            let Some(node) = self.hierarchy.get(id) else { continue; };
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            thread_count += 1;
+            let body = match self.store.get_content(id) {
+                Ok(Some(b)) => b,
+                _ => continue,
+            };
+            let body_str = std::str::from_utf8(&body).unwrap_or("");
+            let parsed: ThreadBody =
+                serde_hjson::from_str(body_str).unwrap_or_default();
+            let status_key = if parsed.status.is_empty() {
+                "(empty)".to_string()
+            } else {
+                parsed.status.clone()
+            };
+            *status_counts.entry(status_key).or_insert(0) += 1;
+            let weight_key = if parsed.weight.is_empty() {
+                "(empty)".to_string()
+            } else {
+                parsed.weight.clone()
+            };
+            *weight_counts.entry(weight_key).or_insert(0) += 1;
+            let display_name = if parsed.title.trim().is_empty() {
+                node.title.clone()
+            } else {
+                parsed.title.clone()
+            };
+            let links = link_tally.get(&id).copied().unwrap_or(0);
+            if links == 0 && !parsed.status.eq_ignore_ascii_case("setup") {
+                zero_links.push(display_name.clone());
+            }
+            if parsed.status.eq_ignore_ascii_case("payoff") && links == 0 {
+                payoff_unfired.push(display_name.clone());
+            }
+            if parsed.status.eq_ignore_ascii_case("develop") && links <= 1 {
+                dormant.push(display_name.clone());
+            }
+            tension_sum += parsed.tension as i64;
+            tension_n += 1;
+        }
+        let avg_tension = if tension_n > 0 {
+            tension_sum as f32 / tension_n as f32
+        } else {
+            0.0
+        };
+        super::super::modal::ThreadDoctorData {
+            thread_count,
+            avg_tension,
+            status_distribution: status_counts.into_iter().collect(),
+            weight_distribution: weight_counts.into_iter().collect(),
+            zero_links,
+            payoff_unfired,
+            dormant,
+        }
+    }
+
+    /// 1.2.14+ Phase D.4 — modal key handler.
+    /// Esc / Enter close.
+    pub(super) fn thread_doctor_handle_key(&mut self, key: KeyEvent) -> bool {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
+            self.modal = Modal::None;
+            return true;
+        }
+        true
+    }
 }

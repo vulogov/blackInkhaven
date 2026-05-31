@@ -254,6 +254,15 @@ pub enum Action {
     /// §3.4.
     #[serde(rename = "ai.thread_audit")]
     AiThreadAudit,
+    /// 1.2.14+ Phase D.4 — Ctrl+V Shift+D.  TUI
+    /// version of `inkhaven thread doctor`: pops a
+    /// modal showing the thread status / weight
+    /// distributions + blind-spot detector output
+    /// (ZERO LINKS / PAYOFF UNFIRED / DORMANT).
+    /// Identical math to the CLI; same per-
+    /// detector labels.
+    #[serde(rename = "view.thread_doctor")]
+    ViewThreadDoctor,
     /// 1.2.14+ Phase C.1 — Ctrl+V c.  Anchor an
     /// inline comment to the selection (or the
     /// word at the cursor when no selection is
@@ -776,6 +785,7 @@ impl Action {
             Action::ViewSiblingBookLookup => "sibling book".into(),
             Action::ViewThreadsPicker => "threads".into(),
             Action::AiThreadAudit => "thread audit".into(),
+            Action::ViewThreadDoctor => "thread doctor".into(),
             Action::ViewAddComment => "add comment".into(),
             Action::ViewCommentsPanel => "comments".into(),
             Action::AiContinuationDraft => "continue".into(),
@@ -965,6 +975,8 @@ impl Action {
                 "Open the Threads picker (Ctrl+V Shift+H, 1.2.14+). Lists every plot-thread paragraph under the `Threads` system book with status (setup/develop/payoff/resolved/abandoned) / weight (major/subplot/runner/bridge) / tension (0-10) / character + place + linked-paragraph counts. Picker chords: ↑↓ navigate, Enter opens the thread entry in the editor, Shift+Enter pins to the split-view secondary slot, w opens the swim-lane weave view (threads × chapters with marks at every paragraph that links to the thread), `/` filters the list by typed substring (status, weight, or title), Esc closes. The weave view's chord set: ↑↓ moves between threads, ←→ moves between chapters, Enter on a cell jumps to a linking paragraph, Esc returns to the picker.".into(),
             Action::AiThreadAudit =>
                 "AI thread audit (Ctrl+V Shift+A, 1.2.14+). Resolves the cursor's scope from the F9 AiMode (Chapter / Subchapter / Book; Selection / Paragraph / None default to the cursor's containing Chapter). Composes a prompt envelope reading every Thread paragraph's HJSON (title / status / weight / opening / midpoint / payoff / connections / tension), a blind-spots pre-pass (link counts per thread, payoff-marked threads whose payoff hasn't yet been linked, stale threads not advanced in the scope), and every paragraph in the scope (paragraph_id + title + body + linked_paragraphs). Streams the response into the AI pane.  Asks the model to score each scope paragraph for which threads it advances / touches incidentally / should advance but doesn't, then call out structural concerns (dormant arcs, premature payoffs, miscategorised weights).".into(),
+            Action::ViewThreadDoctor =>
+                "Open the thread doctor modal (Ctrl+V Shift+D, 1.2.14+). Walks every Threads paragraph + computes the same numbers `inkhaven thread doctor` prints: status distribution, weight distribution, average tension, and three blind-spot passes (ZERO LINKS — status past `setup` but no paragraph links to the thread; PAYOFF UNFIRED — status `payoff` but no paragraph links; DORMANT — status `develop` but ≤1 link project-wide).  Read-only modal; Esc closes.  Pairs with `Ctrl+V Shift+H` (picker, per-thread detail) + `Ctrl+V Shift+A` (AI audit of scope) — the doctor is the project-wide structural health check.".into(),
             Action::ViewAddComment =>
                 "Add an inline comment on the current selection (Ctrl+V c, 1.2.14+). When a selection is active, the comment anchors to that character range. When no selection, it anchors to the word at the cursor (Unicode word boundaries). Pops a multi-line text input modal for the comment body; on commit, writes a sidecar JSON file alongside the paragraph's .typ (`<paragraph>.comments.json`) so the comment travels with the prose in git and diffs cleanly. The commented span is rendered with `theme.comment_span_modifier` (default underline+italic); cursor inside the span surfaces the comment text + author + age in the editor footer. Character offsets (not byte) so UTF-8 boundary edits preserve anchoring.".into(),
             Action::ViewCommentsPanel =>
@@ -1346,6 +1358,11 @@ impl KeyBindings {
                 // thread Audit (lowercase a is
                 // ViewAddLink).
                 entry("Shift+a", Action::AiThreadAudit, Scope::Any),
+                // 1.2.14+ Phase D.4 — Ctrl+V Shift+D
+                // pops the thread doctor modal
+                // (TUI equivalent of CLI `thread
+                // doctor`).
+                entry("Shift+d", Action::ViewThreadDoctor, Scope::Any),
                 // 1.2.14+ Phase C.1 — Ctrl+V c adds an
                 // inline comment.  C for Comment.
                 entry("c", Action::ViewAddComment, Scope::Editor),

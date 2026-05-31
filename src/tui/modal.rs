@@ -964,6 +964,14 @@ pub(super) enum Modal {
         /// OpenedDoc when the modal commits.
         paragraph_id: Uuid,
     },
+    /// 1.2.14+ Phase D.4 — TUI thread doctor.
+    /// Matches `inkhaven thread doctor` output:
+    /// status + weight distributions + average
+    /// tension + three blind-spot detector
+    /// passes.  Read-only; `Esc` closes.
+    ThreadDoctor {
+        data: ThreadDoctorData,
+    },
     /// 1.2.14+ Phase A.2 — swim-lane weave view.
     /// Pushed by `w` from inside `ThreadsPicker`;
     /// `Esc` returns to the picker (stored in
@@ -1033,6 +1041,21 @@ pub(super) struct CommentsPanelEntry {
     /// ("2/5 in ¶") in the panel render.
     #[allow(dead_code)]
     pub paragraph_total_comments: usize,
+}
+
+/// 1.2.14+ Phase D.4 — TUI thread doctor
+/// snapshot.  Computed at modal-open time;
+/// renderer is pure read.  Identical math to the
+/// CLI `inkhaven thread doctor`.
+#[derive(Debug, Clone)]
+pub(super) struct ThreadDoctorData {
+    pub thread_count: usize,
+    pub avg_tension: f32,
+    pub status_distribution: Vec<(String, usize)>,
+    pub weight_distribution: Vec<(String, usize)>,
+    pub zero_links: Vec<String>,
+    pub payoff_unfired: Vec<String>,
+    pub dormant: Vec<String>,
 }
 
 /// 1.2.14+ Phase A.2 — one row of the Threads

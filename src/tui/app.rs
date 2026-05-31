@@ -7669,6 +7669,7 @@ impl App {
             A::ViewSiblingBookLookup => self.sibling_book_lookup(),
             A::ViewThreadsPicker => self.open_threads_picker(),
             A::AiThreadAudit => self.start_thread_audit(),
+            A::ViewThreadDoctor => self.open_thread_doctor(),
             A::ViewAddComment => self.start_add_comment(),
             A::ViewCommentsPanel => self.open_comments_panel(),
             A::AiContinuationDraft => self.start_continuation_draft(),
@@ -13508,6 +13509,8 @@ impl App {
             matches!(self.modal, Modal::ThreadsPicker { .. });
         let is_thread_weave_view =
             matches!(self.modal, Modal::ThreadWeaveView { .. });
+        let is_thread_doctor =
+            matches!(self.modal, Modal::ThreadDoctor { .. });
         let is_comment_editor =
             matches!(self.modal, Modal::CommentEditor { .. });
         let is_comments_panel =
@@ -13586,6 +13589,10 @@ impl App {
         }
         if is_thread_weave_view {
             self.thread_weave_handle_key(key);
+            return Ok(false);
+        }
+        if is_thread_doctor {
+            self.thread_doctor_handle_key(key);
             return Ok(false);
         }
         if is_comment_editor {
