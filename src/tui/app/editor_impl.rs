@@ -1221,4 +1221,162 @@ impl super::App {
         Some((breadcrumb, words, target))
     }
 
+    /// 1.2.14+ Phase Q.2 — snippet expansion driver.
+    /// Fires from `handle_editor_key_inner` after
+    /// the textarea has processed a trigger
+    /// character (whitespace or sentence-ending
+    /// punctuation).  Looks back from the cursor
+    /// for a configured trigger; if found, deletes
+    /// the trigger string from the buffer and
+    /// inserts the resolved expansion in its
+    /// place.  The triggering non-word character
+    /// is left in place — typing `\dt ` produces
+    /// `<date> ` with the space intact.
+    pub(super) fn maybe_expand_snippet(&mut self) {
+        // Short-circuits, in order of cheapest:
+        if !self.cfg.editor.snippets.enabled {
+            return;
+        }
+        if self.cfg.editor.snippets.triggers.is_empty() {
+            return;
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            return;
+        };
+        if doc.read_only {
+            return;
+        }
+        let (cursor_row, cursor_col) = doc.textarea.cursor();
+        let lines = doc.textarea.lines();
+        let Some(line) = lines.get(cursor_row) else {
+            return;
+        };
+        let line_chars: Vec<char> = line.chars().collect();
+        if cursor_col == 0 {
+            // Cursor sits at column 0 — either the
+            // textarea just inserted a newline (the
+            // trigger char IS the newline; we want
+            // to inspect the END of the previous
+            // line) or no preceding chars exist.
+            // For newline-driven expansion, look at
+            // the previous line.
+            return;
+        }
+        // The trigger char that fired us sits at
+        // `line_chars[cursor_col - 1]`.  Look at
+        // everything BEFORE that char for the
+        // trigger string.
+        let before_trigger_char: String =
+            line_chars[..cursor_col.saturating_sub(1)]
+                .iter()
+                .collect();
+        let triggers = &self.cfg.editor.snippets.triggers;
+        let Some((trigger_str, body)) =
+            super::super::snippets::find_trigger(&before_trigger_char, triggers)
+        else {
+            return;
+        };
+        let trigger_chars = trigger_str.chars().count();
+        if trigger_chars == 0 || trigger_chars > cursor_col.saturating_sub(1) {
+            return;
+        }
+        // Build the expansion context from the open
+        // paragraph's metadata + selection.
+        let paragraph_title = doc.title.clone();
+        let paragraph_slug = self
+            .hierarchy
+            .get(doc.id)
+            .map(|n| n.slug.clone())
+            .unwrap_or_default();
+        let selection_text = read_selection_text(&doc.textarea);
+        let author = super::super::comments::resolve_author(
+            self.cfg.editor.comment_author.as_deref(),
+        );
+        let ctx = super::super::snippets::ExpansionContext {
+            paragraph_title,
+            paragraph_slug,
+            selection: selection_text,
+            author,
+        };
+        let expansion = super::super::snippets::expand_placeholders(body, &ctx);
+
+        // Mutate the textarea: delete trigger chars
+        // backward from `cursor_col - 1`, then
+        // insert the expansion at that point.  The
+        // triggering non-word char at
+        // `cursor_col - 1` stays in place.
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        use tui_textarea::CursorMove;
+        // Move cursor BACK one column to land on
+        // the trigger char immediately before the
+        // trigger-firing non-word char.
+        doc.textarea.move_cursor(CursorMove::Back);
+        // Now move further back trigger_chars
+        // columns to land at the start of the
+        // trigger.
+        for _ in 0..trigger_chars {
+            doc.textarea.move_cursor(CursorMove::Back);
+        }
+        // Select the trigger range by moving
+        // forward and starting selection at the
+        // current position.
+        doc.textarea.start_selection();
+        for _ in 0..trigger_chars {
+            doc.textarea.move_cursor(CursorMove::Forward);
+        }
+        // Cut deletes the selection and stashes it
+        // in the yank buffer; we discard the yank
+        // content by overwriting the yank with the
+        // expansion text + pasting.
+        doc.textarea.cut();
+        // Paste the expansion.  `set_yank_text` +
+        // `paste` is the textarea API that handles
+        // multi-line strings correctly (insert_str
+        // would, too, but yank/paste is the
+        // canonical "replace" pattern in the rest
+        // of this crate).
+        doc.textarea.set_yank_text(expansion);
+        doc.textarea.paste();
+        doc.dirty = true;
+    }
+}
+
+/// 1.2.14+ Phase Q.2 — pull the active selection
+/// text out of the textarea.  Returns an empty
+/// string when there's no selection (matches the
+/// `{selection}` placeholder's documented
+/// "empty when none" semantics).
+fn read_selection_text(textarea: &tui_textarea::TextArea<'static>) -> String {
+    let Some(((r1, c1), (r2, c2))) = textarea.selection_range() else {
+        return String::new();
+    };
+    let lines = textarea.lines();
+    if r1 == r2 {
+        // Single-line selection.
+        let Some(line) = lines.get(r1) else {
+            return String::new();
+        };
+        let chars: Vec<char> = line.chars().collect();
+        let (s, e) = if c1 <= c2 { (c1, c2) } else { (c2, c1) };
+        let s = s.min(chars.len());
+        let e = e.min(chars.len());
+        return chars[s..e].iter().collect();
+    }
+    // Multi-line selection.
+    let mut out = String::new();
+    for r in r1..=r2 {
+        let Some(line) = lines.get(r) else { break; };
+        let chars: Vec<char> = line.chars().collect();
+        let start = if r == r1 { c1 } else { 0 };
+        let end = if r == r2 { c2 } else { chars.len() };
+        let s = start.min(chars.len());
+        let e = end.min(chars.len());
+        out.extend(chars[s..e].iter());
+        if r != r2 {
+            out.push('\n');
+        }
+    }
+    out
 }
