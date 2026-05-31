@@ -248,6 +248,15 @@ theme: {
   places_fg:         "#89dceb"
   characters_fg:     "#f9e2af"
 
+  // 1.2.13+ — invented-language word overlay.  Italic
+  // when applied (mnemonic: italics is the typesetting
+  // convention for foreign-language inclusions in
+  // English prose).  Walks every Language/<lang>/
+  // Dictionary entry's surface forms (lemma + every
+  // paradigm in `inflection:` map) and lights them up
+  // in the manuscript editor.
+  language_word_fg:  "#b4a8e1"
+
   // In-buffer search
   search_match_bg:   "#f38ba8"
   search_current_bg: "#f5c2e7"
@@ -319,7 +328,7 @@ Every modal (Add / Delete / Rename / FindReplace / QuickRef /
 FilePicker / Help / PromptPicker / SnapshotPicker) shares `modal_bg`,
 `modal_fg`, and `modal_border`.
 
-### Lexicon overlay (Places / Characters)
+### Lexicon overlay (Places / Characters / Language)
 
 `places_fg` colours any token in the editor that matches a paragraph
 title in the **Places** system book; `characters_fg` does the same for
@@ -327,6 +336,16 @@ title in the **Places** system book; `characters_fg` does the same for
 Russian project's place "Москва" lights up "Москвы", "Москве", and so on
 automatically. See [`LOCATIONS.md`](LOCATIONS.md) and
 [`CHARACTERS.md`](CHARACTERS.md).
+
+`language_word_fg` (1.2.13+) colours every word from every Language
+sub-book's `Dictionary` chapter — the lemma *and* every paradigm value
+in the entry's `inflection: {...}` map.  Rendered ITALIC + colour to
+mirror the typesetting convention for foreign-language inclusions in
+prose.  Cursor on a Language hit shows `[word · POS · translation]` in
+the editor footer (lifted live from the entry's HJSON).  See
+Tutorial 49 for the end-to-end Language-book workflow and
+[`PROPOSALS/LANGUAGE_BOOK.md`](PROPOSALS/LANGUAGE_BOOK.md) for the
+full design.
 
 ### In-buffer search (Ctrl+F)
 

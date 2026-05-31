@@ -509,3 +509,54 @@ preserves the Shift+Enter modifier on each.
 | Chord | What it does |
 |-------|--------------|
 | `Ctrl+R` | Fire LLM review of the current `inkhaven.hjson` buffer.  Reviewer-LLM pattern (not executor); streams into App.inference; visible in the AI pane after closing the modal.  Not currently rebindable — lives inside the HJSON editor modal's local chord dispatch, not the binding table.
+
+## 1.2.13 — new actions
+
+Catalogue of named actions added across the
+1.2.13 Language-book cycle (Phases A through
+D.1).  Same rebind path applies: name the
+action in `keys.bindings` with a chord of your
+choice.
+
+### Language translation (Ctrl+B Q / Ctrl+B Shift+Q)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `ai.translate_to_invented` | `Ctrl+B Q` (editor) | Translate the open paragraph from the project's working language INTO an invented language defined under the `Language` system book.  Composes a prompt envelope from the target language's Meta/overview + Grammar + Phonology + RAG-filtered Dictionary + up to 3 Sample texts.  Picker pops when 2+ languages defined (first-letter shortcut jump-and-commits).  Response wraps the translation in `<<<TRANSLATION>>>` / `<<<END>>>` markers; the AI pane's `I` apply lifts only that block (chip `translate[on]` shows when extraction is armed). |
+| `ai.translate_from_invented` | `Ctrl+B Shift+Q` (editor) | Reverse direction — translate FROM an invented language back to the working language.  Same envelope + picker semantics; flipped direction labels.  Roundtrip-test workflow:  `Ctrl+B Q` then `Ctrl+B Shift+Q` then compare to original. |
+
+### Tree-pane context-sensitive scaffolders
+
+These reuse existing chords (`tree.add_book`,
+`tree.add_paragraph`) but route differently when
+the tree cursor sits inside the `Language`
+system book.  Rebinding the underlying actions
+to different chords preserves the routing.
+
+| Chord (default) | When triggered under | Routes to |
+|-----------------|----------------------|-----------|
+| `b` (tree) | `Language` system book | `scaffold_language_chapters` — creates the 5-chapter shell + seeds `Meta/overview` with the full commented HJSON template.  Matches `inkhaven language init <name>`. |
+| `+` (tree) | `Language/<lang>/Dictionary` (chapter or any bucket subchapter) | `add_dictionary_entry_impl` — derives the alphabet bucket from the typed word's first character, auto-creates the bucket subchapter, seeds the body with the dictionary-entry HJSON template (word pre-filled).  Matches `inkhaven language add-word`. |
+| `+` (tree) | `Language/<lang>/Grammar` | Seeds the new paragraph's body with the schema-aware grammar-rule HJSON template (rule_id / category / rule / examples / applies_when / depends_on). |
+| `+` (tree) | `Language/<lang>/Phonology` | Seeds the new paragraph's body with the phonology-rule HJSON template (rule_id / category / pattern / phonemes / examples). |
+
+### Programmatic / scripting access
+
+The Language-book shipped a CLI surface too,
+exposed via `inkhaven language <subcommand>`:
+
+```
+$ inkhaven language --help
+  init <name>
+  add-word <lang> <word> --type <pos> --translation <text> [--example <text>]
+  add-word <lang> --import <path.csv> [--new] [--force]
+  remove-word <lang> <word>
+  doctor <lang> [--json]
+  list
+  export <lang> --format <json|anki|dictionary-twocol> --output <path>
+```
+
+These have no named-action equivalents (they're
+shell-only), but every TUI chord above produces
+equivalent on-disk artefacts so the CLI and TUI
+paths are interchangeable.

@@ -1,9 +1,9 @@
-// Inkhaven 1.2.12 — printable cheat sheet
+// Inkhaven 1.2.13 — printable cheat sheet
 // Compile: `typst compile Documentation/INKHAVEN_CHEAT_SHEET.typ`
 // Or in the TUI: open this file via F3 then `Ctrl+B B` to build.
 
 #set document(
-  title: "Inkhaven 1.2.12 — Cheat Sheet",
+  title: "Inkhaven 1.2.13 — Cheat Sheet",
   author: "Inkhaven",
 )
 #set page(
@@ -11,7 +11,7 @@
   margin: (top: 1.2cm, bottom: 1.2cm, left: 1.2cm, right: 1.2cm),
   footer: context [
     #set text(7pt, fill: luma(120))
-    Inkhaven 1.2.12 cheat sheet  ·  page #counter(page).display() / #counter(page).final().first()
+    Inkhaven 1.2.13 cheat sheet  ·  page #counter(page).display() / #counter(page).final().first()
   ],
 )
 #set text(font: "New Computer Modern", size: 8pt)
@@ -46,7 +46,7 @@
   ..rows.pos().flatten(),
 )
 
-= Inkhaven 1.2.12 — Cheat Sheet
+= Inkhaven 1.2.13 — Cheat Sheet
 
 A two-page reference. For workflows see
 `Documentation/Tutorials/` and the *Book of Inkhaven* at
@@ -111,6 +111,8 @@ A two-page reference. For workflows see
   row([Shift+T], [(1.2.9) AI show-don't-tell scan]),
   row([Shift+M], [(1.2.11) AI sentence-rhythm rewrite · auto-diff · snapshot on accept]),
   row([Shift+N], [(1.2.12) Toggle prompt-language mode (book ↔ paragraph-detected)]),
+  row([Q],   [(1.2.13) Translate open ¶ INTO an invented language (picker on ambiguity)]),
+  row([Shift+Q], [(1.2.13) Translate open ¶ FROM invented back to working language]),
 )
 
 Inside the tag picker (`Ctrl+B ]` / `Ctrl+B }`):
@@ -289,6 +291,32 @@ bottom; AI response pane is hidden.
 Exiting Shift+F4 clears the secondary slot so the
 standard layout's AI pane reappears.  Re-pin via any
 of the above on next Shift+F4.
+
+== Language book — 1.2.13
+
+Invented-language workbench (Documentation/Tutorials/49,
+50). Five chapters per sub-book: Meta · Dictionary ·
+Grammar · Phonology · Sample texts.
+
+#kv-table(
+  row([Tree b on `Language`], [Scaffold a new language sub-book (5 chapters + seeded Meta/overview)]),
+  row([Tree + under Dictionary], [Add dictionary entry — bucket auto-derived, HJSON template seeded]),
+  row([Tree + under Grammar / Phonology], [Add rule paragraph — schema-aware HJSON seeded]),
+  row([Ctrl+B Q], [Translate ¶ INTO invented language · picker on ambiguity · first-letter jump-and-commit]),
+  row([Ctrl+B Shift+Q], [Translate ¶ FROM invented · roundtrip-test workflow]),
+  row([AI pane I], [Inserts only the `<<<TRANSLATION>>>` block (chip `translate[on]` shows when extraction is armed)]),
+)
+
+CLI:
+#kv-table(
+  row([`language init <name>`], [Scaffold]),
+  row([`language add-word <lang> <w> --type <pos> --translation <t>`], [Single add]),
+  row([`language add-word <lang> --import <csv>` `[--new] [--force]`], [Bulk CSV import · `--new` wipes first · `--force` skips alphabet/phonology validation]),
+  row([`language remove-word <lang> <w>`], [Delete entry]),
+  row([`language list`], [Summary table]),
+  row([`language doctor <lang> [--json]`], [Health report — coverage, missing paradigms, manuscript gap]),
+  row([`language export <lang> --format <json|anki|dictionary-twocol>`], [Export]),
+)
 
 == AI prompt (Ctrl+I)
 
