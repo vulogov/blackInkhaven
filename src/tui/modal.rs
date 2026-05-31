@@ -872,6 +872,31 @@ pub(super) enum Modal {
         /// current filter.  Rebuilt on filter edits.
         visible: Vec<usize>,
     },
+    /// 1.2.14+ Phase C.1 — comment editor.  Pops on
+    /// `Ctrl+V c` once the anchor span has been
+    /// resolved (selection range or word-at-cursor).
+    /// Multi-line TextArea for the comment body;
+    /// `Ctrl+S` / `Esc` commit, `Esc` (when buffer
+    /// empty) cancels.  On commit, a new `Comment`
+    /// is appended to the open paragraph's sidecar
+    /// JSON file with the anchor span, current
+    /// author, and `created_at: now`.
+    CommentEditor {
+        /// Multi-line buffer for the comment body.
+        textarea: tui_textarea::TextArea<'static>,
+        /// Character span the comment anchors to in
+        /// the underlying paragraph body.
+        anchor_start: usize,
+        anchor_end: usize,
+        /// Snippet of the anchor span's text (≤80
+        /// chars) for the modal header so the
+        /// author sees what they're commenting on.
+        anchor_preview: String,
+        /// Paragraph UUID the comment belongs to —
+        /// used to dispatch the save to the right
+        /// OpenedDoc when the modal commits.
+        paragraph_id: Uuid,
+    },
     /// 1.2.14+ Phase A.2 — swim-lane weave view.
     /// Pushed by `w` from inside `ThreadsPicker`;
     /// `Esc` returns to the picker (stored in

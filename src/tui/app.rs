@@ -1861,6 +1861,7 @@ pub(crate) struct App {
 
 mod ai_impl;
 mod backup_impl;
+mod comments_impl;
 mod editor_impl;
 mod render;
 mod snapshot_impl;
@@ -7634,6 +7635,7 @@ impl App {
             A::ViewSiblingBookLookup => self.sibling_book_lookup(),
             A::ViewThreadsPicker => self.open_threads_picker(),
             A::AiThreadAudit => self.start_thread_audit(),
+            A::ViewAddComment => self.start_add_comment(),
             A::OpenSnapshotPicker => self.open_snapshot_picker(),
             A::GrammarCheck => self.start_grammar_check(),
             A::CycleAiMode => self.cycle_ai_mode(),
@@ -13467,6 +13469,8 @@ impl App {
             matches!(self.modal, Modal::ThreadsPicker { .. });
         let is_thread_weave_view =
             matches!(self.modal, Modal::ThreadWeaveView { .. });
+        let is_comment_editor =
+            matches!(self.modal, Modal::CommentEditor { .. });
         let is_image_picker = matches!(self.modal, Modal::ImagePicker { .. });
         let is_function_picker = matches!(self.modal, Modal::FunctionPicker { .. });
         let is_status_filter = matches!(self.modal, Modal::StatusFilter { .. });
@@ -13535,6 +13539,10 @@ impl App {
         }
         if is_thread_weave_view {
             self.thread_weave_handle_key(key);
+            return Ok(false);
+        }
+        if is_comment_editor {
+            self.comment_editor_handle_key(key);
             return Ok(false);
         }
         if is_image_picker {

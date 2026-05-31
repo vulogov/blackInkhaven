@@ -324,6 +324,10 @@ impl super::App {
             block_anchor: None,
             last_activity: std::time::Instant::now(),
             saved_lines,
+            // 1.2.14+ Phase C.1 — snapshots are
+            // read-only; comments don't render or
+            // mutate from this slot.
+            comments: super::super::comments::CommentsFile::new(),
             loaded_mtime: None,
             split: None,
             search: None,

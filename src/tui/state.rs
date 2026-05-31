@@ -168,6 +168,13 @@ pub(super) struct OpenedDoc {
     /// Snapshot of `textarea.lines()` at the most recent save / load. Used to
     /// bold characters added since then.
     pub saved_lines: Vec<String>,
+    /// 1.2.14+ Phase C.1 — inline comments anchored to
+    /// character spans in the paragraph.  Loaded from
+    /// the sidecar `<paragraph>.comments.json` at
+    /// open time + re-saved after every `Ctrl+V c`
+    /// commit.  Empty when the paragraph has no
+    /// comments (sidecar absent or empty list).
+    pub comments: super::comments::CommentsFile,
     /// 1.2.7+ — wall-clock mtime of the paragraph's file at
     /// the moment we loaded it (or after the last save).
     /// The idle ticker compares this to the current mtime;

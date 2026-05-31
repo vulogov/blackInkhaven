@@ -1044,6 +1044,15 @@ pub struct ThemeConfig {
     pub style_warning_repeated_phrase_modifier: String,
     #[serde(default)]
     pub style_warning_show_dont_tell_modifier: String,
+    /// 1.2.14+ Phase C.1 — modifier applied to the
+    /// character span of every inline comment.
+    /// Empty string keeps the baked-in default
+    /// `underline+italic`.  Accepts `+`-combined
+    /// tokens like the existing style-warning
+    /// fields: `bold`, `dim`, `italic`, `underline`,
+    /// `reversed`, `none`.
+    #[serde(default)]
+    pub comment_span_modifier: String,
     /// 1.2.10+ — POV / character chip background +
     /// foreground.  Explicit RGB so the chip stays
     /// readable across terminal palettes (the named
@@ -1139,6 +1148,7 @@ impl Default for ThemeConfig {
             style_warning_filter_word_modifier: String::new(),
             style_warning_repeated_phrase_modifier: String::new(),
             style_warning_show_dont_tell_modifier: String::new(),
+            comment_span_modifier: String::new(),
             pov_chip_bg: "#8b1d88".into(),
             pov_chip_fg: "#ffffff".into(),
 
@@ -1391,6 +1401,17 @@ pub struct EditorConfig {
     /// the resolver silently uses the book language.
     #[serde(default = "default_prompt_language_detection_min_chars")]
     pub prompt_language_detection_min_chars: usize,
+    /// 1.2.14+ Phase C.1 — author name stamped onto
+    /// every inline comment created via `Ctrl+V c`.
+    /// When unset (the default), the comment author
+    /// resolver falls through to `$USER` →
+    /// `$LOGNAME` → `$HOSTNAME` → `"anonymous"`.
+    /// Set this when the inferred author is wrong
+    /// (shared workstation, system account) or
+    /// when the project shares a manuscript across
+    /// authors and per-author attribution matters.
+    #[serde(default)]
+    pub comment_author: Option<String>,
 }
 
 fn default_pov_chip_enabled() -> bool {
@@ -2258,6 +2279,7 @@ impl Default for EditorConfig {
             prompt_language_mode: default_prompt_language_mode(),
             prompt_language_detection_min_chars:
                 default_prompt_language_detection_min_chars(),
+            comment_author: None,
         }
     }
 }

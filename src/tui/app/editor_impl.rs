@@ -492,6 +492,23 @@ impl super::App {
             textarea.move_cursor(CursorMove::Jump(init_row as u16, init_col as u16));
         }
 
+        // 1.2.14+ Phase C.1 — load the sidecar
+        // comments file alongside the .typ.  Errors
+        // are silently degraded to an empty file
+        // (malformed JSON shouldn't block opening
+        // the paragraph for editing); the next
+        // status-bar refresh shows a hint via the
+        // status field.
+        let comments = match super::super::comments::load_from_sidecar(&abs) {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::warn!(
+                    "comments sidecar load failed for {}: {e}",
+                    abs.display()
+                );
+                super::super::comments::CommentsFile::new()
+            }
+        };
         self.opened = Some(OpenedDoc {
             id: node.id,
             title: node.title.clone(),
@@ -503,6 +520,7 @@ impl super::App {
             block_anchor: None,
             last_activity: std::time::Instant::now(),
             saved_lines,
+            comments,
             loaded_mtime: std::fs::metadata(&abs)
                 .and_then(|m| m.modified())
                 .ok(),
@@ -882,6 +900,11 @@ impl super::App {
         if init_row > 0 || init_col > 0 {
             textarea.move_cursor(CursorMove::Jump(init_row as u16, init_col as u16));
         }
+        // 1.2.14+ Phase C.1 — secondary slot also
+        // loads its own comments so the split-view
+        // overlay paints comments on both panes.
+        let comments = super::super::comments::load_from_sidecar(&abs)
+            .unwrap_or_else(|_| super::super::comments::CommentsFile::new());
         self.secondary = Some(OpenedDoc {
             id: node.id,
             title: node.title.clone(),
@@ -893,6 +916,7 @@ impl super::App {
             block_anchor: None,
             last_activity: std::time::Instant::now(),
             saved_lines,
+            comments,
             loaded_mtime: std::fs::metadata(&abs)
                 .and_then(|m| m.modified())
                 .ok(),
