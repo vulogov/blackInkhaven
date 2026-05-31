@@ -263,7 +263,24 @@ impl super::App {
                 doc.textarea.set_yank_text(format!("\n\n{text}"));
                 doc.textarea.paste();
             }
-            InferenceAction::CopyOnly | InferenceAction::ReplaceCorrected => unreachable!(),
+            // 1.2.15+ Phase S.1 — internal-invariant
+            // guard.  `CopyOnly` short-circuits in the
+            // caller (`apply_inference`) before
+            // reaching this fn; `ReplaceCorrected`
+            // routes through `replace_buffer_with_correction`
+            // instead.  If a refactor ever lands one
+            // of them here, we log + no-op rather
+            // than crashing the TUI — the user just
+            // sees nothing happen and can re-invoke.
+            InferenceAction::CopyOnly | InferenceAction::ReplaceCorrected => {
+                debug_assert!(false, "apply_inference_to_buffer reached with non-pasting action");
+                tracing::error!(
+                    target: "inkhaven::ai",
+                    "apply_inference_to_buffer reached with non-pasting action {action:?} — \
+                     caller should have short-circuited; ignoring",
+                );
+                return;
+            }
         }
         doc.dirty = true;
         // 1.2.12+ Phase D — text-insertion / paste of AI
@@ -1397,8 +1414,15 @@ impl super::App {
         }
 
         // 0 → error (handled above), 1 → direct, 2+ → picker.
-        if lang_books.len() == 1 {
-            let target_book = (*lang_books.first().unwrap()).clone();
+        //
+        // 1.2.15+ Phase S.1 — pattern-match `[only]`
+        // instead of `len() == 1` + `.first().unwrap()`.
+        // Same behaviour, no panic surface even if a
+        // future refactor changes how `lang_books` is
+        // built; the `else { /* 2+ → picker */ }` falls
+        // through to the picker path naturally.
+        if let [only] = lang_books.as_slice() {
+            let target_book = (*only).clone();
             self.spawn_translation_inference(
                 &target_book,
                 direction,

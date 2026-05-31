@@ -750,7 +750,20 @@ impl super::super::App {
         // editor border is painted up the stack in
         // `draw_editor`.  We just paint the rendered
         // markdown lines here.
-        let opened = self.opened.as_mut().expect("opened checked above");
+        //
+        // 1.2.15+ Phase S.1 — graceful no-op when
+        // `opened` is None.  The invariant ("caller
+        // checked .is_some()") still holds in every
+        // call site we know about, but a missed
+        // refactor shouldn't take down the TUI; an
+        // empty frame is the right fallback.
+        let Some(opened) = self.opened.as_mut() else {
+            tracing::warn!(
+                target: "inkhaven::tui::render",
+                "draw_help_paragraph_rendered called with no opened paragraph",
+            );
+            return;
+        };
         let source: String = opened.textarea.lines().join("\n");
         let rendered: Vec<ratatui::text::Line<'static>> =
             super::super::super::markdown::render(&source);
@@ -787,7 +800,15 @@ impl super::super::App {
         // together identify the Help book without false
         // positives — other read-only views (snapshots,
         // diffs) keep the existing source view.
-        let opened_ref = self.opened.as_ref().expect("opened checked above");
+        // 1.2.15+ Phase S.1 — see draw_help_paragraph_rendered
+        // for rationale; graceful no-op on None.
+        let Some(opened_ref) = self.opened.as_ref() else {
+            tracing::warn!(
+                target: "inkhaven::tui::render",
+                "editor draw called with no opened paragraph",
+            );
+            return;
+        };
         let is_help_rendered = opened_ref.read_only
             && opened_ref.content_type.as_deref() == Some("markdown");
         if is_help_rendered {
@@ -798,7 +819,9 @@ impl super::super::App {
         let block = self.current_block();
         let lexicon = &self.lexicon;
         let theme = &self.theme;
-        let opened = self.opened.as_mut().expect("opened checked above");
+        let Some(opened) = self.opened.as_mut() else {
+            return;
+        };
         let highlighter = &mut self.highlighter;
         let current_lines: Vec<String> = opened.textarea.lines().to_vec();
         let source = current_lines.join("\n");
@@ -1086,7 +1109,15 @@ impl super::super::App {
         // Same Help-paragraph rendered-markdown short-
         // circuit as `draw_editor_unwrapped` — keep both
         // entry points consistent.
-        let opened_ref = self.opened.as_ref().expect("opened checked above");
+        // 1.2.15+ Phase S.1 — see draw_help_paragraph_rendered
+        // for rationale; graceful no-op on None.
+        let Some(opened_ref) = self.opened.as_ref() else {
+            tracing::warn!(
+                target: "inkhaven::tui::render",
+                "editor draw called with no opened paragraph",
+            );
+            return;
+        };
         let is_help_rendered = opened_ref.read_only
             && opened_ref.content_type.as_deref() == Some("markdown");
         if is_help_rendered {
@@ -1097,7 +1128,9 @@ impl super::super::App {
         let block = self.current_block();
         let lexicon = &self.lexicon;
         let theme = &self.theme;
-        let opened = self.opened.as_mut().expect("opened checked above");
+        let Some(opened) = self.opened.as_mut() else {
+            return;
+        };
         let highlighter = &mut self.highlighter;
         let current_lines: Vec<String> = opened.textarea.lines().to_vec();
         let source = current_lines.join("\n");

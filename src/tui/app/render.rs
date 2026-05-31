@@ -215,75 +215,21 @@ impl super::App {
         let rect = Rect { x, y, width, height };
         f.render_widget(ratatui::widgets::Clear, rect);
 
+        // 1.2.15+ Phase S.1 — the early-dispatch chain
+        // above this match handles all "picker / pane"
+        // modal variants by name; the match below only
+        // builds the body for the few "simple text-
+        // input" variants left.  Every other variant
+        // is funneled into a single graceful catch-all
+        // that logs + returns instead of `unreachable!()`-
+        // panicking.  If a future Modal variant lands
+        // without a matching `if let Modal::X = …`
+        // early-dispatch above, the TUI silently skips
+        // rendering it (visible in logs) instead of
+        // crashing.  The 1.2.14 catalogue had 43 of
+        // these unreachable arms — collapsed into one.
         let (title, border_color, body): (String, Color, Vec<Line<'_>>) = match &self.modal {
             Modal::None => return,
-            Modal::FilePicker(_) => unreachable!("file picker handled above"),
-            Modal::QuickRef { .. } => unreachable!("quickref handled above"),
-            Modal::Credits { .. } => unreachable!("credits handled above"),
-            Modal::BookInfo { .. } => unreachable!("book info handled above"),
-            Modal::LlmPicker { .. } => unreachable!("llm picker handled above"),
-            Modal::ImagePicker { .. } => unreachable!("image picker handled above"),
-            Modal::ImagePreview { .. } => unreachable!("image preview handled above"),
-            Modal::FunctionPicker { .. } => unreachable!("function picker handled above"),
-            Modal::StatusFilter { .. } => unreachable!("status filter handled above"),
-            Modal::BundPane { .. } => unreachable!("bund pane handled above"),
-            Modal::ScriptPicker { .. } => unreachable!("script picker handled above"),
-            Modal::SimilarPicker { .. } => unreachable!("similar picker handled above"),
-            Modal::Progress { .. } => unreachable!("progress modal handled above"),
-            Modal::SnapshotDiff { .. } => unreachable!("snapshot diff handled above"),
-            Modal::LinkPicker { .. } => unreachable!("link picker handled above"),
-            Modal::BacklinkPicker { .. } => unreachable!("backlink picker handled above"),
-            Modal::BookmarkPicker { .. } => unreachable!("bookmark picker handled above"),
-            Modal::FuzzyParagraphPicker { .. } =>
-                unreachable!("fuzzy paragraph picker handled above"),
-            Modal::KillRingPicker { .. } =>
-                unreachable!("kill-ring picker handled above"),
-            Modal::ShellPane { .. } =>
-                unreachable!("shell pane handled above"),
-            Modal::HjsonEditor { .. } =>
-                unreachable!("hjson editor handled above"),
-            Modal::WritingStreakHeatmap { .. } =>
-                unreachable!("writing-streak heatmap handled above"),
-            Modal::Concordance { .. } =>
-                unreachable!("concordance handled above"),
-            Modal::TranslationLanguagePicker { .. } =>
-                unreachable!("translation picker handled above"),
-            Modal::ThreadsPicker { .. } =>
-                unreachable!("threads picker handled above"),
-            Modal::ThreadWeaveView { .. } =>
-                unreachable!("thread weave view handled above"),
-            Modal::ThreadDoctor { .. } =>
-                unreachable!("thread doctor handled above"),
-            Modal::CommentEditor { .. } =>
-                unreachable!("comment editor handled above"),
-            Modal::CommentsPanel { .. } =>
-                unreachable!("comments panel handled above"),
-            Modal::FootnoteEditor { .. } =>
-                unreachable!("footnote editor handled above"),
-            Modal::ProjectGoalModal { .. } =>
-                unreachable!("project goal modal handled above"),
-            Modal::StyleTransferPicker { .. } =>
-                unreachable!("style transfer picker handled above"),
-            Modal::SentenceRhythm { .. } =>
-                unreachable!("sentence rhythm handled above"),
-            Modal::RenderedPreview { .. } =>
-                unreachable!("rendered preview handled above"),
-            Modal::SaveRenderedPng { .. } =>
-                unreachable!("save rendered png handled above"),
-            Modal::TagPicker { .. } =>
-                unreachable!("tag picker handled above"),
-            Modal::TagSearchResults { .. } =>
-                unreachable!("tag search results handled above"),
-            Modal::StoryView { .. } =>
-                unreachable!("story view handled above"),
-            Modal::DiagnosticsList { .. } =>
-                unreachable!("diagnostics list handled above"),
-            Modal::AiDiffReview { .. } =>
-                unreachable!("ai diff review handled above"),
-            Modal::EventPicker { .. } =>
-                unreachable!("event picker handled above"),
-            Modal::TimelineView { .. } =>
-                unreachable!("timeline view handled above"),
             Modal::TimelineNewEventPrompt {
                 input,
                 cursor_ticks,
@@ -363,8 +309,6 @@ impl super::App {
                     body_lines,
                 )
             }
-            Modal::SaveStoryPng { .. } =>
-                unreachable!("save story png handled above"),
             Modal::TagAddPrompt { input, .. } => {
                 let body = vec![
                     Line::from(""),
@@ -926,6 +870,25 @@ impl super::App {
                     Style::default().add_modifier(Modifier::DIM),
                 )));
                 (header, Color::Cyan, body)
+            }
+            // 1.2.15+ Phase S.1 — catch-all for every
+            // Modal variant that has its own dedicated
+            // renderer dispatched via the
+            // `if let Modal::X = …` chain above this
+            // match (file picker, llm picker, comments
+            // panel, threads weave view, etc.).  We
+            // log + return rather than panic so a
+            // misplaced dispatch surfaces as a missing
+            // modal frame (visible in the trace log,
+            // recoverable with Esc) instead of crashing
+            // the TUI.
+            _other_dispatched_above => {
+                tracing::error!(
+                    target: "inkhaven::tui::render",
+                    "draw_modal: modal variant reached the fallback match arm — \
+                     an early dispatch was missed.  Rendering nothing for this frame.",
+                );
+                return;
             }
         };
 
