@@ -269,6 +269,9 @@ pub fn run(project: &Path) -> Result<()> {
             project_root: layout.root.clone(),
             backup_dir,
             backup_max_age: cfg.backup.max_age,
+            repair: crate::health::RepairPolicy {
+                rescue_orphans: cfg.health.auto_repair.rescue_orphans,
+            },
         },
         cfg.health.enabled,
     );
