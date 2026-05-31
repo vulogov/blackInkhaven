@@ -416,7 +416,7 @@ fn print_snippet(
 ) {
     println!("// Paste under the `prompts` array in prompts.hjson.");
     println!(
-        "// Each block carries `language: {lang_iso}` so the Phase A resolver"
+        "// Each block carries `language: {lang_iso}` so the multilingual resolver"
     );
     println!("// picks it over the embedded English fallback when the project");
     println!("// language (or paragraph-detected language) matches.");

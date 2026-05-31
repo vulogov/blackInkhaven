@@ -378,6 +378,7 @@ impl App {
                     text: c.text.clone(),
                     char_start: c.char_start,
                     char_end: c.char_end,
+                    paragraph_position: idx + 1,
                     paragraph_total_comments: total,
                 });
             }
@@ -505,13 +506,28 @@ impl App {
                     .and_then(|i| entries.get(*i))
                     .map(|e| (e.paragraph_id, e.char_start));
                 self.modal = Modal::None;
-                if let Some((id, _char_start)) = target {
+                if let Some((id, char_start)) = target {
                     if let Some(node) = self.hierarchy.get(id).cloned() {
                         let _ = self.load_paragraph(&node);
-                        // Phase C.2.1 candidate:
-                        // jump the cursor to
-                        // char_start via
-                        // textarea.move_cursor.
+                        // Jump cursor to the
+                        // comment's char_start so
+                        // the author lands on the
+                        // commented prose.
+                        if let Some(doc) = self.opened.as_mut() {
+                            let lines = doc.textarea.lines();
+                            if let Some((row, col)) =
+                                super::super::comments::char_offset_to_row_col(
+                                    lines,
+                                    char_start,
+                                )
+                            {
+                                use tui_textarea::CursorMove;
+                                doc.textarea.move_cursor(CursorMove::Jump(
+                                    row as u16,
+                                    col as u16,
+                                ));
+                            }
+                        }
                     }
                 }
                 true

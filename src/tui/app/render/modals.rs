@@ -5245,8 +5245,20 @@ impl super::super::App {
                 snippet
             };
             let resolved_label = if e.resolved { " [r]" } else { "" };
+            // Dense indicator: only shown when the
+            // paragraph has more than one comment.
+            // Single-comment paragraphs would just
+            // see (1/1 in ¶) which is noise.
+            let dense_label = if e.paragraph_total_comments > 1 {
+                format!(
+                    " ({}/{} in ¶)",
+                    e.paragraph_position, e.paragraph_total_comments
+                )
+            } else {
+                String::new()
+            };
             let header = format!(
-                "  {marker} {breadcrumb:<bc_w$}  {author:<au_w$}  {age:>10}{resolved_label}",
+                "  {marker} {breadcrumb:<bc_w$}  {author:<au_w$}  {age:>10}{resolved_label}{dense_label}",
                 bc_w = max_breadcrumb,
                 au_w = max_author,
             );

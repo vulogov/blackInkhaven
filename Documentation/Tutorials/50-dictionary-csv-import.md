@@ -145,7 +145,7 @@ add a Phonology rule via the TUI (`+` under
 
 Without the `phonemes` array populated, phonology
 validation skips silently (alphabet validation
-still runs).  Phase D.2 will let `language
+still runs).  A future release will let `language
 doctor` cross-check this against the actual
 dictionary for completeness.
 
@@ -413,7 +413,7 @@ $ inkhaven language export Tira --format json | \
 ...
 ```
 
-Phase D.2 candidate: `--format csv` that emits
+Future candidate: `--format csv` that emits
 import-compatible CSV so the round-trip is
 fully closed.  For now, this `jq` recipe
 covers the common case.

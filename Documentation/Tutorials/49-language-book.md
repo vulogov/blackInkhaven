@@ -79,8 +79,8 @@ Why split this way:
   rule's `applies_when` field.
 - **Phonology rules** are NOT bundled into every
   translation prompt (they'd bloat it).  Used by
-  the phonotactic generator (Phase D.2) and
-  available to the LLM on demand.
+  the future phonotactic generator and available
+  to the LLM on demand.
 - **Sample texts** — up to 3 included as register
   anchors in every translation.
 
@@ -764,8 +764,7 @@ pomp"), the grammar rules or dictionary entries
 have an inconsistency the manuscript will
 eventually trip over.  This is the in-TUI version
 of what'll eventually be the headless `inkhaven
-language test` corpus-driven drift detector
-(Phase D.2).
+language test` corpus-driven drift detector.
 
 ## Step 10 — health check
 
@@ -950,7 +949,7 @@ it":
 
 ## What's not in 1.2.13
 
-Phase D.2 candidates (the §12 / §13 / §14 parts of
+Follow-up candidates (the §12 / §13 / §14 parts of
 `Documentation/PROPOSALS/LANGUAGE_BOOK.md` that
 didn't ship):
 

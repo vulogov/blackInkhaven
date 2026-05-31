@@ -229,7 +229,7 @@ pub enum Action {
     /// §10 Phase D.
     #[serde(rename = "view.sibling_book_lookup")]
     ViewSiblingBookLookup,
-    /// 1.2.14+ Phase A.2 — Ctrl+V Shift+H.  Open the
+    /// Ctrl+V Shift+H.  Open the
     /// Threads picker: list every plot-thread paragraph
     /// under the `Threads` system book with status /
     /// weight / tension / link-count columns.  `↑↓`
@@ -240,7 +240,7 @@ pub enum Action {
     /// `Documentation/PROPOSALS/1.2.14_PLAN.md` §3.
     #[serde(rename = "view.threads_picker")]
     ViewThreadsPicker,
-    /// 1.2.14+ Phase A.3 — Ctrl+V Shift+A.  AI
+    /// Ctrl+V Shift+A.  AI
     /// thread audit.  Resolves the cursor's scope
     /// from the F9 AiMode (chapter / subchapter /
     /// book; defaults to chapter when AiMode is
@@ -254,7 +254,7 @@ pub enum Action {
     /// §3.4.
     #[serde(rename = "ai.thread_audit")]
     AiThreadAudit,
-    /// 1.2.14+ Phase D.4 — Ctrl+V Shift+D.  TUI
+    /// Ctrl+V Shift+D.  TUI
     /// version of `inkhaven thread doctor`: pops a
     /// modal showing the thread status / weight
     /// distributions + blind-spot detector output
@@ -263,7 +263,7 @@ pub enum Action {
     /// detector labels.
     #[serde(rename = "view.thread_doctor")]
     ViewThreadDoctor,
-    /// 1.2.14+ Phase C.1 — Ctrl+V c.  Anchor an
+    /// Ctrl+V c.  Anchor an
     /// inline comment to the selection (or the
     /// word at the cursor when no selection is
     /// active).  Pops a multi-line text input
@@ -277,7 +277,7 @@ pub enum Action {
     /// §4.
     #[serde(rename = "view.add_comment")]
     ViewAddComment,
-    /// 1.2.14+ Phase C.2 — Ctrl+V Shift+C.  Open
+    /// Ctrl+V Shift+C.  Open
     /// the project-wide comments panel.  Lists
     /// every comment from every paragraph's
     /// sidecar JSON file with author / age /
@@ -288,7 +288,7 @@ pub enum Action {
     /// §4.4.
     #[serde(rename = "view.comments_panel")]
     ViewCommentsPanel,
-    /// 1.2.14+ Phase Q.3 — Ctrl+V d.  AI
+    /// Ctrl+V d.  AI
     /// continuation drafting.  "Continue this
     /// paragraph in my voice" — the prompt
     /// envelope sends the previous N paragraphs
@@ -300,7 +300,7 @@ pub enum Action {
     /// cursor.
     #[serde(rename = "ai.continuation_draft")]
     AiContinuationDraft,
-    /// 1.2.14+ Phase Q.3 — Ctrl+V f.  Insert an
+    /// Ctrl+V f.  Insert an
     /// inline footnote at the cursor.  Pops a
     /// multi-line text input modal for the
     /// footnote body; on commit, inserts
@@ -310,12 +310,12 @@ pub enum Action {
     /// "markdown"`).
     #[serde(rename = "editor.insert_footnote")]
     EditorInsertFootnote,
-    /// 1.2.14+ Phase Q.4 — Ctrl+V Shift+G.
+    /// Ctrl+V Shift+G.
     /// Project-level word-count goal +
     /// projection modal.
     #[serde(rename = "view.project_goal_modal")]
     ViewProjectGoalModal,
-    /// 1.2.14+ Phase Q.4 — Ctrl+V y.  Style
+    /// Ctrl+V y.  Style
     /// transfer rewrite: pick a reference
     /// paragraph; AI rewrites the open paragraph
     /// in that style.  Response wrapped in
@@ -686,7 +686,7 @@ pub enum Action {
     #[serde(rename = "none")]
     None,
 
-    /// 1.2.13+ Phase C — Ctrl+B Q.  Translate the open
+    /// Ctrl+B Q.  Translate the open
     /// paragraph from the project's working language INTO an
     /// invented language defined under the `Language` system
     /// book.  Composes a prompt envelope from the language's
@@ -700,7 +700,7 @@ pub enum Action {
     /// jump-and-commit).
     #[serde(rename = "ai.translate_to_invented")]
     TranslateToInvented,
-    /// 1.2.13+ Phase C.2 — Ctrl+B Shift+Q.  Reverse
+    /// Ctrl+B Shift+Q.  Reverse
     /// direction: translate the open paragraph FROM an
     /// invented language back into the working language.
     /// Same envelope shape, flipped direction labels.  The
@@ -968,7 +968,7 @@ impl Action {
             Action::AcceptSplitSnapshot =>
                 "Replace the live buffer with the split's captured snapshot, exit split, mark dirty.".into(),
             Action::ToggleSplitView =>
-                "Toggle fullscreen split-view (Shift+F4, 1.2.12+). Left pane is the primary buffer; right pane is the `secondary` slot (populated by pickers — Phase B). Tab swaps focus. Tree + AI response panes are hidden; AI prompt input bar still spans the bottom so Ctrl+I works from either pane. Existing F4 (same-paragraph snapshot split) and Ctrl+F4 (accept snapshot) are untouched.".into(),
+                "Toggle fullscreen split-view (Shift+F4, 1.2.12+). Left pane is the primary buffer; right pane is the `secondary` slot, populated by pickers (tree Enter, Ctrl+V P / M / Shift+P, Ctrl+V Shift+B). Tab swaps focus. Tree + AI response panes are hidden; AI prompt input bar still spans the bottom so Ctrl+I works from either pane. Existing F4 (same-paragraph snapshot split) and Ctrl+F4 (accept snapshot) are untouched.".into(),
             Action::ViewSiblingBookLookup =>
                 "Sibling-book lookup for the split-view secondary pane (Ctrl+V Shift+B, 1.2.12+). Given the open paragraph's slug, walks the project hierarchy for paragraphs with the same slug under a different top-level book. Zero matches → status message names the slug. Single match → auto-pin to secondary. Multiple matches → open a fuzzy picker. Primary translation-workflow chord: from `manuscript-en/03-rain`, finds `manuscript-ru/03-rain` and pins it for side-by-side review via Shift+F4.".into(),
             Action::ViewThreadsPicker =>

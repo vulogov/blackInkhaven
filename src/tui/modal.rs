@@ -1032,14 +1032,17 @@ pub(super) struct CommentsPanelEntry {
     pub resolved: bool,
     pub text: String,
     pub char_start: usize,
-    /// Span end character offset — kept for Phase
-    /// C.2.1 "open paragraph + select span" jump.
+    /// Span end character offset.  Reserved for a
+    /// future "open paragraph + SELECT span" jump
+    /// (Enter currently positions the cursor at
+    /// char_start; it doesn't select the range).
     #[allow(dead_code)]
     pub char_end: usize,
-    /// Total comments in this paragraph — kept for
-    /// the Phase C.2.1 dense-paragraph indicator
-    /// ("2/5 in ¶") in the panel render.
-    #[allow(dead_code)]
+    /// One-indexed position of this comment among
+    /// its paragraph's comments (`(2, 5)` means
+    /// the 2nd of 5).  Drives the per-row
+    /// `(N/M in ¶)` dense indicator in the panel.
+    pub paragraph_position: usize,
     pub paragraph_total_comments: usize,
 }
 
