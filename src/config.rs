@@ -283,29 +283,38 @@ pub struct ProjectConfig {
     pub counted_books: Vec<String>,
 }
 
-/// 1.2.15+ Phase H.1 + H.2 — background health-
-/// monitor configuration.  Disabled by default so
-/// existing projects don't inherit a new background
-/// task without opting in; H.3's auto-repair work
-/// will flip the default to true once it's clear
-/// the auto-fix path is safe.
+/// 1.2.15+ Phase H.1 + H.2 + H.3 — background
+/// health-monitor configuration.  Disabled by
+/// default so existing projects don't inherit a
+/// new background task without opting in.
 ///
 /// Per-check cadences live in `crate::health`
 /// (90 s project, 300 s backup, 3600 s rescue
 /// orphans) — they're tuned to the cost of each
 /// check, not exposed as HJSON yet.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HealthConfig {
     /// Master switch.  False = no monitor task,
     /// status-bar chip stays hidden.
     pub enabled: bool,
+    /// 1.2.15+ Phase H.3 — per-class opt-in for
+    /// the auto-repair flow.  All defaults are
+    /// false: a user who turns on the monitor
+    /// doesn't automatically grant it permission
+    /// to mutate project state; each individual
+    /// fix has to be enabled explicitly.
+    pub auto_repair: AutoRepairConfig,
 }
 
-impl Default for HealthConfig {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
+/// HJSON shape for [`crate::health::RepairPolicy`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutoRepairConfig {
+    /// Delete `*.inkhaven-rescue` orphan files
+    /// older than `RESCUE_REPAIR_DAYS` (30 d) from
+    /// the project tree.  Default false.
+    pub rescue_orphans: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
