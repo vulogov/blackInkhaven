@@ -555,7 +555,14 @@ impl super::super::App {
         // cursor moves off.
         let goal_footer = self.editor_goal_footer_text();
         let language_chip = self.language_hit_chip();
-        let need_footer = goal_footer.is_some() || language_chip.is_some();
+        // 1.2.14+ Phase C.1 — comment-at-cursor
+        // chip.  Takes priority over the Language
+        // chip and the goal gauge — comments are
+        // explicit reviewer attention the author
+        // should see first.
+        let comment_chip = self.comment_at_cursor_chip();
+        let need_footer =
+            goal_footer.is_some() || language_chip.is_some() || comment_chip.is_some();
         let (editor_rect, footer_rect) = if need_footer {
             let footer_h: u16 = 1;
             let er = Rect {
@@ -607,7 +614,15 @@ impl super::super::App {
         // between the highlighted word and the chip
         // describing it.
         if let Some(rect) = footer_rect {
-            if let Some(chip) = language_chip {
+            if let Some(chip) = comment_chip {
+                let style = Style::default()
+                    .add_modifier(self.theme.comment_span_modifier);
+                let line = Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled(chip, style),
+                ]);
+                f.render_widget(Paragraph::new(line), rect);
+            } else if let Some(chip) = language_chip {
                 let style = Style::default()
                     .fg(self.theme.language_word_fg)
                     .add_modifier(Modifier::ITALIC);

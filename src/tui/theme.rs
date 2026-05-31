@@ -73,6 +73,14 @@ pub struct Theme {
     pub style_warning_filter_word_modifier: Modifier,
     pub style_warning_repeated_phrase_modifier: Modifier,
     pub style_warning_show_dont_tell_modifier: Modifier,
+    /// 1.2.14+ Phase C.1 — modifier applied to the
+    /// character span of every inline comment.
+    /// Default `underline+italic` mirrors the
+    /// markdown convention for commented prose;
+    /// users on terminals that don't render italic
+    /// can flip to `underline+bold` or any
+    /// `+`-combined modifier list.
+    pub comment_span_modifier: Modifier,
     /// 1.2.9+ — POV / character chip on the status
     /// bar (Ctrl+B Shift+P).  Explicit RGB defaults
     /// so the chip stays readable across terminal
@@ -185,6 +193,19 @@ impl Theme {
             style_warning_show_dont_tell_modifier: parse_style_modifier(
                 &cfg.style_warning_show_dont_tell_modifier,
             ),
+            comment_span_modifier: {
+                let raw = cfg.comment_span_modifier.trim();
+                if raw.is_empty() {
+                    // Sensible default: underline +
+                    // italic.  Matches the markdown
+                    // commenting convention; users
+                    // on terminals without italic
+                    // can flip via HJSON.
+                    Modifier::UNDERLINED | Modifier::ITALIC
+                } else {
+                    parse_style_modifier(raw)
+                }
+            },
             pov_chip_bg: color_or(
                 &cfg.pov_chip_bg,
                 // Deep magenta — guarantees contrast

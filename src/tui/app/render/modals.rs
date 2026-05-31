@@ -4761,6 +4761,118 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 
+    /// 1.2.14+ Phase C.1 — `Ctrl+V c` comment editor.
+    /// Header shows the anchor span snippet so the
+    /// author sees what they're commenting on.
+    /// Body is a multi-line TextArea (same widget
+    /// the HJSON editor uses).  Footer hints at
+    /// commit / cancel.
+    pub(in crate::tui::app) fn draw_comment_editor_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::CommentEditor {
+            textarea,
+            anchor_preview,
+            anchor_start,
+            anchor_end,
+            ..
+        } = &self.modal
+        else {
+            return;
+        };
+        let span_chars = anchor_end.saturating_sub(*anchor_start);
+        let width = (area.width.saturating_sub(4)).min(96).max(40);
+        let height = (area.height.saturating_sub(4)).min(14).max(10);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let title = format!(" Add comment · {span_chars} chars · Ctrl+V c ");
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Carve the inner area into:
+        //  · 1 line  preview header
+        //  · 1 line  spacer
+        //  · N lines TextArea (the rest)
+        //  · 1 line  footer hint
+        let preview_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 1,
+        };
+        let editor_rect = Rect {
+            x: inner.x,
+            y: inner.y + 2,
+            width: inner.width,
+            height: inner.height.saturating_sub(3),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+
+        // Preview line.
+        let preview_line = Line::from(vec![
+            Span::styled(
+                "  on: ".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            ),
+            Span::styled(
+                format!("\"{anchor_preview}\""),
+                Style::default().add_modifier(Modifier::ITALIC),
+            ),
+        ]);
+        f.render_widget(Paragraph::new(preview_line), preview_rect);
+
+        // Editor body — re-style the textarea with
+        // the modal palette before render.  We do
+        // this via a fresh widget so the textarea's
+        // internal styling doesn't fight the modal
+        // bg.
+        let mut ta = textarea.clone();
+        ta.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .style(
+                    Style::default()
+                        .bg(self.theme.modal_bg)
+                        .fg(self.theme.modal_fg),
+                )
+                .border_style(
+                    Style::default().fg(self.theme.modal_border),
+                ),
+        );
+        f.render_widget(&ta, editor_rect);
+
+        // Footer hint.
+        let hint_line = Line::from(Span::styled(
+            " Ctrl+S commit · Esc cancel (when empty) · Ctrl+C cancel anytime "
+                .to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        ));
+        f.render_widget(Paragraph::new(hint_line), footer_rect);
+    }
+
     /// 1.2.14+ Phase A.2 — swim-lane weave view.
     /// Rendered as a table with one row per thread
     /// (down the side) and one column per chapter

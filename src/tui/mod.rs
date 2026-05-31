@@ -5,6 +5,10 @@ mod bund_highlight;
 // `inkhaven export-concordance` subcommand can reuse
 // the same builder + types the Ctrl+B Shift+L modal
 // shows.
+// 1.2.14+ Phase C.1 — inline comments on paragraph
+// prose.  Sidecar JSON storage adjacent to the
+// `.typ` file.
+pub(crate) mod comments;
 pub(crate) mod concordance;
 mod credits;
 mod diff_utils;
