@@ -180,9 +180,18 @@ impl Calendar {
         if !cfg.units.is_empty() {
             ticks_per.push(1);
             for unit in cfg.units.iter().skip(1) {
-                let prev = *ticks_per.last().unwrap();
-                let per = unit.per_parent.max(1) as i64;
-                ticks_per.push(prev.saturating_mul(per));
+                // 1.2.15+ Phase S.5 — `if let Some`
+                // on `.last()` instead of `.unwrap()`.
+                // The vec is provably non-empty
+                // (we just pushed above the loop +
+                // pushed each iteration), so the
+                // else-branch can't fire — but the
+                // panic surface disappears at the
+                // type level.
+                if let Some(&prev) = ticks_per.last() {
+                    let per = unit.per_parent.max(1) as i64;
+                    ticks_per.push(prev.saturating_mul(per));
+                }
             }
         }
         Self { cfg, ticks_per }

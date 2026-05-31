@@ -361,10 +361,24 @@ fn build_branch_index(
                         // under Subchapter → `wrap_image_subchapter`.
                         // Inside the code-mode `{ … }` argument so no
                         // `#` prefix.
+                        // 1.2.15+ Phase S.5 — log +
+                        // skip on BookRoot instead of
+                        // `unreachable!()`.  The
+                        // caller's filter excludes
+                        // BookRoot, but a future
+                        // refactor that loses that
+                        // filter should produce a
+                        // missing image, not a crash.
                         let wrap_fn = match level {
                             BranchLevel::Chapter => "wrap_image_chapter",
                             BranchLevel::Subchapter => "wrap_image_subchapter",
-                            BranchLevel::BookRoot => unreachable!(),
+                            BranchLevel::BookRoot => {
+                                tracing::warn!(
+                                    target: "inkhaven::assemble",
+                                    "image render reached BookRoot level — caller filter missed it; skipping",
+                                );
+                                continue;
+                            }
                         };
                         body.push_str("  ");
                         body.push_str(&render_image_call(
@@ -382,10 +396,22 @@ fn build_branch_index(
                 body.push_str("  []\n"); // empty content placeholder
             }
             let title = escape_typst_string(&branch.title);
+            // 1.2.15+ Phase S.5 — log + early-return
+            // on BookRoot instead of `unreachable!()`.
+            // We're inside `match level { … Chapter |
+            // Subchapter => { … } }` — no enclosing
+            // loop — so the "skip" is a return with
+            // whatever index we built so far.
             let wrap_fn = match level {
                 BranchLevel::Chapter => "wrap_chapter",
                 BranchLevel::Subchapter => "wrap_subchapter",
-                BranchLevel::BookRoot => unreachable!(),
+                BranchLevel::BookRoot => {
+                    tracing::warn!(
+                        target: "inkhaven::assemble",
+                        "branch render reached BookRoot level — caller filter missed it; returning partial index",
+                    );
+                    return out;
+                }
             };
             out.push_str(&format!("#{wrap_fn}(\"{title}\", {{\n"));
             out.push_str(&body);

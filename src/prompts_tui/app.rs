@@ -1176,10 +1176,14 @@ fn stage_rollback(app: &mut App, entry: &BackupEntry) -> Result<usize> {
             app.added.insert(name.clone());
             app.dirty.insert(name.clone());
             staged += 1;
-        } else {
+        } else if let Some(live) = current_by_name.get(&name).copied() {
             // Compare bodies; if different, mark
             // dirty.
-            let live = current_by_name.get(&name).copied().unwrap();
+            //
+            // 1.2.15+ Phase S.5 — `if let Some` instead
+            // of `.unwrap()` after the `was_present`
+            // check.  Same invariant ("present in
+            // map"), zero panic surface.
             if live.template != restored_prompt.template
                 || live.description != restored_prompt.description
             {

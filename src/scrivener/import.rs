@@ -154,7 +154,24 @@ impl<'a> WalkCtx<'a> {
                 self.report.paragraphs_created += 1;
             }
             Classification::Chapter | Classification::Subchapter => {
-                let kind = node_kind_for(&classification).unwrap();
+                // 1.2.15+ Phase S.5 — `let-else` so a
+                // future Classification variant
+                // accidentally falling through here
+                // skips the branch instead of panicking
+                // the entire Scrivener import.  In
+                // practice node_kind_for returns Some
+                // for Chapter/Subchapter by construction.
+                let Some(kind) = node_kind_for(&classification) else {
+                    tracing::warn!(
+                        target: "inkhaven::scrivener",
+                        "node_kind_for returned None for {classification:?} — skipping branch",
+                    );
+                    // walk_in_draft has no enclosing
+                    // loop — the match IS the
+                    // function body — so a "skip" is
+                    // a no-op early return.
+                    return Ok(());
+                };
                 let branch_id = self.create_branch(kind, &item.title, Some(parent_id))?;
                 match kind {
                     NodeKind::Chapter => self.report.chapters_created += 1,
