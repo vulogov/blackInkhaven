@@ -7633,6 +7633,7 @@ impl App {
             A::ToggleSplitView => self.toggle_split_view(),
             A::ViewSiblingBookLookup => self.sibling_book_lookup(),
             A::ViewThreadsPicker => self.open_threads_picker(),
+            A::AiThreadAudit => self.start_thread_audit(),
             A::OpenSnapshotPicker => self.open_snapshot_picker(),
             A::GrammarCheck => self.start_grammar_check(),
             A::CycleAiMode => self.cycle_ai_mode(),
