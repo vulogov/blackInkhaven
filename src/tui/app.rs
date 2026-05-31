@@ -244,6 +244,18 @@ pub fn run(project: &Path) -> Result<()> {
         crate::crash::ActionRecord::new("tui.project_opened"),
     );
 
+    // 1.2.15+ Phase H.1 — spawn the background
+    // health monitor.  `health.enabled` gates the
+    // spawn; the monitor returns `None` when
+    // disabled and the chip stays hidden.  Pinned
+    // to the current tokio runtime (inherited from
+    // `main.rs`).
+    let health_rx = crate::health::spawn_monitor(
+        layout.root.clone(),
+        cfg.health.enabled,
+        cfg.health.cadence_seconds,
+    );
+
     // 1.2.6+ — idempotent re-seed of the Prompts book with the
     // embedded `<name>.example` defaults. The seeder skips
     // paragraphs whose title already matches, so existing
@@ -276,6 +288,10 @@ pub fn run(project: &Path) -> Result<()> {
     }
 
     let mut app = App::new(layout, cfg, store)?;
+    // 1.2.15+ Phase H.1 — attach the health-monitor
+    // receiver (already spawned above, after the
+    // crash context registered the project root).
+    app.health_rx = health_rx;
     app.restore_session();
     app.install_progress();
 
@@ -1902,6 +1918,25 @@ pub(crate) struct App {
     /// one debounce window's worth).  `None` until
     /// the first mirror.
     last_crash_mirror_at: Option<std::time::Instant>,
+
+    /// 1.2.15+ Phase H.1 — receiver for events
+    /// from the background health monitor task.
+    /// `None` when `health.enabled = false` in
+    /// HJSON (no monitor was spawned) — the chip
+    /// then stays hidden.  Pumped on every tick;
+    /// the most recent event drives `health_chip`.
+    health_rx: Option<tokio::sync::mpsc::UnboundedReceiver<crate::health::HealthEvent>>,
+    /// 1.2.15+ Phase H.1 — derived from the latest
+    /// event the TUI consumed.  Drives the status-
+    /// bar chip's glyph + colour.  `Hidden` until
+    /// the first event arrives.
+    health_chip: crate::health::ChipState,
+    /// 1.2.15+ Phase H.1 — most recent finding's
+    /// detail string, used for status-bar tooltip
+    /// expansion + future H.3 doctor-panel
+    /// integration.  `None` while chip is `Clean`
+    /// or `Hidden`.
+    health_detail: Option<String>,
 }
 
 /// 1.2.15+ Phase R.1 — debounce window for the
@@ -2105,6 +2140,9 @@ impl App {
             chat_search: None,
             chat_selection: None,
             last_crash_mirror_at: None,
+            health_rx: None,
+            health_chip: crate::health::ChipState::default(),
+            health_detail: None,
         })
     }
 
@@ -2291,6 +2329,7 @@ impl App {
             self.pump_inference();
             self.tick_autosave();
             self.tick_crash_mirror();
+            self.tick_health_pump();
             // 1.2.9+ — close the TTS playback modal as
             // soon as the engine reports it's idle, so
             // the modal disappears when the paragraph
@@ -2424,6 +2463,42 @@ impl App {
             };
             if due {
                 self.refresh_typst_diagnostics_for_opened();
+            }
+        }
+    }
+
+    /// 1.2.15+ Phase H.1 — drain pending events
+    /// from the health-monitor channel and update
+    /// the status-bar chip + detail.  Cheap when
+    /// idle (single `try_recv` returning Empty).
+    /// We collapse multiple queued events down to
+    /// the most recent — that's the state the chip
+    /// should reflect.
+    fn tick_health_pump(&mut self) {
+        let Some(rx) = self.health_rx.as_mut() else {
+            return;
+        };
+        loop {
+            match rx.try_recv() {
+                Ok(evt) => {
+                    self.health_chip = evt.chip();
+                    self.health_detail = match evt {
+                        crate::health::HealthEvent::Ok => None,
+                        crate::health::HealthEvent::Warning(f)
+                        | crate::health::HealthEvent::Error(f) => Some(f.detail),
+                        crate::health::HealthEvent::Repaired(_, note) => Some(note),
+                    };
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    // Monitor task exited — most
+                    // likely the runtime is being
+                    // torn down on shutdown.  Drop
+                    // the receiver so we don't keep
+                    // polling.
+                    self.health_rx = None;
+                    break;
+                }
             }
         }
     }
@@ -8840,6 +8915,36 @@ impl App {
     /// character chip.  Empty Vec when the chip is
     /// disabled, no paragraph is open, the lexicon
     /// is empty, or no character names are mentioned
+    /// 1.2.15+ Phase H.1 — span list for the
+    /// background-health chip.  Empty when the
+    /// monitor is disabled or hasn't fired yet
+    /// (chip state defaults to `Hidden`).  Colour:
+    /// green/Clean, amber/Repaired, yellow/Warning,
+    /// red/Error.  Glyph is the single-char accent
+    /// from `ChipState::glyph()`.
+    pub(crate) fn health_chip_spans(&self) -> Vec<ratatui::text::Span<'_>> {
+        use ratatui::style::{Color, Modifier, Style};
+        use ratatui::text::Span;
+        let glyph = self.health_chip.glyph();
+        if glyph.is_empty() {
+            return Vec::new();
+        }
+        let (bg, fg) = match self.health_chip {
+            crate::health::ChipState::Clean => (Color::Green, Color::Black),
+            crate::health::ChipState::Repaired => (Color::LightYellow, Color::Black),
+            crate::health::ChipState::Warning => (Color::Yellow, Color::Black),
+            crate::health::ChipState::Error => (Color::Red, Color::White),
+            crate::health::ChipState::Hidden => return Vec::new(),
+        };
+        vec![
+            Span::styled(
+                format!(" {glyph} "),
+                Style::default().bg(bg).fg(fg).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+        ]
+    }
+
     /// in the open paragraph.  The render loop in
     /// `draw_status` splices the result into the
     /// status-bar span list after the focus chip.

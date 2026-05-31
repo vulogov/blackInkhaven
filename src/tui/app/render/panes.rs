@@ -1854,6 +1854,13 @@ impl super::super::App {
                 .fg(Color::Black)
                 .add_modifier(Modifier::BOLD),
         ));
+        // 1.2.15+ Phase H.1 — background health-
+        // monitor chip.  Glyph + colour reflect the
+        // most recent finding the TUI consumed from
+        // the channel.  Hidden when no monitor is
+        // running (config disabled OR receiver
+        // disconnected).
+        spans.extend(self.health_chip_spans());
         spans.extend(self.pov_chip_spans());
         spans.push(Span::raw("  "));
         spans.push(Span::raw(self.status.clone()));
