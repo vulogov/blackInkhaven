@@ -12,6 +12,7 @@ pub(crate) mod comments;
 // 1.2.14+ Phase Q.2 — HJSON-driven snippet
 // expansion for the editor.
 pub(crate) mod snippets;
+pub(crate) mod project_goal;
 pub(crate) mod concordance;
 mod credits;
 mod diff_utils;

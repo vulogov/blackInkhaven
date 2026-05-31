@@ -279,6 +279,40 @@ pub enum Action {
     /// §4.4.
     #[serde(rename = "view.comments_panel")]
     ViewCommentsPanel,
+    /// 1.2.14+ Phase Q.3 — Ctrl+V d.  AI
+    /// continuation drafting.  "Continue this
+    /// paragraph in my voice" — the prompt
+    /// envelope sends the previous N paragraphs
+    /// as voice anchors + the open paragraph's
+    /// existing text with the cursor position
+    /// marked.  Response wrapped in `<<<DRAFT>>>`
+    /// / `<<<END>>>` markers; the AI pane's `I`
+    /// apply lifts only the draft block at the
+    /// cursor.
+    #[serde(rename = "ai.continuation_draft")]
+    AiContinuationDraft,
+    /// 1.2.14+ Phase Q.3 — Ctrl+V f.  Insert an
+    /// inline footnote at the cursor.  Pops a
+    /// multi-line text input modal for the
+    /// footnote body; on commit, inserts
+    /// `#footnote[<body>]` (Typst — the default)
+    /// or `[^id]` + a `[^id]: <body>` line
+    /// (markdown — when `editor.footnote_style =
+    /// "markdown"`).
+    #[serde(rename = "editor.insert_footnote")]
+    EditorInsertFootnote,
+    /// 1.2.14+ Phase Q.4 — Ctrl+V Shift+G.
+    /// Project-level word-count goal +
+    /// projection modal.
+    #[serde(rename = "view.project_goal_modal")]
+    ViewProjectGoalModal,
+    /// 1.2.14+ Phase Q.4 — Ctrl+V y.  Style
+    /// transfer rewrite: pick a reference
+    /// paragraph; AI rewrites the open paragraph
+    /// in that style.  Response wrapped in
+    /// `<<<REWRITE>>>` / `<<<END>>>` markers.
+    #[serde(rename = "ai.style_transfer_rewrite")]
+    AiStyleTransferRewrite,
     /// Ctrl+F4 in Editor — accept the snapshot pane into the
     /// live buffer.
     #[serde(rename = "editor.accept_split_snapshot")]
@@ -744,6 +778,10 @@ impl Action {
             Action::AiThreadAudit => "thread audit".into(),
             Action::ViewAddComment => "add comment".into(),
             Action::ViewCommentsPanel => "comments".into(),
+            Action::AiContinuationDraft => "continue".into(),
+            Action::EditorInsertFootnote => "footnote".into(),
+            Action::ViewProjectGoalModal => "goal".into(),
+            Action::AiStyleTransferRewrite => "style xfer".into(),
             Action::OpenSnapshotPicker => "snapshots".into(),
             Action::GrammarCheck => "grammar".into(),
             Action::DiagnosticsList => "diags".into(),
@@ -931,6 +969,14 @@ impl Action {
                 "Add an inline comment on the current selection (Ctrl+V c, 1.2.14+). When a selection is active, the comment anchors to that character range. When no selection, it anchors to the word at the cursor (Unicode word boundaries). Pops a multi-line text input modal for the comment body; on commit, writes a sidecar JSON file alongside the paragraph's .typ (`<paragraph>.comments.json`) so the comment travels with the prose in git and diffs cleanly. The commented span is rendered with `theme.comment_span_modifier` (default underline+italic); cursor inside the span surfaces the comment text + author + age in the editor footer. Character offsets (not byte) so UTF-8 boundary edits preserve anchoring.".into(),
             Action::ViewCommentsPanel =>
                 "Open the project-wide comments panel (Ctrl+V Shift+C, 1.2.14+). Walks every paragraph's `.comments.json` sidecar and lists every comment with breadcrumb / author / age / text-snippet columns. Panel chords: ↑↓ navigate, Enter open the source paragraph (cursor positioned at the comment span start), r resolve, R reopen (cycles the resolved-filter), d delete (immediate, no confirm), / filter (substring across paragraph slug, author, text body), Esc close. Resolved comments hide by default; press R to toggle them back into view. Reads + writes the sidecar files at panel time — no in-memory cache to stale, so a CLI `inkhaven comments resolve` change between sessions is visible on next panel open.".into(),
+            Action::AiContinuationDraft =>
+                "AI continuation drafting (Ctrl+V d, 1.2.14+). Asks the configured LLM to continue the open paragraph in the author's voice.  Prompt envelope sends the previous N paragraphs (configurable via `editor.continuation_anchor_count`, default 3) as voice anchors and the open paragraph with the cursor position marked.  Response wrapped in <<<DRAFT>>> / <<<END>>> markers; AI pane I apply lifts only the draft block at the cursor.  Pairs with snippet expansion (\\tdo + Ctrl+V d for AI-generated TODOs).".into(),
+            Action::EditorInsertFootnote =>
+                "Insert an inline footnote at the cursor (Ctrl+V f, 1.2.14+). Pops a multi-line text input modal for the footnote body.  On commit, inserts `#footnote[<body>]` at the cursor (Typst, the default) or `[^id]` plus a trailing `[^id]: <body>` line (markdown, when `editor.footnote_style = \"markdown\"`).  Mostly for academic / reference writing; the Typst markup is already supported by the assembled-book renderer.".into(),
+            Action::ViewProjectGoalModal =>
+                "Project-level word-count goal + projection modal (Ctrl+V Shift+G, 1.2.14+). Reads `project.word_count_goal`, `project.target_date`, `project.counted_books` from the HJSON config.  Computes total project words, percentage of goal, days remaining, words-per-day required from today, recent average from the daily streak event log, and the projected completion date.  Per-book breakdown shows which book(s) contribute most.  Read-only; close with Esc.".into(),
+            Action::AiStyleTransferRewrite =>
+                "Style transfer rewrite (Ctrl+V y, 1.2.14+). Pops a paragraph picker scoped to the current book.  On selection, composes a prompt envelope asking the LLM to rewrite the open paragraph in the picked reference paragraph's style (sentence-length distribution, vocabulary register, rhythm, mood, narrative distance) while preserving literal meaning + named entities + plot facts.  Response wrapped in <<<REWRITE>>> / <<<END>>> markers; AI pane I apply extracts only the rewrite block.  Different from Ctrl+B Shift+M rhythm rewrite (which targets rhythm only with a prompt-defined style); this chord targets a CONCRETE EXAMPLE paragraph the author picks.".into(),
             Action::OpenSnapshotPicker =>
                 "Open the snapshot picker for the current paragraph (↑↓ navigate · Enter loads · V diff · D delete).".into(),
             Action::GrammarCheck =>
@@ -1307,6 +1353,18 @@ impl KeyBindings {
                 // opens the project-wide comments
                 // panel.
                 entry("Shift+c", Action::ViewCommentsPanel, Scope::Any),
+                // 1.2.14+ Phase Q.3 — Ctrl+V d
+                // continuation drafting.
+                entry("d", Action::AiContinuationDraft, Scope::Editor),
+                // 1.2.14+ Phase Q.3 — Ctrl+V f
+                // insert footnote.
+                entry("f", Action::EditorInsertFootnote, Scope::Editor),
+                // 1.2.14+ Phase Q.4 — Ctrl+V Shift+G
+                // project goal modal.
+                entry("Shift+g", Action::ViewProjectGoalModal, Scope::Any),
+                // 1.2.14+ Phase Q.4 — Ctrl+V y
+                // style-transfer rewrite.
+                entry("y", Action::AiStyleTransferRewrite, Scope::Editor),
             ],
             top_level: vec![
                 // F1 anywhere: Help-book RAG modal.

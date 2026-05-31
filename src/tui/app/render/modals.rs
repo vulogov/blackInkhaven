@@ -4761,6 +4761,283 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 
+    /// 1.2.14+ Phase Q.3b — `Ctrl+V f` footnote
+    /// editor.  Multi-line input box, much like
+    /// the comment editor.
+    pub(in crate::tui::app) fn draw_footnote_editor_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::FootnoteEditor { textarea, .. } = &self.modal else {
+            return;
+        };
+        let width = (area.width.saturating_sub(4)).min(90).max(40);
+        let height = (area.height.saturating_sub(4)).min(12).max(8);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let style_label = match self.cfg.editor.footnote_style.to_lowercase().as_str() {
+            "markdown" => " (markdown style)",
+            _ => " (Typst style)",
+        };
+        let title =
+            format!(" Footnote{style_label} · Ctrl+V f ");
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+        let editor_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let mut ta = textarea.clone();
+        ta.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .style(
+                    Style::default()
+                        .bg(self.theme.modal_bg)
+                        .fg(self.theme.modal_fg),
+                )
+                .border_style(
+                    Style::default().fg(self.theme.modal_border),
+                ),
+        );
+        f.render_widget(&ta, editor_rect);
+        let hint_line = Line::from(Span::styled(
+            " Ctrl+S commit · Esc cancel (when empty) · Ctrl+C cancel anytime "
+                .to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        ));
+        f.render_widget(Paragraph::new(hint_line), footer_rect);
+    }
+
+    /// 1.2.14+ Phase Q.4a — project goal +
+    /// projection modal (`Ctrl+V Shift+G`).
+    pub(in crate::tui::app) fn draw_project_goal_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::ProjectGoalModal { data } = &self.modal else {
+            return;
+        };
+        let width = (area.width.saturating_sub(4)).min(70).max(50);
+        // Lines: header + 6 stat lines + spacer +
+        // per-book rows + footer = 11..20.
+        let body_lines = 10 + data.per_book.len();
+        let height = (body_lines as u16 + 4)
+            .min(area.height.saturating_sub(2))
+            .max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let title = " Project goal · Ctrl+V Shift+G ";
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title.to_string())
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(""));
+        if data.goal > 0 {
+            lines.push(Line::from(vec![
+                Span::raw("   Total: "),
+                Span::styled(format!("{:>7}", data.total_words), bold),
+                Span::raw(" / "),
+                Span::styled(format!("{:>7}", data.goal), bold),
+                Span::raw(format!("   ({:>3} %)", data.pct.min(100))),
+            ]));
+            lines.push(Line::from(progress_bar(data.pct, width.saturating_sub(8))));
+        } else {
+            lines.push(Line::from(vec![
+                Span::raw("   Total: "),
+                Span::styled(format!("{:>7}", data.total_words), bold),
+                Span::raw("    (no goal set in HJSON)"),
+            ]));
+            lines.push(Line::from(""));
+        }
+        lines.push(Line::from(""));
+        if let Some(days) = data.days_remaining {
+            lines.push(Line::from(format!(
+                "   Days remaining: {:>3}",
+                days
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                "   No target date set".to_string(),
+                dim,
+            )));
+        }
+        if let Some(req) = data.required_per_day {
+            lines.push(Line::from(format!(
+                "   Required:       {:>6} words / day from today",
+                req
+            )));
+        }
+        if let Some(avg) = data.recent_avg {
+            lines.push(Line::from(format!(
+                "   Recent avg:     {:>6} words / day",
+                avg
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                "   Recent avg:     (Q.4.1 — event-log wiring queued)"
+                    .to_string(),
+                dim,
+            )));
+        }
+        if let Some(p) = data.projection_date {
+            lines.push(Line::from(format!(
+                "   Projection:     {}",
+                p.format("%Y-%m-%d")
+            )));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(format!(
+            "   Verdict:        {} {}",
+            data.verdict.glyph(),
+            data.verdict.label()
+        )));
+        if !data.per_book.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "   Per book:".to_string(),
+                dim,
+            )));
+            for (title, words, pct) in &data.per_book {
+                lines.push(Line::from(format!(
+                    "    · {:<24} {:>6} ({:>3} %)",
+                    truncate_to(title, 24),
+                    words,
+                    pct
+                )));
+            }
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "   Esc to close".to_string(),
+            dim,
+        )));
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
+    /// 1.2.14+ Phase Q.4b — style transfer
+    /// reference picker (`Ctrl+V y`).
+    pub(in crate::tui::app) fn draw_style_transfer_picker_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::StyleTransferPicker {
+            entries,
+            cursor,
+            filter,
+            filter_active,
+            visible,
+            ..
+        } = &self.modal
+        else {
+            return;
+        };
+        let width = (area.width.saturating_sub(4)).min(80).max(50);
+        let body = visible.len().min(20).max(1);
+        let height = ((body + 6) as u16)
+            .clamp(10, area.height.saturating_sub(2));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let title = format!(
+            " Style transfer — pick a voice sample · {} of {} ",
+            visible.len(),
+            entries.len()
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        if *filter_active {
+            lines.push(Line::from(Span::styled(
+                format!(" / {}_ ", filter.as_str()),
+                Style::default()
+                    .fg(self.theme.editor_position_fg)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                "  pick a paragraph whose voice you want to mimic".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        }
+        lines.push(Line::from(""));
+        for (display_idx, src_idx) in visible.iter().enumerate() {
+            let Some((_, title)) = entries.get(*src_idx) else { continue; };
+            let marker = if display_idx == *cursor { "›" } else { " " };
+            let row = format!("  {marker} {title}");
+            let style = if display_idx == *cursor {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(row, style)));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " ↑↓ Enter pick · / filter · Esc cancel ".to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
     /// 1.2.14+ Phase C.2 — project-wide comments
     /// panel (`Ctrl+V Shift+C`).
     pub(in crate::tui::app) fn draw_comments_panel_modal(
@@ -5204,6 +5481,26 @@ fn truncate_to(s: &str, max: usize) -> String {
         out.push('…');
         out
     }
+}
+
+/// 1.2.14+ Phase Q.4a — text progress bar for
+/// the project goal modal.  `pct` clamped to
+/// 0..=100.  Width is the on-screen cell count
+/// (not character count of the resulting string;
+/// the bar is ASCII-only so they're equal).
+fn progress_bar(pct: u32, cells: u16) -> String {
+    let cells = cells.max(8) as usize;
+    let filled = ((pct as usize).min(100) * cells) / 100;
+    let empty = cells.saturating_sub(filled);
+    let mut s = String::with_capacity(cells + 4);
+    s.push_str("   ");
+    for _ in 0..filled {
+        s.push('█');
+    }
+    for _ in 0..empty {
+        s.push('░');
+    }
+    s
 }
 
 #[cfg(test)]

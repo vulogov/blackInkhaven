@@ -215,6 +215,34 @@ impl super::App {
                             text.clone()
                         }
                     }
+                } else if self.pending_continuation_draft {
+                    // 1.2.14+ Phase Q.3a — extract
+                    // <<<DRAFT>>> block.  Same
+                    // escape-hatch pattern as
+                    // translation.
+                    self.pending_continuation_draft = false;
+                    match super::q3_q4_impl::extract_continuation_text(&raw) {
+                        Some(t) => t,
+                        None => {
+                            self.status =
+                                "continuation markers missing — inserted full response"
+                                    .into();
+                            text.clone()
+                        }
+                    }
+                } else if self.pending_style_transfer {
+                    // 1.2.14+ Phase Q.4b — extract
+                    // <<<REWRITE>>> block.
+                    self.pending_style_transfer = false;
+                    match super::q3_q4_impl::extract_rewrite_text(&raw) {
+                        Some(t) => t,
+                        None => {
+                            self.status =
+                                "rewrite markers missing — inserted full response"
+                                    .into();
+                            text.clone()
+                        }
+                    }
                 } else {
                     text
                 };

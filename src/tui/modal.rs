@@ -904,6 +904,41 @@ pub(super) enum Modal {
         /// pass.
         visible: Vec<usize>,
     },
+    /// 1.2.14+ Phase Q.3 — `Ctrl+V f` inline
+    /// footnote editor.  Multi-line text input
+    /// (like `Modal::CommentEditor` but the body
+    /// becomes `#footnote[…]` Typst markup or
+    /// `[^id]` markdown at the cursor on commit
+    /// instead of writing a sidecar).
+    FootnoteEditor {
+        textarea: tui_textarea::TextArea<'static>,
+        paragraph_id: Uuid,
+    },
+    /// 1.2.14+ Phase Q.4 — `Ctrl+V Shift+G`
+    /// project goal modal.  Materialises the
+    /// word-count math at open time so the
+    /// render path is pure read.  Esc-only —
+    /// the modal doesn't mutate config.
+    ProjectGoalModal {
+        data: super::project_goal::ProjectGoalData,
+    },
+    /// 1.2.14+ Phase Q.4 — `Ctrl+V y` style
+    /// transfer picker.  Pops first; on a
+    /// commit, the source paragraph is rewritten
+    /// in the picked reference paragraph's style
+    /// via the AI pane stream.
+    StyleTransferPicker {
+        entries: Vec<(Uuid, String)>,
+        cursor: usize,
+        filter: super::input::TextInput,
+        filter_active: bool,
+        visible: Vec<usize>,
+        /// Paragraph being rewritten — UUID
+        /// captured at open time so a mid-flight
+        /// paragraph switch doesn't confuse the
+        /// commit handler.
+        target_paragraph_id: Uuid,
+    },
     /// 1.2.14+ Phase C.1 — comment editor.  Pops on
     /// `Ctrl+V c` once the anchor span has been
     /// resolved (selection range or word-at-cursor).

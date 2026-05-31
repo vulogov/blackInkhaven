@@ -86,6 +86,14 @@ pub struct Config {
     /// `editor.stemming.languages`.
     #[serde(default = "default_language")]
     pub language: String,
+    /// 1.2.14+ Phase Q.4 — project-level word-
+    /// count goal + pacing settings.  Feeds the
+    /// `Ctrl+V Shift+G` projection modal.  Empty
+    /// defaults disable the modal contents but
+    /// still let the chord open the modal with
+    /// a "no goal set" message.
+    #[serde(default)]
+    pub project: ProjectConfig,
     #[serde(default = "default_prompts_path")]
     pub prompts_file: PathBuf,
     /// Where per-book artefacts (rendered PDFs, build intermediates, …)
@@ -154,6 +162,7 @@ impl Default for Config {
             shell: ShellConfig::default(),
             scripting: crate::scripting::policy::Policy::default(),
             language: default_language(),
+            project: ProjectConfig::default(),
             prompts_file: default_prompts_path(),
             artefacts_directory: default_artefacts_directory(),
             sync_interval_seconds: default_sync_interval(),
@@ -242,6 +251,31 @@ impl Default for SoundConfig {
 /// at the parsed start tick, no end, the project's
 /// `timeline.default_track`). When `timeline.enabled = false`
 /// the whole pass is a no-op.
+/// 1.2.14+ Phase Q.4 — `project: { … }` HJSON
+/// stanza.  Word-count goal + target date drive
+/// the `Ctrl+V Shift+G` projection modal.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProjectConfig {
+    /// Total manuscript word-count goal.  `0`
+    /// disables the goal display in the modal
+    /// (counts still show).
+    #[serde(default)]
+    pub word_count_goal: u64,
+    /// Target completion date in ISO 8601
+    /// (`YYYY-MM-DD`).  Empty disables the days-
+    /// remaining + projection-date display.
+    #[serde(default)]
+    pub target_date: String,
+    /// Which user books contribute to the project
+    /// total.  Empty = every user book.  Useful
+    /// when a project has a primary manuscript
+    /// book + reference / notes books that
+    /// shouldn't count toward the goal.  Match
+    /// is against book TITLE, case-insensitive.
+    #[serde(default)]
+    pub counted_books: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ScrivenerConfig {
@@ -1422,6 +1456,31 @@ pub struct EditorConfig {
     /// §6.
     #[serde(default)]
     pub snippets: SnippetsConfig,
+    /// 1.2.14+ Phase Q.3 — number of previous
+    /// paragraphs (in canonical hierarchy order)
+    /// sent as voice anchors in the AI continuation
+    /// drafting prompt envelope (`Ctrl+V d`).
+    /// Default 3.  Larger values give the model
+    /// more voice context at the cost of prompt
+    /// envelope size.
+    #[serde(default = "default_continuation_anchor_count")]
+    pub continuation_anchor_count: usize,
+    /// 1.2.14+ Phase Q.3 — output style for
+    /// `Ctrl+V f` inline footnote insertion.
+    /// `"typst"` (the default) inserts
+    /// `#footnote[<body>]` at the cursor;
+    /// `"markdown"` inserts `[^id]` at the cursor
+    /// plus a `[^id]: <body>` trailing reference.
+    #[serde(default = "default_footnote_style")]
+    pub footnote_style: String,
+}
+
+fn default_continuation_anchor_count() -> usize {
+    3
+}
+
+fn default_footnote_style() -> String {
+    "typst".into()
 }
 
 /// 1.2.14+ Phase Q.2 — `editor.snippets` HJSON
@@ -2334,6 +2393,8 @@ impl Default for EditorConfig {
                 default_prompt_language_detection_min_chars(),
             comment_author: None,
             snippets: SnippetsConfig::default(),
+            continuation_anchor_count: default_continuation_anchor_count(),
+            footnote_style: default_footnote_style(),
         }
     }
 }
