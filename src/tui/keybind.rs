@@ -268,6 +268,17 @@ pub enum Action {
     /// §4.
     #[serde(rename = "view.add_comment")]
     ViewAddComment,
+    /// 1.2.14+ Phase C.2 — Ctrl+V Shift+C.  Open
+    /// the project-wide comments panel.  Lists
+    /// every comment from every paragraph's
+    /// sidecar JSON file with author / age /
+    /// breadcrumb / text-snippet columns.
+    /// Filter, resolve, reopen, delete, jump to
+    /// source paragraph.  See
+    /// `Documentation/PROPOSALS/1.2.14_PLAN.md`
+    /// §4.4.
+    #[serde(rename = "view.comments_panel")]
+    ViewCommentsPanel,
     /// Ctrl+F4 in Editor — accept the snapshot pane into the
     /// live buffer.
     #[serde(rename = "editor.accept_split_snapshot")]
@@ -732,6 +743,7 @@ impl Action {
             Action::ViewThreadsPicker => "threads".into(),
             Action::AiThreadAudit => "thread audit".into(),
             Action::ViewAddComment => "add comment".into(),
+            Action::ViewCommentsPanel => "comments".into(),
             Action::OpenSnapshotPicker => "snapshots".into(),
             Action::GrammarCheck => "grammar".into(),
             Action::DiagnosticsList => "diags".into(),
@@ -917,6 +929,8 @@ impl Action {
                 "AI thread audit (Ctrl+V Shift+A, 1.2.14+). Resolves the cursor's scope from the F9 AiMode (Chapter / Subchapter / Book; Selection / Paragraph / None default to the cursor's containing Chapter). Composes a prompt envelope reading every Thread paragraph's HJSON (title / status / weight / opening / midpoint / payoff / connections / tension), a blind-spots pre-pass (link counts per thread, payoff-marked threads whose payoff hasn't yet been linked, stale threads not advanced in the scope), and every paragraph in the scope (paragraph_id + title + body + linked_paragraphs). Streams the response into the AI pane.  Asks the model to score each scope paragraph for which threads it advances / touches incidentally / should advance but doesn't, then call out structural concerns (dormant arcs, premature payoffs, miscategorised weights).".into(),
             Action::ViewAddComment =>
                 "Add an inline comment on the current selection (Ctrl+V c, 1.2.14+). When a selection is active, the comment anchors to that character range. When no selection, it anchors to the word at the cursor (Unicode word boundaries). Pops a multi-line text input modal for the comment body; on commit, writes a sidecar JSON file alongside the paragraph's .typ (`<paragraph>.comments.json`) so the comment travels with the prose in git and diffs cleanly. The commented span is rendered with `theme.comment_span_modifier` (default underline+italic); cursor inside the span surfaces the comment text + author + age in the editor footer. Character offsets (not byte) so UTF-8 boundary edits preserve anchoring.".into(),
+            Action::ViewCommentsPanel =>
+                "Open the project-wide comments panel (Ctrl+V Shift+C, 1.2.14+). Walks every paragraph's `.comments.json` sidecar and lists every comment with breadcrumb / author / age / text-snippet columns. Panel chords: ↑↓ navigate, Enter open the source paragraph (cursor positioned at the comment span start), r resolve, R reopen (cycles the resolved-filter), d delete (immediate, no confirm), / filter (substring across paragraph slug, author, text body), Esc close. Resolved comments hide by default; press R to toggle them back into view. Reads + writes the sidecar files at panel time — no in-memory cache to stale, so a CLI `inkhaven comments resolve` change between sessions is visible on next panel open.".into(),
             Action::OpenSnapshotPicker =>
                 "Open the snapshot picker for the current paragraph (↑↓ navigate · Enter loads · V diff · D delete).".into(),
             Action::GrammarCheck =>
@@ -1289,6 +1303,10 @@ impl KeyBindings {
                 // 1.2.14+ Phase C.1 — Ctrl+V c adds an
                 // inline comment.  C for Comment.
                 entry("c", Action::ViewAddComment, Scope::Editor),
+                // 1.2.14+ Phase C.2 — Ctrl+V Shift+C
+                // opens the project-wide comments
+                // panel.
+                entry("Shift+c", Action::ViewCommentsPanel, Scope::Any),
             ],
             top_level: vec![
                 // F1 anywhere: Help-book RAG modal.

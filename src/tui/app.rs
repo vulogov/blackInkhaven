@@ -7654,6 +7654,7 @@ impl App {
             A::ViewThreadsPicker => self.open_threads_picker(),
             A::AiThreadAudit => self.start_thread_audit(),
             A::ViewAddComment => self.start_add_comment(),
+            A::ViewCommentsPanel => self.open_comments_panel(),
             A::OpenSnapshotPicker => self.open_snapshot_picker(),
             A::GrammarCheck => self.start_grammar_check(),
             A::CycleAiMode => self.cycle_ai_mode(),
@@ -13489,6 +13490,8 @@ impl App {
             matches!(self.modal, Modal::ThreadWeaveView { .. });
         let is_comment_editor =
             matches!(self.modal, Modal::CommentEditor { .. });
+        let is_comments_panel =
+            matches!(self.modal, Modal::CommentsPanel { .. });
         let is_image_picker = matches!(self.modal, Modal::ImagePicker { .. });
         let is_function_picker = matches!(self.modal, Modal::FunctionPicker { .. });
         let is_status_filter = matches!(self.modal, Modal::StatusFilter { .. });
@@ -13561,6 +13564,10 @@ impl App {
         }
         if is_comment_editor {
             self.comment_editor_handle_key(key);
+            return Ok(false);
+        }
+        if is_comments_panel {
+            self.comments_panel_handle_key(key);
             return Ok(false);
         }
         if is_image_picker {

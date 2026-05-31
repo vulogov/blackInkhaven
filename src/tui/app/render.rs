@@ -71,6 +71,10 @@ impl super::App {
             self.draw_comment_editor_modal(f, area);
             return;
         }
+        if let Modal::CommentsPanel { .. } = &self.modal {
+            self.draw_comments_panel_modal(f, area);
+            return;
+        }
         if let Modal::ImagePicker { .. } = &self.modal {
             self.draw_image_picker_modal(f, area);
             return;
@@ -234,6 +238,8 @@ impl super::App {
                 unreachable!("thread weave view handled above"),
             Modal::CommentEditor { .. } =>
                 unreachable!("comment editor handled above"),
+            Modal::CommentsPanel { .. } =>
+                unreachable!("comments panel handled above"),
             Modal::SentenceRhythm { .. } =>
                 unreachable!("sentence rhythm handled above"),
             Modal::RenderedPreview { .. } =>

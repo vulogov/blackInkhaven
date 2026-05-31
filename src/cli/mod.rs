@@ -18,6 +18,7 @@ pub mod restore;
 pub mod search;
 pub mod doctor;
 pub mod event;
+pub mod comments;
 pub mod language;
 pub mod templates;
 pub mod thread;
@@ -455,6 +456,53 @@ pub enum Command {
     /// `inkhaven init --template <name>`.
     #[command(subcommand)]
     Template(TemplateCommand),
+    /// 1.2.14+ Phase C.2 — `inkhaven comments
+    /// <subcommand>`.  Headless manipulation of
+    /// the per-paragraph sidecar comment files
+    /// (`.comments.json`).  Mirrors the in-TUI
+    /// `Ctrl+V Shift+C` panel.
+    #[command(subcommand)]
+    Comments(CommentsCommand),
+}
+
+/// 1.2.14+ Phase C.2 — sub-subcommands under
+/// `inkhaven comments …`.
+#[derive(Debug, Subcommand)]
+pub enum CommentsCommand {
+    /// Print every comment in the project (or
+    /// filtered to a paragraph slug).  Default
+    /// shows all; pass `--unresolved-only` to
+    /// hide resolved comments.
+    List {
+        /// Limit to comments under this paragraph
+        /// slug-path.
+        #[arg(long)]
+        paragraph: Option<String>,
+        /// Hide resolved comments.
+        #[arg(long)]
+        unresolved_only: bool,
+    },
+    /// Mark a comment as resolved.  Identifies
+    /// the comment by its UUID.
+    Resolve {
+        /// Comment UUID.
+        id: String,
+    },
+    /// Re-open (un-resolve) a comment.
+    Reopen {
+        id: String,
+    },
+    /// Delete a comment.  Immediate; no undo.
+    Delete {
+        id: String,
+    },
+    /// Export every comment in the project as
+    /// structured JSON.  Streams to stdout when
+    /// `--output` is omitted.
+    Export {
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
+    },
 }
 
 /// 1.2.14+ Phase Q.1 — sub-subcommands under
@@ -1074,6 +1122,9 @@ impl Cli {
             Command::Template(TemplateCommand::List) => {
                 templates::list_templates();
                 Ok(())
+            }
+            Command::Comments(cmd) => {
+                comments::run(&project, cmd).map_err(Into::into)
             }
         }
     }
