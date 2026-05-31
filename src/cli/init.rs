@@ -14,7 +14,7 @@ use crate::store::Store;
 /// directory is removed and freshly re-created so the new database starts
 /// from a clean slate (stale `metadata.db` + `vectors/` from a previous
 /// install never trip up the schema).
-pub fn run(path: &Path, force: bool) -> Result<()> {
+pub fn run(path: &Path, force: bool, template: &str) -> Result<()> {
     let layout = ProjectLayout::new(path);
 
     if path.exists() {
@@ -89,6 +89,18 @@ pub fn run(path: &Path, force: bool) -> Result<()> {
     eprintln!("  store db:  {}", layout.metadata_db_path().display());
     eprintln!("  vecstore:  {}", layout.vecstore_path().display());
     eprintln!("  books:     {}", layout.books_path().display());
+
+    // 1.2.14+ Phase Q.1 — apply the named template
+    // AFTER the standard init.  Errors here surface
+    // upward but don't roll back the standard init
+    // (a partial template scaffold is recoverable
+    // via `inkhaven add`; a rolled-back init isn't).
+    if !template.eq_ignore_ascii_case("empty") {
+        eprintln!();
+        eprintln!("Applying template `{template}`:");
+        super::templates::apply(&store, &cfg, template)?;
+    }
+
     Ok(())
 }
 
