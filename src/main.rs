@@ -4,6 +4,7 @@ mod backup;
 mod cli;
 mod config;
 mod config_tui;
+mod crash;
 mod prompts_tui;
 mod error;
 mod export;
@@ -27,6 +28,13 @@ mod typst_world;
 use clap::Parser;
 
 fn main() {
+    // Install the crash-report panic hook before
+    // anything else.  Catches panics in CLI
+    // subcommands, TUI startup, runtime init — every
+    // code path.  TUI later registers its terminal-
+    // restore closure via crash::set_terminal_restore.
+    crash::install_panic_hook();
+
     let cli = cli::Cli::parse();
 
     // Tracing routing depends on the subcommand. TUI sessions must NOT

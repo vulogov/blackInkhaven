@@ -315,6 +315,10 @@ impl super::App {
             .update_paragraph_content(&mut node, body.as_bytes())
             .map_err(|e| format!("store update: {e}"))?;
         doc.dirty = false;
+        // 1.2.15+ Phase R.1 — buffer is clean, drop
+        // its crash-rescue mirror so the next panic
+        // doesn't try to rescue stale content.
+        crate::crash::context().clear_mirror(&doc.rel_path);
         doc.saved_lines = doc.textarea.lines().to_vec();
         // 1.2.7+ — restamp loaded_mtime so the external-
         // change watcher doesn't see our OWN save as a
@@ -544,6 +548,24 @@ impl super::App {
             detected_language: None,
             detected_language_length: 0,
         });
+        // 1.2.15+ Phase R.1 — register the open
+        // paragraph with the crash-report context so
+        // the panic hook knows what was being edited.
+        let book_slug = self
+            .hierarchy
+            .ancestors(node)
+            .into_iter()
+            .find(|a| a.kind == NodeKind::Book)
+            .map(|b| b.slug.clone());
+        crate::crash::context().set_open_paragraph(
+            book_slug,
+            Some(node.slug.clone()),
+            Some(rel.clone()),
+        );
+        crate::crash::context().push_action(
+            crate::crash::ActionRecord::with_detail("editor.load_paragraph", &node.slug),
+        );
+
         self.refresh_typst_diagnostics_for_opened();
         // 1.2.12+ — run whatlang on the freshly loaded body so
         // the AI resolver has a cached language when the user
@@ -667,6 +689,9 @@ impl super::App {
         }
 
         doc.dirty = false;
+        // 1.2.15+ Phase R.1 — buffer is clean, drop
+        // its crash-rescue mirror.
+        crate::crash::context().clear_mirror(&doc.rel_path);
         // Refresh the saved-lines snapshot so the bold-new-additions overlay
         // resets, and stamp last_activity to "now" so idle autosave restarts.
         // Save is the explicit "I've reviewed and accepted the
