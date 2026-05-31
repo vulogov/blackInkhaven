@@ -1865,6 +1865,7 @@ mod editor_impl;
 mod render;
 mod snapshot_impl;
 mod tag_impl;
+mod threads_impl;
 mod timeline_impl;
 mod tree_impl;
 
@@ -7631,6 +7632,7 @@ impl App {
             A::AcceptSplitSnapshot => self.accept_split_snapshot(),
             A::ToggleSplitView => self.toggle_split_view(),
             A::ViewSiblingBookLookup => self.sibling_book_lookup(),
+            A::ViewThreadsPicker => self.open_threads_picker(),
             A::OpenSnapshotPicker => self.open_snapshot_picker(),
             A::GrammarCheck => self.start_grammar_check(),
             A::CycleAiMode => self.cycle_ai_mode(),
@@ -13460,6 +13462,10 @@ impl App {
         let is_llm_picker = matches!(self.modal, Modal::LlmPicker { .. });
         let is_translation_picker =
             matches!(self.modal, Modal::TranslationLanguagePicker { .. });
+        let is_threads_picker =
+            matches!(self.modal, Modal::ThreadsPicker { .. });
+        let is_thread_weave_view =
+            matches!(self.modal, Modal::ThreadWeaveView { .. });
         let is_image_picker = matches!(self.modal, Modal::ImagePicker { .. });
         let is_function_picker = matches!(self.modal, Modal::FunctionPicker { .. });
         let is_status_filter = matches!(self.modal, Modal::StatusFilter { .. });
@@ -13520,6 +13526,14 @@ impl App {
         }
         if is_translation_picker {
             self.translation_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_threads_picker {
+            self.threads_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_thread_weave_view {
+            self.thread_weave_handle_key(key);
             return Ok(false);
         }
         if is_image_picker {
