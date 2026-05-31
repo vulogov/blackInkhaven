@@ -179,14 +179,19 @@ pub fn run(project: &Path) -> Result<()> {
         "typst engine: {engine_summary}",
     );
 
-    // Install the panic hook BEFORE we touch the terminal so a panic during
-    // DB load (or anywhere later) still restores the screen.
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
+    // 1.2.15+ Phase R.1 — register the terminal-
+    // restore closure with the crash-report panic
+    // hook installed in main().  The hook runs the
+    // closure before flushing dirty buffers and
+    // writing the report so anything printed lands
+    // on a cooked terminal.  The previous local
+    // panic-hook replacement (raw-mode + alt-screen
+    // restore only) is now superseded by the global
+    // hook in `crate::crash`.
+    crate::crash::set_terminal_restore(Some(Box::new(|| {
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
-        original_hook(info);
-    }));
+    })));
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -228,6 +233,16 @@ pub fn run(project: &Path) -> Result<()> {
             return Err(e);
         }
     };
+
+    // 1.2.15+ Phase R.1 — register the project root
+    // with the crash-report context now that we know
+    // it.  Every subsequent panic includes the project
+    // path in the report, and the rescue-buffer flush
+    // can resolve rel-paths against it.
+    crate::crash::context().set_project(layout.root.clone());
+    crate::crash::context().push_action(
+        crate::crash::ActionRecord::new("tui.project_opened"),
+    );
 
     // 1.2.6+ — idempotent re-seed of the Prompts book with the
     // embedded `<name>.example` defaults. The seeder skips
@@ -324,8 +339,14 @@ pub fn run(project: &Path) -> Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
-    // Restore the hook we replaced.
-    let _ = std::panic::take_hook();
+    // 1.2.15+ Phase R.1 — clear the terminal-restore
+    // closure now that the terminal is back to cooked
+    // mode.  A panic from anything that runs after
+    // this point (CLI cleanup, error printing, etc.)
+    // still hits the crash-report hook installed in
+    // main(), but doesn't try to "restore" a terminal
+    // that's already cooked.
+    crate::crash::set_terminal_restore(None);
 
     result
 }
@@ -1870,7 +1891,25 @@ pub(crate) struct App {
     /// `C` copies the selected turn to the system clipboard, `T`
     /// inserts it into the editor buffer at the cursor.
     chat_selection: Option<ChatSelectionState>,
+
+    /// 1.2.15+ Phase R.1 — wall-clock of the last
+    /// dirty-buffer mirror push to the crash-report
+    /// context.  Debounces the per-tick mirror call
+    /// to at most once per [`CRASH_MIRROR_DEBOUNCE_SECS`]
+    /// seconds — mirroring every 200 ms tick would
+    /// burn CPU on long buffers without changing the
+    /// outcome (the user can't lose more work than
+    /// one debounce window's worth).  `None` until
+    /// the first mirror.
+    last_crash_mirror_at: Option<std::time::Instant>,
 }
+
+/// 1.2.15+ Phase R.1 — debounce window for the
+/// dirty-buffer mirror push to the crash-report
+/// context.  Two seconds is enough that idle CPU is
+/// negligible while still bounding worst-case
+/// post-panic data loss to ~2 s of typing.
+const CRASH_MIRROR_DEBOUNCE_SECS: u64 = 2;
 
 mod ai_impl;
 mod backup_impl;
@@ -2065,6 +2104,7 @@ impl App {
             chat_history_scroll: 0,
             chat_search: None,
             chat_selection: None,
+            last_crash_mirror_at: None,
         })
     }
 
@@ -2250,6 +2290,7 @@ impl App {
         loop {
             self.pump_inference();
             self.tick_autosave();
+            self.tick_crash_mirror();
             // 1.2.9+ — close the TTS playback modal as
             // soon as the engine reports it's idle, so
             // the modal disappears when the paragraph
@@ -2385,6 +2426,40 @@ impl App {
                 self.refresh_typst_diagnostics_for_opened();
             }
         }
+    }
+
+    /// 1.2.15+ Phase R.1 — push the open paragraph's
+    /// current buffer (only when dirty) into the
+    /// crash-report context so the panic hook can
+    /// flush it as a rescue file.  Debounced via
+    /// `last_crash_mirror_at` to once every
+    /// [`CRASH_MIRROR_DEBOUNCE_SECS`] seconds — that's
+    /// the worst-case unsaved-typing window a panic
+    /// can take down with it.  When the buffer is
+    /// clean, the mirror is cleared by `save_current`
+    /// directly (not here) so the periodic tick
+    /// stays minimal: read field, check timer,
+    /// maybe build a string and push.
+    fn tick_crash_mirror(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            return;
+        };
+        if !doc.dirty {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if let Some(last) = self.last_crash_mirror_at {
+            if now.duration_since(last).as_secs() < CRASH_MIRROR_DEBOUNCE_SECS {
+                return;
+            }
+        }
+        let content = doc.textarea.lines().join("\n");
+        let (cursor_row, cursor_col) = doc.textarea.cursor();
+        crate::crash::context().mirror_buffer(
+            doc.rel_path.clone(),
+            crate::crash::DirtyMirror::new(content, cursor_row, cursor_col),
+        );
+        self.last_crash_mirror_at = Some(now);
     }
 
     /// 1.2.7+ — once per tick, check whether the open
@@ -7540,6 +7615,16 @@ impl App {
     /// entry in `KeyBindings::defaults()`.
     fn run_action(&mut self, action: super::keybind::Action) {
         use super::keybind::Action as A;
+        // 1.2.15+ Phase R.1 — push the action name
+        // onto the crash-report recent-action ring so
+        // a post-mortem reader can reconstruct what
+        // the user was doing.  Uses the Debug
+        // formatting since Action has no Display
+        // impl; the discriminant name is what we
+        // care about.
+        crate::crash::context().push_action(
+            crate::crash::ActionRecord::new(format!("action.{action:?}")),
+        );
         match action {
             // ── Tree pane ─────────────────────────────────────
             A::AddBook => self.open_add_modal(NodeKind::Book),
