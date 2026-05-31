@@ -560,3 +560,80 @@ These have no named-action equivalents (they're
 shell-only), but every TUI chord above produces
 equivalent on-disk artefacts so the CLI and TUI
 paths are interchangeable.
+
+## 1.2.14 — new actions
+
+Catalogue of named actions added across the
+1.2.14 plot-intelligence + inline-comments + quick-
+wins cycle.  Same rebind path: name the action in
+`keys.bindings.view_sub` with a chord of your
+choice; the default lives on the `Ctrl+V` prefix.
+
+### Threads system book (Phase A)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `view.threads_picker` | `Ctrl+V Shift+H` | Open the threads picker.  Enter on a selection opens a swim-lane weave view of that thread + its 4 closest neighbours by waypoint overlap. |
+| `ai.thread_audit` | `Ctrl+V Shift+A` | Send the project's thread structure to the LLM with a prompt asking for blind spots (unfired payoffs, dormant arcs, structural gaps).  Response streams into the AI pane. |
+| `view.thread_doctor` | `Ctrl+V Shift+D` | Open the thread doctor modal — deterministic blind-spot report (zero-links / payoff-unfired / dormant).  TUI equivalent of `inkhaven thread doctor`. |
+
+### Inline comments (Phase C)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `view.add_comment` | `Ctrl+V c` (editor) | Anchor a comment to the current selection (or the cursor's word, if no selection); pops a text-input modal for the body; writes a sidecar `<paragraph>.comments.json`. |
+| `view.comments_panel` | `Ctrl+V Shift+C` | Open the project-wide comments panel.  Walks every `.comments.json` sidecar; rows show breadcrumb / author / age / snippet plus `(N/M in ¶)` dense indicator.  Panel-local chords: Enter open + jump cursor, `r` resolve, `R` toggle resolved-filter, `d` delete, `/` filter, `a` AI digest. |
+
+### AI continuation + footnote + style transfer (Phase Q.3 / Q.4)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `ai.continuation_draft` | `Ctrl+V d` (editor) | LLM continuation in the author's voice.  Sends previous N paragraphs (`editor.continuation_anchor_count`) as voice anchors plus the open paragraph with `[[CURSOR_HERE]]` marker.  Response wrapped in `<<<DRAFT>>> / <<<END>>>` markers. |
+| `editor.insert_footnote` | `Ctrl+V f` (editor) | Pops a text-input modal; on commit inserts `#footnote[<body>]` at the cursor (Typst — default) or `[^id]` + trailing reference line (markdown, when `editor.footnote_style = "markdown"`). |
+| `view.project_goal_modal` | `Ctrl+V Shift+G` | Open the project word-count-goal modal.  Reads `project.word_count_goal` + `project.target_date`, projects finish from the 30-day word delta, renders a progress bar + verdict.  Pairs with `Ctrl+V g` (writing-progress / current pace) but goal-oriented. |
+| `ai.style_transfer_rewrite` | `Ctrl+V y` (editor) | Style-transfer rewrite.  Pops a recent-paragraph picker; selection becomes the style reference.  Envelope asks the LLM to rewrite the open paragraph in the reference's voice (sentence length / register / distance / rhythm) while preserving meaning + entities + facts.  Response wrapped in `<<<REWRITE>>> / <<<END>>>` markers. |
+
+### Programmatic / scripting access
+
+The 1.2.14 cycle also shipped three CLI surfaces:
+
+```
+$ inkhaven thread --help
+  add <name>
+  list
+  doctor [--json]
+  export --format <json|csv|markdown> --output <path>
+
+$ inkhaven comments --help
+  list [--paragraph <slug>] [--resolved] [--json]
+  resolve <comment-id>
+  reopen <comment-id>
+  delete <comment-id>
+  export --format <json|csv|markdown> --output <path>
+
+$ inkhaven template --help
+  list                       # show all 14 templates
+$ inkhaven init <path> --template <name>
+```
+
+11 of the 14 templates are author-genre scaffolds
+(novel, nonfiction, rpg-sourcebook, technical,
+nanowrimo, russian-novel, russian-long-story,
+russian-scifi, russian-lore, russian-utopia,
+epic-fantasy, mystery, french-novel); the 14th
+(`empty`) is the bare-bones project shape.
+
+### Snippet expansion (Phase Q.2)
+
+Editor-driven, not a chord.  Snippets configured
+in `inkhaven.hjson` under the `snippets` block
+expand on Space inside the editor.  Placeholders:
+`{date}`, `{time}`, `{datetime}`, `{slug}`,
+`{book}`, `{chapter}`, `{author}`, `{cursor}`
+(controls post-expansion cursor position).  Three
+picker-based placeholders (`{char_lookup}` /
+`{place_lookup}` / `{artefact_lookup}`) and the
+`bund:` prefix for Bund-VM expansion are queued
+for a future release (need an async snippet state
+machine the current synchronous pipeline doesn't
+yet have).
