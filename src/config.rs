@@ -94,6 +94,12 @@ pub struct Config {
     /// a "no goal set" message.
     #[serde(default)]
     pub project: ProjectConfig,
+    /// 1.2.15+ Phase H.1 — background health
+    /// monitor.  See `crate::health` and
+    /// `Documentation/PROPOSALS/1.2.15_PLAN.md`
+    /// §3.
+    #[serde(default)]
+    pub health: HealthConfig,
     #[serde(default = "default_prompts_path")]
     pub prompts_file: PathBuf,
     /// Where per-book artefacts (rendered PDFs, build intermediates, …)
@@ -163,6 +169,7 @@ impl Default for Config {
             scripting: crate::scripting::policy::Policy::default(),
             language: default_language(),
             project: ProjectConfig::default(),
+            health: HealthConfig::default(),
             prompts_file: default_prompts_path(),
             artefacts_directory: default_artefacts_directory(),
             sync_interval_seconds: default_sync_interval(),
@@ -274,6 +281,36 @@ pub struct ProjectConfig {
     /// is against book TITLE, case-insensitive.
     #[serde(default)]
     pub counted_books: Vec<String>,
+}
+
+/// 1.2.15+ Phase H.1 — background health-monitor
+/// configuration.  Disabled by default for the
+/// scaffold commit so existing projects don't
+/// inherit a new background task without opting
+/// in; H.2 / H.3 will flip the default to true
+/// once real integrity checks land.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HealthConfig {
+    /// Master switch.  False = no monitor task,
+    /// status-bar chip stays hidden.
+    pub enabled: bool,
+    /// Seconds between integrity checks.  Clamped
+    /// to `[10, 3600]` by the spawner.  30 s is the
+    /// recommended floor: enough head-room for the
+    /// TUI's autosave loop + idle work, low enough
+    /// that the next finding lands within a couple
+    /// of frames.
+    pub cadence_seconds: u64,
+}
+
+impl Default for HealthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cadence_seconds: 30,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
