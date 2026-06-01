@@ -42,7 +42,7 @@ use std::process::{Child, Command, Stdio};
 /// (c) the App is dropped at shutdown.  All three paths
 /// call `stop()` for a clean teardown.
 #[derive(Debug, Default)]
-pub(super) struct Say {
+pub(crate) struct Say {
     child: Option<Child>,
 }
 
