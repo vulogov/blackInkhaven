@@ -998,6 +998,16 @@ pub(super) enum Modal {
     /// insert the literal placeholder string +
     /// tail so the user sees what was there and
     /// can fix it manually.
+    /// 1.2.16+ Phase A.2 — manuscript intelligence
+    /// dashboard.  Opened via `Ctrl+V Shift+J`
+    /// (View layer, J for Journal).  Snapshot
+    /// data computed once at open; `↑↓` scrolls,
+    /// `e` exports to markdown, `Esc` closes.
+    Journal {
+        snapshot: super::journal::JournalSnapshot,
+        scroll: usize,
+        last_status: Option<String>,
+    },
     SnippetPicker {
         kind: super::snippets::SnippetPickerKind,
         /// Type-to-filter input.

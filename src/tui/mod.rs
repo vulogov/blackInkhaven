@@ -13,6 +13,9 @@ pub(crate) mod comments;
 // expansion for the editor.
 pub(crate) mod snippets;
 pub(crate) mod project_goal;
+// 1.2.16+ Phase A.2 — manuscript intelligence
+// dashboard (Ctrl+V Shift+J).
+pub(crate) mod journal;
 pub(crate) mod concordance;
 mod credits;
 mod diff_utils;

@@ -7806,6 +7806,7 @@ impl App {
             A::TtsSaveAsAudio => self.tts_open_save_as_audio_picker(),
             A::OpenWritingStreakHeatmap => self.open_writing_streak_heatmap(),
             A::OpenDoctorPanel => self.open_doctor_panel(),
+            A::OpenJournal => self.open_journal(),
             A::SceneBreakPrev => self.scene_break_jump(-1),
             A::SceneBreakNext => self.scene_break_jump(1),
             A::ToggleStyleWarnings => self.toggle_style_warnings(),
@@ -9088,6 +9089,90 @@ impl App {
     /// `r`/`R` repairs + `Esc` close.  Synchronous
     /// scan for now — for typical projects this
     /// returns in milliseconds.
+    /// 1.2.16+ Phase A.2 — open the manuscript
+    /// intelligence dashboard.  Synchronously
+    /// gathers a `JournalSnapshot` from progress
+    /// cache + hierarchy + sidecars + threads
+    /// book.  Snapshot is captured once at modal
+    /// open; the user re-opens for fresh numbers.
+    fn open_journal(&mut self) {
+        let snapshot = crate::tui::journal::compute_snapshot(
+            self.progress_cache.as_ref(),
+            &self.hierarchy,
+            &self.layout.root,
+            self.cfg.project.word_count_goal,
+            &self.cfg.project.target_date,
+        );
+        self.modal = super::modal::Modal::Journal {
+            snapshot,
+            scroll: 0,
+            last_status: None,
+        };
+        self.status = "journal: ↑↓ scroll · e export to markdown · Esc closes".into();
+    }
+
+    /// 1.2.16+ Phase A.2 — modal-local key handler
+    /// for the journal.  Returns true if the modal
+    /// consumed the key.
+    pub(super) fn handle_journal_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::KeyCode;
+        let super::modal::Modal::Journal { snapshot, scroll, last_status } =
+            &mut self.modal
+        else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = super::modal::Modal::None;
+                true
+            }
+            KeyCode::Up => {
+                if *scroll > 0 {
+                    *scroll -= 1;
+                }
+                true
+            }
+            KeyCode::Down => {
+                *scroll = scroll.saturating_add(1);
+                true
+            }
+            KeyCode::PageUp => {
+                *scroll = scroll.saturating_sub(10);
+                true
+            }
+            KeyCode::PageDown => {
+                *scroll = scroll.saturating_add(10);
+                true
+            }
+            KeyCode::Home => {
+                *scroll = 0;
+                true
+            }
+            KeyCode::Char('e') => {
+                let body = crate::tui::journal::to_markdown(snapshot);
+                let stem = format!(
+                    "journal-{}.md",
+                    snapshot.generated_at.format("%Y%m%dT%H%M%S"),
+                );
+                let path = self.layout.root.join(&stem);
+                match crate::io_atomic::write(&path, body.as_bytes()) {
+                    Ok(()) => {
+                        let msg = format!("journal: exported to {}", path.display());
+                        *last_status = Some(msg.clone());
+                        self.status = msg;
+                    }
+                    Err(e) => {
+                        let msg = format!("journal export failed: {e}");
+                        *last_status = Some(msg.clone());
+                        self.status = msg;
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn open_doctor_panel(&mut self) {
         match crate::cli::doctor_scan::scan_project(&self.layout.root, None) {
             Ok(report) => {
@@ -13865,6 +13950,8 @@ impl App {
             matches!(self.modal, Modal::DoctorPanel { .. });
         let is_snippet_picker =
             matches!(self.modal, Modal::SnippetPicker { .. });
+        let is_journal =
+            matches!(self.modal, Modal::Journal { .. });
         let is_comment_editor =
             matches!(self.modal, Modal::CommentEditor { .. });
         let is_comments_panel =
@@ -13955,6 +14042,10 @@ impl App {
         }
         if is_snippet_picker {
             self.handle_snippet_picker_key(key);
+            return Ok(false);
+        }
+        if is_journal {
+            self.handle_journal_key(key);
             return Ok(false);
         }
         if is_comment_editor {

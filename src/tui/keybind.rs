@@ -502,6 +502,16 @@ pub enum Action {
     /// cursor-driven `r` / `R` apply repairs.
     #[serde(rename = "view.doctor_panel")]
     OpenDoctorPanel,
+    /// 1.2.16+ Phase A.2 — `Ctrl+V Shift+J` opens
+    /// the manuscript intelligence dashboard.
+    /// J for Journal — a synthesis pane unifying
+    /// every metric inkhaven has been collecting
+    /// since 1.2.5 (word count + structure +
+    /// pacing + threads + comments) into one
+    /// view.  `↑↓` scroll · `e` export to
+    /// markdown · `Esc` close.
+    #[serde(rename = "view.journal")]
+    OpenJournal,
     /// Ctrl+B Shift+G (1.2.9+) — open the writing-
     /// streak heatmap modal.  Shows the last 91 days
     /// of project-wide word deltas as a GitHub-style
@@ -834,6 +844,7 @@ impl Action {
             Action::TtsSaveAsAudio => "save audio".into(),
             Action::OpenWritingStreakHeatmap => "streak".into(),
             Action::OpenDoctorPanel => "doctor".into(),
+            Action::OpenJournal => "journal".into(),
             Action::SceneBreakPrev => "prev scene break".into(),
             Action::SceneBreakNext => "next scene break".into(),
             Action::ToggleStyleWarnings => "style warnings".into(),
@@ -1065,6 +1076,8 @@ impl Action {
                 "Open the writing-streak heatmap modal (1.2.9+, Ctrl+B Shift+G). GitHub-style 13×7 grid of the last 91 days of project-wide word deltas, plus current streak + longest streak in the window + per-month totals. Data comes from the existing progress store (the same source feeding the startup pulse splash + Ctrl+V G modal). Esc closes.".into(),
             Action::OpenDoctorPanel =>
                 "Open the project-wide doctor panel (1.2.15+, Ctrl+B Shift+0). Runs the same scan as the `inkhaven doctor --scan` CLI: zero-byte paragraph files, orphan DB rows, missing referenced files, corrupt comment sidecars. Each finding shows class + severity + path + a one-line detail; `r` repairs the highlighted finding, `R` repairs every finding, `Esc` closes. Repairs are logged to `<project>/.inkhaven/doctor.log` with timestamp + class + outcome for audit. Paired mnemonically with `Ctrl+B 0` (HJSON config editor): digit-0 row is the system-inspection cluster.".into(),
+            Action::OpenJournal =>
+                "Open the manuscript intelligence dashboard (1.2.16+, Ctrl+V Shift+J). Synthesis pane that unifies every metric inkhaven has been collecting since 1.2.5: word count today/total + streak + active minutes, structure (books/chapters/paragraphs + chapter word-count CV + pacing verdict), threads (active/dormant), comments (open/resolved this week/lifetime). Cursor-driven — `↑↓` scrolls; `e` exports the snapshot to `<project>/journal-<UTC>.md`; `Esc` closes. Snapshot computed once at open; re-open for fresh numbers.".into(),
             Action::SceneBreakPrev =>
                 "Jump editor cursor to the previous scene-break line (1.2.9+, Ctrl+B <). Scene breaks are typographic divider lines: `* * *`, `***`, `---`, `___`, `###`, `~~~`, or a lone `§`. Detection is hand-rolled — any line consisting only of 3+ copies of `*`/`-`/`_`/`~`/`#` (optionally space-separated) counts, plus `§` alone. Useful for navigating multi-scene paragraphs in a single pass.".into(),
             Action::SceneBreakNext =>
@@ -1348,6 +1361,10 @@ impl KeyBindings {
                 // Shift+W opens the full book story view.
                 entry("w", Action::ViewStoryGraphParagraph, Scope::Any),
                 entry("Shift+W", Action::ViewStoryGraph, Scope::Any),
+                // 1.2.16+ Phase A.2 — Ctrl+V Shift+J
+                // opens the manuscript intelligence
+                // dashboard (J for Journal).
+                entry("Shift+j", Action::OpenJournal, Scope::Any),
                 // 1.2.6+ — timeline event picker.
                 entry("e", Action::ViewEventPicker, Scope::Any),
                 // 1.2.6+ — new event from any pane. Opens the

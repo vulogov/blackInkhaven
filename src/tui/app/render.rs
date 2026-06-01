@@ -79,6 +79,10 @@ impl super::App {
             self.draw_snippet_picker_modal(f, area);
             return;
         }
+        if let Modal::Journal { .. } = &self.modal {
+            self.draw_journal_modal(f, area);
+            return;
+        }
         if let Modal::CommentEditor { .. } = &self.modal {
             self.draw_comment_editor_modal(f, area);
             return;
