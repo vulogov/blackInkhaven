@@ -7,6 +7,7 @@ mod config_tui;
 mod crash;
 mod health;
 mod io_atomic;
+mod path_safety;
 mod prompts_tui;
 mod error;
 mod export;

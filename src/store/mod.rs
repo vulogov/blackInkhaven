@@ -181,10 +181,21 @@ impl Store {
             return default_user_artefacts_dir(&self.layout.root);
         }
         let p = std::path::PathBuf::from(raw);
-        if p.is_absolute() {
-            p
-        } else {
-            self.layout.root.join(p)
+        // 1.2.15+ Phase S.6 (H4) — reject `..`
+        // traversal in relative `artefacts_directory`
+        // values.  Absolute paths still honoured per
+        // documented intent (Case 2 above); the
+        // S.6.H1 project-trust prompt is the gate
+        // for "is this absolute path safe to use".
+        match crate::path_safety::resolve_within_or_absolute(&self.layout.root, &p) {
+            Ok(resolved) => resolved,
+            Err(e) => {
+                tracing::warn!(
+                    target: "inkhaven::security",
+                    "artefacts_directory `{raw}` rejected ({e}); falling back to default per-user dir",
+                );
+                default_user_artefacts_dir(&self.layout.root)
+            }
         }
     }
 
