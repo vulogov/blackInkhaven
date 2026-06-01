@@ -5968,6 +5968,156 @@ impl super::super::App {
             footer_rect,
         );
     }
+
+    /// 1.2.17+ T.6 — voice picker render.  Header
+    /// shows catalog state (fresh / stale / dir-only),
+    /// filter on the left + entry count on the right,
+    /// table-like rows (key · lang · quality · status
+    /// chip · size), footer with keybinds.
+    pub(in crate::tui::app) fn draw_tts_voice_picker_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::TtsVoicePicker { state } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(6).clamp(60, 100);
+        let body_max = area.height.saturating_sub(8).clamp(8, 24);
+        let filtered = state.filtered_indices();
+        let visible = filtered.len().min(body_max as usize).max(1);
+        let height = (7 + visible as u16).min(area.height.saturating_sub(2));
+        let x = area.x + area.width.saturating_sub(width) / 2;
+        let y = area.y + area.height.saturating_sub(height) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let title = " Piper voices ".to_string();
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let amber = Style::default().fg(ratatui::style::Color::Yellow);
+        let green = Style::default().fg(ratatui::style::Color::Green);
+        let mut lines: Vec<Line<'_>> = Vec::new();
+
+        // Header row: catalog status + count.
+        let header = if let Some(reason) = state.catalog_failed.as_ref() {
+            format!(
+                " catalog: offline ({}) · {} voice(s) on disk",
+                truncate_to(reason, 40),
+                state.entries.len(),
+            )
+        } else if state.catalog_stale {
+            format!(
+                " catalog: stale (using cached) · {} voice(s)",
+                state.entries.len(),
+            )
+        } else {
+            format!(
+                " catalog: fresh · {} voice(s)",
+                state.entries.len(),
+            )
+        };
+        let header_style = if state.catalog_failed.is_some()
+            || state.catalog_stale
+        {
+            amber
+        } else {
+            green
+        };
+        lines.push(Line::from(Span::styled(header, header_style)));
+
+        // Filter input.
+        let filter_label = if state.filter.is_empty() {
+            "  filter: (type to filter by lang or name)".to_string()
+        } else {
+            format!("  filter: /{}│  ({} match)", state.filter, filtered.len())
+        };
+        lines.push(Line::from(Span::styled(filter_label, dim)));
+        lines.push(Line::from(""));
+
+        if filtered.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  (no entries — clear the filter or Esc to close)",
+                dim,
+            )));
+        } else {
+            let cursor = state.cursor;
+            for (row, idx) in filtered.iter().enumerate().take(body_max as usize) {
+                let Some(entry) = state.entries.get(*idx) else {
+                    continue;
+                };
+                let chip = if entry.downloaded {
+                    "✓"
+                } else {
+                    "⬇"
+                };
+                let size = if entry.size_bytes > 0 {
+                    format!(" {:>4} MB", entry.size_bytes / 1_048_576)
+                } else {
+                    "".to_string()
+                };
+                let lang = if entry.language_english.is_empty() {
+                    entry.language_code.clone()
+                } else {
+                    format!(
+                        "{} ({})",
+                        entry.language_english, entry.language_code,
+                    )
+                };
+                let line = format!(
+                    "  {marker} {chip} {key:<28} {lang:<22} {q:<7}{size}",
+                    marker = if row == cursor { "›" } else { " " },
+                    key = truncate_to(&entry.key, 28),
+                    lang = truncate_to(&lang, 22),
+                    q = truncate_to(&entry.quality, 7),
+                );
+                let style = if row == cursor {
+                    bold.add_modifier(Modifier::REVERSED)
+                } else if !entry.downloaded {
+                    Style::default()
+                } else {
+                    bold
+                };
+                lines.push(Line::from(Span::styled(line, style)));
+            }
+        }
+
+        // Picker-local status line (per-action message).
+        lines.push(Line::from(""));
+        if !state.status.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("  {}", state.status),
+                amber,
+            )));
+        }
+
+        // Footer keybinds.
+        lines.push(Line::from(Span::styled(
+            " ↑↓ select · / filter · Enter download/use · d remove · Esc close ",
+            dim,
+        )));
+
+        f.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            inner,
+        );
+    }
 }
 
 /// Truncate `s` to at most `max` characters,

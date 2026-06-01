@@ -44,6 +44,9 @@ mod tts;
 // 1.2.17+ T.1 stub — Piper backend type.  Full
 // implementation lands across T.2–T.5.
 mod piper;
+// 1.2.17+ T.6 — pure state model for the
+// `Ctrl+B Shift+V` voice picker modal.
+mod voice_picker;
 mod sentence_rhythm;
 mod style_warnings;
 mod quickref;
