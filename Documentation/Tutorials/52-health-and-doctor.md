@@ -69,10 +69,15 @@ fire on the same tick:
   without running `inkhaven recover`.  Warning with a
   count + an example path.
 
-Additional integrity checks (DuckDB PRAGMA, Tantivy index,
-HNSW vector parity, textarea-vs-disk sync, tree
+Additional integrity checks (DuckDB PRAGMA, HNSW vector
+parity vs. DB row count, textarea-vs-disk sync, tree
 parent-pointers, disk free %) need cross-thread access to
-the project Store and are deferred to a future release.
+the project Store and are deferred to 1.2.16 (Phase P.4).
+
+Note: inkhaven's search subsystem is HNSW + fastembed
+embeddings only — there is no inverted full-text index
+(Tantivy or otherwise).  See `Documentation/MAINTENANCE.md`
+§ "Search model" for the full picture.
 
 ## Auto-repair (opt-in)
 

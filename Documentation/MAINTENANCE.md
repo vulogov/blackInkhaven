@@ -220,6 +220,75 @@ INKHAVEN_LOG=inkhaven=debug,bdslib=info inkhaven --project ~/Books/my-novel
 `EnvFilter`. The actual env var name is whatever you have set as
 `RUST_LOG` — `INKHAVEN_LOG` is just a convention.)
 
+## Search model
+
+A common question — "does inkhaven have full-text search?"  Worth
+spelling out exactly what the search subsystem is and isn't.
+
+### What's there
+
+Inkhaven runs **two persistent stores** under the project root,
+plus an embedding model that lives in a per-user cache.
+
+| Store          | Backend                  | Holds                                 |
+| -------------- | ------------------------ | ------------------------------------- |
+| `metadata.db`  | DuckDB                   | Hierarchy rows: nodes, slugs, titles, parents, tags, event metadata, comments-sidecar references. |
+| `blobs.db`     | DuckDB                   | Paragraph bodies + image bytes, content-addressed by node UUID. |
+| `vectors/`    | [`vecstore`](https://crates.io/crates/vecstore) — HNSW index | One embedding per paragraph (and per image with extracted text); built at save time via [`fastembed`](https://github.com/Anush008/fastembed-rs). |
+
+`Store::search_text(query, limit)` computes the embedding of
+`query` and asks the HNSW index for the nearest paragraphs.
+That's **semantic search**: "the moment the lighthouse fails"
+matches a paragraph about a darkening keeper's station even if
+the literal word `lighthouse` isn't there, because the embedding
+puts the two near each other in vector space.
+
+### What's NOT there
+
+Inkhaven has **no inverted full-text index** (no Tantivy, no
+Lucene, no DuckDB `fts` extension activated).  If you want
+"every paragraph literally containing the word `lighthouse`",
+inkhaven's search subsystem can't give you that — semantic
+results may or may not coincide with literal matches.
+
+Workarounds for literal-match needs today:
+
+* `Ctrl+F` inside the editor — regex find/replace on the open
+  paragraph's buffer.
+* `rg <pattern> books/` from a shell against the on-disk `.typ`
+  files (which the editor keeps in sync via atomic save —
+  see [`SECURITY_WARNING.md`](SECURITY_WARNING.md) §4.1 H2 for
+  why those writes are atomic in 1.2.15+).
+* `inkhaven search "<phrase>"` — passes through to the
+  semantic search; phrase queries land near but may miss exact
+  matches.
+
+A proper inverted index is a possible 1.2.17+ direction but
+not currently scheduled.
+
+### History — bdslib
+
+Pre-1.2 inkhaven used [`bdslib`](https://github.com/vulogov/bdslib)
+(DuckDB + Tantivy + HNSW + fastembed) as a single document-
+storage backend.  At some point in the 1.2.x cycle the storage
+layer was reimplemented in-tree under `src/storage/` and the
+bdslib dependency was dropped — see `src/storage/mod.rs` module
+docs.  The current code keeps DuckDB + HNSW + fastembed; the
+Tantivy part was not re-implemented because semantic search
+covers the inkhaven editor's primary "find that prose I half-
+remember" use case.  The name `bdslib` survives in:
+
+* the doctor scan class `bdslib-only` (paragraph row present
+  in the store but no on-disk `.typ` file) — see Tutorial 52
+  §"Doctor scan classes" — kept as a stable identifier
+  rather than renamed to `store-only`.
+* a handful of `src/storage/mod.rs` doc comments that
+  preserve the migration trail.
+
+If you see "bdslib" in older Documentation/RELEASE_NOTES (e.g.
+1.2.5 through 1.2.12), it's referring to the dependency that
+was vendored / replaced.
+
 ## Embedding model cache
 
 The first time you initialise a project, fastembed downloads the chosen

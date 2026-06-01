@@ -27,12 +27,19 @@
 //!     without running `inkhaven recover`.  3600 s.
 //!
 //! Cross-thread-state checks (DuckDB PRAGMA,
-//! Tantivy index integrity, HNSW vector parity,
-//! textarea-vs-disk sync, tree parent-pointer
-//! integrity, disk-free %) need a shared Arc<Store>
-//! or App handle which the monitor task doesn't
-//! own; those land in a follow-up after we work
-//! out the safe-sharing story.
+//! HNSW vector parity vs. DB row count, textarea-
+//! vs-disk sync, tree parent-pointer integrity,
+//! disk-free %) need a shared `Arc<Store>` or App
+//! handle which the monitor task doesn't own;
+//! those land in 1.2.16 P.4 after the
+//! `Arc<RwLock<Store>>` sharing work in P.4-pre.
+//!
+//! Note: there is no Tantivy / inverted full-text
+//! index in inkhaven; the `HealthClass::Index`
+//! variant below is reserved for a future FTS
+//! layer but is never emitted by any check today.
+//! See `Documentation/MAINTENANCE.md` § "Search
+//! model" for the full picture.
 //!
 //! Auto-repair (H.3) plugs onto the same channel.
 
@@ -66,7 +73,9 @@ pub struct HealthFinding {
 pub enum HealthClass {
     /// The project's DuckDB metadata.db / blobs.db.
     Db,
-    /// Tantivy full-text index.
+    /// Reserved for a future inverted full-text
+    /// index layer.  No check emits this class
+    /// today — inkhaven's search is HNSW-only.
     Index,
     /// HNSW vector store parity with the DB.
     Vectors,
@@ -108,8 +117,8 @@ pub enum HealthEvent {
     Warning(HealthFinding),
     /// A finding surfaced and the monitor auto-
     /// repaired it.  The `String` carries a short
-    /// human-readable note ("rebuilt Tantivy index
-    /// — 1247 docs reindexed").
+    /// human-readable note ("removed 2 orphan
+    /// rescue files (4823 bytes)").
     Repaired(HealthFinding, String),
     /// A finding surfaced that the user needs to
     /// intervene on — auto-repair declined or

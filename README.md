@@ -230,8 +230,9 @@ Every prior release lives under
   markup).
 
 ### Storage and backup
-- DuckDB metadata + Tantivy full-text + HNSW vectors via
-  [bdslib](https://github.com/vulogov/bdslib).
+- DuckDB metadata + DuckDB blobs + HNSW semantic vectors.  No
+  inverted full-text index — search is semantic-only via
+  embedded vectors.
 - Snapshots: `F5` captures the buffer; `F6` opens the snapshot history
   picker.
 - `inkhaven backup --out <dir>` zips the entire project.
@@ -295,9 +296,9 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 1.2.14).  The first build takes ~10 minutes on
-a modern laptop because of DuckDB + Tantivy + fastembed compilation;
-`cargo binstall` above is the fast path.
+new version (latest: 1.2.15).  The first build takes ~10 minutes on
+a modern laptop because of DuckDB + fastembed + ONNX-runtime
+compilation; `cargo binstall` above is the fast path.
 
 ### 4. `cargo install --git` (compile from a specific tag)
 
@@ -374,8 +375,12 @@ Reference:
 
 ## Built with
 
-- [bdslib](https://github.com/vulogov/bdslib) — DuckDB + Tantivy +
-  fastembed + HNSW document store
+- [duckdb](https://duckdb.org/) — metadata + blob persistence
+- [vecstore](https://crates.io/crates/vecstore) — HNSW semantic
+  vector store
+- [fastembed](https://github.com/Anush008/fastembed-rs) —
+  embedding model (search is semantic-only; no inverted full-
+  text index)
 - [ratatui](https://ratatui.rs/), [tui-textarea](https://github.com/rhysd/tui-textarea)
 - [tree-sitter](https://tree-sitter.github.io/) +
   [tree-sitter-typst](https://github.com/uben0/tree-sitter-typst)
