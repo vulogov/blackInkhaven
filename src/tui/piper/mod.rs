@@ -19,15 +19,16 @@
 //!     extraction + atomic install of the resolved
 //!     binary.
 
-// T.2: the binary + download submodules land as standalone
-// library code.  They aren't wired into the engine
-// constructor until T.5, so the production build sees
-// them as unused.  Tests + the future T.5 engine consume
-// every public item; suppress the dead-code lint at the
-// module level rather than scattering #[allow] across
-// every function.
+// T.2 / T.3: each submodule lands as standalone library
+// code that the production engine doesn't consume until
+// T.5 wires synthesis.  Tests + the future T.5 engine
+// use every public item; suppress the dead-code lint at
+// the module level rather than scattering #[allow]
+// across every function.
 #[allow(dead_code)]
 pub(crate) mod binary;
+#[allow(dead_code)]
+pub(crate) mod catalog;
 #[allow(dead_code)]
 pub(crate) mod download;
 
