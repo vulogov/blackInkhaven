@@ -1091,3 +1091,120 @@ Three picker-based placeholders (`{char_lookup}` /
 a future release — they need an async snippet state
 machine the current synchronous pipeline doesn't
 yet have.
+
+## 1.2.15 — new HJSON blocks
+
+### `health` (1.2.15+) — background health monitor
+
+The background health monitor catches project
+inconsistencies before they cause data loss
+(missed backups, orphan rescue files from
+prior panics, etc.).  Disabled by default
+so existing projects don't inherit a new
+background task without opting in.
+
+```hjson
+{
+  health: {
+    enabled: false           // flip to true to spawn
+                             // the monitor task
+    auto_repair: {
+      rescue_orphans: false  // when true, delete
+                             // *.inkhaven-rescue
+                             // files older than 30d
+                             // automatically.  Use
+                             // only on projects
+                             // where you know
+                             // you've reviewed
+                             // every crash report.
+    }
+  }
+}
+```
+
+When enabled, the monitor runs three checks at
+independent cadences:
+
+* **Project root reachable** (90 s) — Critical on
+  missing, Warning on type mismatch.
+* **Backup freshness** (5 min) — Warning when the
+  newest backup is older than `backup.max_age`.
+* **Rescue file orphans** (1 h) — Warning when
+  `*.inkhaven-rescue` files older than 7 days
+  exist under the project.  Auto-repair (when
+  enabled) deletes files older than 30 days.
+
+Findings drive the status-bar `health` chip:
+`✓` clean, `✎` repaired, `⚠` warning, `✗` error.
+Every non-`Ok` event is appended to
+`<project>/.inkhaven/health.log` (size-rotated at
+1 MB × 5 archives).
+
+See [Tutorial 52](Tutorials/52-health-and-doctor.md)
+for the full workflow.
+
+### `scripting.trust_decision` (1.2.15+)
+
+Gate for the auto-load of `Scripts` system-book
+paragraphs at project open.  Default `"ask"`.
+
+```hjson
+{
+  scripting: {
+    trust_decision: "ask"  // "ask" | "trust" | "deny"
+  }
+}
+```
+
+Three values:
+
+* **`"ask"`** (default) — scripts run only when
+  `<project>/.inkhaven/trust` exists and contains
+  the marker line `trust`.  Without that file the
+  scripts are skipped and a warning lands in
+  `.inkhaven.log`.
+* **`"trust"`** — scripts run unconditionally.
+  Use only on projects you authored or audited.
+* **`"deny"`** — never run scripts regardless of
+  the trust file.  Useful for read-only review.
+
+The trust file lives outside the project sources
+by convention (gitignored, since `.inkhaven/`
+holds machine-local state); an attacker shipping
+a project cannot pre-grant trust to themselves
+via the file.  The HJSON `"trust"` value is the
+project author's declaration "I wrote these
+scripts" — recipients of a shared project should
+audit before keeping that value.
+
+See [Tutorial 53](Tutorials/53-bund-trust-gate.md)
+and `Documentation/SECURITY_WARNING.md` §3.2.
+
+### `scripting.fs_unsandboxed` (1.2.15+)
+
+When `true`, `ink.fs.read` and `ink.fs.write`
+operate on unrestricted paths.  Default `false`:
+the words confine their paths to the project
+root via `crate::path_safety::resolve_within`.
+
+```hjson
+{
+  scripting: {
+    fs_unsandboxed: false  // default — paths
+                           // confined to project root
+  }
+}
+```
+
+The sandbox applies whether or not the `fs_read`
+/ `fs_write` category gates are enabled.  Set
+`true` only on trusted projects where a script
+genuinely needs to reach a shared location
+outside the project tree.
+
+The 1.2.15 audit identified the previous
+unsandboxed behaviour as a privilege risk: a
+Bund script with `fs_write` enabled could
+overwrite anywhere the user could reach
+(`~/.ssh/authorized_keys`, system files with
+sudo, etc.).  Confinement is the safer default.

@@ -21,142 +21,121 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.14 — Plot intelligence + inline comments + quick wins
+## Latest release · 1.2.15 — Stability + self-healing + security hardening
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.14.md`](Documentation/RELEASE_NOTES/1.2.14.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.15.md`](Documentation/RELEASE_NOTES/1.2.15.md)
 
-1.2.14's headlines are the new **Threads system
-book** (a plot-intelligence workbench that ties
-narrative beats to manuscript paragraphs) and
-**inline sidecar comments** (margin notes that
-travel with the prose in git).  Around them sit
-a sweep of authoring quick-wins: 14 init
-templates, snippet expansion, AI continuation
-drafting, inline footnotes, a project word-count
-goal modal, and style-transfer rewrite.
+1.2.15 is a stability + security release.  The
+goal is concrete: zero panics from the hot path,
+zero data loss across crashes, every project-wide
+inconsistency either auto-fixed or surfaced to
+the user.  Four themes landed.
 
-Shipped across 9 planned phases (A.1-A.3, C.1 +
-C.1.1 + C.2 + C.2.1, Q.1, Q.2 + Q.2.1, Q.3, Q.4)
-plus a 7-step tooling-polish round (D.1-D.7).
-Tests 565 → 637 (+72).
+Tests 565 → 695 (+130).  Zero new dependencies.
 
-### Threads — plot intelligence
+### Survivable panics — `Ctrl+C` proof, `kill -9` proof
 
-A new `Threads` system book sits next to
-`Characters` / `Places` / `Artefacts` and holds
-named arcs (each thread is a chapter with a
-`Meta` paragraph + waypoint paragraphs).
-Waypoints link to manuscript paragraphs, so the
-project knows which prose advances which arc.
+A custom panic hook (installed before any code
+that might panic) catches every panic the editor
+or the host throws.  On firing it:
 
-* **`Ctrl+V Shift+H` — threads picker + weave
-  view.**  Fuzzy picker over every thread;
-  Enter opens a swim-lane weave view of the
-  selected thread plus its 4 closest neighbours
-  (by waypoint overlap) — manuscript paragraphs
-  on the horizontal axis, threads as lanes,
-  waypoints as `●`, gaps as `·`.
-* **`Ctrl+V Shift+A` — AI thread audit.**
-  Streams the configured LLM a structural view
-  of every thread + waypoints; asks for blind
-  spots (unfired payoffs, dormant arcs, gaps).
-* **`Ctrl+V Shift+D` — thread doctor modal.**
-  Deterministic version of the AI audit: flags
-  zero-links, payoff-unfired, dormant (last
-  waypoint > 30 days old).  TUI equivalent of
-  `inkhaven thread doctor`.
-* **`inkhaven thread` CLI** — `add` / `list` /
-  `doctor` / `export --format json|csv|markdown`
-  for the scripted side of the workflow.
+1. Flushes every dirty editor buffer atomically
+   to a side-by-side `<path>.inkhaven-rescue`
+   companion file.
+2. Writes `inkhaven-crash-<UTC>.hjson` to the
+   launch cwd with the panic message + location,
+   the project state at the moment of the
+   crash, a ring buffer of the last 50 user
+   actions, and an environment fingerprint.
+3. Restores the terminal so anything that
+   prints after is readable.
 
-### Inline comments — margin notes that diff
+After the crash, `inkhaven recover <crash.hjson>`
+walks the rescued-buffer manifest with `y` / `N`
+/ `diff` per buffer.  Accepted rescues are
+applied atomically, with the current on-disk
+version snapshotted as `<original>.pre-recover-
+<UTC>` so rollback is one `mv` away.  `--yes`
+for scripted recovery; `--keep` to retain the
+report files.
 
-A `Ctrl+V c` adds an inline comment to the
-current selection (or the cursor's word, if no
-selection); the body lives in a sidecar
-`<paragraph>.comments.json` so it travels with
-the prose in git and merges cleanly.  Char-offset
-spans (not byte) for UTF-8 safety.  The commented
-span renders with `theme.comment_span_modifier`
-(default underline + italic); cursor inside the
-span surfaces `comment by <author> · <age>: <text>`
-in the editor footer.
+The dirty-buffer mirror runs at a 2 s debounce
+in the main loop, so the worst-case unsaved-
+typing window a panic can take down is bounded
+at ~2 s.
 
-* **`Ctrl+V Shift+C` — comments panel.**
-  Project-wide panel walking every sidecar.
-  Columns: breadcrumb / author / age / snippet
-  plus a `(N/M in ¶)` dense indicator for
-  paragraphs carrying multiple comments.  Panel
-  chords: `Enter` open + jump cursor to the span,
-  `r` resolve, `R` toggle resolved-filter, `d`
-  delete, `/` filter, `a` AI digest (categorises
-  comments as STRUCTURAL / PROSE / FACTUAL /
-  QUESTION).
-* **`inkhaven comments` CLI** — `list` (with
-  `--paragraph`, `--resolved`, `--json` filters),
-  `resolve` / `reopen` / `delete`, `export
-  --format json|csv|markdown`.
+### Stability sweep across the codebase
 
-### 14 init templates (5 Russian + 3 international new)
+Five sub-phases catalogued and patched **62
+panic sites** (the entire hot-path `unwrap()` /
+`expect()` / `unreachable!()` surface in
+`src/tui/app`, `src/store`, `src/cli`, and
+helper modules) **+ 2 latent out-of-bounds
+crashes + 5 non-atomic critical-data writes + 4
+lock-poisoning sites**.
 
-`inkhaven init <path> --template <name>`
-scaffolds a fresh project from a genre-aware
-template.  1.2.14 grows the registry to 14:
+The flagship side-effect: every user-data save
+path now goes through the new `crate::io_atomic`
+module — temp + fsync + rename + parent-dir
+fsync.  A power loss mid-save preserves either
+the previous version or the new version, never a
+half-written truncated file.  Applies to the
+manuscript save path, the secondary-editor save,
+comment sidecar writes, session state, and
+directory imports.
 
-* Original 6: `empty`, `novel`, `nonfiction`,
-  `rpg-sourcebook`, `technical`, `nanowrimo`
-* 5 Russian (Толстой / Пушкин / Стругацкий /
-  былины / Чернышевский traditions):
-  `russian-novel`, `russian-long-story`,
-  `russian-scifi`, `russian-lore`,
-  `russian-utopia`
-* 3 international: `epic-fantasy` (Tolkien /
-  Sanderson — Prologue + 3 Books + Epilogue +
-  Appendices with hero / shadow / mentor seeds),
-  `mystery` (Christie / Doyle — crime /
-  investigation / revelation with detective + 3
-  suspects), `french-novel` (Hugo / Flaubert /
-  Camus — Première / Deuxième / Troisième partie)
+### Background health monitor + project doctor
 
-`inkhaven template list` enumerates the full set
-with recommended word-count goals.
+A tokio task running alongside the TUI
+periodically checks project-root reachability
+(90 s), backup freshness vs. `backup.max_age`
+(5 min), and rescue file orphans older than 7
+days (1 h).  Findings drive a status-bar chip
+(`✓` clean / `✎` repaired / `⚠` warning / `✗`
+error) and are appended to
+`<project>/.inkhaven/health.log` (size-rotated
+at 1 MB × 5 archives).  Per-class auto-repair
+opt-in in HJSON (`health.auto_repair.*`).
 
-### Snippet expansion (HJSON-driven)
+The on-demand counterpart is the project
+doctor.  `inkhaven doctor --scan` walks the
+project for five problem classes:
+zero-byte-file, orphan-paragraph-row, missing-
+referenced-file, corrupt-comments-sidecar, and
+the recoverable `bdslib-only` (disk file
+missing but content preserved in bdslib).
+`--autofix [--yes]` applies per-class repairs
+(delete row + file, move corrupt sidecar to
+`.bak`, rematerialize disk from bdslib).
+`--json` for CI gates (exit 2 on any Warning+).
+`Ctrl+B Shift+0` opens the same flow as a TUI
+modal.
 
-Snippets configured under the `snippets` block
-in `inkhaven.hjson` expand on Space inside the
-editor.  Built-in placeholders: `{date}`,
-`{time}`, `{datetime}`, `{slug}`, `{book}`,
-`{chapter}`, `{author}`, `{cursor}` (the cursor
-position after expansion — split-paste).
+### Security hardening from a full audit
 
-### AI continuation, footnote, project goal, style transfer
+A 1.2.15 security audit catalogued four risk
+classes; all patched before release:
 
-Four targeted authoring helpers:
+* **Path-traversal in the recover CLI** —
+  crafted crash reports with `paragraph_rel_path:
+  "../../etc/passwd"` now rejected.
+* **Path-traversal in HJSON config** —
+  `prompts_file` and `artefacts_directory` `..`-
+  escapes blocked.
+* **`ink.fs.*` sandbox** — Bund scripts'
+  filesystem read / write now confined to the
+  project root by default.  `scripting.fs_
+  unsandboxed: true` opt-out for power users.
+* **Script auto-load trust gate** — opening a
+  project no longer silently runs Bund scripts.
+  `scripting.trust_decision: "ask"` (default)
+  requires `<project>/.inkhaven/trust` with a
+  `trust` marker line; `"trust"` / `"deny"`
+  override.
 
-* **`Ctrl+V d` — AI continuation drafting.**
-  LLM continues the open paragraph in the
-  author's voice; previous N paragraphs (config:
-  `editor.continuation_anchor_count`) anchor the
-  voice; the open paragraph's cursor position is
-  marked with `[[CURSOR_HERE]]`.  Response
-  wrapped in `<<<DRAFT>>>` markers.
-* **`Ctrl+V f` — inline footnote.**  Pops a body
-  input; inserts `#footnote[<body>]` (Typst,
-  default) or `[^id]` + reference line (markdown,
-  when `editor.footnote_style = "markdown"`).
-* **`Ctrl+V Shift+G` — project word-count goal
-  modal.**  Reads `project.word_count_goal` +
-  `project.target_date`; projects finish-date
-  from the 30-day word delta; renders a progress
-  bar + verdict (`✓ Ahead` / `· On track` / `✗
-  Behind` / `✓ Complete`).
-* **`Ctrl+V y` — style-transfer rewrite.**
-  Pops a recent-paragraph picker for the style
-  reference; LLM rewrites the open paragraph in
-  the reference's voice (sentence length /
-  register / distance / rhythm) while preserving
-  meaning + entities + facts.
+New [`Documentation/SECURITY_WARNING.md`](Documentation/SECURITY_WARNING.md)
+documents known + unknown risks and limitation
+of liability.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
