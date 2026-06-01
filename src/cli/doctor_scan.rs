@@ -324,6 +324,108 @@ fn sidecar_path_for(typ_path: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
+/// 1.2.15+ Phase D.2 — apply one finding's repair
+/// in-place.  Returns a one-line summary of what
+/// was done (which the caller logs + prints).
+///
+/// Each fix is irreversible for the file-touching
+/// cases (delete row + file).  The caller is
+/// responsible for confirming with the user
+/// before calling — `doctor::run_autofix` does the
+/// prompting; this fn just applies.
+pub fn apply_fix(
+    project: &Path,
+    finding: &ScanFinding,
+) -> Result<String> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let hierarchy =
+        crate::store::hierarchy::Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    match finding.class {
+        ScanClass::ZeroByteFile
+        | ScanClass::OrphanParagraphRow
+        | ScanClass::MissingReferencedFile => {
+            // Resolve the finding back to a node
+            // via the rel-path embedded in path.
+            // The finding's path is absolute; strip
+            // the project root prefix to get rel.
+            let abs = finding
+                .path
+                .as_deref()
+                .ok_or_else(|| Error::Store("finding has no path".into()))?;
+            let abs_path = std::path::PathBuf::from(abs);
+            let rel = abs_path
+                .strip_prefix(&layout.root)
+                .map_err(|e| Error::Store(format!("path {} not under project root: {e}", abs)))?
+                .to_string_lossy()
+                .into_owned();
+            let mut to_delete: Vec<uuid::Uuid> = Vec::new();
+            for node in hierarchy.iter() {
+                if node.file.as_deref() == Some(rel.as_str()) {
+                    to_delete.push(node.id);
+                }
+            }
+            if to_delete.is_empty() {
+                return Err(Error::Store(format!(
+                    "no DB row matches {rel} — was the project mutated between scan and fix?"
+                )));
+            }
+            store
+                .delete_subtree(std::path::Path::new(&rel), &to_delete)
+                .map_err(|e| Error::Store(format!("delete row {rel}: {e}")))?;
+            Ok(format!(
+                "deleted {} DB row(s) + file {} ({})",
+                to_delete.len(),
+                rel,
+                finding.class.slug()
+            ))
+        }
+        ScanClass::CorruptCommentsSidecar => {
+            let abs = finding
+                .path
+                .as_deref()
+                .ok_or_else(|| Error::Store("finding has no path".into()))?;
+            let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S").to_string();
+            let dest = format!("{abs}.corrupt-{stamp}.bak");
+            std::fs::rename(abs, &dest).map_err(Error::Io)?;
+            Ok(format!(
+                "moved corrupt sidecar {} → {}",
+                abs, dest
+            ))
+        }
+    }
+}
+
+/// Append one line to `<project>/.inkhaven/doctor.log`
+/// recording the fix that was applied.  Format
+/// mirrors the health log: UTC | OUTCOME | CLASS |
+/// detail.  Silent on I/O errors (log is
+/// diagnostic, not load-bearing).
+pub fn log_fix(project: &Path, finding: &ScanFinding, outcome: &Result<String>) {
+    let path = project.join(".inkhaven").join("doctor.log");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
+    let (kind, detail) = match outcome {
+        Ok(s) => ("OK", s.clone()),
+        Err(e) => ("ERR", e.to_string()),
+    };
+    let line = format!(
+        "{now}|{kind}|{}|{}\n",
+        finding.class.slug(),
+        detail.replace('\n', " "),
+    );
+    use std::io::Write;
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| f.write_all(line.as_bytes()));
+}
+
 /// Pretty-print findings to stdout.  Used by the
 /// human-readable doctor output path.
 pub fn print_human(report: &ScanReport) {

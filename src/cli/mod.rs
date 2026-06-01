@@ -343,6 +343,20 @@ pub enum Command {
         /// sidecar`.
         #[arg(long, value_name = "CLASS")]
         class: Option<String>,
+        /// 1.2.15+ Phase D.2 — apply per-class
+        /// repairs.  Prompts `y/N` per finding
+        /// unless `--yes` is also passed.  Every
+        /// repair is logged to
+        /// `<project>/.inkhaven/doctor.log` with
+        /// before/after for audit.
+        #[arg(long)]
+        autofix: bool,
+        /// Pair with `--autofix` to skip the per-
+        /// finding prompt.  Intended for CI gates
+        /// + scripted cleanup; refuses to start
+        /// without `--autofix`.
+        #[arg(long)]
+        yes: bool,
     },
 
     /// 1.2.6+ — story-timeline event management. Requires
@@ -1175,18 +1189,23 @@ impl Cli {
             Command::Stats { book_name } => {
                 stats::run(&project, book_name.as_deref()).map_err(Into::into)
             }
-            Command::Doctor { voices, tts_test, filter_words_snippet, scan, json, class } => {
+            Command::Doctor { voices, tts_test, filter_words_snippet, scan, json, class, autofix, yes } => {
                 if filter_words_snippet {
                     doctor::run_filter_words_snippet().map_err(Into::into)
                 } else if let Some(text) = tts_test {
                     doctor::run_tts_test(&project, &text).map_err(Into::into)
                 } else if voices {
                     doctor::run_voices().map_err(Into::into)
-                } else if scan || json || class.is_some() {
-                    // 1.2.15+ Phase D.1 — project
-                    // scan path.  `--json` and
-                    // `--class <name>` imply
-                    // `--scan`.
+                } else if scan || json || class.is_some() || autofix {
+                    // 1.2.15+ Phase D.1 + D.2 —
+                    // project scan path.  `--json`,
+                    // `--class`, `--autofix` all
+                    // imply `--scan`.
+                    if yes && !autofix {
+                        return Err(crate::error::Error::Config(
+                            "doctor: --yes requires --autofix".into()
+                        ).into());
+                    }
                     let selected = match class.as_deref() {
                         None => None,
                         Some(s) => match doctor_scan::ScanClass::from_slug(s) {
@@ -1212,10 +1231,17 @@ impl Cli {
                     } else {
                         doctor_scan::print_human(&report);
                     }
+                    if autofix && !report.findings.is_empty() {
+                        run_autofix(&project, &report, yes)?;
+                    }
                     // Exit code 2 when any finding
-                    // at Warning or above shipped
-                    // — matches conventional
-                    // doctor / linter behaviour.
+                    // at Warning or above shipped —
+                    // matches conventional doctor /
+                    // linter behaviour.  Autofix
+                    // doesn't suppress this: the
+                    // user may have skipped fixes,
+                    // and re-running shows whether
+                    // the project is now clean.
                     if report.count_at_or_above(doctor_scan::ScanSeverity::Warning) > 0 {
                         std::process::exit(2);
                     }
@@ -1267,4 +1293,68 @@ impl Cli {
             }
         }
     }
+}
+
+/// 1.2.15+ Phase D.2 — interactive autofix walk.
+/// Iterates the scan report, prompts the user per
+/// finding (or auto-accepts when `yes`), calls
+/// `doctor_scan::apply_fix` for each accepted
+/// repair, logs the outcome.  Halts on the first
+/// fatal error (e.g. Store open failure) but
+/// continues past per-finding apply errors.
+fn run_autofix(project: &std::path::Path, report: &doctor_scan::ScanReport, yes: bool) -> Result<()> {
+    use std::io::{BufRead, Write};
+    println!();
+    println!("Autofix — applying repairs.");
+    let stdin = std::io::stdin();
+    let mut applied = 0usize;
+    let mut skipped = 0usize;
+    let mut errors = 0usize;
+
+    for (i, f) in report.findings.iter().enumerate() {
+        println!(
+            "\n  [{n}/{total}] {sev} · {class}",
+            n = i + 1,
+            total = report.findings.len(),
+            sev = f.severity.slug(),
+            class = f.class.slug(),
+        );
+        if let Some(p) = &f.path {
+            println!("        path: {p}");
+        }
+        println!("        {}", f.detail);
+        let accept = if yes {
+            true
+        } else {
+            print!("        apply repair? [y/N]: ");
+            std::io::stdout().flush().ok();
+            let mut line = String::new();
+            stdin
+                .lock()
+                .read_line(&mut line)
+                .map_err(crate::error::Error::Io)?;
+            matches!(line.trim(), "y" | "Y")
+        };
+        if !accept {
+            println!("        skipped.");
+            skipped += 1;
+            continue;
+        }
+        let outcome = doctor_scan::apply_fix(project, f);
+        doctor_scan::log_fix(project, f, &outcome);
+        match outcome {
+            Ok(note) => {
+                println!("        applied: {note}");
+                applied += 1;
+            }
+            Err(e) => {
+                eprintln!("        ERROR: {e:#}");
+                errors += 1;
+            }
+        }
+    }
+    println!(
+        "\nAutofix done: {applied} applied, {skipped} skipped, {errors} error(s).",
+    );
+    Ok(())
 }
