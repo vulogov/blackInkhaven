@@ -130,9 +130,17 @@ impl HealthEvent {
     /// Glyph + colour suggestion for the status-bar
     /// chip.  The TUI calls this on the most recent
     /// event to derive the chip state.
+    ///
+    /// 1.2.16+ Phase P.1 — `Warning(finding)` events
+    /// with `Severity::Info` map to `ChipState::Info`
+    /// (the new soft-amber tier), not `Warning`.
+    /// Lets callers raise an early-warning finding
+    /// without overlapping the hard `⚠` yellow that
+    /// `Severity::Warn`+ uses.
     pub fn chip(&self) -> ChipState {
         match self {
             HealthEvent::Ok => ChipState::Clean,
+            HealthEvent::Warning(f) if f.severity == Severity::Info => ChipState::Info,
             HealthEvent::Warning(_) => ChipState::Warning,
             HealthEvent::Repaired(_, _) => ChipState::Repaired,
             HealthEvent::Error(_) => ChipState::Error,
@@ -150,8 +158,16 @@ pub enum ChipState {
     Hidden,
     /// Last tick clean: `[health: ✓]` green.
     Clean,
-    /// Last tick auto-repaired: `[health: ✎]` amber.
+    /// Last tick auto-repaired: `[health: ✎]` light
+    /// amber.
     Repaired,
+    /// 1.2.16+ Phase P.1 — soft-warning amber chip
+    /// for `Severity::Info` findings.  Used by the
+    /// backup-freshness amber threshold ("backup
+    /// is getting old, plan a refresh soon") so
+    /// the user sees an early-warning state
+    /// distinct from the hard `Warning` yellow.
+    Info,
     /// Warning open: `[health: ⚠]` yellow.
     Warning,
     /// Error open: `[health: ✗]` red — user must
@@ -166,6 +182,7 @@ impl ChipState {
             ChipState::Hidden => "",
             ChipState::Clean => "✓",
             ChipState::Repaired => "✎",
+            ChipState::Info => "ℹ",
             ChipState::Warning => "⚠",
             ChipState::Error => "✗",
         }
@@ -206,6 +223,11 @@ pub struct MonitorSetup {
     /// "backup-freshness check disabled" — the
     /// check then short-circuits with Ok.
     pub backup_max_age: Duration,
+    /// 1.2.16+ Phase P.1 — fraction of `max_age`
+    /// at which the chip flips from `Clean` to
+    /// `Info` (amber).  See
+    /// `BackupConfig.amber_threshold`.
+    pub backup_amber_threshold: f32,
     /// 1.2.15+ Phase H.3 — per-class auto-repair
     /// opt-in.  Every false means "surface as
     /// Warning even if a repair is available" —
@@ -322,6 +344,7 @@ pub fn spawn_monitor(
                 findings.push(check_backup_freshness(
                     &setup.backup_dir,
                     setup.backup_max_age,
+                    setup.backup_amber_threshold,
                 ));
             }
             // Rescue-file orphans.
@@ -525,6 +548,7 @@ pub(crate) fn check_project_root(project_root: &Path) -> HealthEvent {
 pub(crate) fn check_backup_freshness(
     backup_dir: &Path,
     max_age: Duration,
+    amber_threshold: f32,
 ) -> HealthEvent {
     if max_age.is_zero() {
         return HealthEvent::Ok;
@@ -543,8 +567,28 @@ pub(crate) fn check_backup_freshness(
     };
     let now = SystemTime::now();
     let age = now.duration_since(mtime).unwrap_or(Duration::ZERO);
+    classify_backup_age(age, max_age, amber_threshold)
+}
+
+/// 1.2.16+ Phase P.1 — three-tier classifier for
+/// backup age.  Extracted from
+/// `check_backup_freshness` for unit testing.
+///
+///   * `age > max_age` → Warning (yellow chip).
+///   * `age > amber_threshold * max_age` →
+///     Info-severity Warning (amber chip).
+///   * Otherwise → Ok.
+///
+/// `amber_threshold == 0.0` disables the amber
+/// tier (chip stays green until hard warning).
+/// Negative or NaN thresholds are clamped to 0.
+pub(crate) fn classify_backup_age(
+    age: Duration,
+    max_age: Duration,
+    amber_threshold: f32,
+) -> HealthEvent {
     if age > max_age {
-        HealthEvent::Warning(HealthFinding {
+        return HealthEvent::Warning(HealthFinding {
             class: HealthClass::Backup,
             severity: Severity::Warn,
             detail: format!(
@@ -553,10 +597,32 @@ pub(crate) fn check_backup_freshness(
                 humantime::format_duration(max_age),
             ),
             auto_repairable: false,
-        })
-    } else {
-        HealthEvent::Ok
+        });
     }
+    // Amber tier.
+    let threshold = amber_threshold.clamp(0.0, 1.0);
+    if threshold <= 0.0 {
+        return HealthEvent::Ok;
+    }
+    let max_secs = max_age.as_secs_f32();
+    let amber_secs = (max_secs * threshold) as u64;
+    if age.as_secs() > amber_secs {
+        return HealthEvent::Warning(HealthFinding {
+            class: HealthClass::Backup,
+            severity: Severity::Info,
+            detail: format!(
+                "newest backup is {} old; soft limit {} ({}× {} threshold).  \
+                 Plan an `inkhaven backup` before the hard limit ({}) fires.",
+                humantime::format_duration(round_to_minutes(age)),
+                humantime::format_duration(Duration::from_secs(amber_secs)),
+                threshold,
+                humantime::format_duration(max_age),
+                humantime::format_duration(max_age),
+            ),
+            auto_repairable: false,
+        });
+    }
+    HealthEvent::Ok
 }
 
 fn newest_zip_mtime(dir: &Path) -> Option<SystemTime> {
@@ -875,6 +941,7 @@ mod tests {
                 project_root: PathBuf::from("/tmp/nonexistent"),
                 backup_dir: PathBuf::from("/tmp/nonexistent-backups"),
                 backup_max_age: Duration::from_secs(7 * 86400),
+                backup_amber_threshold: 0.5,
                 repair: RepairPolicy::default(),
                 store: None,
             },
@@ -897,6 +964,7 @@ mod tests {
             project_root: PathBuf::from("/tmp/x"),
             backup_dir: PathBuf::from("/tmp/x-backups"),
             backup_max_age: Duration::from_secs(86400),
+            backup_amber_threshold: 0.5,
             repair: RepairPolicy::default(),
             store: None,
         };
@@ -911,6 +979,7 @@ mod tests {
         let evt = super::check_backup_freshness(
             &PathBuf::from("/tmp/whatever-nonexistent"),
             Duration::ZERO,
+            0.5,
         );
         assert!(matches!(evt, HealthEvent::Ok));
     }
@@ -920,6 +989,7 @@ mod tests {
         let evt = super::check_backup_freshness(
             &PathBuf::from(format!("/tmp/nx-{}-backups", std::process::id())),
             Duration::from_secs(86400),
+            0.5,
         );
         match evt {
             HealthEvent::Warning(f) => {
@@ -941,10 +1011,115 @@ mod tests {
         let zip = dir.join("blackinkhaven_20260531_120000.zip");
         std::fs::write(&zip, b"\x50\x4b\x03\x04 fake zip").unwrap();
 
-        let evt = super::check_backup_freshness(&dir, Duration::from_secs(7 * 86400));
+        let evt = super::check_backup_freshness(&dir, Duration::from_secs(7 * 86400), 0.5);
         assert!(matches!(evt, HealthEvent::Ok), "got {evt:?}");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // 1.2.16+ Phase P.1 — three-tier classifier tests.
+
+    #[test]
+    fn backup_age_below_amber_is_clean() {
+        // 1 day old, limit 7 days, threshold 0.5 → 3.5d soft limit.
+        // 1d < 3.5d → Ok.
+        let evt = super::classify_backup_age(
+            Duration::from_secs(86400),
+            Duration::from_secs(7 * 86400),
+            0.5,
+        );
+        assert!(matches!(evt, HealthEvent::Ok));
+    }
+
+    #[test]
+    fn backup_age_in_amber_zone_returns_info_severity() {
+        // 5 days old, limit 7d, threshold 0.5 → 3.5d soft.
+        // 5d > 3.5d but < 7d → amber Info.
+        let evt = super::classify_backup_age(
+            Duration::from_secs(5 * 86400),
+            Duration::from_secs(7 * 86400),
+            0.5,
+        );
+        match evt {
+            HealthEvent::Warning(ref f) => {
+                assert_eq!(f.severity, Severity::Info);
+                assert_eq!(f.class, HealthClass::Backup);
+                assert!(f.detail.contains("soft limit"));
+                // Chip routing: Info severity →
+                // ChipState::Info, not Warning.
+                assert_eq!(evt.chip(), ChipState::Info);
+            }
+            other => panic!("expected amber Warning(Info), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn backup_age_beyond_max_returns_warn_severity() {
+        // 10 days old, limit 7d → hard Warning.
+        let evt = super::classify_backup_age(
+            Duration::from_secs(10 * 86400),
+            Duration::from_secs(7 * 86400),
+            0.5,
+        );
+        match evt {
+            HealthEvent::Warning(ref f) => {
+                assert_eq!(f.severity, Severity::Warn);
+                assert!(f.detail.contains("run `inkhaven backup`"));
+                assert_eq!(evt.chip(), ChipState::Warning);
+            }
+            other => panic!("expected hard Warning(Warn), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn backup_age_threshold_zero_disables_amber() {
+        // 5 days old, limit 7d, threshold 0.0 → no
+        // amber tier; chip stays clean until hard
+        // limit.
+        let evt = super::classify_backup_age(
+            Duration::from_secs(5 * 86400),
+            Duration::from_secs(7 * 86400),
+            0.0,
+        );
+        assert!(matches!(evt, HealthEvent::Ok));
+    }
+
+    #[test]
+    fn backup_age_threshold_clamped_to_unit_interval() {
+        // Negative threshold → treated as 0
+        // (no amber).  > 1.0 → clamped to 1.0
+        // (amber tier collapses to hard limit).
+        let evt = super::classify_backup_age(
+            Duration::from_secs(5 * 86400),
+            Duration::from_secs(7 * 86400),
+            -0.5,
+        );
+        assert!(matches!(evt, HealthEvent::Ok));
+        let evt = super::classify_backup_age(
+            Duration::from_secs(5 * 86400),
+            Duration::from_secs(7 * 86400),
+            2.0,
+        );
+        // 5d > 7d × 1.0 = 7d? no, 5d < 7d.  Stays Ok.
+        assert!(matches!(evt, HealthEvent::Ok));
+    }
+
+    #[test]
+    fn chip_state_info_glyph_distinct() {
+        // Info chip glyph differs from every
+        // other state's glyph so all five visible
+        // states are distinguishable in the bar.
+        let glyphs: std::collections::HashSet<&'static str> = [
+            ChipState::Clean,
+            ChipState::Repaired,
+            ChipState::Info,
+            ChipState::Warning,
+            ChipState::Error,
+        ]
+        .iter()
+        .map(|s| s.glyph())
+        .collect();
+        assert_eq!(glyphs.len(), 5);
     }
 
     #[test]
