@@ -122,6 +122,32 @@ impl StorageEngine {
     pub fn checkpoint(&self) -> Result<()> {
         self.execute("CHECKPOINT;")
     }
+
+    /// 1.2.16+ Phase P.4 — DuckDB integrity check.
+    /// Runs `PRAGMA integrity_check` and returns
+    /// the result string.  On a clean database
+    /// DuckDB returns `"ok"`; on corruption it
+    /// returns a list of issues — non-`"ok"` is
+    /// the failure signal.
+    ///
+    /// Cheap on healthy databases (single-digit
+    /// milliseconds for typical project sizes);
+    /// scales linearly with corruption.  The
+    /// health monitor's 15 min cadence accounts
+    /// for that.
+    pub fn integrity_check(&self) -> Result<String> {
+        let rows = self.select_all("PRAGMA integrity_check;")?;
+        // Expected shape: one row, one column, text
+        // `"ok"` on healthy.  Older DuckDB versions
+        // returned empty result instead of `"ok"`
+        // — treat empty as healthy too.
+        let val = rows.first().and_then(|r| r.first());
+        match val {
+            Some(duckdb::types::Value::Text(s)) => Ok(s.clone()),
+            Some(other) => Ok(format!("{other:?}")),
+            None => Ok("ok".to_string()),
+        }
+    }
 }
 
 // ── BlobStorage ──────────────────────────────────────────────────────
@@ -202,6 +228,12 @@ impl BlobStorage {
 
     pub fn checkpoint(&self) -> Result<()> {
         self.engine.checkpoint()
+    }
+
+    /// 1.2.16+ Phase P.4 — DuckDB integrity check
+    /// delegated to the underlying engine.
+    pub fn integrity_check(&self) -> Result<String> {
+        self.engine.integrity_check()
     }
 }
 
@@ -337,6 +369,12 @@ impl JsonStorage {
 
     pub fn checkpoint(&self) -> Result<()> {
         self.engine.checkpoint()
+    }
+
+    /// 1.2.16+ Phase P.4 — DuckDB integrity check
+    /// delegated to the underlying engine.
+    pub fn integrity_check(&self) -> Result<String> {
+        self.engine.integrity_check()
     }
 }
 

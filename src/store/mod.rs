@@ -522,6 +522,32 @@ impl Store {
             .map_err(|e| Error::Store(e.to_string()))
     }
 
+    /// 1.2.16+ Phase P.4 — DuckDB integrity check.
+    /// Returns `(meta_status, blobs_status)`;
+    /// expected `("ok", "ok")` on healthy.  Any
+    /// other value signals corruption.
+    pub fn integrity_check(&self) -> Result<(String, String)> {
+        self.inner
+            .integrity_check()
+            .map_err(|e| Error::Store(e.to_string()))
+    }
+
+    /// 1.2.16+ Phase P.4 — paragraph row count.
+    pub fn row_count(&self) -> Result<usize> {
+        self.inner
+            .row_count()
+            .map_err(|e| Error::Store(e.to_string()))
+    }
+
+    /// 1.2.16+ Phase P.4 — total HNSW vector
+    /// count (the store keeps two vectors per
+    /// document).
+    pub fn vector_count(&self) -> Result<usize> {
+        self.inner
+            .vector_count()
+            .map_err(|e| Error::Store(e.to_string()))
+    }
+
     /// Add a hierarchy node to bdslib. The metadata is serialized; the content
     /// bytes are indexed for vector search. Returns the bdslib-assigned UUIDv7
     /// after we copy it back onto the Node.

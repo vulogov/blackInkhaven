@@ -137,6 +137,16 @@ impl VectorEngine {
     ///
     /// On save failure `dirty` is restored to `true` so the next tick
     /// retries instead of silently dropping the unpersisted writes.
+    /// 1.2.16+ Phase P.4 — total vector count in
+    /// the HNSW store.  The store holds two
+    /// vectors per document (`:meta` + `:content`)
+    /// — the parity check accounts for this by
+    /// dividing.  Cheap (single VecStore::count
+    /// call); used by `Store::vector_count`.
+    pub fn count(&self) -> Result<usize> {
+        self.with_store(|s| Ok(s.count()))
+    }
+
     pub fn sync(&self) -> Result<()> {
         if !self.dirty.load(Ordering::Acquire) {
             return Ok(());

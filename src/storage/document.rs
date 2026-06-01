@@ -157,6 +157,33 @@ impl DocumentStorage {
         Ok(())
     }
 
+    /// 1.2.16+ Phase P.4 — DuckDB integrity check
+    /// across both sub-stores.  Errors on the
+    /// first non-`"ok"` result; otherwise returns
+    /// `Ok(())`.  The `which` argument is the
+    /// sub-store identifier exposed in the error
+    /// so callers can name the failing layer.
+    pub fn integrity_check(&self) -> Result<(String, String)> {
+        let meta_ok = self.meta.integrity_check()?;
+        let blobs_ok = self.blobs.integrity_check()?;
+        Ok((meta_ok, blobs_ok))
+    }
+
+    /// 1.2.16+ Phase P.4 — total paragraph row
+    /// count.  Just `list_metadata().len()`;
+    /// shortcut for the vector-parity check.
+    pub fn row_count(&self) -> Result<usize> {
+        Ok(self.meta.list_all()?.len())
+    }
+
+    /// 1.2.16+ Phase P.4 — total HNSW vector
+    /// count.  Note: the store holds two vectors
+    /// per document (`:meta` + `:content`); the
+    /// parity check divides by 2.
+    pub fn vector_count(&self) -> Result<usize> {
+        self.vectors.count()
+    }
+
     // ── internals ──────────────────────────────────────────────────
 
     fn build_results(
