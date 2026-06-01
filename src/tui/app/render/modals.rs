@@ -5817,6 +5817,157 @@ impl super::super::App {
 
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
+
+    /// 1.2.16+ Phase A.2 — manuscript intelligence
+    /// dashboard render.  Sectioned synthesis of
+    /// every metric inkhaven has been collecting
+    /// since 1.2.5.
+    pub(in crate::tui::app) fn draw_journal_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::Journal { snapshot, scroll, last_status } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(4).clamp(58, 100);
+        let height = area.height.saturating_sub(2).clamp(20, 44);
+        let x = area.x + area.width.saturating_sub(width) / 2;
+        let y = area.y + area.height.saturating_sub(height) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let title = format!(
+            " Journal — manuscript intelligence ({}) ",
+            snapshot.generated_at.format("%Y-%m-%d %H:%M UTC")
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let mut all: Vec<Line<'_>> = Vec::new();
+
+        // Word count section.
+        all.push(Line::from(Span::styled(" Word count", bold)));
+        all.push(Line::from(format!(
+            "   today: {} · total: {} · streak: {}d",
+            snapshot.word_count.today,
+            snapshot.word_count.total,
+            snapshot.word_count.streak_days,
+        )));
+        if snapshot.word_count.goal > 0 {
+            let remaining =
+                (snapshot.word_count.goal - snapshot.word_count.total).max(0);
+            let target = if snapshot.word_count.target_date.is_empty() {
+                "(no target date)".to_string()
+            } else {
+                snapshot.word_count.target_date.clone()
+            };
+            all.push(Line::from(format!(
+                "   goal: {} · remaining: {} · target: {}",
+                snapshot.word_count.goal, remaining, target,
+            )));
+        }
+        all.push(Line::from(format!(
+            "   active: {}m today · {}m this week",
+            snapshot.word_count.active_seconds_today / 60,
+            snapshot.word_count.active_seconds_week / 60,
+        )));
+        all.push(Line::from(""));
+
+        // Structure.
+        all.push(Line::from(Span::styled(" Structure", bold)));
+        all.push(Line::from(format!(
+            "   books: {} · chapters: {} · paragraphs: {}",
+            snapshot.structure.user_books,
+            snapshot.structure.chapters,
+            snapshot.structure.paragraphs,
+        )));
+        if !snapshot.structure.chapter_word_counts.is_empty() {
+            all.push(Line::from(format!(
+                "   mean chapter: {:.0} words ± {:.0} (CV {:.0}%)",
+                snapshot.structure.avg_chapter_words,
+                snapshot.structure.stdev_chapter_words,
+                snapshot.structure.cv * 100.0,
+            )));
+            all.push(Line::from(format!(
+                "   pacing: {}",
+                snapshot.structure.pacing_verdict
+            )));
+        }
+        all.push(Line::from(""));
+
+        // Threads.
+        all.push(Line::from(Span::styled(" Threads", bold)));
+        all.push(Line::from(format!(
+            "   total: {} · active: {} · dormant (>{}d): {}",
+            snapshot.threads.total,
+            snapshot.threads.active,
+            crate::tui::journal::DORMANT_DAYS,
+            snapshot.threads.dormant,
+        )));
+        all.push(Line::from(""));
+
+        // Comments.
+        all.push(Line::from(Span::styled(" Comments", bold)));
+        all.push(Line::from(format!(
+            "   open: {} · resolved this week: {} · resolved total: {}",
+            snapshot.comments.open,
+            snapshot.comments.resolved_this_week,
+            snapshot.comments.resolved_total,
+        )));
+        all.push(Line::from(""));
+
+        // Status / footer.
+        if let Some(s) = last_status.as_deref() {
+            all.push(Line::from(Span::styled(
+                format!(" {s}"),
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+            all.push(Line::from(""));
+        }
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let total = all.len();
+        let max_scroll = total.saturating_sub(body_h);
+        let scroll = (*scroll).min(max_scroll);
+        let end = (scroll + body_h).min(total);
+        let visible: Vec<Line<'_>> = all[scroll..end].to_vec();
+
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+
+        f.render_widget(Paragraph::new(visible).wrap(Wrap { trim: false }), body_rect);
+        let more = if end < total { " · ↓ more below" } else { "" };
+        let footer = format!(
+            " ↑↓ scroll · e export to journal-<ts>.md · Esc closes{more} ",
+        );
+        f.render_widget(
+            Paragraph::new(Span::styled(footer, dim)),
+            footer_rect,
+        );
+    }
 }
 
 /// Truncate `s` to at most `max` characters,
