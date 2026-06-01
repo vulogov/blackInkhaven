@@ -46,10 +46,37 @@ use crate::store::Store;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ScanClass {
+    /// `.typ` file on disk is 0 bytes AND bdslib has
+    /// no content for the node either.  Real data
+    /// loss — prose for that paragraph is gone.
     ZeroByteFile,
+    /// DB has a paragraph row with no on-disk file
+    /// AND no bdslib content.  Same shape: real
+    /// data loss.  Delete the row to clean up.
     OrphanParagraphRow,
+    /// Variant of OrphanParagraphRow with a
+    /// suspicious rel-path (empty / `..` segments).
+    /// Kept as a separate class so the user can
+    /// see the path-malformation pattern.
     MissingReferencedFile,
+    /// `<paragraph>.comments.json` doesn't parse as
+    /// JSON.  User comments unreadable.
     CorruptCommentsSidecar,
+    /// 1.2.15+ — paragraph row exists, disk file
+    /// is missing OR zero-byte, but bdslib has
+    /// non-empty content.  This is RECOVERABLE:
+    /// re-save the paragraph from the TUI (or use
+    /// the autofix rematerialize path) and the
+    /// disk file comes back from bdslib content.
+    /// Common for system books like Prompts / Help /
+    /// Typst whose paragraphs are auto-seeded from
+    /// embedded defaults at first open — and the
+    /// disk file was later deleted (manually,
+    /// import script, partial restore).  The
+    /// editor's `load_paragraph` reads bdslib as
+    /// a fallback so the paragraph is still
+    /// openable; this finding is informational.
+    BdslibOnly,
 }
 
 impl ScanClass {
@@ -61,6 +88,7 @@ impl ScanClass {
             ScanClass::OrphanParagraphRow => "orphan-paragraph-row",
             ScanClass::MissingReferencedFile => "missing-referenced-file",
             ScanClass::CorruptCommentsSidecar => "corrupt-comments-sidecar",
+            ScanClass::BdslibOnly => "bdslib-only",
         }
     }
 
@@ -71,15 +99,17 @@ impl ScanClass {
             "orphan-paragraph-row" => ScanClass::OrphanParagraphRow,
             "missing-referenced-file" => ScanClass::MissingReferencedFile,
             "corrupt-comments-sidecar" => ScanClass::CorruptCommentsSidecar,
+            "bdslib-only" => ScanClass::BdslibOnly,
             _ => return None,
         })
     }
 
-    pub const ALL: [ScanClass; 4] = [
+    pub const ALL: [ScanClass; 5] = [
         ScanClass::ZeroByteFile,
         ScanClass::OrphanParagraphRow,
         ScanClass::MissingReferencedFile,
         ScanClass::CorruptCommentsSidecar,
+        ScanClass::BdslibOnly,
     ];
 }
 
@@ -179,12 +209,24 @@ pub fn scan_project(
 
     let run = |c: ScanClass| selected.map_or(true, |s| s == c);
 
-    if run(ScanClass::ZeroByteFile) {
-        report.findings.extend(scan_zero_byte_files(&layout, &hierarchy));
+    // 1.2.15+ — the zero-byte + orphan checks both
+    // need to consult bdslib for fallback content,
+    // so they emit `BdslibOnly` findings too.  When
+    // the caller selects only one of those classes,
+    // we keep the cross-class findings filtered
+    // down via the `run(...)` guard below.
+    if run(ScanClass::ZeroByteFile) || run(ScanClass::BdslibOnly) {
+        for finding in scan_zero_byte_files(&layout, &hierarchy, &store) {
+            if run(finding.class) {
+                report.findings.push(finding);
+            }
+        }
     }
-    if run(ScanClass::OrphanParagraphRow) || run(ScanClass::MissingReferencedFile) {
-        // The two classes share most of the walk.
-        for finding in scan_orphans_and_missing(&layout, &hierarchy) {
+    if run(ScanClass::OrphanParagraphRow)
+        || run(ScanClass::MissingReferencedFile)
+        || run(ScanClass::BdslibOnly)
+    {
+        for finding in scan_orphans_and_missing(&layout, &hierarchy, &store) {
             if run(finding.class) {
                 report.findings.push(finding);
             }
@@ -197,9 +239,22 @@ pub fn scan_project(
     Ok(report)
 }
 
+/// 1.2.15+ — does bdslib have non-empty content
+/// for this node?  Returns `Some(byte_len)` when
+/// content is present, `None` otherwise.  Errors
+/// from the store call are treated as "no content"
+/// — the scan would rather under-report than crash.
+fn bdslib_content_len(store: &Store, id: uuid::Uuid) -> Option<usize> {
+    match store.get_content(id) {
+        Ok(Some(bytes)) if !bytes.is_empty() => Some(bytes.len()),
+        _ => None,
+    }
+}
+
 fn scan_zero_byte_files(
     layout: &ProjectLayout,
     hierarchy: &crate::store::hierarchy::Hierarchy,
+    store: &Store,
 ) -> Vec<ScanFinding> {
     let mut out: Vec<ScanFinding> = Vec::new();
     for node in hierarchy.iter() {
@@ -210,15 +265,31 @@ fn scan_zero_byte_files(
         let abs = layout.root.join(rel);
         let Ok(md) = std::fs::metadata(&abs) else { continue };
         if md.len() == 0 {
-            out.push(ScanFinding {
-                class: ScanClass::ZeroByteFile,
-                severity: ScanSeverity::Critical,
-                path: Some(abs.display().to_string()),
-                detail: format!(
-                    "paragraph `{}` resolves to a 0-byte file — prose lost",
-                    node.slug,
-                ),
-            });
+            // 1.2.15+ — disk is 0 bytes, but bdslib
+            // may still hold the prose.  If it does,
+            // this is recoverable — surface as
+            // BdslibOnly / Info instead of
+            // Critical data loss.
+            match bdslib_content_len(store, node.id) {
+                Some(n) => out.push(ScanFinding {
+                    class: ScanClass::BdslibOnly,
+                    severity: ScanSeverity::Info,
+                    path: Some(abs.display().to_string()),
+                    detail: format!(
+                        "paragraph `{}` has 0-byte disk file but bdslib holds {} bytes — re-save in the editor or autofix to rematerialize",
+                        node.slug, n,
+                    ),
+                }),
+                None => out.push(ScanFinding {
+                    class: ScanClass::ZeroByteFile,
+                    severity: ScanSeverity::Critical,
+                    path: Some(abs.display().to_string()),
+                    detail: format!(
+                        "paragraph `{}` resolves to a 0-byte file AND bdslib has no content — prose lost",
+                        node.slug,
+                    ),
+                }),
+            }
         }
     }
     out
@@ -227,6 +298,7 @@ fn scan_zero_byte_files(
 fn scan_orphans_and_missing(
     layout: &ProjectLayout,
     hierarchy: &crate::store::hierarchy::Hierarchy,
+    store: &Store,
 ) -> Vec<ScanFinding> {
     let mut out: Vec<ScanFinding> = Vec::new();
     for node in hierarchy.iter() {
@@ -235,15 +307,35 @@ fn scan_orphans_and_missing(
         match std::fs::metadata(&abs) {
             Ok(_) => continue,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // "Orphan paragraph row" vs.
-                // "missing referenced file" is a
-                // taxonomic distinction the
-                // proposal kept: if the rel-path
-                // is plausibly malformed (empty,
-                // dot-segments, etc.) we tag it
-                // MissingReferencedFile; otherwise
-                // OrphanParagraphRow.  In practice
-                // both produce the same fix.
+                // 1.2.15+ — disk is gone; check
+                // bdslib before declaring this a
+                // real orphan.  System-book seeds
+                // (Prompts / Help / Typst) and any
+                // paragraph created by a flow that
+                // writes only to bdslib live here
+                // legitimately.  The editor's
+                // `load_paragraph` reads bdslib as
+                // a fallback, so the paragraph is
+                // still openable.  Repair path:
+                // re-save (or `--autofix
+                // rematerialize`) writes the bdslib
+                // content back to disk.
+                if let Some(n) = bdslib_content_len(store, node.id) {
+                    out.push(ScanFinding {
+                        class: ScanClass::BdslibOnly,
+                        severity: ScanSeverity::Info,
+                        path: Some(abs.display().to_string()),
+                        detail: format!(
+                            "paragraph `{}` has no disk file but bdslib holds {} bytes — recoverable",
+                            node.slug, n,
+                        ),
+                    });
+                    continue;
+                }
+                // No disk, no bdslib content —
+                // genuine orphan.  "Malformed path"
+                // sub-classifier preserved from
+                // D.1.
                 let class = if rel.contains("..") || rel.is_empty() {
                     ScanClass::MissingReferencedFile
                 } else {
@@ -254,7 +346,7 @@ fn scan_orphans_and_missing(
                     severity: ScanSeverity::Warning,
                     path: Some(abs.display().to_string()),
                     detail: format!(
-                        "paragraph row `{}` points at missing file {}",
+                        "paragraph row `{}` points at missing file {} and bdslib has no content either",
                         node.slug,
                         abs.display(),
                     ),
@@ -393,6 +485,66 @@ pub fn apply_fix(
             Ok(format!(
                 "moved corrupt sidecar {} → {}",
                 abs, dest
+            ))
+        }
+        ScanClass::BdslibOnly => {
+            // 1.2.15+ — rematerialize the disk file
+            // from bdslib content.  Non-destructive:
+            // never overwrites an existing on-disk
+            // file (the scan said it was missing or
+            // 0 bytes; we double-check at write
+            // time so a concurrent save isn't
+            // clobbered).  Atomic via io_atomic.
+            let abs = finding
+                .path
+                .as_deref()
+                .ok_or_else(|| Error::Store("finding has no path".into()))?;
+            let abs_path = std::path::PathBuf::from(abs);
+            let rel = abs_path
+                .strip_prefix(&layout.root)
+                .map_err(|e| Error::Store(format!("path {} not under project root: {e}", abs)))?
+                .to_string_lossy()
+                .into_owned();
+            let mut found_id: Option<uuid::Uuid> = None;
+            for node in hierarchy.iter() {
+                if node.file.as_deref() == Some(rel.as_str()) {
+                    found_id = Some(node.id);
+                    break;
+                }
+            }
+            let id = found_id.ok_or_else(|| {
+                Error::Store(format!(
+                    "no DB row matches {rel} — was the project mutated between scan and fix?"
+                ))
+            })?;
+            let bytes = store
+                .get_content(id)
+                .map_err(|e| Error::Store(format!("bdslib read for {rel}: {e}")))?
+                .ok_or_else(|| {
+                    Error::Store(format!("bdslib has no content for {rel} — refusing to write empty file"))
+                })?;
+            if bytes.is_empty() {
+                return Err(Error::Store(format!(
+                    "bdslib has 0-byte content for {rel} — refusing to write empty file"
+                )));
+            }
+            if let Some(parent) = abs_path.parent() {
+                std::fs::create_dir_all(parent).map_err(Error::Io)?;
+            }
+            // Don't clobber a real on-disk file.
+            // Re-check at write time.
+            if let Ok(md) = std::fs::metadata(&abs_path) {
+                if md.len() > 0 {
+                    return Err(Error::Store(format!(
+                        "disk file {abs} grew non-empty between scan and fix — refusing to overwrite"
+                    )));
+                }
+            }
+            crate::io_atomic::write(&abs_path, &bytes).map_err(Error::Io)?;
+            Ok(format!(
+                "rematerialized {} ({} bytes) from bdslib",
+                rel,
+                bytes.len()
             ))
         }
     }
