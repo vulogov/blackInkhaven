@@ -826,6 +826,27 @@ pub enum LanguageCommand {
         /// title match).
         word: String,
     },
+    /// 1.2.16+ Phase P.5 — define-or-edit a
+    /// grammar or phonology rule in `$EDITOR`.
+    /// Opens the rule's HJSON template in the
+    /// user's `$EDITOR` (or `vi` if unset), then
+    /// — on save — writes the resulting body
+    /// back into a new or existing rule paragraph
+    /// under the chosen category.  Pairs with the
+    /// `--format grammar` exporter.
+    DefineRule {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Unique rule identifier (kebab-case
+        /// recommended) — used as the paragraph
+        /// slug and the `rule_id` field in the
+        /// HJSON body.
+        rule_id: String,
+        /// Which chapter the rule lives under.
+        /// `grammar` or `phonology`.
+        #[arg(long, default_value = "grammar")]
+        category: String,
+    },
     /// export a language's content
     /// to a portable artefact.  See the proposal §12.
     /// Three formats land in Phase D; the remaining
@@ -867,6 +888,24 @@ pub enum LanguageExportFormat {
     /// formatted as: bold headword + POS italic +
     /// translation + examples indented.
     DictionaryTwocol,
+    /// 1.2.16+ Phase P.5 — round-trip-compatible
+    /// CSV that the `--import` path can re-ingest.
+    /// 12-column format matching the dictionary
+    /// importer; closes the import/export loop.
+    Csv,
+    /// 1.2.16+ Phase P.5 — typst-rendered grammar
+    /// reference.  TOC + chapter per rule
+    /// category (case marking, verb conjugation,
+    /// etc.) + examples table + cross-references.
+    /// Always needs `--output <path.typ>`.
+    Grammar,
+    /// 1.2.16+ Phase P.5 — typst-rendered
+    /// phrasebook from the Sample-texts chapter.
+    /// Two-column layout: working-language gloss
+    /// on the left, invented-language sample on
+    /// the right.  Always needs `--output
+    /// <path.typ>`.
+    Phrasebook,
 }
 
 /// output format selector for
