@@ -104,6 +104,16 @@ pub enum ScanClass {
     /// — a thread can be paused on purpose
     /// (saved for a later book).  No autofix.
     StalledThread,
+    /// 1.2.16+ Phase A.5 — near-miss spelling of a
+    /// canonical multi-word name from the
+    /// Characters / Places / Artefacts system
+    /// books.  Catches typos like
+    /// "Aerin Stormbreaker" when the canonical
+    /// entry is "Aerin Stormbringer" — shared
+    /// first word + the rest differs by a small
+    /// edit distance.  Info severity (could be
+    /// an intentional variant) — no autofix.
+    NamingInconsistency,
 }
 
 impl ScanClass {
@@ -119,6 +129,7 @@ impl ScanClass {
             ScanClass::DroppedCharacter => "dropped-character",
             ScanClass::PacingCollapse => "pacing-collapse",
             ScanClass::StalledThread => "stalled-thread",
+            ScanClass::NamingInconsistency => "naming-inconsistency",
         }
     }
 
@@ -133,11 +144,12 @@ impl ScanClass {
             "dropped-character" => ScanClass::DroppedCharacter,
             "pacing-collapse" => ScanClass::PacingCollapse,
             "stalled-thread" => ScanClass::StalledThread,
+            "naming-inconsistency" => ScanClass::NamingInconsistency,
             _ => return None,
         })
     }
 
-    pub const ALL: [ScanClass; 8] = [
+    pub const ALL: [ScanClass; 9] = [
         ScanClass::ZeroByteFile,
         ScanClass::OrphanParagraphRow,
         ScanClass::MissingReferencedFile,
@@ -146,6 +158,7 @@ impl ScanClass {
         ScanClass::DroppedCharacter,
         ScanClass::PacingCollapse,
         ScanClass::StalledThread,
+        ScanClass::NamingInconsistency,
     ];
 }
 
@@ -283,6 +296,9 @@ pub fn scan_project(
     }
     if run(ScanClass::StalledThread) {
         report.findings.extend(scan_stalled_threads(&layout, &hierarchy));
+    }
+    if run(ScanClass::NamingInconsistency) {
+        report.findings.extend(scan_naming_inconsistencies(&layout, &hierarchy));
     }
 
     Ok(report)
@@ -604,7 +620,8 @@ pub fn apply_fix(
         // way / a thread was paused on purpose.
         ScanClass::DroppedCharacter
         | ScanClass::PacingCollapse
-        | ScanClass::StalledThread => Err(Error::Store(format!(
+        | ScanClass::StalledThread
+        | ScanClass::NamingInconsistency => Err(Error::Store(format!(
             "no autofix for class `{}` — this is an author-judgment finding (review the prose / outline / threads)",
             finding.class.slug(),
         ))),
@@ -904,6 +921,217 @@ fn scan_stalled_threads(
     findings
 }
 
+/// 1.2.16+ Phase A.5 — naming-inconsistency
+/// detector.  Walks every entry in the
+/// Characters / Places / Artefacts system books;
+/// for each canonical multi-word name, looks for
+/// near-miss occurrences in manuscript prose.
+///
+/// Single-word canonical names are skipped — too
+/// many natural variants ("Aerin", "Aragorn")
+/// to detect typos without burying the user in
+/// false positives.  Multi-word names anchor on
+/// the first word; the rest is matched against
+/// the prose's next word via Levenshtein
+/// distance.
+fn scan_naming_inconsistencies(
+    layout: &ProjectLayout,
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+) -> Vec<ScanFinding> {
+    use crate::store::{
+        SYSTEM_TAG_ARTEFACTS, SYSTEM_TAG_CHARACTERS, SYSTEM_TAG_PLACES,
+    };
+    let canonical_names = collect_multi_word_canonical_names(
+        hierarchy,
+        &[SYSTEM_TAG_CHARACTERS, SYSTEM_TAG_PLACES, SYSTEM_TAG_ARTEFACTS],
+    );
+    if canonical_names.is_empty() {
+        return Vec::new();
+    }
+    // Concatenate all user-book chapter prose
+    // once.  Detection runs over the joined
+    // string per canonical name.
+    let chapter_ordinals = collect_user_book_chapter_ordinals(hierarchy);
+    let mut prose = String::new();
+    for id in &chapter_ordinals {
+        prose.push_str(&read_chapter_prose(layout, hierarchy, *id));
+        prose.push('\n');
+    }
+    classify_naming_inconsistencies(&canonical_names, &prose)
+}
+
+/// 1.2.16+ Phase A.5 — pure classifier.  Exposed
+/// for unit testing without fs setup.
+///
+/// Returns one finding per (canonical name,
+/// near-miss variant) pair.  Same variant
+/// repeated multiple times only fires once.
+pub(crate) fn classify_naming_inconsistencies(
+    canonical_names: &[String],
+    prose: &str,
+) -> Vec<ScanFinding> {
+    let mut findings: Vec<ScanFinding> = Vec::new();
+    for canonical in canonical_names {
+        let parts: Vec<&str> = canonical.split_whitespace().collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let head = parts[0];
+        let canonical_tail = parts[1..].join(" ");
+        let canonical_lc = canonical.to_lowercase();
+        // Walk prose for occurrences of `head` (case-insensitive),
+        // capture the next whitespace-delimited word(s) matching
+        // `canonical_tail.len()`-word window.
+        let mut seen_variants: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let prose_lc = prose.to_lowercase();
+        let head_lc = head.to_lowercase();
+        let mut search_start = 0usize;
+        while let Some(pos) = prose_lc[search_start..].find(&head_lc) {
+            let abs_pos = search_start + pos;
+            // Ensure `head` is at a word boundary —
+            // previous char must be non-word.
+            let prev_char = if abs_pos == 0 {
+                ' '
+            } else {
+                prose_lc[..abs_pos].chars().last().unwrap_or(' ')
+            };
+            search_start = abs_pos + head_lc.len();
+            if prev_char.is_alphanumeric() || prev_char == '_' {
+                continue;
+            }
+            // After head: skip whitespace, capture
+            // the next `canonical_tail.len()`-word
+            // chunk.
+            let rest = &prose[search_start..];
+            let after = rest.trim_start();
+            let need_words = canonical_tail.split_whitespace().count();
+            let candidate: String = after
+                .split_whitespace()
+                .take(need_words)
+                .collect::<Vec<&str>>()
+                .join(" ");
+            if candidate.is_empty() {
+                continue;
+            }
+            // Strip trailing punctuation from the
+            // candidate so "Stormbreaker," matches
+            // "Stormbreaker" cleanly.
+            let candidate_clean: String = candidate
+                .trim_end_matches(|c: char| !c.is_alphanumeric())
+                .to_string();
+            if candidate_clean.is_empty() {
+                continue;
+            }
+            let full = format!("{head} {candidate_clean}");
+            // Skip exact-match occurrences (this
+            // IS the canonical).
+            if full.eq_ignore_ascii_case(canonical) {
+                continue;
+            }
+            // Also skip if the full lowercased
+            // string equals the canonical lower —
+            // catches case differences.
+            if full.to_lowercase() == canonical_lc {
+                continue;
+            }
+            // Edit distance check on the variable
+            // part.
+            let dist = levenshtein(&candidate_clean.to_lowercase(), &canonical_tail.to_lowercase());
+            if dist == 0 {
+                continue;
+            }
+            // Heuristic: a typo is plausible when
+            // the distance is small relative to
+            // the length of the longer string.
+            let max_len = candidate_clean
+                .chars()
+                .count()
+                .max(canonical_tail.chars().count());
+            if max_len == 0 {
+                continue;
+            }
+            let ratio = dist as f64 / max_len as f64;
+            // 0.0 < ratio <= 0.5 catches small
+            // typos but excludes wholly different
+            // words like "Aerin and Borin"
+            // (distance very high).
+            if ratio > 0.5 {
+                continue;
+            }
+            if !seen_variants.insert(full.to_lowercase()) {
+                continue;
+            }
+            findings.push(ScanFinding {
+                class: ScanClass::NamingInconsistency,
+                severity: ScanSeverity::Info,
+                path: None,
+                detail: format!(
+                    "near-miss `{full}` in prose vs. canonical `{canonical}` (edit distance {dist})",
+                ),
+            });
+        }
+    }
+    findings
+}
+
+/// Walk the named system books and collect every
+/// entry's title.  Returns only multi-word
+/// names (single-word names skip the naming
+/// heuristic — too many false positives).
+fn collect_multi_word_canonical_names(
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    system_tags: &[&str],
+) -> Vec<String> {
+    use crate::store::NodeKind;
+    let mut out: Vec<String> = Vec::new();
+    for tag in system_tags {
+        let Some(book) = hierarchy.iter().find(|n| {
+            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(*tag)
+        }) else {
+            continue;
+        };
+        for id in hierarchy.collect_subtree(book.id) {
+            let Some(n) = hierarchy.get(id) else { continue };
+            if n.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let title = n.title.trim();
+            if title.split_whitespace().count() < 2 {
+                continue;
+            }
+            out.push(title.to_string());
+        }
+    }
+    out
+}
+
+/// 1.2.16+ Phase A.5 — Levenshtein edit distance.
+/// Standard DP; O(n*m).  Exposed for unit tests.
+pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let n = a_chars.len();
+    let m = b_chars.len();
+    if n == 0 {
+        return m;
+    }
+    if m == 0 {
+        return n;
+    }
+    let mut prev: Vec<usize> = (0..=m).collect();
+    let mut curr: Vec<usize> = vec![0; m + 1];
+    for i in 1..=n {
+        curr[0] = i;
+        for j in 1..=m {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[m]
+}
+
 /// Collect chapter UUIDs in user-book order
 /// (skips chapters under system books like
 /// Characters / Places / etc.).  Used by the
@@ -1150,5 +1378,121 @@ mod tests {
     /// back to "chapter N".
     fn empty_hierarchy_for_tests() -> crate::store::hierarchy::Hierarchy {
         crate::store::hierarchy::Hierarchy::default()
+    }
+
+    // ── 1.2.16+ Phase A.5 — naming / glossary tests ───────
+
+    #[test]
+    fn levenshtein_zero_for_identical() {
+        assert_eq!(super::levenshtein("Aerin", "Aerin"), 0);
+        assert_eq!(super::levenshtein("", ""), 0);
+    }
+
+    #[test]
+    fn levenshtein_one_for_single_edit() {
+        // single substitution
+        assert_eq!(super::levenshtein("cat", "bat"), 1);
+        // single insertion
+        assert_eq!(super::levenshtein("cat", "cats"), 1);
+        // single deletion
+        assert_eq!(super::levenshtein("cats", "cat"), 1);
+    }
+
+    #[test]
+    fn levenshtein_handles_multi_char_distance() {
+        // "Stormbringer" vs "Stormbreaker":
+        // first 7 chars identical, then `ing` →
+        // `eak` (3 substitutions), then `er` ===
+        // `er`.  Distance = 3.
+        assert_eq!(super::levenshtein("Stormbringer", "Stormbreaker"), 3);
+    }
+
+    #[test]
+    fn naming_flags_near_miss() {
+        let canonical = vec!["Aerin Stormbringer".to_string()];
+        let prose = "In the morning, Aerin Stormbreaker rode west.";
+        let findings = super::classify_naming_inconsistencies(&canonical, prose);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].class, ScanClass::NamingInconsistency);
+        assert_eq!(findings[0].severity, ScanSeverity::Info);
+        assert!(findings[0].detail.contains("Aerin Stormbreaker"));
+        assert!(findings[0].detail.contains("Aerin Stormbringer"));
+    }
+
+    #[test]
+    fn naming_no_finding_when_canonical_present() {
+        let canonical = vec!["Aerin Stormbringer".to_string()];
+        let prose = "Aerin Stormbringer rode west.  Later, Aerin Stormbringer drew her sword.";
+        let findings = super::classify_naming_inconsistencies(&canonical, prose);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn naming_dedupes_repeated_variants() {
+        let canonical = vec!["Aerin Stormbringer".to_string()];
+        let prose =
+            "Aerin Stormbreaker rode west.  Then Aerin Stormbreaker turned back.";
+        let findings = super::classify_naming_inconsistencies(&canonical, prose);
+        // Same variant appears twice — only one
+        // finding.
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn naming_skips_single_word_canonicals() {
+        let canonical = vec!["Aerin".to_string()];
+        // Any near-miss variants are unmanageable
+        // for single-word names; we just don't try.
+        let prose = "Aerinn rode west.";
+        let findings = super::classify_naming_inconsistencies(&canonical, prose);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn naming_skips_wholly_different_continuations() {
+        let canonical = vec!["Aerin Stormbringer".to_string()];
+        // "Aerin and Borin" is not a near-miss; the
+        // second word's edit distance from
+        // "Stormbringer" is way above the 50%
+        // tolerance.
+        let prose = "Aerin and Borin rode west.";
+        let findings = super::classify_naming_inconsistencies(&canonical, prose);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn naming_respects_word_boundary_on_head() {
+        // "Aerinet" should NOT match the "Aerin"
+        // prefix — word boundary check.
+        let canonical = vec!["Aerin Stormbringer".to_string()];
+        let prose = "The aerinet was lowered into the sea Stormbringer waited.";
+        let findings = super::classify_naming_inconsistencies(&canonical, prose);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn naming_strips_trailing_punctuation() {
+        let canonical = vec!["Aerin Stormbringer".to_string()];
+        let prose = "She called: Aerin Stormbreaker, where are you?";
+        let findings = super::classify_naming_inconsistencies(&canonical, prose);
+        assert_eq!(findings.len(), 1);
+        // Detail mentions the cleaned variant, not
+        // the comma-suffixed one.
+        assert!(
+            findings[0].detail.contains("Aerin Stormbreaker"),
+            "got: {}",
+            findings[0].detail
+        );
+    }
+
+    #[test]
+    fn naming_case_insensitive_match_against_canonical() {
+        // Lowercased canonical should be matched
+        // against equally and skipped (not flagged
+        // as a typo).
+        let canonical = vec!["Aerin Stormbringer".to_string()];
+        let prose = "aerin stormbringer rode west.";
+        let findings = super::classify_naming_inconsistencies(&canonical, prose);
+        assert!(findings.is_empty());
     }
 }

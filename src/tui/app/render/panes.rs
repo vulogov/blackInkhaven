@@ -1862,6 +1862,9 @@ impl super::super::App {
         // disconnected).
         spans.extend(self.health_chip_spans());
         spans.extend(self.pov_chip_spans());
+        // 1.2.16+ Phase A.5 — glossary chip
+        // (worldbuilding density at-a-glance).
+        spans.extend(self.glossary_chip_spans());
         spans.push(Span::raw("  "));
         spans.push(Span::raw(self.status.clone()));
 

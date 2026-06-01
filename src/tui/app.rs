@@ -400,6 +400,36 @@ pub fn run(project: &Path) -> Result<()> {
 /// Walk `root` and count regular files that would be imported as
 /// paragraphs (mirrors the importer's hidden-entry filter so the total
 /// matches the progress callbacks).
+/// 1.2.16+ Phase A.5 — count Characters / Places /
+/// Artefacts entries.  Used by the worldbuilding
+/// glossary chip in the status bar.  Returns
+/// `(chars, places, artefacts)`.
+pub(crate) fn glossary_counts(
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+) -> (usize, usize, usize) {
+    use crate::store::{
+        NodeKind, SYSTEM_TAG_ARTEFACTS, SYSTEM_TAG_CHARACTERS, SYSTEM_TAG_PLACES,
+    };
+    let count_in = |tag: &str| -> usize {
+        let Some(book) = hierarchy.iter().find(|n| {
+            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(tag)
+        }) else {
+            return 0;
+        };
+        hierarchy
+            .collect_subtree(book.id)
+            .into_iter()
+            .filter_map(|id| hierarchy.get(id))
+            .filter(|n| n.kind == NodeKind::Paragraph)
+            .count()
+    };
+    (
+        count_in(SYSTEM_TAG_CHARACTERS),
+        count_in(SYSTEM_TAG_PLACES),
+        count_in(SYSTEM_TAG_ARTEFACTS),
+    )
+}
+
 fn count_importable_files(root: &Path) -> usize {
     walkdir::WalkDir::new(root)
         .follow_links(false)
@@ -8980,6 +9010,42 @@ impl App {
             Span::styled(
                 format!(" {glyph} "),
                 Style::default().bg(bg).fg(fg).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+        ]
+    }
+
+    /// 1.2.16+ Phase A.5 — worldbuilding glossary
+    /// chip.  Renders a compact density summary
+    /// `[gloss: 12C·5P·3A]` showing the cumulative
+    /// count of Characters / Places / Artefacts
+    /// system-book entries.  Useful sanity check:
+    /// 30 chapters in with only 4 named characters
+    /// flags a thin cast; 50 named places across
+    /// a 200-paragraph manuscript flags a thicket
+    /// the reader might struggle with.
+    ///
+    /// Hidden when `editor.show_glossary_chip` is
+    /// false in HJSON (default true) or when all
+    /// three counts are zero (fresh project).
+    pub(crate) fn glossary_chip_spans(&self) -> Vec<ratatui::text::Span<'_>> {
+        use ratatui::style::{Color, Modifier, Style};
+        use ratatui::text::Span;
+        if !self.cfg.editor.show_glossary_chip {
+            return Vec::new();
+        }
+        let (chars, places, artefacts) = glossary_counts(&self.hierarchy);
+        if chars == 0 && places == 0 && artefacts == 0 {
+            return Vec::new();
+        }
+        let label = format!(" {chars}C·{places}P·{artefacts}A ");
+        vec![
+            Span::styled(
+                label,
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::DIM),
             ),
             Span::raw(" "),
         ]
