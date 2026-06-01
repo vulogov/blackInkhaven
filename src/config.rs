@@ -1533,6 +1533,16 @@ pub struct EditorConfig {
     /// plus a `[^id]: <body>` trailing reference.
     #[serde(default = "default_footnote_style")]
     pub footnote_style: String,
+
+    /// 1.2.16+ Phase A.5 — worldbuilding glossary
+    /// chip in the status bar.  When true (the
+    /// default), shows `<N>C·<N>P·<N>A` —
+    /// cumulative Characters / Places / Artefacts
+    /// entry counts.  Auto-hides when all three
+    /// are zero (fresh project).  Set false to
+    /// reclaim the screen real estate.
+    #[serde(default = "default_show_glossary_chip")]
+    pub show_glossary_chip: bool,
 }
 
 fn default_continuation_anchor_count() -> usize {
@@ -1541,6 +1551,10 @@ fn default_continuation_anchor_count() -> usize {
 
 fn default_footnote_style() -> String {
     "typst".into()
+}
+
+fn default_show_glossary_chip() -> bool {
+    true
 }
 
 /// 1.2.14+ Phase Q.2 — `editor.snippets` HJSON
@@ -2455,6 +2469,7 @@ impl Default for EditorConfig {
             snippets: SnippetsConfig::default(),
             continuation_anchor_count: default_continuation_anchor_count(),
             footnote_style: default_footnote_style(),
+            show_glossary_chip: default_show_glossary_chip(),
         }
     }
 }
