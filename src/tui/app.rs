@@ -272,6 +272,15 @@ pub fn run(project: &Path) -> Result<()> {
             repair: crate::health::RepairPolicy {
                 rescue_orphans: cfg.health.auto_repair.rescue_orphans,
             },
+            // 1.2.16+ Phase P.4-pre — Store
+            // travels into the monitor task as a
+            // cheap clone (Arc-backed inner
+            // storage; every public method
+            // takes &self).  Deferred P4 checks
+            // (DuckDB integrity, HNSW vector
+            // parity, etc.) read project state
+            // through this handle.
+            store: Some(store.clone()),
         },
         cfg.health.enabled,
     );
