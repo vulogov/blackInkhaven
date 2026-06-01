@@ -77,6 +77,33 @@ pub enum ScanClass {
     /// a fallback so the paragraph is still
     /// openable; this finding is informational.
     BdslibOnly,
+    /// 1.2.16+ Phase A.6 — character mentioned in
+    /// the first 30% of the manuscript but absent
+    /// from the last 30%.  Flags potentially-
+    /// dropped characters whose arcs the author
+    /// forgot to wrap up.  Info severity — false
+    /// positives expected (a deliberately-dropped
+    /// minor character is a legitimate authorial
+    /// choice).  No autofix.
+    DroppedCharacter,
+    /// 1.2.16+ Phase A.6 — chapter word count
+    /// > 3× or < 0.3× the trailing 5-chapter
+    /// mean.  Flags pacing collapses (a 12K-word
+    /// chapter sandwiched between 4K-word ones,
+    /// or vice versa) the author may have
+    /// shipped without noticing.  Info severity
+    /// — could be intentional (epilogue is
+    /// supposed to be short).  No autofix.
+    PacingCollapse,
+    /// 1.2.16+ Phase A.6 — thread whose newest
+    /// waypoint is older than 30 days.  Mirrors
+    /// the 1.2.14 `inkhaven thread doctor`
+    /// dormant detector; surfaced here so the
+    /// dashboard + the doctor TUI panel both
+    /// report on stalled arcs.  Info severity
+    /// — a thread can be paused on purpose
+    /// (saved for a later book).  No autofix.
+    StalledThread,
 }
 
 impl ScanClass {
@@ -89,6 +116,9 @@ impl ScanClass {
             ScanClass::MissingReferencedFile => "missing-referenced-file",
             ScanClass::CorruptCommentsSidecar => "corrupt-comments-sidecar",
             ScanClass::BdslibOnly => "bdslib-only",
+            ScanClass::DroppedCharacter => "dropped-character",
+            ScanClass::PacingCollapse => "pacing-collapse",
+            ScanClass::StalledThread => "stalled-thread",
         }
     }
 
@@ -100,16 +130,22 @@ impl ScanClass {
             "missing-referenced-file" => ScanClass::MissingReferencedFile,
             "corrupt-comments-sidecar" => ScanClass::CorruptCommentsSidecar,
             "bdslib-only" => ScanClass::BdslibOnly,
+            "dropped-character" => ScanClass::DroppedCharacter,
+            "pacing-collapse" => ScanClass::PacingCollapse,
+            "stalled-thread" => ScanClass::StalledThread,
             _ => return None,
         })
     }
 
-    pub const ALL: [ScanClass; 5] = [
+    pub const ALL: [ScanClass; 8] = [
         ScanClass::ZeroByteFile,
         ScanClass::OrphanParagraphRow,
         ScanClass::MissingReferencedFile,
         ScanClass::CorruptCommentsSidecar,
         ScanClass::BdslibOnly,
+        ScanClass::DroppedCharacter,
+        ScanClass::PacingCollapse,
+        ScanClass::StalledThread,
     ];
 }
 
@@ -234,6 +270,19 @@ pub fn scan_project(
     }
     if run(ScanClass::CorruptCommentsSidecar) {
         report.findings.extend(scan_corrupt_comments(&layout, &hierarchy));
+    }
+    // 1.2.16+ Phase A.6 — plot-mining detectors.
+    // Each adds its own findings independently;
+    // the doctor TUI panel + the CLI consumer
+    // group them naturally via the `class` slug.
+    if run(ScanClass::DroppedCharacter) {
+        report.findings.extend(scan_dropped_characters(&layout, &hierarchy));
+    }
+    if run(ScanClass::PacingCollapse) {
+        report.findings.extend(scan_pacing_collapse(&layout, &hierarchy));
+    }
+    if run(ScanClass::StalledThread) {
+        report.findings.extend(scan_stalled_threads(&layout, &hierarchy));
     }
 
     Ok(report)
@@ -547,6 +596,18 @@ pub fn apply_fix(
                 bytes.len()
             ))
         }
+        // 1.2.16+ Phase A.6 — author-judgment
+        // findings.  No auto-repair: only the
+        // author can decide whether a dropped
+        // character was intentional / a chapter's
+        // pacing collapse was meant to land that
+        // way / a thread was paused on purpose.
+        ScanClass::DroppedCharacter
+        | ScanClass::PacingCollapse
+        | ScanClass::StalledThread => Err(Error::Store(format!(
+            "no autofix for class `{}` — this is an author-judgment finding (review the prose / outline / threads)",
+            finding.class.slug(),
+        ))),
     }
 }
 
@@ -602,6 +663,294 @@ pub fn print_human(report: &ScanReport) {
         );
         println!("        {}", f.detail);
     }
+}
+
+// ── 1.2.16+ Phase A.6 — plot-mining detectors ─────────────────
+
+/// Threshold for the "dormant thread" / "dropped
+/// character" heuristics — mirror the 1.2.14
+/// thread doctor's 30-day window so all
+/// stalled-arc reports agree.
+const DORMANT_DAYS: u64 = 30;
+
+/// Fraction of the manuscript counted as
+/// "introduction" vs. "wrap-up" for the dropped-
+/// character heuristic.  A character mentioned
+/// in the first 30% of chapters but absent from
+/// the last 30% is flagged.
+const DROPPED_CHARACTER_INTRO_FRACTION: f64 = 0.30;
+const DROPPED_CHARACTER_OUTRO_FRACTION: f64 = 0.30;
+
+/// Pacing collapse thresholds: chapter word
+/// counts more than 3× the trailing 5-chapter
+/// mean (suspicious long) or less than 30% of
+/// it (suspicious short) flag.
+const PACING_HIGH_RATIO: f64 = 3.0;
+const PACING_LOW_RATIO: f64 = 0.30;
+const PACING_TRAILING_WINDOW: usize = 5;
+
+fn scan_dropped_characters(
+    layout: &ProjectLayout,
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+) -> Vec<ScanFinding> {
+    use crate::store::{NodeKind, SYSTEM_TAG_CHARACTERS};
+
+    // Step 1 — collect character names from the
+    // Characters system book.
+    let Some(chars_root) = hierarchy.iter().find(|n| {
+        n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_CHARACTERS)
+    }) else {
+        return Vec::new();
+    };
+    let character_names: Vec<String> = hierarchy
+        .collect_subtree(chars_root.id)
+        .into_iter()
+        .filter_map(|id| hierarchy.get(id))
+        .filter(|n| n.kind == NodeKind::Paragraph)
+        .map(|n| n.title.clone())
+        .filter(|t| !t.trim().is_empty())
+        .collect();
+    if character_names.is_empty() {
+        return Vec::new();
+    }
+
+    // Step 2 — collect user-book chapter ordinals.
+    let chapter_ordinals = collect_user_book_chapter_ordinals(hierarchy);
+    let total_chapters = chapter_ordinals.len();
+    if total_chapters < 5 {
+        // Too few chapters to apply the heuristic
+        // — a 3-chapter manuscript with a
+        // character only in chapter 1 doesn't
+        // necessarily mean "dropped".
+        return Vec::new();
+    }
+    let intro_cap = (total_chapters as f64 * DROPPED_CHARACTER_INTRO_FRACTION) as usize;
+    let outro_start = total_chapters
+        .saturating_sub((total_chapters as f64 * DROPPED_CHARACTER_OUTRO_FRACTION) as usize);
+
+    // Step 3 — for each character, find the
+    // first + last chapter ordinal that mentions
+    // them.  Case-insensitive substring match
+    // — the same heuristic the existing lexicon
+    // overlay uses for cheap detection.
+    let mut findings: Vec<ScanFinding> = Vec::new();
+    let mut chapter_bodies_cache: Vec<(usize, String)> = Vec::with_capacity(total_chapters);
+    for (ordinal, chapter_node) in chapter_ordinals.iter().enumerate() {
+        let body = read_chapter_prose(layout, hierarchy, *chapter_node);
+        chapter_bodies_cache.push((ordinal, body.to_lowercase()));
+    }
+    for name in &character_names {
+        let needle = name.to_lowercase();
+        let mut first_seen: Option<usize> = None;
+        let mut last_seen: Option<usize> = None;
+        for (ordinal, body) in &chapter_bodies_cache {
+            if body.contains(&needle) {
+                if first_seen.is_none() {
+                    first_seen = Some(*ordinal);
+                }
+                last_seen = Some(*ordinal);
+            }
+        }
+        let (Some(first), Some(last)) = (first_seen, last_seen) else { continue };
+        // Character appeared at all.  Dropped iff:
+        //   first in intro (< intro_cap) AND
+        //   last NOT in outro (< outro_start).
+        if first < intro_cap && last < outro_start {
+            findings.push(ScanFinding {
+                class: ScanClass::DroppedCharacter,
+                severity: ScanSeverity::Info,
+                path: None,
+                detail: format!(
+                    "character `{name}` first appears in chapter {} (of {}) but is absent from the last {:.0}% (last seen chapter {})",
+                    first + 1,
+                    total_chapters,
+                    DROPPED_CHARACTER_OUTRO_FRACTION * 100.0,
+                    last + 1,
+                ),
+            });
+        }
+    }
+    findings
+}
+
+fn scan_pacing_collapse(
+    layout: &ProjectLayout,
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+) -> Vec<ScanFinding> {
+    let chapter_ordinals = collect_user_book_chapter_ordinals(hierarchy);
+    if chapter_ordinals.len() < PACING_TRAILING_WINDOW + 1 {
+        return Vec::new();
+    }
+    let counts: Vec<i64> = chapter_ordinals
+        .iter()
+        .map(|&id| {
+            let body = read_chapter_prose(layout, hierarchy, id);
+            crate::progress::count_words(&body)
+        })
+        .collect();
+    classify_pacing(&counts, hierarchy, &chapter_ordinals)
+}
+
+/// 1.2.16+ Phase A.6 — pure classifier for pacing
+/// collapse.  Exposed for unit testing without
+/// fs setup.  Takes parallel slices of chapter
+/// word counts + chapter UUIDs; returns one
+/// Info finding per outlier chapter.
+pub(crate) fn classify_pacing(
+    counts: &[i64],
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    chapter_ids: &[uuid::Uuid],
+) -> Vec<ScanFinding> {
+    let mut findings: Vec<ScanFinding> = Vec::new();
+    for (i, &count) in counts.iter().enumerate().skip(PACING_TRAILING_WINDOW) {
+        let window = &counts[i - PACING_TRAILING_WINDOW..i];
+        let mean: f64 = window.iter().sum::<i64>() as f64 / window.len() as f64;
+        if mean <= 0.0 {
+            continue;
+        }
+        let ratio = count as f64 / mean;
+        let (descriptor, severe) = if ratio > PACING_HIGH_RATIO {
+            ("notably longer", true)
+        } else if ratio < PACING_LOW_RATIO {
+            ("notably shorter", true)
+        } else {
+            ("", false)
+        };
+        if !severe {
+            continue;
+        }
+        let title = chapter_ids
+            .get(i)
+            .and_then(|id| hierarchy.get(*id))
+            .map(|n| n.title.clone())
+            .unwrap_or_else(|| format!("chapter {}", i + 1));
+        findings.push(ScanFinding {
+            class: ScanClass::PacingCollapse,
+            severity: ScanSeverity::Info,
+            path: None,
+            detail: format!(
+                "chapter `{title}` ({count} words) is {descriptor} than the trailing {} chapters (mean {:.0}, ratio {:.2}×)",
+                PACING_TRAILING_WINDOW, mean, ratio,
+            ),
+        });
+    }
+    findings
+}
+
+fn scan_stalled_threads(
+    layout: &ProjectLayout,
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+) -> Vec<ScanFinding> {
+    use crate::store::{NodeKind, SYSTEM_TAG_THREADS};
+    let Some(threads_root) = hierarchy.iter().find(|n| {
+        n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_THREADS)
+    }) else {
+        return Vec::new();
+    };
+    let threshold = std::time::SystemTime::now()
+        - std::time::Duration::from_secs(DORMANT_DAYS * 86400);
+    let mut findings: Vec<ScanFinding> = Vec::new();
+    for thread in hierarchy.children_of(Some(threads_root.id)) {
+        if thread.kind != NodeKind::Chapter {
+            continue;
+        }
+        let mut newest: Option<std::time::SystemTime> = None;
+        let mut waypoint_count = 0usize;
+        for waypoint in hierarchy.children_of(Some(thread.id)) {
+            if waypoint.kind != NodeKind::Paragraph {
+                continue;
+            }
+            waypoint_count += 1;
+            let Some(rel) = waypoint.file.as_ref() else { continue };
+            let abs = layout.root.join(rel);
+            let Ok(md) = std::fs::metadata(&abs) else { continue };
+            let Ok(mtime) = md.modified() else { continue };
+            newest = Some(match newest {
+                Some(prev) if prev >= mtime => prev,
+                _ => mtime,
+            });
+        }
+        let stalled = match newest {
+            Some(t) => t < threshold,
+            None => waypoint_count > 0, // has waypoints but no readable mtime
+        };
+        if waypoint_count == 0 {
+            // Empty thread is its own thing — flag it
+            // as stalled too, for now (no waypoints =
+            // no progress).
+            findings.push(ScanFinding {
+                class: ScanClass::StalledThread,
+                severity: ScanSeverity::Info,
+                path: None,
+                detail: format!(
+                    "thread `{}` has no waypoints yet",
+                    thread.title,
+                ),
+            });
+            continue;
+        }
+        if stalled {
+            findings.push(ScanFinding {
+                class: ScanClass::StalledThread,
+                severity: ScanSeverity::Info,
+                path: None,
+                detail: format!(
+                    "thread `{}` newest waypoint is > {} days old ({} waypoints total)",
+                    thread.title, DORMANT_DAYS, waypoint_count,
+                ),
+            });
+        }
+    }
+    findings
+}
+
+/// Collect chapter UUIDs in user-book order
+/// (skips chapters under system books like
+/// Characters / Places / etc.).  Used by the
+/// dropped-character + pacing-collapse
+/// detectors.
+fn collect_user_book_chapter_ordinals(
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+) -> Vec<uuid::Uuid> {
+    use crate::store::NodeKind;
+    let mut out = Vec::new();
+    for node in hierarchy.iter() {
+        if node.kind != NodeKind::Chapter {
+            continue;
+        }
+        let ancestors = hierarchy.ancestors(node);
+        let under_system = ancestors
+            .iter()
+            .any(|a| a.kind == NodeKind::Book && a.system_tag.is_some());
+        if !under_system {
+            out.push(node.id);
+        }
+    }
+    out
+}
+
+/// Concatenate every paragraph body under
+/// `chapter_id` into one big string.  Used by
+/// the prose-scanning detectors.
+fn read_chapter_prose(
+    layout: &ProjectLayout,
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    chapter_id: uuid::Uuid,
+) -> String {
+    use crate::store::NodeKind;
+    let mut body = String::new();
+    for id in hierarchy.collect_subtree(chapter_id) {
+        let Some(p) = hierarchy.get(id) else { continue };
+        if p.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Some(rel) = p.file.as_ref() else { continue };
+        let abs = layout.root.join(rel);
+        let Ok(text) = std::fs::read_to_string(&abs) else { continue };
+        body.push_str(&text);
+        body.push('\n');
+    }
+    body
 }
 
 #[cfg(test)]
@@ -681,5 +1030,125 @@ mod tests {
         assert_eq!(parsed.findings.len(), 1);
         assert_eq!(parsed.findings[0].class, ScanClass::ZeroByteFile);
         assert_eq!(parsed.findings[0].path.as_deref(), Some("/tmp/x/foo.typ"));
+    }
+
+    // 1.2.16+ Phase A.6 — new class slugs roundtrip.
+
+    #[test]
+    fn new_class_slugs_match_kebab_case_pattern() {
+        for class in [
+            ScanClass::DroppedCharacter,
+            ScanClass::PacingCollapse,
+            ScanClass::StalledThread,
+        ] {
+            let slug = class.slug();
+            assert_eq!(
+                ScanClass::from_slug(slug),
+                Some(class),
+                "slug `{slug}` should roundtrip"
+            );
+            assert!(slug.contains('-'), "slug `{slug}` should be kebab-case");
+        }
+    }
+
+    #[test]
+    fn new_classes_are_in_all_const() {
+        for class in [
+            ScanClass::DroppedCharacter,
+            ScanClass::PacingCollapse,
+            ScanClass::StalledThread,
+        ] {
+            assert!(
+                ScanClass::ALL.contains(&class),
+                "{class:?} should be in ScanClass::ALL"
+            );
+        }
+    }
+
+    // classify_pacing tests use a minimal
+    // throwaway hierarchy + UUID list to exercise
+    // the windowing logic without fs setup.
+
+    #[test]
+    fn pacing_below_window_size_emits_nothing() {
+        // 5 chapters total, window is 5 — no
+        // chapter has a trailing window of 5
+        // earlier chapters, so nothing fires.
+        let counts: Vec<i64> = vec![5000, 5000, 5000, 5000, 5000];
+        let ids: Vec<uuid::Uuid> = (0..counts.len())
+            .map(|_| uuid::Uuid::new_v4())
+            .collect();
+        let hierarchy = empty_hierarchy_for_tests();
+        let findings = classify_pacing(&counts, &hierarchy, &ids);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn pacing_uniform_chapters_emit_nothing() {
+        let counts: Vec<i64> = vec![5000; 12];
+        let ids: Vec<uuid::Uuid> = (0..counts.len())
+            .map(|_| uuid::Uuid::new_v4())
+            .collect();
+        let hierarchy = empty_hierarchy_for_tests();
+        let findings = classify_pacing(&counts, &hierarchy, &ids);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn pacing_long_outlier_flagged() {
+        // Steady 5000-word chapters, then one
+        // 20000-word chapter.  Trailing 5 mean
+        // is 5000, ratio is 4.0× → flag.
+        let counts: Vec<i64> = vec![5000, 5000, 5000, 5000, 5000, 20000];
+        let ids: Vec<uuid::Uuid> = (0..counts.len())
+            .map(|_| uuid::Uuid::new_v4())
+            .collect();
+        let hierarchy = empty_hierarchy_for_tests();
+        let findings = classify_pacing(&counts, &hierarchy, &ids);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].class, ScanClass::PacingCollapse);
+        assert_eq!(findings[0].severity, ScanSeverity::Info);
+        assert!(findings[0].detail.contains("notably longer"));
+        assert!(findings[0].detail.contains("4.00×"));
+    }
+
+    #[test]
+    fn pacing_short_outlier_flagged() {
+        // 5000-word baseline, then a 1000-word
+        // chapter.  Ratio 0.20 → below 0.30
+        // threshold → flag.
+        let counts: Vec<i64> = vec![5000, 5000, 5000, 5000, 5000, 1000];
+        let ids: Vec<uuid::Uuid> = (0..counts.len())
+            .map(|_| uuid::Uuid::new_v4())
+            .collect();
+        let hierarchy = empty_hierarchy_for_tests();
+        let findings = classify_pacing(&counts, &hierarchy, &ids);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].detail.contains("notably shorter"));
+        assert!(findings[0].detail.contains("0.20×"));
+    }
+
+    #[test]
+    fn pacing_moderate_variation_passes() {
+        // 5000-word baseline, then 8000 (ratio
+        // 1.6×) — within the 3.0× / 0.3× bounds
+        // → no flag.
+        let counts: Vec<i64> = vec![5000, 5000, 5000, 5000, 5000, 8000];
+        let ids: Vec<uuid::Uuid> = (0..counts.len())
+            .map(|_| uuid::Uuid::new_v4())
+            .collect();
+        let hierarchy = empty_hierarchy_for_tests();
+        let findings = classify_pacing(&counts, &hierarchy, &ids);
+        assert!(findings.is_empty());
+    }
+
+    /// Helper — build an empty hierarchy via the
+    /// existing Default impl.  `classify_pacing`
+    /// only reads the chapter title for the
+    /// finding's `detail` field; an empty
+    /// hierarchy means the test detail falls
+    /// back to "chapter N".
+    fn empty_hierarchy_for_tests() -> crate::store::hierarchy::Hierarchy {
+        crate::store::hierarchy::Hierarchy::default()
     }
 }
