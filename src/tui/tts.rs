@@ -262,6 +262,12 @@ mod tests {
         let mut c = TtsConfig::default();
         c.enabled = enabled;
         c.engine = engine.into();
+        // Force Piper to fail resolution so the
+        // auto/piper resolver paths reach their
+        // fallback behaviour deterministically — even
+        // on dev machines where `piper` is on PATH.
+        c.binary_path = Some("/__inkhaven_test_no_such_piper__".into());
+        c.auto_download_binary = false;
         c
     }
 
@@ -279,12 +285,12 @@ mod tests {
     }
 
     #[test]
-    fn auto_falls_through_to_system_in_t1() {
-        // Piper stub always errors in T.1, so "auto" must
-        // produce a System variant.  This guards against
-        // a future T.2 implementation that accidentally
-        // changes the fall-through behaviour without
-        // updating the test.
+    fn auto_falls_through_to_system_when_piper_unresolvable() {
+        // T.5+: "auto" tries Piper first; falls back to
+        // System when Piper construction errors (binary
+        // missing in this test harness).  cfg_with()
+        // points binary_path at a guaranteed-absent
+        // path so this test is host-independent.
         let cfg = cfg_with("auto", true);
         let eng = TtsEngine::resolve(&cfg, std::env::temp_dir().as_path());
         assert_eq!(eng.kind(), EngineKind::System);
@@ -298,18 +304,45 @@ mod tests {
     }
 
     #[test]
-    fn forced_piper_collapses_to_disabled_with_t1_reason() {
+    fn forced_piper_collapses_to_disabled_when_binary_missing() {
+        // Explicit `engine: "piper"` with a missing
+        // binary surfaces as Disabled, carrying the
+        // BinaryNotFound diagnostic so the user can
+        // see the expected install path.
         let cfg = cfg_with("piper", true);
         let eng = TtsEngine::resolve(&cfg, std::env::temp_dir().as_path());
-        // T.1: Piper construction always fails.  Forced
-        // "piper" therefore falls into Disabled with a
-        // diagnostic the user can read.
         assert_eq!(eng.kind(), EngineKind::Disabled);
         let msg = eng.is_ready().unwrap_err();
         assert!(
-            msg.contains("T.2"),
-            "expected diagnostic to reference T.2, got: {msg}",
+            msg.contains("tts.binary_path") || msg.contains("Piper binary"),
+            "expected diagnostic to reference binary path, got: {msg}",
         );
+    }
+
+    /// New T.5 invariant: when Piper IS resolvable
+    /// (binary_path points at an executable file), the
+    /// auto + piper resolvers both produce a Piper
+    /// variant.  Exercised on Unix only because we
+    /// rely on chmod +x; Windows test would need a
+    /// .exe with the right ACL.
+    #[cfg(unix)]
+    #[test]
+    fn auto_resolves_to_piper_when_binary_present() {
+        let bin_dir = tempfile::tempdir().unwrap();
+        let bin = bin_dir.path().join("piper");
+        std::fs::write(&bin, b"#!/bin/sh\nexit 0\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&bin).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&bin, perms).unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let mut cfg = TtsConfig::default();
+        cfg.enabled = true;
+        cfg.engine = "auto".into();
+        cfg.binary_path = Some(bin.to_string_lossy().to_string());
+        cfg.auto_download_binary = false;
+        let eng = TtsEngine::resolve(&cfg, project.path());
+        assert_eq!(eng.kind(), EngineKind::Piper);
     }
 
     #[test]
