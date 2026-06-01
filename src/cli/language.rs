@@ -79,6 +79,11 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::RemoveWord { language, word } => {
             remove_word(project, &language, &word)
         }
+        LanguageCommand::DefineRule {
+            language,
+            rule_id,
+            category,
+        } => define_rule(project, &language, &rule_id, &category),
     }
 }
 
@@ -1536,18 +1541,34 @@ fn export(
             meta.as_ref(),
             &entries,
         ),
+        // 1.2.16+ Phase P.5 — three new formats.
+        LanguageExportFormat::Csv => render_csv(&entries),
+        LanguageExportFormat::Grammar => render_grammar(
+            &lang_book.title,
+            &grammar_bodies,
+            &phonology_bodies,
+        ),
+        LanguageExportFormat::Phrasebook => render_phrasebook(
+            &lang_book.title,
+            &sample_bodies,
+        ),
     };
 
     match (output, format) {
         (Some(path), _) => {
-            std::fs::write(path, &rendered).map_err(|e| {
+            // 1.2.15+ Phase S.4 — atomic write so
+            // an interrupted export doesn't leave
+            // a half-written file.
+            crate::io_atomic::write(path, &rendered).map_err(|e| {
                 Error::Config(format!("write {}: {e}", path.display()))
             })?;
             eprintln!("wrote {} bytes to {}", rendered.len(), path.display());
         }
-        (None, LanguageExportFormat::DictionaryTwocol) => {
+        (None, LanguageExportFormat::DictionaryTwocol)
+        | (None, LanguageExportFormat::Grammar)
+        | (None, LanguageExportFormat::Phrasebook) => {
             return Err(Error::Config(
-                "dictionary-twocol export needs --output <path.typ> — \
+                "this export format needs --output <path.typ> — \
                  the Typst renderer doesn't stream to stdout"
                     .into(),
             ));
@@ -1769,6 +1790,406 @@ fn typst_escape(s: &str) -> String {
         }
     }
     out
+}
+
+/// 1.2.16+ Phase P.5 — render a dictionary as a
+/// round-trip-compatible CSV that the `--import`
+/// path can re-ingest.  Five columns matching the
+/// in-memory `DictionaryEntry` shape: `word`,
+/// `type` (pos), `translation`, `example`,
+/// `inflection`.
+///
+/// Richer per-paragraph fields (`pronunciation`,
+/// `etymology`, `related`, `register`, `era`,
+/// `notes`) survive in the original HJSON
+/// paragraph bodies but are not parsed into
+/// `DictionaryEntry` so they don't appear here.
+/// For full preservation across machines use the
+/// `--format json` export (which serialises every
+/// raw paragraph body verbatim) or — better —
+/// `inkhaven backup` of the whole project.
+fn render_csv(entries: &[(String, crate::language_entry::DictionaryEntry)]) -> Vec<u8> {
+    let mut out = String::new();
+    out.push_str("word,type,translation,example,inflection\n");
+    for (_lemma, e) in entries {
+        out.push_str(&csv_field(&e.word));
+        out.push(',');
+        out.push_str(&csv_field(&e.pos));
+        out.push(',');
+        out.push_str(&csv_field(&e.translation));
+        out.push(',');
+        out.push_str(&csv_field(&e.example));
+        out.push(',');
+        out.push_str(&csv_field(&join_inflection(&e.inflection)));
+        out.push('\n');
+    }
+    out.into_bytes()
+}
+
+fn join_inflection(inflection: &std::collections::BTreeMap<String, String>) -> String {
+    let mut parts: Vec<String> =
+        inflection.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    parts.sort();
+    parts.join(";")
+}
+
+/// 1.2.16+ Phase P.5 — render a typst grammar
+/// reference.  Walks the Grammar and Phonology
+/// chapter bodies (each is HJSON-shaped); groups
+/// by `category` field; emits a sectioned typst
+/// document with examples tables.
+fn render_grammar(
+    language_title: &str,
+    grammar_bodies: &[(String, String)],
+    phonology_bodies: &[(String, String)],
+) -> Vec<u8> {
+    let mut out = String::new();
+    out.push_str("#set page(paper: \"a4\", margin: 2cm)\n");
+    out.push_str("#set heading(numbering: \"1.\")\n");
+    out.push_str("#set text(font: (\"New Computer Modern\", \"DejaVu Serif\"), size: 11pt)\n");
+    out.push_str(&format!(
+        "#align(center)[#text(20pt, weight: \"bold\")[{} — grammar reference]]\n\n",
+        typst_escape(language_title),
+    ));
+    out.push_str("#outline()\n\n");
+    out.push_str("#pagebreak()\n\n");
+
+    let mut by_category: std::collections::BTreeMap<String, Vec<&(String, String)>> =
+        std::collections::BTreeMap::new();
+    for entry in grammar_bodies {
+        let cat = extract_hjson_string_field(&entry.1, "category")
+            .unwrap_or_else(|| "Uncategorised".to_string());
+        by_category.entry(cat).or_default().push(entry);
+    }
+
+    out.push_str("= Grammar rules\n\n");
+    for (cat, rules) in &by_category {
+        out.push_str(&format!("== {}\n\n", typst_escape(cat)));
+        for (title, body) in rules {
+            out.push_str(&format!("=== {}\n\n", typst_escape(title)));
+            if let Some(rule) = extract_hjson_string_field(body, "rule") {
+                out.push_str(&format!("*Rule:* {}\n\n", typst_escape(&rule)));
+            }
+            if let Some(examples_block) =
+                extract_hjson_examples(body)
+            {
+                if !examples_block.is_empty() {
+                    out.push_str("*Examples:*\n\n");
+                    for ex in &examples_block {
+                        out.push_str(&format!("- {}\n", typst_escape(ex)));
+                    }
+                    out.push('\n');
+                }
+            }
+        }
+    }
+
+    if !phonology_bodies.is_empty() {
+        out.push_str("\n= Phonology rules\n\n");
+        for (title, body) in phonology_bodies {
+            out.push_str(&format!("== {}\n\n", typst_escape(title)));
+            if let Some(rule) = extract_hjson_string_field(body, "rule") {
+                out.push_str(&format!("*Rule:* {}\n\n", typst_escape(&rule)));
+            }
+            if let Some(pattern) = extract_hjson_string_field(body, "pattern") {
+                out.push_str(&format!("*Pattern:* `{}`\n\n", pattern));
+            }
+        }
+    }
+
+    out.into_bytes()
+}
+
+/// 1.2.16+ Phase P.5 — render a typst phrasebook
+/// from the Sample texts chapter.  Two-column
+/// layout via typst's `grid`; gloss left,
+/// invented-language sample right.  Sample bodies
+/// are expected to contain a `gloss:` and
+/// `original:` HJSON field; falls back to the
+/// raw body when either is missing.
+fn render_phrasebook(
+    language_title: &str,
+    sample_bodies: &[(String, String)],
+) -> Vec<u8> {
+    let mut out = String::new();
+    out.push_str("#set page(paper: \"a4\", margin: 2cm)\n");
+    out.push_str("#set text(font: (\"New Computer Modern\", \"DejaVu Serif\"), size: 11pt)\n");
+    out.push_str(&format!(
+        "#align(center)[#text(20pt, weight: \"bold\")[{} — phrasebook]]\n\n",
+        typst_escape(language_title),
+    ));
+    if sample_bodies.is_empty() {
+        out.push_str("_No sample texts in the project yet._\n");
+        return out.into_bytes();
+    }
+    for (title, body) in sample_bodies {
+        let gloss = extract_hjson_string_field(body, "gloss")
+            .or_else(|| extract_hjson_string_field(body, "translation"));
+        let original = extract_hjson_string_field(body, "original")
+            .or_else(|| extract_hjson_string_field(body, "text"));
+        out.push_str(&format!("== {}\n\n", typst_escape(title)));
+        out.push_str("#grid(columns: (1fr, 1fr), gutter: 1em,\n");
+        out.push_str(&format!(
+            "  [#text(weight: \"semibold\")[Gloss]\\\n{}],\n",
+            typst_escape(gloss.as_deref().unwrap_or(body)),
+        ));
+        out.push_str(&format!(
+            "  [#text(weight: \"semibold\")[Original]\\\n{}],\n",
+            typst_escape(original.as_deref().unwrap_or("(no original supplied)")),
+        ));
+        out.push_str(")\n\n");
+    }
+    out.into_bytes()
+}
+
+/// Extract a single string field from an HJSON
+/// body via a forgiving line-based scan.  Avoids
+/// pulling in a full HJSON parse here — the bodies
+/// are author-written and we only want one field
+/// per call.  Returns the trimmed value when found.
+fn extract_hjson_string_field(body: &str, field: &str) -> Option<String> {
+    let needle = format!("{field}:");
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with(&needle) {
+            continue;
+        }
+        let rest = trimmed[needle.len()..].trim();
+        // Strip surrounding quotes if present.
+        let v = rest.trim_matches('"').trim_matches('\'').trim();
+        if v.is_empty() {
+            return None;
+        }
+        return Some(v.to_string());
+    }
+    None
+}
+
+/// Extract the `examples:` array from an HJSON
+/// body.  Handles both single-line array form
+/// (`examples: ["a", "b"]`) and multi-line block
+/// form.  Light-touch parsing — same rationale as
+/// `extract_hjson_string_field`.
+fn extract_hjson_examples(body: &str) -> Option<Vec<String>> {
+    let mut found = false;
+    let mut single_line: Option<String> = None;
+    let mut block_lines: Vec<String> = Vec::new();
+    let mut in_block = false;
+
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if !found && trimmed.starts_with("examples:") {
+            found = true;
+            let rest = trimmed["examples:".len()..].trim();
+            if rest.starts_with('[') && rest.ends_with(']') {
+                single_line = Some(rest[1..rest.len() - 1].to_string());
+                break;
+            }
+            if rest.starts_with('[') {
+                in_block = true;
+            }
+            continue;
+        }
+        if in_block {
+            if trimmed.starts_with(']') {
+                break;
+            }
+            block_lines.push(trimmed.trim_end_matches(',').to_string());
+        }
+    }
+    if !found {
+        return None;
+    }
+    if let Some(sl) = single_line {
+        return Some(
+            sl.split(',')
+                .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+        );
+    }
+    Some(
+        block_lines
+            .into_iter()
+            .map(|s| s.trim_matches('"').trim_matches('\'').to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+    )
+}
+
+/// 1.2.16+ Phase P.5 — `inkhaven language
+/// define-rule <language> <rule_id> [--category
+/// grammar|phonology]`.  Opens the rule's HJSON
+/// template in `$EDITOR` (fallback `vi`); on the
+/// editor's exit, writes the saved content into
+/// a new or existing rule paragraph under the
+/// chosen category.
+fn define_rule(
+    project: &Path,
+    language: &str,
+    rule_id: &str,
+    category: &str,
+) -> Result<()> {
+    let category_norm = category.to_lowercase();
+    if category_norm != "grammar" && category_norm != "phonology" {
+        return Err(Error::Config(format!(
+            "--category must be `grammar` or `phonology` (got `{category}`)"
+        )));
+    }
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+    use crate::store::node::NodeKind;
+
+    let lang_root = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Store(
+                "Language system book missing — re-open the project to seed it".into(),
+            )
+        })?;
+    let lang_book = hierarchy
+        .children_of(Some(lang_root.id))
+        .into_iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!("language `{language}` not found"))
+        })?;
+    let category_chapter = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.title.eq_ignore_ascii_case(&category_norm))
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "`{category_norm}` chapter not found under language `{language}` — \
+                 was it scaffolded? Try `inkhaven language init {language}`"
+            ))
+        })?;
+
+    // Find existing paragraph by slug match, OR
+    // build the seed template.
+    let existing = hierarchy
+        .collect_subtree(category_chapter.id)
+        .into_iter()
+        .filter_map(|id| hierarchy.get(id).cloned())
+        .find(|n| {
+            n.kind == NodeKind::Paragraph
+                && n.slug.eq_ignore_ascii_case(rule_id)
+        });
+
+    let seed = if let Some(node) = &existing {
+        match store.get_content(node.id) {
+            Ok(Some(b)) => String::from_utf8_lossy(&b).into_owned(),
+            _ => String::new(),
+        }
+    } else {
+        rule_template(rule_id, &category_norm)
+    };
+
+    // Open in $EDITOR.
+    let edited = open_in_editor(&seed, &format!("{rule_id}-{category_norm}"))?;
+
+    // Roundtrip: persist back into the paragraph.
+    if let Some(node) = existing {
+        let mut n = node;
+        store
+            .update_paragraph_content(&mut n, edited.as_bytes())
+            .map_err(|e| Error::Store(format!("save rule: {e}")))?;
+        if let Some(rel) = &n.file {
+            crate::io_atomic::write(&store.project_root().join(rel), edited.as_bytes())
+                .map_err(Error::Io)?;
+        }
+        eprintln!("updated rule `{rule_id}` under {category_norm}");
+    } else {
+        let mut created = store
+            .create_node(
+                &cfg,
+                &hierarchy,
+                NodeKind::Paragraph,
+                rule_id,
+                Some(&category_chapter),
+                None,
+                crate::store::InsertPosition::End,
+            )
+            .map_err(|e| Error::Store(format!("create rule paragraph: {e}")))?;
+        if let Some(rel) = &created.file {
+            crate::io_atomic::write(
+                &store.project_root().join(rel),
+                edited.as_bytes(),
+            )
+            .map_err(Error::Io)?;
+            store
+                .update_paragraph_content(&mut created, edited.as_bytes())
+                .map_err(|e| Error::Store(format!("save rule: {e}")))?;
+        }
+        eprintln!("created rule `{rule_id}` under {category_norm}");
+    }
+
+    Ok(())
+}
+
+fn rule_template(rule_id: &str, category: &str) -> String {
+    // Mirrors the seed template used by the
+    // tree-pane scaffolders in
+    // `src/tui/app/threads_impl.rs` for the
+    // Grammar / Phonology categories.
+    let cat_examples = if category == "grammar" {
+        "[\n    \"example 1 in invented language — translation\",\n    \"example 2 — translation\"\n  ]"
+    } else {
+        "[\n    \"phoneme example 1\",\n    \"phoneme example 2\"\n  ]"
+    };
+    format!(
+        "{{\n  rule_id: \"{rule_id}\"\n  category: \"\"\n  rule: \"\"\n  examples: {cat_examples}\n  applies_when: \"\"\n  depends_on: []\n}}\n"
+    )
+}
+
+/// Open `seed` in `$EDITOR`; return the saved
+/// content.  Falls back to `vi` on Linux/macOS or
+/// `notepad` on Windows.  Errors when the editor
+/// process exits non-zero.
+fn open_in_editor(seed: &str, label: &str) -> Result<String> {
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| {
+        if cfg!(windows) {
+            "notepad".into()
+        } else {
+            "vi".into()
+        }
+    });
+    // Write seed to a temp file the editor edits
+    // in place.  The temp file path is just under
+    // the OS temp dir + a process-id prefix; the
+    // editor handles its own atomic save on exit.
+    let tmp_dir = std::env::temp_dir();
+    let tmp_path = tmp_dir.join(format!(
+        "inkhaven-define-rule-{}-{}.hjson",
+        std::process::id(),
+        label
+    ));
+    std::fs::write(&tmp_path, seed.as_bytes()).map_err(Error::Io)?;
+    let status = std::process::Command::new(&editor)
+        .arg(&tmp_path)
+        .status()
+        .map_err(|e| Error::Config(format!("spawn `{editor}`: {e}")))?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(Error::Config(format!(
+            "editor `{editor}` exited with status {status}"
+        )));
+    }
+    let body = std::fs::read_to_string(&tmp_path).map_err(Error::Io)?;
+    let _ = std::fs::remove_file(&tmp_path);
+    Ok(body)
 }
 
 /// `inkhaven language list`.
@@ -2895,6 +3316,120 @@ mod tests {
         assert!(lines[1].contains("hail"));
         assert!(lines[1].contains("interjection"));
         assert!(lines[1].contains("Aiya Eärendil!"));
+    }
+
+    // 1.2.16+ Phase P.5 — render_csv tests.
+
+    #[test]
+    fn render_csv_emits_header_row() {
+        let out = render_csv(&[]);
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.starts_with("word,type,translation,example,inflection\n"));
+    }
+
+    #[test]
+    fn render_csv_round_trip_columns_match_in_memory_struct() {
+        // The whole point of the CSV format is
+        // that the `--import` path can re-ingest
+        // it.  Pin the column order against the
+        // documented in-memory struct shape.
+        let mut entry = crate::language_entry::DictionaryEntry::default();
+        entry.word = "stelle".into();
+        entry.pos = "noun".into();
+        entry.translation = "star".into();
+        entry.example = "Le stelle brillano.".into();
+        entry.inflection.insert("plural".into(), "stelle".into());
+        entry
+            .inflection
+            .insert("singular".into(), "stella".into());
+        let out = render_csv(&[("stelle".into(), entry)]);
+        let s = String::from_utf8(out).unwrap();
+        let lines: Vec<&str> = s.lines().collect();
+        assert_eq!(lines.len(), 2);
+        // Inflection serialises sorted by key:
+        // plural=stelle;singular=stella.
+        assert!(
+            lines[1].contains("plural=stelle;singular=stella"),
+            "unexpected inflection serialisation: {}",
+            lines[1]
+        );
+        assert!(lines[1].contains("stelle,noun,star,Le stelle brillano."));
+    }
+
+    #[test]
+    fn render_csv_quotes_fields_with_commas_and_quotes() {
+        let mut entry = crate::language_entry::DictionaryEntry::default();
+        entry.word = "salve".into();
+        entry.pos = "interjection".into();
+        entry.translation = "hello, hi".into(); // contains comma
+        entry.example = "She said \"salve\".".into(); // contains quote
+        let out = render_csv(&[("salve".into(), entry)]);
+        let s = String::from_utf8(out).unwrap();
+        let lines: Vec<&str> = s.lines().collect();
+        assert!(
+            lines[1].contains("\"hello, hi\""),
+            "comma field should be quoted: {}",
+            lines[1]
+        );
+        assert!(
+            lines[1].contains("\"She said \"\"salve\"\".\""),
+            "quote field should escape inner quotes: {}",
+            lines[1]
+        );
+    }
+
+    // 1.2.16+ Phase P.5 — extract_hjson_string_field tests.
+
+    #[test]
+    fn extract_hjson_finds_simple_string_field() {
+        let body = "{\n  rule: \"i becomes y before vowel\"\n  category: \"phonology\"\n}";
+        assert_eq!(
+            extract_hjson_string_field(body, "rule"),
+            Some("i becomes y before vowel".into())
+        );
+        assert_eq!(
+            extract_hjson_string_field(body, "category"),
+            Some("phonology".into())
+        );
+        assert_eq!(extract_hjson_string_field(body, "missing"), None);
+    }
+
+    #[test]
+    fn extract_hjson_skips_empty_fields() {
+        let body = "{\n  rule: \"\"\n  category: \"grammar\"\n}";
+        assert_eq!(extract_hjson_string_field(body, "rule"), None);
+        assert_eq!(
+            extract_hjson_string_field(body, "category"),
+            Some("grammar".into())
+        );
+    }
+
+    #[test]
+    fn extract_hjson_examples_inline_array() {
+        let body = "{\n  examples: [\"one\", \"two\", \"three\"]\n}";
+        let got = extract_hjson_examples(body).unwrap();
+        assert_eq!(got, vec!["one", "two", "three"]);
+    }
+
+    #[test]
+    fn extract_hjson_examples_block_form() {
+        let body = "{\n  examples: [\n    \"alpha\",\n    \"beta\"\n  ]\n}";
+        let got = extract_hjson_examples(body).unwrap();
+        assert_eq!(got, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn rule_template_includes_id_and_grammar_examples() {
+        let t = rule_template("noun-cases", "grammar");
+        assert!(t.contains("rule_id: \"noun-cases\""));
+        assert!(t.contains("invented language"));
+    }
+
+    #[test]
+    fn rule_template_uses_phonology_examples_when_category_phonology() {
+        let t = rule_template("vowel-shift", "phonology");
+        assert!(t.contains("rule_id: \"vowel-shift\""));
+        assert!(t.contains("phoneme example"));
     }
 
     #[test]
