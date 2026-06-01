@@ -1334,47 +1334,278 @@ impl super::App {
             selection: selection_text,
             author,
         };
-        let expansion = super::super::snippets::expand_placeholders(body, &ctx);
+        // 1.2.16+ Phase P.6 — switched from the
+        // pure `expand_placeholders` to the
+        // plan-producing `analyse`.  Three cases:
+        //
+        //   * `Literal(s)` with the `\x00bund:`
+        //     sentinel → eval the Bund program,
+        //     substitute the result.
+        //   * `Literal(s)` plain → today's behaviour
+        //     ({cursor} split + atomic paste).
+        //   * `Picker { head, kind, tail }` → paste
+        //     head, open the SnippetPicker modal,
+        //     stash tail.
+        let plan = super::super::snippets::analyse(body, &ctx);
 
         // Mutate the textarea: delete trigger chars
-        // backward from `cursor_col - 1`, then
-        // insert the expansion at that point.  The
+        // backward from `cursor_col - 1`.  The
         // triggering non-word char at
         // `cursor_col - 1` stays in place.
         let Some(doc) = self.opened.as_mut() else {
             return;
         };
         use tui_textarea::CursorMove;
-        // Move cursor BACK one column to land on
-        // the trigger char immediately before the
-        // trigger-firing non-word char.
         doc.textarea.move_cursor(CursorMove::Back);
-        // Now move further back trigger_chars
-        // columns to land at the start of the
-        // trigger.
         for _ in 0..trigger_chars {
             doc.textarea.move_cursor(CursorMove::Back);
         }
-        // Select the trigger range by moving
-        // forward and starting selection at the
-        // current position.
         doc.textarea.start_selection();
         for _ in 0..trigger_chars {
             doc.textarea.move_cursor(CursorMove::Forward);
         }
-        // Cut deletes the selection and stashes it
-        // in the yank buffer; we discard the yank
-        // content by overwriting the yank with the
-        // expansion text + pasting.
         doc.textarea.cut();
-        // {cursor} placeholder support: split the
-        // expansion at the first `{cursor}` marker;
-        // paste the head, remember position, paste
-        // the tail, then move cursor back to the
-        // remembered position so the author lands
-        // INSIDE the snippet.  Snippets without
-        // `{cursor}` paste atomically — cursor
-        // ends after the last char as before.
+
+        match plan {
+            super::super::snippets::ExpansionPlan::Literal(s) => {
+                let expansion = if let Some(program) = s.strip_prefix("\x00bund:") {
+                    // Synchronous Bund eval.  On
+                    // error, fall back to a status-
+                    // bar warning + insert nothing
+                    // (the trigger has been
+                    // consumed; user re-types
+                    // explicitly).
+                    match crate::scripting::eval(program) {
+                        Ok(output) => match output.top {
+                            Some(v) => crate::scripting::format_value(&v),
+                            None => output.stdout,
+                        },
+                        Err(e) => {
+                            self.status =
+                                format!("bund snippet failed: {e}");
+                            return;
+                        }
+                    }
+                } else {
+                    s
+                };
+                self.paste_expansion_with_cursor_marker(&expansion);
+            }
+            super::super::snippets::ExpansionPlan::Picker {
+                head,
+                kind,
+                tail,
+            } => {
+                // Paste the head now.
+                if !head.is_empty() {
+                    doc.textarea.set_yank_text(head);
+                    doc.textarea.paste();
+                }
+                doc.dirty = true;
+                // Open the picker.  Modal completion
+                // inserts the picked entry's title +
+                // `tail`.
+                self.open_snippet_picker(kind, tail);
+                return;
+            }
+        }
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        doc.dirty = true;
+    }
+
+    /// 1.2.16+ Phase P.6 — open a picker modal mid-
+    /// snippet-expansion.  Enumerates entries in
+    /// the relevant system book (Characters /
+    /// Places / Artefacts), seeds the modal's
+    /// candidates, captures `tail` as the text to
+    /// insert after the user's pick.
+    pub(super) fn open_snippet_picker(
+        &mut self,
+        kind: super::super::snippets::SnippetPickerKind,
+        tail: String,
+    ) {
+        use crate::store::{NodeKind, SYSTEM_TAG_ARTEFACTS, SYSTEM_TAG_CHARACTERS, SYSTEM_TAG_PLACES};
+        let system_tag = match kind {
+            super::super::snippets::SnippetPickerKind::Char => SYSTEM_TAG_CHARACTERS,
+            super::super::snippets::SnippetPickerKind::Place => SYSTEM_TAG_PLACES,
+            super::super::snippets::SnippetPickerKind::Artefact => SYSTEM_TAG_ARTEFACTS,
+        };
+        // Find the system-book root.
+        let Some(book_root) = self.hierarchy.iter().find(|n| {
+            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(system_tag)
+        }) else {
+            self.status = format!(
+                "snippet: `{}` system book not found — picker skipped (literal placeholder + tail inserted)",
+                kind.label(),
+            );
+            self.paste_expansion_with_cursor_marker(&format!(
+                "{{{}}}{tail}",
+                match kind {
+                    super::super::snippets::SnippetPickerKind::Char => "char_lookup",
+                    super::super::snippets::SnippetPickerKind::Place => "place_lookup",
+                    super::super::snippets::SnippetPickerKind::Artefact => "artefact_lookup",
+                }
+            ));
+            if let Some(doc) = self.opened.as_mut() {
+                doc.dirty = true;
+            }
+            return;
+        };
+        let candidates: Vec<String> = self
+            .hierarchy
+            .collect_subtree(book_root.id)
+            .into_iter()
+            .filter_map(|id| self.hierarchy.get(id))
+            .filter(|n| n.kind == NodeKind::Paragraph)
+            .map(|n| n.title.clone())
+            .collect();
+        if candidates.is_empty() {
+            self.status = format!(
+                "snippet: `{}` system book is empty — picker skipped (literal placeholder + tail inserted)",
+                kind.label(),
+            );
+            self.paste_expansion_with_cursor_marker(&format!(
+                "{{{}}}{tail}",
+                match kind {
+                    super::super::snippets::SnippetPickerKind::Char => "char_lookup",
+                    super::super::snippets::SnippetPickerKind::Place => "place_lookup",
+                    super::super::snippets::SnippetPickerKind::Artefact => "artefact_lookup",
+                }
+            ));
+            if let Some(doc) = self.opened.as_mut() {
+                doc.dirty = true;
+            }
+            return;
+        }
+        let matches: Vec<usize> = (0..candidates.len()).collect();
+        self.modal = super::super::modal::Modal::SnippetPicker {
+            kind,
+            input: super::super::input::TextInput::new(),
+            candidates,
+            matches,
+            cursor: 0,
+            tail,
+        };
+        self.status = format!(
+            "snippet: pick a {} (↑↓ select · Enter commit · Esc cancel)",
+            kind.label(),
+        );
+    }
+
+    /// 1.2.16+ Phase P.6 — modal-local key handler
+    /// for the snippet picker.  Returns true if the
+    /// modal consumed the key.
+    pub(super) fn handle_snippet_picker_key(
+        &mut self,
+        key: crossterm::event::KeyEvent,
+    ) -> bool {
+        use crossterm::event::KeyCode;
+        let super::super::modal::Modal::SnippetPicker {
+            kind,
+            input,
+            candidates,
+            matches,
+            cursor,
+            tail,
+        } = &mut self.modal
+        else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                // Cancel — insert literal
+                // placeholder + tail so the user
+                // can recover.
+                let placeholder = match kind {
+                    super::super::snippets::SnippetPickerKind::Char => "{char_lookup}",
+                    super::super::snippets::SnippetPickerKind::Place => "{place_lookup}",
+                    super::super::snippets::SnippetPickerKind::Artefact => "{artefact_lookup}",
+                };
+                let restore = format!("{placeholder}{tail}");
+                self.modal = super::super::modal::Modal::None;
+                self.paste_expansion_with_cursor_marker(&restore);
+                if let Some(doc) = self.opened.as_mut() {
+                    doc.dirty = true;
+                }
+                self.status = "snippet picker cancelled".into();
+                true
+            }
+            KeyCode::Enter => {
+                if matches.is_empty() {
+                    return true;
+                }
+                let Some(idx) = matches.get(*cursor).copied() else {
+                    return true;
+                };
+                let Some(name) = candidates.get(idx).cloned() else {
+                    return true;
+                };
+                let tail_copy = tail.clone();
+                self.modal = super::super::modal::Modal::None;
+                self.paste_expansion_with_cursor_marker(&format!("{name}{tail_copy}"));
+                if let Some(doc) = self.opened.as_mut() {
+                    doc.dirty = true;
+                }
+                self.status = "snippet expansion complete".into();
+                true
+            }
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+                true
+            }
+            KeyCode::Down => {
+                if !matches.is_empty() && *cursor + 1 < matches.len() {
+                    *cursor += 1;
+                }
+                true
+            }
+            KeyCode::Char(c) => {
+                input.insert_char(c);
+                let filter = input.as_str().to_lowercase();
+                *matches = candidates
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, name)| name.to_lowercase().contains(&filter))
+                    .map(|(i, _)| i)
+                    .collect();
+                if *cursor >= matches.len() {
+                    *cursor = matches.len().saturating_sub(1);
+                }
+                true
+            }
+            KeyCode::Backspace => {
+                input.backspace();
+                let filter = input.as_str().to_lowercase();
+                *matches = candidates
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, name)| name.to_lowercase().contains(&filter))
+                    .map(|(i, _)| i)
+                    .collect();
+                if *cursor >= matches.len() {
+                    *cursor = matches.len().saturating_sub(1);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// 1.2.16+ Phase P.6 — extracted helper.  Paste
+    /// the fully-resolved `expansion` into the
+    /// editor, splitting at the first `{cursor}`
+    /// marker so the cursor lands inside the
+    /// snippet when one is present.  Snippets
+    /// without `{cursor}` paste atomically.
+    fn paste_expansion_with_cursor_marker(&mut self, expansion: &str) {
+        let Some(doc) = self.opened.as_mut() else {
+            return;
+        };
+        use tui_textarea::CursorMove;
         if let Some((head, tail)) = expansion.split_once("{cursor}") {
             if !head.is_empty() {
                 doc.textarea.set_yank_text(head.to_string());
@@ -1390,10 +1621,9 @@ impl super::App {
                 cursor_after_head.1 as u16,
             ));
         } else {
-            doc.textarea.set_yank_text(expansion);
+            doc.textarea.set_yank_text(expansion.to_string());
             doc.textarea.paste();
         }
-        doc.dirty = true;
     }
 }
 

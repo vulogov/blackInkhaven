@@ -5731,6 +5731,92 @@ impl super::super::App {
 
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
+
+    /// 1.2.16+ Phase P.6 — snippet picker modal.
+    /// Mid-snippet-expansion overlay: the editor
+    /// has already pasted the snippet's head; the
+    /// user picks one entry from the relevant
+    /// system book (Characters / Places /
+    /// Artefacts), and Enter inserts its title +
+    /// the stashed tail back into the editor.
+    pub(in crate::tui::app) fn draw_snippet_picker_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::SnippetPicker {
+            kind,
+            input,
+            candidates,
+            matches,
+            cursor,
+            tail: _,
+        } = &self.modal
+        else {
+            return;
+        };
+        let width = area.width.saturating_sub(6).clamp(50, 90);
+        let body_max = area.height.saturating_sub(6).clamp(8, 20);
+        let visible = matches.len().min(body_max as usize).max(1);
+        let height = (5 + visible as u16).min(area.height.saturating_sub(2));
+        let x = area.x + area.width.saturating_sub(width) / 2;
+        let y = area.y + area.height.saturating_sub(height) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let title = format!(" Pick a {} — snippet expansion ", kind.label());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let mut lines: Vec<Line<'_>> = Vec::new();
+
+        lines.push(Line::from(Span::styled(
+            format!(" › {}", input.render_with_cursor('│')),
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+
+        if matches.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  (no entries match — refine the filter or Esc to cancel)",
+                dim,
+            )));
+        } else {
+            for (i, idx) in matches.iter().enumerate().take(body_max as usize) {
+                let Some(name) = candidates.get(*idx) else { continue };
+                let marker = if i == *cursor { "›" } else { " " };
+                let style = if i == *cursor {
+                    Style::default()
+                        .add_modifier(Modifier::REVERSED)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                lines.push(Line::from(Span::styled(
+                    format!("  {marker} {name}"),
+                    style,
+                )));
+            }
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " type filter · ↑↓ select · Enter commit · Esc restore placeholder ",
+            dim,
+        )));
+
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
 }
 
 /// Truncate `s` to at most `max` characters,

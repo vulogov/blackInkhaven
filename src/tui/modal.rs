@@ -987,6 +987,35 @@ pub(super) enum Modal {
         scroll: usize,
         last_status: Option<String>,
     },
+    /// 1.2.16+ Phase P.6 — snippet picker
+    /// placeholder modal.  Pushed mid-expansion
+    /// by `maybe_expand_snippet` when the snippet
+    /// body contains `{char_lookup}` /
+    /// `{place_lookup}` / `{artefact_lookup}`.
+    /// The editor has already pasted the head;
+    /// on Enter we insert the picked entry's
+    /// title + the stashed `tail`.  On Esc we
+    /// insert the literal placeholder string +
+    /// tail so the user sees what was there and
+    /// can fix it manually.
+    SnippetPicker {
+        kind: super::snippets::SnippetPickerKind,
+        /// Type-to-filter input.
+        input: super::input::TextInput,
+        /// All system-book entry titles for
+        /// `kind`.  Built once at modal open.
+        candidates: Vec<String>,
+        /// Indices into `candidates` that match
+        /// the current filter.  Rebuilt on every
+        /// `input` change.
+        matches: Vec<usize>,
+        /// Index into `matches` for the
+        /// highlighted row.
+        cursor: usize,
+        /// Text to insert after the picked entry.
+        /// Captured at modal-open time.
+        tail: String,
+    },
     /// 1.2.14+ Phase A.2 — swim-lane weave view.
     /// Pushed by `w` from inside `ThreadsPicker`;
     /// `Esc` returns to the picker (stored in

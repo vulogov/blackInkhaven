@@ -123,6 +123,121 @@ pub fn expand_placeholders(body: &str, ctx: &ExpansionContext) -> String {
     out
 }
 
+/// 1.2.16+ Phase P.6 — picker placeholder kinds.
+///
+/// `{char_lookup}`, `{place_lookup}`, and
+/// `{artefact_lookup}` each open the corresponding
+/// system-book entry picker; the chosen entry's
+/// title becomes the substitution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnippetPickerKind {
+    Char,
+    Place,
+    Artefact,
+}
+
+impl SnippetPickerKind {
+    /// Map the placeholder name (without braces) to
+    /// a picker kind, or `None` if this isn't a
+    /// picker placeholder.
+    pub fn from_placeholder(name: &str) -> Option<Self> {
+        match name {
+            "char_lookup" => Some(SnippetPickerKind::Char),
+            "place_lookup" => Some(SnippetPickerKind::Place),
+            "artefact_lookup" => Some(SnippetPickerKind::Artefact),
+            _ => None,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            SnippetPickerKind::Char => "Character",
+            SnippetPickerKind::Place => "Place",
+            SnippetPickerKind::Artefact => "Artefact",
+        }
+    }
+}
+
+/// 1.2.16+ Phase P.6 — result of analysing a
+/// snippet body for expansion.
+///
+/// Two cases:
+///   * `Literal(s)` — the body fully expands to
+///     `s`; the editor pastes it directly (modulo
+///     the `{cursor}` split-paste handled by the
+///     caller).
+///   * `Picker { head, kind, tail }` — the body
+///     contains a picker placeholder.  The editor
+///     pastes `head` immediately, opens a modal
+///     for `kind`, and inserts the picked entry
+///     followed by `tail` on commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExpansionPlan {
+    Literal(String),
+    Picker {
+        head: String,
+        kind: SnippetPickerKind,
+        tail: String,
+    },
+}
+
+/// 1.2.16+ Phase P.6 — analyse a snippet body and
+/// produce an expansion plan.  Handles two cases
+/// beyond the pure-sync placeholder expansion:
+///
+///   1. **`bund:` prefix.**  When the body starts
+///      with `bund:`, the rest is interpreted as a
+///      Bund-VM program.  Caller (in the editor)
+///      evaluates and substitutes the result.
+///      This fn returns the program with the
+///      prefix stripped, wrapped in
+///      `ExpansionPlan::Literal` carrying a
+///      sentinel `\x00bund:` prefix the caller
+///      detects.  (Why the sentinel: keeps
+///      snippets.rs free of any Bund-VM
+///      dependency; the caller owns the eval.)
+///
+///   2. **Picker placeholders.**  Detects the
+///      first `{char_lookup}` / `{place_lookup}` /
+///      `{artefact_lookup}` and returns
+///      `ExpansionPlan::Picker` with the
+///      surrounding text split into head + tail.
+///
+/// Sync placeholders are expanded normally in
+/// every branch.
+pub fn analyse(body: &str, ctx: &ExpansionContext) -> ExpansionPlan {
+    if let Some(stripped) = body.strip_prefix("bund:") {
+        // Expand sync placeholders inside the Bund
+        // program first — so `bund: "{author}" ink.print`
+        // gets the author injected before eval.
+        let expanded = expand_placeholders(stripped, ctx);
+        return ExpansionPlan::Literal(format!("\x00bund:{expanded}"));
+    }
+    let expanded = expand_placeholders(body, ctx);
+    // Scan for the first picker placeholder.
+    if let Some((head, kind, tail)) = split_at_picker_placeholder(&expanded) {
+        return ExpansionPlan::Picker {
+            head: head.to_string(),
+            kind,
+            tail: tail.to_string(),
+        };
+    }
+    ExpansionPlan::Literal(expanded)
+}
+
+fn split_at_picker_placeholder(s: &str) -> Option<(&str, SnippetPickerKind, &str)> {
+    for placeholder in &["char_lookup", "place_lookup", "artefact_lookup"] {
+        let needle = format!("{{{placeholder}}}");
+        if let Some(idx) = s.find(&needle) {
+            let head = &s[..idx];
+            let tail = &s[idx + needle.len()..];
+            let kind = SnippetPickerKind::from_placeholder(placeholder)?;
+            return Some((head, kind, tail));
+        }
+    }
+    None
+}
+
 fn resolve_placeholder(name: &str, ctx: &ExpansionContext) -> Option<String> {
     // Allow chrono-format suffixes: `today:%Y/%m/%d`,
     // `now:%H:%M:%S`.
@@ -293,5 +408,122 @@ mod tests {
         for c in "abcXYZ_0123".chars() {
             assert!(!is_expansion_trigger_char(c), "char {c} should not fire");
         }
+    }
+
+    // 1.2.16+ Phase P.6 — analyse() tests.
+
+    #[test]
+    fn analyse_plain_body_returns_literal() {
+        let plan = analyse("hello world", &ExpansionContext::default());
+        assert_eq!(plan, ExpansionPlan::Literal("hello world".into()));
+    }
+
+    #[test]
+    fn analyse_sync_placeholder_returns_literal_with_substitution() {
+        let plan = analyse(
+            "hi {paragraph_title}!",
+            &ExpansionContext {
+                paragraph_title: "Rain".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(plan, ExpansionPlan::Literal("hi Rain!".into()));
+    }
+
+    #[test]
+    fn analyse_bund_prefix_returns_sentinel_literal() {
+        let plan = analyse("bund:40 2 +", &ExpansionContext::default());
+        match plan {
+            ExpansionPlan::Literal(s) => {
+                assert!(s.starts_with('\x00'), "expected sentinel prefix");
+                assert_eq!(s, "\x00bund:40 2 +");
+            }
+            _ => panic!("expected Literal with bund sentinel"),
+        }
+    }
+
+    #[test]
+    fn analyse_bund_prefix_expands_sync_placeholders_in_program() {
+        let plan = analyse(
+            "bund:\"{paragraph_title}\" ink.print",
+            &ExpansionContext {
+                paragraph_title: "Rain".into(),
+                ..Default::default()
+            },
+        );
+        match plan {
+            ExpansionPlan::Literal(s) => {
+                assert_eq!(s, "\x00bund:\"Rain\" ink.print");
+            }
+            _ => panic!("expected Literal"),
+        }
+    }
+
+    #[test]
+    fn analyse_char_lookup_returns_picker() {
+        let plan = analyse(
+            "She turned to {char_lookup}.",
+            &ExpansionContext::default(),
+        );
+        match plan {
+            ExpansionPlan::Picker { head, kind, tail } => {
+                assert_eq!(head, "She turned to ");
+                assert_eq!(kind, SnippetPickerKind::Char);
+                assert_eq!(tail, ".");
+            }
+            _ => panic!("expected Picker"),
+        }
+    }
+
+    #[test]
+    fn analyse_place_lookup_returns_picker() {
+        let plan = analyse("In {place_lookup}", &ExpansionContext::default());
+        match plan {
+            ExpansionPlan::Picker { kind, .. } => {
+                assert_eq!(kind, SnippetPickerKind::Place);
+            }
+            _ => panic!("expected Picker"),
+        }
+    }
+
+    #[test]
+    fn analyse_artefact_lookup_returns_picker() {
+        let plan = analyse(
+            "the {artefact_lookup} fell",
+            &ExpansionContext::default(),
+        );
+        match plan {
+            ExpansionPlan::Picker { kind, .. } => {
+                assert_eq!(kind, SnippetPickerKind::Artefact);
+            }
+            _ => panic!("expected Picker"),
+        }
+    }
+
+    #[test]
+    fn analyse_multi_picker_picks_first_only() {
+        // Limitation documented in the proposal:
+        // only the first picker placeholder fires
+        // a modal; subsequent ones currently pass
+        // through verbatim into the tail.
+        let plan = analyse(
+            "{char_lookup} met {place_lookup}",
+            &ExpansionContext::default(),
+        );
+        match plan {
+            ExpansionPlan::Picker { head, kind, tail } => {
+                assert_eq!(head, "");
+                assert_eq!(kind, SnippetPickerKind::Char);
+                assert_eq!(tail, " met {place_lookup}");
+            }
+            _ => panic!("expected Picker"),
+        }
+    }
+
+    #[test]
+    fn picker_kind_label_matches_system_book() {
+        assert_eq!(SnippetPickerKind::Char.label(), "Character");
+        assert_eq!(SnippetPickerKind::Place.label(), "Place");
+        assert_eq!(SnippetPickerKind::Artefact.label(), "Artefact");
     }
 }
