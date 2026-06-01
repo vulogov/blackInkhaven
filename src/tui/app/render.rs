@@ -75,6 +75,10 @@ impl super::App {
             self.draw_doctor_panel_modal(f, area);
             return;
         }
+        if let Modal::SnippetPicker { .. } = &self.modal {
+            self.draw_snippet_picker_modal(f, area);
+            return;
+        }
         if let Modal::CommentEditor { .. } = &self.modal {
             self.draw_comment_editor_modal(f, area);
             return;

@@ -13845,6 +13845,8 @@ impl App {
             matches!(self.modal, Modal::ThreadDoctor { .. });
         let is_doctor_panel =
             matches!(self.modal, Modal::DoctorPanel { .. });
+        let is_snippet_picker =
+            matches!(self.modal, Modal::SnippetPicker { .. });
         let is_comment_editor =
             matches!(self.modal, Modal::CommentEditor { .. });
         let is_comments_panel =
@@ -13931,6 +13933,10 @@ impl App {
         }
         if is_doctor_panel {
             self.handle_doctor_panel_key(key);
+            return Ok(false);
+        }
+        if is_snippet_picker {
+            self.handle_snippet_picker_key(key);
             return Ok(false);
         }
         if is_comment_editor {
