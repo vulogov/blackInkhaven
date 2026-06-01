@@ -411,3 +411,19 @@ Reference:
 ## Licence
 
 Apache 2.0 — see [`LICENSE`](LICENSE).
+
+## Security Warning and Disclaimer
+
+Inkhaven is provided **"AS IS"** with no warranty.  The author
+cannot be held liable for personal, business, or financial
+damage arising from its use.  Use is voluntary and **at your
+own risk**.
+
+Before opening a project file you did not author — and before
+relying on Inkhaven for work you cannot afford to lose —
+please read **[`Documentation/SECURITY_WARNING.md`](Documentation/SECURITY_WARNING.md)**.
+It enumerates the security issues catalogued in the 1.2.15
+audit (both fixed and pending), the design properties that
+are inherent rather than bugs, the unknown-risk classes that
+no audit can fully eliminate, and the limitation-of-liability
+terms under which Inkhaven is distributed.
