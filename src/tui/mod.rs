@@ -37,6 +37,13 @@ mod markdown_highlight;
 mod modal;
 mod pov_tracker;
 mod say;
+// 1.2.17+ T.1 — engine abstraction over the macOS `say`
+// backend (preserved as `TtsEngine::System`) and the
+// upcoming Piper neural backend (`TtsEngine::Piper`).
+mod tts;
+// 1.2.17+ T.1 stub — Piper backend type.  Full
+// implementation lands across T.2–T.5.
+mod piper;
 mod sentence_rhythm;
 mod style_warnings;
 mod quickref;

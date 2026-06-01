@@ -2421,6 +2421,104 @@ pub struct TtsConfig {
     /// shell doesn't truncate the audio mid-word.  Keep it
     /// short (a few words).
     pub goodbye: String,
+
+    // ── 1.2.17+ — Piper transition fields ─────────────────
+
+    /// 1.2.17+ — selects the TTS backend.  Three values:
+    ///   * `"auto"` (default) — prefer Piper if the binary
+    ///     resolves; fall back to the 1.2.9 `system`
+    ///     backend (macOS `/usr/bin/say`).  The status-bar
+    ///     diagnostic chip reports which is active.
+    ///   * `"piper"` — force Piper; error if unresolvable
+    ///     instead of falling back.
+    ///   * `"system"` — force the 1.2.9 macOS backend;
+    ///     errors on non-macOS hosts.
+    ///
+    /// T.1 (1.2.17): the Piper backend is a stub that
+    /// always errors on construction, so `"auto"` falls
+    /// through to `"system"` on every host.  Real
+    /// dispatch lands in T.2+.
+    pub engine: String,
+
+    /// 1.2.17+ — directory for Piper voice models +
+    /// catalog cache.  Resolved via
+    /// `crate::path_safety::resolve_within(project_root,
+    /// voices_dir)` so a malicious project can't escape
+    /// into `~/.ssh/`.  Relative paths join the project
+    /// root (default `.inkhaven/voices` lives there);
+    /// absolute paths are rejected.
+    pub voices_dir: String,
+
+    /// 1.2.17+ — when `true`, missing voice models are
+    /// streamed from the Hugging Face catalog on first
+    /// use.  When `false`, missing voices produce a clear
+    /// "voice X is not downloaded; run `inkhaven tts
+    /// voice download X`" error.
+    pub auto_download: bool,
+
+    /// 1.2.17+ — Piper voice catalog URL.  Defaults to
+    /// the upstream Hugging Face manifest.  Override only
+    /// if you maintain a private / mirrored catalog with
+    /// the same JSON shape.
+    pub catalog_url: String,
+
+    /// 1.2.17+ — how long the local catalog cache is
+    /// fresh, in hours.  After expiry the next voice
+    /// operation re-fetches.  Network failures during
+    /// refresh fall back to the stale cache + log a
+    /// warning rather than blocking synthesis.
+    pub catalog_ttl_hours: u32,
+
+    /// 1.2.17+ — explicit path to a `piper` binary.
+    /// When `None` (default), inkhaven autoresolves:
+    /// PATH first, then `~/.cache/inkhaven/piper-<plat>/`.
+    /// When the resolver finds nothing and
+    /// `auto_download_binary` is true, the platform's
+    /// piper release is downloaded into the user cache
+    /// (NOT the project tree — the binary is identical
+    /// across projects).
+    pub binary_path: Option<String>,
+
+    /// 1.2.17+ — when `true`, a missing Piper binary
+    /// triggers a one-time download from GitHub
+    /// Releases.  When `false`, the resolver reports
+    /// "Piper not found" and falls back to System under
+    /// `engine: "auto"` or errors under `engine:
+    /// "piper"`.
+    pub auto_download_binary: bool,
+
+    /// 1.2.17+ — LRU cache cap on the project's voices
+    /// directory.  When the count exceeds this number,
+    /// the least-recently-used voice is evicted (its
+    /// `.onnx` + `.onnx.json` removed).  Voice models
+    /// are 25–100 MB each; the default `5` caps the
+    /// directory at ~125–500 MB per project.
+    pub cache_max_voices: usize,
+
+    /// 1.2.17+ — override the platform default playback
+    /// command.  `None` (default) uses `afplay` on macOS,
+    /// `paplay` / `aplay` on Linux, PowerShell
+    /// `Media.SoundPlayer` on Windows.  Set to a string
+    /// containing `{path}` (replaced with the synthesised
+    /// WAV path) to use a custom player (`mpv`, `ffplay`,
+    /// `sox play`, etc.).
+    pub play_command: Option<String>,
+
+    /// 1.2.17+ — sample rate for Piper synthesis output
+    /// in Hz.  Piper's native rate is 22050 Hz; changing
+    /// this triggers a resample inside the playback
+    /// pipeline.  Most users should leave the default.
+    pub sample_rate_hz: u32,
+
+    /// 1.2.17+ — when `true`, the first auto-downloaded
+    /// voice appends `.inkhaven/voices/` to the project's
+    /// `.gitignore` (creating the file if absent).
+    /// Voices are large opaque blobs; committing them
+    /// pollutes git history and the working tree.  Set
+    /// `false` if you manage `.gitignore` strictly by
+    /// hand.  One-time, idempotent, atomic via
+    /// `crate::io_atomic`.
+    pub auto_gitignore: bool,
 }
 
 impl Default for TtsConfig {
@@ -2431,6 +2529,19 @@ impl Default for TtsConfig {
             speed: 1.0,
             greeting: String::new(),
             goodbye: String::new(),
+            engine: "auto".into(),
+            voices_dir: ".inkhaven/voices".into(),
+            auto_download: true,
+            catalog_url:
+                "https://huggingface.co/rhasspy/piper-voices/raw/main/voices.json"
+                    .into(),
+            catalog_ttl_hours: 24,
+            binary_path: None,
+            auto_download_binary: true,
+            cache_max_voices: 5,
+            play_command: None,
+            sample_rate_hz: 22_050,
+            auto_gitignore: true,
         }
     }
 }

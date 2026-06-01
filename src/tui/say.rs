@@ -135,6 +135,93 @@ impl Say {
         }
     }
 
+    /// Speak `text` into a file at `dest` via
+    /// `/usr/bin/say -o`.  Blocks until the subprocess
+    /// exits or `timeout` fires (whichever comes first).
+    /// Returns the number of bytes written on success.
+    ///
+    /// 1.2.17+: extracted from the inline implementation
+    /// that used to live in `commit_tts_save_as_audio` so
+    /// the `TtsEngine` dispatcher can route save-as-audio
+    /// uniformly across backends.  Behaviour is
+    /// byte-identical to the 1.2.9 inline code.
+    pub(super) fn speak_to_file_blocking(
+        text: &str,
+        voice: &str,
+        rate_wpm: Option<u16>,
+        dest: &Path,
+        timeout: std::time::Duration,
+    ) -> Result<u64, String> {
+        Self::available().map_err(|s| s.to_string())?;
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                format!("couldn't create {}: {e}", parent.display())
+            })?;
+        }
+        let mut cmd = Command::new("/usr/bin/say");
+        cmd.arg("-o").arg(dest);
+        if !voice.is_empty() {
+            cmd.arg("-v").arg(voice);
+        }
+        if let Some(r) = rate_wpm {
+            cmd.arg("-r").arg(r.to_string());
+        }
+        cmd.stdin(Stdio::piped());
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::piped());
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("spawn failed: {e}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(text.as_bytes())
+                .map_err(|e| {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    format!("write stdin: {e}")
+                })?;
+        }
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if status.success() {
+                        let bytes = std::fs::metadata(dest)
+                            .map(|m| m.len())
+                            .unwrap_or(0);
+                        return Ok(bytes);
+                    } else {
+                        let mut stderr = String::new();
+                        if let Some(mut s) = child.stderr.take() {
+                            use std::io::Read;
+                            let _ = s.read_to_string(&mut stderr);
+                        }
+                        return Err(format!(
+                            "`say` exited {} — {}",
+                            status.code().unwrap_or(-1),
+                            stderr.trim(),
+                        ));
+                    }
+                }
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(format!(
+                            "timed out after {}s — partial file at {}",
+                            timeout.as_secs(),
+                            dest.display(),
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(e) => {
+                    return Err(format!("wait failed: {e}"));
+                }
+            }
+        }
+    }
+
     /// Enumerate installed voices by running
     /// `say -v "?"` and parsing the output.  Each line:
     ///

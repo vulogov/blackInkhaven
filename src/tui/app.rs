@@ -1644,14 +1644,14 @@ pub(crate) struct App {
     /// `true` after Ctrl+B inside the pane, consumed by
     /// the next keystroke.
     shell_ctrlb_pending: bool,
-    /// 1.2.9+ — TTS subprocess wrapper.  Each
-    /// `Ctrl+B S` / greeting / goodbye spawns a fresh
-    /// `/usr/bin/say` child process and stores it here.
-    /// Side-steps the in-process `tts-rs` / AVFoundation
-    /// reuse bug where the second `speak()` call in the
-    /// same process produces no audio.  See `tui::say`
-    /// for the wrapper detail.
-    tts_say: super::say::Say,
+    /// TTS engine handle.  1.2.9 had a single `Say`
+    /// (macOS-only) field; 1.2.17 T.1 replaces it with
+    /// the `TtsEngine` enum dispatcher so the same speak
+    /// paths can route to either the legacy System
+    /// backend (`/usr/bin/say` subprocess) or the new
+    /// Piper neural backend (lands across T.2–T.5).
+    /// Resolved in `App::new` from `editor.tts.engine`.
+    tts: super::tts::TtsEngine,
     /// 1.2.9+ — session-local override for
     /// `editor.style_warnings.enabled`.  `Ctrl+V w`
     /// flips this; `true` forces overlays on regardless
@@ -2106,6 +2106,12 @@ impl App {
             None
         };
         let initial_mouse_captured = cfg.editor.mouse_captured;
+        // Resolve the TTS engine before the struct
+        // literal moves `cfg` + `layout` into the App.
+        // T.1: "auto" falls through to System on every
+        // host because the Piper stub always errors.
+        let tts =
+            super::tts::TtsEngine::resolve(&cfg.editor.tts, &layout.root);
         Ok(Self {
             layout,
             store,
@@ -2142,7 +2148,7 @@ impl App {
             shell_command_history: Vec::new(),
             shell_history_db: None,
             shell_ctrlb_pending: false,
-            tts_say: super::say::Say::default(),
+            tts,
             style_warnings_toggle: None,
             pov_chip_toggle: None,
             prompt_lang_mode_runtime: None,
@@ -8839,16 +8845,17 @@ impl App {
             return;
         }
 
-        // ── 4 — platform gate ───────────────────────
-        if let Err(reason) = super::say::Say::available() {
+        // ── 4 — engine readiness ────────────────────
+        if let Err(reason) = self.tts.is_ready() {
             self.modal = Modal::TtsUnavailable {
                 title: " TTS unavailable ".into(),
                 reason: format!(
                     "{reason}\n\n\
-                     1.2.9 ships TTS via macOS `/usr/bin/say` — the only \
-                     backend that proved reliable for repeated invocations \
-                     in one process.  Cross-platform TTS is on the roadmap; \
-                     until then non-macOS hosts surface this modal."
+                     Active backend: {backend}.  1.2.17 adds the Piper \
+                     neural backend (T.2+) so non-macOS hosts will gain a \
+                     working option; until then `tts.engine = \"auto\"` \
+                     falls back to macOS `say` on this host.",
+                    backend = self.tts.label(),
                 ),
             };
             return;
@@ -8856,29 +8863,30 @@ impl App {
 
         // ── 5 — pick voice + speak ──────────────────
         let cfg = &self.cfg.editor.tts;
-        let voice_resolved = super::say::Say::pick_voice(&cfg.voice);
+        let voice_resolved = self.tts.resolve_voice(&cfg.voice);
         let voice_label = voice_resolved
             .clone()
-            .unwrap_or_else(|| "system default".to_string());
+            .unwrap_or_else(|| "engine default".to_string());
         let voice_arg = voice_resolved.unwrap_or_default();
         // Convert speed multiplier to words-per-minute.
         // 180 wpm is the canonical "normal" reading rate;
-        // multiplying by the HJSON speed lands us in
-        // `say`'s expected range.  Clamp to [80, 400] —
-        // `say` accepts the full range, but speech is
-        // unintelligible outside it.
+        // multiplying by the HJSON speed lands us in the
+        // engine's expected range.  Clamp to [80, 400] —
+        // the System backend (`say`) accepts the full
+        // range, but speech is unintelligible outside it.
         let wpm = ((180.0 * cfg.speed.max(0.1)).round() as i32)
             .clamp(80, 400) as u16;
 
-        if let Err(e) = self.tts_say.speak(&body, &voice_arg, Some(wpm)) {
+        if let Err(e) = self.tts.speak(&body, &voice_arg, Some(wpm)) {
             self.modal = Modal::TtsUnavailable {
                 title: " TTS error ".into(),
                 reason: format!(
-                    "Couldn't start `say` subprocess:\n\n  {e}\n\n\
-                     Check that /usr/bin/say is on disk and executable.  \
-                     This binary ships with every macOS install since \
-                     OS X 10.3 — its absence is usually a permissions or \
-                     SIP issue."
+                    "Couldn't start TTS playback:\n\n  {e}\n\n\
+                     Active backend: {backend}.  Check the diagnostic \
+                     above for the exact cause — common reasons include \
+                     a missing `say` binary (macOS) or a Piper voice \
+                     that hasn't finished downloading.",
+                    backend = self.tts.label(),
                 ),
             };
             return;
@@ -8901,7 +8909,7 @@ impl App {
         if !matches!(self.modal, Modal::TtsPlayback { .. }) {
             return;
         }
-        if !self.tts_say.is_speaking() {
+        if !self.tts.is_speaking() {
             self.modal = Modal::None;
             self.status = "TTS: finished".into();
         }
@@ -8911,7 +8919,7 @@ impl App {
     /// playback modal.  Called when the user hits any
     /// key while the playback modal is open.
     fn tts_stop_playback(&mut self) {
-        self.tts_say.stop();
+        self.tts.stop();
         self.modal = Modal::None;
         self.status = "TTS: stopped".into();
     }
@@ -9912,12 +9920,15 @@ impl App {
             };
             return;
         }
-        if let Err(reason) = super::say::Say::available() {
+        if let Err(reason) = self.tts.is_ready() {
             self.modal = Modal::TtsUnavailable {
                 title: " TTS unavailable ".into(),
                 reason: format!(
-                    "{reason}\n\nSave-as-audio uses macOS `/usr/bin/say -o`. \
-                     Cross-platform support is on the 1.3+ roadmap."
+                    "{reason}\n\nSave-as-audio routes through the same \
+                     TTS engine as `Ctrl+B S`.  Active backend: {backend}. \
+                     1.2.17 Piper transition (T.5) brings cross-platform \
+                     save-as-audio.",
+                    backend = self.tts.label(),
                 ),
             };
             return;
@@ -9938,9 +9949,9 @@ impl App {
             input.insert_char(c);
         }
         let cfg = &self.cfg.editor.tts;
-        let voice = super::say::Say::pick_voice(&cfg.voice).unwrap_or_default();
+        let voice = self.tts.resolve_voice(&cfg.voice).unwrap_or_default();
         let voice_label = if voice.is_empty() {
-            "system default".to_string()
+            "engine default".to_string()
         } else {
             voice.clone()
         };
@@ -9977,86 +9988,28 @@ impl App {
         voice_label: &str,
     ) {
         let dest = std::path::PathBuf::from(dest_raw.trim());
-        if let Some(parent) = dest.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
+        // The blocking save dispatches through TtsEngine
+        // so the System (`say -o`) and future Piper
+        // (`piper > out.wav`) backends share the same
+        // call site.  Each backend handles its own
+        // parent-dir creation, subprocess lifecycle, and
+        // timeout behaviour.
+        match self.tts.speak_to_file_blocking(
+            body,
+            voice,
+            Some(wpm),
+            &dest,
+            std::time::Duration::from_secs(30),
+        ) {
+            Ok(bytes) => {
                 self.status = format!(
-                    "TTS save: couldn't create {}: {e}",
-                    parent.display(),
+                    "TTS save: wrote {} ({} KB · voice={voice_label})",
+                    dest.display(),
+                    bytes / 1024,
                 );
-                return;
             }
-        }
-        let mut cmd = std::process::Command::new("/usr/bin/say");
-        cmd.arg("-o").arg(&dest);
-        if !voice.is_empty() {
-            cmd.arg("-v").arg(voice);
-        }
-        cmd.arg("-r").arg(wpm.to_string());
-        cmd.stdin(std::process::Stdio::piped());
-        cmd.stdout(std::process::Stdio::null());
-        cmd.stderr(std::process::Stdio::piped());
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
             Err(e) => {
-                self.status = format!("TTS save: spawn failed: {e}");
-                return;
-            }
-        };
-        if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write;
-            if let Err(e) = stdin.write_all(body.as_bytes()) {
-                self.status = format!("TTS save: write stdin: {e}");
-                let _ = child.kill();
-                let _ = child.wait();
-                return;
-            }
-        }
-        // Bounded wait: 30 seconds.  `say -o` writes
-        // streaming so even a long paragraph fits.
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_secs(30);
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    if status.success() {
-                        let bytes = std::fs::metadata(&dest)
-                            .map(|m| m.len())
-                            .unwrap_or(0);
-                        self.status = format!(
-                            "TTS save: wrote {} ({} KB · voice={voice_label})",
-                            dest.display(),
-                            bytes / 1024,
-                        );
-                    } else {
-                        let mut stderr = String::new();
-                        if let Some(mut s) = child.stderr.take() {
-                            use std::io::Read;
-                            let _ = s.read_to_string(&mut stderr);
-                        }
-                        self.status = format!(
-                            "TTS save: `say` exited {} — {}",
-                            status.code().unwrap_or(-1),
-                            stderr.trim(),
-                        );
-                    }
-                    return;
-                }
-                Ok(None) => {
-                    if std::time::Instant::now() >= deadline {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        self.status = format!(
-                            "TTS save: timed out after 30s — partial file at {}",
-                            dest.display(),
-                        );
-                        return;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                Err(e) => {
-                    self.status = format!("TTS save: wait failed: {e}");
-                    return;
-                }
+                self.status = format!("TTS save: {e}");
             }
         }
     }
@@ -10079,22 +10032,12 @@ impl App {
         if text.is_empty() {
             return Err("empty text".into());
         }
-        if !self.cfg.editor.tts.enabled {
-            return Err(
-                "TTS is disabled in inkhaven.hjson (editor.tts.enabled = true)".into(),
-            );
-        }
-        if let Err(reason) = super::say::Say::available() {
-            return Err(reason.to_string());
-        }
+        self.tts.is_ready()?;
         let cfg = &self.cfg.editor.tts;
-        let voice = super::say::Say::pick_voice(&cfg.voice).unwrap_or_default();
+        let voice = self.tts.resolve_voice(&cfg.voice).unwrap_or_default();
         let wpm = ((180.0 * cfg.speed.max(0.1)).round() as i32)
             .clamp(80, 400) as u16;
-        self.tts_say
-            .speak(text, &voice, Some(wpm))
-            .map_err(|e| format!("subprocess spawn failed: {e}"))?;
-        Ok(())
+        self.tts.speak(text, &voice, Some(wpm))
     }
 
     /// 1.2.9+ — speak `editor.tts.greeting` at startup.
@@ -10104,17 +10047,17 @@ impl App {
     /// `enabled = false`, or the platform isn't macOS.
     pub(super) fn tts_speak_greeting(&mut self) {
         let text = self.cfg.editor.tts.greeting.trim().to_string();
-        if text.is_empty() || !self.cfg.editor.tts.enabled {
+        if text.is_empty() {
             return;
         }
-        if super::say::Say::available().is_err() {
+        if self.tts.is_ready().is_err() {
             return;
         }
         let cfg = &self.cfg.editor.tts;
-        let voice = super::say::Say::pick_voice(&cfg.voice).unwrap_or_default();
+        let voice = self.tts.resolve_voice(&cfg.voice).unwrap_or_default();
         let wpm = ((180.0 * cfg.speed.max(0.1)).round() as i32)
             .clamp(80, 400) as u16;
-        let _ = self.tts_say.speak(&text, &voice, Some(wpm));
+        let _ = self.tts.speak(&text, &voice, Some(wpm));
     }
 
     /// 1.2.9+ — speak `editor.tts.goodbye` at shutdown
@@ -10127,17 +10070,17 @@ impl App {
     /// platform isn't macOS.
     pub(super) fn tts_speak_goodbye_blocking(&mut self) {
         let text = self.cfg.editor.tts.goodbye.trim().to_string();
-        if text.is_empty() || !self.cfg.editor.tts.enabled {
+        if text.is_empty() {
             return;
         }
-        if super::say::Say::available().is_err() {
+        if self.tts.is_ready().is_err() {
             return;
         }
         let cfg = &self.cfg.editor.tts;
-        let voice = super::say::Say::pick_voice(&cfg.voice).unwrap_or_default();
+        let voice = self.tts.resolve_voice(&cfg.voice).unwrap_or_default();
         let wpm = ((180.0 * cfg.speed.max(0.1)).round() as i32)
             .clamp(80, 400) as u16;
-        if self.tts_say.speak(&text, &voice, Some(wpm)).is_err() {
+        if self.tts.speak(&text, &voice, Some(wpm)).is_err() {
             return;
         }
         // Wait for the subprocess to exit naturally.
@@ -10147,14 +10090,14 @@ impl App {
         let hard_deadline = std::time::Instant::now()
             + std::time::Duration::from_secs(6);
         while std::time::Instant::now() < hard_deadline {
-            if !self.tts_say.is_speaking() {
+            if !self.tts.is_speaking() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         // Ensure the subprocess is gone even if it
         // outran our deadline.
-        self.tts_say.stop();
+        self.tts.stop();
     }
 
     fn open_hjson_editor(&mut self) {
