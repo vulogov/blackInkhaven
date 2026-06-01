@@ -102,14 +102,18 @@ pub(crate) fn download_piper_binary(
             },
         )?;
 
-    // 3. Stage the download into a unique temp dir
-    //    under the cache so a partial transfer can't
-    //    leave garbage behind in the final location.
-    //    A failed run leaves the staging dir; the next
-    //    successful run overwrites it.
-    let staging = cache_root
-        .join(platform.cache_subdir())
-        .join(".staging");
+    // 3. Stage the download into a unique sibling
+    //    directory of the target.  T.2.a moved this
+    //    out of `<target>/.staging/` because the
+    //    install step now wipes the target directory
+    //    to guarantee a clean re-install — sharing
+    //    a parent with staging would self-wipe the
+    //    source.  A failed run leaves the staging dir;
+    //    the next successful run overwrites it.
+    let staging = cache_root.join(format!(
+        ".staging-{}",
+        platform.cache_subdir(),
+    ));
     std::fs::create_dir_all(&staging).map_err(|e| {
         PiperUnavailable::DownloadFailed(format!(
             "mkdir staging {}: {e}",
@@ -133,18 +137,33 @@ pub(crate) fn download_piper_binary(
     })?;
     extract_archive(&archive_path, &extract_dir)?;
 
-    // 5. Locate the binary inside the extracted tree.
-    //    Piper tarballs ship as `piper/piper(.exe)`;
-    //    we walk a couple of layers to be tolerant of
-    //    upstream layout changes.
-    let target = cache_root
-        .join(platform.cache_subdir())
-        .join(platform.binary_filename());
+    // 5. Locate the binary inside the extracted tree
+    //    + install the WHOLE containing directory (not
+    //    just the executable).  Piper's macOS + Linux
+    //    tarballs ship sibling files the runtime
+    //    needs: `espeak-ng-data/` (~400 phoneme tables),
+    //    `piper_phonemize` helper binary,
+    //    `libtashkeel_model.ort`, etc.  T.2's original
+    //    install_binary copied only the .exe and lost
+    //    everything else — Piper would launch but fail
+    //    at first phonemization.  T.2.a installs the
+    //    directory that holds the binary.
+    let target_dir = cache_root.join(platform.cache_subdir());
     let extracted = locate_extracted_binary(
         &extract_dir,
         platform.binary_filename(),
     )?;
-    install_binary(&extracted, &target)?;
+    let source_tree = extracted
+        .parent()
+        .ok_or_else(|| {
+            PiperUnavailable::ExtractFailed(format!(
+                "extracted binary `{}` has no parent directory",
+                extracted.display(),
+            ))
+        })?
+        .to_path_buf();
+    install_tree(&source_tree, &target_dir)?;
+    let target = target_dir.join(platform.binary_filename());
 
     // 6. Cleanup staging (best-effort; not fatal if it
     //    fails — the next run will overwrite).
@@ -345,9 +364,29 @@ pub(crate) fn locate_extracted_binary(
     })
 }
 
-/// Move `src` to `dst`, atomic-rename style.  Creates
-/// the parent of `dst` if missing + carries +x on Unix.
-pub(crate) fn install_binary(src: &Path, dst: &Path) -> Result<(), PiperUnavailable> {
+/// Install the entire `src` directory tree into `dst`.
+/// `src` is the directory containing the Piper binary
+/// (i.e. `<extract>/piper/` in the canonical tarball
+/// layout); `dst` is the cache subdir
+/// (`<cache_root>/piper-<plat>/`).  The runtime
+/// dependencies (`espeak-ng-data/`, `piper_phonemize`,
+/// libraries) land alongside the binary.
+///
+/// T.2.a (1.2.17): replaces the original single-file
+/// `install_binary` which lost the espeak-ng-data
+/// directory and made Piper fail at phonemization.
+///
+/// Not atomic in the strict sense (directory installs
+/// require coordinated rename of a whole tree which is
+/// platform-dependent), but bounded: a crash mid-copy
+/// leaves a partial dst that `resolve_piper_binary`
+/// classifies as "binary missing" and the next download
+/// overwrites cleanly.  Wipes `dst` first to keep the
+/// install idempotent.
+pub(crate) fn install_tree(
+    src: &Path,
+    dst: &Path,
+) -> Result<(), PiperUnavailable> {
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
             PiperUnavailable::ExtractFailed(format!(
@@ -356,40 +395,48 @@ pub(crate) fn install_binary(src: &Path, dst: &Path) -> Result<(), PiperUnavaila
             ))
         })?;
     }
-    // Atomic via `crate::io_atomic`: copy through a
-    // temp file in the dst's directory + fsync +
-    // rename, so a crash mid-install never leaves the
-    // user with a half-written binary.
-    let bytes = std::fs::read(src).map_err(|e| {
+    // Wipe the destination first so a re-install
+    // doesn't leave stale files from a prior version.
+    let _ = std::fs::remove_dir_all(dst);
+    std::fs::create_dir_all(dst).map_err(|e| {
         PiperUnavailable::ExtractFailed(format!(
-            "read extracted binary {}: {e}",
-            src.display(),
-        ))
-    })?;
-    crate::io_atomic::write(dst, &bytes).map_err(|e| {
-        PiperUnavailable::ExtractFailed(format!(
-            "atomic write {}: {e}",
+            "mkdir target {}: {e}",
             dst.display(),
         ))
     })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(dst)
-            .map_err(|e| {
-                PiperUnavailable::ExtractFailed(format!(
-                    "stat dst {}: {e}",
-                    dst.display(),
-                ))
-            })?
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(dst, perms).map_err(|e| {
-            PiperUnavailable::ExtractFailed(format!(
-                "chmod {}: {e}",
-                dst.display(),
-            ))
-        })?;
+    copy_dir_recursive(src, dst).map_err(|e| {
+        PiperUnavailable::ExtractFailed(format!(
+            "copy {} → {}: {e}",
+            src.display(),
+            dst.display(),
+        ))
+    })?;
+    Ok(())
+}
+
+/// Recursively copy `src` into `dst`.  Symbolic links
+/// are skipped — Piper's tarballs don't ship any, and
+/// blindly resolving symlinks during install is a
+/// known path-traversal vector.  Errors propagate
+/// verbatim.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            // Skip — see fn-level docs.
+            continue;
+        }
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+            // std::fs::copy preserves Unix mode bits;
+            // no extra chmod needed for the binary.
+        }
     }
     Ok(())
 }
@@ -552,25 +599,76 @@ mod tests {
         assert!(err.to_user_message().contains("piper"));
     }
 
-    // ── install_binary (atomic + +x) ──────────────────
+    // ── install_tree (T.2.a — whole-directory install) ────
 
     #[test]
-    fn install_binary_writes_and_sets_executable() {
+    fn install_tree_copies_every_file() {
         let tmp = tempfile::tempdir().unwrap();
-        let src = tmp.path().join("src");
-        std::fs::write(&src, b"binary-bytes").unwrap();
-        let dst = tmp.path().join("cache").join("piper-linux-x86_64").join("piper");
-        install_binary(&src, &dst).unwrap();
-        assert_eq!(std::fs::read(&dst).unwrap(), b"binary-bytes");
+        let src = tmp.path().join("src-piper");
+        std::fs::create_dir_all(src.join("espeak-ng-data")).unwrap();
+        // Mark the binary +x so we can verify mode
+        // preservation after copy.
+        let bin = src.join("piper");
+        std::fs::write(&bin, b"BIN").unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&dst).unwrap().permissions().mode();
+            let mut perms = std::fs::metadata(&bin).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&bin, perms).unwrap();
+        }
+        std::fs::write(src.join("espeak-ng"), b"E").unwrap();
+        std::fs::write(
+            src.join("espeak-ng-data").join("phonemes.dict"),
+            b"P",
+        )
+        .unwrap();
+        std::fs::write(src.join("libtashkeel_model.ort"), b"T").unwrap();
+
+        let dst = tmp.path().join("cache").join("piper-linux-x86_64");
+        install_tree(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read(dst.join("piper")).unwrap(), b"BIN");
+        assert_eq!(std::fs::read(dst.join("espeak-ng")).unwrap(), b"E");
+        assert_eq!(
+            std::fs::read(
+                dst.join("espeak-ng-data").join("phonemes.dict"),
+            )
+            .unwrap(),
+            b"P",
+        );
+        assert_eq!(
+            std::fs::read(dst.join("libtashkeel_model.ort")).unwrap(),
+            b"T",
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dst.join("piper"))
+                .unwrap()
+                .permissions()
+                .mode();
             assert!(
                 mode & 0o111 != 0,
-                "expected +x on installed binary, mode={mode:o}",
+                "expected +x preserved on installed binary, mode={mode:o}",
             );
         }
+    }
+
+    #[test]
+    fn install_tree_wipes_prior_installation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("piper"), b"NEW").unwrap();
+        let dst = tmp.path().join("dst");
+        std::fs::create_dir_all(&dst).unwrap();
+        // Stale file from a prior install — must be
+        // removed by the re-install.
+        std::fs::write(dst.join("stale.txt"), b"old").unwrap();
+        install_tree(&src, &dst).unwrap();
+        assert!(!dst.join("stale.txt").exists(), "stale must be removed");
+        assert_eq!(std::fs::read(dst.join("piper")).unwrap(), b"NEW");
     }
 
     // ── download_piper_binary orchestrator ────────────
