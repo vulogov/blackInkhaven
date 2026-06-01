@@ -726,3 +726,101 @@ Three values for `trust_decision`: `"ask"`
 `"deny"` (never run — for read-only review).
 See [Tutorial 53](Tutorials/53-bund-trust-gate.md)
 for when to use which.
+
+## 1.2.16 — new actions
+
+One new TUI chord landed this cycle.  The
+remaining 1.2.16 surface is CLI subcommands +
+HJSON config knobs, summarised below for the
+rebinding audience.
+
+### Manuscript intelligence dashboard (Ctrl+V Shift+J)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `view.journal` | `Ctrl+V Shift+J` | Open the manuscript intelligence dashboard (J for *Journal*).  Synthesis pane that unifies word count + structure + threads + comments into one view.  Modal-local: ↑↓ scroll, e exports snapshot to `<project>/journal-<UTC>.md` (atomic), Esc closes.  See [Tutorial 54](Tutorials/54-manuscript-intelligence-dashboard.md). |
+
+### Programmatic / scripting access
+
+The 1.2.16 cycle also shipped:
+
+```
+$ inkhaven language export --format <fmt>
+  fmt options: json | anki | dictionary-twocol |
+               csv (NEW, round-trip with --import)
+             | grammar (NEW, typst-rendered ref)
+             | phrasebook (NEW, two-column typst)
+
+$ inkhaven language define-rule <language> <rule_id>
+                                [--category grammar|phonology]
+  # Opens $EDITOR with the rule template; on save,
+  # writes the body back to the rule paragraph.
+
+$ inkhaven doctor --scan
+  # New classes in 1.2.16:
+  #   dropped-character   (A.6)
+  #   pacing-collapse     (A.6)
+  #   stalled-thread      (A.6)
+  #   naming-inconsistency (A.5)
+  # All Info severity, no autofix — author-judgment
+  # findings.  See Tutorial 55.
+```
+
+### Bund stdlib expansion (I.4.a)
+
+Four new Bund words (default-allowed `store_read`
+unless noted):
+
+| Word | Stack | Category |
+|------|-------|----------|
+| `ink.review.list` | `( -- list )` | store_read |
+| `ink.review.add_comment` | `( para_uuid char_start char_end body -- comment_uuid )` | **store_write** |
+| `ink.review.resolve` | `( comment_uuid -- bool )` | **store_write** |
+| `ink.thread.list` | `( -- list )` | store_read |
+
+Default-denied for the write variants; project
+needs `scripting.enabled_categories: [
+"store_write"]` to grant.  The 1.2.15 trust gate
+also applies — auto-loaded scripts in untrusted
+projects can't reach the writes regardless of
+the category enable.
+
+### Snippet expansion — picker placeholders + `bund:` prefix (P.6)
+
+Editor-driven, not a chord.  Three additional
+placeholders + one prefix in the `snippets`
+HJSON block:
+
+| Body | Behaviour |
+|------|-----------|
+| `She turned to {char_lookup}.` | Pastes head, opens Characters picker, on Enter inserts the picked entry name + tail |
+| `In {place_lookup}` | Same shape — Places picker |
+| `the {artefact_lookup} fell` | Same — Artefacts picker |
+| `bund:40 2 +` | Evaluates the Bund-VM program; top-of-stack string becomes the expansion |
+| `bund:"{author}" ink.print` | Sync placeholders expanded before eval — `{author}` is injected first |
+
+First picker placeholder in a body fires the
+modal; any subsequent picker placeholders pass
+through verbatim in the tail (documented
+limitation, can be lifted later via continuation
+queueing).
+
+### Worldbuilding glossary chip + amber backup chip
+
+Two new status-bar chips.  Toggle via HJSON:
+
+```hjson
+{
+  editor: {
+    show_glossary_chip: true   // default — <N>C·<N>P·<N>A
+  }
+  backup: {
+    amber_threshold: 0.5   // default — chip turns amber
+                           // at 50% of max_age, yellow
+                           // at 100% (1.2.15 behaviour)
+  }
+}
+```
+
+See [`CONFIGURATION.md`](CONFIGURATION.md) for
+the full reference.

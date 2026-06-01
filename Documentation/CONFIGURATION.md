@@ -1208,3 +1208,144 @@ Bund script with `fs_write` enabled could
 overwrite anywhere the user could reach
 (`~/.ssh/authorized_keys`, system files with
 sudo, etc.).  Confinement is the safer default.
+
+## 1.2.16 — new HJSON blocks
+
+### `backup.amber_threshold` (1.2.16+)
+
+The 1.2.15 health monitor's backup-freshness
+check went straight from Ok → Warn at
+`backup.max_age`.  1.2.16 adds an intermediate
+"amber" state so the user has visibility BEFORE
+the warn fires.
+
+```hjson
+{
+  backup: {
+    max_age: "30d"         // 1.2.15 — when warn fires
+    amber_threshold: 0.5   // 1.2.16 — when amber chip
+                           //          appears (50% of
+                           //          max_age by default)
+  }
+}
+```
+
+* `amber_threshold` is a fraction in `[0.0, 1.0]`.
+* When backup age ≥ `amber_threshold × max_age`
+  but < `max_age`, the status-bar chip turns
+  amber with the `ℹ` glyph (Severity::Info).
+* Above `max_age`, the existing 1.2.15
+  Warning path takes over (yellow chip).
+
+Set `0.0` to disable the amber tier (chip
+behaves as 1.2.15).  Set `1.0` and the chip
+flips straight to Warn (also 1.2.15 behaviour).
+
+### `editor.show_glossary_chip` (1.2.16+)
+
+Toggles the worldbuilding-density chip in the
+status bar.
+
+```hjson
+{
+  editor: {
+    show_glossary_chip: true  // default
+  }
+}
+```
+
+When enabled, the status bar shows a
+`<N>C·<N>P·<N>A` chip — cumulative counts of
+**C**haracters / **P**laces / **A**rtefacts
+entries across the system books.  Auto-hides
+on fresh projects (all three counts zero) so
+empty-project users don't see noise.
+
+Useful at-a-glance check for cast density:
+30 chapters in with only 4 named characters
+tells you the cast is thin; 50 named places
+across a 200-paragraph manuscript tells you
+the reader has a thicket to navigate.
+
+### `snippets` — `bund:` prefix + picker placeholders (1.2.16+)
+
+Extends the 1.2.14 `snippets` block.  No new
+config keys — the additions live inside
+existing snippet bodies.
+
+```hjson
+{
+  snippets: {
+    enabled: true                   // 1.2.14
+    expand_on: ["space", "tab"]     // 1.2.14
+    bindings: [
+      // Bund-prefix bodies (NEW in 1.2.16):
+      { trigger: ";today",
+        body: "bund:ink.now \"%Y-%m-%d\" ink.fmt" }
+      { trigger: ";doubled",
+        body: "bund:40 2 *" }
+
+      // Picker placeholder bodies (NEW in 1.2.16):
+      { trigger: ";cmeets",
+        body: "She turned to {char_lookup}." }
+      { trigger: ";at",
+        body: "In {place_lookup}, the air was thin." }
+      { trigger: ";holds",
+        body: "He held the {artefact_lookup} aloft." }
+    ]
+  }
+}
+```
+
+#### `bund:` prefix
+
+When the snippet body starts with `bund:`, the
+remainder is interpreted as a Bund-VM program.
+The top-of-stack value at program end (coerced
+to string) becomes the expansion.
+
+* Sync placeholders are expanded BEFORE
+  evaluation, so `bund:"{author}" ink.print`
+  injects `{author}` first then runs the
+  program.
+* Script execution honours the trust gate +
+  category policy — a `bund:` body that calls
+  a `store_write` word in an untrusted project
+  is denied with a warning.
+* Empty stack / non-string top → empty
+  expansion (snippet pastes nothing) plus a
+  status-bar warning.
+
+#### Picker placeholders
+
+Three new placeholders interrupt expansion to
+ask the author which entity to insert:
+
+| Placeholder | Picker |
+|-------------|--------|
+| `{char_lookup}` | Characters system book |
+| `{place_lookup}` | Places system book |
+| `{artefact_lookup}` | Artefacts system book |
+
+Behaviour:
+
+* The leading sync placeholders (`{author}`,
+  `{date}`, etc.) are resolved first.
+* Text before the picker placeholder is pasted
+  at the cursor immediately.
+* The corresponding picker modal opens; on
+  Enter the picked entry name + the tail of
+  the snippet body are inserted at the cursor.
+* Esc cancels — the head stays inserted, the
+  tail is dropped.
+* Only the **first** picker placeholder in a
+  body fires the modal; any subsequent
+  placeholders pass through as literal text
+  (a documented limitation, can be lifted in
+  a follow-up cycle by queueing modal
+  continuations).
+
+See [Tutorial 41 — Snippets](Tutorials/41-snippets-and-expansion.md)
+for the full snippet reference and
+`Documentation/RELEASE_NOTES/1.2.16.md` Phase
+P.6 for the implementation log.
