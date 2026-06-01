@@ -972,6 +972,21 @@ pub(super) enum Modal {
     ThreadDoctor {
         data: ThreadDoctorData,
     },
+    /// 1.2.15+ Phase D.3 — project-wide doctor
+    /// panel.  TUI surface for `inkhaven doctor
+    /// --scan` + `--autofix` (D.1/D.2).  Cursor-
+    /// driven table of findings; `r` applies the
+    /// highlighted finding's repair, `R` applies
+    /// every repair, `Esc` closes.  Status messages
+    /// after each repair land on the regular
+    /// status bar so the user can see what
+    /// happened without scrolling the modal.
+    DoctorPanel {
+        findings: Vec<crate::cli::doctor_scan::ScanFinding>,
+        cursor: usize,
+        scroll: usize,
+        last_status: Option<String>,
+    },
     /// 1.2.14+ Phase A.2 — swim-lane weave view.
     /// Pushed by `w` from inside `ThreadsPicker`;
     /// `Esc` returns to the picker (stored in

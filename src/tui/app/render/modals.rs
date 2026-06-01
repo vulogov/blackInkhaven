@@ -5623,6 +5623,114 @@ impl super::super::App {
 
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
+
+    /// 1.2.15+ Phase D.3 — TUI project doctor
+    /// panel.  Renders the findings table with the
+    /// cursor highlighted, footer hints, and the
+    /// last-action status line below.  Layout:
+    ///
+    ///   ┌ Doctor — N findings — Ctrl+B Shift+0 ┐
+    ///   │   [N] sev · class · path             │
+    ///   │       detail                          │
+    ///   │   …                                   │
+    ///   │ <last_status>                         │
+    ///   │ ↑↓ navigate · r repair · R repair all │
+    ///   └───────────────────────────────────────┘
+    pub(in crate::tui::app) fn draw_doctor_panel_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::DoctorPanel { findings, cursor, scroll, last_status } =
+            &self.modal
+        else {
+            return;
+        };
+        let total = findings.len();
+        let width = area.width.saturating_sub(4).clamp(60, 110);
+        let inner_w = width.saturating_sub(4) as usize;
+        let header_lines = 1;
+        let footer_lines = 2;
+        let max_rows = area.height.saturating_sub(6) as usize;
+        let body_h = ((total * 2).max(2)).min(max_rows.max(4));
+        let height = (header_lines + body_h + footer_lines + 2) as u16;
+        let height = height.min(area.height.saturating_sub(2));
+        let x = area.x + area.width.saturating_sub(width) / 2;
+        let y = area.y + area.height.saturating_sub(height) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let title = if total == 0 {
+            " Doctor — project is clean — Ctrl+B Shift+0 ".to_string()
+        } else {
+            format!(" Doctor — {total} finding(s) — Ctrl+B Shift+0 ")
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let mut lines: Vec<Line<'_>> = Vec::new();
+
+        if findings.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  (nothing to do — the project scan returned zero findings)",
+                dim,
+            )));
+        } else {
+            // Visible window — body_h / 2 rows because
+            // each finding takes 2 lines (heading + detail).
+            let rows_per_line = 2;
+            let visible_rows = body_h / rows_per_line;
+            let start = (*scroll).min(total.saturating_sub(visible_rows.max(1)));
+            let end = (start + visible_rows.max(1)).min(total);
+            for (idx, f) in findings.iter().enumerate().skip(start).take(end - start) {
+                let marker = if idx == *cursor { "›" } else { " " };
+                let sev = f.severity.slug();
+                let class = f.class.slug();
+                let path = f.path.as_deref().unwrap_or("-");
+                let path_short = truncate_to(path, inner_w.saturating_sub(40));
+                let heading = format!("  {marker} {sev:>8} · {class:<24} · {path_short}");
+                let detail = truncate_to(&f.detail, inner_w.saturating_sub(8));
+                let detail_line = format!("        {detail}");
+                let style = if idx == *cursor {
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                lines.push(Line::from(Span::styled(heading, style)));
+                lines.push(Line::from(Span::styled(detail_line, dim)));
+            }
+        }
+
+        // Optional status line.
+        lines.push(Line::from(""));
+        if let Some(s) = last_status.as_deref() {
+            lines.push(Line::from(Span::styled(
+                format!("  {s}"),
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+        }
+        let footer = if findings.is_empty() {
+            " Esc closes ".to_string()
+        } else {
+            " ↑↓ navigate · r repair · R repair all · Esc closes ".to_string()
+        };
+        lines.push(Line::from(Span::styled(footer, dim)));
+
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
 }
 
 /// Truncate `s` to at most `max` characters,
