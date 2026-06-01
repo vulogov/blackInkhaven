@@ -269,6 +269,16 @@ pub const RESCUE_REPAIR_DAYS: u64 = 30;
 const CADENCE_PROJECT: Duration = Duration::from_secs(90);
 const CADENCE_BACKUP: Duration = Duration::from_secs(300);
 const CADENCE_RESCUE: Duration = Duration::from_secs(3600);
+/// 1.2.16+ Phase P.4 — DB integrity + HNSW
+/// parity ride the same cadence (cheap if
+/// healthy; expensive only when something has
+/// gone wrong).
+const CADENCE_DB_INTEGRITY: Duration = Duration::from_secs(900);
+const CADENCE_VECTOR_PARITY: Duration = Duration::from_secs(900);
+/// Tree parent-pointer integrity runs faster
+/// because a stale hierarchy snapshot affects
+/// the TUI's tree pane immediately.
+const CADENCE_TREE_INTEGRITY: Duration = Duration::from_secs(30);
 /// How often the tick loop wakes up to re-evaluate
 /// due checks.  The smallest cadence above defines
 /// the lower bound; 30 s is a safe pick that keeps
@@ -331,6 +341,24 @@ pub fn spawn_monitor(
                     evt
                 };
                 findings.push(evt);
+            }
+            // 1.2.16+ Phase P.4 — DB-side checks
+            // gated on a real Store handle being
+            // present (None for test paths + CLI
+            // monitor flows without a project).
+            if let Some(store) = setup.store.as_ref() {
+                if last.db_integrity.map_or(true, |t| now.duration_since(t) >= CADENCE_DB_INTEGRITY) {
+                    last.db_integrity = Some(now);
+                    findings.push(check_db_integrity(store));
+                }
+                if last.vector_parity.map_or(true, |t| now.duration_since(t) >= CADENCE_VECTOR_PARITY) {
+                    last.vector_parity = Some(now);
+                    findings.push(check_vector_parity(store));
+                }
+                if last.tree_integrity.map_or(true, |t| now.duration_since(t) >= CADENCE_TREE_INTEGRITY) {
+                    last.tree_integrity = Some(now);
+                    findings.push(check_tree_integrity(store));
+                }
             }
 
             // Collapse the per-tick findings to the
@@ -434,6 +462,10 @@ struct LastRun {
     project: Option<Instant>,
     backup: Option<Instant>,
     rescue: Option<Instant>,
+    // 1.2.16+ Phase P.4 — DB-side checks.
+    db_integrity: Option<Instant>,
+    vector_parity: Option<Instant>,
+    tree_integrity: Option<Instant>,
 }
 
 /// Pick the worst event from a tick's findings.
@@ -627,6 +659,168 @@ fn walk_rescues(
     }
 }
 
+/// 1.2.16+ Phase P.4 — DuckDB integrity check.
+/// Runs `PRAGMA integrity_check` against both
+/// metadata.db + blobs.db.  Healthy projects
+/// return `("ok", "ok")`; anything else is a
+/// Critical finding the user must act on
+/// immediately (restore from backup, run
+/// `inkhaven reindex`, etc.).  No auto-repair
+/// — the failure mode is "your database is
+/// corrupt"; we don't blindly mutate corrupt
+/// state.
+pub(crate) fn check_db_integrity(store: &crate::store::Store) -> HealthEvent {
+    match store.integrity_check() {
+        Ok((meta, blobs)) => classify_db_status(&meta, &blobs),
+        Err(e) => HealthEvent::Error(HealthFinding {
+            class: HealthClass::Db,
+            severity: Severity::Critical,
+            detail: format!("DuckDB integrity_check failed to run: {e}"),
+            auto_repairable: false,
+        }),
+    }
+}
+
+/// 1.2.16+ Phase P.4 — pure classifier for DB
+/// integrity-check output.  Exposed for unit
+/// testing without needing a real Store.
+pub(crate) fn classify_db_status(meta: &str, blobs: &str) -> HealthEvent {
+    if meta == "ok" && blobs == "ok" {
+        HealthEvent::Ok
+    } else {
+        HealthEvent::Error(HealthFinding {
+            class: HealthClass::Db,
+            severity: Severity::Critical,
+            detail: format!(
+                "DuckDB integrity_check returned non-ok: metadata=`{meta}` blobs=`{blobs}` — restore from backup or run `inkhaven reindex`",
+            ),
+            auto_repairable: false,
+        })
+    }
+}
+
+/// 1.2.16+ Phase P.4 — HNSW vector parity vs.
+/// DB row count.  The store keeps two vectors
+/// per document (`:meta` + `:content`), so the
+/// expected ratio is `vectors = 2 * rows`.
+/// Drift of more than `VECTOR_PARITY_TOLERANCE`
+/// vectors is a Warning — points at an
+/// interrupted save / abort or a manual delete
+/// that didn't propagate to both layers.
+/// Repair would be re-embedding the missing
+/// docs; not auto-repaired in this commit (the
+/// re-embed cost can be large + needs the
+/// embedding engine on the monitor thread).
+pub(crate) fn check_vector_parity(store: &crate::store::Store) -> HealthEvent {
+    let row_count = match store.row_count() {
+        Ok(n) => n,
+        Err(e) => {
+            return HealthEvent::Error(HealthFinding {
+                class: HealthClass::Db,
+                severity: Severity::Warn,
+                detail: format!("row_count failed: {e}"),
+                auto_repairable: false,
+            });
+        }
+    };
+    let vec_count = match store.vector_count() {
+        Ok(n) => n,
+        Err(e) => {
+            return HealthEvent::Error(HealthFinding {
+                class: HealthClass::Vectors,
+                severity: Severity::Warn,
+                detail: format!("vector_count failed: {e}"),
+                auto_repairable: false,
+            });
+        }
+    };
+    classify_vector_parity(row_count, vec_count)
+}
+
+/// 1.2.16+ Phase P.4 — pure classifier for the
+/// HNSW vs DB row-count parity comparison.
+/// Exposed for unit testing without needing a
+/// real Store.
+pub(crate) fn classify_vector_parity(row_count: usize, vec_count: usize) -> HealthEvent {
+    let expected = row_count.saturating_mul(2);
+    let drift = vec_count.abs_diff(expected);
+    if drift <= VECTOR_PARITY_TOLERANCE {
+        HealthEvent::Ok
+    } else {
+        HealthEvent::Warning(HealthFinding {
+            class: HealthClass::Vectors,
+            severity: Severity::Warn,
+            detail: format!(
+                "HNSW vector count drift: {vec_count} vectors vs {expected} expected ({row_count} rows × 2). \
+                 Run `inkhaven reindex` to rebuild missing embeddings.",
+            ),
+            // H.3 auto-repair flow could land a
+            // "re-embed missing" sweep here in a
+            // future commit; today we surface as
+            // Warning + recommend reindex.
+            auto_repairable: false,
+        })
+    }
+}
+
+/// Tolerance window for vector parity drift —
+/// HNSW save / reindex flows can briefly leave a
+/// single-digit gap that resolves on the next
+/// sync; we don't want to warn on that.
+pub const VECTOR_PARITY_TOLERANCE: usize = 4;
+
+/// 1.2.16+ Phase P.4 — tree parent-pointer
+/// integrity.  Walks the project hierarchy
+/// looking for nodes whose `parent` UUID
+/// doesn't exist in the same hierarchy.  A
+/// dangling parent pointer surfaces as missing
+/// rows in the tree pane; the doctor scan's
+/// `orphan-paragraph-row` class catches the
+/// disk consequence but not the in-store one.
+pub(crate) fn check_tree_integrity(store: &crate::store::Store) -> HealthEvent {
+    let hierarchy = match crate::store::hierarchy::Hierarchy::load(store) {
+        Ok(h) => h,
+        Err(e) => {
+            return HealthEvent::Error(HealthFinding {
+                class: HealthClass::Tree,
+                severity: Severity::Warn,
+                detail: format!("hierarchy load failed: {e}"),
+                auto_repairable: false,
+            });
+        }
+    };
+    let known: std::collections::HashSet<uuid::Uuid> =
+        hierarchy.iter().map(|n| n.id).collect();
+    let mut dangling: Vec<(uuid::Uuid, uuid::Uuid)> = Vec::new();
+    for node in hierarchy.iter() {
+        if let Some(parent_id) = node.parent_id {
+            if !known.contains(&parent_id) {
+                dangling.push((node.id, parent_id));
+            }
+        }
+    }
+    if dangling.is_empty() {
+        HealthEvent::Ok
+    } else {
+        let example = dangling
+            .first()
+            .map(|(child, parent)| {
+                format!("node `{child}` -> missing parent `{parent}`")
+            })
+            .unwrap_or_default();
+        HealthEvent::Warning(HealthFinding {
+            class: HealthClass::Tree,
+            severity: Severity::Warn,
+            detail: format!(
+                "{} node(s) with dangling parent pointer — e.g. {example}. \
+                 Run `inkhaven reindex` or `inkhaven doctor --autofix` to repair.",
+                dangling.len(),
+            ),
+            auto_repairable: false,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -811,6 +1005,99 @@ mod tests {
     #[test]
     fn collapse_empty_is_ok() {
         assert!(matches!(super::collapse_findings(vec![]), HealthEvent::Ok));
+    }
+
+    // 1.2.16+ Phase P.4 — DB integrity classifier tests.
+
+    #[test]
+    fn db_status_both_ok_is_clean() {
+        assert!(matches!(
+            super::classify_db_status("ok", "ok"),
+            HealthEvent::Ok,
+        ));
+    }
+
+    #[test]
+    fn db_status_meta_non_ok_is_critical() {
+        match super::classify_db_status("corruption detected", "ok") {
+            HealthEvent::Error(f) => {
+                assert_eq!(f.class, HealthClass::Db);
+                assert_eq!(f.severity, Severity::Critical);
+                assert!(f.detail.contains("metadata=`corruption detected`"));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn db_status_blobs_non_ok_is_critical() {
+        match super::classify_db_status("ok", "blob mismatch") {
+            HealthEvent::Error(f) => {
+                assert_eq!(f.severity, Severity::Critical);
+                assert!(f.detail.contains("blobs=`blob mismatch`"));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    // 1.2.16+ Phase P.4 — vector parity classifier tests.
+
+    #[test]
+    fn vector_parity_exact_match_is_clean() {
+        assert!(matches!(
+            super::classify_vector_parity(100, 200),
+            HealthEvent::Ok,
+        ));
+    }
+
+    #[test]
+    fn vector_parity_within_tolerance_is_clean() {
+        // 100 rows expects 200 vectors; we tolerate
+        // a drift of up to VECTOR_PARITY_TOLERANCE.
+        let drift = super::VECTOR_PARITY_TOLERANCE;
+        assert!(matches!(
+            super::classify_vector_parity(100, 200 + drift),
+            HealthEvent::Ok,
+        ));
+        assert!(matches!(
+            super::classify_vector_parity(100, 200 - drift),
+            HealthEvent::Ok,
+        ));
+    }
+
+    #[test]
+    fn vector_parity_beyond_tolerance_warns() {
+        let drift = super::VECTOR_PARITY_TOLERANCE + 1;
+        match super::classify_vector_parity(100, 200 + drift) {
+            HealthEvent::Warning(f) => {
+                assert_eq!(f.class, HealthClass::Vectors);
+                assert_eq!(f.severity, Severity::Warn);
+                assert!(!f.auto_repairable);
+                assert!(f.detail.contains("vs 200 expected"));
+                assert!(f.detail.contains("inkhaven reindex"));
+            }
+            other => panic!("expected Warning, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vector_parity_empty_project_is_clean() {
+        // 0 rows + 0 vectors = drift 0.
+        assert!(matches!(
+            super::classify_vector_parity(0, 0),
+            HealthEvent::Ok,
+        ));
+    }
+
+    #[test]
+    fn vector_parity_tolerance_constant_is_small_positive() {
+        // Pin the constant against accidental
+        // 0-tolerance (every drift would fire) or
+        // unreasonably-large-tolerance (real drift
+        // hidden).  Small single-digit window is
+        // intentional.
+        assert!(super::VECTOR_PARITY_TOLERANCE >= 1);
+        assert!(super::VECTOR_PARITY_TOLERANCE <= 16);
     }
 
     #[test]
