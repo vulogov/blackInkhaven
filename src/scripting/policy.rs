@@ -277,12 +277,70 @@ pub struct Policy {
     #[serde(default)]
     pub no_default_deny: bool,
 
+    /// 1.2.15+ Phase S.6 (H2) — when `true`,
+    /// `ink.fs.read` and `ink.fs.write` operate on
+    /// unrestricted filesystem paths.  Default
+    /// false: paths are confined to the project
+    /// root via `crate::path_safety::resolve_within`.
+    ///
+    /// Confinement applies even when the user has
+    /// enabled the `fs_read` / `fs_write`
+    /// categories — the category gate decides "is
+    /// the script ALLOWED to touch the filesystem",
+    /// the sandbox decides "what surface area
+    /// counts as filesystem for that script".
+    /// Setting this `true` collapses the surface
+    /// to "anywhere this UID can reach", which is
+    /// the pre-1.2.15 behaviour.
+    ///
+    /// Recommended only for trusted projects where
+    /// scripts genuinely need to reach a shared
+    /// location outside the project tree.
+    #[serde(default)]
+    pub fs_unsandboxed: bool,
+
+    /// 1.2.15+ Phase S.6 (H1) — gate for the
+    /// auto-load of Script-book paragraphs at
+    /// project open.  Three values:
+    ///
+    ///   * `"ask"` (default) — scripts are run only
+    ///     when `<project>/.inkhaven/trust` exists
+    ///     and contains the marker line `trust`
+    ///     (case-insensitive).  Without that file
+    ///     the user gets a status-bar notice that
+    ///     scripts are pending opt-in.  Eliminates
+    ///     the "open a malicious project, scripts
+    ///     auto-execute" risk.
+    ///   * `"trust"` — run scripts unconditionally.
+    ///     Use only on projects where the user
+    ///     authored or audited the scripts.  The
+    ///     `.inkhaven/trust` file becomes
+    ///     unnecessary.
+    ///   * `"deny"` — never run scripts regardless
+    ///     of the trust file.  Useful for opening
+    ///     a project for read-only review.
+    ///
+    /// Note: a malicious project's HJSON could set
+    /// this to `"trust"` itself.  The intended
+    /// audience for this knob is the project
+    /// author publishing their own work.  Users
+    /// opening a project they did not write should
+    /// always start from `"ask"` defaults and
+    /// review the scripts before creating the
+    /// trust file.
+    #[serde(default = "default_trust_decision")]
+    pub trust_decision: String,
+
     /// Bund script run once after Adam is constructed, after stdlib
     /// registration, after policy application. The natural home for
     /// defining hook lambdas (`hook.on_save`, `hook.on_rename`, …)
     /// and any custom user words. Empty = no bootstrap.
     #[serde(default)]
     pub bootstrap: String,
+}
+
+fn default_trust_decision() -> String {
+    "ask".to_string()
 }
 
 impl Default for Policy {
@@ -293,6 +351,8 @@ impl Default for Policy {
             enabled_words: Vec::new(),
             enabled_categories: Vec::new(),
             no_default_deny: false,
+            fs_unsandboxed: false,
+            trust_decision: default_trust_decision(),
             bootstrap: String::new(),
         }
     }

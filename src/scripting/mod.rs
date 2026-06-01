@@ -219,6 +219,12 @@ pub fn init_adam() -> Result<()> {
 ///
 /// No-ops cleanly when no project store is registered (e.g., a
 /// pure `inkhaven bund "40 2 +"` invocation outside any project).
+///
+/// 1.2.15+ Phase S.6 (H1) — scripts are gated by
+/// the project-trust decision (`scripting.
+/// trust_decision` + `<project>/.inkhaven/trust`
+/// file).  Opening an untrusted project no longer
+/// silently runs arbitrary Bund code.
 fn load_store_scripts(bund: &mut Bund) {
     let Some(store) = active_store() else { return };
     let hierarchy = match crate::store::hierarchy::Hierarchy::load(store) {
@@ -232,6 +238,43 @@ fn load_store_scripts(bund: &mut Bund) {
             return;
         }
     };
+    let script_count = hierarchy
+        .iter()
+        .filter(|n| n.kind == crate::store::NodeKind::Script)
+        .count();
+    if script_count == 0 {
+        return;
+    }
+    let policy = POLICY.get().cloned().unwrap_or_default();
+    let decision = trust_decision(&policy, store.project_root());
+    match decision {
+        TrustOutcome::Deny => {
+            tracing::warn!(
+                target: "inkhaven::security",
+                "{} script(s) NOT auto-loaded — scripting.trust_decision = \"deny\"",
+                script_count,
+            );
+            return;
+        }
+        TrustOutcome::PendingOptIn => {
+            tracing::warn!(
+                target: "inkhaven::security",
+                "{} script(s) pending opt-in.  Create `<project>/.inkhaven/trust` \
+                 (with the marker line `trust`) to enable, or set \
+                 `scripting.trust_decision: \"trust\"` in inkhaven.hjson if you \
+                 authored / audited these scripts.",
+                script_count,
+            );
+            return;
+        }
+        TrustOutcome::Trusted => {
+            tracing::info!(
+                target: "inkhaven::security",
+                "{} script(s) trusted — loading.",
+                script_count,
+            );
+        }
+    }
     for node in hierarchy.iter() {
         if node.kind != crate::store::NodeKind::Script {
             continue;
@@ -265,6 +308,157 @@ fn load_store_scripts(bund: &mut Bund) {
     }
 }
 
+/// 1.2.15+ Phase S.6 (H1) — outcome of the
+/// trust-decision lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrustOutcome {
+    /// Scripts run.
+    Trusted,
+    /// Scripts do NOT run; user has not opted in.
+    PendingOptIn,
+    /// Scripts do NOT run; HJSON explicitly denies.
+    Deny,
+}
+
+/// Decide whether to auto-load scripts in this
+/// project.  HJSON `trust_decision` is the
+/// override; absent or `"ask"` falls back to the
+/// `.inkhaven/trust` file marker.
+fn trust_decision(policy: &Policy, project_root: &std::path::Path) -> TrustOutcome {
+    match policy.trust_decision.trim().to_lowercase().as_str() {
+        "trust" => TrustOutcome::Trusted,
+        "deny" => TrustOutcome::Deny,
+        // `"ask"` and any unrecognised value fall
+        // back to the file marker.  Unknown values
+        // are logged but don't fail open — we
+        // treat them as the safe default.
+        other => {
+            if !other.is_empty() && other != "ask" {
+                tracing::warn!(
+                    target: "inkhaven::security",
+                    "unknown scripting.trust_decision `{other}` — treating as `ask`",
+                );
+            }
+            if read_trust_file(project_root) {
+                TrustOutcome::Trusted
+            } else {
+                TrustOutcome::PendingOptIn
+            }
+        }
+    }
+}
+
+/// Read `<project>/.inkhaven/trust`.  Returns true
+/// when the file exists AND contains the marker
+/// line `trust` (case-insensitive).  Any other
+/// state is "not trusted".
+fn read_trust_file(project_root: &std::path::Path) -> bool {
+    let path = project_root.join(".inkhaven").join("trust");
+    let Ok(body) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    body.lines()
+        .any(|line| line.trim().eq_ignore_ascii_case("trust"))
+}
+
+#[cfg(test)]
+mod trust_tests {
+    use super::*;
+
+    fn temp_dir(label: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "inkhaven-trust-{}-{}",
+            label,
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn explicit_trust_in_hjson_bypasses_file() {
+        let dir = temp_dir("explicit-trust");
+        let policy = Policy {
+            trust_decision: "trust".into(),
+            ..Policy::default()
+        };
+        assert_eq!(trust_decision(&policy, &dir), TrustOutcome::Trusted);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn explicit_deny_in_hjson_overrides_file() {
+        let dir = temp_dir("explicit-deny");
+        // Even with the trust file present, deny wins.
+        std::fs::create_dir_all(dir.join(".inkhaven")).unwrap();
+        std::fs::write(dir.join(".inkhaven/trust"), b"trust\n").unwrap();
+        let policy = Policy {
+            trust_decision: "deny".into(),
+            ..Policy::default()
+        };
+        assert_eq!(trust_decision(&policy, &dir), TrustOutcome::Deny);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ask_without_trust_file_is_pending_opt_in() {
+        let dir = temp_dir("ask-no-file");
+        let policy = Policy::default(); // trust_decision = "ask"
+        assert_eq!(
+            trust_decision(&policy, &dir),
+            TrustOutcome::PendingOptIn
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ask_with_trust_file_marker_is_trusted() {
+        let dir = temp_dir("ask-with-marker");
+        std::fs::create_dir_all(dir.join(".inkhaven")).unwrap();
+        std::fs::write(dir.join(".inkhaven/trust"), b"trust\n").unwrap();
+        let policy = Policy::default();
+        assert_eq!(trust_decision(&policy, &dir), TrustOutcome::Trusted);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn trust_file_without_marker_does_not_grant_trust() {
+        let dir = temp_dir("no-marker");
+        std::fs::create_dir_all(dir.join(".inkhaven")).unwrap();
+        std::fs::write(dir.join(".inkhaven/trust"), b"some other content\n").unwrap();
+        let policy = Policy::default();
+        assert_eq!(
+            trust_decision(&policy, &dir),
+            TrustOutcome::PendingOptIn
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unrecognised_trust_decision_falls_back_to_ask() {
+        let dir = temp_dir("unknown");
+        let policy = Policy {
+            trust_decision: "yes-please-i-trust-everything".into(),
+            ..Policy::default()
+        };
+        assert_eq!(
+            trust_decision(&policy, &dir),
+            TrustOutcome::PendingOptIn
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn case_insensitive_marker_match() {
+        let dir = temp_dir("case");
+        std::fs::create_dir_all(dir.join(".inkhaven")).unwrap();
+        std::fs::write(dir.join(".inkhaven/trust"), b"  TRUST\n").unwrap();
+        let policy = Policy::default();
+        assert_eq!(trust_decision(&policy, &dir), TrustOutcome::Trusted);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 /// Run `f` with a mutable reference to Adam. Returns `None` when
 /// Adam hasn't been built yet — callers handle that as "no script
 /// runtime available, skip". Used internally by `hooks::fire`.
@@ -283,6 +477,15 @@ where
 /// (single-project-per-process).
 pub fn set_policy(policy: Policy) {
     let _ = POLICY.set(policy);
+}
+
+/// 1.2.15+ Phase S.6 — read access to the active
+/// policy for runtime gates (e.g. the `ink.fs.*`
+/// sandbox check).  Returns `None` when no policy
+/// has been installed yet (CLI flows that don't
+/// run the TUI startup).
+pub fn active_policy() -> Option<&'static Policy> {
+    POLICY.get()
 }
 
 /// Install the project store into the global slot. Called by the

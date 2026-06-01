@@ -37,11 +37,32 @@ impl ProjectLayout {
         self.root.join(BOOKS_DIR)
     }
 
+    /// 1.2.15+ Phase S.6 (H4) — resolve
+    /// `cfg.prompts_file` to an absolute path while
+    /// preventing `..` traversal in relative paths.
+    /// Absolute paths are honoured as documented
+    /// (the project owner may want to point at a
+    /// shared prompts library) — when opening an
+    /// untrusted project, the S.6.H1 project-trust
+    /// prompt is the gate, not path safety.
+    ///
+    /// On rejection of a `..`-escaping relative
+    /// path, falls back to the default
+    /// `prompts.hjson` under the project root + logs
+    /// a warning.  We never crash the editor over a
+    /// bad config field — the user gets a status
+    /// message + a safe default.
     pub fn prompts_path(&self, cfg: &Config) -> PathBuf {
-        if cfg.prompts_file.is_absolute() {
-            cfg.prompts_file.clone()
-        } else {
-            self.root.join(&cfg.prompts_file)
+        match crate::path_safety::resolve_within_or_absolute(&self.root, &cfg.prompts_file) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(
+                    target: "inkhaven::security",
+                    "prompts_file `{}` rejected ({e}); falling back to default `prompts.hjson` under project root",
+                    cfg.prompts_file.display(),
+                );
+                self.root.join("prompts.hjson")
+            }
         }
     }
 

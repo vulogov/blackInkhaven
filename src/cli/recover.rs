@@ -86,8 +86,30 @@ pub fn run(report_path: &Path, yes: bool, keep: bool) -> Result<()> {
 
     for (idx, b) in report.rescued_buffers.iter().enumerate() {
         let rescue_path = PathBuf::from(&b.rescue_path);
+        // 1.2.15+ Phase S.6 (H3) — validate the
+        // `paragraph_rel_path` from the crash report
+        // resolves to a path inside the project root.
+        // A crafted report with
+        // `paragraph_rel_path: "../../etc/passwd"`
+        // would otherwise let `inkhaven recover --yes`
+        // overwrite arbitrary files.
         let original = match project_root {
-            Some(root) => root.join(&b.paragraph_rel_path),
+            Some(root) => match crate::path_safety::resolve_within_str(
+                root,
+                &b.paragraph_rel_path,
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!(
+                        "  [{}/{}] {}: rejected (path traversal): {e}",
+                        idx + 1,
+                        report.rescued_buffers.len(),
+                        b.paragraph_rel_path,
+                    );
+                    errors += 1;
+                    continue;
+                }
+            },
             // No project path in the report — fall back
             // to deriving the original by stripping the
             // `.inkhaven-rescue` suffix from the rescue

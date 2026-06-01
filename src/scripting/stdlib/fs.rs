@@ -6,12 +6,20 @@
 //!   templates pull project-external content.
 //! * `ink.fs.write` → `fs_write` category, **default-denied**.
 //!   Users opt in via `scripting.enabled_categories:
-//!   ["fs_write"]`. Writes are unsandboxed — paths pass
-//!   verbatim to `std::fs::write` and overwrite if present.
+//!   ["fs_write"]`.
 //!
-//! Paths are passed verbatim through to `std::fs`. UTF-8 is
-//! assumed on read; non-UTF-8 bytes surface as a clean error
-//! rather than a panic. Writes overwrite existing files.
+//! 1.2.15+ Phase S.6 (H2) — both words confine
+//! paths to the project root by default via
+//! [`crate::path_safety::resolve_within`].  A path
+//! resolving outside the project (absolute, `..`-
+//! escape, etc.) is rejected with a security
+//! error.  Power users can disable confinement
+//! with `scripting.fs_unsandboxed: true`.
+//!
+//! UTF-8 is assumed on read; non-UTF-8 bytes
+//! surface as a clean error rather than a panic.
+//! Writes overwrite existing files (within the
+//! sandbox).
 
 use anyhow::{anyhow, Result};
 use easy_error::Error as BundError;
@@ -46,7 +54,8 @@ fn do_ink_fs_read(vm: &mut VM) -> Result<&mut VM> {
     let tag = "ink.fs.read";
     require_depth(vm, 1, tag)?;
     let path = value_to_string(pull(vm, tag)?, "path", tag)?;
-    let bytes = std::fs::read(&path)
+    let resolved = resolve_fs_path(tag, &path)?;
+    let bytes = std::fs::read(&resolved)
         .map_err(|e| anyhow!("{tag} `{path}`: {e}"))?;
     let s = String::from_utf8(bytes)
         .map_err(|e| anyhow!("{tag} `{path}`: not UTF-8: {e}"))?;
@@ -69,7 +78,52 @@ fn do_ink_fs_write(vm: &mut VM) -> Result<&mut VM> {
     require_depth(vm, 2, tag)?;
     let content = value_to_string(pull(vm, tag)?, "content", tag)?;
     let path = value_to_string(pull(vm, tag)?, "path", tag)?;
-    std::fs::write(&path, content.as_bytes())
+    let resolved = resolve_fs_path(tag, &path)?;
+    // 1.2.15+ Phase S.4 — atomic write so a script
+    // crash mid-write can't truncate the user's
+    // file.  Combined with the S.6 sandbox above:
+    // confined target + atomic flow.
+    crate::io_atomic::write(&resolved, content.as_bytes())
         .map_err(|e| anyhow!("{tag} `{path}`: {e}"))?;
     Ok(vm)
+}
+
+/// 1.2.15+ Phase S.6 (H2) — resolve a Bund-supplied
+/// path against the project root.  Returns the
+/// absolute path on success or a security error on
+/// rejection.
+///
+/// Behaviour:
+///   * No active store registered → reject (Bund
+///     scripts run from CLI flows without
+///     `--project` can't use `ink.fs.*` against
+///     the project tree because they don't HAVE
+///     one).  Power users can fall back to
+///     `scripting.fs_unsandboxed: true` if they
+///     genuinely need that.
+///   * Active store + sandbox enabled → confine
+///     via `path_safety::resolve_within`.
+///   * Active store + `fs_unsandboxed: true` →
+///     pass through as-is (legacy behaviour).
+fn resolve_fs_path(tag: &str, raw: &str) -> Result<std::path::PathBuf> {
+    let unsandboxed = crate::scripting::active_policy()
+        .map(|p| p.fs_unsandboxed)
+        .unwrap_or(false);
+    if unsandboxed {
+        return Ok(std::path::PathBuf::from(raw));
+    }
+    let store = crate::scripting::active_store().ok_or_else(|| {
+        anyhow!(
+            "{tag} `{raw}`: rejected — no project store registered; \
+             paths can't be confined.  Enable `scripting.fs_unsandboxed: true` \
+             to opt out (trusted projects only)."
+        )
+    })?;
+    let root = store.project_root();
+    crate::path_safety::resolve_within_str(root, raw).map_err(|e| {
+        anyhow!(
+            "{tag} `{raw}`: rejected by sandbox: {e}.  \
+             Enable `scripting.fs_unsandboxed: true` to opt out (trusted projects only)."
+        )
+    })
 }
