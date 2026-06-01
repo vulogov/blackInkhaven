@@ -77,6 +77,12 @@ pub fn register(vm: &mut VM) -> Result<()> {
     vm.register_inline("ink.event.link_paragraph".to_string(), ink_event_link_paragraph)
         .map_err(|e| anyhow!("register ink.event.link_paragraph: {e}"))?;
 
+    // ── Threads (1.2.14+; read words land in
+    //   1.2.16+ Phase I.4.a).  More thread
+    //   mutations follow in I.4.b.
+    vm.register_inline("ink.thread.list".to_string(), ink_thread_list)
+        .map_err(|e| anyhow!("register ink.thread.list: {e}"))?;
+
     // ── Tags (1.2.6+) — read words under store_read,
     //   add/remove under store_write.
     vm.register_inline("ink.tag.list".to_string(), ink_tag_list)
@@ -1114,6 +1120,62 @@ fn do_ink_event_list_orphans(vm: &mut VM) -> Result<&mut VM> {
                 && n.tags.iter().any(|t| t.eq_ignore_ascii_case("orphan"))
         })
         .map(event_dict)
+        .collect();
+    push(vm, Value::from_list(items));
+    Ok(vm)
+}
+
+// ── ink.thread.list ──────────────────────────────────────────────────
+// Stack: ( -- list )
+//
+// 1.2.16+ Phase I.4.a — return every thread in
+// the Threads system book as a list of dicts.
+// Each dict carries the thread's UUID + title +
+// slug + waypoint count.  Empty list when the
+// Threads system book is absent (Threads only
+// auto-spawns on 1.2.14+ projects).
+
+fn ink_thread_list(vm: &mut VM) -> BundResult<'_> {
+    do_ink_thread_list(vm).map_err(to_bund_err)
+}
+
+fn do_ink_thread_list(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.thread.list";
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let threads_root = match hierarchy.iter().find(|n| {
+        n.kind == crate::store::NodeKind::Book
+            && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_THREADS)
+    }) {
+        Some(n) => n.clone(),
+        None => {
+            push(vm, Value::from_list(Vec::new()));
+            return Ok(vm);
+        }
+    };
+    let items: Vec<Value> = hierarchy
+        .children_of(Some(threads_root.id))
+        .into_iter()
+        .filter(|n| n.kind == crate::store::NodeKind::Chapter)
+        .map(|thread_chapter| {
+            let waypoint_count = hierarchy
+                .children_of(Some(thread_chapter.id))
+                .into_iter()
+                .filter(|n| n.kind == crate::store::NodeKind::Paragraph)
+                .count();
+            let mut h: HashMap<String, Value> = HashMap::new();
+            h.insert(
+                "id".into(),
+                Value::from_string(thread_chapter.id.to_string()),
+            );
+            h.insert("title".into(), Value::from_string(&thread_chapter.title));
+            h.insert("slug".into(), Value::from_string(&thread_chapter.slug));
+            h.insert(
+                "waypoint_count".into(),
+                Value::from_int(waypoint_count as i64),
+            );
+            Value::from_dict(h)
+        })
         .collect();
     push(vm, Value::from_list(items));
     Ok(vm)

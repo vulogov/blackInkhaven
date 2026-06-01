@@ -14,6 +14,7 @@ pub mod helpers;
 mod ink;
 pub mod io;
 mod keymap;
+mod review;
 
 use anyhow::Result;
 use rust_multistackvm::multistackvm::VM;
@@ -30,5 +31,6 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     keymap::register(vm)?;
     app::register(vm)?;
     fs::register(vm)?;
+    review::register(vm)?;
     Ok(())
 }
