@@ -1008,6 +1008,23 @@ pub(super) enum Modal {
         scroll: usize,
         last_status: Option<String>,
     },
+    /// 1.2.17+ T.6 — TTS voice picker (`Ctrl+B Shift+V`).
+    /// Opened via `App::open_tts_voice_picker`.  Modal-
+    /// local key handler:
+    ///   * `↑↓` / `PgUp` / `PgDn` / `Home` / `End` —
+    ///     navigate.
+    ///   * Printable chars — extend the filter; the
+    ///     selected row falls back to the first match.
+    ///   * `Backspace` — pop the filter.
+    ///   * `Enter` — download (if not present) and set
+    ///     the runtime voice.  Blocks the UI for the
+    ///     download (~5–30s on a fast connection).
+    ///   * `d` — remove a downloaded voice + update the
+    ///     LRU index.
+    ///   * `Esc` — close.
+    TtsVoicePicker {
+        state: super::voice_picker::TtsVoicePickerState,
+    },
     SnippetPicker {
         kind: super::snippets::SnippetPickerKind,
         /// Type-to-filter input.

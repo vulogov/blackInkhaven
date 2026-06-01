@@ -7843,6 +7843,7 @@ impl App {
             A::OpenWritingStreakHeatmap => self.open_writing_streak_heatmap(),
             A::OpenDoctorPanel => self.open_doctor_panel(),
             A::OpenJournal => self.open_journal(),
+            A::OpenTtsVoicePicker => self.open_tts_voice_picker(),
             A::SceneBreakPrev => self.scene_break_jump(-1),
             A::SceneBreakNext => self.scene_break_jump(1),
             A::ToggleStyleWarnings => self.toggle_style_warnings(),
@@ -9245,6 +9246,312 @@ impl App {
             }
             _ => false,
         }
+    }
+
+    /// 1.2.17+ T.6 — open the Piper TTS voice picker.
+    /// Resolves the voices directory under the project
+    /// root via path_safety, loads the catalog (T.3
+    /// freshness-first; stale + dir-only fallbacks),
+    /// builds the picker state.  Open is decoupled
+    /// from the active engine — even on macOS with
+    /// the System backend running, users can use the
+    /// picker to browse + download Piper voices.
+    fn open_tts_voice_picker(&mut self) {
+        use super::piper::catalog::Catalog;
+        use super::piper::download::curl_get_json;
+        use super::voice_picker::TtsVoicePickerState;
+        let cfg = &self.cfg.editor.tts;
+        let voices_dir = match crate::path_safety::resolve_within_str(
+            &self.layout.root,
+            cfg.voices_dir.trim(),
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!(
+                    "voice picker: tts.voices_dir invalid ({e})",
+                );
+                return;
+            }
+        };
+        let _ = std::fs::create_dir_all(&voices_dir);
+        let ttl = std::time::Duration::from_secs(
+            cfg.catalog_ttl_hours as u64 * 3600,
+        );
+        let state = match Catalog::load(
+            &voices_dir,
+            &cfg.catalog_url,
+            ttl,
+            curl_get_json,
+        ) {
+            Ok(catalog) => TtsVoicePickerState::from_catalog(&catalog, &voices_dir),
+            Err(e) => TtsVoicePickerState::from_dir_only(
+                &voices_dir,
+                e.to_user_message(),
+            ),
+        };
+        let header = if state.entries.is_empty() {
+            "voice picker: empty (no catalog + no downloaded voices)".to_string()
+        } else if state.catalog_failed.is_some() {
+            format!(
+                "voice picker (offline · {} voices on disk): ↑↓ select · / filter · Esc closes",
+                state.entries.len(),
+            )
+        } else if state.catalog_stale {
+            format!(
+                "voice picker (stale catalog · {} voices): ↑↓ select · / filter · Enter download/use · d remove · Esc closes",
+                state.entries.len(),
+            )
+        } else {
+            format!(
+                "voice picker ({} voices): ↑↓ select · / filter · Enter download/use · d remove · Esc closes",
+                state.entries.len(),
+            )
+        };
+        self.modal = super::modal::Modal::TtsVoicePicker { state };
+        self.status = header;
+    }
+
+    /// 1.2.17+ T.6 — modal-local key handler for the
+    /// voice picker.  Returns true when the key was
+    /// consumed.
+    pub(super) fn handle_tts_voice_picker_key(
+        &mut self,
+        key: crossterm::event::KeyEvent,
+    ) -> bool {
+        use crossterm::event::KeyCode;
+        let super::modal::Modal::TtsVoicePicker { state } = &mut self.modal
+        else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = super::modal::Modal::None;
+                self.status = "voice picker: closed".into();
+                true
+            }
+            KeyCode::Up => {
+                state.move_up();
+                true
+            }
+            KeyCode::Down => {
+                state.move_down();
+                true
+            }
+            KeyCode::Home => {
+                state.move_to_top();
+                true
+            }
+            KeyCode::End => {
+                state.move_to_bottom();
+                true
+            }
+            KeyCode::PageUp => {
+                for _ in 0..10 {
+                    state.move_up();
+                }
+                true
+            }
+            KeyCode::PageDown => {
+                for _ in 0..10 {
+                    state.move_down();
+                }
+                true
+            }
+            KeyCode::Backspace => {
+                state.pop_filter_char();
+                true
+            }
+            KeyCode::Char('d') if state.filter.is_empty() => {
+                // Remove the selected voice's files +
+                // update LRU.  Only acts when a filter
+                // isn't in progress so 'd' doesn't
+                // accidentally collide with type-to-
+                // filter.
+                self.tts_voice_picker_remove();
+                true
+            }
+            KeyCode::Enter => {
+                self.tts_voice_picker_commit();
+                true
+            }
+            KeyCode::Char(c) => {
+                state.push_filter_char(c);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// 1.2.17+ T.6 — Enter handler: download (if
+    /// absent) + set the runtime voice.  Blocks the UI
+    /// for the duration — a background-task version is
+    /// a T.6.b polish item.
+    fn tts_voice_picker_commit(&mut self) {
+        let (voice_key, downloaded) = {
+            let super::modal::Modal::TtsVoicePicker { state } = &self.modal
+            else {
+                return;
+            };
+            let Some(entry) = state.selected_entry() else {
+                self.status = "voice picker: nothing selected".into();
+                return;
+            };
+            (entry.key.clone(), entry.downloaded)
+        };
+        if downloaded {
+            // Just set the runtime voice + close.
+            self.cfg.editor.tts.voice = voice_key.clone();
+            self.modal = super::modal::Modal::None;
+            self.status = format!(
+                "voice picker: set runtime voice to `{voice_key}` (use `inkhaven config` to persist)",
+            );
+            return;
+        }
+        // Download path — blocking.  Surface progress
+        // in the picker's status before the call so the
+        // user sees a sane "downloading..." line if the
+        // terminal redraws between key handlers.
+        if let super::modal::Modal::TtsVoicePicker { state } = &mut self.modal {
+            state.status = format!(
+                "downloading `{voice_key}` — please wait...",
+            );
+        }
+        let result = self.tts_voice_picker_download(&voice_key);
+        let super::modal::Modal::TtsVoicePicker { state } = &mut self.modal
+        else {
+            return;
+        };
+        match result {
+            Ok(()) => {
+                state.refresh_downloaded(
+                    &self.layout.root.join(
+                        self.cfg.editor.tts.voices_dir.trim(),
+                    ),
+                );
+                self.cfg.editor.tts.voice = voice_key.clone();
+                state.status =
+                    format!("downloaded `{voice_key}` · runtime voice set");
+                self.status = format!(
+                    "voice picker: downloaded `{voice_key}` · runtime voice set",
+                );
+            }
+            Err(reason) => {
+                state.status =
+                    format!("download failed: {reason}");
+                self.status =
+                    format!("voice picker: download failed: {reason}");
+            }
+        }
+    }
+
+    /// Blocking download of `voice_key` via the T.4
+    /// pipeline.  Reuses the catalog loaded by
+    /// open_tts_voice_picker — re-load if it's not
+    /// present (defensive).
+    fn tts_voice_picker_download(
+        &self,
+        voice_key: &str,
+    ) -> Result<(), String> {
+        use super::piper::catalog::Catalog;
+        use super::piper::download::{curl_get_json, curl_get_to_file};
+        use super::piper::voice::ensure_voice_downloaded;
+        let cfg = &self.cfg.editor.tts;
+        let voices_dir = crate::path_safety::resolve_within_str(
+            &self.layout.root,
+            cfg.voices_dir.trim(),
+        )
+        .map_err(|e| format!("voices_dir invalid: {e}"))?;
+        let ttl = std::time::Duration::from_secs(
+            cfg.catalog_ttl_hours as u64 * 3600,
+        );
+        let catalog = Catalog::load(
+            &voices_dir,
+            &cfg.catalog_url,
+            ttl,
+            curl_get_json,
+        )
+        .map_err(|e| e.to_user_message())?;
+        let voice = catalog.voice(voice_key).ok_or_else(|| {
+            format!("voice `{voice_key}` not found in catalog")
+        })?;
+        ensure_voice_downloaded(
+            voice,
+            &voices_dir,
+            &self.layout.root,
+            cfg.cache_max_voices,
+            cfg.auto_gitignore,
+            curl_get_to_file,
+            |_progress| {},
+        )
+        .map(|_files| ())
+        .map_err(|e| e.to_user_message())
+    }
+
+    /// 1.2.17+ T.6 — `d` handler: remove the selected
+    /// voice's files + drop it from the LRU index.
+    fn tts_voice_picker_remove(&mut self) {
+        use super::piper::lru::LruIndex;
+        let (voice_key, was_downloaded) = {
+            let super::modal::Modal::TtsVoicePicker { state } = &self.modal
+            else {
+                return;
+            };
+            let Some(entry) = state.selected_entry() else {
+                self.status = "voice picker: nothing selected".into();
+                return;
+            };
+            (entry.key.clone(), entry.downloaded)
+        };
+        if !was_downloaded {
+            self.status = format!(
+                "voice picker: `{voice_key}` is not downloaded",
+            );
+            return;
+        }
+        let voices_dir = match crate::path_safety::resolve_within_str(
+            &self.layout.root,
+            self.cfg.editor.tts.voices_dir.trim(),
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!(
+                    "voice picker: voices_dir invalid ({e})",
+                );
+                return;
+            }
+        };
+        let onnx = voices_dir.join(format!("{voice_key}.onnx"));
+        let onnx_json = voices_dir.join(format!("{voice_key}.onnx.json"));
+        let _ = std::fs::remove_file(&onnx);
+        let _ = std::fs::remove_file(&onnx_json);
+        // Drop from LRU.
+        let mut idx = LruIndex::load(&voices_dir);
+        // No public "remove" on LruIndex — we rebuild
+        // by touching every surviving key except this
+        // one; cheap enough at cache_max_voices = 5.
+        let kept: Vec<(String, std::time::Duration)> = idx
+            .entries()
+            .iter()
+            .filter(|e| e.voice_key != voice_key)
+            .map(|e| (e.voice_key.clone(), e.last_touched))
+            .collect();
+        idx = LruIndex::default();
+        for (key, when) in kept {
+            idx.touch(
+                &key,
+                std::time::SystemTime::UNIX_EPOCH + when,
+            );
+        }
+        let _ = idx.save(&voices_dir);
+
+        let super::modal::Modal::TtsVoicePicker { state } = &mut self.modal
+        else {
+            return;
+        };
+        state.refresh_downloaded(&voices_dir);
+        state.status = format!("removed `{voice_key}`");
+        self.status =
+            format!("voice picker: removed `{voice_key}`");
     }
 
     fn open_doctor_panel(&mut self) {
@@ -13961,6 +14268,8 @@ impl App {
             matches!(self.modal, Modal::SnippetPicker { .. });
         let is_journal =
             matches!(self.modal, Modal::Journal { .. });
+        let is_tts_voice_picker =
+            matches!(self.modal, Modal::TtsVoicePicker { .. });
         let is_comment_editor =
             matches!(self.modal, Modal::CommentEditor { .. });
         let is_comments_panel =
@@ -14055,6 +14364,10 @@ impl App {
         }
         if is_journal {
             self.handle_journal_key(key);
+            return Ok(false);
+        }
+        if is_tts_voice_picker {
+            self.handle_tts_voice_picker_key(key);
             return Ok(false);
         }
         if is_comment_editor {
