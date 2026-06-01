@@ -169,9 +169,9 @@ filters straight to it.
 - **Travels with the manuscript.** Anyone who clones the project gets
   your prompts for free.
 - **Editable in the TUI.** No round-trip through a text editor.
-- **Indexed for search.** Semantic search and Tantivy hits both find
-  it; `inkhaven search "tighten"` lists your book prompts alongside
-  prose.
+- **Indexed for search.** Semantic search picks them up like any
+  paragraph; `inkhaven search "tighten"` lists your book prompts
+  alongside prose when the embeddings line up.
 - **Snapshot-able.** F5 captures a snapshot before you tweak the
   prompt; F6 picks an older version back out.
 

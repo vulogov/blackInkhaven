@@ -7,20 +7,26 @@ thinking of takes one keystroke and an approximate phrase.
 
 ## What "indexed" means here
 
-When you save a paragraph (`Ctrl+S` or autosave), Inkhaven does three
+When you save a paragraph (`Ctrl+S` or autosave), Inkhaven does two
 things in addition to writing the `.typ` file:
 
-1. **Tantivy full-text index** — the prose is tokenised and stored
-   for keyword search.
-2. **HNSW vector index** — the prose is fed to a multilingual
+1. **HNSW vector index** — the prose is fed to a multilingual
    embedding model (default `MultilingualE5Small`) and the resulting
    vector is added to a nearest-neighbour graph.
-3. **Metadata refresh** — word count, modified time, title (if
+2. **Metadata refresh** — word count, modified time, title (if
    placeholder) are updated in DuckDB.
 
-Search blends keyword and vector hits via bdslib's hybrid scoring. You
-do not pick one or the other — the score column in the results
-overlay tells you the strength of the match.
+Search runs the query through the same embedding model and asks the
+HNSW index for the nearest neighbours.  The score column in the
+results overlay tells you the strength of the match.
+
+> **Note (correcting earlier wording):** older versions of this
+> tutorial referenced a "Tantivy full-text index" alongside the
+> HNSW vectors.  That was inherited from the pre-1.2 bdslib
+> integration; the in-tree storage layer that replaced bdslib does
+> NOT include Tantivy.  Search in inkhaven is semantic-only.  See
+> [`Documentation/MAINTENANCE.md`](../MAINTENANCE.md) §"Search
+> model" for the full picture.
 
 If you have not seen this before: "embedding" means the paragraph is
 represented as ~384 floating-point numbers (a "vector"). Two passages
@@ -103,13 +109,12 @@ again cycles focus to the Editor (or Tree if no paragraph is open).
 
 ## Search syntax tips
 
-bdslib treats the query as a natural-language phrase by default.
-A few things that work well:
+The search subsystem treats the query as a natural-language phrase
+and looks for semantically nearest paragraphs.  A few things that
+work well:
 
-- **Plain keywords** — exact matches always come back near the top
-  via the Tantivy keyword side of the hybrid score.
-- **Paraphrases** — works because the embedding side picks up
-  semantic similarity even when no keyword matches.
+- **Paraphrases** — the embedding side picks up semantic similarity
+  even when no exact words match.  This is the strongest case.
 - **Multilingual** — set `language: russian` and queries like
   `утренний рассвет на палубе` find Russian prose written in different
   inflections. The multilingual embedding model handles ~100 languages.
@@ -119,9 +124,15 @@ A few things that work well:
 
 What does **not** work:
 
-- Boolean operators (`AND`, `OR`, `NOT`) — bdslib's interface is
-  natural-language; for that level of control use the CLI with
-  multiple separate queries.
+- **Literal-word search** — there is no inverted full-text index.
+  A query for a specific word may miss a paragraph that contains
+  that exact word but whose overall embedding lands far away.
+  Use `Ctrl+F` inside the editor (regex on the open paragraph's
+  buffer) or `rg <pattern> books/` from a shell against the on-
+  disk `.typ` files for literal searches.
+- Boolean operators (`AND`, `OR`, `NOT`) — the search interface is
+  natural-language; for that level of control compose multiple
+  separate queries.
 - Field-restricted search (e.g. `title:foo`) — not supported.
 - Regex search — the in-buffer Ctrl+F find supports regex, but the
   project-wide search bar does not.
@@ -236,8 +247,8 @@ Tree pane.
 
 ## What you have learned
 
-- Saving a paragraph indexes it for both Tantivy (keyword) and HNSW
-  (semantic vector) search automatically.
+- Saving a paragraph indexes it in the HNSW semantic vector store
+  automatically (no separate full-text index step).
 - `Ctrl+/` opens the Search bar; `Enter` runs the query; `Enter` on
   a result opens the paragraph.
 - The results overlay shows score + kind + title-breadcrumb + snippet.

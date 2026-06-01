@@ -233,6 +233,21 @@ Inkhaven for a given purpose.
   trust is the same as any other HTTPS client running on
   your machine.
 
+* **Search is semantic, not literal.**  Inkhaven's
+  `Store::search_text` and the `inkhaven search` CLI run
+  the query through the embedding model and return the
+  HNSW vector-store's nearest paragraphs.  There is no
+  inverted full-text index in the dep tree.  A query for
+  a literal word may miss paragraphs that contain that
+  exact word but whose embedding lands far away; a query
+  for a concept may match paragraphs that don't contain
+  any of the typed words.  Audit log + grep workflows that
+  assume literal substring matching against
+  `Store::search_text` will be unreliable.  Use `Ctrl+F`
+  in the editor or `rg books/` from a shell for literal
+  searches.  See `Documentation/MAINTENANCE.md`
+  § "Search model" for the full picture.
+
 ## 5. Unknown Risks
 
 The 1.2.15 audit was thorough but not exhaustive.  The
