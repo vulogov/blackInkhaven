@@ -24,6 +24,7 @@ pub mod comments;
 pub mod language;
 pub mod templates;
 pub mod thread;
+pub mod tts;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -501,6 +502,16 @@ pub enum Command {
     #[command(subcommand)]
     Comments(CommentsCommand),
 
+    /// 1.2.17+ T.7 — `inkhaven tts <subcommand>`.
+    /// Headless management of the Piper TTS stack:
+    /// engine status, binary install/inspect, voice
+    /// list/download/remove, catalog refresh, and
+    /// cross-platform synthesis test.  Mirrors the
+    /// in-TUI `Ctrl+B Shift+V` voice picker for
+    /// scripts, CI gates, and remote-shell users.
+    #[command(subcommand)]
+    Tts(TtsCommand),
+
     /// `inkhaven recover <crash-report.hjson>` —
     /// pick up an inkhaven crash report and walk the
     /// rescued-buffer manifest, optionally applying
@@ -670,6 +681,111 @@ pub enum PromptsCommand {
         #[arg(long)]
         update: bool,
     },
+}
+
+/// 1.2.17+ T.7 — sub-subcommands under
+/// `inkhaven tts …`.  Mirrors the in-TUI
+/// `Ctrl+B Shift+V` voice picker + adds engine
+/// + binary diagnostics + cross-platform synth
+/// testing.
+#[derive(Debug, Subcommand)]
+pub enum TtsCommand {
+    /// `inkhaven tts engine` — print which TTS
+    /// backend is active for the project (System
+    /// `say` vs. Piper) and why.  Honours
+    /// `tts.engine` (`auto` | `piper` | `system`).
+    Engine,
+    /// `inkhaven tts binary <action>` — Piper
+    /// binary management.
+    #[command(subcommand)]
+    Binary(TtsBinarySubcommand),
+    /// `inkhaven tts voice <action>` — voice
+    /// catalog browsing + per-voice download /
+    /// remove.
+    #[command(subcommand)]
+    Voice(TtsVoiceSubcommand),
+    /// `inkhaven tts catalog <action>` — voice
+    /// catalog cache management.
+    #[command(subcommand)]
+    Catalog(TtsCatalogSubcommand),
+    /// `inkhaven tts test "<phrase>" [--voice
+    /// <name>]` — cross-platform synthesis test
+    /// routed through `TtsEngine::resolve`.
+    /// Synthesises to a temp WAV + plays via the
+    /// platform default (or `tts.play_command`).
+    /// Reports the active backend + binary path
+    /// + voice path + bytes-out.  Exits 0 on
+    /// success, non-zero on synth or playback
+    /// failure.
+    Test {
+        /// Phrase to speak.  Required.
+        phrase: String,
+        /// Override `editor.tts.voice` for this
+        /// invocation only.  Useful for A/B-ing
+        /// voices without editing HJSON.
+        #[arg(long)]
+        voice: Option<String>,
+        /// Synthesise to a file instead of
+        /// playing.  Suppresses the playback step.
+        #[arg(long, value_name = "PATH")]
+        output: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TtsBinarySubcommand {
+    /// Print where the Piper binary is on disk
+    /// (or "not installed"), plus the resolved
+    /// platform identifier + cache root.
+    Status,
+    /// Explicitly download the platform-
+    /// appropriate Piper binary into the user
+    /// cache.  Idempotent — re-downloads if the
+    /// existing binary is corrupt or missing.
+    Download,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TtsVoiceSubcommand {
+    /// Print every voice in the catalog with a
+    /// downloaded / available chip + size.  Falls
+    /// back to "voices on disk only" when the
+    /// catalog can't be loaded.
+    List {
+        /// Filter to voices whose canonical key or
+        /// language code contains <NEEDLE>.  Case-
+        /// insensitive.
+        #[arg(long)]
+        filter: Option<String>,
+        /// Show only voices that are already
+        /// downloaded into the project.
+        #[arg(long)]
+        downloaded: bool,
+    },
+    /// Download a specific voice by canonical key
+    /// (e.g. `en_US-lessac-medium`) or alias.
+    /// Atomic install via `crate::io_atomic`;
+    /// .gitignore updated per `tts.auto_gitignore`.
+    Download {
+        /// Voice key or alias.
+        name: String,
+    },
+    /// Delete a downloaded voice + drop it from
+    /// the LRU index.  Safe — the catalog itself
+    /// is untouched, so the voice can be re-
+    /// downloaded.
+    Remove {
+        /// Voice key as stored on disk.
+        name: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TtsCatalogSubcommand {
+    /// Force a catalog refresh — deletes the
+    /// cached `voices.json` so the next operation
+    /// fetches from `tts.catalog_url`.
+    Refresh,
 }
 
 /// sub-subcommands under
@@ -1326,6 +1442,9 @@ impl Cli {
             }
             Command::Comments(cmd) => {
                 comments::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Tts(cmd) => {
+                tts::run(&project, cmd).map_err(Into::into)
             }
             Command::Recover { report, yes, keep } => {
                 recover::run(&report, yes, keep)

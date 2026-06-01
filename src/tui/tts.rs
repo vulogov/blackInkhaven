@@ -53,14 +53,14 @@ use super::say::Say;
 /// Identifies which backend the engine is using.  Used by
 /// the diagnostic status-bar chip + the engine-status CLI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum EngineKind {
+pub(crate) enum EngineKind {
     System,
     Piper,
     Disabled,
 }
 
 impl EngineKind {
-    pub(super) fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::System => "system",
             Self::Piper => "piper",
@@ -72,7 +72,7 @@ impl EngineKind {
 /// TTS engine dispatcher.  See module docs for shape +
 /// resolution semantics.
 #[derive(Debug)]
-pub(super) enum TtsEngine {
+pub(crate) enum TtsEngine {
     System(Say),
     #[allow(dead_code)] // T.5 will wire synthesis through this
     Piper(PiperEngine),
@@ -95,7 +95,7 @@ impl Default for TtsEngine {
 impl TtsEngine {
     /// Resolve a `TtsEngine` from configuration.  See
     /// module docs for the precedence rules.
-    pub(super) fn resolve(cfg: &TtsConfig, project_root: &Path) -> Self {
+    pub(crate) fn resolve(cfg: &TtsConfig, project_root: &Path) -> Self {
         if !cfg.enabled {
             return Self::Disabled(
                 "TTS is disabled (set editor.tts.enabled = true)".into(),
@@ -124,7 +124,7 @@ impl TtsEngine {
     }
 
     /// Identifier of the active backend for diagnostics.
-    pub(super) fn kind(&self) -> EngineKind {
+    pub(crate) fn kind(&self) -> EngineKind {
         match self {
             Self::System(_) => EngineKind::System,
             Self::Piper(_) => EngineKind::Piper,
@@ -134,7 +134,7 @@ impl TtsEngine {
 
     /// Short human-readable label for the status bar /
     /// diagnostic chip.
-    pub(super) fn label(&self) -> &'static str {
+    pub(crate) fn label(&self) -> &'static str {
         self.kind().label()
     }
 
@@ -142,7 +142,7 @@ impl TtsEngine {
     /// synthesise.  Errors carry a user-facing reason
     /// suitable for surfacing in a modal or the status
     /// bar.
-    pub(super) fn is_ready(&self) -> Result<(), String> {
+    pub(crate) fn is_ready(&self) -> Result<(), String> {
         match self {
             Self::System(_) => Say::available().map_err(|s| s.to_string()),
             Self::Piper(_) => {
@@ -172,7 +172,7 @@ impl TtsEngine {
     ///     T.3 catalog lookups + fuzzy matching land
     ///     later.
     ///   * Disabled — `None`.
-    pub(super) fn resolve_voice(&self, needle: &str) -> Option<String> {
+    pub(crate) fn resolve_voice(&self, needle: &str) -> Option<String> {
         match self {
             Self::System(_) => Say::pick_voice(needle),
             Self::Piper(p) => Some(p.resolve_voice(needle)),
@@ -185,7 +185,7 @@ impl TtsEngine {
     /// launched; audio continues in parallel.  Any prior
     /// in-flight playback this engine owns is stopped
     /// first.
-    pub(super) fn speak(
+    pub(crate) fn speak(
         &mut self,
         text: &str,
         voice: &str,
@@ -203,7 +203,7 @@ impl TtsEngine {
     /// Speak `text` into a file at `dest`.  Blocks until
     /// the subprocess exits (or `timeout` fires).  Returns
     /// the number of bytes written on success.
-    pub(super) fn speak_to_file_blocking(
+    pub(crate) fn speak_to_file_blocking(
         &mut self,
         text: &str,
         voice: &str,
@@ -224,7 +224,7 @@ impl TtsEngine {
 
     /// True while a `speak` subprocess is still running.
     /// Cheap; non-blocking.
-    pub(super) fn is_speaking(&mut self) -> bool {
+    pub(crate) fn is_speaking(&mut self) -> bool {
         match self {
             Self::System(say) => say.is_speaking(),
             Self::Piper(p) => p.is_speaking(),
@@ -233,7 +233,7 @@ impl TtsEngine {
     }
 
     /// Stop any in-flight playback.  Idempotent.
-    pub(super) fn stop(&mut self) {
+    pub(crate) fn stop(&mut self) {
         match self {
             Self::System(say) => say.stop(),
             Self::Piper(p) => p.stop(),
