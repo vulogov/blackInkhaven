@@ -199,10 +199,28 @@ pub struct BackupConfig {
     /// from 1.2.5 and earlier.
     #[serde(default = "default_backup_wait_for_key")]
     pub wait_for_key_after_backup: bool,
+
+    /// 1.2.16+ Phase P.1 — amber chip threshold
+    /// for the backup-freshness health check.
+    /// Fraction of `max_age` at which the status-
+    /// bar chip flips from `✓` clean to `ℹ` amber
+    /// ("backup is getting old, plan a refresh
+    /// soon").  Above `max_age` the chip flips to
+    /// the existing `⚠` yellow warning.  Default
+    /// 0.5 — gives the user a midpoint heads-up
+    /// before the hard warning fires.  Set 0.0
+    /// to disable (chip never amber; only the
+    /// hard warning surfaces).
+    #[serde(default = "default_amber_threshold")]
+    pub amber_threshold: f32,
 }
 
 fn default_backup_wait_for_key() -> bool {
     true
+}
+
+fn default_amber_threshold() -> f32 {
+    0.5
 }
 
 impl Default for BackupConfig {
@@ -220,6 +238,7 @@ impl Default for BackupConfig {
             // snapshots the editor already supports.
             max_age: std::time::Duration::from_secs(7 * 24 * 3600),
             wait_for_key_after_backup: default_backup_wait_for_key(),
+            amber_threshold: default_amber_threshold(),
         }
     }
 }

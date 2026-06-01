@@ -269,6 +269,7 @@ pub fn run(project: &Path) -> Result<()> {
             project_root: layout.root.clone(),
             backup_dir,
             backup_max_age: cfg.backup.max_age,
+            backup_amber_threshold: cfg.backup.amber_threshold,
             repair: crate::health::RepairPolicy {
                 rescue_orphans: cfg.health.auto_repair.rescue_orphans,
             },
@@ -8962,6 +8963,14 @@ impl App {
         let (bg, fg) = match self.health_chip {
             crate::health::ChipState::Clean => (Color::Green, Color::Black),
             crate::health::ChipState::Repaired => (Color::LightYellow, Color::Black),
+            // 1.2.16+ Phase P.1 — soft-warning
+            // amber tier.  Distinct from
+            // `Repaired` (which uses
+            // LightYellow) and the hard
+            // `Warning` (Yellow) so all three
+            // amber-ish chips are visually
+            // separable in the status bar.
+            crate::health::ChipState::Info => (Color::Magenta, Color::White),
             crate::health::ChipState::Warning => (Color::Yellow, Color::Black),
             crate::health::ChipState::Error => (Color::Red, Color::White),
             crate::health::ChipState::Hidden => return Vec::new(),
