@@ -131,6 +131,10 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // 1.2.6+ events — reads.
     ("ink.event.list", category::STORE_READ),
     ("ink.event.list_orphans", category::STORE_READ),
+    // 1.2.16+ Phase I.4.a — threads (read) +
+    // review (read).
+    ("ink.thread.list", category::STORE_READ),
+    ("ink.review.list", category::STORE_READ),
 
     // ── store_write (default-denied) ──────────────────────────
     // 1.2.3+: Bund scripts can mutate the project tree, status
@@ -154,6 +158,13 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.event.set_precision", category::STORE_WRITE),
     ("ink.event.set_track", category::STORE_WRITE),
     ("ink.event.link_paragraph", category::STORE_WRITE),
+    // 1.2.16+ Phase I.4.a — review mutations.
+    // Inherit the existing store_write category
+    // gate; projects that already enable
+    // store_write for tree mutation automatically
+    // grant review-write too.
+    ("ink.review.add_comment", category::STORE_WRITE),
+    ("ink.review.resolve", category::STORE_WRITE),
     ("ink.db.sync", category::STORE_WRITE),
     ("ink.db.checkpoint", category::STORE_WRITE),
     ("ink.db.reindex", category::STORE_WRITE),
@@ -476,6 +487,70 @@ mod tests {
                     assert!(effectively_denied, "{word} should be denied");
                 }
             }
+        }
+    }
+
+    // 1.2.16+ Phase I.4.a — policy entries for the
+    // new ink.review.* + ink.thread.list words.
+    // The tests catch silent drift: if someone
+    // refactors the WORD_CATEGORIES table and
+    // forgets to keep these entries, the deny
+    // contract for review writes silently lifts.
+
+    #[test]
+    fn review_list_classified_as_store_read() {
+        let cat = WORD_CATEGORIES
+            .iter()
+            .find(|(w, _)| *w == "ink.review.list")
+            .map(|(_, c)| *c);
+        assert_eq!(cat, Some(category::STORE_READ));
+    }
+
+    #[test]
+    fn review_writes_classified_as_store_write() {
+        for word in ["ink.review.add_comment", "ink.review.resolve"] {
+            let cat = WORD_CATEGORIES
+                .iter()
+                .find(|(w, _)| *w == word)
+                .map(|(_, c)| *c);
+            assert_eq!(
+                cat,
+                Some(category::STORE_WRITE),
+                "{word} should inherit the store_write gate"
+            );
+        }
+    }
+
+    #[test]
+    fn thread_list_classified_as_store_read() {
+        let cat = WORD_CATEGORIES
+            .iter()
+            .find(|(w, _)| *w == "ink.thread.list")
+            .map(|(_, c)| *c);
+        assert_eq!(cat, Some(category::STORE_READ));
+    }
+
+    #[test]
+    fn review_writes_default_denied() {
+        // Default Policy denies STORE_WRITE; that
+        // category gates the review-write words.
+        // Pin the chain so a future refactor of
+        // DEFAULT_DENIED_CATEGORIES doesn't
+        // accidentally let scripts add comments
+        // on auto-loaded untrusted projects.
+        let p = Policy::default();
+        let denied = p.effective_denied_categories();
+        assert!(denied.contains(category::STORE_WRITE));
+        for word in ["ink.review.add_comment", "ink.review.resolve"] {
+            let cat = WORD_CATEGORIES
+                .iter()
+                .find(|(w, _)| *w == word)
+                .map(|(_, c)| *c)
+                .unwrap();
+            assert!(
+                denied.contains(cat),
+                "{word} should be denied by default"
+            );
         }
     }
 }
