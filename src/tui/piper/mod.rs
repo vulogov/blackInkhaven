@@ -31,6 +31,10 @@ pub(crate) mod binary;
 pub(crate) mod catalog;
 #[allow(dead_code)]
 pub(crate) mod download;
+#[allow(dead_code)]
+pub(crate) mod lru;
+#[allow(dead_code)]
+pub(crate) mod voice;
 
 use std::path::{Path, PathBuf};
 
