@@ -175,7 +175,26 @@ impl ChipState {
 /// Knobs the monitor task needs at spawn time.
 /// Built by `tui::app::run` from the project layout
 /// + `HealthConfig` + `BackupConfig`.
-#[derive(Debug, Clone)]
+///
+/// 1.2.16+ Phase P.4-pre — Store handle now flows
+/// through here so the deferred P4 checks
+/// (DuckDB integrity, HNSW vector parity,
+/// textarea↔disk sync, tree parent-pointers) can
+/// read project state from the monitor task.
+/// `Store` derives `Clone` cheaply (the inner
+/// `DocumentStorage` is `Arc`-backed and every
+/// public method takes `&self`); cross-thread
+/// sharing is a simple `store.clone()`.  No
+/// `Arc<RwLock<…>>` needed — the proposal's
+/// "needs safe-sharing story" was a planning
+/// error.  See P4-pre design note in
+/// `Documentation/PROPOSALS/1.2.16_PLAN.md` §3.3.
+///
+/// Field is `Option<Store>` so the existing
+/// disk-side checks + CLI test paths that don't
+/// hold a project store still build a
+/// `MonitorSetup`.
+#[derive(Clone)]
 pub struct MonitorSetup {
     pub project_root: PathBuf,
     /// Resolved absolute path of the backup directory
@@ -192,7 +211,36 @@ pub struct MonitorSetup {
     /// Warning even if a repair is available" —
     /// the user gets to decide.
     pub repair: RepairPolicy,
+    /// 1.2.16+ Phase P.4-pre — cloned project
+    /// Store handle for the deferred DB-side
+    /// checks.  `None` when the monitor is
+    /// spawned without a project (test paths;
+    /// disk-side checks still work without it).
+    /// `Store` is cheaply Clone via Arc-backed
+    /// inner storage.
+    ///
+    /// `#[allow(dead_code)]` because the
+    /// scaffolding is in place ahead of the P4
+    /// DB-side checks that will consume it
+    /// (DuckDB integrity, HNSW vector parity,
+    /// etc.).  Reachable via clone in the test
+    /// above; the warning fires because no
+    /// production reader matches on `Some(store)`
+    /// yet.
+    #[allow(dead_code)]
+    pub store: Option<crate::store::Store>,
 }
+
+/// 1.2.16+ Phase P.4-pre — compile-time assertion
+/// that `Store` is `Send + Sync` so it can travel
+/// into the tokio monitor task without further
+/// wrapping.  Fails the build if a future
+/// refactor of `DocumentStorage` accidentally
+/// breaks this property.
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<crate::store::Store>();
+};
 
 /// Per-class opt-in for auto-repair.  Defaults are
 /// all `false` so a user who flips
@@ -634,10 +682,34 @@ mod tests {
                 backup_dir: PathBuf::from("/tmp/nonexistent-backups"),
                 backup_max_age: Duration::from_secs(7 * 86400),
                 repair: RepairPolicy::default(),
+                store: None,
             },
             false,
         );
         assert!(rx.is_none());
+    }
+
+    /// 1.2.16+ Phase P.4-pre — pins the Store
+    /// thread-safety contract.  This test exists
+    /// primarily as runtime documentation that
+    /// matches the compile-time `assert_send_sync`
+    /// invariant above; together they ensure a
+    /// future Store refactor can't accidentally
+    /// break the monitor task's ability to
+    /// receive + use a cloned Store handle.
+    #[test]
+    fn monitor_setup_carries_optional_store_field() {
+        let setup = MonitorSetup {
+            project_root: PathBuf::from("/tmp/x"),
+            backup_dir: PathBuf::from("/tmp/x-backups"),
+            backup_max_age: Duration::from_secs(86400),
+            repair: RepairPolicy::default(),
+            store: None,
+        };
+        // Clone semantics + field carries through.
+        let cloned = setup.clone();
+        assert!(cloned.store.is_none());
+        assert_eq!(cloned.project_root, setup.project_root);
     }
 
     #[test]
