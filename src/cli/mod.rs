@@ -18,6 +18,7 @@ pub mod reindex;
 pub mod restore;
 pub mod search;
 pub mod doctor;
+pub mod doctor_scan;
 pub mod event;
 pub mod comments;
 pub mod language;
@@ -321,6 +322,27 @@ pub enum Command {
         /// to see and edit them in your project HJSON.
         #[arg(long)]
         filter_words_snippet: bool,
+        /// 1.2.15+ — run the project scan only,
+        /// skipping the dep-version / typst-engine
+        /// dump.  Walks the hierarchy + on-disk
+        /// files looking for zero-byte paragraphs,
+        /// orphan DB rows, missing referenced files,
+        /// and corrupt comment sidecars.
+        #[arg(long)]
+        scan: bool,
+        /// 1.2.15+ — emit the scan results as
+        /// JSON instead of human prose.  Implies
+        /// `--scan`.  Useful for CI gates: `inkhaven
+        /// doctor --json | jq -e '.findings == []'`.
+        #[arg(long)]
+        json: bool,
+        /// 1.2.15+ — limit the scan to a single
+        /// class.  Accepts: `zero-byte-file`,
+        /// `orphan-paragraph-row`, `missing-
+        /// referenced-file`, `corrupt-comments-
+        /// sidecar`.
+        #[arg(long, value_name = "CLASS")]
+        class: Option<String>,
     },
 
     /// 1.2.6+ — story-timeline event management. Requires
@@ -1153,13 +1175,51 @@ impl Cli {
             Command::Stats { book_name } => {
                 stats::run(&project, book_name.as_deref()).map_err(Into::into)
             }
-            Command::Doctor { voices, tts_test, filter_words_snippet } => {
+            Command::Doctor { voices, tts_test, filter_words_snippet, scan, json, class } => {
                 if filter_words_snippet {
                     doctor::run_filter_words_snippet().map_err(Into::into)
                 } else if let Some(text) = tts_test {
                     doctor::run_tts_test(&project, &text).map_err(Into::into)
                 } else if voices {
                     doctor::run_voices().map_err(Into::into)
+                } else if scan || json || class.is_some() {
+                    // 1.2.15+ Phase D.1 — project
+                    // scan path.  `--json` and
+                    // `--class <name>` imply
+                    // `--scan`.
+                    let selected = match class.as_deref() {
+                        None => None,
+                        Some(s) => match doctor_scan::ScanClass::from_slug(s) {
+                            Some(c) => Some(c),
+                            None => {
+                                return Err(crate::error::Error::Config(format!(
+                                    "doctor: unknown scan class `{s}` — try one of: {}",
+                                    doctor_scan::ScanClass::ALL
+                                        .iter()
+                                        .map(|c| c.slug())
+                                        .collect::<Vec<_>>()
+                                        .join(", "),
+                                ))
+                                .into());
+                            }
+                        },
+                    };
+                    let report = doctor_scan::scan_project(&project, selected)?;
+                    if json {
+                        let rendered = serde_json::to_string_pretty(&report)
+                            .map_err(|e| crate::error::Error::Store(format!("doctor JSON: {e}")))?;
+                        println!("{rendered}");
+                    } else {
+                        doctor_scan::print_human(&report);
+                    }
+                    // Exit code 2 when any finding
+                    // at Warning or above shipped
+                    // — matches conventional
+                    // doctor / linter behaviour.
+                    if report.count_at_or_above(doctor_scan::ScanSeverity::Warning) > 0 {
+                        std::process::exit(2);
+                    }
+                    Ok(())
                 } else {
                     doctor::run(&project).map_err(Into::into)
                 }
