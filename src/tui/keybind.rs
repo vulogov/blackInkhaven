@@ -493,6 +493,15 @@ pub enum Action {
     /// / `.wav` work on recent macOS.
     #[serde(rename = "editor.tts_save_as_audio")]
     TtsSaveAsAudio,
+    /// 1.2.15+ Phase D.3 — `Ctrl+B Shift+0` opens
+    /// the project-wide doctor panel.  Paired
+    /// mnemonically with `Ctrl+B 0` (HJSON config
+    /// editor): the digit-0 row is the "system
+    /// inspection" cluster.  Triggers a sync
+    /// project scan + presents the findings;
+    /// cursor-driven `r` / `R` apply repairs.
+    #[serde(rename = "view.doctor_panel")]
+    OpenDoctorPanel,
     /// Ctrl+B Shift+G (1.2.9+) — open the writing-
     /// streak heatmap modal.  Shows the last 91 days
     /// of project-wide word deltas as a GitHub-style
@@ -824,6 +833,7 @@ impl Action {
             Action::TtsReadParagraph => "read aloud".into(),
             Action::TtsSaveAsAudio => "save audio".into(),
             Action::OpenWritingStreakHeatmap => "streak".into(),
+            Action::OpenDoctorPanel => "doctor".into(),
             Action::SceneBreakPrev => "prev scene break".into(),
             Action::SceneBreakNext => "next scene break".into(),
             Action::ToggleStyleWarnings => "style warnings".into(),
@@ -1053,6 +1063,8 @@ impl Action {
                 "Save the open paragraph as an audio file via macOS `say -o <path>` (1.2.9+, Ctrl+B Shift+R). Opens a path picker pre-filled with `<project>/audio/<paragraph-slug>.aiff`; Enter commits, Esc cancels. Output is AIFF by default; coerce another format with the file extension (`.m4a`, `.wav` work on macOS 13+). Same voice + rate as the configured chord-driven TTS. macOS-only; non-macOS hosts surface the same `TTS unavailable` modal as Ctrl+B S.".into(),
             Action::OpenWritingStreakHeatmap =>
                 "Open the writing-streak heatmap modal (1.2.9+, Ctrl+B Shift+G). GitHub-style 13×7 grid of the last 91 days of project-wide word deltas, plus current streak + longest streak in the window + per-month totals. Data comes from the existing progress store (the same source feeding the startup pulse splash + Ctrl+V G modal). Esc closes.".into(),
+            Action::OpenDoctorPanel =>
+                "Open the project-wide doctor panel (1.2.15+, Ctrl+B Shift+0). Runs the same scan as the `inkhaven doctor --scan` CLI: zero-byte paragraph files, orphan DB rows, missing referenced files, corrupt comment sidecars. Each finding shows class + severity + path + a one-line detail; `r` repairs the highlighted finding, `R` repairs every finding, `Esc` closes. Repairs are logged to `<project>/.inkhaven/doctor.log` with timestamp + class + outcome for audit. Paired mnemonically with `Ctrl+B 0` (HJSON config editor): digit-0 row is the system-inspection cluster.".into(),
             Action::SceneBreakPrev =>
                 "Jump editor cursor to the previous scene-break line (1.2.9+, Ctrl+B <). Scene breaks are typographic divider lines: `* * *`, `***`, `---`, `___`, `###`, `~~~`, or a lone `§`. Detection is hand-rolled — any line consisting only of 3+ copies of `*`/`-`/`_`/`~`/`#` (optionally space-separated) counts, plus `§` alone. Useful for navigating multi-scene paragraphs in a single pass.".into(),
             Action::SceneBreakNext =>
@@ -1228,6 +1240,12 @@ impl KeyBindings {
                 // terminal layout (previous `|` binding was
                 // dropped on some terminals' chord state).
                 entry("0", Action::BundEditProjectHjson, Scope::Any),
+                // 1.2.15+ Phase D.3 — Ctrl+B Shift+0
+                // opens the project-wide doctor panel.
+                // Same digit row as Ctrl+B 0 (config
+                // editor) so the "system inspection"
+                // chord cluster lives together.
+                entry("Shift+0", Action::OpenDoctorPanel, Scope::Any),
                 // 1.2.9+ — Ctrl+B Shift+F toggles inline
                 // style-warning overlays (filter words).
                 entry("Shift+f", Action::ToggleStyleWarnings, Scope::Any),

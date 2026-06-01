@@ -7795,6 +7795,7 @@ impl App {
             A::TtsReadParagraph => self.tts_read_paragraph(),
             A::TtsSaveAsAudio => self.tts_open_save_as_audio_picker(),
             A::OpenWritingStreakHeatmap => self.open_writing_streak_heatmap(),
+            A::OpenDoctorPanel => self.open_doctor_panel(),
             A::SceneBreakPrev => self.scene_break_jump(-1),
             A::SceneBreakNext => self.scene_break_jump(1),
             A::ToggleStyleWarnings => self.toggle_style_warnings(),
@@ -9062,6 +9063,122 @@ impl App {
     /// progress store, computes current + longest
     /// streak in the window, and seeds the modal with
     /// the data so the render path doesn't re-query.
+    /// 1.2.15+ Phase D.3 — open the project-wide
+    /// doctor modal.  Runs the same scan as the
+    /// CLI `inkhaven doctor --scan`; presents the
+    /// findings as a cursor-driven panel with
+    /// `r`/`R` repairs + `Esc` close.  Synchronous
+    /// scan for now — for typical projects this
+    /// returns in milliseconds.
+    fn open_doctor_panel(&mut self) {
+        match crate::cli::doctor_scan::scan_project(&self.layout.root, None) {
+            Ok(report) => {
+                let count = report.findings.len();
+                self.modal = super::modal::Modal::DoctorPanel {
+                    findings: report.findings,
+                    cursor: 0,
+                    scroll: 0,
+                    last_status: None,
+                };
+                self.status = if count == 0 {
+                    "doctor: project is clean".into()
+                } else {
+                    format!("doctor: {count} finding(s) — r/R to repair · Esc closes")
+                };
+            }
+            Err(e) => {
+                self.status = format!("doctor scan failed: {e:#}");
+            }
+        }
+    }
+
+    /// 1.2.15+ Phase D.3 — handle a keystroke
+    /// inside the doctor modal.  Returns true if
+    /// the modal consumed the key.
+    pub(super) fn handle_doctor_panel_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::KeyCode;
+        let super::modal::Modal::DoctorPanel { findings, cursor, scroll, last_status } =
+            &mut self.modal
+        else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = super::modal::Modal::None;
+                true
+            }
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                    if *cursor < *scroll {
+                        *scroll = *cursor;
+                    }
+                }
+                true
+            }
+            KeyCode::Down => {
+                if !findings.is_empty() && *cursor + 1 < findings.len() {
+                    *cursor += 1;
+                }
+                true
+            }
+            KeyCode::Char('r') => {
+                if findings.is_empty() {
+                    return true;
+                }
+                let cur = *cursor;
+                let Some(finding) = findings.get(cur).cloned() else {
+                    return true;
+                };
+                let project = self.layout.root.clone();
+                let outcome = crate::cli::doctor_scan::apply_fix(&project, &finding);
+                crate::cli::doctor_scan::log_fix(&project, &finding, &outcome);
+                let summary = match &outcome {
+                    Ok(s) => format!("repaired: {s}"),
+                    Err(e) => format!("repair failed: {e:#}"),
+                };
+                *last_status = Some(summary.clone());
+                self.status = summary;
+                // Remove the finding from the list
+                // on success so the user sees the
+                // table shrink as they go.
+                if outcome.is_ok() {
+                    findings.remove(cur);
+                    if *cursor >= findings.len() && *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                true
+            }
+            KeyCode::Char('R') => {
+                // Apply every remaining finding.
+                let project = self.layout.root.clone();
+                let mut applied = 0usize;
+                let mut errors = 0usize;
+                let snapshot = findings.clone();
+                findings.clear();
+                for f in snapshot.iter() {
+                    let outcome = crate::cli::doctor_scan::apply_fix(&project, f);
+                    crate::cli::doctor_scan::log_fix(&project, f, &outcome);
+                    if outcome.is_ok() {
+                        applied += 1;
+                    } else {
+                        errors += 1;
+                        findings.push(f.clone());
+                    }
+                }
+                let msg =
+                    format!("repair all: {applied} applied, {errors} error(s)");
+                *cursor = 0;
+                *scroll = 0;
+                *last_status = Some(msg.clone());
+                self.status = msg;
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn open_writing_streak_heatmap(&mut self) {
         let project_total = self
             .progress_cache
@@ -13726,6 +13843,8 @@ impl App {
             matches!(self.modal, Modal::ThreadWeaveView { .. });
         let is_thread_doctor =
             matches!(self.modal, Modal::ThreadDoctor { .. });
+        let is_doctor_panel =
+            matches!(self.modal, Modal::DoctorPanel { .. });
         let is_comment_editor =
             matches!(self.modal, Modal::CommentEditor { .. });
         let is_comments_panel =
@@ -13808,6 +13927,10 @@ impl App {
         }
         if is_thread_doctor {
             self.thread_doctor_handle_key(key);
+            return Ok(false);
+        }
+        if is_doctor_panel {
+            self.handle_doctor_panel_key(key);
             return Ok(false);
         }
         if is_comment_editor {

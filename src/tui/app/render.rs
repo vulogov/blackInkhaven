@@ -71,6 +71,10 @@ impl super::App {
             self.draw_thread_doctor_modal(f, area);
             return;
         }
+        if let Modal::DoctorPanel { .. } = &self.modal {
+            self.draw_doctor_panel_modal(f, area);
+            return;
+        }
         if let Modal::CommentEditor { .. } = &self.modal {
             self.draw_comment_editor_modal(f, area);
             return;
