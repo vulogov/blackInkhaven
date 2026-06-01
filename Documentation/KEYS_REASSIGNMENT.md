@@ -637,3 +637,92 @@ picker-based placeholders (`{char_lookup}` /
 for a future release (need an async snippet state
 machine the current synchronous pipeline doesn't
 yet have).
+
+## 1.2.15 — new actions
+
+The 1.2.15 cycle is a stability + security release.
+Most of the work was internal hardening (panic
+sites, atomic writes, lock-poisoning recovery,
+path-traversal patches, Bund sandbox); one new
+TUI chord landed.
+
+### Project doctor panel (Ctrl+B Shift+0)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `view.doctor_panel` | `Ctrl+B Shift+0` | Open the project doctor modal.  Synchronous scan of zero-byte files / orphan paragraph rows / bdslib-disk drift / corrupt comment sidecars.  Modal-local chords: ↑↓ navigate, `r` repair highlighted, `R` repair all, `Esc` close.  Same flow as `inkhaven doctor --autofix` from the CLI. |
+
+### Programmatic / scripting access
+
+The 1.2.15 cycle also shipped four CLI surfaces:
+
+```
+$ inkhaven doctor --help
+  doctor                              # info dump (existing)
+  doctor --scan                       # project scan only
+  doctor --scan --json                # scan + JSON output
+  doctor --scan --class <slug>        # one-class scan
+  doctor --autofix [--yes]            # apply per-class repairs
+  Scan classes: zero-byte-file, orphan-paragraph-row,
+                missing-referenced-file,
+                corrupt-comments-sidecar, bdslib-only
+
+$ inkhaven recover --help
+  recover <crash-report.hjson>        # walk rescue manifest
+                                      # apply per-buffer y/N/diff
+  recover --yes                       # apply every rescue
+  recover --keep                      # leave files in place
+```
+
+The recover CLI is paired with the panic-hook
+crash report writer (no chord — fires
+automatically on any panic; writes
+`inkhaven-crash-<UTC>.hjson` to cwd + per-buffer
+`<path>.inkhaven-rescue` files).
+
+### Background health monitor
+
+Configured in HJSON, not a chord.  Surfaces via
+the status-bar health chip (`✓` clean / `✎`
+repaired / `⚠` warning / `✗` error):
+
+```hjson
+{
+  health: {
+    enabled: true
+    auto_repair: {
+      rescue_orphans: true   # delete > 30d orphan
+                             # rescue files
+    }
+  }
+}
+```
+
+See [`CONFIGURATION.md`](CONFIGURATION.md) for the
+full `health.*` reference.
+
+### Security — Bund script trust gate
+
+Also configured in HJSON, not a chord.  Gates
+auto-load of Script-book paragraphs at project
+open:
+
+```hjson
+{
+  scripting: {
+    trust_decision: "ask"  # default; require
+                           # <project>/.inkhaven/trust
+                           # marker file to enable
+                           # script auto-load
+    fs_unsandboxed: false  # default; confine
+                           # ink.fs.* to project root
+  }
+}
+```
+
+Three values for `trust_decision`: `"ask"`
+(default — gated on the trust file), `"trust"`
+(run unconditionally — for authored projects),
+`"deny"` (never run — for read-only review).
+See [Tutorial 53](Tutorials/53-bund-trust-gate.md)
+for when to use which.
