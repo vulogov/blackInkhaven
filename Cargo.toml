@@ -314,6 +314,27 @@ syn = { version = "2", features = ["full"] }
 
 [dev-dependencies]
 tempfile = "3"
+# 1.2.18+ I.1.2 — criterion bench harness for the
+# perf-pass scenarios.  Subprocess-style benchmarks
+# spawn the release binary against a generated fixture
+# (`inkhaven gen-fixture`) and measure wall-clock time
+# with statistical analysis.  html_reports feature
+# emits HTML output for inspection.
+criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+
+# 1.2.18+ I.1.2 — bench entries.  Each is a standalone
+# binary with `harness = false` (criterion provides its
+# own main).  Run with `cargo bench --bench <name>`.
+# Requires INKHAVEN_BENCH_FIXTURE=<path> to a project
+# generated via `inkhaven gen-fixture`.  See
+# `benches/README.md`.
+[[bench]]
+name = "startup"
+harness = false
+
+[[bench]]
+name = "search"
+harness = false
 
 [profile.release]
 lto = "thin"
