@@ -25,6 +25,7 @@ pub mod language;
 pub mod templates;
 pub mod thread;
 pub mod tts;
+pub mod gen_fixture;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -501,6 +502,32 @@ pub enum Command {
     /// `Ctrl+V Shift+C` panel.
     #[command(subcommand)]
     Comments(CommentsCommand),
+
+    /// 1.2.18+ I.1.1 — `inkhaven gen-fixture
+    /// <path>` (hidden).  Generates a deterministic
+    /// 10K-paragraph synthetic project for the
+    /// criterion bench harness.  See
+    /// `Documentation/PROPOSALS/1.2.18_PLAN.md`.
+    /// Hidden from `--help` because end-user projects
+    /// should not run this by accident.
+    #[command(hide = true, name = "gen-fixture")]
+    GenFixture {
+        /// Target directory.  Wiped + recreated; use
+        /// `--force` to skip the confirmation prompt.
+        path: PathBuf,
+        #[arg(long, default_value_t = 5)]
+        books: usize,
+        #[arg(long, default_value_t = 20)]
+        chapters: usize,
+        #[arg(long, default_value_t = 100)]
+        paragraphs: usize,
+        #[arg(long, default_value_t = 450)]
+        target_words: u32,
+        #[arg(long, default_value_t = 0xC0FFEE_DEAD_BEEFu64)]
+        seed: u64,
+        #[arg(long)]
+        force: bool,
+    },
 
     /// 1.2.17+ T.7 — `inkhaven tts <subcommand>`.
     /// Headless management of the Piper TTS stack:
@@ -1445,6 +1472,34 @@ impl Cli {
             }
             Command::Tts(cmd) => {
                 tts::run(&project, cmd).map_err(Into::into)
+            }
+            Command::GenFixture {
+                path,
+                books,
+                chapters,
+                paragraphs,
+                target_words,
+                seed,
+                force,
+            } => {
+                let spec = gen_fixture::FixtureSpec {
+                    books,
+                    chapters_per_book: chapters,
+                    paragraphs_per_chapter: paragraphs,
+                    target_words_per_paragraph: target_words,
+                    seed,
+                    force,
+                    ..gen_fixture::FixtureSpec::default()
+                };
+                let stats = gen_fixture::run(&path, spec)?;
+                eprintln!(
+                    "gen-fixture: {} books · {} chapters · {} paragraphs at {}",
+                    stats.books_created,
+                    stats.chapters_created,
+                    stats.paragraphs_created,
+                    path.display(),
+                );
+                Ok(())
             }
             Command::Recover { report, yes, keep } => {
                 recover::run(&report, yes, keep)
