@@ -26,6 +26,7 @@ pub mod templates;
 pub mod thread;
 pub mod tts;
 pub mod gen_fixture;
+pub mod bench_load;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -527,6 +528,25 @@ pub enum Command {
         seed: u64,
         #[arg(long)]
         force: bool,
+    },
+
+    /// 1.2.18+ I.1.3 — `inkhaven _bench-load`
+    /// (hidden).  Opens the project with phase timers
+    /// + reports per-phase millis on stdout.  The
+    /// in-process bench hook the I.1.2.b plan
+    /// anticipated; doubles as the I.1.3 profiling
+    /// instrument (a true sampling flamegraph needs
+    /// dtrace, which SIP blocks without sudo).  Pair
+    /// with `INKHAVEN_PERF_TRACE=1` for the
+    /// sub-phase store-open + hierarchy-load breakdown.
+    #[command(hide = true, name = "_bench-load")]
+    BenchLoad {
+        /// Search query for the search-phase timing.
+        #[arg(long, default_value = "the harbor")]
+        query: String,
+        /// Iterations to average flatten + search over.
+        #[arg(long, default_value_t = 20)]
+        iterations: usize,
     },
 
     /// 1.2.17+ T.7 — `inkhaven tts <subcommand>`.
@@ -1472,6 +1492,10 @@ impl Cli {
             }
             Command::Tts(cmd) => {
                 tts::run(&project, cmd).map_err(Into::into)
+            }
+            Command::BenchLoad { query, iterations } => {
+                bench_load::run(&project, &query, iterations)
+                    .map_err(Into::into)
             }
             Command::GenFixture {
                 path,
