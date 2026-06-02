@@ -129,7 +129,19 @@ impl Store {
             .to_str()
             .ok_or_else(|| Error::Store("project root path is not valid UTF-8".into()))?;
 
+        // 1.2.18+ I.1.3 — env-gated phase timing for the
+        // performance pass.  Set INKHAVEN_PERF_TRACE=1 to
+        // emit per-phase millis on stderr.  Harmless +
+        // permanent — the `Instant` calls are ~nanoseconds
+        // when the env flag is unset (the format! +
+        // eprintln! are guarded).
+        let perf = perf_trace_enabled();
+        let t0 = std::time::Instant::now();
+
         let engine = build_embedding_engine(&cfg.embeddings.model)?;
+        perf_mark(perf, "store.open.embedding_engine", t0.elapsed());
+
+        let t1 = std::time::Instant::now();
         let inner = DocumentStorage::with_embedding(root, engine).map_err(|e| {
             Error::Store(format!(
                 "couldn't open the document store at {} — {}.\n\
@@ -141,11 +153,15 @@ impl Store {
             ))
         })?;
 
+        perf_mark(perf, "store.open.duckdb_open", t1.elapsed());
+
         let store = Self {
             inner,
             layout: Arc::new(layout),
         };
+        let t2 = std::time::Instant::now();
         store.ensure_system_books(cfg)?;
+        perf_mark(perf, "store.open.ensure_system_books", t2.elapsed());
         store.ensure_artefacts_directory(cfg)?;
         // Arm the scripting layer for every path that opens a
         // project — TUI, `inkhaven bund`, `inkhaven add`,
@@ -1586,6 +1602,24 @@ fn first_prose_line(content: &[u8]) -> String {
         return t.to_string();
     }
     String::new()
+}
+
+/// 1.2.18+ I.1.3 — true when `INKHAVEN_PERF_TRACE` is set
+/// to a non-empty, non-"0" value.  Drives the env-gated
+/// phase timers in the project-load path.
+pub(crate) fn perf_trace_enabled() -> bool {
+    std::env::var("INKHAVEN_PERF_TRACE")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false)
+}
+
+/// Emit a single phase-timing line to stderr when `on`.
+/// Format: `[perf] <label> <millis>ms` — line-oriented +
+/// grep-friendly for the I.1.3 hotspot write-up.
+pub(crate) fn perf_mark(on: bool, label: &str, elapsed: std::time::Duration) {
+    if on {
+        eprintln!("[perf] {label} {:.2}ms", elapsed.as_secs_f64() * 1000.0);
+    }
 }
 
 fn build_embedding_engine(model_name: &str) -> Result<EmbeddingEngine> {

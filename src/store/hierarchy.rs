@@ -28,11 +28,22 @@ impl Default for Hierarchy {
 
 impl Hierarchy {
     pub fn load(store: &Store) -> Result<Self> {
+        // 1.2.18+ I.1.3 — env-gated phase timing
+        // (INKHAVEN_PERF_TRACE).  list_metadata is a
+        // DuckDB scan; the parse loop is per-row JSON
+        // deserialization; the sort is O(n log n) over
+        // every node.  Splitting them tells us which to
+        // attack in I.1.4+.
+        let perf = crate::store::perf_trace_enabled();
+
+        let t0 = std::time::Instant::now();
         let raw = store
             .raw()
             .list_metadata()
             .map_err(|e| Error::Store(format!("list_metadata: {e}")))?;
+        crate::store::perf_mark(perf, "hierarchy.load.list_metadata", t0.elapsed());
 
+        let t1 = std::time::Instant::now();
         let mut by_id = HashMap::with_capacity(raw.len());
         for (id, value) in raw {
             // Skip non-hierarchy documents (e.g. chunked bodies) — those won't
@@ -41,12 +52,15 @@ impl Hierarchy {
                 by_id.insert(id, node);
             }
         }
+        crate::store::perf_mark(perf, "hierarchy.load.parse_nodes", t1.elapsed());
 
+        let t2 = std::time::Instant::now();
         let mut order: Vec<Uuid> = by_id.keys().copied().collect();
         order.sort_by_key(|id| {
             let n = &by_id[id];
             (n.path.len(), n.order, n.slug.clone())
         });
+        crate::store::perf_mark(perf, "hierarchy.load.sort", t2.elapsed());
 
         Ok(Self { by_id, order })
     }
