@@ -21,76 +21,93 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.16 — Author intelligence + polish
+## Latest release · 1.2.17 — TTS Piper transition
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.16.md`](Documentation/RELEASE_NOTES/1.2.16.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.17.md`](Documentation/RELEASE_NOTES/1.2.17.md)
 
-1.2.15 made inkhaven survivable; 1.2.16 turns
-that infrastructure into author-facing value.
+1.2.17 is a single-feature cycle: a full
+cross-platform TTS rework around
+[Piper](https://github.com/rhasspy/piper) (neural
+TTS, ONNX-based, multilingual).  Replaces the
+1.2.9 macOS-only `say` integration with a
+backend-agnostic engine that prefers Piper if
+resolvable + falls back to System (`say`)
+otherwise.  macOS users see no regression;
+Linux + Windows users get a working TTS for the
+first time.
 
-Headline: a unified **manuscript intelligence
-dashboard** (`Ctrl+V Shift+J`) that synthesises
-every metric inkhaven has been collecting since
-1.2.5 (word count, streak, structure, pacing,
-threads, comments) into one pane.  `e` exports
-an atomic snapshot to
-`<project>/journal-<UTC>.md`.
+Headline shape:
 
-Around it ship the deferred polish items from
-the previous three cycles plus a worldbuilding
-pack.
+* **`editor.tts.engine`** new HJSON field
+  with `"auto"` / `"piper"` / `"system"`
+  values.  `"auto"` is the default.
+* **Voices stored per project** under
+  `<project>/.inkhaven/voices/`.  The Piper
+  binary lives in `~/.cache/inkhaven/piper-<plat>/`
+  (user-scoped — it's identical across
+  projects).
+* **`Ctrl+B Shift+V` opens the voice picker**.
+  Browse the Hugging Face piper-voices
+  catalog + already-downloaded voices, type-
+  to-filter, Enter downloads + selects, `d`
+  removes.
+* **`inkhaven tts` CLI surface**: `engine` /
+  `binary status|download` / `voice list|download|remove` /
+  `catalog refresh` / `test "<phrase>"`.
+  Mirrors the picker for scripts, CI gates,
+  remote-shell users.
 
-### Narrative-audit detectors
+### Engine resolution
 
-Four new classes in `inkhaven doctor --scan` /
-`Ctrl+B Shift+0`, all author-judgment findings
-(Info severity, no autofix):
+```
+$ inkhaven tts engine
+inkhaven TTS engine — v1.2.17
+project:       /home/me/Books/my-novel
+master switch: enabled
+requested:     tts.engine = "auto"
+voice:         en_US-lessac-medium
+platform:      linux-x86_64
+piper binary:  /home/me/.cache/inkhaven/piper-linux-x86_64/piper
 
-* **`dropped-character`** — character in the
-  first 30 % of chapters, absent from the last
-  30 %.
-* **`pacing-collapse`** — chapter > 3× or < 0.3×
-  the trailing 5-chapter mean.
-* **`stalled-thread`** — thread with newest
-  waypoint > 30 days old (or empty).
-* **`naming-inconsistency`** — Levenshtein
-  near-miss against a canonical multi-word
-  Characters / Places / Artefacts name (e.g.
-  `Aerin Stormbreaker` vs.
-  canonical `Aerin Stormbringer`).
+→ effective backend: Piper (auto)
+```
 
-See [Tutorial 55](Documentation/Tutorials/55-plot-mining-and-worldbuilding.md).
+On a fresh machine `auto` falls through to
+System until the Piper binary is downloaded
+(via the picker, the CLI, or set explicitly
+via `tts.binary_path`).  TUI startup never
+auto-downloads — first-launch wouldn't be a
+30s pause for users who didn't ask for it.
 
-### Carryovers landed
+### Stale-catalog + offline fallbacks
 
-* **Snippet `bund:` prefix + picker placeholders**
-  — `{char_lookup}` / `{place_lookup}` /
-  `{artefact_lookup}` open the corresponding
-  picker mid-expansion; `bund:` bodies evaluate
-  Bund-VM programs.
-* **Language CLI exports** — `--format
-  csv|grammar|phrasebook` (CSV round-trips with
-  `--import`) + `inkhaven language define-rule
-  <language> <rule_id>` opens the rule template
-  in `$EDITOR`.
-* **Bund stdlib expansion** — `ink.review.list /
-  add_comment / resolve` and `ink.thread.list`.
-* **DB-side health checks** — `PRAGMA
-  integrity_check` (15 min, critical),
-  HNSW-vs-DB row parity (15 min, warn), tree-
-  parent-pointer integrity (30 s).
+Synthesis with already-downloaded voices must
+keep working when the network goes away.  The
+catalog loader returns the stale cache with a
+chip when the refresh fails; the picker falls
+back to listing on-disk voices only when
+neither catalog nor cache is available.
 
-### Worldbuilding chip + amber backup chip
+### Apple Silicon limitation (honest)
 
-Two new status-bar chips:
+Piper's official `piper_macos_aarch64.tar.gz`
+release **ships x86_64 code, not aarch64** —
+a known upstream packaging bug.  Apple Silicon
+Macs need `engine: "system"` (recommended; the
+1.2.9 backend ships dozens of high-quality
+voices), a from-source Piper build, or the
+Rosetta workaround documented in
+[Tutorial 56](Documentation/Tutorials/56-tts-piper.md).
+Linux + Windows have no such issue.
 
-* **`<N>C·<N>P·<N>A`** — cumulative
-  Characters / Places / Artefacts entry counts.
-  Toggle via `editor.show_glossary_chip`.
-* **Amber backup freshness chip** — appears at
-  `backup.amber_threshold × backup.max_age`
-  (default 50 %) so freshness drift is visible
-  before the 1.2.15 warn fires.
+### Test stats
+
+758 → 955 (+197).  Zero new Rust dependencies
+(`curl` + `tar` + platform playback commands
+carry the work via subprocess).
+
+See [Tutorial 56](Documentation/Tutorials/56-tts-piper.md)
+for the full workflow.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
@@ -251,14 +268,14 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 1.2.16).  The first build takes ~10 minutes on
+new version (latest: 1.2.17).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
 ### 4. `cargo install --git` (compile from a specific tag)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v1.2.16
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v1.2.17
 ```
 
 Useful when you want a specific tag, a pre-release branch, or a
