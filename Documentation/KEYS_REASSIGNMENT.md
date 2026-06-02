@@ -824,3 +824,62 @@ Two new status-bar chips.  Toggle via HJSON:
 
 See [`CONFIGURATION.md`](CONFIGURATION.md) for
 the full reference.
+
+## 1.2.17 — new actions
+
+One new TUI chord this cycle.  The rest of the
+1.2.17 surface is CLI subcommands + HJSON config
+knobs around the new Piper TTS backend.
+
+### TTS voice picker (Ctrl+B Shift+V)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `tts.voice_picker` | `Ctrl+B Shift+V` | Open the Piper voice picker.  Browse the catalog + downloaded voices, type-to-filter, Enter to download/use, `d` to remove, Esc to close.  See [Tutorial 56](Tutorials/56-tts-piper.md). |
+
+### Programmatic surface
+
+The 1.2.17 cycle also shipped the headless
+`inkhaven tts` CLI family:
+
+```
+$ inkhaven tts engine                            # backend status
+$ inkhaven tts binary status                     # piper binary info
+$ inkhaven tts binary download                   # explicit fetch
+$ inkhaven tts voice list [--filter X] [--downloaded]
+$ inkhaven tts voice download <name>
+$ inkhaven tts voice remove <name>
+$ inkhaven tts catalog refresh
+$ inkhaven tts test "<phrase>" [--voice <name>] [--output PATH]
+```
+
+All output is line-oriented + grep-friendly; the
+`tts test` flow is synchronous (waits for playback)
+so scripts can chain operations.
+
+### HJSON knobs
+
+Eleven new fields under `editor.tts`:
+
+```hjson
+{
+  editor: {
+    tts: {
+      engine: "auto"                 // "auto" | "piper" | "system"
+      voices_dir: ".inkhaven/voices"
+      auto_download: true
+      catalog_url: "https://huggingface.co/rhasspy/piper-voices/raw/main/voices.json"
+      catalog_ttl_hours: 24
+      binary_path: null
+      auto_download_binary: true
+      cache_max_voices: 5
+      play_command: null
+      sample_rate_hz: 22050
+      auto_gitignore: true
+    }
+  }
+}
+```
+
+See [`CONFIGURATION.md`](CONFIGURATION.md) for the
+full per-field reference + defaults.

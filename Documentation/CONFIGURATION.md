@@ -1349,3 +1349,63 @@ See [Tutorial 41 — Snippets](Tutorials/41-snippets-and-expansion.md)
 for the full snippet reference and
 `Documentation/RELEASE_NOTES/1.2.16.md` Phase
 P.6 for the implementation log.
+
+## 1.2.17 — new HJSON blocks
+
+### `editor.tts` (extended for Piper)
+
+1.2.9 introduced the `editor.tts.*` block for the
+macOS `say` backend.  1.2.17 keeps every 1.2.9
+field intact + layers a backend-agnostic engine
+on top so the same chord (`Ctrl+B S`) can route
+to either macOS `say` (the System backend) or
+the new neural Piper backend.
+
+```hjson
+{
+  editor: {
+    tts: {
+      // 1.2.9+ (preserved)
+      enabled: false
+      voice: "Milena"
+      speed: 1.0
+      greeting: ""
+      goodbye: ""
+
+      // 1.2.17+ (new)
+      engine: "auto"
+      voices_dir: ".inkhaven/voices"
+      auto_download: true
+      catalog_url: "https://huggingface.co/rhasspy/piper-voices/raw/main/voices.json"
+      catalog_ttl_hours: 24
+      binary_path: null
+      auto_download_binary: true
+      cache_max_voices: 5
+      play_command: null
+      sample_rate_hz: 22050
+      auto_gitignore: true
+    }
+  }
+}
+```
+
+Per-field reference:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `engine`              | string  | `"auto"` | Backend selector: `"auto"` prefers Piper if resolvable + falls back to System; `"piper"` forces Piper (errors if unresolvable); `"system"` forces the 1.2.9 macOS `say` backend. |
+| `voices_dir`          | string  | `".inkhaven/voices"` | Directory for the Piper voice cache + catalog snapshot, resolved relative to the project root via `crate::path_safety::resolve_within_str`.  Absolute paths + `..` traversal are rejected at startup. |
+| `auto_download`       | bool    | `true`   | When `true`, missing voices are streamed from `catalog_url` on first use.  When `false`, missing voices produce a clear "voice X is not downloaded; run `inkhaven tts voice download X`" error. |
+| `catalog_url`         | string  | Hugging Face piper-voices `voices.json` | Voice catalog URL.  Override only if you maintain a private / mirrored catalog with the same JSON shape. |
+| `catalog_ttl_hours`   | u32     | `24`     | How long the local catalog cache is fresh.  After expiry the next voice operation re-fetches.  Network failures during refresh fall back to the stale cache + log a warning rather than blocking synthesis. |
+| `binary_path`         | string? | `null`   | Explicit path to a `piper` binary.  When `null`, inkhaven autoresolves via PATH then `~/.cache/inkhaven/piper-<plat>/`.  Treats the explicit override as authoritative — doesn't silently fall back to PATH if the path is set but unreadable. |
+| `auto_download_binary`| bool    | `true`   | When `true`, the `inkhaven tts binary download` CLI fetches the platform-appropriate Piper release from GitHub.  TUI startup never auto-downloads — the chord-triggered surfaces always assume a pre-resolved binary. |
+| `cache_max_voices`    | usize   | `5`      | LRU cap on the project's `voices_dir`.  Beyond the cap, the least-recently-used voice's `.onnx` + `.onnx.json` are removed.  Voice models are 25–100 MB each. |
+| `play_command`        | string? | `null`   | Override the platform default playback command.  `{path}` is replaced with the resolved WAV path at spawn time.  Default per platform: `afplay {path}` (macOS), `paplay {path}` → `aplay {path}` fallback (Linux), `powershell -c "(New-Object Media.SoundPlayer '{path}').PlaySync()"` (Windows). |
+| `sample_rate_hz`      | u32     | `22050`  | Sample rate for Piper synthesis output.  Piper's native rate is 22050 Hz; changing this triggers a resample inside the playback pipeline.  Most users should leave the default. |
+| `auto_gitignore`      | bool    | `true`   | When `true`, the first auto-downloaded voice appends `.inkhaven/voices/` to the project's `.gitignore` (creating the file if absent).  Voices are large opaque blobs; checking them into git is universally wrong.  One-time, idempotent, atomic via `crate::io_atomic`. |
+
+See [Tutorial 56](Tutorials/56-tts-piper.md) for the
+full Piper workflow including the `Ctrl+B Shift+V`
+voice picker, the `inkhaven tts` CLI surface, and the
+known Apple-Silicon Piper limitation.
