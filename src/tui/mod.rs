@@ -54,6 +54,7 @@ pub(crate) mod piper;
 mod voice_picker;
 mod sentence_rhythm;
 mod style_warnings;
+mod echo_overlay;
 mod quickref;
 mod sound;
 mod theme;

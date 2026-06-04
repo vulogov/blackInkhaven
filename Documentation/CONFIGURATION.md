@@ -1455,6 +1455,7 @@ distinctive word reused close together).
 | `echo_window` | usize | `5` | Window (consecutive paragraphs) for the echo scan.  A distinctive word reused `echo_min_repeats` times within this many paragraphs is flagged. |
 | `echo_min_repeats` | usize | `3` | Occurrences within `echo_window` required to flag.  Lower = more sensitive. |
 | `echo_max_global` | usize | `40` | Distinctiveness ceiling: words used more than this many times across a chapter are treated as common vocabulary (legitimately reused) and skipped, even when clustered.  Tune up for long works, down for short stories. |
+| `echo_overlay` | bool | `false` | Default state of the live echo overlay (`Ctrl+B Shift+K`, 1.2.20+ C.1.b): underline, in the open paragraph, words echoing across nearby paragraphs — the inline companion to the `echo-repetition` doctor scan, reusing the three `echo_*` tunables above.  The session toggle overrides this; set `true` to always start on. |
 
 ### `editor.paragraph_long_secs` (1.2.20+)
 

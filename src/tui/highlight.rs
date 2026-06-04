@@ -390,6 +390,12 @@ fn style_warning_style_at(
         StyleWarningKind::ShowDontTell => Style::default()
             .fg(theme.style_warning_show_dont_tell_fg)
             .add_modifier(theme.style_warning_show_dont_tell_modifier),
+        // 1.2.20+ C.1.b — the echo overlay shares the
+        // repeated-phrase styling: both are repetition
+        // signals, so they read as one visual family.
+        StyleWarningKind::Echo => Style::default()
+            .fg(theme.style_warning_repeated_phrase_fg)
+            .add_modifier(theme.style_warning_repeated_phrase_modifier),
     })
 }
 

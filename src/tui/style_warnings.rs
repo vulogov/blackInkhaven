@@ -55,6 +55,10 @@ pub enum StyleWarningKind {
     /// (`realised` / `knew`).  See
     /// `ShowDontTellDetector`.
     ShowDontTell,
+    /// 1.2.20+ C.1.b — a word echoing across nearby
+    /// paragraphs of the chapter, underlined in the open
+    /// paragraph.  See `crate::tui::echo_overlay`.
+    Echo,
 }
 
 /// One stylistic-warning hit on a row of editor text.

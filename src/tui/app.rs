@@ -1639,6 +1639,25 @@ pub(crate) struct App {
     /// of HJSON, `false` forces off, `None` (the
     /// default) defers to the HJSON setting.
     style_warnings_toggle: Option<bool>,
+    /// 1.2.20+ C.1.b — session-local override for
+    /// `editor.echo_overlay` (`Ctrl+B Shift+K`); same
+    /// three-state semantics as `style_warnings_toggle`.
+    echo_overlay_toggle: Option<bool>,
+    /// 1.2.20+ C.1.b — cached set of stems echoing near
+    /// the open paragraph, recomputed by
+    /// `refresh_echo_overlay`.  The render path turns this
+    /// into per-line underlines.
+    echo_overlay_stems: std::collections::HashSet<String>,
+    /// 1.2.20+ C.1.b — chapter-paragraph cache for the
+    /// echo overlay, keyed by the open paragraph id:
+    /// `(open_id, [(para_id, plain_text), …])`.  Re-gathered
+    /// (one store read per chapter paragraph) only when the
+    /// open paragraph changes, not per keystroke.
+    echo_overlay_chapter: Option<(Uuid, Vec<(Uuid, String)>)>,
+    /// 1.2.20+ C.1.b — `(open_id, content_hash)` of the
+    /// last `refresh_echo_overlay` compute, so idle ticks
+    /// and unrelated keystrokes skip the echo pass.
+    echo_overlay_last_key: Option<(Uuid, u64)>,
     /// 1.2.9+ — session-local override for
     /// `editor.pov_chip_enabled`.  `Ctrl+B Shift+P`
     /// flips this; semantics identical to
@@ -2131,6 +2150,10 @@ impl App {
             shell_ctrlb_pending: false,
             tts,
             style_warnings_toggle: None,
+            echo_overlay_toggle: None,
+            echo_overlay_stems: std::collections::HashSet::new(),
+            echo_overlay_chapter: None,
+            echo_overlay_last_key: None,
             pov_chip_toggle: None,
             prompt_lang_mode_runtime: None,
             opened: None,
@@ -2406,6 +2429,10 @@ impl App {
             if std::mem::take(&mut self.pending_backup_now) {
                 self.run_pending_backup_now(terminal);
             }
+            // 1.2.20+ C.1.b — refresh the echo-overlay stem
+            // cache before drawing (cheap when off or
+            // unchanged).
+            self.refresh_echo_overlay();
             terminal.draw(|f| self.draw(f))?;
             // Shorter poll interval while streaming so tokens render with low
             // latency without burning CPU when idle.  1.2.18+ R.4 — the
@@ -7873,6 +7900,7 @@ impl App {
             A::SceneBreakPrev => self.scene_break_jump(-1),
             A::SceneBreakNext => self.scene_break_jump(1),
             A::ToggleStyleWarnings => self.toggle_style_warnings(),
+            A::ToggleEchoOverlay => self.toggle_echo_overlay(),
             A::OpenConcordance => self.open_concordance(),
             A::TogglePovChip => self.toggle_pov_chip(),
             A::TogglePromptLanguageMode => self.toggle_prompt_language_mode(),
@@ -8977,6 +9005,173 @@ impl App {
         } else {
             "style warnings: OFF".into()
         };
+    }
+
+    /// 1.2.20+ C.1.b — flip the live echo overlay.  Same
+    /// three-state cycle as `toggle_style_warnings`.
+    fn toggle_echo_overlay(&mut self) {
+        let new_state = match self.echo_overlay_toggle {
+            None => Some(!self.cfg.editor.echo_overlay),
+            Some(true) => Some(false),
+            Some(false) => Some(true),
+        };
+        self.echo_overlay_toggle = new_state;
+        let effective = new_state.unwrap_or(self.cfg.editor.echo_overlay);
+        // Force a recompute on the next refresh regardless
+        // of the content-hash skip (the toggle itself isn't
+        // part of that key).
+        self.echo_overlay_last_key = None;
+        if !effective {
+            self.echo_overlay_stems.clear();
+        }
+        self.status = if effective {
+            "echo overlay: ON · underlining words echoing near this paragraph".into()
+        } else {
+            "echo overlay: OFF".into()
+        };
+    }
+
+    /// 1.2.20+ C.1.b — effective echo-overlay state
+    /// (session toggle over the HJSON default).
+    fn echo_overlay_active(&self) -> bool {
+        self.echo_overlay_toggle
+            .unwrap_or(self.cfg.editor.echo_overlay)
+    }
+
+    /// The nearest `Chapter` ancestor of the open
+    /// paragraph (its own id if it somehow is a chapter).
+    fn open_paragraph_chapter(&self) -> Option<Uuid> {
+        use crate::store::NodeKind;
+        let open = self.opened.as_ref()?;
+        let node = self.hierarchy.get(open.id)?;
+        if node.kind == NodeKind::Chapter {
+            return Some(node.id);
+        }
+        self.hierarchy
+            .ancestors(node)
+            .into_iter()
+            .find(|a| a.kind == NodeKind::Chapter)
+            .map(|a| a.id)
+    }
+
+    /// Every paragraph under `chapter_id` as
+    /// `(id, plain_text)` in reading order, read from the
+    /// bdslib store (the live source the editor edits).
+    fn gather_chapter_paragraphs(&self, chapter_id: Uuid) -> Vec<(Uuid, String)> {
+        use crate::store::NodeKind;
+        let mut out = Vec::new();
+        for id in self.hierarchy.collect_subtree(chapter_id) {
+            let Some(p) = self.hierarchy.get(id) else { continue };
+            if p.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let text = self
+                .store
+                .get_content(id)
+                .ok()
+                .flatten()
+                .and_then(|b| String::from_utf8(b).ok())
+                .unwrap_or_default();
+            out.push((id, crate::audiobook::typst_to_plain(&text)));
+        }
+        out
+    }
+
+    /// 1.2.20+ C.1.b — recompute the set of stems echoing
+    /// near the open paragraph.  Cheap when nothing
+    /// changed (content-hash skip); re-gathers the
+    /// chapter's sibling paragraphs only when the open
+    /// paragraph changes.  Called once per main-loop
+    /// iteration, before draw.
+    fn refresh_echo_overlay(&mut self) {
+        if !self.echo_overlay_active() {
+            if !self.echo_overlay_stems.is_empty() {
+                self.echo_overlay_stems.clear();
+            }
+            self.echo_overlay_chapter = None;
+            self.echo_overlay_last_key = None;
+            return;
+        }
+        let Some(open) = self.opened.as_ref() else {
+            self.echo_overlay_stems.clear();
+            self.echo_overlay_last_key = None;
+            return;
+        };
+        let open_id = open.id;
+        let open_raw = open.textarea.lines().join("\n");
+
+        // Skip the whole pass when neither the open
+        // paragraph nor its text has changed since last time.
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            open_id.hash(&mut h);
+            open_raw.hash(&mut h);
+            h.finish()
+        };
+        if self.echo_overlay_last_key == Some((open_id, key)) {
+            return;
+        }
+
+        let Some(chapter_id) = self.open_paragraph_chapter() else {
+            self.echo_overlay_stems.clear();
+            self.echo_overlay_last_key = Some((open_id, key));
+            return;
+        };
+
+        // Re-gather sibling paragraphs only when the open
+        // paragraph changed (one store read each); reuse
+        // across keystrokes within the same paragraph.
+        let need_gather = self
+            .echo_overlay_chapter
+            .as_ref()
+            .map_or(true, |(cached_open, _)| *cached_open != open_id);
+        if need_gather {
+            let paras = self.gather_chapter_paragraphs(chapter_id);
+            self.echo_overlay_chapter = Some((open_id, paras));
+        }
+        let Some((_, paras)) = self.echo_overlay_chapter.as_ref() else {
+            return;
+        };
+
+        // Substitute the live (plain) open-paragraph text at
+        // its slot so the overlay tracks unsaved edits.
+        let open_plain = crate::audiobook::typst_to_plain(&open_raw);
+        let mut texts: Vec<String> = Vec::with_capacity(paras.len());
+        let mut open_index: Option<usize> = None; // 1-based
+        for (i, (id, plain)) in paras.iter().enumerate() {
+            if *id == open_id {
+                open_index = Some(i + 1);
+                texts.push(open_plain.clone());
+            } else {
+                texts.push(plain.clone());
+            }
+        }
+        let Some(open_index) = open_index else {
+            self.echo_overlay_stems.clear();
+            self.echo_overlay_last_key = Some((open_id, key));
+            return;
+        };
+
+        let language = if self.cfg.language.trim().is_empty() {
+            "english"
+        } else {
+            self.cfg.language.as_str()
+        };
+        let echo_cfg = crate::echo::EchoConfig {
+            window: self.cfg.editor.echo_window.max(1),
+            min_repeats: self.cfg.editor.echo_min_repeats.max(2),
+            max_global: self.cfg.editor.echo_max_global.max(1),
+            ..crate::echo::EchoConfig::default()
+        };
+        let findings =
+            crate::echo::detect_echoes(&texts, language, None, &echo_cfg);
+        self.echo_overlay_stems = findings
+            .into_iter()
+            .filter(|f| open_index >= f.para_start && open_index <= f.para_end)
+            .map(|f| f.stem)
+            .collect();
+        self.echo_overlay_last_key = Some((open_id, key));
     }
 
     /// 1.2.9+ — true when the POV / character chip

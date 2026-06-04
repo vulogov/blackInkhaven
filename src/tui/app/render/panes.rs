@@ -930,6 +930,27 @@ impl super::super::App {
             } else {
                 None
             };
+        // 1.2.20+ C.1.b — echo overlay.  Independent of the
+        // Shift+F style toggle; driven by its own Shift+K
+        // toggle + the `echo_overlay_stems` cache refreshed
+        // each main-loop iteration.  Cheap per-line detector
+        // built from the cached stem set.
+        // Field accesses (not a method call) so the borrow
+        // stays disjoint from the `self.opened` mutable
+        // borrow above.
+        let echo_active = self
+            .echo_overlay_toggle
+            .unwrap_or(self.cfg.editor.echo_overlay);
+        let echo_detector = if echo_active
+            && !self.echo_overlay_stems.is_empty()
+        {
+            Some(crate::tui::echo_overlay::EchoHighlighter::new(
+                &self.echo_overlay_stems,
+                style_lang,
+            ))
+        } else {
+            None
+        };
         let style_per_row: Vec<Vec<super::super::super::style_warnings::StyleHit>> =
             current_lines
                 .iter()
@@ -947,6 +968,11 @@ impl super::super::App {
                         }
                     }
                     if let Some(d) = &sdt_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.detect(line));
+                        }
+                    }
+                    if let Some(d) = &echo_detector {
                         if !d.is_empty() {
                             hits.extend(d.detect(line));
                         }
@@ -1231,6 +1257,27 @@ impl super::super::App {
             } else {
                 None
             };
+        // 1.2.20+ C.1.b — echo overlay.  Independent of the
+        // Shift+F style toggle; driven by its own Shift+K
+        // toggle + the `echo_overlay_stems` cache refreshed
+        // each main-loop iteration.  Cheap per-line detector
+        // built from the cached stem set.
+        // Field accesses (not a method call) so the borrow
+        // stays disjoint from the `self.opened` mutable
+        // borrow above.
+        let echo_active = self
+            .echo_overlay_toggle
+            .unwrap_or(self.cfg.editor.echo_overlay);
+        let echo_detector = if echo_active
+            && !self.echo_overlay_stems.is_empty()
+        {
+            Some(crate::tui::echo_overlay::EchoHighlighter::new(
+                &self.echo_overlay_stems,
+                style_lang,
+            ))
+        } else {
+            None
+        };
         let style_per_row: Vec<Vec<super::super::super::style_warnings::StyleHit>> =
             current_lines
                 .iter()
@@ -1248,6 +1295,11 @@ impl super::super::App {
                         }
                     }
                     if let Some(d) = &sdt_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.detect(line));
+                        }
+                    }
+                    if let Some(d) = &echo_detector {
                         if !d.is_empty() {
                             hits.extend(d.detect(line));
                         }
