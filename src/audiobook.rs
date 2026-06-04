@@ -56,9 +56,9 @@ pub struct ChapterAudio {
 /// `say` / piper engines treat a newline as a short
 /// pause).
 pub fn typst_to_plain(body: &str) -> String {
-    let stripped = strip_leading_heading(body);
+    let stripped = crate::typst_prose::strip_leading_heading(body);
     let mut out_blocks: Vec<String> = Vec::new();
-    for block in split_blocks(&stripped) {
+    for block in crate::typst_prose::split_blocks(&stripped) {
         let trimmed = block.trim();
         if trimmed.is_empty() {
             continue;
@@ -79,39 +79,6 @@ pub fn typst_to_plain(body: &str) -> String {
         }
     }
     out_blocks.join("\n")
-}
-
-fn strip_leading_heading(body: &str) -> String {
-    let mut lines = body.lines();
-    if let Some(first) = lines.clone().next() {
-        if first.trim_start().starts_with("= ") {
-            lines.next();
-            let rest: Vec<&str> = lines.collect();
-            return rest.join("\n").trim_start_matches('\n').to_string();
-        }
-    }
-    body.to_string()
-}
-
-fn split_blocks(s: &str) -> Vec<String> {
-    let mut blocks = Vec::new();
-    let mut cur = String::new();
-    for line in s.lines() {
-        if line.trim().is_empty() {
-            if !cur.trim().is_empty() {
-                blocks.push(std::mem::take(&mut cur));
-            }
-        } else {
-            if !cur.is_empty() {
-                cur.push('\n');
-            }
-            cur.push_str(line);
-        }
-    }
-    if !cur.trim().is_empty() {
-        blocks.push(cur);
-    }
-    blocks
 }
 
 /// Remove `#footnote[…]` blocks + `_` / `*` emphasis
