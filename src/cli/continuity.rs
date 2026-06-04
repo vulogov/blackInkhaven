@@ -15,11 +15,9 @@
 //! assembly + fact parsing are unit-tested in
 //! `crate::continuity_bible`.
 
-use std::io::Write;
 use std::path::Path;
 
 use crate::ai::AiClient;
-use crate::ai::stream::{spawn_chat_stream, StreamMsg};
 use crate::config::Config;
 use crate::continuity_bible::{ContinuityBible, parse_extraction};
 use crate::error::{Error, Result};
@@ -127,28 +125,13 @@ fn build_extract_prompt(language: &str, chapter: &str, prose: &str) -> String {
 }
 
 fn run_blocking(ai: &AiClient, model: &str, prompt: &str) -> Result<String> {
-    let mut rx = spawn_chat_stream(
+    crate::ai::stream::collect_blocking(
         ai.client.clone(),
         model.to_string(),
         Some(SYSTEM_PROMPT.to_string()),
-        Vec::new(),
         prompt.to_string(),
-    );
-    let mut raw = String::new();
-    while let Some(msg) = rx.blocking_recv() {
-        match msg {
-            StreamMsg::Token(t) => {
-                raw.push_str(&t);
-                let _ = std::io::stderr().write_all(b".");
-                let _ = std::io::stderr().flush();
-            }
-            StreamMsg::Done => break,
-            StreamMsg::Error(e) => {
-                return Err(Error::Store(format!("inference error: {e}")));
-            }
-        }
-    }
-    Ok(raw)
+    )
+    .map_err(|e| Error::Store(format!("inference error: {e}")))
 }
 
 fn list(project: &Path) -> Result<()> {

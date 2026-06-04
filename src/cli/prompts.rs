@@ -32,12 +32,10 @@
 //!     three-pass resolver — no LLM calls on the hot
 //!     path.
 
-use std::io::Write;
 use std::path::Path;
 
 use crate::ai::AiClient;
 use crate::ai::prompts::{Prompt, PromptLibrary, iso_from_long};
-use crate::ai::stream::{StreamMsg, spawn_chat_stream};
 use crate::config::Config;
 use crate::error::Result;
 use crate::project::ProjectLayout;
@@ -129,30 +127,19 @@ fn bootstrap(
             .unwrap_or_default(),
     );
 
-    let mut rx = spawn_chat_stream(
+    let raw = match crate::ai::stream::collect_blocking(
         ai.client.clone(),
         model.to_string(),
         Some(SYSTEM_PROMPT.to_string()),
-        Vec::new(),
         prompt,
-    );
-
-    let mut raw = String::new();
-    while let Some(msg) = rx.blocking_recv() {
-        match msg {
-            StreamMsg::Token(t) => {
-                raw.push_str(&t);
-                let _ = std::io::stderr().write_all(b".");
-                let _ = std::io::stderr().flush();
-            }
-            StreamMsg::Done => break,
-            StreamMsg::Error(e) => {
-                eprintln!();
-                eprintln!("inference error: {e}");
-                return Ok(());
-            }
+    ) {
+        Ok(raw) => raw,
+        Err(e) => {
+            eprintln!();
+            eprintln!("inference error: {e}");
+            return Ok(());
         }
-    }
+    };
     eprintln!();
 
     let parsed = match parse_prompts(&raw) {
