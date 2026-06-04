@@ -155,7 +155,7 @@ the measured data:
 | Phase  | Proposal hypothesis | **Revised (data-driven)** | Est. win | Status |
 |--------|--------------------|--------------------------|----------|--------|
 | I.1.4  | lazy tree-row materialisation | **lazy embedding-engine init** | ~470 ms / cold start | ✅ **landed** |
-| I.1.5  | background embedding refresh (save) | **parent→children index (flatten O(n²)→O(n))** | ~755 ms / flatten @ 10K | next |
+| I.1.5  | background embedding refresh (save) | **parent→children index (flatten O(n²)→O(n))** | ~755 ms / flatten @ 10K | ✅ **landed** |
 | I.1.6  | DuckDB write batching | deferred — profile save path first (`_bench-save`), smaller win | TBD | deferred |
 
 ### I.1.4 result (measured)
@@ -178,6 +178,52 @@ instead of on every project open.  Search correctness
 unchanged (the first query pays the load, amortised
 across a session).  `inkhaven list` / `add` / TUI launch
 all land ~470 ms faster.
+
+### I.1.5 result (measured)
+
+`Hierarchy` now builds a parent→children index
+(`HashMap<Option<Uuid>, Vec<Uuid>>`) once in `load`, in
+a single O(n) pass over the already-sorted `order` vec.
+`children_of` becomes an O(k) map lookup (k = child
+count) instead of an O(n) full scan, which collapses
+`flatten`'s O(n²) into O(n).  The buckets come out
+pre-sorted (a parent's children share a depth, so the
+global `(depth, order, slug)` sort already orders them),
+so there's no per-bucket sort.
+
+Re-profiled the 2046-node fixture:
+
+| Phase                       | before    | **after** |
+|-----------------------------|-----------|-----------|
+| `flatten` (per call)        | 31.98 ms  | **0.05 ms** |
+| `hierarchy.load.build_index`| —         | 0.08 ms (new, one-time) |
+| `hierarchy_load` (total)    | 6.82 ms   | 6.98 ms (≈ flat) |
+
+640× faster flatten at 2k.  Projected to 10K (linear
+now): ~0.25 ms vs. the ~760 ms O(n²) problem.  `flatten`
+runs on the tree-pane render path, so this is the
+difference between smooth + janky scrolling on a large
+project.
+
+The index also speeds up every other `children_of`
+consumer for free: `has_children` (now O(1)),
+`next_order`, `walk_ids` / `collect_subtree`,
+`find_by_path`.
+
+`Hierarchy` is immutable after construction (mutations
+reload via `Hierarchy::load`), so the index never needs
+invalidating — no cache-coherence complexity.
+
+Correctness: 7 `index_tests` assert children order
+(order-field beats insertion order), preorder-DFS
+flatten, has_children, next_order, and empty-hierarchy
+well-formedness.
+
+> A dedicated criterion `tree_scroll` bench is deferred:
+> measuring a 0.05 ms in-process flatten under criterion
+> needs the lib-refactor (a subprocess bench's ~85 ms
+> startup would drown the signal).  The `_bench-load`
+> instrument already captures the win precisely.
 
 I.1.7 (CI gates) is unchanged.
 
