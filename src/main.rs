@@ -17,6 +17,7 @@ mod echo;
 mod epub;
 mod error;
 mod export;
+mod git;
 mod grammar;
 mod language_entry;
 mod manuscript;

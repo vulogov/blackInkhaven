@@ -732,6 +732,15 @@ pub(super) enum Modal {
     /// `request_quit` flow; N / Esc cancels.  No fields —
     /// the modal is fully transient.
     ConfirmQuit,
+    /// 1.2.20+ Phase G — quit-time warning when the
+    /// project's git working tree has uncommitted changes
+    /// (`editor.warn_uncommitted_on_exit`).  Shown after
+    /// the open buffer is autosaved; `count` is the number
+    /// of changed/untracked paths.  Y / Enter quits
+    /// anyway; N / Esc cancels.
+    ConfirmQuitUncommitted {
+        count: usize,
+    },
     /// 1.2.9+ — TTS unavailable / disabled modal.  Opens
     /// when `Ctrl+B S` fires while either the feature is
     /// disabled in HJSON (`editor.tts.enabled = false`)

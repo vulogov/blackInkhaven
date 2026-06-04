@@ -1486,6 +1486,20 @@ Threshold for the R.3.b `paragraph-too-long` doctor scan.
 |-------|------|---------|-------------|
 | `disk_warn_mb` | u64 | `100` | Low-disk pre-flight threshold (MiB).  When the volume holding the project has less than this much free space, the editor shows a one-time status-line warning at startup, before a session of edits or a long export.  Atomic writes already fail safely on a full disk (the original file survives, the error surfaces) — this is the proactive heads-up.  `0` disables the check. |
 
+### `editor.warn_uncommitted_on_exit` (1.2.20+)
+
+```hjson
+{
+  editor: {
+    warn_uncommitted_on_exit: true   // default
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `warn_uncommitted_on_exit` | bool | `true` | On quit, if the project is a git repo with uncommitted changes (modified, staged, or untracked paths), confirm before exiting (`y`/Enter quits anyway, `n`/Esc stays).  The open paragraph is autosaved first, so the working tree reflects your latest edits.  Best-effort: silently skipped when the project isn't a git repo or `git` isn't installed (inkhaven shells out to your own `git`; it has no git dependency).  Set `false` to quit without the check. |
+
 ### Revision sidecars (1.2.19+)
 
 The C.3 / C.4 revision features store their AI-extracted
