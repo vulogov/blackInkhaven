@@ -101,7 +101,7 @@ impl FilterWordsDetector {
             None
         };
         let normalise = |w: &str| -> String {
-            let lc = w.trim().to_lowercase();
+            let lc = w.trim().to_lowercase().replace('ё', "е");
             match &stemmer {
                 Some(s) => s.stem(&lc).into_owned(),
                 None => lc,
@@ -162,7 +162,7 @@ impl FilterWordsDetector {
         }
         let mut out = Vec::new();
         for (byte_start, word) in line.unicode_word_indices() {
-            let lc = word.to_lowercase();
+            let lc = word.to_lowercase().replace('ё', "е");
             let key = match &self.stemmer {
                 Some(s) => s.stem(&lc).into_owned(),
                 None => lc,
@@ -249,7 +249,7 @@ impl RepeatedPhraseDetector {
             _ => &cfg.english_stop_words,
         };
         let normalise_stop = |w: &str| -> String {
-            let lc = w.trim().to_lowercase();
+            let lc = w.trim().to_lowercase().replace('ё', "е");
             match &stemmer {
                 Some(s) => s.stem(&lc).into_owned(),
                 None => lc,
@@ -284,7 +284,7 @@ impl RepeatedPhraseDetector {
                 byte_to_char.push(char_count);
             }
             for (byte_start, word) in line.unicode_word_indices() {
-                let lc = word.to_lowercase();
+                let lc = word.to_lowercase().replace('ё', "е");
                 let stem = match &stemmer {
                     Some(s) => s.stem(&lc).into_owned(),
                     None => lc,
@@ -445,7 +445,7 @@ impl ShowDontTellDetector {
             None
         };
         let normalise = |w: &str| -> String {
-            let lc = w.trim().to_lowercase();
+            let lc = w.trim().to_lowercase().replace('ё', "е");
             match &stemmer {
                 Some(s) => s.stem(&lc).into_owned(),
                 None => lc,
@@ -568,7 +568,7 @@ impl ShowDontTellDetector {
         let tokens: Vec<Tok> = line
             .unicode_word_indices()
             .map(|(b, w)| {
-                let lc = w.to_lowercase();
+                let lc = w.to_lowercase().replace('ё', "е");
                 let stem = match &self.stemmer {
                     Some(s) => s.stem(&lc).into_owned(),
                     None => lc,
@@ -661,6 +661,21 @@ mod tests {
         let hits = d.detect("Он был очень устал и просто хотел спать.");
         // очень + просто → 2 hits
         assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn russian_yo_fold_matches_e_spelling() {
+        // Filter list spells the word with `ё`; the author
+        // typed the `е` form.  Without the ё→е fold the
+        // stems diverge and the hit is missed (1.2.20 B.1).
+        let mut cfg = cfg_default();
+        cfg.russian = vec!["ещё".to_string()];
+        let d = FilterWordsDetector::new(&cfg, "russian");
+        assert!(!d.detect("ещё раз").is_empty(), "ё-spelling must match");
+        assert!(
+            !d.detect("еще раз").is_empty(),
+            "е-spelling must match the ё list entry via the fold"
+        );
     }
 
     #[test]

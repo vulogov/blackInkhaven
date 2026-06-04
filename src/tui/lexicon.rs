@@ -313,7 +313,10 @@ fn tokenize_with_offsets(s: &str) -> Vec<Token> {
 /// lowercased original is always included so an empty algorithm list still
 /// matches the exact word.
 fn stems_for(word: &str, algos: &[Algorithm]) -> Vec<String> {
-    let lc = word.to_lowercase();
+    // Fold ё→е so a name spelled with ё (Алёша, Фёдор)
+    // matches its е-spelled buffer occurrence and vice
+    // versa; the Russian stemmer treats the two as unified.
+    let lc = word.to_lowercase().replace('ё', "е");
     let mut out: Vec<String> = Vec::with_capacity(1 + algos.len());
     out.push(lc.clone());
     for a in algos {
@@ -385,6 +388,22 @@ mod tests {
         let lex = build_test_lex(&["cities"], &[], vec![Algorithm::English]);
         let hits = lex.row_hits("She walked through the city at dawn.");
         assert_eq!(hits.len(), 1, "expected one hit, got {hits:?}");
+    }
+
+    #[test]
+    fn russian_yo_name_matches_e_spelling() {
+        // Name compiled with `ё`; buffer uses the `е` form
+        // (common in informal Russian).  The fold aligns
+        // both sides (1.2.20 B.1).
+        let lex = build_test_lex(&[], &["Алёша"], vec![Algorithm::Russian]);
+        assert!(
+            !lex.row_hits("Где Алёша сегодня").is_empty(),
+            "ё-spelling of the name must highlight"
+        );
+        assert!(
+            !lex.row_hits("Где Алеша сегодня").is_empty(),
+            "е-spelling must highlight via the fold"
+        );
     }
 
     #[test]
