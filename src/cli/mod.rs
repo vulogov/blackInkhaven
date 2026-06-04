@@ -31,6 +31,7 @@ pub mod bench_report;
 pub mod epub;
 pub mod audiobook;
 pub mod continuity;
+pub mod tension;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -487,6 +488,16 @@ pub enum Command {
     #[command(subcommand)]
     Continuity(ContinuityCommand),
 
+    /// 1.2.19+ C.4 — `inkhaven tension <subcommand>`.
+    /// `scan` runs the AI pass that tags each chapter's
+    /// introduced + resolved tensions into
+    /// `<project>/.inkhaven/tensions.json`; `list` dumps
+    /// it.  Then `doctor --scan --class
+    /// unresolved-tension` (opt-in) flags introduced
+    /// tensions with no downstream payoff.
+    #[command(subcommand)]
+    Tension(TensionCommand),
+
     /// Launch the TUI editor (default if no subcommand is given).
     Tui,
 
@@ -843,6 +854,23 @@ pub enum ContinuityCommand {
     },
     /// Dump the extracted continuity bible — each
     /// character's facts, by attribute + chapter.
+    List,
+}
+
+/// 1.2.19+ C.4 — sub-subcommands under
+/// `inkhaven tension …`.
+#[derive(Debug, Subcommand)]
+pub enum TensionCommand {
+    /// Run the AI pass that tags each chapter's
+    /// introduced + resolved tensions into
+    /// `<project>/.inkhaven/tensions.json`.
+    Scan {
+        /// LLM provider override (defaults to
+        /// `llm.default`).
+        #[arg(long)]
+        provider: Option<String>,
+    },
+    /// Dump the tension ledger.
     List,
 }
 
@@ -1637,6 +1665,9 @@ impl Cli {
             }
             Command::Continuity(cmd) => {
                 continuity::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Tension(cmd) => {
+                tension::run(&project, cmd).map_err(Into::into)
             }
             Command::BenchLoad { query, iterations } => {
                 bench_load::run(&project, &query, iterations)

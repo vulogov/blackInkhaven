@@ -143,6 +143,15 @@ pub enum ScanClass {
     /// severity — an attribute can legitimately change
     /// (an injury, dyed hair).  No autofix.
     ContinuityDrift,
+    /// 1.2.19+ C.4 — a tension / question / goal
+    /// introduced in the manuscript but never paid off,
+    /// from the `inkhaven tension scan` ledger.  **Opt-in
+    /// only** — excluded from the default `doctor --scan`,
+    /// runs solely on `--class unresolved-tension`,
+    /// because tension is a judgment call (an open thread
+    /// may be a deliberate series hook) and the AI tagging
+    /// is approximate.  Info severity.  No autofix.
+    UnresolvedTension,
 }
 
 impl ScanClass {
@@ -162,6 +171,7 @@ impl ScanClass {
             ScanClass::EchoRepetition => "echo-repetition",
             ScanClass::NumericContradiction => "numeric-contradiction",
             ScanClass::ContinuityDrift => "continuity-drift",
+            ScanClass::UnresolvedTension => "unresolved-tension",
         }
     }
 
@@ -180,11 +190,12 @@ impl ScanClass {
             "echo-repetition" => ScanClass::EchoRepetition,
             "numeric-contradiction" => ScanClass::NumericContradiction,
             "continuity-drift" => ScanClass::ContinuityDrift,
+            "unresolved-tension" => ScanClass::UnresolvedTension,
             _ => return None,
         })
     }
 
-    pub const ALL: [ScanClass; 12] = [
+    pub const ALL: [ScanClass; 13] = [
         ScanClass::ZeroByteFile,
         ScanClass::OrphanParagraphRow,
         ScanClass::MissingReferencedFile,
@@ -197,7 +208,17 @@ impl ScanClass {
         ScanClass::EchoRepetition,
         ScanClass::NumericContradiction,
         ScanClass::ContinuityDrift,
+        ScanClass::UnresolvedTension,
     ];
+
+    /// 1.2.19+ C.4 — classes excluded from the default
+    /// `doctor --scan` (run only on explicit `--class`).
+    /// `unresolved-tension` is opt-in because its AI
+    /// tagging is approximate + an open thread can be
+    /// deliberate.
+    pub fn is_opt_in(&self) -> bool {
+        matches!(self, ScanClass::UnresolvedTension)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -294,7 +315,10 @@ pub fn scan_project(
 
     let mut report = ScanReport::new(&layout.root);
 
-    let run = |c: ScanClass| selected.map_or(true, |s| s == c);
+    // On the default (no `--class`) run, every class runs
+    // EXCEPT opt-in ones (C.4 unresolved-tension); when a
+    // class is explicitly selected, it runs regardless.
+    let run = |c: ScanClass| selected.map_or(!c.is_opt_in(), |s| s == c);
 
     // 1.2.15+ — the zero-byte + orphan checks both
     // need to consult bdslib for fallback content,
@@ -351,8 +375,48 @@ pub fn scan_project(
     if run(ScanClass::ContinuityDrift) {
         report.findings.extend(scan_continuity_drift(&layout, &cfg));
     }
+    // 1.2.19+ C.4 — unresolved tension.  Opt-in: the
+    // `run` guard returns false for it on the default run
+    // (is_opt_in), true only when explicitly selected.
+    if run(ScanClass::UnresolvedTension) {
+        report.findings.extend(scan_unresolved_tension(&layout, &cfg));
+    }
 
     Ok(report)
+}
+
+/// 1.2.19+ C.4 — flag introduced tensions with no
+/// downstream resolution, from the `inkhaven tension
+/// scan` ledger.  Empty / absent ledger → no findings.
+fn scan_unresolved_tension(
+    layout: &ProjectLayout,
+    cfg: &Config,
+) -> Vec<ScanFinding> {
+    let Ok(ledger) = crate::tension::TensionLedger::load(&layout.root) else {
+        return Vec::new();
+    };
+    if ledger.tags.is_empty() {
+        return Vec::new();
+    }
+    let language = if !ledger.language.trim().is_empty() {
+        ledger.language.clone()
+    } else if !cfg.language.trim().is_empty() {
+        cfg.language.clone()
+    } else {
+        "english".to_string()
+    };
+    crate::tension::detect_unresolved(&ledger, &language)
+        .into_iter()
+        .map(|u| ScanFinding {
+            class: ScanClass::UnresolvedTension,
+            severity: ScanSeverity::Info,
+            path: None,
+            detail: format!(
+                "unresolved tension: `{}` is introduced in `{}` but never paid off — review whether it's a deliberate open thread",
+                u.topic, u.chapter,
+            ),
+        })
+        .collect()
 }
 
 /// 1.2.19+ C.3 — flag character attributes that change
@@ -880,7 +944,8 @@ pub fn apply_fix(
         | ScanClass::NamingInconsistency
         | ScanClass::EchoRepetition
         | ScanClass::NumericContradiction
-        | ScanClass::ContinuityDrift => Err(Error::Store(format!(
+        | ScanClass::ContinuityDrift
+        | ScanClass::UnresolvedTension => Err(Error::Store(format!(
             "no autofix for class `{}` — this is an author-judgment finding (review the prose / outline / threads)",
             finding.class.slug(),
         ))),
