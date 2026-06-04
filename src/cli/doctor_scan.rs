@@ -134,6 +134,15 @@ pub enum ScanClass {
     /// "review whether these refer to the same thing."
     /// No autofix.
     NumericContradiction,
+    /// 1.2.19+ C.3 — a character attribute that changes
+    /// across chapters in the continuity bible ("ch.3:
+    /// eyes green; ch.17: eyes brown").  Reads the
+    /// `inkhaven continuity extract` sidecar; multilingual
+    /// drift comparison via the project's Snowball stemmer
+    /// so inflected restatements don't false-flag.  Info
+    /// severity — an attribute can legitimately change
+    /// (an injury, dyed hair).  No autofix.
+    ContinuityDrift,
 }
 
 impl ScanClass {
@@ -152,6 +161,7 @@ impl ScanClass {
             ScanClass::NamingInconsistency => "naming-inconsistency",
             ScanClass::EchoRepetition => "echo-repetition",
             ScanClass::NumericContradiction => "numeric-contradiction",
+            ScanClass::ContinuityDrift => "continuity-drift",
         }
     }
 
@@ -169,11 +179,12 @@ impl ScanClass {
             "naming-inconsistency" => ScanClass::NamingInconsistency,
             "echo-repetition" => ScanClass::EchoRepetition,
             "numeric-contradiction" => ScanClass::NumericContradiction,
+            "continuity-drift" => ScanClass::ContinuityDrift,
             _ => return None,
         })
     }
 
-    pub const ALL: [ScanClass; 11] = [
+    pub const ALL: [ScanClass; 12] = [
         ScanClass::ZeroByteFile,
         ScanClass::OrphanParagraphRow,
         ScanClass::MissingReferencedFile,
@@ -185,6 +196,7 @@ impl ScanClass {
         ScanClass::NamingInconsistency,
         ScanClass::EchoRepetition,
         ScanClass::NumericContradiction,
+        ScanClass::ContinuityDrift,
     ];
 }
 
@@ -335,8 +347,58 @@ pub fn scan_project(
     if run(ScanClass::NumericContradiction) {
         report.findings.extend(scan_numeric_contradictions(&layout, &hierarchy, &cfg));
     }
+    // 1.2.19+ C.3 — continuity-bible drift.
+    if run(ScanClass::ContinuityDrift) {
+        report.findings.extend(scan_continuity_drift(&layout, &cfg));
+    }
 
     Ok(report)
+}
+
+/// 1.2.19+ C.3 — flag character attributes that change
+/// across chapters in the continuity bible.  Reads the
+/// `inkhaven continuity extract` sidecar; empty / absent
+/// sidecar → no findings.  Drift comparison uses the
+/// bible's recorded language (falls back to the project
+/// `language`).
+fn scan_continuity_drift(
+    layout: &ProjectLayout,
+    cfg: &Config,
+) -> Vec<ScanFinding> {
+    let Ok(bible) = crate::continuity_bible::ContinuityBible::load(&layout.root)
+    else {
+        return Vec::new();
+    };
+    if bible.facts.is_empty() {
+        return Vec::new();
+    }
+    let language = if !bible.language.trim().is_empty() {
+        bible.language.clone()
+    } else if !cfg.language.trim().is_empty() {
+        cfg.language.clone()
+    } else {
+        "english".to_string()
+    };
+    crate::continuity_bible::detect_drift(&bible, &language)
+        .into_iter()
+        .map(|d| {
+            let where_ = d
+                .conflicts
+                .iter()
+                .map(|(ch, v)| format!("{ch}: {v}"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            ScanFinding {
+                class: ScanClass::ContinuityDrift,
+                severity: ScanSeverity::Info,
+                path: None,
+                detail: format!(
+                    "continuity drift: `{}`'s `{}` changes across chapters — {where_}",
+                    d.character, d.attribute,
+                ),
+            }
+        })
+        .collect()
 }
 
 /// 1.2.19+ C.2 — flag numeric / temporal / spatial
@@ -817,7 +879,8 @@ pub fn apply_fix(
         | ScanClass::StalledThread
         | ScanClass::NamingInconsistency
         | ScanClass::EchoRepetition
-        | ScanClass::NumericContradiction => Err(Error::Store(format!(
+        | ScanClass::NumericContradiction
+        | ScanClass::ContinuityDrift => Err(Error::Store(format!(
             "no autofix for class `{}` — this is an author-judgment finding (review the prose / outline / threads)",
             finding.class.slug(),
         ))),

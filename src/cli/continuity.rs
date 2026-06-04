@@ -1,0 +1,224 @@
+//! 1.2.19+ C.3 — `inkhaven continuity` subcommand.
+//!
+//! Builds + inspects the continuity bible:
+//!
+//!   * `extract` — the AI pass.  Walks each user-book
+//!     chapter, asks the LLM to extract established
+//!     character facts (per-language prompt), and writes
+//!     them to `<project>/.inkhaven/continuity.json`.
+//!   * `list` — dump the extracted bible (per character,
+//!     per attribute, per chapter).
+//!
+//! The `continuity-drift` doctor scan then flags
+//! attributes that change across chapters.  The AI call
+//! is the only non-deterministic boundary; the prompt
+//! assembly + fact parsing are unit-tested in
+//! `crate::continuity_bible`.
+
+use std::io::Write;
+use std::path::Path;
+
+use crate::ai::AiClient;
+use crate::ai::stream::{spawn_chat_stream, StreamMsg};
+use crate::config::Config;
+use crate::continuity_bible::{ContinuityBible, parse_extraction};
+use crate::error::{Error, Result};
+use crate::project::ProjectLayout;
+use crate::store::Store;
+use crate::store::hierarchy::Hierarchy;
+use crate::store::node::NodeKind;
+
+use super::ContinuityCommand;
+
+pub fn run(project: &Path, cmd: ContinuityCommand) -> Result<()> {
+    match cmd {
+        ContinuityCommand::Extract { provider } => {
+            extract(project, provider.as_deref())
+        }
+        ContinuityCommand::List => list(project),
+    }
+}
+
+const SYSTEM_PROMPT: &str = "You are a continuity editor for a novel. You extract \
+ESTABLISHED, FACTUAL attributes of characters from prose — appearance \
+(eye colour, hair, height, scars), origin (hometown), relationships, \
+possessions, occupation, age. You do NOT infer mood, intentions, or \
+one-off actions. Output ONE fact per line in the exact form:\n\
+  Character | attribute_key | value\n\
+Use a short snake_case attribute_key (eye_color, hometown, occupation, \
+weapon, relationship_to_X). Keep values to a few words. Output nothing \
+else — no preamble, no markdown, no commentary. If a chapter establishes \
+no durable facts, output nothing.";
+
+fn extract(project: &Path, provider: Option<&str>) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg)
+        .map_err(|e| Error::Store(e.to_string()))?;
+    let hierarchy =
+        Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+
+    let ai = AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+
+    let language = if cfg.language.trim().is_empty() {
+        "English".to_string()
+    } else {
+        cfg.language.clone()
+    };
+
+    let chapters = user_book_chapters(&hierarchy);
+    if chapters.is_empty() {
+        return Err(Error::Store(
+            "continuity extract: no user-book chapters found".into(),
+        ));
+    }
+
+    eprintln!(
+        "inkhaven continuity extract · language: {language} · model: {model} · {} chapter(s)",
+        chapters.len(),
+    );
+
+    let mut bible = ContinuityBible {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        language: language.clone(),
+        facts: Vec::new(),
+    };
+
+    for (idx, (chapter_id, chapter_title)) in chapters.iter().enumerate() {
+        let prose = chapter_prose(&layout, &hierarchy, *chapter_id);
+        let plain = crate::audiobook::typst_to_plain(&prose);
+        if plain.trim().is_empty() {
+            continue;
+        }
+        eprint!("  [{}/{}] {chapter_title} ", idx + 1, chapters.len());
+        let prompt = build_extract_prompt(&language, chapter_title, &plain);
+        let raw = run_blocking(&ai, model, &prompt)?;
+        let facts = parse_extraction(&raw, chapter_title);
+        eprintln!("→ {} fact(s)", facts.len());
+        bible.facts.extend(facts);
+    }
+
+    bible
+        .save(&layout.root)
+        .map_err(|e| Error::Store(format!("continuity save: {e}")))?;
+    println!(
+        "continuity: extracted {} fact(s) for {} character(s) → {}",
+        bible.facts.len(),
+        bible.characters().len(),
+        ContinuityBible::sidecar_path(&layout.root).display(),
+    );
+    Ok(())
+}
+
+/// Compose the per-chapter extraction prompt.  Language is
+/// woven in so the model answers in the manuscript's
+/// language (Tier-1 multilingual).
+fn build_extract_prompt(language: &str, chapter: &str, prose: &str) -> String {
+    format!(
+        "Language of the manuscript: {language}.\n\
+         Extract the established character facts from this chapter \
+         (\"{chapter}\"). Remember: one fact per line, \
+         `Character | attribute_key | value`, no other output.\n\n\
+         --- CHAPTER PROSE ---\n{prose}\n--- END ---",
+    )
+}
+
+fn run_blocking(ai: &AiClient, model: &str, prompt: &str) -> Result<String> {
+    let mut rx = spawn_chat_stream(
+        ai.client.clone(),
+        model.to_string(),
+        Some(SYSTEM_PROMPT.to_string()),
+        Vec::new(),
+        prompt.to_string(),
+    );
+    let mut raw = String::new();
+    while let Some(msg) = rx.blocking_recv() {
+        match msg {
+            StreamMsg::Token(t) => {
+                raw.push_str(&t);
+                let _ = std::io::stderr().write_all(b".");
+                let _ = std::io::stderr().flush();
+            }
+            StreamMsg::Done => break,
+            StreamMsg::Error(e) => {
+                return Err(Error::Store(format!("inference error: {e}")));
+            }
+        }
+    }
+    Ok(raw)
+}
+
+fn list(project: &Path) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let bible = ContinuityBible::load(&layout.root)
+        .map_err(|e| Error::Store(format!("continuity load: {e}")))?;
+    if bible.facts.is_empty() {
+        println!(
+            "continuity: no facts yet — run `inkhaven continuity extract` first"
+        );
+        return Ok(());
+    }
+    println!(
+        "Continuity bible — {} fact(s), language {}\n",
+        bible.facts.len(),
+        bible.language,
+    );
+    for character in bible.characters() {
+        println!("{character}");
+        // Group this character's facts by attribute.
+        let mut rows: Vec<&crate::continuity_bible::CharacterFact> = bible
+            .facts
+            .iter()
+            .filter(|f| f.character == character)
+            .collect();
+        rows.sort_by(|a, b| {
+            a.attribute.cmp(&b.attribute).then(a.chapter.cmp(&b.chapter))
+        });
+        for f in rows {
+            println!("  {:<20} {:<28} [{}]", f.attribute, f.value, f.chapter);
+        }
+        println!();
+    }
+    Ok(())
+}
+
+fn user_book_chapters(h: &Hierarchy) -> Vec<(uuid::Uuid, String)> {
+    let mut out = Vec::new();
+    for node in h.iter() {
+        if node.kind != NodeKind::Chapter {
+            continue;
+        }
+        let under_system = h
+            .ancestors(node)
+            .iter()
+            .any(|a| a.kind == NodeKind::Book && a.system_tag.is_some());
+        if !under_system {
+            out.push((node.id, node.title.clone()));
+        }
+    }
+    out
+}
+
+fn chapter_prose(
+    layout: &ProjectLayout,
+    h: &Hierarchy,
+    chapter_id: uuid::Uuid,
+) -> String {
+    let mut body = String::new();
+    for id in h.collect_subtree(chapter_id) {
+        let Some(p) = h.get(id) else { continue };
+        if p.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Some(rel) = p.file.as_ref() else { continue };
+        let abs = layout.root.join(rel);
+        if let Ok(text) = std::fs::read_to_string(&abs) {
+            body.push_str(&text);
+            body.push('\n');
+        }
+    }
+    body
+}
