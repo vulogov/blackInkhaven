@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::sync::Arc;
 
 use futures_util::StreamExt;
@@ -86,4 +87,37 @@ pub fn spawn_chat_stream(
         let _ = tx.send(StreamMsg::Done);
     });
     rx
+}
+
+/// Run a one-shot chat completion to completion on the
+/// calling (sync) thread, collecting every token into a
+/// `String`.  Emits a `.` to stderr per token as a coarse
+/// progress indicator.  This is what the bootstrap /
+/// extract CLI commands use — they need the whole response
+/// in hand before parsing it.
+///
+/// History is always empty (one-shot); pass the system
+/// prompt the command wants.  `Err` carries the raw
+/// inference-error message with no prefix — callers wrap
+/// it in their own error type and decide how to report it.
+pub fn collect_blocking(
+    client: Arc<Client>,
+    model: String,
+    system_prompt: Option<String>,
+    prompt: String,
+) -> Result<String, String> {
+    let mut rx = spawn_chat_stream(client, model, system_prompt, Vec::new(), prompt);
+    let mut raw = String::new();
+    while let Some(msg) = rx.blocking_recv() {
+        match msg {
+            StreamMsg::Token(t) => {
+                raw.push_str(&t);
+                let _ = std::io::stderr().write_all(b".");
+                let _ = std::io::stderr().flush();
+            }
+            StreamMsg::Done => break,
+            StreamMsg::Error(e) => return Err(e),
+        }
+    }
+    Ok(raw)
 }
