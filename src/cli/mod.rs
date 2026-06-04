@@ -36,6 +36,7 @@ pub mod manuscript;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
+pub(crate) mod book_walk;
 
 use std::path::PathBuf;
 

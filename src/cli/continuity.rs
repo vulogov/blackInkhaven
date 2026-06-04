@@ -87,7 +87,8 @@ fn extract(project: &Path, provider: Option<&str>) -> Result<()> {
     };
 
     for (idx, (chapter_id, chapter_title)) in chapters.iter().enumerate() {
-        let prose = chapter_prose(&layout, &hierarchy, *chapter_id);
+        let prose =
+            crate::cli::book_walk::chapter_raw_prose(&layout, &hierarchy, *chapter_id);
         let plain = crate::audiobook::typst_to_plain(&prose);
         if plain.trim().is_empty() {
             continue;
@@ -202,23 +203,3 @@ fn user_book_chapters(h: &Hierarchy) -> Vec<(uuid::Uuid, String)> {
     out
 }
 
-fn chapter_prose(
-    layout: &ProjectLayout,
-    h: &Hierarchy,
-    chapter_id: uuid::Uuid,
-) -> String {
-    let mut body = String::new();
-    for id in h.collect_subtree(chapter_id) {
-        let Some(p) = h.get(id) else { continue };
-        if p.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Some(rel) = p.file.as_ref() else { continue };
-        let abs = layout.root.join(rel);
-        if let Ok(text) = std::fs::read_to_string(&abs) {
-            body.push_str(&text);
-            body.push('\n');
-        }
-    }
-    body
-}

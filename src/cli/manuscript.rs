@@ -117,8 +117,13 @@ fn collect_chapters(
         if chapter.kind != NodeKind::Chapter {
             continue;
         }
-        let mut paragraphs = Vec::new();
-        gather_paragraphs(layout, h, chapter, &mut paragraphs);
+        let paragraphs: Vec<String> =
+            crate::cli::book_walk::chapter_paragraphs_raw(layout, h, chapter.id)
+                .into_iter()
+                .map(|text| crate::audiobook::typst_to_plain(&text))
+                .filter(|plain| !plain.trim().is_empty())
+                .map(|plain| plain.trim().to_string())
+                .collect();
         if !paragraphs.is_empty() {
             out.push(ManuscriptChapter {
                 title: crate::cli::epub::clean_title(&chapter.title),
@@ -127,31 +132,5 @@ fn collect_chapters(
         }
     }
     out
-}
-
-fn gather_paragraphs(
-    layout: &ProjectLayout,
-    h: &Hierarchy,
-    branch: &Node,
-    out: &mut Vec<String>,
-) {
-    for child in h.children_of(Some(branch.id)) {
-        match child.kind {
-            NodeKind::Paragraph => {
-                let Some(rel) = child.file.as_ref() else { continue };
-                let abs = layout.root.join(rel);
-                if let Ok(text) = std::fs::read_to_string(&abs) {
-                    let plain = crate::audiobook::typst_to_plain(&text);
-                    if !plain.trim().is_empty() {
-                        out.push(plain.trim().to_string());
-                    }
-                }
-            }
-            NodeKind::Subchapter => {
-                gather_paragraphs(layout, h, child, out);
-            }
-            _ => {}
-        }
-    }
 }
 
