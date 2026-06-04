@@ -28,6 +28,7 @@ pub mod tts;
 pub mod gen_fixture;
 pub mod bench_load;
 pub mod bench_report;
+pub mod epub;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -416,6 +417,33 @@ pub enum Command {
         /// writing the artefacts tree.
         #[arg(long)]
         compile: bool,
+    },
+
+    /// 1.2.18+ R.1 — export a user book to a
+    /// standards-compliant EPUB 3 file.  Walks the
+    /// book's chapters in order, converts the typst
+    /// prose to XHTML, and assembles the container.
+    /// The reader-facing companion to `inkhaven build`
+    /// (which targets typst → PDF).
+    Epub {
+        /// User-book name (case-insensitive title or
+        /// slug).  Optional when the project has exactly
+        /// one user book; required otherwise.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Output path.  Defaults to
+        /// `<project>/<book-slug>.epub`.
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
+        /// Override the EPUB title (default: the book's
+        /// title).
+        #[arg(long)]
+        title: Option<String>,
+        /// Override the author (default:
+        /// `editor.comment_author`, else "Unknown
+        /// Author").
+        #[arg(long)]
+        author: Option<String>,
     },
 
     /// Launch the TUI editor (default if no subcommand is given).
@@ -1483,6 +1511,19 @@ impl Cli {
             Command::Build { book_name, compile } => {
                 build::run(&project, book_name.as_deref(), compile).map_err(Into::into)
             }
+            Command::Epub {
+                book_name,
+                output,
+                title,
+                author,
+            } => epub::run(
+                &project,
+                book_name.as_deref(),
+                output.as_deref(),
+                title.as_deref(),
+                author.as_deref(),
+            )
+            .map_err(Into::into),
             Command::Event(cmd) => event::run(&project, cmd).map_err(Into::into),
             Command::ExportTimeline {
                 book_name,

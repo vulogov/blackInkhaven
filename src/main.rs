@@ -9,6 +9,7 @@ mod health;
 mod io_atomic;
 mod path_safety;
 mod prompts_tui;
+mod epub;
 mod error;
 mod export;
 mod grammar;

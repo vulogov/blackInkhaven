@@ -1,0 +1,669 @@
+//! 1.2.18+ R.1 — EPUB 3 export.
+//!
+//! Turns a user book into a standards-compliant `.epub`
+//! — the format readers actually consume — alongside the
+//! existing typst → PDF assembly path.
+//!
+//! ## Why not pandoc?
+//!
+//! The 1.2.18 plan floated shelling out to `pandoc` for
+//! the prose → HTML step.  But pandoc can't read typst,
+//! and requiring it would add a heavy soft-dependency.
+//! Inkhaven already has the prose as typst markup + the
+//! `zip` crate in-tree, so R.1 builds the EPUB container
+//! directly and does a lightweight in-house typst →
+//! XHTML conversion for the common subset (headings,
+//! emphasis, strong, footnotes).  Zero new dependencies.
+//!
+//! ## Structure produced
+//!
+//! ```text
+//! mimetype                    (stored, first entry — EPUB rule)
+//! META-INF/container.xml
+//! OEBPS/content.opf           (package: metadata + manifest + spine)
+//! OEBPS/nav.xhtml             (EPUB3 navigation)
+//! OEBPS/toc.ncx               (EPUB2 back-compat)
+//! OEBPS/style.css
+//! OEBPS/chapter-001.xhtml
+//! OEBPS/chapter-002.xhtml
+//! ...
+//! ```
+//!
+//! ## Conversion fidelity (R.1)
+//!
+//! The typst → XHTML pass handles the markup inkhaven
+//! prose actually uses:
+//!
+//!   * `= …` / `== …` / `=== …` headings → `<h1/2/3>`
+//!   * `_emphasis_` → `<em>`
+//!   * `*strong*` → `<strong>`
+//!   * `#footnote[…]` → inline `<span class="footnote">`
+//!     (a documented R.1 limitation; proper popup
+//!     endnotes are an R.1.b polish)
+//!   * blank-line-separated blocks → `<p>`
+//!
+//! Each paragraph node's leading `= title` heading is
+//! treated as organisational scaffolding and stripped —
+//! the reader sees flowing chapter prose, not "001.
+//! Approach" scene labels.  (A `--paragraph-headings`
+//! opt-in can surface them later.)
+
+use std::io::Write;
+use std::path::Path;
+
+use anyhow::Result;
+use zip::write::FileOptions;
+use zip::{CompressionMethod, ZipWriter};
+
+/// Book-level metadata for the EPUB package document.
+#[derive(Debug, Clone)]
+pub struct EpubMeta {
+    pub title: String,
+    pub author: String,
+    /// BCP-47 language tag (`en`, `ru`, `fr`).
+    pub language: String,
+    /// Unique identifier (a UUID urn).  Stable per
+    /// export so re-exports replace cleanly in a
+    /// reader's library.
+    pub identifier: String,
+}
+
+/// One chapter: a heading + pre-converted XHTML body
+/// (the inner content of `<body>`, already escaped +
+/// marked up).
+#[derive(Debug, Clone)]
+pub struct EpubChapter {
+    pub title: String,
+    pub body_xhtml: String,
+}
+
+/// Result summary for stdout reporting.
+#[derive(Debug, Clone)]
+pub struct EpubReport {
+    pub chapters: usize,
+    pub bytes: u64,
+}
+
+/// Write the assembled EPUB to `dest`.
+pub fn write_epub(
+    meta: &EpubMeta,
+    chapters: &[EpubChapter],
+    dest: &Path,
+) -> Result<EpubReport> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::File::create(dest)?;
+    let mut zip = ZipWriter::new(file);
+
+    // ── mimetype — MUST be first + stored (uncompressed)
+    //    per the EPUB OCF spec.  Readers sniff the first
+    //    30 bytes; a deflated mimetype fails validation.
+    let stored: FileOptions<()> =
+        FileOptions::default().compression_method(CompressionMethod::Stored);
+    zip.start_file("mimetype", stored)?;
+    zip.write_all(b"application/epub+zip")?;
+
+    let deflated: FileOptions<()> =
+        FileOptions::default().compression_method(CompressionMethod::Deflated);
+
+    zip.start_file("META-INF/container.xml", deflated)?;
+    zip.write_all(CONTAINER_XML.as_bytes())?;
+
+    zip.start_file("OEBPS/style.css", deflated)?;
+    zip.write_all(STYLE_CSS.as_bytes())?;
+
+    // Chapter documents.
+    for (i, ch) in chapters.iter().enumerate() {
+        let name = chapter_filename(i);
+        zip.start_file(format!("OEBPS/{name}"), deflated)?;
+        zip.write_all(chapter_xhtml(&ch.title, &ch.body_xhtml).as_bytes())?;
+    }
+
+    // Navigation + package + ncx.
+    zip.start_file("OEBPS/nav.xhtml", deflated)?;
+    zip.write_all(nav_xhtml(chapters).as_bytes())?;
+
+    zip.start_file("OEBPS/toc.ncx", deflated)?;
+    zip.write_all(toc_ncx(meta, chapters).as_bytes())?;
+
+    zip.start_file("OEBPS/content.opf", deflated)?;
+    zip.write_all(content_opf(meta, chapters).as_bytes())?;
+
+    zip.finish()?;
+    let bytes = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+    Ok(EpubReport {
+        chapters: chapters.len(),
+        bytes,
+    })
+}
+
+/// `chapter-001.xhtml`, `chapter-002.xhtml`, … (1-based).
+pub fn chapter_filename(index0: usize) -> String {
+    format!("chapter-{:03}.xhtml", index0 + 1)
+}
+
+// ── typst → XHTML ────────────────────────────────────
+
+/// Convert a paragraph's typst body to escaped XHTML
+/// (the inner content of `<body>`).  Pure.  See the
+/// module-level fidelity note for the supported subset.
+pub fn typst_to_xhtml(body: &str) -> String {
+    let stripped = strip_leading_heading(body);
+    let blocks = split_blocks(&stripped);
+    let mut out = String::new();
+    for block in blocks {
+        let trimmed = block.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Heading levels (== / ===) inside a body.
+        if let Some(rest) = trimmed.strip_prefix("=== ") {
+            out.push_str(&format!("<h3>{}</h3>\n", inline(rest)));
+        } else if let Some(rest) = trimmed.strip_prefix("== ") {
+            out.push_str(&format!("<h2>{}</h2>\n", inline(rest)));
+        } else if let Some(rest) = trimmed.strip_prefix("= ") {
+            out.push_str(&format!("<h2>{}</h2>\n", inline(rest)));
+        } else {
+            // Collapse intra-block newlines into spaces
+            // (typst treats a single newline as a space).
+            let joined = trimmed
+                .split('\n')
+                .map(str::trim)
+                .collect::<Vec<_>>()
+                .join(" ");
+            out.push_str(&format!("<p>{}</p>\n", inline(&joined)));
+        }
+    }
+    out
+}
+
+/// Drop a single leading `= heading` line (the
+/// paragraph's organisational title).  Leaves `==` /
+/// `===` subheadings intact.
+fn strip_leading_heading(body: &str) -> String {
+    let mut lines = body.lines();
+    if let Some(first) = lines.clone().next() {
+        let t = first.trim_start();
+        if t.starts_with("= ") {
+            // Skip the heading + a following blank line.
+            lines.next();
+            let rest: Vec<&str> = lines.collect();
+            let mut joined = rest.join("\n");
+            joined = joined.trim_start_matches('\n').to_string();
+            return joined;
+        }
+    }
+    body.to_string()
+}
+
+/// Split into blank-line-separated blocks.
+fn split_blocks(s: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut current = String::new();
+    for line in s.lines() {
+        if line.trim().is_empty() {
+            if !current.trim().is_empty() {
+                blocks.push(std::mem::take(&mut current));
+            }
+        } else {
+            if !current.is_empty() {
+                current.push('\n');
+            }
+            current.push_str(line);
+        }
+    }
+    if !current.trim().is_empty() {
+        blocks.push(current);
+    }
+    blocks
+}
+
+/// Inline markup conversion on a single block.  Escapes
+/// XML first, then applies `_emph_`, `*strong*`,
+/// `#footnote[…]` over the escaped text (the markup
+/// delimiters aren't escape targets, so order is safe).
+fn inline(text: &str) -> String {
+    let escaped = escape_xml(text);
+    let with_footnotes = convert_footnotes(&escaped);
+    let with_strong = convert_delim(&with_footnotes, '*', "strong");
+    convert_delim(&with_strong, '_', "em")
+}
+
+/// Replace `#footnote[…]` with an inline footnote span.
+/// Non-nested (R.1 limitation); the first `]` closes.
+fn convert_footnotes(s: &str) -> String {
+    let needle = "#footnote[";
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(pos) = rest.find(needle) {
+        out.push_str(&rest[..pos]);
+        let after = &rest[pos + needle.len()..];
+        if let Some(end) = after.find(']') {
+            let inner = &after[..end];
+            out.push_str(&format!(
+                "<span class=\"footnote\">[{inner}]</span>"
+            ));
+            rest = &after[end + 1..];
+        } else {
+            // Unterminated — emit literally + stop.
+            out.push_str(&rest[pos..]);
+            return out;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Convert paired single-char delimiters (`*x*`, `_x_`)
+/// into `<tag>x</tag>`.  Pairs are matched greedily on
+/// the same logical line; an unpaired delimiter passes
+/// through literally.
+fn convert_delim(s: &str, delim: char, tag: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == delim {
+            // Find the closing delimiter.
+            if let Some(close) = (i + 1..chars.len()).find(|&j| chars[j] == delim) {
+                let inner: String = chars[i + 1..close].iter().collect();
+                if !inner.is_empty() {
+                    out.push_str(&format!("<{tag}>{inner}</{tag}>"));
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+/// Escape the five XML special characters.
+pub fn escape_xml(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+// ── document templates ───────────────────────────────
+
+const CONTAINER_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>
+"#;
+
+const STYLE_CSS: &str = r#"body { font-family: serif; line-height: 1.5; margin: 1em; }
+h1, h2, h3 { font-family: sans-serif; line-height: 1.2; }
+p { margin: 0 0 0.8em 0; text-indent: 1.5em; }
+p:first-of-type { text-indent: 0; }
+.footnote { font-size: 0.85em; color: #555; }
+"#;
+
+fn chapter_xhtml(title: &str, body: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>{title}</title>
+  <link rel="stylesheet" type="text/css" href="style.css"/>
+</head>
+<body>
+  <section epub:type="chapter">
+    <h1>{title}</h1>
+{body}  </section>
+</body>
+</html>
+"#,
+        title = escape_xml(title),
+        body = body,
+    )
+}
+
+fn nav_xhtml(chapters: &[EpubChapter]) -> String {
+    let mut items = String::new();
+    for (i, ch) in chapters.iter().enumerate() {
+        items.push_str(&format!(
+            "      <li><a href=\"{}\">{}</a></li>\n",
+            chapter_filename(i),
+            escape_xml(&ch.title),
+        ));
+    }
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Contents</title>
+</head>
+<body>
+  <nav epub:type="toc" id="toc">
+    <h1>Contents</h1>
+    <ol>
+{items}    </ol>
+  </nav>
+</body>
+</html>
+"#,
+        items = items,
+    )
+}
+
+fn toc_ncx(meta: &EpubMeta, chapters: &[EpubChapter]) -> String {
+    let mut points = String::new();
+    for (i, ch) in chapters.iter().enumerate() {
+        points.push_str(&format!(
+            r#"    <navPoint id="navpoint-{n}" playOrder="{n}">
+      <navLabel><text>{title}</text></navLabel>
+      <content src="{file}"/>
+    </navPoint>
+"#,
+            n = i + 1,
+            title = escape_xml(&ch.title),
+            file = chapter_filename(i),
+        ));
+    }
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head>
+    <meta name="dtb:uid" content="{id}"/>
+  </head>
+  <docTitle><text>{title}</text></docTitle>
+  <navMap>
+{points}  </navMap>
+</ncx>
+"#,
+        id = escape_xml(&meta.identifier),
+        title = escape_xml(&meta.title),
+        points = points,
+    )
+}
+
+fn content_opf(meta: &EpubMeta, chapters: &[EpubChapter]) -> String {
+    let mut manifest = String::new();
+    let mut spine = String::new();
+    for (i, _) in chapters.iter().enumerate() {
+        let id = format!("ch{:03}", i + 1);
+        manifest.push_str(&format!(
+            "    <item id=\"{id}\" href=\"{file}\" media-type=\"application/xhtml+xml\"/>\n",
+            id = id,
+            file = chapter_filename(i),
+        ));
+        spine.push_str(&format!("    <itemref idref=\"{id}\"/>\n", id = id));
+    }
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="pub-id">{id}</dc:identifier>
+    <dc:title>{title}</dc:title>
+    <dc:creator>{author}</dc:creator>
+    <dc:language>{lang}</dc:language>
+    <meta property="dcterms:modified">2026-01-01T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="css" href="style.css" media-type="text/css"/>
+{manifest}  </manifest>
+  <spine toc="ncx">
+{spine}  </spine>
+</package>
+"#,
+        id = escape_xml(&meta.identifier),
+        title = escape_xml(&meta.title),
+        author = escape_xml(&meta.author),
+        lang = escape_xml(&meta.language),
+        manifest = manifest,
+        spine = spine,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── escape_xml ────────────────────────────────────
+
+    #[test]
+    fn escape_handles_all_five() {
+        assert_eq!(
+            escape_xml(r#"a&b<c>d"e'f"#),
+            "a&amp;b&lt;c&gt;d&quot;e&apos;f",
+        );
+    }
+
+    #[test]
+    fn escape_passes_unicode() {
+        assert_eq!(escape_xml("Русский — 中文"), "Русский — 中文");
+    }
+
+    // ── inline markup ─────────────────────────────────
+
+    #[test]
+    fn inline_converts_emphasis() {
+        assert_eq!(inline("a _word_ b"), "a <em>word</em> b");
+    }
+
+    #[test]
+    fn inline_converts_strong() {
+        assert_eq!(inline("a *word* b"), "a <strong>word</strong> b");
+    }
+
+    #[test]
+    fn inline_unpaired_delim_passes_through() {
+        // A lone underscore (e.g. a filename) must not
+        // open an unterminated <em>.
+        assert_eq!(inline("file_name only"), "file_name only");
+    }
+
+    #[test]
+    fn inline_escapes_then_marks_up() {
+        // The `<` must be escaped, the `_` must convert.
+        assert_eq!(
+            inline("x < y and _z_"),
+            "x &lt; y and <em>z</em>",
+        );
+    }
+
+    #[test]
+    fn inline_converts_footnote() {
+        assert_eq!(
+            inline("text#footnote[a note]more"),
+            "text<span class=\"footnote\">[a note]</span>more",
+        );
+    }
+
+    #[test]
+    fn inline_unterminated_footnote_is_literal() {
+        let got = inline("text#footnote[oops");
+        assert!(got.contains("#footnote[oops"));
+    }
+
+    // ── strip_leading_heading ─────────────────────────
+
+    #[test]
+    fn strip_drops_leading_equals_heading() {
+        let body = "= 001. Approach\n\nHelena paused.";
+        assert_eq!(strip_leading_heading(body), "Helena paused.");
+    }
+
+    #[test]
+    fn strip_keeps_body_without_heading() {
+        let body = "Just prose here.";
+        assert_eq!(strip_leading_heading(body), "Just prose here.");
+    }
+
+    #[test]
+    fn strip_keeps_subheadings() {
+        // `==` is a subheading, not the org title — keep it.
+        let body = "== A scene\n\nProse.";
+        assert_eq!(strip_leading_heading(body), "== A scene\n\nProse.");
+    }
+
+    // ── typst_to_xhtml ────────────────────────────────
+
+    #[test]
+    fn xhtml_wraps_paragraphs() {
+        let body = "= Title\n\nFirst para.\n\nSecond para.";
+        let got = typst_to_xhtml(body);
+        assert!(got.contains("<p>First para.</p>"));
+        assert!(got.contains("<p>Second para.</p>"));
+        assert!(!got.contains("Title"), "leading heading should be stripped");
+    }
+
+    #[test]
+    fn xhtml_converts_subheadings() {
+        let body = "Lead.\n\n== A scene\n\nMore.";
+        let got = typst_to_xhtml(body);
+        assert!(got.contains("<h2>A scene</h2>"));
+        assert!(got.contains("<p>Lead.</p>"));
+        assert!(got.contains("<p>More.</p>"));
+    }
+
+    #[test]
+    fn xhtml_collapses_intra_block_newlines() {
+        let body = "Line one\nline two";
+        let got = typst_to_xhtml(body);
+        assert!(got.contains("<p>Line one line two</p>"));
+    }
+
+    #[test]
+    fn xhtml_empty_body_is_empty() {
+        assert_eq!(typst_to_xhtml("= Title\n\n"), "");
+    }
+
+    // ── chapter_filename ──────────────────────────────
+
+    #[test]
+    fn chapter_filenames_are_zero_padded_one_based() {
+        assert_eq!(chapter_filename(0), "chapter-001.xhtml");
+        assert_eq!(chapter_filename(9), "chapter-010.xhtml");
+    }
+
+    // ── write_epub (real zip) ─────────────────────────
+
+    fn sample_meta() -> EpubMeta {
+        EpubMeta {
+            title: "The Harbor Code".into(),
+            author: "A. Writer".into(),
+            language: "en".into(),
+            identifier: "urn:uuid:test-1234".into(),
+        }
+    }
+
+    fn sample_chapters() -> Vec<EpubChapter> {
+        vec![
+            EpubChapter {
+                title: "Arrivals".into(),
+                body_xhtml: "<p>Helena paused.</p>\n".into(),
+            },
+            EpubChapter {
+                title: "The Wharf".into(),
+                body_xhtml: "<p>Marcus waited.</p>\n".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn write_epub_produces_valid_container() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("book.epub");
+        let report =
+            write_epub(&sample_meta(), &sample_chapters(), &dest).unwrap();
+        assert_eq!(report.chapters, 2);
+        assert!(report.bytes > 0);
+        assert!(dest.exists());
+
+        // Re-open the zip + assert the EPUB invariants.
+        let file = std::fs::File::open(&dest).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+
+        // mimetype must be the FIRST entry + stored.
+        let first = archive.by_index(0).unwrap();
+        assert_eq!(first.name(), "mimetype");
+        assert_eq!(first.compression(), zip::CompressionMethod::Stored);
+        drop(first);
+
+        // Required members present.
+        let names: Vec<String> =
+            archive.file_names().map(String::from).collect();
+        for required in [
+            "mimetype",
+            "META-INF/container.xml",
+            "OEBPS/content.opf",
+            "OEBPS/nav.xhtml",
+            "OEBPS/toc.ncx",
+            "OEBPS/chapter-001.xhtml",
+            "OEBPS/chapter-002.xhtml",
+        ] {
+            assert!(
+                names.iter().any(|n| n == required),
+                "missing EPUB member: {required}",
+            );
+        }
+    }
+
+    #[test]
+    fn write_epub_mimetype_content_is_exact() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("b.epub");
+        write_epub(&sample_meta(), &sample_chapters(), &dest).unwrap();
+        let file = std::fs::File::open(&dest).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let mut mt = archive.by_name("mimetype").unwrap();
+        use std::io::Read;
+        let mut s = String::new();
+        mt.read_to_string(&mut s).unwrap();
+        assert_eq!(s, "application/epub+zip");
+    }
+
+    #[test]
+    fn content_opf_lists_every_chapter_in_spine() {
+        let opf = content_opf(&sample_meta(), &sample_chapters());
+        assert!(opf.contains("<dc:title>The Harbor Code</dc:title>"));
+        assert!(opf.contains("<dc:creator>A. Writer</dc:creator>"));
+        assert!(opf.contains("<dc:language>en</dc:language>"));
+        assert!(opf.contains("idref=\"ch001\""));
+        assert!(opf.contains("idref=\"ch002\""));
+    }
+
+    #[test]
+    fn nav_lists_every_chapter() {
+        let nav = nav_xhtml(&sample_chapters());
+        assert!(nav.contains("chapter-001.xhtml"));
+        assert!(nav.contains("Arrivals"));
+        assert!(nav.contains("The Wharf"));
+    }
+
+    #[test]
+    fn metadata_with_xml_specials_is_escaped() {
+        let meta = EpubMeta {
+            title: "Tom & Jerry <draft>".into(),
+            author: "A \"Quoted\" Name".into(),
+            language: "en".into(),
+            identifier: "urn:uuid:x".into(),
+        };
+        let opf = content_opf(&meta, &sample_chapters());
+        assert!(opf.contains("Tom &amp; Jerry &lt;draft&gt;"));
+        assert!(opf.contains("A &quot;Quoted&quot; Name"));
+    }
+}
