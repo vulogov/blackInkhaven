@@ -558,6 +558,12 @@ pub enum Action {
     /// session without rewriting config.
     #[serde(rename = "editor.toggle_style_warnings")]
     ToggleStyleWarnings,
+    /// Ctrl+B Shift+K (1.2.20+ C.1.b) — toggle the live
+    /// echo overlay: underline, in the open paragraph,
+    /// words echoing across nearby paragraphs.  Session-
+    /// local override on top of `editor.echo_overlay`.
+    #[serde(rename = "editor.toggle_echo_overlay")]
+    ToggleEchoOverlay,
     /// Ctrl+B Shift+T (1.2.9+) — AI-driven show-
     /// don't-tell scan of the open paragraph.  Sends
     /// the paragraph to the configured LLM with a
@@ -867,6 +873,7 @@ impl Action {
             Action::SceneBreakPrev => "prev scene break".into(),
             Action::SceneBreakNext => "next scene break".into(),
             Action::ToggleStyleWarnings => "style warnings".into(),
+            Action::ToggleEchoOverlay => "echo overlay".into(),
             Action::OpenConcordance => "concordance".into(),
             Action::TogglePovChip => "pov chip".into(),
             Action::TogglePromptLanguageMode => "prompt lang mode".into(),
@@ -1107,6 +1114,8 @@ impl Action {
                 "Jump editor cursor to the next scene-break line (1.2.9+, Ctrl+B >). Same detector as `SceneBreakPrev`.".into(),
             Action::ToggleStyleWarnings =>
                 "Toggle the inline style-warning overlays (1.2.9+, Ctrl+B Shift+F). Currently flags filter words — intensifier crutches like `just`, `really`, `very`, `просто`, `очень` — drawn in amber + underlined. Session-local override on top of `editor.style_warnings.enabled` in HJSON. Per-language defaults ship for English, Russian, French, German, Spanish; the active list is keyed by the project's top-level `language` field. Add more via `editor.style_warnings.filter_words.extra_words`. Repeated-phrase / show-don't-tell / sentence-rhythm detectors will share this toggle as they land.".into(),
+            Action::ToggleEchoOverlay =>
+                "Toggle the live echo overlay (1.2.20+, Ctrl+B Shift+K). Underlines, in the open paragraph, any word echoing across nearby paragraphs of the chapter — the inline companion to the `echo-repetition` doctor scan, sharing the repeated-phrase highlight colour. Multilingual via the project's Snowball stemmer (ё-folded for Russian) and the shared `editor.echo_window` / `echo_min_repeats` / `echo_max_global` tunables. Session-local override on top of `editor.echo_overlay`.".into(),
             Action::OpenConcordance =>
                 "Open the project-wide concordance modal (1.2.9+, Ctrl+B Shift+L). Lists every distinct lexical stem in the project with its total count plus up to three KWIC samples. Stop-words, single-character tokens, and pure-digit runs are filtered out so the list surfaces the words actually carrying the prose's weight. System books (Prompts, Characters, Places, Lore, Help, Notes, Artefacts, etc.) are excluded from the corpus since they're metadata/scaffolding, not prose (1.2.11+). Multilingual via the same Snowball stemmer + stop-list plumbing as the repeated-phrase detector — `language` in HJSON drives the algorithm choice. Type to filter (substring match); Ctrl+S toggles sort (count ↔ alphabetical); Enter jumps to the first sample's source paragraph at the matching line (1.2.11+); Esc closes.".into(),
             Action::TogglePovChip =>
@@ -1285,6 +1294,9 @@ impl KeyBindings {
                 // 1.2.9+ — Ctrl+B Shift+F toggles inline
                 // style-warning overlays (filter words).
                 entry("Shift+f", Action::ToggleStyleWarnings, Scope::Any),
+                // 1.2.20+ C.1.b — Ctrl+B Shift+K toggles the
+                // inline echo overlay (companion to Shift+F).
+                entry("Shift+k", Action::ToggleEchoOverlay, Scope::Editor),
                 // 1.2.9+ — Ctrl+B Shift+R saves the
                 // current paragraph as an audio file
                 // via macOS `say -o`.

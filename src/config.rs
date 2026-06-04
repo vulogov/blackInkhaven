@@ -1611,6 +1611,17 @@ pub struct EditorConfig {
     /// `true`.
     #[serde(default = "default_warn_uncommitted_on_exit")]
     pub warn_uncommitted_on_exit: bool,
+
+    /// 1.2.20+ C.1.b — default state of the live echo
+    /// overlay (Ctrl+B Shift+K): underline, in the open
+    /// paragraph, words echoing across nearby paragraphs.
+    /// The session toggle overrides this.  Default `false`
+    /// (opt in per session, or set `true` to always start
+    /// on).  Uses the `echo_window` / `echo_min_repeats` /
+    /// `echo_max_global` tunables shared with the
+    /// `echo-repetition` doctor scan.
+    #[serde(default)]
+    pub echo_overlay: bool,
 }
 
 fn default_warn_uncommitted_on_exit() -> bool {
@@ -2685,6 +2696,7 @@ impl Default for EditorConfig {
             paragraph_long_secs: default_paragraph_long_secs(),
             disk_warn_mb: default_disk_warn_mb(),
             warn_uncommitted_on_exit: default_warn_uncommitted_on_exit(),
+            echo_overlay: false,
         }
     }
 }
