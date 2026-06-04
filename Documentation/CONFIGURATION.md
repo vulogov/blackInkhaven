@@ -1432,3 +1432,52 @@ both read at a configurable words-per-minute.
 | `reading_wpm` | u32 | `200` | Words-per-minute for the reading-time chip, the reader-pace preview (`Ctrl+B Shift+E`), and the per-chapter timing displayed by the audiobook export.  200 ≈ silent-reading average; ~150 ≈ audiobook narration; ~300 ≈ a fast reader. |
 
 See [Tutorial 58](Tutorials/58-reading-pace.md).
+
+## 1.2.19 — new HJSON blocks
+
+### `editor.echo_*` (1.2.19+)
+
+Tunables for the C.1 `echo-repetition` doctor scan (a
+distinctive word reused close together).
+
+```hjson
+{
+  editor: {
+    echo_window: 5        // default
+    echo_min_repeats: 3   // default
+    echo_max_global: 40   // default
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `echo_window` | usize | `5` | Window (consecutive paragraphs) for the echo scan.  A distinctive word reused `echo_min_repeats` times within this many paragraphs is flagged. |
+| `echo_min_repeats` | usize | `3` | Occurrences within `echo_window` required to flag.  Lower = more sensitive. |
+| `echo_max_global` | usize | `40` | Distinctiveness ceiling: words used more than this many times across a chapter are treated as common vocabulary (legitimately reused) and skipped, even when clustered.  Tune up for long works, down for short stories. |
+
+### Revision sidecars (1.2.19+)
+
+The C.3 / C.4 revision features store their AI-extracted
+data under `<project>/.inkhaven/`:
+
+| File | Written by | Read by |
+|------|-----------|---------|
+| `continuity.json` | `inkhaven continuity extract` | `inkhaven continuity list` + the `continuity-drift` doctor scan |
+| `tensions.json` | `inkhaven tension scan` | `inkhaven tension list` + the `unresolved-tension` doctor scan |
+
+These are machine-generated; edit them by hand only if you
+know the shape.  Both record the extraction language so the
+drift / matching comparison uses the right stemmer.  Add
+`.inkhaven/` to `.gitignore` if you don't want them tracked.
+
+The `numeric-contradiction` scan's quantity lexicons
+(number-words, units, directions) are **built in** for
+English / French / Spanish; other languages skip the scan
+cleanly (Russian + German + a `bootstrap-continuity` seed
+CLI land in a follow-up).
+
+See [Tutorial 59](Tutorials/59-revision-and-continuity.md)
+for the full revision workflow + the multilingual-coverage
+table, and [Tutorial 60](Tutorials/60-manuscript-format.md)
+for the manuscript-format export.
