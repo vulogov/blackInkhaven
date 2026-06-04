@@ -21,69 +21,75 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.18 — Performance pass + reader experience
+## Latest release · 1.2.19 — Revision & continuity (multilingual)
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.18.md`](Documentation/RELEASE_NOTES/1.2.18.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.19.md`](Documentation/RELEASE_NOTES/1.2.19.md)
 
-1.2.18 has two themes: a performance pass
-(closing debt deferred since 1.2.16) and a
-reader-experience headline — the formats a
-reader actually consumes.
+First drafts get the words down; revision catches
+what slipped in.  1.2.19 adds the revision layer —
+four detectors + a submission export — built
+**multilingual from the start** across a three-tier
+model (AI prompts / Snowball stemmer / per-language
+quantity lexicons), so no feature is English-only.
 
-### Performance pass
+All four detectors surface through
+`inkhaven doctor --scan` as Info-severity,
+author-judgment findings — they point, you decide.
 
-A deterministic fixture generator + a criterion
-bench harness made the codebase measurable;
-timing-instrumented profiling then **overturned
-the plan's guesses** and pointed at two
-algorithmic hotspots:
+### The four detectors
 
-* **Lazy embedding-engine init.**  `Store::open`
-  was loading the fastembed ONNX model eagerly
-  on *every* project open — 470 ms, 92 % of cold
-  start — even for `inkhaven list`.  Deferred to
-  the first search / save.  Cold start
-  **507 ms → 36 ms**.
-* **`Hierarchy::flatten` was O(n²)** —
-  `children_of` did a full scan per node.  A
-  parent→children index built once at load takes
-  it to O(n): **31.98 ms → 0.05 ms** at 2K nodes
-  (≈ 0.25 ms vs a projected 760 ms at 10K).  This
-  is the tree-scroll smoothness fix.
+* **`echo-repetition`** — a distinctive word reused
+  close together ("she *walked* … he *walked* … they
+  *walked*").  Stem + window; works across all 18
+  Snowball languages.
+* **`numeric-contradiction`** — a reversed direction
+  or mismatched duration ("200 leagues north" …
+  "200 leagues south"; "three days" … "a week"),
+  via per-language quantity lexicons (English /
+  French / Spanish bundled).
+* **`continuity-drift`** (the headline) —
+  `inkhaven continuity extract` runs an AI pass that
+  builds a character-fact bible; the scan flags
+  attributes that change across chapters (eyes
+  green→brown).  Stemmer-normalised, so inflection
+  doesn't false-flag.
+* **`unresolved-tension`** (opt-in) —
+  `inkhaven tension scan` tags introduced + resolved
+  tensions; the scan flags the ones set up but never
+  paid off.
 
-A CI regression gate (`inkhaven _bench-report` +
-`.github/workflows/bench.yml`) fails PRs that
-regress a scenario past 20 %, guarding both wins.
+### Submission export
 
-### Reader experience
+`inkhaven manuscript` exports a user book to a
+submission-ready **Shunn standard manuscript format**
+typst document — monospace, double-spaced, title page
+with rounded word count, running `Surname / KEYWORD /
+page` header, scene breaks as `#`.  The agent/editor
+companion to the 1.2.18 ePub + audiobook reader
+exports.
 
-* **`inkhaven epub`** — a standards-compliant
-  EPUB 3, built directly from the in-tree `zip`
-  crate + an in-house typst → XHTML converter
-  (no pandoc, zero new deps).
-* **`inkhaven audiobook`** — a chapter-marked
-  `.m4b`, synthesised per-chapter through the
-  1.2.17 TTS engine + muxed with `ffmpeg`.
-* **Reading-time chip** — opt-in status-bar
-  `📖 <remaining> / <total>` at
-  `editor.reading_wpm`.
-* **Reader-pace preview** (`Ctrl+B Shift+E`) — a
-  teleprompter that advances a word-by-word
-  highlight at reading speed, so pacing problems
-  surface that are invisible at editing-glance
-  speed.
+### Multilingual by design
+
+Each detector lands on a different tier — AI prompt,
+Snowball stemmer, or quantity lexicon — and degrades
+gracefully where a language isn't covered (a missing
+quantity lexicon skips the numeric scan rather than
+producing garbage).  A real lesson surfaced building
+it: the Russian Snowball stemmer needed a `ё`→`е`
+fold, and it's a stemmer not a lemmatiser (noun cases
+collapse, some verb forms don't) — documented, not
+papered over.
 
 ### Test stats
 
-962 → 1053.  Zero new Rust dependencies in the
-reader-experience work (`zip` was already
-in-tree; `criterion` is a dev-dep; `ffmpeg` is a
-documented required external for the audiobook
-mux).
+1053 → 1121.  Zero new Rust dependencies — the
+detectors reuse the existing Snowball / stop-word /
+whatlang / AI / typst stack.  Closes the deferred
+A.5.b + A.6.b.
 
-See [Tutorial 57](Documentation/Tutorials/57-reader-experience-exports.md)
-+ [Tutorial 58](Documentation/Tutorials/58-reading-pace.md)
-for the full reader-experience workflow.
+See [Tutorial 59](Documentation/Tutorials/59-revision-and-continuity.md)
++ [Tutorial 60](Documentation/Tutorials/60-manuscript-format.md)
+for the full workflow.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
@@ -244,14 +250,14 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 1.2.18).  The first build takes ~10 minutes on
+new version (latest: 1.2.19).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
 ### 4. `cargo install --git` (compile from a specific tag)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v1.2.18
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v1.2.19
 ```
 
 Useful when you want a specific tag, a pre-release branch, or a
