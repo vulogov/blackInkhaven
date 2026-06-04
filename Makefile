@@ -17,6 +17,10 @@ clean:
 	cargo clean
 	cargo update
 
+sweep:
+	cargo install cargo-sweep
+	cargo sweep --time 3 --recursive
+
 commit:
 	aic -ac
 	git push
