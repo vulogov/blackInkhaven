@@ -931,3 +931,50 @@ $ inkhaven gen-fixture <path>   # synthetic 10K-paragraph project
 Plus `cargo bench` (criterion, `benches/`) + a CI
 regression gate (`.github/workflows/bench.yml`).  See
 `benches/README.md` + `Documentation/PROPOSALS/PERF.md`.
+
+## 1.2.19 — new actions
+
+No new TUI chords this cycle — the revision &
+continuity features are all CLI subcommands + doctor-scan
+classes.
+
+### Doctor-scan classes
+
+```
+$ inkhaven doctor --scan --class echo-repetition
+$ inkhaven doctor --scan --class numeric-contradiction
+$ inkhaven doctor --scan --class continuity-drift
+$ inkhaven doctor --scan --class unresolved-tension   # opt-in
+```
+
+`echo-repetition`, `numeric-contradiction`, and
+`continuity-drift` run in the default `doctor --scan`;
+`unresolved-tension` is opt-in (only on explicit
+`--class`).  All Info severity, no autofix — surfaced
+identically in the `Ctrl+B Shift+0` doctor panel.
+
+### Revision CLIs
+
+```
+$ inkhaven continuity extract [--provider <name>]   # AI: build the character-fact bible
+$ inkhaven continuity list
+$ inkhaven tension scan [--provider <name>]          # AI: tag introduced/resolved tensions
+$ inkhaven tension list
+$ inkhaven manuscript [--book-name] [--output] [--title] [--author] [--contact]
+  # Shunn standard manuscript format export
+```
+
+### HJSON knobs
+
+```hjson
+{
+  editor: {
+    echo_window: 5        // echo-repetition scan window (paragraphs)
+    echo_min_repeats: 3   // occurrences within the window to flag
+    echo_max_global: 40   // distinctiveness ceiling
+  }
+}
+```
+
+See [`CONFIGURATION.md`](CONFIGURATION.md) for the full
+reference + the revision-sidecar notes.
