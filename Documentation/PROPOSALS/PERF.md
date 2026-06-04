@@ -152,11 +152,32 @@ HNSW index lazily.  Not worth a phase this cycle.
 The proposal's I.1.4–I.1.6 hypotheses are superseded by
 the measured data:
 
-| Phase  | Proposal hypothesis | **Revised (data-driven)** | Est. win |
-|--------|--------------------|--------------------------|----------|
-| I.1.4  | lazy tree-row materialisation | **lazy embedding-engine init** | ~470 ms / cold start |
-| I.1.5  | background embedding refresh (save) | **parent→children index (flatten O(n²)→O(n))** | ~755 ms / flatten @ 10K |
-| I.1.6  | DuckDB write batching | deferred — profile save path first (`_bench-save`), smaller win | TBD |
+| Phase  | Proposal hypothesis | **Revised (data-driven)** | Est. win | Status |
+|--------|--------------------|--------------------------|----------|--------|
+| I.1.4  | lazy tree-row materialisation | **lazy embedding-engine init** | ~470 ms / cold start | ✅ **landed** |
+| I.1.5  | background embedding refresh (save) | **parent→children index (flatten O(n²)→O(n))** | ~755 ms / flatten @ 10K | next |
+| I.1.6  | DuckDB write batching | deferred — profile save path first (`_bench-save`), smaller win | TBD | deferred |
+
+### I.1.4 result (measured)
+
+`EmbeddingEngine::new` now stores its construction
+parameters + defers the ~470 ms `TextEmbedding::try_new`
+to the first `embed` / `embed_batch`.  Re-profiled the
+2046-node fixture warm:
+
+| Phase                          | before  | **after** |
+|--------------------------------|---------|-----------|
+| `store.open.embedding_engine`  | 469.62 ms | **0.03 ms** |
+| `store_open` (total)           | 500.51 ms | **29.22 ms** |
+| `total_cold_load`              | 507.33 ms | **35.93 ms** |
+| `inkhaven list` (subprocess)   | 486 ms  | **85.6 ms** |
+
+The one-time ~470 ms model load now happens on the first
+search / save / reindex — exactly where it's needed —
+instead of on every project open.  Search correctness
+unchanged (the first query pays the load, amortised
+across a session).  `inkhaven list` / `add` / TUI launch
+all land ~470 ms faster.
 
 I.1.7 (CI gates) is unchanged.
 
