@@ -326,6 +326,20 @@ pub fn run(project: &Path) -> Result<()> {
     app.restore_session();
     app.install_progress();
 
+    // 1.2.20+ Phase G — low-disk pre-flight.  Best-effort,
+    // one-time: warn in the status line if the project's
+    // volume is critically low on free space before a
+    // session of edits / a long export.  Atomic writes
+    // still fail safely — this is the proactive heads-up.
+    if crate::disk::is_low(&app.layout.root, app.cfg.editor.disk_warn_mb) {
+        if let Some(avail) = crate::disk::available_bytes(&app.layout.root) {
+            app.status = format!(
+                "⚠ low disk: only {} free on this volume — free space before a long export",
+                crate::disk::human(avail),
+            );
+        }
+    }
+
     // 1.2.8+ — `editor.mouse_captured = false` in HJSON
     // asks the launcher to start with native terminal
     // drag-select instead of the TUI mouse-capture default.

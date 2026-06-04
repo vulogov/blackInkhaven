@@ -1592,10 +1592,24 @@ pub struct EditorConfig {
     /// text, not a merely dense paragraph.
     #[serde(default = "default_paragraph_long_secs")]
     pub paragraph_long_secs: u32,
+
+    /// 1.2.20+ Phase G — low-disk pre-flight threshold in
+    /// MiB.  When the volume holding the project has less
+    /// than this much free space, the editor shows a
+    /// one-time warning at startup (atomic writes still
+    /// fail safely, but this gives a heads-up before a
+    /// long export).  `0` disables the check.  Default
+    /// 100 MiB.
+    #[serde(default = "default_disk_warn_mb")]
+    pub disk_warn_mb: u64,
 }
 
 fn default_paragraph_long_secs() -> u32 {
     180
+}
+
+fn default_disk_warn_mb() -> u64 {
+    100
 }
 
 fn default_echo_window() -> usize {
@@ -2656,6 +2670,7 @@ impl Default for EditorConfig {
             echo_min_repeats: default_echo_min_repeats(),
             echo_max_global: default_echo_max_global(),
             paragraph_long_secs: default_paragraph_long_secs(),
+            disk_warn_mb: default_disk_warn_mb(),
         }
     }
 }

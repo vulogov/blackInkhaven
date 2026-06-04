@@ -301,6 +301,11 @@ nu-command  = "0.112"
 # Bundled SQLite — no system dependency.  Tiny (~1 MB linked).
 rusqlite = { version = "0.32", features = ["bundled"] }
 
+# 1.2.20+ Phase G — cross-platform free-disk-space query for the
+# low-disk pre-flight warning.  Tiny (a thin statvfs / GetDiskFreeSpace
+# wrapper over libc/winapi); no system dependency.
+fs2 = "0.4"
+
 [build-dependencies]
 # Compiles the in-tree Typst tree-sitter grammar (`src/grammar/`)
 # during `cargo build`. See `build.rs`.
