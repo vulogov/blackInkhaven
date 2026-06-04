@@ -18,6 +18,7 @@ mod error;
 mod export;
 mod grammar;
 mod language_entry;
+mod manuscript;
 mod progress;
 mod project;
 mod scripting;

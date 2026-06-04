@@ -32,6 +32,7 @@ pub mod epub;
 pub mod audiobook;
 pub mod continuity;
 pub mod tension;
+pub mod manuscript;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -420,6 +421,37 @@ pub enum Command {
         /// writing the artefacts tree.
         #[arg(long)]
         compile: bool,
+    },
+
+    /// 1.2.19+ X.1 — export a user book to a
+    /// submission-ready Shunn standard manuscript format
+    /// typst document (monospace, double-spaced, title
+    /// page with rounded word count, running
+    /// `Surname / KEYWORD / page` header, scene breaks as
+    /// `#`).  The finishing-line companion to the
+    /// reader-facing `epub` + `audiobook` exports.
+    /// Compile to PDF with `typst compile <out>.typ`.
+    Manuscript {
+        /// User-book name (case-insensitive title or
+        /// slug).  Optional when the project has exactly
+        /// one user book.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Output path.  Defaults to
+        /// `<project>/<book-slug>-manuscript.typ`.
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
+        /// Override the title (default: the book's title).
+        #[arg(long)]
+        title: Option<String>,
+        /// Author / byline (default:
+        /// `editor.comment_author`).
+        #[arg(long)]
+        author: Option<String>,
+        /// Title-page contact block; use `\n` for line
+        /// breaks (default: the author name).
+        #[arg(long)]
+        contact: Option<String>,
     },
 
     /// 1.2.18+ R.1 — export a user book to a
@@ -1669,6 +1701,21 @@ impl Cli {
             Command::Tension(cmd) => {
                 tension::run(&project, cmd).map_err(Into::into)
             }
+            Command::Manuscript {
+                book_name,
+                output,
+                title,
+                author,
+                contact,
+            } => manuscript::run(
+                &project,
+                book_name.as_deref(),
+                output.as_deref(),
+                title.as_deref(),
+                author.as_deref(),
+                contact.as_deref(),
+            )
+            .map_err(Into::into),
             Command::BenchLoad { query, iterations } => {
                 bench_load::run(&project, &query, iterations)
                     .map_err(Into::into)
