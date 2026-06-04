@@ -123,6 +123,17 @@ pub enum ScanClass {
     /// Info severity — an echo can be deliberate
     /// (anaphora, refrain).  No autofix.
     EchoRepetition,
+    /// 1.2.19+ C.2 — a numeric / temporal / spatial
+    /// contradiction: a directed distance reversed at the
+    /// same magnitude close together ("200 leagues north"
+    /// … "200 leagues south"), or two different durations
+    /// in immediate proximity ("the three-day journey …
+    /// after a week").  Multilingual via the per-language
+    /// continuity lexicon (en/fr/es bundled; others skip
+    /// with a clear message).  Info severity — framed as
+    /// "review whether these refer to the same thing."
+    /// No autofix.
+    NumericContradiction,
 }
 
 impl ScanClass {
@@ -140,6 +151,7 @@ impl ScanClass {
             ScanClass::StalledThread => "stalled-thread",
             ScanClass::NamingInconsistency => "naming-inconsistency",
             ScanClass::EchoRepetition => "echo-repetition",
+            ScanClass::NumericContradiction => "numeric-contradiction",
         }
     }
 
@@ -156,11 +168,12 @@ impl ScanClass {
             "stalled-thread" => ScanClass::StalledThread,
             "naming-inconsistency" => ScanClass::NamingInconsistency,
             "echo-repetition" => ScanClass::EchoRepetition,
+            "numeric-contradiction" => ScanClass::NumericContradiction,
             _ => return None,
         })
     }
 
-    pub const ALL: [ScanClass; 10] = [
+    pub const ALL: [ScanClass; 11] = [
         ScanClass::ZeroByteFile,
         ScanClass::OrphanParagraphRow,
         ScanClass::MissingReferencedFile,
@@ -171,6 +184,7 @@ impl ScanClass {
         ScanClass::StalledThread,
         ScanClass::NamingInconsistency,
         ScanClass::EchoRepetition,
+        ScanClass::NumericContradiction,
     ];
 }
 
@@ -316,8 +330,76 @@ pub fn scan_project(
     if run(ScanClass::EchoRepetition) {
         report.findings.extend(scan_echoes(&layout, &hierarchy, &cfg));
     }
+    // 1.2.19+ C.2 — numeric / temporal / spatial
+    // contradictions.
+    if run(ScanClass::NumericContradiction) {
+        report.findings.extend(scan_numeric_contradictions(&layout, &hierarchy, &cfg));
+    }
 
     Ok(report)
+}
+
+/// 1.2.19+ C.2 — flag numeric / temporal / spatial
+/// contradictions per user-book chapter.  Multilingual
+/// via the project `language`'s continuity lexicon; skips
+/// (with no findings) when no lexicon is bundled for the
+/// language — the CLI surfaces that separately so the
+/// user knows to bootstrap one.
+fn scan_numeric_contradictions(
+    layout: &ProjectLayout,
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    cfg: &Config,
+) -> Vec<ScanFinding> {
+    let language = if cfg.language.trim().is_empty() {
+        "english".to_string()
+    } else {
+        cfg.language.clone()
+    };
+    let Some(lexicon) = crate::continuity::built_in_lexicon(&language) else {
+        // No lexicon for this language — graceful skip.
+        return Vec::new();
+    };
+    let contra_cfg = crate::continuity::ContradictionConfig::default();
+
+    let mut out: Vec<ScanFinding> = Vec::new();
+    for chapter_id in collect_user_book_chapter_ordinals(hierarchy) {
+        let prose = read_chapter_prose(layout, hierarchy, chapter_id);
+        let plain = crate::audiobook::typst_to_plain(&prose);
+        let sentences = crate::continuity::split_sentences(&plain);
+        if sentences.is_empty() {
+            continue;
+        }
+        let quantities =
+            crate::continuity::extract_quantities(&sentences, &lexicon);
+        let chapter_label = hierarchy
+            .get(chapter_id)
+            .map(|n| n.title.clone())
+            .unwrap_or_default();
+        let chapter_path = hierarchy
+            .get(chapter_id)
+            .and_then(|n| n.file.clone());
+        for c in crate::continuity::detect_contradictions(&quantities, &contra_cfg)
+        {
+            let what = match c.kind {
+                crate::continuity::ContradictionKind::DirectionReversal => {
+                    "direction reversal"
+                }
+                crate::continuity::ContradictionKind::TemporalMismatch => {
+                    "duration mismatch"
+                }
+            };
+            out.push(ScanFinding {
+                class: ScanClass::NumericContradiction,
+                severity: ScanSeverity::Info,
+                path: chapter_path.clone(),
+                detail: format!(
+                    "{what}: `{}` vs `{}` — review whether these refer to the same thing (chapter `{}`)",
+                    c.a_raw, c.b_raw, chapter_label,
+                ),
+            });
+        }
+    }
+    out
 }
 
 /// 1.2.19+ C.1 — flag distinctive words reused close
@@ -734,7 +816,8 @@ pub fn apply_fix(
         | ScanClass::PacingCollapse
         | ScanClass::StalledThread
         | ScanClass::NamingInconsistency
-        | ScanClass::EchoRepetition => Err(Error::Store(format!(
+        | ScanClass::EchoRepetition
+        | ScanClass::NumericContradiction => Err(Error::Store(format!(
             "no autofix for class `{}` — this is an author-judgment finding (review the prose / outline / threads)",
             finding.class.slug(),
         ))),
