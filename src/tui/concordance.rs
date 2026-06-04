@@ -184,7 +184,10 @@ pub fn build(
         stop_configured.clone()
     };
     let normalise = |w: &str| -> String {
-        let lc = w.trim().to_lowercase();
+        // Fold ё→е before stemming so Russian ё/е spellings
+        // of a word share one stem key (the stemmer assumes
+        // the two are unified).
+        let lc = w.trim().to_lowercase().replace('ё', "е");
         match &stemmer {
             Some(s) => s.stem(&lc).into_owned(),
             None => lc,
@@ -214,9 +217,12 @@ pub fn build(
                     continue;
                 }
                 let surface = word.to_lowercase();
+                // Fold ё→е for the grouping key only; the
+                // displayed surface form keeps its ё.
+                let folded = surface.replace('ё', "е");
                 let stem_key = match &stemmer {
-                    Some(s) => s.stem(&surface).into_owned(),
-                    None => surface.clone(),
+                    Some(s) => s.stem(&folded).into_owned(),
+                    None => folded,
                 };
                 if stem_key.is_empty() || stop_set.contains(&stem_key) {
                     continue;
@@ -439,6 +445,24 @@ mod tests {
         assert!(headwords.contains(&"dog"));
         assert!(!headwords.contains(&"the"));
         assert!(!headwords.contains(&"and"));
+    }
+
+    #[test]
+    fn russian_yo_fold_groups_spellings() {
+        // ё and е spellings of the same word must land in
+        // one stem group, not two (the 1.2.20 B.1 fix).
+        let cfg = cfg_default();
+        let lines = vec![
+            "Капитан пошёл вперёд".to_string(),
+            "Капитан пошел вперед".to_string(),
+        ];
+        let result = build(&cfg, "russian", &[para("book/ch", &lines)]);
+        let group = result
+            .entries
+            .iter()
+            .find(|e| e.variants.iter().any(|v| v.starts_with("пош")))
+            .expect("пошёл/пошел group missing");
+        assert_eq!(group.count, 2, "ё and е spellings should merge");
     }
 
     #[test]
