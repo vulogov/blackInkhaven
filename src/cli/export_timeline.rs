@@ -49,7 +49,8 @@ pub fn run(
     let store = Store::open(layout.clone(), &cfg)?;
     let calendar = Calendar::from_config(cfg.timeline.calendar.clone());
     let hierarchy = Hierarchy::load(&store)?;
-    let book = resolve_user_book(&hierarchy, book_name)?;
+    let book = crate::cli::resolve_user_book(&hierarchy, book_name, "export-timeline")
+        .map_err(|m| anyhow!(m))?;
     let book_id = book.id;
     let book_title = book.title.clone();
 
@@ -213,48 +214,6 @@ fn render_typst(
     out
 }
 
-fn resolve_user_book<'a>(
-    hierarchy: &'a Hierarchy,
-    book_name: Option<&str>,
-) -> Result<&'a Node> {
-    let user_books: Vec<&Node> = hierarchy
-        .children_of(None)
-        .into_iter()
-        .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
-        .collect();
-    if user_books.is_empty() {
-        return Err(anyhow!("project has no user books"));
-    }
-    if let Some(name) = book_name {
-        let needle = name.trim().to_ascii_lowercase();
-        let hit = user_books.iter().find(|b| {
-            b.title.eq_ignore_ascii_case(&needle) || b.slug == needle
-        });
-        return hit.copied().ok_or_else(|| {
-            anyhow!(
-                "no user book named `{}` (have: {})",
-                name,
-                user_books
-                    .iter()
-                    .map(|b| b.title.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        });
-    }
-    if user_books.len() == 1 {
-        return Ok(user_books[0]);
-    }
-    Err(anyhow!(
-        "project has {} user books — pass --book-name to disambiguate (have: {})",
-        user_books.len(),
-        user_books
-            .iter()
-            .map(|b| b.title.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
-    ))
-}
 
 // ── SVG renderer ────────────────────────────────────────────
 

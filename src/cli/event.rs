@@ -93,7 +93,8 @@ fn add(
     }
 
     let hierarchy = Hierarchy::load(store)?;
-    let book = resolve_user_book(&hierarchy, book_name)?;
+    let book = crate::cli::resolve_user_book(&hierarchy, book_name, "event")
+        .map_err(|m| anyhow!(m))?;
     let timeline_chapter_id = store.ensure_timeline_chapter(cfg, book.id)?;
 
     // Reload hierarchy so the freshly-created Timeline
@@ -166,7 +167,11 @@ fn list(
 ) -> Result<()> {
     let hierarchy = Hierarchy::load(store)?;
     let book_filter_id = match book_filter {
-        Some(name) => Some(resolve_user_book(&hierarchy, Some(name))?.id),
+        Some(name) => Some(
+            crate::cli::resolve_user_book(&hierarchy, Some(name), "event")
+                .map_err(|m| anyhow!(m))?
+                .id,
+        ),
         None => None,
     };
     let mut rows: Vec<(&Node, &EventData)> = hierarchy
@@ -275,43 +280,3 @@ fn show(store: &Store, calendar: &Calendar, path: &str) -> Result<()> {
     Ok(())
 }
 
-fn resolve_user_book<'a>(
-    hierarchy: &'a Hierarchy,
-    book_name: Option<&str>,
-) -> Result<&'a Node> {
-    let user_books: Vec<&Node> = hierarchy
-        .children_of(None)
-        .into_iter()
-        .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
-        .collect();
-    if user_books.is_empty() {
-        return Err(anyhow!(
-            "no user books in this project — `inkhaven add book \"...\"` first"
-        ));
-    }
-    match book_name {
-        Some(name) => {
-            let needle = name.trim().to_ascii_lowercase();
-            user_books
-                .into_iter()
-                .find(|b| {
-                    b.title.to_ascii_lowercase() == needle
-                        || b.slug.to_ascii_lowercase() == needle
-                })
-                .ok_or_else(|| anyhow!("no user book matches `--book-name {name}`"))
-        }
-        None => {
-            if user_books.len() > 1 {
-                let names: Vec<String> =
-                    user_books.iter().map(|b| format!("`{}`", b.title)).collect();
-                Err(anyhow!(
-                    "project has {} user books — pass --book-name <name>. Available: {}",
-                    user_books.len(),
-                    names.join(", ")
-                ))
-            } else {
-                Ok(user_books[0])
-            }
-        }
-    }
-}
