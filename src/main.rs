@@ -6,6 +6,7 @@ mod cli;
 mod config;
 mod config_tui;
 mod continuity;
+mod continuity_bible;
 mod crash;
 mod health;
 mod io_atomic;

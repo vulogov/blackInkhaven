@@ -30,6 +30,7 @@ pub mod bench_load;
 pub mod bench_report;
 pub mod epub;
 pub mod audiobook;
+pub mod continuity;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -476,6 +477,16 @@ pub enum Command {
         author: Option<String>,
     },
 
+    /// 1.2.19+ C.3 — `inkhaven continuity
+    /// <subcommand>`.  Build + inspect the continuity
+    /// bible: `extract` runs the AI fact-extraction pass
+    /// over the manuscript into
+    /// `<project>/.inkhaven/continuity.json`; `list`
+    /// dumps it.  The `continuity-drift` doctor scan then
+    /// flags attributes that change across chapters.
+    #[command(subcommand)]
+    Continuity(ContinuityCommand),
+
     /// Launch the TUI editor (default if no subcommand is given).
     Tui,
 
@@ -814,6 +825,25 @@ pub enum PromptsCommand {
         #[arg(long)]
         update: bool,
     },
+}
+
+/// 1.2.19+ C.3 — sub-subcommands under
+/// `inkhaven continuity …`.
+#[derive(Debug, Subcommand)]
+pub enum ContinuityCommand {
+    /// Run the AI fact-extraction pass over the
+    /// manuscript, writing the continuity bible to
+    /// `<project>/.inkhaven/continuity.json`.  Uses the
+    /// configured LLM + a per-language prompt.
+    Extract {
+        /// LLM provider override (defaults to
+        /// `llm.default`).
+        #[arg(long)]
+        provider: Option<String>,
+    },
+    /// Dump the extracted continuity bible — each
+    /// character's facts, by attribute + chapter.
+    List,
 }
 
 /// 1.2.17+ T.7 — sub-subcommands under
@@ -1604,6 +1634,9 @@ impl Cli {
             }
             Command::Tts(cmd) => {
                 tts::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Continuity(cmd) => {
+                continuity::run(&project, cmd).map_err(Into::into)
             }
             Command::BenchLoad { query, iterations } => {
                 bench_load::run(&project, &query, iterations)
