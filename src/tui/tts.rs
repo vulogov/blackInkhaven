@@ -138,6 +138,24 @@ impl TtsEngine {
         self.kind().label()
     }
 
+    /// Preferred output-file extension for
+    /// `speak_to_file_blocking` on this backend.  macOS
+    /// `say -o` derives the container format from the
+    /// extension + rejects `.wav` (it wants `aiff` /
+    /// `m4a` / `caf`); Piper always writes WAV.  ffmpeg
+    /// reads either by sniffing content, but the
+    /// extension must be one the backend's writer
+    /// accepts.  Used by the R.2 audiobook export so the
+    /// per-chapter temp files get a name the engine can
+    /// actually write.
+    pub(crate) fn audio_extension(&self) -> &'static str {
+        match self {
+            Self::System(_) => "aiff",
+            Self::Piper(_) => "wav",
+            Self::Disabled(_) => "wav",
+        }
+    }
+
     /// Returns `Ok(())` when the engine is ready to
     /// synthesise.  Errors carry a user-facing reason
     /// suitable for surfacing in a modal or the status

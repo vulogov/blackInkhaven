@@ -29,6 +29,7 @@ pub mod gen_fixture;
 pub mod bench_load;
 pub mod bench_report;
 pub mod epub;
+pub mod audiobook;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -442,6 +443,35 @@ pub enum Command {
         /// Override the author (default:
         /// `editor.comment_author`, else "Unknown
         /// Author").
+        #[arg(long)]
+        author: Option<String>,
+    },
+
+    /// 1.2.18+ R.2 — synthesise a user book to a
+    /// single `.m4b` audiobook with a chapter marker per
+    /// Chapter node.  Drives the TTS engine (Piper or
+    /// macOS `say`) for per-chapter synthesis, then
+    /// `ffmpeg` for the concat + chapter-metadata mux.
+    /// Requires ffmpeg + ffprobe on PATH and
+    /// `editor.tts.enabled = true`.  Synthesis is
+    /// roughly real-time — a batch export, not
+    /// interactive.
+    Audiobook {
+        /// User-book name (case-insensitive title or
+        /// slug).  Optional when the project has exactly
+        /// one user book.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Output path.  Defaults to
+        /// `<project>/<book-slug>.m4b`.
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
+        /// Override the audiobook title (default: the
+        /// book's title).
+        #[arg(long)]
+        title: Option<String>,
+        /// Override the author (default:
+        /// `editor.comment_author`).
         #[arg(long)]
         author: Option<String>,
     },
@@ -1517,6 +1547,19 @@ impl Cli {
                 title,
                 author,
             } => epub::run(
+                &project,
+                book_name.as_deref(),
+                output.as_deref(),
+                title.as_deref(),
+                author.as_deref(),
+            )
+            .map_err(Into::into),
+            Command::Audiobook {
+                book_name,
+                output,
+                title,
+                author,
+            } => audiobook::run(
                 &project,
                 book_name.as_deref(),
                 output.as_deref(),

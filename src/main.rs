@@ -1,5 +1,6 @@
 mod ai;
 mod assemble;
+mod audiobook;
 mod backup;
 mod cli;
 mod config;
