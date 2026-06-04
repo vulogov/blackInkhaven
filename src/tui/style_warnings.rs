@@ -100,13 +100,7 @@ impl FilterWordsDetector {
         } else {
             None
         };
-        let normalise = |w: &str| -> String {
-            let lc = w.trim().to_lowercase().replace('ё', "е");
-            match &stemmer {
-                Some(s) => s.stem(&lc).into_owned(),
-                None => lc,
-            }
-        };
+        let normalise = |w: &str| -> String { crate::text::normalize_stem(w.trim(), &stemmer) };
         let mut targets: HashSet<String> = HashSet::new();
         if configured.is_empty() {
             for w in built_in_filter_words(language) {
@@ -162,11 +156,7 @@ impl FilterWordsDetector {
         }
         let mut out = Vec::new();
         for (byte_start, word) in line.unicode_word_indices() {
-            let lc = word.to_lowercase().replace('ё', "е");
-            let key = match &self.stemmer {
-                Some(s) => s.stem(&lc).into_owned(),
-                None => lc,
-            };
+            let key = crate::text::normalize_stem(word, &self.stemmer);
             if !self.targets.contains(&key) {
                 continue;
             }
@@ -248,13 +238,7 @@ impl RepeatedPhraseDetector {
             "spanish" => &cfg.spanish_stop_words,
             _ => &cfg.english_stop_words,
         };
-        let normalise_stop = |w: &str| -> String {
-            let lc = w.trim().to_lowercase().replace('ё', "е");
-            match &stemmer {
-                Some(s) => s.stem(&lc).into_owned(),
-                None => lc,
-            }
-        };
+        let normalise_stop = |w: &str| -> String { crate::text::normalize_stem(w.trim(), &stemmer) };
         let stops: std::collections::HashSet<String> = if stop_configured.is_empty() {
             built_in_stop_words(language)
                 .iter()
@@ -284,11 +268,7 @@ impl RepeatedPhraseDetector {
                 byte_to_char.push(char_count);
             }
             for (byte_start, word) in line.unicode_word_indices() {
-                let lc = word.to_lowercase().replace('ё', "е");
-                let stem = match &stemmer {
-                    Some(s) => s.stem(&lc).into_owned(),
-                    None => lc,
-                };
+                let stem = crate::text::normalize_stem(word, &stemmer);
                 if stops.contains(&stem) {
                     continue;
                 }
@@ -444,13 +424,7 @@ impl ShowDontTellDetector {
         } else {
             None
         };
-        let normalise = |w: &str| -> String {
-            let lc = w.trim().to_lowercase().replace('ё', "е");
-            match &stemmer {
-                Some(s) => s.stem(&lc).into_owned(),
-                None => lc,
-            }
-        };
+        let normalise = |w: &str| -> String { crate::text::normalize_stem(w.trim(), &stemmer) };
         // Pick configured-or-built-in per language +
         // category.  Same precedence as filter_words:
         // configured list wins when non-empty;
@@ -568,11 +542,7 @@ impl ShowDontTellDetector {
         let tokens: Vec<Tok> = line
             .unicode_word_indices()
             .map(|(b, w)| {
-                let lc = w.to_lowercase().replace('ё', "е");
-                let stem = match &self.stemmer {
-                    Some(s) => s.stem(&lc).into_owned(),
-                    None => lc,
-                };
+                let stem = crate::text::normalize_stem(w, &self.stemmer);
                 Tok {
                     byte_start: b,
                     byte_end: b + w.len(),

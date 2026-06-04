@@ -137,14 +137,8 @@ fn normalise(value: &str, stemmer: &Option<Stemmer>) -> String {
     value
         .split_whitespace()
         .map(|w| {
-            let lc = w
-                .trim_matches(|c: char| !c.is_alphanumeric())
-                .to_lowercase()
-                .replace('ё', "е");
-            match stemmer {
-                Some(s) => s.stem(&lc).into_owned(),
-                None => lc,
-            }
+            let trimmed = w.trim_matches(|c: char| !c.is_alphanumeric());
+            crate::text::normalize_stem(trimmed, stemmer)
         })
         .filter(|w| !w.is_empty())
         .collect::<Vec<_>>()

@@ -183,16 +183,7 @@ pub fn build(
     } else {
         stop_configured.clone()
     };
-    let normalise = |w: &str| -> String {
-        // Fold ё→е before stemming so Russian ё/е spellings
-        // of a word share one stem key (the stemmer assumes
-        // the two are unified).
-        let lc = w.trim().to_lowercase().replace('ё', "е");
-        match &stemmer {
-            Some(s) => s.stem(&lc).into_owned(),
-            None => lc,
-        }
-    };
+    let normalise = |w: &str| -> String { crate::text::normalize_stem(w.trim(), &stemmer) };
     let mut stop_set: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     for w in &stop_source {
@@ -217,13 +208,9 @@ pub fn build(
                     continue;
                 }
                 let surface = word.to_lowercase();
-                // Fold ё→е for the grouping key only; the
+                // The grouping key folds ё→е and stems; the
                 // displayed surface form keeps its ё.
-                let folded = surface.replace('ё', "е");
-                let stem_key = match &stemmer {
-                    Some(s) => s.stem(&folded).into_owned(),
-                    None => folded,
-                };
+                let stem_key = crate::text::normalize_stem(word, &stemmer);
                 if stem_key.is_empty() || stop_set.contains(&stem_key) {
                     continue;
                 }

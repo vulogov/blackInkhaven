@@ -113,19 +113,7 @@ pub fn detect_echoes(
     cfg: &EchoConfig,
 ) -> Vec<EchoFinding> {
     let stemmer = parse_stemmer_language(language).map(Stemmer::create);
-    let stem_of = |w: &str| -> String {
-        // Fold `ё` → `е` before stemming: the Russian
-        // Snowball algorithm assumes the two are unified
-        // (real text uses them interchangeably), and
-        // without this `пошёл` won't collapse with
-        // `пошла` / `пошли`.  Harmless for other
-        // languages — `ё` appears only in Cyrillic.
-        let lc = w.to_lowercase().replace('ё', "е");
-        match &stemmer {
-            Some(s) => s.stem(&lc).into_owned(),
-            None => lc,
-        }
-    };
+    let stem_of = |w: &str| -> String { crate::text::normalize_stem(w, &stemmer) };
 
     // Resolve + stem the stop-word set so it aligns with
     // the stemmed tokens.

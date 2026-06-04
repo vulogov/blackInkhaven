@@ -313,10 +313,10 @@ fn tokenize_with_offsets(s: &str) -> Vec<Token> {
 /// lowercased original is always included so an empty algorithm list still
 /// matches the exact word.
 fn stems_for(word: &str, algos: &[Algorithm]) -> Vec<String> {
-    // Fold ё→е so a name spelled with ё (Алёша, Фёдор)
-    // matches its е-spelled buffer occurrence and vice
-    // versa; the Russian stemmer treats the two as unified.
-    let lc = word.to_lowercase().replace('ё', "е");
+    // Fold ё→е (see crate::text) so a name spelled with ё
+    // (Алёша, Фёдор) matches its е-spelled buffer
+    // occurrence and vice versa.
+    let lc = crate::text::fold_lower(word);
     let mut out: Vec<String> = Vec::with_capacity(1 + algos.len());
     out.push(lc.clone());
     for a in algos {

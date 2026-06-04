@@ -27,6 +27,7 @@ mod storage;
 mod story_view;
 mod store;
 mod tension;
+mod text;
 mod timeline;
 mod tui;
 mod typst_check;
