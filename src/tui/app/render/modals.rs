@@ -6118,6 +6118,117 @@ impl super::super::App {
             inner,
         );
     }
+
+    /// 1.2.18+ R.4 — reader-pace teleprompter render.
+    /// Shows the paragraph prose with already-read words
+    /// dim, the current word reverse-highlighted, and
+    /// upcoming words normal.  A footer reports the live
+    /// elapsed / remaining time + the keys.
+    pub(in crate::tui::app) fn draw_reader_pace_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::ReaderPace { words, paused, wpm, .. } = &self.modal else {
+            return;
+        };
+        let (idx, total) = self.reader_pace_index().unwrap_or((0, words.len()));
+
+        let width = area.width.saturating_sub(8).clamp(40, 84);
+        let height = area.height.saturating_sub(6).clamp(10, 24);
+        let x = area.x + area.width.saturating_sub(width) / 2;
+        let y = area.y + area.height.saturating_sub(height) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let finished = idx >= total;
+        let title = if finished {
+            " Reader pace — done ".to_string()
+        } else if *paused {
+            " Reader pace — paused ".to_string()
+        } else {
+            " Reader pace ".to_string()
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Build a single wrapped line of spans: dim for
+        // already-read, reversed for the current word,
+        // normal for upcoming.
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let current = Style::default()
+            .add_modifier(Modifier::REVERSED)
+            .add_modifier(Modifier::BOLD);
+        let mut spans: Vec<Span<'_>> = Vec::with_capacity(words.len() * 2);
+        for (i, w) in words.iter().enumerate() {
+            let style = if i < idx {
+                dim
+            } else if i == idx {
+                current
+            } else {
+                Style::default()
+            };
+            spans.push(Span::styled(w.clone(), style));
+            spans.push(Span::raw(" "));
+        }
+
+        // Reserve the bottom row for the footer.
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(2),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+
+        f.render_widget(
+            Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true }),
+            body_rect,
+        );
+
+        let remaining = crate::tui::reading_time::fmt_compact(
+            crate::tui::reader_pace::remaining_secs(idx, total, *wpm),
+        );
+        let footer = if finished {
+            format!(
+                " done · {total} words @ {wpm} wpm · r restart · Esc close "
+            )
+        } else {
+            format!(
+                " {}/{} · {} left @ {} wpm · Space {} · ←→ step · r restart · Esc close ",
+                idx.min(total),
+                total,
+                remaining,
+                wpm,
+                if *paused { "play" } else { "pause" },
+            )
+        };
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                footer,
+                Style::default().add_modifier(Modifier::DIM),
+            )),
+            footer_rect,
+        );
+    }
 }
 
 /// Truncate `s` to at most `max` characters,

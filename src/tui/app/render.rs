@@ -87,6 +87,10 @@ impl super::App {
             self.draw_tts_voice_picker_modal(f, area);
             return;
         }
+        if let Modal::ReaderPace { .. } = &self.modal {
+            self.draw_reader_pace_modal(f, area);
+            return;
+        }
         if let Modal::CommentEditor { .. } = &self.modal {
             self.draw_comment_editor_modal(f, area);
             return;
