@@ -27,6 +27,7 @@ pub mod thread;
 pub mod tts;
 pub mod gen_fixture;
 pub mod bench_load;
+pub mod bench_report;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -547,6 +548,33 @@ pub enum Command {
         /// Iterations to average flatten + search over.
         #[arg(long, default_value_t = 20)]
         iterations: usize,
+    },
+
+    /// 1.2.18+ I.1.7 — `inkhaven _bench-report`
+    /// (hidden).  Compares two criterion output trees +
+    /// emits a markdown/plain delta table + exits 2 on
+    /// any regression past `--threshold`.  Drives the
+    /// CI bench gate (`.github/workflows/bench.yml`).
+    #[command(hide = true, name = "_bench-report")]
+    BenchReport {
+        /// Baseline criterion dir (restored from the
+        /// main branch's last run).  When absent /
+        /// missing, every bench is treated as new (no
+        /// regression possible).
+        #[arg(long)]
+        baseline: Option<PathBuf>,
+        /// Current-run criterion dir.  Defaults to
+        /// `<target>/criterion`.
+        #[arg(long)]
+        current: Option<PathBuf>,
+        /// Regression threshold as a fraction (0.20 =
+        /// 20%).
+        #[arg(long, default_value_t = 0.20)]
+        threshold: f64,
+        /// Emit GitHub-flavoured markdown (for a PR
+        /// comment) instead of plain text.
+        #[arg(long)]
+        markdown: bool,
     },
 
     /// 1.2.17+ T.7 — `inkhaven tts <subcommand>`.
@@ -1496,6 +1524,21 @@ impl Cli {
             Command::BenchLoad { query, iterations } => {
                 bench_load::run(&project, &query, iterations)
                     .map_err(Into::into)
+            }
+            Command::BenchReport {
+                baseline,
+                current,
+                threshold,
+                markdown,
+            } => {
+                let current = current
+                    .unwrap_or_else(bench_report::default_criterion_dir);
+                bench_report::run(
+                    baseline.as_deref(),
+                    &current,
+                    threshold,
+                    markdown,
+                )
             }
             Command::GenFixture {
                 path,

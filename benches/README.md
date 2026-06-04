@@ -99,18 +99,53 @@ from the main baseline.
 
 ## CI integration
 
-`.github/workflows/bench.yml` (lands in I.1.7) handles:
+`.github/workflows/bench.yml` (I.1.7) handles:
 
-1. `cargo build --release`
-2. `./target/release/inkhaven gen-fixture` (cached
-   across runs)
-3. `cargo bench` for every scenario
-4. `tools/bench-report.rs` posts per-scenario deltas
-   as a PR comment
-5. Non-zero exit on any >20% regression
+1. `cargo build --release` + `cargo bench --no-run`.
+2. `inkhaven gen-fixture` — a CI-sized ~250-paragraph
+   fixture (1 book × 5 chapters × 50 paragraphs, ~30s),
+   not the full 10K. Big enough to exercise the
+   algorithmic paths the gate protects; the I.1.4 +
+   I.1.5 wins show up as multiples, not 20% drifts, so
+   the smaller fixture catches a regression just as
+   reliably.
+3. `cargo bench --bench startup --bench search`.
+4. On **push to main**: upload `target/criterion` as the
+   `bench-baseline` artifact (the reference every PR
+   compares against).
+5. On **pull_request**: download the latest main
+   baseline (`dawidd6/action-download-artifact`), run
+   `inkhaven _bench-report --baseline … --current … --markdown`,
+   post the delta table as a PR comment, and fail the
+   job (exit 2 → `::error::`) when any scenario regresses
+   >20%.
+
+The comparison tool is `inkhaven _bench-report` (a
+hidden, unit-tested subcommand) rather than a loose
+script — the parse / compare / verdict logic has 15
+tests covering threshold boundaries, new-bench handling,
+zero-baseline safety, and the algorithmic-regression
+case.
 
 For local-only runs, the bench output is enough; the
-report-tool integration is a CI-only convenience.
+report-tool + PR-comment integration is a CI convenience.
+
+### Running the report tool locally
+
+```bash
+# Save a baseline (e.g. on main):
+$ INKHAVEN_BENCH_FIXTURE=/tmp/fix cargo bench
+$ cp -r target/criterion /tmp/baseline-criterion
+
+# …make changes, re-bench, compare:
+$ INKHAVEN_BENCH_FIXTURE=/tmp/fix cargo bench
+$ inkhaven _bench-report \
+    --baseline /tmp/baseline-criterion \
+    --current target/criterion \
+    --threshold 0.20
+```
+
+Exit 0 = clean, exit 2 = regression.
 
 ## Adding a new bench
 

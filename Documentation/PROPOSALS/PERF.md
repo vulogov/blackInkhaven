@@ -225,7 +225,14 @@ well-formedness.
 > startup would drown the signal).  The `_bench-load`
 > instrument already captures the win precisely.
 
-I.1.7 (CI gates) is unchanged.
+I.1.7 (CI gates) landed: `.github/workflows/bench.yml`
+runs the suite, publishes a `bench-baseline` artifact on
+main, and on PRs compares via `inkhaven _bench-report`
+(exit 2 + `::error::` + PR comment on any >20%
+regression).  The gate is intentionally loose because
+the regressions it exists to catch — re-introducing the
+eager engine load or the O(n²) flatten — are
+order-of-magnitude, robust to shared-runner noise.
 
 The two big wins — lazy engine init + the flatten index
 — are independent, each tied to a different bench

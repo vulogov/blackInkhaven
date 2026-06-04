@@ -1,0 +1,154 @@
+name: bench
+
+# 1.2.18+ I.1.7 — performance regression gate.
+#
+# On push to main: run the criterion bench suite + upload
+# the result tree as the `bench-baseline` artifact (the
+# reference every PR compares against).
+#
+# On pull_request: download the latest main baseline, run
+# the suite, compare via `inkhaven _bench-report`, post a
+# delta table as a PR comment, and FAIL the job when any
+# scenario regresses >20%.
+#
+# Fixture sizing: CI uses a ~250-paragraph fixture (1 book
+# × 5 chapters × 50 paragraphs, ~30s to generate) rather
+# than the full 10K (~20 min). It's large enough to
+# exercise the algorithmic paths the gate exists to
+# protect — the I.1.4 lazy-engine + I.1.5 O(n)-flatten
+# wins both show up as multiples, not 20% drifts, so the
+# smaller fixture catches a regression just as reliably.
+#
+# A note on shared-runner noise: absolute wall-clock
+# drifts between GitHub runners, so the 20% threshold is
+# deliberately loose. The regressions worth gating here
+# are structural (re-introducing eager model load, or
+# making flatten O(n²) again) — those are order-of-
+# magnitude, not marginal.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  BENCH_FIXTURE: /tmp/inkhaven-bench-fixture
+
+jobs:
+  bench:
+    name: criterion bench gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Same native deps as ci.yml — bdslib transitive +
+      # typst font discovery.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libfontconfig1-dev \
+            libssl-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libasound2-dev \
+            fonts-dejavu-core
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary + benches
+        run: |
+          cargo build --release --locked
+          cargo bench --no-run --locked
+
+      - name: Generate bench fixture
+        run: |
+          ./target/release/inkhaven gen-fixture "$BENCH_FIXTURE" \
+            --books 1 --chapters 5 --paragraphs 50 --force
+
+      - name: Run benches
+        env:
+          INKHAVEN_BENCH_FIXTURE: ${{ env.BENCH_FIXTURE }}
+        run: |
+          cargo bench --bench startup --bench search
+
+      # ── main branch: publish the baseline ────────────
+      - name: Upload baseline (main only)
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-baseline
+          path: target/criterion
+          retention-days: 90
+
+      # ── PR: download the main baseline + compare ─────
+      #
+      # The built-in actions/download-artifact can only
+      # fetch artifacts from the *current* run; we need the
+      # latest baseline from a *prior* main run.
+      # dawidd6/action-download-artifact is the standard
+      # tool for "grab the newest artifact from branch
+      # main".  continue-on-error so the first-ever PR (no
+      # main baseline yet) doesn't hard-fail — _bench-report
+      # treats a missing baseline as "everything new".
+      - name: Download main baseline (PR only)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: bench-baseline
+          path: /tmp/bench-baseline
+          branch: main
+          workflow: bench.yml
+          workflow_conclusion: success
+          if_no_artifact_found: warn
+
+      - name: Compare + render report (PR only)
+        if: github.event_name == 'pull_request'
+        id: report
+        run: |
+          # If the baseline download failed (first run, or
+          # no main baseline yet) /tmp/bench-baseline won't
+          # exist — _bench-report treats a missing baseline
+          # as "everything is new" + exits 0.
+          set +e
+          ./target/release/inkhaven _bench-report \
+            --baseline /tmp/bench-baseline \
+            --current target/criterion \
+            --threshold 0.20 \
+            --markdown > /tmp/bench-report.md
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          cat /tmp/bench-report.md
+
+      - name: Post report as PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/bench-report.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Fail on regression (PR only)
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ "${{ steps.report.outputs.exit_code }}" = "2" ]; then
+            echo "::error::Performance regression detected — see the PR comment."
+            exit 1
+          fi
+          echo "No performance regression."
