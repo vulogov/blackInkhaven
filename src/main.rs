@@ -34,6 +34,7 @@ mod typst_check;
 mod typst_compile;
 mod typst_inprocess;
 mod typst_paragraph_render;
+mod typst_prose;
 mod typst_world;
 
 use clap::Parser;

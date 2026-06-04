@@ -149,8 +149,8 @@ pub fn chapter_filename(index0: usize) -> String {
 /// (the inner content of `<body>`).  Pure.  See the
 /// module-level fidelity note for the supported subset.
 pub fn typst_to_xhtml(body: &str) -> String {
-    let stripped = strip_leading_heading(body);
-    let blocks = split_blocks(&stripped);
+    let stripped = crate::typst_prose::strip_leading_heading(body);
+    let blocks = crate::typst_prose::split_blocks(&stripped);
     let mut out = String::new();
     for block in blocks {
         let trimmed = block.trim();
@@ -181,44 +181,6 @@ pub fn typst_to_xhtml(body: &str) -> String {
 /// Drop a single leading `= heading` line (the
 /// paragraph's organisational title).  Leaves `==` /
 /// `===` subheadings intact.
-fn strip_leading_heading(body: &str) -> String {
-    let mut lines = body.lines();
-    if let Some(first) = lines.clone().next() {
-        let t = first.trim_start();
-        if t.starts_with("= ") {
-            // Skip the heading + a following blank line.
-            lines.next();
-            let rest: Vec<&str> = lines.collect();
-            let mut joined = rest.join("\n");
-            joined = joined.trim_start_matches('\n').to_string();
-            return joined;
-        }
-    }
-    body.to_string()
-}
-
-/// Split into blank-line-separated blocks.
-fn split_blocks(s: &str) -> Vec<String> {
-    let mut blocks = Vec::new();
-    let mut current = String::new();
-    for line in s.lines() {
-        if line.trim().is_empty() {
-            if !current.trim().is_empty() {
-                blocks.push(std::mem::take(&mut current));
-            }
-        } else {
-            if !current.is_empty() {
-                current.push('\n');
-            }
-            current.push_str(line);
-        }
-    }
-    if !current.trim().is_empty() {
-        blocks.push(current);
-    }
-    blocks
-}
-
 /// Inline markup conversion on a single block.  Escapes
 /// XML first, then applies `_emph_`, `*strong*`,
 /// `#footnote[…]` over the escaped text (the markup
@@ -496,27 +458,6 @@ mod tests {
     fn inline_unterminated_footnote_is_literal() {
         let got = inline("text#footnote[oops");
         assert!(got.contains("#footnote[oops"));
-    }
-
-    // ── strip_leading_heading ─────────────────────────
-
-    #[test]
-    fn strip_drops_leading_equals_heading() {
-        let body = "= 001. Approach\n\nHelena paused.";
-        assert_eq!(strip_leading_heading(body), "Helena paused.");
-    }
-
-    #[test]
-    fn strip_keeps_body_without_heading() {
-        let body = "Just prose here.";
-        assert_eq!(strip_leading_heading(body), "Just prose here.");
-    }
-
-    #[test]
-    fn strip_keeps_subheadings() {
-        // `==` is a subheading, not the org title — keep it.
-        let body = "== A scene\n\nProse.";
-        assert_eq!(strip_leading_heading(body), "== A scene\n\nProse.");
     }
 
     // ── typst_to_xhtml ────────────────────────────────
