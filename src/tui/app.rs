@@ -9060,6 +9060,50 @@ impl App {
         ]
     }
 
+    /// 1.2.18+ R.3 — reading-time chip for the current
+    /// book.  Shows `📖 <remaining> / <total>` at
+    /// `editor.reading_wpm`, where remaining is from the
+    /// open paragraph to the book's end.  Hidden when
+    /// `editor.reading_time_chip` is false (default) or
+    /// no paragraph is open.  Cheap: one O(n) walk of
+    /// the current book's paragraph subtree (the I.1.5
+    /// children index keeps it linear).
+    pub(crate) fn reading_time_chip_spans(&self) -> Vec<ratatui::text::Span<'_>> {
+        use ratatui::style::{Color, Modifier, Style};
+        use ratatui::text::Span;
+        if !self.cfg.editor.reading_time_chip {
+            return Vec::new();
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            return Vec::new();
+        };
+        let Some(bt) = crate::tui::reading_time::compute(
+            &self.hierarchy,
+            doc.id,
+            self.cfg.editor.reading_wpm,
+        ) else {
+            return Vec::new();
+        };
+        if bt.total_words == 0 {
+            return Vec::new();
+        }
+        let label = format!(
+            " 📖 {} / {} ",
+            crate::tui::reading_time::fmt_compact(bt.remaining_secs),
+            crate::tui::reading_time::fmt_compact(bt.total_secs),
+        );
+        vec![
+            Span::styled(
+                label,
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::DIM),
+            ),
+            Span::raw(" "),
+        ]
+    }
+
     /// in the open paragraph.  The render loop in
     /// `draw_status` splices the result into the
     /// status-bar span list after the focus chip.

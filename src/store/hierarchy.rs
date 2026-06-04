@@ -91,6 +91,25 @@ impl Hierarchy {
         Ok(Self { by_id, order, children })
     }
 
+    /// Test-only constructor: build a Hierarchy from an
+    /// in-memory node set without a `Store`.  Mirrors
+    /// `load`'s sort + index build.  Used by unit tests
+    /// across modules (`reading_time`, the index tests).
+    #[cfg(test)]
+    pub(crate) fn from_nodes_for_test(nodes: Vec<Node>) -> Self {
+        let mut by_id = HashMap::new();
+        for n in nodes {
+            by_id.insert(n.id, n);
+        }
+        let mut order: Vec<Uuid> = by_id.keys().copied().collect();
+        order.sort_by_key(|id| {
+            let n = &by_id[id];
+            (n.path.len(), n.order, n.slug.clone())
+        });
+        let children = build_children_index(&order, &by_id);
+        Self { by_id, order, children }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.by_id.is_empty()
     }
@@ -420,22 +439,10 @@ mod index_tests {
         serde_json::from_value(raw).expect("test node deserialises")
     }
 
-    /// Construct a Hierarchy the way `load` does (sort
-    /// `order` by (depth, order, slug), then build the
-    /// index) but from an in-memory node set — no Store
-    /// needed.
+    /// Construct a Hierarchy from an in-memory node set
+    /// — delegates to the shared test constructor.
     fn build(nodes: Vec<Node>) -> Hierarchy {
-        let mut by_id = HashMap::new();
-        for n in nodes {
-            by_id.insert(n.id, n);
-        }
-        let mut order: Vec<Uuid> = by_id.keys().copied().collect();
-        order.sort_by_key(|id| {
-            let n = &by_id[id];
-            (n.path.len(), n.order, n.slug.clone())
-        });
-        let children = build_children_index(&order, &by_id);
-        Hierarchy { by_id, order, children }
+        Hierarchy::from_nodes_for_test(nodes)
     }
 
     /// A two-book tree:
