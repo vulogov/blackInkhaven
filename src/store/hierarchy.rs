@@ -15,6 +15,23 @@ pub struct Hierarchy {
     by_id: HashMap<Uuid, Node>,
     /// Sorted by (depth, order) so iteration and printing stay stable.
     order: Vec<Uuid>,
+    /// 1.2.18+ I.1.5 — parent → ordered child-id list,
+    /// built once at construction.  Turns `children_of`
+    /// from an O(n) full scan into an O(k) map lookup,
+    /// which collapses `flatten`'s O(n²) into O(n).
+    ///
+    /// The buckets are pre-sorted: `order` is globally
+    /// sorted by `(depth, order, slug)`, and a parent's
+    /// children all share the same depth, so iterating
+    /// `order` to fill the buckets yields each child list
+    /// already in `(order, slug)` sequence — exactly what
+    /// the old `children_of` produced with its
+    /// `sort_by_key(|n| n.order)`.
+    ///
+    /// `Hierarchy` is immutable after construction
+    /// (mutations reload via `Hierarchy::load`), so the
+    /// index never needs invalidating.
+    children: HashMap<Option<Uuid>, Vec<Uuid>>,
 }
 
 impl Default for Hierarchy {
@@ -22,6 +39,7 @@ impl Default for Hierarchy {
         Self {
             by_id: HashMap::new(),
             order: Vec::new(),
+            children: HashMap::new(),
         }
     }
 }
@@ -62,7 +80,15 @@ impl Hierarchy {
         });
         crate::store::perf_mark(perf, "hierarchy.load.sort", t2.elapsed());
 
-        Ok(Self { by_id, order })
+        // 1.2.18+ I.1.5 — build the parent→children index
+        // in one O(n) pass over the already-sorted `order`
+        // vec.  Each bucket comes out in display order
+        // (see the field docs), so no per-bucket sort.
+        let t3 = std::time::Instant::now();
+        let children = build_children_index(&order, &by_id);
+        crate::store::perf_mark(perf, "hierarchy.load.build_index", t3.elapsed());
+
+        Ok(Self { by_id, order, children })
     }
 
     pub fn is_empty(&self) -> bool {
@@ -77,13 +103,17 @@ impl Hierarchy {
         self.by_id.get(&id)
     }
 
+    /// Children of `parent_id`, in display order.
+    ///
+    /// 1.2.18+ I.1.5 — O(k) (k = child count) via the
+    /// pre-sorted `children` index, down from the old
+    /// O(n) full scan.  This is the change that makes
+    /// `flatten` linear.
     pub fn children_of(&self, parent_id: Option<Uuid>) -> Vec<&Node> {
-        let mut out: Vec<&Node> = self
-            .iter()
-            .filter(|n| n.parent_id == parent_id)
-            .collect();
-        out.sort_by_key(|n| n.order);
-        out
+        match self.children.get(&parent_id) {
+            Some(ids) => ids.iter().map(|id| &self.by_id[id]).collect(),
+            None => Vec::new(),
+        }
     }
 
     /// Depth-first flatten in display order. Each entry is `(node, depth)`
@@ -134,16 +164,28 @@ impl Hierarchy {
     }
 
     /// True when `node_id` has at least one child in the hierarchy.
+    /// 1.2.18+ I.1.5 — O(1) index lookup; no node materialisation.
     pub fn has_children(&self, node_id: Uuid) -> bool {
-        !self.children_of(Some(node_id)).is_empty()
+        self.children
+            .get(&Some(node_id))
+            .map(|ids| !ids.is_empty())
+            .unwrap_or(false)
     }
 
     pub fn next_order(&self, parent_id: Option<Uuid>) -> u32 {
-        self.children_of(parent_id)
-            .iter()
-            .map(|n| n.order)
-            .max()
-            .map(|m| m + 1)
+        // The index bucket is sorted by order, so the
+        // max is the last entry — but stay robust to any
+        // future non-monotonic ordering by taking the
+        // real max over the (small) child list.
+        self.children
+            .get(&parent_id)
+            .map(|ids| {
+                ids.iter()
+                    .map(|id| self.by_id[id].order)
+                    .max()
+                    .map(|m| m + 1)
+                    .unwrap_or(1)
+            })
             .unwrap_or(1)
     }
 
@@ -323,6 +365,171 @@ impl Hierarchy {
                 parent_desc
             )))
         }
+    }
+}
+
+/// 1.2.18+ I.1.5 — build the parent→children index.
+///
+/// One O(n) pass over `order` (which is already sorted
+/// by `(depth, order, slug)`).  Because a parent's
+/// children all share the same depth, appending each id
+/// to its parent's bucket in `order` sequence yields
+/// buckets that are already in `(order, slug)` display
+/// order — matching the old `children_of`'s
+/// `sort_by_key(|n| n.order)` (stable) exactly, with no
+/// per-bucket sort.
+fn build_children_index(
+    order: &[Uuid],
+    by_id: &HashMap<Uuid, Node>,
+) -> HashMap<Option<Uuid>, Vec<Uuid>> {
+    let mut children: HashMap<Option<Uuid>, Vec<Uuid>> = HashMap::new();
+    for id in order {
+        let parent_id = by_id[id].parent_id;
+        children.entry(parent_id).or_default().push(*id);
+    }
+    children
+}
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+    use uuid::Uuid;
+
+    /// Build a Node via serde round-trip (same trick the
+    /// placement_tests use) so we only specify the fields
+    /// the index + ordering read.
+    fn node(
+        id: Uuid,
+        kind: &str,
+        slug: &str,
+        path: &[&str],
+        parent: Option<Uuid>,
+        order: u32,
+    ) -> Node {
+        let raw = serde_json::json!({
+            "id": id,
+            "kind": kind,
+            "title": slug,
+            "slug": slug,
+            "path": path,
+            "parent_id": parent,
+            "order": order,
+            "file": null,
+            "modified_at": "2026-01-01T00:00:00Z",
+        });
+        serde_json::from_value(raw).expect("test node deserialises")
+    }
+
+    /// Construct a Hierarchy the way `load` does (sort
+    /// `order` by (depth, order, slug), then build the
+    /// index) but from an in-memory node set — no Store
+    /// needed.
+    fn build(nodes: Vec<Node>) -> Hierarchy {
+        let mut by_id = HashMap::new();
+        for n in nodes {
+            by_id.insert(n.id, n);
+        }
+        let mut order: Vec<Uuid> = by_id.keys().copied().collect();
+        order.sort_by_key(|id| {
+            let n = &by_id[id];
+            (n.path.len(), n.order, n.slug.clone())
+        });
+        let children = build_children_index(&order, &by_id);
+        Hierarchy { by_id, order, children }
+    }
+
+    /// A two-book tree:
+    ///   book-a (order 1)
+    ///     ch-a1 (order 1)
+    ///       p1 (order 2), p2 (order 1)   ← intentionally out of order
+    ///   book-b (order 2)
+    fn sample() -> (Hierarchy, Vec<Uuid>) {
+        let ids: Vec<Uuid> = (0..5).map(|_| Uuid::now_v7()).collect();
+        let (book_a, ch_a1, p1, p2, book_b) =
+            (ids[0], ids[1], ids[2], ids[3], ids[4]);
+        let h = build(vec![
+            node(book_a, "book", "book-a", &[], None, 1),
+            node(ch_a1, "chapter", "ch-a1", &["book-a"], Some(book_a), 1),
+            // p1 has order 2, p2 has order 1 — children_of
+            // must return them order-sorted (p2 then p1).
+            node(p1, "paragraph", "p1", &["book-a", "ch-a1"], Some(ch_a1), 2),
+            node(p2, "paragraph", "p2", &["book-a", "ch-a1"], Some(ch_a1), 1),
+            node(book_b, "book", "book-b", &[], None, 2),
+        ]);
+        (h, ids)
+    }
+
+    #[test]
+    fn children_of_root_is_order_sorted() {
+        let (h, ids) = sample();
+        let roots: Vec<Uuid> =
+            h.children_of(None).iter().map(|n| n.id).collect();
+        assert_eq!(roots, vec![ids[0], ids[4]], "book-a before book-b");
+    }
+
+    #[test]
+    fn children_of_orders_by_order_field_not_insertion() {
+        let (h, ids) = sample();
+        // p2 (order 1) must come before p1 (order 2) even
+        // though p1 was inserted first.
+        let kids: Vec<Uuid> = h
+            .children_of(Some(ids[1]))
+            .iter()
+            .map(|n| n.id)
+            .collect();
+        assert_eq!(kids, vec![ids[3], ids[2]], "p2 (order 1) before p1 (order 2)");
+    }
+
+    #[test]
+    fn children_of_leaf_is_empty() {
+        let (h, ids) = sample();
+        assert!(h.children_of(Some(ids[2])).is_empty());
+        assert!(h.children_of(Some(ids[4])).is_empty());
+    }
+
+    #[test]
+    fn flatten_is_preorder_depth_first() {
+        let (h, ids) = sample();
+        let flat: Vec<(Uuid, usize)> =
+            h.flatten().iter().map(|(n, d)| (n.id, *d)).collect();
+        assert_eq!(
+            flat,
+            vec![
+                (ids[0], 0), // book-a
+                (ids[1], 1), // ch-a1
+                (ids[3], 2), // p2 (order 1)
+                (ids[2], 2), // p1 (order 2)
+                (ids[4], 0), // book-b
+            ],
+        );
+    }
+
+    #[test]
+    fn has_children_matches_index() {
+        let (h, ids) = sample();
+        assert!(h.has_children(ids[0])); // book-a has ch-a1
+        assert!(h.has_children(ids[1])); // ch-a1 has p1+p2
+        assert!(!h.has_children(ids[2])); // p1 is a leaf
+        assert!(!h.has_children(ids[4])); // book-b is a leaf
+    }
+
+    #[test]
+    fn next_order_is_max_plus_one() {
+        let (h, ids) = sample();
+        // Root has book-a(1) + book-b(2) → next is 3.
+        assert_eq!(h.next_order(None), 3);
+        // ch-a1 has p1(2) + p2(1) → next is 3.
+        assert_eq!(h.next_order(Some(ids[1])), 3);
+        // A leaf has no children → next is 1.
+        assert_eq!(h.next_order(Some(ids[2])), 1);
+    }
+
+    #[test]
+    fn empty_hierarchy_is_well_formed() {
+        let h = Hierarchy::default();
+        assert!(h.children_of(None).is_empty());
+        assert_eq!(h.next_order(None), 1);
+        assert!(h.flatten().is_empty());
     }
 }
 
