@@ -27,6 +27,7 @@ use crate::ai::prompts::PromptLibrary;
 use crate::ai::stream::{ChatTurn, StreamMsg, spawn_chat_stream};
 use crate::config::Config;
 use crate::error::{Error, Result as InkResult};
+use crate::manuscript::is_scene_break;
 use crate::project::ProjectLayout;
 use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
@@ -1394,43 +1395,9 @@ fn strip_leading_typst_heading(body: &str) -> String {
 /// 24-row terminal without scrolling.
 const KILL_RING_CAP: usize = 10;
 
-/// 1.2.9+ — true when `line` is a typographic scene-
-/// break line.  Recognised forms (case-insensitive,
-/// after trimming whitespace + collapsing internal
-/// spaces):
-///   * 3+ copies of any one of `*`, `-`, `_`, `~`, `#`
-///     (optionally separated by single spaces — so
-///     `* * *` and `***` both match).
-///   * A single `§` (typographic section sign).
-/// Reject everything else.  Notably does NOT match
-/// typst headings (`= Foo`, `== Foo`) — those are
-/// structural section markers, not scene breaks.
-/// Doesn't match `**` (2 chars, below threshold) or
-/// `***bold***` (mixed-content), avoiding common
-/// false positives.
-fn is_scene_break(line: &str) -> bool {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    if trimmed == "§" {
-        return true;
-    }
-    // Strip internal whitespace; the remaining chars must
-    // be 3+ copies of one of the marker characters.
-    let chars: Vec<char> = trimmed
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
-    if chars.len() < 3 {
-        return false;
-    }
-    let first = chars[0];
-    if !"*-_~#".contains(first) {
-        return false;
-    }
-    chars.iter().all(|c| *c == first)
-}
+// `is_scene_break` lives in `crate::manuscript` (imported
+// above) — one definition shared by the editor's scene-
+// break navigation and the manuscript exporter.
 
 /// 1.2.9+ — sanitise a paragraph title into a
 /// filesystem-safe slug for the default audio path.
