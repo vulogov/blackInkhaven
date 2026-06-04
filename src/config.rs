@@ -1561,6 +1561,40 @@ pub struct EditorConfig {
     /// audiobooks.
     #[serde(default = "default_reading_wpm")]
     pub reading_wpm: u32,
+
+    /// 1.2.19+ C.1 — window (in consecutive paragraphs)
+    /// for the `echo-repetition` doctor scan.  A
+    /// distinctive word reused `echo_min_repeats` times
+    /// within this many paragraphs is flagged as an echo.
+    #[serde(default = "default_echo_window")]
+    pub echo_window: usize,
+
+    /// 1.2.19+ C.1 — occurrences within `echo_window`
+    /// required to flag an echo.  Lower = more sensitive
+    /// (more findings).
+    #[serde(default = "default_echo_min_repeats")]
+    pub echo_min_repeats: usize,
+
+    /// 1.2.19+ C.1 — distinctiveness ceiling for the echo
+    /// scan: words used more than this many times across a
+    /// chapter are treated as common vocabulary (which an
+    /// author legitimately reuses) and skipped, even when
+    /// clustered.  Tune up for longer works, down for
+    /// short stories.
+    #[serde(default = "default_echo_max_global")]
+    pub echo_max_global: usize,
+}
+
+fn default_echo_window() -> usize {
+    5
+}
+
+fn default_echo_min_repeats() -> usize {
+    3
+}
+
+fn default_echo_max_global() -> usize {
+    40
 }
 
 fn default_continuation_anchor_count() -> usize {
@@ -2605,6 +2639,9 @@ impl Default for EditorConfig {
             show_glossary_chip: default_show_glossary_chip(),
             reading_time_chip: false,
             reading_wpm: default_reading_wpm(),
+            echo_window: default_echo_window(),
+            echo_min_repeats: default_echo_min_repeats(),
+            echo_max_global: default_echo_max_global(),
         }
     }
 }

@@ -114,6 +114,15 @@ pub enum ScanClass {
     /// edit distance.  Info severity (could be
     /// an intentional variant) — no autofix.
     NamingInconsistency,
+    /// 1.2.19+ C.1 — a distinctive word reused close
+    /// together (≥ `editor.echo_min_repeats` times within
+    /// `editor.echo_window` paragraphs of a chapter).
+    /// Catches the revision-stage echo tic.  Multilingual
+    /// via the project's Snowball stemmer + stop-words
+    /// (exact-form fallback for non-Snowball languages).
+    /// Info severity — an echo can be deliberate
+    /// (anaphora, refrain).  No autofix.
+    EchoRepetition,
 }
 
 impl ScanClass {
@@ -130,6 +139,7 @@ impl ScanClass {
             ScanClass::PacingCollapse => "pacing-collapse",
             ScanClass::StalledThread => "stalled-thread",
             ScanClass::NamingInconsistency => "naming-inconsistency",
+            ScanClass::EchoRepetition => "echo-repetition",
         }
     }
 
@@ -145,11 +155,12 @@ impl ScanClass {
             "pacing-collapse" => ScanClass::PacingCollapse,
             "stalled-thread" => ScanClass::StalledThread,
             "naming-inconsistency" => ScanClass::NamingInconsistency,
+            "echo-repetition" => ScanClass::EchoRepetition,
             _ => return None,
         })
     }
 
-    pub const ALL: [ScanClass; 9] = [
+    pub const ALL: [ScanClass; 10] = [
         ScanClass::ZeroByteFile,
         ScanClass::OrphanParagraphRow,
         ScanClass::MissingReferencedFile,
@@ -159,6 +170,7 @@ impl ScanClass {
         ScanClass::PacingCollapse,
         ScanClass::StalledThread,
         ScanClass::NamingInconsistency,
+        ScanClass::EchoRepetition,
     ];
 }
 
@@ -300,8 +312,108 @@ pub fn scan_project(
     if run(ScanClass::NamingInconsistency) {
         report.findings.extend(scan_naming_inconsistencies(&layout, &hierarchy));
     }
+    // 1.2.19+ C.1 — echo / repetition-at-distance.
+    if run(ScanClass::EchoRepetition) {
+        report.findings.extend(scan_echoes(&layout, &hierarchy, &cfg));
+    }
 
     Ok(report)
+}
+
+/// 1.2.19+ C.1 — flag distinctive words reused close
+/// together within each user-book chapter.  Multilingual
+/// via the project's `language` (Snowball stemmer +
+/// stop-words; exact-form fallback otherwise).
+fn scan_echoes(
+    layout: &ProjectLayout,
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    cfg: &Config,
+) -> Vec<ScanFinding> {
+    let echo_cfg = crate::echo::EchoConfig {
+        window: cfg.editor.echo_window.max(1),
+        min_repeats: cfg.editor.echo_min_repeats.max(2),
+        max_global: cfg.editor.echo_max_global.max(1),
+        ..crate::echo::EchoConfig::default()
+    };
+    let language = if cfg.language.trim().is_empty() {
+        "english".to_string()
+    } else {
+        cfg.language.clone()
+    };
+
+    let mut out: Vec<ScanFinding> = Vec::new();
+    for chapter_id in collect_user_book_chapter_ordinals(hierarchy) {
+        let paragraphs = collect_chapter_paragraph_prose(layout, hierarchy, chapter_id);
+        if paragraphs.len() < 2 {
+            continue;
+        }
+        let chapter_label = hierarchy
+            .get(chapter_id)
+            .map(|n| n.title.clone())
+            .unwrap_or_default();
+        let chapter_path = hierarchy
+            .get(chapter_id)
+            .and_then(|n| n.file.clone());
+        let findings =
+            crate::echo::detect_echoes(&paragraphs, &language, None, &echo_cfg);
+        for f in findings {
+            let where_ = if f.para_start == f.para_end {
+                format!("¶{}", f.para_start)
+            } else {
+                format!("¶{}–{}", f.para_start, f.para_end)
+            };
+            // Lead with the headword (the first surface
+            // form — readable) rather than the raw stem
+            // (`alway`), listing the other inflections when
+            // they differ.
+            let headword = f
+                .surface_forms
+                .first()
+                .cloned()
+                .unwrap_or_else(|| f.stem.clone());
+            let forms = if f.surface_forms.len() > 1 {
+                format!(" (forms: {})", f.surface_forms.join(", "))
+            } else {
+                String::new()
+            };
+            out.push(ScanFinding {
+                class: ScanClass::EchoRepetition,
+                severity: ScanSeverity::Info,
+                path: chapter_path.clone(),
+                detail: format!(
+                    "echo: `{}`{} appears {}× within {} (chapter `{}`)",
+                    headword, forms, f.count, where_, chapter_label,
+                ),
+            });
+        }
+    }
+    out
+}
+
+/// Per-paragraph plain prose for a chapter (markup
+/// stripped via the audiobook plain-text pass), in
+/// reading order.  Empty paragraphs are skipped.
+fn collect_chapter_paragraph_prose(
+    layout: &ProjectLayout,
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    chapter_id: uuid::Uuid,
+) -> Vec<String> {
+    use crate::store::NodeKind;
+    let mut out = Vec::new();
+    for id in hierarchy.collect_subtree(chapter_id) {
+        let Some(p) = hierarchy.get(id) else { continue };
+        if p.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Some(rel) = p.file.as_ref() else { continue };
+        let abs = layout.root.join(rel);
+        let Ok(text) = std::fs::read_to_string(&abs) else { continue };
+        let plain = crate::audiobook::typst_to_plain(&text);
+        if !plain.trim().is_empty() {
+            out.push(plain);
+        }
+    }
+    out
 }
 
 /// 1.2.15+ — does bdslib have non-empty content
@@ -621,7 +733,8 @@ pub fn apply_fix(
         ScanClass::DroppedCharacter
         | ScanClass::PacingCollapse
         | ScanClass::StalledThread
-        | ScanClass::NamingInconsistency => Err(Error::Store(format!(
+        | ScanClass::NamingInconsistency
+        | ScanClass::EchoRepetition => Err(Error::Store(format!(
             "no autofix for class `{}` — this is an author-judgment finding (review the prose / outline / threads)",
             finding.class.slug(),
         ))),
