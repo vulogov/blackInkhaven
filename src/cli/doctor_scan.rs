@@ -152,6 +152,14 @@ pub enum ScanClass {
     /// may be a deliberate series hook) and the AI tagging
     /// is approximate.  Info severity.  No autofix.
     UnresolvedTension,
+    /// 1.2.20+ R.3.b — a paragraph whose estimated read
+    /// time at the configured `reading_wpm` exceeds
+    /// `editor.paragraph_long_secs` (default 180s ≈ 600
+    /// words).  Flags a wall of text the reader meets in
+    /// one unbroken block.  Info severity — length can be
+    /// deliberate (a breathless run-on, a dense
+    /// exposition).  No autofix.
+    ParagraphTooLong,
 }
 
 impl ScanClass {
@@ -172,6 +180,7 @@ impl ScanClass {
             ScanClass::NumericContradiction => "numeric-contradiction",
             ScanClass::ContinuityDrift => "continuity-drift",
             ScanClass::UnresolvedTension => "unresolved-tension",
+            ScanClass::ParagraphTooLong => "paragraph-too-long",
         }
     }
 
@@ -191,11 +200,12 @@ impl ScanClass {
             "numeric-contradiction" => ScanClass::NumericContradiction,
             "continuity-drift" => ScanClass::ContinuityDrift,
             "unresolved-tension" => ScanClass::UnresolvedTension,
+            "paragraph-too-long" => ScanClass::ParagraphTooLong,
             _ => return None,
         })
     }
 
-    pub const ALL: [ScanClass; 13] = [
+    pub const ALL: [ScanClass; 14] = [
         ScanClass::ZeroByteFile,
         ScanClass::OrphanParagraphRow,
         ScanClass::MissingReferencedFile,
@@ -209,6 +219,7 @@ impl ScanClass {
         ScanClass::NumericContradiction,
         ScanClass::ContinuityDrift,
         ScanClass::UnresolvedTension,
+        ScanClass::ParagraphTooLong,
     ];
 
     /// 1.2.19+ C.4 — classes excluded from the default
@@ -380,6 +391,10 @@ pub fn scan_project(
     // (is_opt_in), true only when explicitly selected.
     if run(ScanClass::UnresolvedTension) {
         report.findings.extend(scan_unresolved_tension(&layout, &cfg));
+    }
+    // 1.2.20+ R.3.b — paragraph read-time / wall-of-text.
+    if run(ScanClass::ParagraphTooLong) {
+        report.findings.extend(scan_paragraphs_too_long(&layout, &hierarchy, &cfg));
     }
 
     Ok(report)
@@ -593,6 +608,62 @@ fn scan_echoes(
                     headword, forms, f.count, where_, chapter_label,
                 ),
             });
+        }
+    }
+    out
+}
+
+/// 1.2.20+ R.3.b — flag paragraphs whose estimated read
+/// time at the configured `reading_wpm` exceeds
+/// `editor.paragraph_long_secs`.  Info, no autofix — a
+/// long paragraph can be a deliberate stylistic choice.
+fn scan_paragraphs_too_long(
+    layout: &ProjectLayout,
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    cfg: &Config,
+) -> Vec<ScanFinding> {
+    let wpm = cfg.editor.reading_wpm;
+    let threshold = cfg.editor.paragraph_long_secs;
+    if wpm == 0 || threshold == 0 {
+        return Vec::new();
+    }
+
+    let mut out: Vec<ScanFinding> = Vec::new();
+    for chapter_id in collect_user_book_chapter_ordinals(hierarchy) {
+        let paragraphs = collect_chapter_paragraph_prose(layout, hierarchy, chapter_id);
+        if paragraphs.is_empty() {
+            continue;
+        }
+        let chapter_label = hierarchy
+            .get(chapter_id)
+            .map(|n| n.title.clone())
+            .unwrap_or_default();
+        let chapter_path = hierarchy
+            .get(chapter_id)
+            .and_then(|n| n.file.clone());
+        for (idx, para) in paragraphs.iter().enumerate() {
+            let words = crate::progress::count_words(para).max(0) as u64;
+            // Read time in seconds at the configured wpm —
+            // the same estimate the editor's reading-time
+            // chip shows (words × 60 / wpm).
+            let secs = words.saturating_mul(60) / wpm as u64;
+            if secs > threshold as u64 {
+                out.push(ScanFinding {
+                    class: ScanClass::ParagraphTooLong,
+                    severity: ScanSeverity::Info,
+                    path: chapter_path.clone(),
+                    detail: format!(
+                        "long paragraph: ¶{} in chapter `{}` runs ~{} words (~{}m{:02}s at {} wpm, over the {}s threshold)",
+                        idx + 1,
+                        chapter_label,
+                        words,
+                        secs / 60,
+                        secs % 60,
+                        wpm,
+                        threshold,
+                    ),
+                });
+            }
         }
     }
     out
@@ -934,7 +1005,8 @@ pub fn apply_fix(
         | ScanClass::EchoRepetition
         | ScanClass::NumericContradiction
         | ScanClass::ContinuityDrift
-        | ScanClass::UnresolvedTension => Err(Error::Store(format!(
+        | ScanClass::UnresolvedTension
+        | ScanClass::ParagraphTooLong => Err(Error::Store(format!(
             "no autofix for class `{}` — this is an author-judgment finding (review the prose / outline / threads)",
             finding.class.slug(),
         ))),

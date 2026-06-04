@@ -1583,6 +1583,19 @@ pub struct EditorConfig {
     /// short stories.
     #[serde(default = "default_echo_max_global")]
     pub echo_max_global: usize,
+
+    /// 1.2.20+ R.3.b — read-time threshold (seconds) for
+    /// the `paragraph-too-long` doctor scan.  A paragraph
+    /// whose estimated read time at `reading_wpm` exceeds
+    /// this is flagged (Info, author-judgment).  Default
+    /// 180s (~600 words at 200 wpm) — a genuine wall of
+    /// text, not a merely dense paragraph.
+    #[serde(default = "default_paragraph_long_secs")]
+    pub paragraph_long_secs: u32,
+}
+
+fn default_paragraph_long_secs() -> u32 {
+    180
 }
 
 fn default_echo_window() -> usize {
@@ -2642,6 +2655,7 @@ impl Default for EditorConfig {
             echo_window: default_echo_window(),
             echo_min_repeats: default_echo_min_repeats(),
             echo_max_global: default_echo_max_global(),
+            paragraph_long_secs: default_paragraph_long_secs(),
         }
     }
 }
