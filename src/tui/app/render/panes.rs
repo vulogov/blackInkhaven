@@ -1865,6 +1865,9 @@ impl super::super::App {
         // 1.2.16+ Phase A.5 — glossary chip
         // (worldbuilding density at-a-glance).
         spans.extend(self.glossary_chip_spans());
+        // 1.2.18+ R.3 — reading-time chip (book length
+        // + time remaining at editor.reading_wpm).
+        spans.extend(self.reading_time_chip_spans());
         spans.push(Span::raw("  "));
         spans.push(Span::raw(self.status.clone()));
 

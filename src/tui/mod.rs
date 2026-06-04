@@ -36,6 +36,9 @@ mod markdown;
 mod markdown_highlight;
 mod modal;
 mod pov_tracker;
+// 1.2.18+ R.3 — reading-time computation for the
+// status-bar chip + R.4 reader-pace preview.
+mod reading_time;
 mod say;
 // 1.2.17+ T.1 — engine abstraction over the macOS `say`
 // backend (preserved as `TtsEngine::System`) and the

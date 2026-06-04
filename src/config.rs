@@ -1543,6 +1543,24 @@ pub struct EditorConfig {
     /// reclaim the screen real estate.
     #[serde(default = "default_show_glossary_chip")]
     pub show_glossary_chip: bool,
+
+    /// 1.2.18+ R.3 — show a status-bar reading-time
+    /// chip for the current book: total audiobook /
+    /// read-aloud length + the time remaining from the
+    /// open paragraph to the book's end, at
+    /// `reading_wpm`.  Default off (the status bar is
+    /// already busy; opt in when the metric is useful —
+    /// e.g. when targeting an audiobook length).
+    #[serde(default)]
+    pub reading_time_chip: bool,
+
+    /// 1.2.18+ R.3 — words-per-minute used by the
+    /// reading-time chip (and the R.4 reader-pace
+    /// preview).  200 wpm is the common silent-reading
+    /// average; ~150 is a typical narration pace for
+    /// audiobooks.
+    #[serde(default = "default_reading_wpm")]
+    pub reading_wpm: u32,
 }
 
 fn default_continuation_anchor_count() -> usize {
@@ -1555,6 +1573,10 @@ fn default_footnote_style() -> String {
 
 fn default_show_glossary_chip() -> bool {
     true
+}
+
+fn default_reading_wpm() -> u32 {
+    200
 }
 
 /// 1.2.14+ Phase Q.2 — `editor.snippets` HJSON
@@ -2581,6 +2603,8 @@ impl Default for EditorConfig {
             continuation_anchor_count: default_continuation_anchor_count(),
             footnote_style: default_footnote_style(),
             show_glossary_chip: default_show_glossary_chip(),
+            reading_time_chip: false,
+            reading_wpm: default_reading_wpm(),
         }
     }
 }
