@@ -521,6 +521,14 @@ pub enum Action {
     /// `d` to remove a downloaded voice.
     #[serde(rename = "tts.voice_picker")]
     OpenTtsVoicePicker,
+    /// 1.2.18+ R.4 — `Ctrl+B Shift+E`.  Reader-pace
+    /// preview: a teleprompter that advances a highlight
+    /// through the open paragraph at `editor.reading_wpm`,
+    /// so the author experiences their prose at a
+    /// reader's speed.  Space pause/resume, ←/→ step, r
+    /// restart, Esc close.
+    #[serde(rename = "view.reader_pace")]
+    OpenReaderPace,
     /// Ctrl+B Shift+G (1.2.9+) — open the writing-
     /// streak heatmap modal.  Shows the last 91 days
     /// of project-wide word deltas as a GitHub-style
@@ -852,6 +860,7 @@ impl Action {
             Action::TtsReadParagraph => "read aloud".into(),
             Action::TtsSaveAsAudio => "save audio".into(),
             Action::OpenTtsVoicePicker => "voice picker".into(),
+            Action::OpenReaderPace => "reader pace".into(),
             Action::OpenWritingStreakHeatmap => "streak".into(),
             Action::OpenDoctorPanel => "doctor".into(),
             Action::OpenJournal => "journal".into(),
@@ -1084,6 +1093,8 @@ impl Action {
                 "Save the open paragraph as an audio file via macOS `say -o <path>` (1.2.9+, Ctrl+B Shift+R). Opens a path picker pre-filled with `<project>/audio/<paragraph-slug>.aiff`; Enter commits, Esc cancels. Output is AIFF by default; coerce another format with the file extension (`.m4a`, `.wav` work on macOS 13+). Same voice + rate as the configured chord-driven TTS. macOS-only; non-macOS hosts surface the same `TTS unavailable` modal as Ctrl+B S.".into(),
             Action::OpenTtsVoicePicker =>
                 "Open the Piper TTS voice picker (1.2.17+, Ctrl+B Shift+V). Lists every voice in the Hugging Face piper-voices catalog plus any voices already on disk that the catalog doesn't list (offline fallback). Sort: language code asc → quality tier desc → voice key asc. Type to filter (matches voice key, language code, or English language name; case-insensitive). Enter on a row: downloads the voice if absent (blocking, ~5-30s on a fast connection) and sets `editor.tts.voice` for the session — the picker DOES NOT rewrite inkhaven.hjson; use `inkhaven config` to make it persistent. `d` removes a downloaded voice + updates the LRU index. `Esc` closes. Doesn't require Piper to be the active engine — useful for downloading voices while still on the 1.2.9 System backend.".into(),
+            Action::OpenReaderPace =>
+                "Open the reader-pace preview (1.2.18+, Ctrl+B Shift+E). A teleprompter that advances a highlight word-by-word through the open paragraph at `editor.reading_wpm` (default 200), so you experience your prose at a reader's speed instead of editing-glance speed — surfaces pacing problems (a run-on that drags, a too-abrupt beat) that are invisible when you skim. Space pauses/resumes, ←/→ step the highlight back/forward, r restarts from the top, Esc closes. Pairs with the R.3 reading-time chip + the R.2 audiobook export.".into(),
             Action::OpenWritingStreakHeatmap =>
                 "Open the writing-streak heatmap modal (1.2.9+, Ctrl+B Shift+G). GitHub-style 13×7 grid of the last 91 days of project-wide word deltas, plus current streak + longest streak in the window + per-month totals. Data comes from the existing progress store (the same source feeding the startup pulse splash + Ctrl+V G modal). Esc closes.".into(),
             Action::OpenDoctorPanel =>
@@ -1284,6 +1295,10 @@ impl KeyBindings {
                 // type-to-filter, Enter to
                 // download/select, d to remove.
                 entry("Shift+v", Action::OpenTtsVoicePicker, Scope::Any),
+                // 1.2.18+ R.4 — Ctrl+B Shift+E opens the
+                // reader-pace preview teleprompter (E for
+                // Experience the prose at reading speed).
+                entry("Shift+e", Action::OpenReaderPace, Scope::Editor),
                 // 1.2.9+ — Ctrl+B Shift+G opens the
                 // writing-streak heatmap modal.
                 entry("Shift+g", Action::OpenWritingStreakHeatmap, Scope::Any),

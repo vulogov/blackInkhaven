@@ -1025,6 +1025,30 @@ pub(super) enum Modal {
     TtsVoicePicker {
         state: super::voice_picker::TtsVoicePickerState,
     },
+    /// 1.2.18+ R.4 — reader-pace preview
+    /// (`Ctrl+B Shift+E`).  Teleprompter that advances a
+    /// highlight through the open paragraph at
+    /// `editor.reading_wpm`.  Modal-local keys: `Space`
+    /// pause/resume, `←/→` step the highlight, `r`
+    /// restart, `Esc` close.  The advance is driven by
+    /// `App::tick_reader_pace` from the main loop —
+    /// `started_at` + `accumulated` give the elapsed
+    /// reading time across pause/resume cycles.
+    ReaderPace {
+        /// Tokenised prose (whitespace-split words).
+        words: Vec<String>,
+        /// When the current play segment started.  Only
+        /// meaningful while `!paused`.
+        started_at: std::time::Instant,
+        /// Reading time accumulated across prior play
+        /// segments (frozen on pause, resumed on play).
+        accumulated: std::time::Duration,
+        /// True while paused (highlight frozen).
+        paused: bool,
+        /// Words-per-minute snapshot (from config at
+        /// open time).
+        wpm: u32,
+    },
     SnippetPicker {
         kind: super::snippets::SnippetPickerKind,
         /// Type-to-filter input.

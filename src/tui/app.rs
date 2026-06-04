@@ -2427,8 +2427,10 @@ impl App {
             }
             terminal.draw(|f| self.draw(f))?;
             // Shorter poll interval while streaming so tokens render with low
-            // latency without burning CPU when idle.
-            let timeout = if self.is_streaming() {
+            // latency without burning CPU when idle.  1.2.18+ R.4 — the
+            // reader-pace teleprompter animates the highlight, so it also
+            // wants the fast tick (but only while playing, not paused).
+            let timeout = if self.is_streaming() || self.reader_pace_playing() {
                 Duration::from_millis(40)
             } else {
                 Duration::from_millis(200)
@@ -7844,6 +7846,7 @@ impl App {
             A::OpenDoctorPanel => self.open_doctor_panel(),
             A::OpenJournal => self.open_journal(),
             A::OpenTtsVoicePicker => self.open_tts_voice_picker(),
+            A::OpenReaderPace => self.open_reader_pace(),
             A::SceneBreakPrev => self.scene_break_jump(-1),
             A::SceneBreakNext => self.scene_break_jump(1),
             A::ToggleStyleWarnings => self.toggle_style_warnings(),
@@ -9286,6 +9289,151 @@ impl App {
                         self.status = msg;
                     }
                 }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// 1.2.18+ R.4 — open the reader-pace preview for
+    /// the open paragraph.  Strips the leading heading +
+    /// markup (the same plain-text pass the audiobook
+    /// export uses) so the teleprompter reads clean
+    /// prose, then starts the highlight advancing at
+    /// `editor.reading_wpm`.
+    fn open_reader_pace(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "reader pace: no paragraph open".into();
+            return;
+        };
+        let body = doc.textarea.lines().join("\n");
+        let plain = crate::audiobook::typst_to_plain(&body);
+        let words = super::reader_pace::split_words(&plain);
+        if words.is_empty() {
+            self.status = "reader pace: paragraph is empty".into();
+            return;
+        }
+        let wpm = self.cfg.editor.reading_wpm.max(1);
+        let count = words.len();
+        self.modal = super::modal::Modal::ReaderPace {
+            words,
+            started_at: std::time::Instant::now(),
+            accumulated: std::time::Duration::ZERO,
+            paused: false,
+            wpm,
+        };
+        self.status = format!(
+            "reader pace: {count} words @ {wpm} wpm · Space pause · ←→ step · r restart · Esc close",
+        );
+    }
+
+    /// 1.2.18+ R.4 — current highlight word index for the
+    /// reader-pace modal, derived from elapsed reading
+    /// time.  Pure read of the modal state; returns
+    /// `(index, total)`.  `None` when the modal isn't
+    /// open.
+    pub(super) fn reader_pace_index(&self) -> Option<(usize, usize)> {
+        let super::modal::Modal::ReaderPace {
+            words,
+            started_at,
+            accumulated,
+            paused,
+            wpm,
+        } = &self.modal
+        else {
+            return None;
+        };
+        let elapsed = if *paused {
+            *accumulated
+        } else {
+            *accumulated + started_at.elapsed()
+        };
+        let idx = super::reader_pace::word_index_at(
+            elapsed.as_secs_f64(),
+            *wpm,
+            words.len(),
+        );
+        Some((idx, words.len()))
+    }
+
+    /// 1.2.18+ R.4 — true when the reader-pace modal is
+    /// open + actively advancing (not paused).  Drives
+    /// the main loop's fast-tick so the highlight
+    /// animates smoothly.
+    pub(super) fn reader_pace_playing(&self) -> bool {
+        matches!(
+            &self.modal,
+            super::modal::Modal::ReaderPace { paused: false, .. },
+        )
+    }
+
+    /// 1.2.18+ R.4 — modal-local key handler.  Returns
+    /// true when the key was consumed.
+    pub(super) fn handle_reader_pace_key(
+        &mut self,
+        key: crossterm::event::KeyEvent,
+    ) -> bool {
+        use crossterm::event::KeyCode;
+        let super::modal::Modal::ReaderPace {
+            words,
+            started_at,
+            accumulated,
+            paused,
+            wpm,
+        } = &mut self.modal
+        else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = super::modal::Modal::None;
+                self.status = "reader pace: closed".into();
+                true
+            }
+            KeyCode::Char(' ') => {
+                // Toggle pause: freeze / resume the
+                // accumulated reading time.
+                if *paused {
+                    *started_at = std::time::Instant::now();
+                    *paused = false;
+                } else {
+                    *accumulated += started_at.elapsed();
+                    *paused = true;
+                }
+                true
+            }
+            KeyCode::Char('r') => {
+                *accumulated = std::time::Duration::ZERO;
+                *started_at = std::time::Instant::now();
+                *paused = false;
+                true
+            }
+            KeyCode::Right | KeyCode::Left => {
+                // Step the highlight by ±1 word: recompute
+                // `accumulated` so the new elapsed lands on
+                // the target index, then pause.
+                let total = words.len();
+                let wps = (*wpm as f64 / 60.0).max(0.0001);
+                let cur_elapsed = if *paused {
+                    accumulated.as_secs_f64()
+                } else {
+                    accumulated.as_secs_f64() + started_at.elapsed().as_secs_f64()
+                };
+                let cur_idx = super::reader_pace::word_index_at(
+                    cur_elapsed, *wpm, total,
+                );
+                let next_idx = if matches!(key.code, KeyCode::Right) {
+                    (cur_idx + 1).min(total)
+                } else {
+                    cur_idx.saturating_sub(1)
+                };
+                // Elapsed that lands mid-word `next_idx`
+                // (add half a word so floor() stays put).
+                let target_secs = (next_idx as f64 + 0.5) / wps;
+                *accumulated = std::time::Duration::from_secs_f64(
+                    target_secs.max(0.0),
+                );
+                *paused = true;
                 true
             }
             _ => false,
@@ -14314,6 +14462,8 @@ impl App {
             matches!(self.modal, Modal::Journal { .. });
         let is_tts_voice_picker =
             matches!(self.modal, Modal::TtsVoicePicker { .. });
+        let is_reader_pace =
+            matches!(self.modal, Modal::ReaderPace { .. });
         let is_comment_editor =
             matches!(self.modal, Modal::CommentEditor { .. });
         let is_comments_panel =
@@ -14412,6 +14562,10 @@ impl App {
         }
         if is_tts_voice_picker {
             self.handle_tts_voice_picker_key(key);
+            return Ok(false);
+        }
+        if is_reader_pace {
+            self.handle_reader_pace_key(key);
             return Ok(false);
         }
         if is_comment_editor {
