@@ -1602,6 +1602,19 @@ pub struct EditorConfig {
     /// 100 MiB.
     #[serde(default = "default_disk_warn_mb")]
     pub disk_warn_mb: u64,
+
+    /// 1.2.20+ Phase G — when quitting, if the project is
+    /// a git repo with uncommitted changes (modified,
+    /// staged, or untracked), confirm before exiting.
+    /// Best-effort: silently skipped when the project
+    /// isn't a git repo or `git` isn't installed.  Default
+    /// `true`.
+    #[serde(default = "default_warn_uncommitted_on_exit")]
+    pub warn_uncommitted_on_exit: bool,
+}
+
+fn default_warn_uncommitted_on_exit() -> bool {
+    true
 }
 
 fn default_paragraph_long_secs() -> u32 {
@@ -2671,6 +2684,7 @@ impl Default for EditorConfig {
             echo_max_global: default_echo_max_global(),
             paragraph_long_secs: default_paragraph_long_secs(),
             disk_warn_mb: default_disk_warn_mb(),
+            warn_uncommitted_on_exit: default_warn_uncommitted_on_exit(),
         }
     }
 }

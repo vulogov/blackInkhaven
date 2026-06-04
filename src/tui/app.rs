@@ -3100,6 +3100,27 @@ impl App {
             }
         }
 
+        // 1.2.20+ Phase G — uncommitted-changes quit guard.
+        // The open buffer was already saved by `request_quit`
+        // before this modal opened, so Y finalises directly
+        // (saving the session) rather than re-running the git
+        // check and looping.
+        if matches!(self.modal, Modal::ConfirmQuitUncommitted { .. }) {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    self.modal = Modal::None;
+                    let _ = self.save_session();
+                    return Ok(true);
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    self.modal = Modal::None;
+                    self.status = "quit cancelled — commit or stash first".into();
+                    return Ok(false);
+                }
+                _ => return Ok(false),
+            }
+        }
+
         // 1.2.9+ — TtsUnavailable: any key dismisses.
         if matches!(self.modal, Modal::TtsUnavailable { .. }) {
             self.modal = Modal::None;
@@ -4211,6 +4232,27 @@ impl App {
             let _ = self.save_current();
             if self.opened.as_ref().is_some_and(|d| d.dirty) {
                 return false;
+            }
+        }
+        // 1.2.20+ Phase G — warn before quitting with
+        // uncommitted git changes.  The open buffer is
+        // already saved above, so the working tree reflects
+        // the latest edits.  Best-effort: `uncommitted_count`
+        // returns None (→ no warning) when the project isn't
+        // a git repo or git is unavailable.  Skipped when a
+        // modal is already open (Ctrl+Q in-modal stays the
+        // unconditional escape hatch).
+        if self.cfg.editor.warn_uncommitted_on_exit
+            && matches!(self.modal, Modal::None)
+        {
+            if let Some(n) = crate::git::uncommitted_count(&self.layout.root) {
+                if n > 0 {
+                    self.modal = Modal::ConfirmQuitUncommitted { count: n };
+                    self.status = format!(
+                        "{n} uncommitted git change(s) — quit anyway? Y/Enter · N/Esc"
+                    );
+                    return false;
+                }
             }
         }
         // Persist session state regardless of save outcome path above.

@@ -672,6 +672,31 @@ impl super::App {
                 ];
                 (" Confirm quit ".into(), Color::Yellow, body)
             }
+            Modal::ConfirmQuitUncommitted { count } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(" {count} uncommitted git change(s)."),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Your open paragraph is saved, but these changes",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                    Line::from(Span::styled(
+                        " aren't committed to git.  Quit anyway?",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                    Line::from(Span::styled(
+                        " y / Enter to quit · n / Esc to stay ",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (" Uncommitted changes ".into(), Color::Yellow, body)
+            }
             Modal::TtsUnavailable { title, reason } => {
                 let mut body: Vec<Line<'_>> = vec![Line::from("")];
                 for line in reason.lines() {
