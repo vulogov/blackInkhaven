@@ -1456,6 +1456,22 @@ distinctive word reused close together).
 | `echo_min_repeats` | usize | `3` | Occurrences within `echo_window` required to flag.  Lower = more sensitive. |
 | `echo_max_global` | usize | `40` | Distinctiveness ceiling: words used more than this many times across a chapter are treated as common vocabulary (legitimately reused) and skipped, even when clustered.  Tune up for long works, down for short stories. |
 
+### `editor.paragraph_long_secs` (1.2.20+)
+
+Threshold for the R.3.b `paragraph-too-long` doctor scan.
+
+```hjson
+{
+  editor: {
+    paragraph_long_secs: 180   // default
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `paragraph_long_secs` | u32 | `180` | A paragraph whose estimated read time at `reading_wpm` exceeds this many seconds is flagged `paragraph-too-long` (Info, no autofix) — a wall of text the reader meets in one unbroken block.  Default 180s ≈ 600 words at 200 wpm.  Set lower to flag denser paragraphs; the finding is author-judgment (length can be a deliberate run-on). |
+
 ### Revision sidecars (1.2.19+)
 
 The C.3 / C.4 revision features store their AI-extracted
