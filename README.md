@@ -21,93 +21,69 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.17 — TTS Piper transition
+## Latest release · 1.2.18 — Performance pass + reader experience
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.17.md`](Documentation/RELEASE_NOTES/1.2.17.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.18.md`](Documentation/RELEASE_NOTES/1.2.18.md)
 
-1.2.17 is a single-feature cycle: a full
-cross-platform TTS rework around
-[Piper](https://github.com/rhasspy/piper) (neural
-TTS, ONNX-based, multilingual).  Replaces the
-1.2.9 macOS-only `say` integration with a
-backend-agnostic engine that prefers Piper if
-resolvable + falls back to System (`say`)
-otherwise.  macOS users see no regression;
-Linux + Windows users get a working TTS for the
-first time.
+1.2.18 has two themes: a performance pass
+(closing debt deferred since 1.2.16) and a
+reader-experience headline — the formats a
+reader actually consumes.
 
-Headline shape:
+### Performance pass
 
-* **`editor.tts.engine`** new HJSON field
-  with `"auto"` / `"piper"` / `"system"`
-  values.  `"auto"` is the default.
-* **Voices stored per project** under
-  `<project>/.inkhaven/voices/`.  The Piper
-  binary lives in `~/.cache/inkhaven/piper-<plat>/`
-  (user-scoped — it's identical across
-  projects).
-* **`Ctrl+B Shift+V` opens the voice picker**.
-  Browse the Hugging Face piper-voices
-  catalog + already-downloaded voices, type-
-  to-filter, Enter downloads + selects, `d`
-  removes.
-* **`inkhaven tts` CLI surface**: `engine` /
-  `binary status|download` / `voice list|download|remove` /
-  `catalog refresh` / `test "<phrase>"`.
-  Mirrors the picker for scripts, CI gates,
-  remote-shell users.
+A deterministic fixture generator + a criterion
+bench harness made the codebase measurable;
+timing-instrumented profiling then **overturned
+the plan's guesses** and pointed at two
+algorithmic hotspots:
 
-### Engine resolution
+* **Lazy embedding-engine init.**  `Store::open`
+  was loading the fastembed ONNX model eagerly
+  on *every* project open — 470 ms, 92 % of cold
+  start — even for `inkhaven list`.  Deferred to
+  the first search / save.  Cold start
+  **507 ms → 36 ms**.
+* **`Hierarchy::flatten` was O(n²)** —
+  `children_of` did a full scan per node.  A
+  parent→children index built once at load takes
+  it to O(n): **31.98 ms → 0.05 ms** at 2K nodes
+  (≈ 0.25 ms vs a projected 760 ms at 10K).  This
+  is the tree-scroll smoothness fix.
 
-```
-$ inkhaven tts engine
-inkhaven TTS engine — v1.2.17
-project:       /home/me/Books/my-novel
-master switch: enabled
-requested:     tts.engine = "auto"
-voice:         en_US-lessac-medium
-platform:      linux-x86_64
-piper binary:  /home/me/.cache/inkhaven/piper-linux-x86_64/piper
+A CI regression gate (`inkhaven _bench-report` +
+`.github/workflows/bench.yml`) fails PRs that
+regress a scenario past 20 %, guarding both wins.
 
-→ effective backend: Piper (auto)
-```
+### Reader experience
 
-On a fresh machine `auto` falls through to
-System until the Piper binary is downloaded
-(via the picker, the CLI, or set explicitly
-via `tts.binary_path`).  TUI startup never
-auto-downloads — first-launch wouldn't be a
-30s pause for users who didn't ask for it.
-
-### Stale-catalog + offline fallbacks
-
-Synthesis with already-downloaded voices must
-keep working when the network goes away.  The
-catalog loader returns the stale cache with a
-chip when the refresh fails; the picker falls
-back to listing on-disk voices only when
-neither catalog nor cache is available.
-
-### Apple Silicon limitation (honest)
-
-Piper's official `piper_macos_aarch64.tar.gz`
-release **ships x86_64 code, not aarch64** —
-a known upstream packaging bug.  Apple Silicon
-Macs need `engine: "system"` (recommended; the
-1.2.9 backend ships dozens of high-quality
-voices), a from-source Piper build, or the
-Rosetta workaround documented in
-[Tutorial 56](Documentation/Tutorials/56-tts-piper.md).
-Linux + Windows have no such issue.
+* **`inkhaven epub`** — a standards-compliant
+  EPUB 3, built directly from the in-tree `zip`
+  crate + an in-house typst → XHTML converter
+  (no pandoc, zero new deps).
+* **`inkhaven audiobook`** — a chapter-marked
+  `.m4b`, synthesised per-chapter through the
+  1.2.17 TTS engine + muxed with `ffmpeg`.
+* **Reading-time chip** — opt-in status-bar
+  `📖 <remaining> / <total>` at
+  `editor.reading_wpm`.
+* **Reader-pace preview** (`Ctrl+B Shift+E`) — a
+  teleprompter that advances a word-by-word
+  highlight at reading speed, so pacing problems
+  surface that are invisible at editing-glance
+  speed.
 
 ### Test stats
 
-758 → 955 (+197).  Zero new Rust dependencies
-(`curl` + `tar` + platform playback commands
-carry the work via subprocess).
+962 → 1053.  Zero new Rust dependencies in the
+reader-experience work (`zip` was already
+in-tree; `criterion` is a dev-dep; `ffmpeg` is a
+documented required external for the audiobook
+mux).
 
-See [Tutorial 56](Documentation/Tutorials/56-tts-piper.md)
-for the full workflow.
+See [Tutorial 57](Documentation/Tutorials/57-reader-experience-exports.md)
++ [Tutorial 58](Documentation/Tutorials/58-reading-pace.md)
+for the full reader-experience workflow.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
@@ -268,14 +244,14 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 1.2.17).  The first build takes ~10 minutes on
+new version (latest: 1.2.18).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
 ### 4. `cargo install --git` (compile from a specific tag)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v1.2.17
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v1.2.18
 ```
 
 Useful when you want a specific tag, a pre-release branch, or a
