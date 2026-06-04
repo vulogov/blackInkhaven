@@ -72,9 +72,16 @@ pub fn header_keyword(title: &str) -> String {
         .unwrap_or_else(|| "MANUSCRIPT".to_string())
 }
 
-/// True when a paragraph is *only* a scene-break marker
-/// (`* * *`, `***`, `---`, `# # #`, a lone `§`, …) — it
-/// renders as a centred `#` in the output.
+/// True when a paragraph is *only* a scene-break marker:
+/// 3+ copies of one of `*`, `-`, `_`, `~`, `#` (internal
+/// single spaces allowed, so `* * *` and `***` both
+/// match) or a lone `§`.  Rejects typst headings
+/// (`= Foo`) and mixed content (`***bold***`).
+///
+/// The single home for scene-break detection: the
+/// manuscript exporter renders a match as a centred `#`,
+/// and the editor (`crate::tui::app`) uses the same
+/// function for scene-break navigation.
 pub fn is_scene_break(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed == "§" {
