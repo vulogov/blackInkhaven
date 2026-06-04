@@ -127,17 +127,11 @@ fn significant_stems(
     topic
         .split_whitespace()
         .filter_map(|w| {
-            let lc = w
-                .trim_matches(|c: char| !c.is_alphanumeric())
-                .to_lowercase()
-                .replace('ё', "е");
-            if lc.chars().count() < 3 {
+            let trimmed = w.trim_matches(|c: char| !c.is_alphanumeric());
+            if crate::text::fold_lower(trimmed).chars().count() < 3 {
                 return None;
             }
-            let stem = match stemmer {
-                Some(s) => s.stem(&lc).into_owned(),
-                None => lc,
-            };
+            let stem = crate::text::normalize_stem(trimmed, stemmer);
             if stem.is_empty() || stop.contains(&stem) {
                 None
             } else {
@@ -154,13 +148,7 @@ pub fn detect_unresolved(ledger: &TensionLedger, language: &str) -> Vec<Unresolv
     let stemmer = parse_stemmer_language(language).map(Stemmer::create);
     let stop: std::collections::HashSet<String> = built_in_stop_words(language)
         .iter()
-        .map(|w| {
-            let lc = w.to_lowercase().replace('ё', "е");
-            match &stemmer {
-                Some(s) => s.stem(&lc).into_owned(),
-                None => lc,
-            }
-        })
+        .map(|w| crate::text::normalize_stem(w, &stemmer))
         .collect();
 
     // Pre-stem resolutions with their chapter index.
