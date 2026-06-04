@@ -44,6 +44,74 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::store::NodeKind;
 
+/// Resolve the target user book for a CLI command.
+///
+/// User books are top-level `Book` nodes without a
+/// `system_tag` (Characters / Places / Threads etc. carry
+/// one).  With `--book-name`, match by title or slug
+/// (case-insensitive); without it, succeed only when the
+/// project has exactly one user book.
+///
+/// Returns a borrowed node — callers `.clone()` when they
+/// need an owned `Node`.  The `Err` is a ready-to-display
+/// message prefixed with `context` (the command name);
+/// callers map it into their module's error type
+/// (`Error::Store` or `anyhow!`).
+///
+/// The single home for user-book resolution, shared by
+/// build / epub / audiobook / manuscript / event /
+/// export-timeline.
+pub(crate) fn resolve_user_book<'a>(
+    h: &'a crate::store::hierarchy::Hierarchy,
+    book_name: Option<&str>,
+    context: &str,
+) -> std::result::Result<&'a crate::store::node::Node, String> {
+    use crate::store::node::Node;
+    let user_books: Vec<&Node> = h
+        .children_of(None)
+        .into_iter()
+        .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
+        .collect();
+
+    match book_name {
+        Some(name) => {
+            let needle = name.trim().to_ascii_lowercase();
+            user_books
+                .iter()
+                .copied()
+                .find(|b| {
+                    b.title.to_ascii_lowercase() == needle
+                        || b.slug.to_ascii_lowercase() == needle
+                })
+                .ok_or_else(|| {
+                    let listing = user_books
+                        .iter()
+                        .map(|b| format!("`{}` (slug: {})", b.title, b.slug))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let listing = if listing.is_empty() {
+                        "no user books in this project".to_string()
+                    } else {
+                        listing
+                    };
+                    format!(
+                        "{context}: no book matches `--book-name {name}`. Available: {listing}"
+                    )
+                })
+        }
+        None => match user_books.as_slice() {
+            [book] => Ok(*book),
+            [] => Err(format!(
+                "{context}: project has no user books — add one with `inkhaven add book <title>`"
+            )),
+            _ => Err(format!(
+                "{context}: project has {} user books — pass --book-name",
+                user_books.len()
+            )),
+        },
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "inkhaven", version, about = "TUI literary work editor for Typst books")]
 pub struct Cli {

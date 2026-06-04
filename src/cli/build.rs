@@ -12,7 +12,6 @@ use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
 use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
-use crate::store::node::{Node, NodeKind};
 use crate::typst_compile;
 
 /// Entry point for the `inkhaven build` subcommand.
@@ -30,7 +29,9 @@ pub fn run(project: &Path, book_name: Option<&str>, compile: bool) -> Result<()>
     let cfg = Config::load(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg)?;
     let h = Hierarchy::load(&store)?;
-    let book = resolve_user_book(&h, book_name)?;
+    let book = crate::cli::resolve_user_book(&h, book_name, "build")
+        .map_err(Error::Store)?
+        .clone();
 
     eprintln!("Assembling `{}` (slug: {})…", book.title, book.slug);
     let mut progress = |done: usize, total: usize, file: &Path| {
@@ -74,65 +75,6 @@ pub fn run(project: &Path, book_name: Option<&str>, compile: bool) -> Result<()>
         Err(Error::Store(format!(
             "typst compile failed:\n{body}"
         )))
-    }
-}
-
-/// Pick the user book to assemble. Mirrors `resolve_export_scope`
-/// in `cli/export.rs` but always requires a concrete user book
-/// (you can't assemble "the whole project" — only a book).
-fn resolve_user_book<'a>(
-    h: &'a Hierarchy,
-    book_name: Option<&str>,
-) -> Result<Node> {
-    let user_books: Vec<&Node> = h
-        .children_of(None)
-        .into_iter()
-        .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
-        .collect();
-
-    match book_name {
-        Some(name) => {
-            let needle = name.trim().to_ascii_lowercase();
-            let pick = user_books.iter().copied().find(|b| {
-                b.title.to_ascii_lowercase() == needle
-                    || b.slug.to_ascii_lowercase() == needle
-            });
-            match pick {
-                Some(book) => Ok(book.clone()),
-                None => {
-                    let listing = user_books
-                        .iter()
-                        .map(|b| format!("`{}` (slug: {})", b.title, b.slug))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let listing = if listing.is_empty() {
-                        "no user books in this project".into()
-                    } else {
-                        listing
-                    };
-                    Err(Error::Store(format!(
-                        "build: no book matches `--book-name {name}`. Available: {listing}"
-                    )))
-                }
-            }
-        }
-        None => match user_books.as_slice() {
-            [book] => Ok((*book).clone()),
-            [] => Err(Error::Store(
-                "build: project has no user books — add one with `inkhaven add book <title>`".into(),
-            )),
-            _ => {
-                let listing = user_books
-                    .iter()
-                    .map(|b| format!("`{}`", b.title))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                Err(Error::Store(format!(
-                    "build: project has {n} user books — pass --book-name <name>. Available: {listing}",
-                    n = user_books.len(),
-                )))
-            }
-        },
     }
 }
 

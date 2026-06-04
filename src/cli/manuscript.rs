@@ -41,7 +41,9 @@ pub fn run(
     let store = Store::open(layout.clone(), &cfg)
         .map_err(|e| Error::Store(e.to_string()))?;
     let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
-    let book = resolve_user_book(&h, book_name)?;
+    let book = crate::cli::resolve_user_book(&h, book_name, "manuscript")
+        .map_err(Error::Store)?
+        .clone();
 
     let chapters = collect_chapters(&layout, &h, &book);
     if chapters.is_empty() {
@@ -153,41 +155,3 @@ fn gather_paragraphs(
     }
 }
 
-/// Resolve the user book.  Mirrors `cli::epub` /
-/// `cli::audiobook`.
-fn resolve_user_book(h: &Hierarchy, book_name: Option<&str>) -> Result<Node> {
-    let user_books: Vec<&Node> = h
-        .children_of(None)
-        .into_iter()
-        .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
-        .collect();
-
-    match book_name {
-        Some(name) => {
-            let needle = name.trim().to_ascii_lowercase();
-            user_books
-                .iter()
-                .copied()
-                .find(|b| {
-                    b.title.to_ascii_lowercase() == needle
-                        || b.slug.to_ascii_lowercase() == needle
-                })
-                .cloned()
-                .ok_or_else(|| {
-                    Error::Store(format!(
-                        "manuscript: no book matches `--book-name {name}`"
-                    ))
-                })
-        }
-        None => match user_books.as_slice() {
-            [book] => Ok((*book).clone()),
-            [] => Err(Error::Store(
-                "manuscript: project has no user books".into(),
-            )),
-            _ => Err(Error::Store(format!(
-                "manuscript: project has {} user books — pass --book-name",
-                user_books.len(),
-            ))),
-        },
-    }
-}
