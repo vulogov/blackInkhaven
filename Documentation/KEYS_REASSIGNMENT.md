@@ -883,3 +883,51 @@ Eleven new fields under `editor.tts`:
 
 See [`CONFIGURATION.md`](CONFIGURATION.md) for the
 full per-field reference + defaults.
+
+## 1.2.18 — new actions
+
+One new TUI chord this cycle; the rest of the 1.2.18
+surface is CLI exports + two HJSON config knobs.
+
+### Reader-pace preview (Ctrl+B Shift+E)
+
+| Action | Default chord | What it does |
+|--------|---------------|--------------|
+| `view.reader_pace` | `Ctrl+B Shift+E` | Open the reader-pace preview teleprompter — advances a word-by-word highlight through the open paragraph at `editor.reading_wpm`.  Space pause/resume, ←→ step, r restart, Esc close.  See [Tutorial 58](Tutorials/58-reading-pace.md). |
+
+### Reader-experience exports (CLI)
+
+```
+$ inkhaven epub      [--book-name] [--output] [--title] [--author]
+  # Standards-compliant EPUB 3 (one XHTML per chapter,
+  # nav + ncx, in-house typst→XHTML).  Zero new deps.
+
+$ inkhaven audiobook [--book-name] [--output] [--title] [--author]
+  # Chapter-marked .m4b via the TTS engine + ffmpeg.
+  # Requires ffmpeg + ffprobe on PATH + editor.tts.enabled.
+```
+
+### Reading-pace HJSON knobs
+
+```hjson
+{
+  editor: {
+    reading_time_chip: false   // status-bar 📖 chip
+    reading_wpm: 200           // shared by chip + preview + audiobook timing
+  }
+}
+```
+
+### Performance + benches (contributor surface)
+
+The 1.2.18 cycle also shipped a hidden fixture
+generator + bench harness for the I.1 performance
+pass:
+
+```
+$ inkhaven gen-fixture <path>   # synthetic 10K-paragraph project
+```
+
+Plus `cargo bench` (criterion, `benches/`) + a CI
+regression gate (`.github/workflows/bench.yml`).  See
+`benches/README.md` + `Documentation/PROPOSALS/PERF.md`.

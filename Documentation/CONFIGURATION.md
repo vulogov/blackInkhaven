@@ -1409,3 +1409,26 @@ See [Tutorial 56](Tutorials/56-tts-piper.md) for the
 full Piper workflow including the `Ctrl+B Shift+V`
 voice picker, the `inkhaven tts` CLI surface, and the
 known Apple-Silicon Piper limitation.
+
+## 1.2.18 — new HJSON blocks
+
+### `editor.reading_time_chip` + `editor.reading_wpm` (1.2.18+)
+
+The R.3 reading-time chip + R.4 reader-pace preview
+both read at a configurable words-per-minute.
+
+```hjson
+{
+  editor: {
+    reading_time_chip: false   // default — opt in
+    reading_wpm: 200           // default
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `reading_time_chip` | bool | `false` | Show a status-bar chip for the current book: `📖 <remaining> / <total>` read-aloud length at `reading_wpm`, where remaining counts from the open paragraph to the book's end.  Off by default (the status bar is already busy); opt in when targeting an audiobook length or word budget.  Cheap — one O(n) walk of the current book's paragraphs. |
+| `reading_wpm` | u32 | `200` | Words-per-minute for the reading-time chip, the reader-pace preview (`Ctrl+B Shift+E`), and the per-chapter timing displayed by the audiobook export.  200 ≈ silent-reading average; ~150 ≈ audiobook narration; ~300 ≈ a fast reader. |
+
+See [Tutorial 58](Tutorials/58-reading-pace.md).
