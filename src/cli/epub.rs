@@ -155,7 +155,8 @@ fn read_paragraph(store: &Store, node: &Node) -> Result<String> {
 /// titles with their order).  `Chapter 3: The Box` →
 /// `The Box`; `001. Approach` → `Approach`.  Best-effort
 /// + conservative — only strips recognised patterns.
-fn clean_title(title: &str) -> String {
+/// Shared with `cli::audiobook` (R.2).
+pub(crate) fn clean_title(title: &str) -> String {
     let t = title.trim();
     // `Chapter N: Rest` → `Rest`.
     if let Some(idx) = t.find(": ") {
