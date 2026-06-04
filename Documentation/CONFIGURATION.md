@@ -1472,6 +1472,20 @@ Threshold for the R.3.b `paragraph-too-long` doctor scan.
 |-------|------|---------|-------------|
 | `paragraph_long_secs` | u32 | `180` | A paragraph whose estimated read time at `reading_wpm` exceeds this many seconds is flagged `paragraph-too-long` (Info, no autofix) — a wall of text the reader meets in one unbroken block.  Default 180s ≈ 600 words at 200 wpm.  Set lower to flag denser paragraphs; the finding is author-judgment (length can be a deliberate run-on). |
 
+### `editor.disk_warn_mb` (1.2.20+)
+
+```hjson
+{
+  editor: {
+    disk_warn_mb: 100   // default; 0 disables
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `disk_warn_mb` | u64 | `100` | Low-disk pre-flight threshold (MiB).  When the volume holding the project has less than this much free space, the editor shows a one-time status-line warning at startup, before a session of edits or a long export.  Atomic writes already fail safely on a full disk (the original file survives, the error surfaces) — this is the proactive heads-up.  `0` disables the check. |
+
 ### Revision sidecars (1.2.19+)
 
 The C.3 / C.4 revision features store their AI-extracted
