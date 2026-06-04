@@ -489,7 +489,7 @@ fn scan_numeric_contradictions(
 
     let mut out: Vec<ScanFinding> = Vec::new();
     for chapter_id in collect_user_book_chapter_ordinals(hierarchy) {
-        let prose = read_chapter_prose(layout, hierarchy, chapter_id);
+        let prose = crate::cli::book_walk::chapter_raw_prose(layout, hierarchy, chapter_id);
         let plain = crate::audiobook::typst_to_plain(&prose);
         let sentences = crate::continuity::split_sentences(&plain);
         if sentences.is_empty() {
@@ -606,22 +606,11 @@ fn collect_chapter_paragraph_prose(
     hierarchy: &crate::store::hierarchy::Hierarchy,
     chapter_id: uuid::Uuid,
 ) -> Vec<String> {
-    use crate::store::NodeKind;
-    let mut out = Vec::new();
-    for id in hierarchy.collect_subtree(chapter_id) {
-        let Some(p) = hierarchy.get(id) else { continue };
-        if p.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Some(rel) = p.file.as_ref() else { continue };
-        let abs = layout.root.join(rel);
-        let Ok(text) = std::fs::read_to_string(&abs) else { continue };
-        let plain = crate::audiobook::typst_to_plain(&text);
-        if !plain.trim().is_empty() {
-            out.push(plain);
-        }
-    }
-    out
+    crate::cli::book_walk::chapter_paragraphs_raw(layout, hierarchy, chapter_id)
+        .into_iter()
+        .map(|text| crate::audiobook::typst_to_plain(&text))
+        .filter(|plain| !plain.trim().is_empty())
+        .collect()
 }
 
 /// 1.2.15+ — does bdslib have non-empty content
@@ -1077,7 +1066,7 @@ fn scan_dropped_characters(
     let mut findings: Vec<ScanFinding> = Vec::new();
     let mut chapter_bodies_cache: Vec<(usize, String)> = Vec::with_capacity(total_chapters);
     for (ordinal, chapter_node) in chapter_ordinals.iter().enumerate() {
-        let body = read_chapter_prose(layout, hierarchy, *chapter_node);
+        let body = crate::cli::book_walk::chapter_raw_prose(layout, hierarchy, *chapter_node);
         chapter_bodies_cache.push((ordinal, body.to_lowercase()));
     }
     for name in &character_names {
@@ -1125,7 +1114,7 @@ fn scan_pacing_collapse(
     let counts: Vec<i64> = chapter_ordinals
         .iter()
         .map(|&id| {
-            let body = read_chapter_prose(layout, hierarchy, id);
+            let body = crate::cli::book_walk::chapter_raw_prose(layout, hierarchy, id);
             crate::progress::count_words(&body)
         })
         .collect();
@@ -1278,7 +1267,7 @@ fn scan_naming_inconsistencies(
     let chapter_ordinals = collect_user_book_chapter_ordinals(hierarchy);
     let mut prose = String::new();
     for id in &chapter_ordinals {
-        prose.push_str(&read_chapter_prose(layout, hierarchy, *id));
+        prose.push_str(&crate::cli::book_walk::chapter_raw_prose(layout, hierarchy, *id));
         prose.push('\n');
     }
     classify_naming_inconsistencies(&canonical_names, &prose)
@@ -1484,26 +1473,6 @@ fn collect_user_book_chapter_ordinals(
 /// Concatenate every paragraph body under
 /// `chapter_id` into one big string.  Used by
 /// the prose-scanning detectors.
-fn read_chapter_prose(
-    layout: &ProjectLayout,
-    hierarchy: &crate::store::hierarchy::Hierarchy,
-    chapter_id: uuid::Uuid,
-) -> String {
-    use crate::store::NodeKind;
-    let mut body = String::new();
-    for id in hierarchy.collect_subtree(chapter_id) {
-        let Some(p) = hierarchy.get(id) else { continue };
-        if p.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Some(rel) = p.file.as_ref() else { continue };
-        let abs = layout.root.join(rel);
-        let Ok(text) = std::fs::read_to_string(&abs) else { continue };
-        body.push_str(&text);
-        body.push('\n');
-    }
-    body
-}
 
 #[cfg(test)]
 mod tests {
