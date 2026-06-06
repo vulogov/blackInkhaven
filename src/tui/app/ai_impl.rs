@@ -1285,6 +1285,10 @@ impl super::App {
         let para_id = doc.id;
         // Decision 1 — lock the AI scope to the local paragraph.
         self.ai_mode = AiMode::Paragraph;
+        // 1.2.21+ FF.4d — arm navigable findings: pump_inference parses
+        // this run's verdict on completion; clear any stale findings.
+        self.fact_check_pending = Some((para_id, title.clone()));
+        self.fact_check_nav = super::FactCheckNav::default();
         let template = self.resolve_prompt_template("fact-check", || {
             let want_lang = self.active_prompt_language();
             super::super::app::fact_check_default_prompt(&want_lang).to_string()

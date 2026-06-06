@@ -114,19 +114,32 @@ $ … your open paragraph …
 
 Ctrl+B Shift+X →
 
-AI: 2 contradictions found.
-    • "the capital's first snow" — contradicts
-      Facts/Climate: the basin is equatorial, no
-      winter; snow only on the Tagh peaks.
-    • "two days after leaving the coast" —
-      contradicts Facts/Geography: the capital is
-      three days' ride inland.
-    Verdict: 2 contradictions
+AI:
+  the capital's first snow | Climate: equatorial,
+    no winter | the basin has no winter
+  two days after leaving the coast | Geography:
+    capital is 3 days' ride inland | far too fast
 ```
 
-The verdict streams into the AI pane — read it, fix the prose, move on. If
-the Facts book is empty, the chord still runs a generic local fact-check
-(no grounding).
+The verdict streams into the AI pane as `claim | fact | detail` lines —
+read it, fix the prose, move on. If the Facts book is empty, the chord
+still runs a generic local fact-check (no grounding).
+
+### Jump to each contradiction — `Ctrl+B Shift+J`
+
+You don't have to eyeball the prose for each flagged claim. After a
+fact-check, **`Ctrl+B Shift+J`** cycles through the findings — each press
+moves the editor cursor to the next flagged claim in the paragraph and
+shows the violated fact on the status bar:
+
+```
+fact finding 1/2: Climate: equatorial, no winter — the basin has no winter
+```
+
+It wraps around, and the jump is best-effort (if the model paraphrased
+the claim, the cursor stays put but the fact + explanation still show).
+Findings belong to the paragraph you checked — switch paragraphs and it
+asks you to re-run the check.
 
 ### Tie a scene to the facts it depends on
 
