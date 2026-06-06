@@ -1561,6 +1561,13 @@ pub struct EditorConfig {
     /// reclaim the screen real estate.
     #[serde(default = "default_show_glossary_chip")]
     pub show_glossary_chip: bool,
+    /// 1.2.21+ FF.6 — Facts chip in the status bar.
+    /// When true, shows `⚑<N>` — the number of entries
+    /// in the Facts book — so the world's invariants are
+    /// visible at a glance.  Auto-hides when the Facts
+    /// book is empty.  Off by default (opt-in).
+    #[serde(default)]
+    pub show_facts_chip: bool,
 
     /// 1.2.18+ R.3 — show a status-bar reading-time
     /// chip for the current book: total audiobook /
@@ -2706,6 +2713,7 @@ impl Default for EditorConfig {
             continuation_anchor_count: default_continuation_anchor_count(),
             footnote_style: default_footnote_style(),
             show_glossary_chip: default_show_glossary_chip(),
+            show_facts_chip: false,
             reading_time_chip: false,
             reading_wpm: default_reading_wpm(),
             echo_window: default_echo_window(),

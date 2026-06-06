@@ -1027,10 +1027,16 @@ pub enum FactsCommand {
     /// Geography, Seasons, Chronology, Culture, Rules) in
     /// the Facts book — fill-in-the-blanks for a fresh
     /// project.  Idempotent: existing categories are kept.
+    /// `--genre` appends genre-specific categories
+    /// (fantasy / scifi / mystery / historical).
     Init {
         /// Add the skeleton even if categories already exist.
         #[arg(long)]
         force: bool,
+        /// Append genre-specific categories: general (default),
+        /// fantasy, scifi, mystery, historical.
+        #[arg(long)]
+        genre: Option<String>,
     },
 }
 

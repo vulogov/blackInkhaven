@@ -9512,6 +9512,31 @@ impl App {
         ]
     }
 
+    /// 1.2.21+ FF.6 — Facts chip (`⚑<N>`): the Facts-book entry count,
+    /// so the world's invariants are visible at a glance.  Gated by
+    /// `editor.show_facts_chip`; auto-hides on an empty Facts book.
+    pub(crate) fn facts_chip_spans(&self) -> Vec<ratatui::text::Span<'_>> {
+        use ratatui::style::{Color, Modifier, Style};
+        use ratatui::text::Span;
+        if !self.cfg.editor.show_facts_chip {
+            return Vec::new();
+        }
+        let n = self.facts_paragraph_ids().len();
+        if n == 0 {
+            return Vec::new();
+        }
+        vec![
+            Span::styled(
+                format!(" ⚑{n} "),
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::DIM),
+            ),
+            Span::raw(" "),
+        ]
+    }
+
     /// 1.2.18+ R.3 — reading-time chip for the current
     /// book.  Shows `📖 <remaining> / <total>` at
     /// `editor.reading_wpm`, where remaining is from the
