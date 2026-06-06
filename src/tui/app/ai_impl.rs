@@ -15,8 +15,9 @@ use uuid::Uuid;
 use super::{
     critique_changes_default_prompt, critique_edit_default_prompt, current_word_or_selection,
     explain_diagnostic_default_prompt, extract_corrected_text, extract_translation_text,
-    grammar_check_default_prompt, select_apply_text, sentence_rhythm_rewrite_default_prompt,
-    FULL_SYSTEM_PROMPT, GRAMMAR_CHECK_SYSTEM_PROMPT, HELP_SYSTEM_PROMPT, LOCAL_SYSTEM_PROMPT,
+    facts_scope_system_prompt, grammar_check_default_prompt, select_apply_text,
+    sentence_rhythm_rewrite_default_prompt, FULL_SYSTEM_PROMPT, GRAMMAR_CHECK_SYSTEM_PROMPT,
+    HELP_SYSTEM_PROMPT, LOCAL_SYSTEM_PROMPT,
 };
 
 use crate::ai::stream::{spawn_chat_stream, ChatTurn};
@@ -540,13 +541,20 @@ impl super::App {
         // model to supplied context only; Full lets it augment with
         // general knowledge while still treating context as ground truth.
         // `ink.ai.set_system_prompt` overrides both via a Bund script.
-        let system_prompt = self
-            .system_prompt_override
-            .clone()
-            .or_else(|| match self.inference_mode {
-                InferenceMode::Local => Some(LOCAL_SYSTEM_PROMPT.to_string()),
-                InferenceMode::Full => Some(FULL_SYSTEM_PROMPT.to_string()),
-            });
+        // 1.2.21+ — the Facts scope frames the whole session as
+        // fact-analysis / fact-checking (the facts themselves are the
+        // seeded history prologue), unless a Bund override is in force.
+        let system_prompt = self.system_prompt_override.clone().or_else(|| {
+            if mode_used == AiMode::Facts {
+                let lang = crate::ai::prompts::iso_from_long(&self.cfg.language);
+                Some(facts_scope_system_prompt(lang).to_string())
+            } else {
+                match self.inference_mode {
+                    InferenceMode::Local => Some(LOCAL_SYSTEM_PROMPT.to_string()),
+                    InferenceMode::Full => Some(FULL_SYSTEM_PROMPT.to_string()),
+                }
+            }
+        });
         let rx = spawn_chat_stream(
             self.ai.client.clone(),
             model.clone(),
@@ -584,7 +592,12 @@ impl super::App {
         );
         // Auto-reset the scope so the next prompt isn't surprised by stale
         // context. The user re-cycles with F9 to pick a new scope.
-        self.ai_mode = AiMode::None;
+        // 1.2.21+ — except Facts: it's a sticky *session* scope, so the
+        // fact-analysis framing + seeded facts persist across follow-up
+        // questions until the author cycles F9 away.
+        if mode_used != AiMode::Facts {
+            self.ai_mode = AiMode::None;
+        }
         // Clear the prompt so the next inference starts fresh.
         self.ai_input.clear();
     }
