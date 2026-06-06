@@ -1254,6 +1254,91 @@ impl super::App {
             format!("show↛tell scan: streaming from {provider}…");
     }
 
+    /// 1.2.21+ — Ctrl+B Shift+X.  AI fact-check of the open
+    /// paragraph against the project's Facts book.
+    ///
+    /// Per the Facts design (Decision 1) this **locks the AI scope
+    /// to the local paragraph** — the check is about *this* prose,
+    /// never a whole-book send — and **grounds against the Facts
+    /// book**: every established fact is included so the model can
+    /// flag a claim that contradicts the world (snow in a tropical
+    /// region, a three-day ride that should be three weeks).  An
+    /// empty Facts book degrades to a plain local fact-check.
+    /// One-shot — streams the verdict into the AI pane, like the
+    /// show↛tell scan, under the multilingual fact-analysis system
+    /// prompt.
+    ///
+    /// Prompt resolution is the standard pattern: a Prompts-book
+    /// `fact-check` paragraph → a `prompts.hjson` entry → the
+    /// embedded multilingual `fact_check_default_prompt`.
+    pub(super) fn start_fact_check(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "fact check: no paragraph open".into();
+            return;
+        };
+        let body = doc.textarea.lines().join("\n");
+        if body.trim().is_empty() {
+            self.status = "fact check: paragraph is empty".into();
+            return;
+        }
+        let title = doc.title.clone();
+        // Decision 1 — lock the AI scope to the local paragraph.
+        self.ai_mode = AiMode::Paragraph;
+        let template = self.resolve_prompt_template("fact-check", || {
+            let want_lang = self.active_prompt_language();
+            super::super::app::fact_check_default_prompt(&want_lang).to_string()
+        });
+        let rendered = self.render_template(&template);
+        // Ground against the Facts book when it has content.
+        let facts = self.gather_facts_chunks();
+        let facts_block = if facts.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "── Established facts ({} entr{}) ──\n{}\n── end facts ──\n\n",
+                facts.len(),
+                if facts.len() == 1 { "y" } else { "ies" },
+                facts.join("\n\n"),
+            )
+        };
+        let prompt_text = format!(
+            "{rendered}\n\n{facts_block}── Paragraph: {title} ──\n{body}\n── end paragraph ──",
+        );
+        let (model, _env_var) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("fact check: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let lang = crate::ai::prompts::iso_from_long(&self.cfg.language);
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            Some(facts_scope_system_prompt(lang).to_string()),
+            Vec::new(),
+            prompt_text,
+        );
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        self.change_focus(Focus::Ai);
+        let grounded = if facts.is_empty() {
+            " (no facts — generic check)"
+        } else {
+            " (grounded in Facts)"
+        };
+        self.status = format!("fact check{grounded}: streaming from {provider}…");
+    }
+
     /// 1.2.11+ — Ctrl+B Shift+M.  AI-driven sentence-
     /// rhythm rewrite of the open paragraph.
     ///

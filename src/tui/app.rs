@@ -7906,6 +7906,7 @@ impl App {
             A::TogglePromptLanguageMode => self.toggle_prompt_language_mode(),
             A::OpenSentenceRhythm => self.open_sentence_rhythm(),
             A::AnalyseShowDontTell => self.start_show_dont_tell_scan(),
+            A::FactCheck => self.start_fact_check(),
             A::AiRewriteRhythm => self.start_sentence_rhythm_rewrite(),
             A::TranslateToInvented => self.start_translate_to_invented(),
             A::TranslateFromInvented => self.start_translate_from_invented(),
@@ -19861,6 +19862,40 @@ if something is not covered by the established facts, say it is unspecified rath
     }
 }
 
+/// 1.2.21+ — embedded fallback instruction for the `Ctrl+B Shift+X`
+/// fact-check chord.  Pairs with [`facts_scope_system_prompt`] as the
+/// system framing; the open paragraph + the established facts are
+/// appended by the caller.  Five-language; English is the floor.
+pub(crate) fn fact_check_default_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Проверь абзац ниже на соответствие установленным фактам мира, приведённым в этом сообщении. \
+Для каждого конкретного утверждения в абзаце — места, расстояния, направления, климат, времена года, даты, длительности — \
+укажи, СОГЛАСУЕТСЯ ли оно, ПРОТИВОРЕЧИТ или НЕ ОХВАЧЕНО установленными фактами. Процитируй точную фразу, назови \
+относящийся факт и объясни противоречие одной строкой. Не переписывай абзац. Заверши одной строкой-вердиктом: \
+`согласуется` / `N противоречий` / `недостаточно фактов`.",
+        "de" => "Prüfe den Absatz unten gegen die in dieser Nachricht angegebenen etablierten Weltfakten. \
+Gib für jede konkrete Aussage im Absatz — Orte, Entfernungen, Richtungen, Klima, Jahreszeiten, Daten, Dauern — an, ob sie \
+mit den etablierten Fakten ÜBEREINSTIMMT, ihnen WIDERSPRICHT oder NICHT ABGEDECKT ist. Zitiere die genaue Formulierung, \
+nenne den betreffenden Fakt und erkläre jeden Widerspruch in einer Zeile. Schreibe den Absatz nicht um. Schließe mit einer \
+Urteilszeile: `konsistent` / `N Widerspruch/-sprüche` / `unzureichende Fakten`.",
+        "fr" => "Vérifie le paragraphe ci-dessous par rapport aux faits établis du monde fournis dans ce message. \
+Pour chaque affirmation concrète du paragraphe — lieux, distances, directions, climat, saisons, dates, durées — indique si \
+elle est COHÉRENTE avec, CONTREDIT, ou N'EST PAS COUVERTE par les faits établis. Cite la phrase exacte, nomme le fait \
+concerné et explique toute contradiction en une ligne. Ne réécris pas le paragraphe. Termine par une ligne de verdict : \
+`cohérent` / `N contradiction(s)` / `faits insuffisants`.",
+        "es" => "Verifica el párrafo de abajo frente a los hechos establecidos del mundo incluidos en este mensaje. \
+Para cada afirmación concreta del párrafo — lugares, distancias, direcciones, clima, estaciones, fechas, duraciones — indica si \
+es COHERENTE con, CONTRADICE, o NO ESTÁ CUBIERTA por los hechos establecidos. Cita la frase exacta, nombra el hecho \
+relevante y explica cualquier contradicción en una línea. No reescribas el párrafo. Termina con una línea de veredicto: \
+`coherente` / `N contradicción(es)` / `hechos insuficientes`.",
+        _ => "Fact-check the paragraph below against the established world facts included in this message. \
+For each concrete claim in the paragraph — places, distances, directions, climate, seasons, dates, durations — say whether it \
+is CONSISTENT with, CONTRADICTS, or is NOT COVERED by the established facts. Quote the exact phrase, name the relevant fact, \
+and explain any contradiction in one line. Do not rewrite the paragraph. End with a single verdict line: \
+`consistent` / `N contradiction(s)` / `insufficient facts`.",
+    }
+}
+
 /// translations of the same instructions tuned for native
 /// grammatical idiom.  Unknown codes fall back to English
 /// so the resolver always has a floor.  Same shape for the
@@ -20664,6 +20699,7 @@ mod tests_split_view {
                 as fn(&str) -> &'static str,
             super::facts_seed_intro,
             super::facts_seed_ack,
+            super::fact_check_default_prompt,
         ] {
             let en = f("en");
             let variants = [f("en"), f("ru"), f("de"), f("fr"), f("es")];

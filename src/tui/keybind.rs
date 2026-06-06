@@ -575,6 +575,18 @@ pub enum Action {
     /// with deeper analysis.
     #[serde(rename = "ai.analyse_show_dont_tell")]
     AnalyseShowDontTell,
+    /// Ctrl+B Shift+X (1.2.21+) — AI fact-check of the
+    /// open paragraph against the project's Facts book.
+    /// Locks the AI scope to the local paragraph and
+    /// grounds the check against the established world
+    /// facts, so the model flags any claim that
+    /// contradicts the world (snow in the tropics, a
+    /// three-day ride that should be three weeks).  The
+    /// mnemonic is `X` for fact e**X**amination.  Streams
+    /// into the AI pane under the fact-analysis system
+    /// prompt.
+    #[serde(rename = "ai.fact_check")]
+    FactCheck,
     /// Ctrl+B Shift+H (1.2.9+) — open the sentence-
     /// rhythm gauge modal for the open paragraph.
     /// Splits prose into sentences, computes word-
@@ -880,6 +892,7 @@ impl Action {
             Action::OpenSentenceRhythm => "rhythm".into(),
             Action::AiRewriteRhythm => "rhythm rewrite".into(),
             Action::AnalyseShowDontTell => "show↛tell AI".into(),
+            Action::FactCheck => "fact check".into(),
             Action::TranslateToInvented => "translate →".into(),
             Action::TranslateFromInvented => "translate ←".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
@@ -1128,6 +1141,8 @@ impl Action {
                 "AI-driven sentence-rhythm rewrite of the open paragraph (1.2.11+, Ctrl+B Shift+M). Sends the paragraph to the configured LLM with a prompt asking it to break monotonous rhythm by mixing short and long sentences while preserving voice + meaning. Prompt resolution follows the standard pattern: the project's Prompts book first (look up by slug or title `sentence-rhythm-rewrite`), then prompts.hjson, then an embedded multilingual fallback that respects the project's `language` setting. When the stream completes, an AI diff modal pops automatically so the user can review the rewrite line by line. Accept commits the rewrite into the buffer AND creates a snapshot annotated `Sentence rhythm rewrite` first; reject leaves the buffer untouched. Mnemonic: M for Modulate / Mix it up. Pairs with the Ctrl+B Shift+H rhythm gauge — and the chord ALSO fires from inside that gauge modal, so the natural diagnose-then-rewrite workflow needs no extra keystrokes: open the gauge, see MONOTONE, press Ctrl+B Shift+M to fix it. The gauge dismisses automatically as the rewrite spawns.".into(),
             Action::AnalyseShowDontTell =>
                 "AI-driven show-don't-tell scan of the open paragraph (1.2.9+, Ctrl+B Shift+T). Sends the paragraph to the configured LLM with a system prompt asking for telling passages plus suggested rewrites. The response streams into the AI pane. Complements the always-on regex overlay (`editor.style_warnings.show_dont_tell`) with deeper analysis — the regex catches the obvious 2-grams (`was angry`, `realised`); the AI scan catches subtler instances and proposes alternatives. Mnemonic: T for tell.".into(),
+            Action::FactCheck =>
+                "AI fact-check of the open paragraph against the project's Facts book (1.2.21+, Ctrl+B Shift+X). Locks the AI scope to the local paragraph and grounds the check against every established world fact (climate, geography, seasons, distances, chronology), so the model flags any claim that contradicts the world — snow in a tropical region, a three-day ride that should be three weeks. With an empty Facts book it degrades to a generic local fact-check. Multilingual fact-analysis system prompt (en/ru/de/fr/es); prompt resolution: Prompts-book `fact-check` paragraph → `prompts.hjson` → embedded default. Streams the verdict into the AI pane. Mnemonic: X for fact eXamination. Pairs with the F9 `Facts` scope, which loads the same facts as a chat session.".into(),
             Action::TranslateToInvented =>
                 "AI-driven translation of the open paragraph from the project's working language INTO an invented language defined under the Language system book (1.2.13+, Ctrl+B Q). Composes a prompt envelope from the language's Dictionary (RAG-filtered to words present in the source), Grammar (all rules), Phonology (all rules), and Sample-text chapters, then streams the response into the AI pane. With zero Language sub-books the chord errors out; with exactly one it translates directly; with two or more it pops a picker — ↑↓ + Enter, or type the first letter to jump-and-commit (the proposal's Ctrl+B Q Q for Quenya sub-letter pattern, unbundled). The translation block is wrapped between <<<TRANSLATION>>> / <<<END>>> markers so the I apply chord in the AI pane lifts only the target-language prose, no gloss table or commentary.".into(),
             Action::TranslateFromInvented =>
@@ -1340,6 +1355,7 @@ impl KeyBindings {
                 // open paragraph to the LLM for a
                 // show-don't-tell scan.
                 entry("Shift+t", Action::AnalyseShowDontTell, Scope::Editor),
+                entry("Shift+x", Action::FactCheck, Scope::Editor),
                 // 1.2.11+ — Ctrl+B Shift+M asks the
                 // LLM to rewrite the open paragraph
                 // for rhythm variety; AI diff modal
