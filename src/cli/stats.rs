@@ -24,7 +24,7 @@ use crate::store::node::{Node, NodeKind};
 pub fn run(project: &Path, book_name: Option<&str>) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg)?;
     let h = Hierarchy::load(&store)?;
 

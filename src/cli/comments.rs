@@ -92,7 +92,7 @@ fn list(
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
     let all = walk_all_comments(&store, &hierarchy, &layout);
@@ -180,7 +180,7 @@ fn set_resolved(project: &Path, id: &str, resolved: bool) -> Result<()> {
         })?;
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
     let (typ_abs, mut file) = locate_sidecar_containing(&hierarchy, &layout, uuid)?;
@@ -214,7 +214,7 @@ fn delete(project: &Path, id: &str) -> Result<()> {
         })?;
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
     let (typ_abs, mut file) = locate_sidecar_containing(&hierarchy, &layout, uuid)?;
@@ -235,7 +235,7 @@ fn delete(project: &Path, id: &str) -> Result<()> {
 fn export(project: &Path, output: Option<&Path>) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
     let all = walk_all_comments(&store, &hierarchy, &layout);

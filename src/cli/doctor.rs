@@ -315,7 +315,7 @@ pub fn run(project: &Path) -> Result<()> {
     // the user's HJSON. Either way the report is meaningful.
     let layout = ProjectLayout::new(project);
     let cfg_opt = if layout.is_initialized() {
-        match Config::load(&layout.config_path()) {
+        match Config::load_layered(&layout.config_path()) {
             Ok(c) => Some(c),
             Err(e) => {
                 println!("  config-load: ERROR {e}");

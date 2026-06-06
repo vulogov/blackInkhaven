@@ -165,7 +165,7 @@ pub fn run(project: &Path) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized().map_err(anyhow::Error::from)?;
 
-    let cfg = Config::load(&layout.config_path()).map_err(anyhow::Error::from)?;
+    let cfg = Config::load_layered(&layout.config_path()).map_err(anyhow::Error::from)?;
 
     // 1.2.5+: log the typst engine at startup so users can confirm
     // their HJSON setting took effect. Both engines are always

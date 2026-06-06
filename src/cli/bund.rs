@@ -51,7 +51,7 @@ fn maybe_open_project(project: &Path) {
     if layout.require_initialized().is_err() {
         return;
     }
-    let cfg = match Config::load(&layout.config_path()) {
+    let cfg = match Config::load_layered(&layout.config_path()) {
         Ok(c) => c,
         Err(_) => return,
     };

@@ -36,7 +36,7 @@ use crate::store::hierarchy::Hierarchy;
 pub fn run(project: &Path, query: &str, iterations: usize) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
 
     println!("inkhaven _bench-load — v{}", env!("CARGO_PKG_VERSION"));
     println!("project:    {}", project.display());

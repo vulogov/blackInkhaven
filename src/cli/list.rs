@@ -11,7 +11,7 @@ pub fn run(project: &Path) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
 
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout, &cfg)?;
     let h = Hierarchy::load(&store)?;
 
