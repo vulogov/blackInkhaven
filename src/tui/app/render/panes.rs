@@ -1523,8 +1523,17 @@ impl super::super::App {
             ));
         }
         spans.push(Span::raw(" · infer="));
+        // 1.2.21+ FF.4b — the Facts scope is always grounded in the
+        // supplied facts (it runs the fact-analysis system prompt, not
+        // F10's Local/Full prompt), so the chip reads `Local` there
+        // regardless of the F10 toggle — honest about the clamp.
+        let infer_label = if self.ai_mode == crate::tui::inference::AiMode::Facts {
+            "Local"
+        } else {
+            self.inference_mode.label()
+        };
         spans.push(Span::styled(
-            self.inference_mode.label().to_string(),
+            infer_label.to_string(),
             Style::default()
                 .fg(self.theme.ai_infer_fg)
                 .add_modifier(Modifier::BOLD),
