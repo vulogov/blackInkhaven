@@ -7406,6 +7406,235 @@ impl App {
         Ok(out)
     }
 
+    // ── FF.1 — Facts semantic-search modal (1.2.21+) ──────────
+
+    /// `Ctrl+B Shift+S` — open the Facts search modal.
+    fn open_facts_search(&mut self) {
+        if self.system_book_id(crate::store::SYSTEM_TAG_FACTS).is_none() {
+            self.status = "facts search: this project has no Facts book".into();
+            return;
+        }
+        self.modal = Modal::FactsSearch {
+            input: crate::tui::input::TextInput::new(),
+            entries: Vec::new(),
+            cursor: 0,
+            marked: std::collections::BTreeSet::new(),
+            browsing: false,
+        };
+        self.status =
+            "facts search: type a query, Enter searches · Esc cancels".into();
+    }
+
+    /// Semantic search over the Facts book for `query`, ranked, capped
+    /// at `limit`.  Whole-project `search_text` post-filtered to the
+    /// Facts subtree (the vector index has no per-book scope), reusing
+    /// the same call the similar-paragraph picker uses but seeded from a
+    /// typed query instead of a paragraph.
+    fn search_facts(&self, query: &str, limit: usize) -> Vec<SimilarPickerEntry> {
+        use crate::tui::search_results::SearchHit;
+        let Some(facts_id) = self.system_book_id(crate::store::SYSTEM_TAG_FACTS) else {
+            return Vec::new();
+        };
+        let facts_ids: std::collections::HashSet<Uuid> = self
+            .hierarchy
+            .collect_subtree(facts_id)
+            .into_iter()
+            .collect();
+        let raw = match self.store.search_text(query, (limit + 8).max(16)) {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        let mut out: Vec<SimilarPickerEntry> = Vec::new();
+        for v in raw.iter() {
+            let Some(hit) = SearchHit::parse(v) else {
+                continue;
+            };
+            if !facts_ids.contains(&hit.id) {
+                continue;
+            }
+            if !matches!(hit.kind, crate::store::node::NodeKind::Paragraph) {
+                continue;
+            }
+            let Some(node) = self.hierarchy.get(hit.id) else {
+                continue;
+            };
+            let slug_path = self.hierarchy.slug_path(node);
+            out.push(SimilarPickerEntry {
+                id: hit.id,
+                title: hit.title.clone(),
+                slug_path,
+                score: hit.score,
+                snippet: hit.snippet.clone(),
+            });
+            if out.len() >= limit {
+                break;
+            }
+        }
+        out
+    }
+
+    /// Run the search from the modal's current query, populate the
+    /// results, and switch to browsing mode when there are any.
+    fn run_facts_search(&mut self) {
+        let query = if let Modal::FactsSearch { input, .. } = &self.modal {
+            input.as_str().trim().to_string()
+        } else {
+            return;
+        };
+        if query.is_empty() {
+            self.status = "facts search: type a query first".into();
+            return;
+        }
+        let entries = self.search_facts(&query, 25);
+        let n = entries.len();
+        if let Modal::FactsSearch {
+            entries: e,
+            cursor,
+            browsing,
+            ..
+        } = &mut self.modal
+        {
+            *e = entries;
+            *cursor = 0;
+            *browsing = n > 0;
+        }
+        self.status = if n == 0 {
+            format!("facts search: no matches for “{query}”")
+        } else {
+            format!(
+                "facts search: {n} match{} · ↑↓ move · Space mark · Enter send",
+                if n == 1 { "" } else { "es" },
+            )
+        };
+    }
+
+    /// Send the marked facts (or the cursor's row if none marked) to a
+    /// targeted Facts chat: seed the chat with just those facts + the
+    /// fact-analysis framing (`apply_facts_seed`), then drop on the AI
+    /// prompt.  The scalable path for a big Facts book — grounding in
+    /// the relevant handful rather than the whole book.
+    fn facts_search_send(&mut self) {
+        let ids: Vec<Uuid> = if let Modal::FactsSearch {
+            entries,
+            cursor,
+            marked,
+            ..
+        } = &self.modal
+        {
+            if !marked.is_empty() {
+                marked.iter().copied().collect()
+            } else if let Some(e) = entries.get(*cursor) {
+                vec![e.id]
+            } else {
+                Vec::new()
+            }
+        } else {
+            return;
+        };
+        if ids.is_empty() {
+            self.status = "facts search: nothing to send".into();
+            return;
+        }
+        let chunks = self.facts_chunks_for(&ids);
+        if chunks.is_empty() {
+            self.status = "facts search: the selected facts are empty".into();
+            return;
+        }
+        let n = self.apply_facts_seed(chunks);
+        self.modal = Modal::None;
+        self.change_focus(Focus::AiPrompt);
+        let plural = if n == 1 { "y" } else { "ies" };
+        self.status = format!(
+            "Facts chat: grounded in {n} matched fact entr{plural} — ask away (F9 to exit)"
+        );
+    }
+
+    /// Key handler for the two-phase Facts search modal.  Query mode:
+    /// Enter searches, printable chars (incl. Space) edit the query.
+    /// Results mode: ↑↓ move, Space marks (multi-select), Enter sends,
+    /// any printable / Backspace drops back to refine the query.  Esc
+    /// closes from either mode.
+    fn facts_search_handle_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        if matches!(key.code, KeyCode::Esc) {
+            self.modal = Modal::None;
+            self.status = "facts search: closed".into();
+            return;
+        }
+        let browsing = matches!(self.modal, Modal::FactsSearch { browsing: true, .. });
+        if !browsing {
+            match key.code {
+                KeyCode::Enter => self.run_facts_search(),
+                KeyCode::Backspace => {
+                    if let Modal::FactsSearch { input, .. } = &mut self.modal {
+                        input.backspace();
+                    }
+                }
+                KeyCode::Char(c)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    if let Modal::FactsSearch { input, .. } = &mut self.modal {
+                        input.insert_char(c);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        // Results mode.
+        match key.code {
+            KeyCode::Up => {
+                if let Modal::FactsSearch { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::FactsSearch { cursor, entries, .. } = &mut self.modal {
+                    if !entries.is_empty() && *cursor + 1 < entries.len() {
+                        *cursor += 1;
+                    }
+                }
+            }
+            // Space marks — must precede the generic Char arm so a space
+            // toggles instead of dropping back to the query.
+            KeyCode::Char(' ') => {
+                if let Modal::FactsSearch {
+                    entries,
+                    cursor,
+                    marked,
+                    ..
+                } = &mut self.modal
+                {
+                    if let Some(e) = entries.get(*cursor) {
+                        if marked.contains(&e.id) {
+                            marked.remove(&e.id);
+                        } else {
+                            marked.insert(e.id);
+                        }
+                    }
+                }
+            }
+            KeyCode::Enter => self.facts_search_send(),
+            KeyCode::Char(c)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                if let Modal::FactsSearch { input, browsing, .. } = &mut self.modal {
+                    *browsing = false;
+                    input.insert_char(c);
+                }
+            }
+            KeyCode::Backspace => {
+                if let Modal::FactsSearch { input, browsing, .. } = &mut self.modal {
+                    *browsing = false;
+                    input.backspace();
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Compute (markdown body, default destination, status-bar
     /// label) for the open paragraph's buffer. Used by the
     /// save-as flow — `view_export_markdown` opens the
@@ -7907,6 +8136,7 @@ impl App {
             A::OpenSentenceRhythm => self.open_sentence_rhythm(),
             A::AnalyseShowDontTell => self.start_show_dont_tell_scan(),
             A::FactCheck => self.start_fact_check(),
+            A::SearchFacts => self.open_facts_search(),
             A::AiRewriteRhythm => self.start_sentence_rhythm_rewrite(),
             A::TranslateToInvented => self.start_translate_to_invented(),
             A::TranslateFromInvented => self.start_translate_from_invented(),
@@ -14844,6 +15074,7 @@ impl App {
         let is_tts_save_as_audio = matches!(self.modal, Modal::TtsSaveAsAudio { .. });
         let is_writing_streak_heatmap = matches!(self.modal, Modal::WritingStreakHeatmap { .. });
         let is_concordance = matches!(self.modal, Modal::Concordance { .. });
+        let is_facts_search = matches!(self.modal, Modal::FactsSearch { .. });
         let is_sentence_rhythm = matches!(self.modal, Modal::SentenceRhythm { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
         let is_ai_diff_review = matches!(self.modal, Modal::AiDiffReview { .. });
@@ -15381,6 +15612,11 @@ impl App {
 
         if is_concordance {
             self.concordance_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_facts_search {
+            self.facts_search_handle_key(key);
             return Ok(false);
         }
 

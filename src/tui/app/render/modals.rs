@@ -3847,6 +3847,134 @@ impl super::super::App {
         );
     }
 
+    /// 1.2.21+ FF.1 — the Facts semantic-search modal: a query box on
+    /// top, the ranked matches below (with `[x]`/`[ ]` mark boxes once
+    /// browsing), and a mode-aware footer.
+    pub(in crate::tui::app) fn draw_facts_search_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::FactsSearch { input, entries, cursor, marked, browsing } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(
+            " Facts search{} ",
+            if entries.is_empty() {
+                String::new()
+            } else {
+                format!(" ({} match{})", entries.len(), if entries.len() == 1 { "" } else { "es" })
+            },
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Row 0: the query box (cursor shown only while editing).
+        let query_text = if *browsing {
+            format!(" query: {}", input.as_str())
+        } else {
+            format!(" query: {}", input.render_with_cursor('▌'))
+        };
+        let query_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                query_text,
+                Style::default().add_modifier(if *browsing {
+                    Modifier::DIM
+                } else {
+                    Modifier::BOLD
+                }),
+            ))),
+            query_rect,
+        );
+
+        // Body: the ranked matches; footer: hints.
+        let body_h = inner.height.saturating_sub(2) as usize;
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y + 1,
+            width: inner.width,
+            height: inner.height.saturating_sub(2),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        // Keep the cursor in view without persisting scroll state.
+        let view_scroll = if body_h > 0 && *cursor >= body_h {
+            *cursor + 1 - body_h
+        } else {
+            0
+        };
+
+        let lines: Vec<Line<'_>> = entries
+            .iter()
+            .enumerate()
+            .skip(view_scroll)
+            .take(body_h)
+            .map(|(i, e)| {
+                let mark = if marked.contains(&e.id) { "[x]" } else { "[ ]" };
+                let score_pct = (e.score * 100.0).round() as i64;
+                let head = format!(" {mark} {:>3}%  {}", score_pct, e.title);
+                let path_dim = format!("   {}", e.slug_path);
+                let mut spans: Vec<Span> = vec![
+                    Span::raw(head),
+                    Span::raw("  "),
+                    Span::styled(path_dim, Style::default().add_modifier(Modifier::DIM)),
+                ];
+                if !e.snippet.is_empty() {
+                    spans.push(Span::raw("  · "));
+                    spans.push(Span::styled(
+                        e.snippet.clone(),
+                        Style::default().add_modifier(Modifier::DIM),
+                    ));
+                }
+                let mut line = Line::from(spans);
+                if i == *cursor && *browsing {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                line
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = if !*browsing {
+            " type a query · Enter search · Esc close ".to_string()
+        } else {
+            format!(
+                " ↑↓ move · Space mark · Enter send{} · type to refine · Esc close    ({}/{}) ",
+                if marked.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({} marked)", marked.len())
+                },
+                cursor + 1,
+                entries.len().max(1),
+            )
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     pub(in crate::tui::app) fn draw_progress_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
         let scroll = match &self.modal {
             Modal::Progress { scroll } => *scroll,
