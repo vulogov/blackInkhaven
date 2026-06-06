@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::epub::{self, EpubChapter, EpubMeta};
+use crate::epub::{self, EpubChapter, EpubCover, EpubMeta};
 use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
 use crate::store::Store;
@@ -51,6 +51,11 @@ pub fn run(
         )));
     }
 
+    let cover = detect_cover(&layout.root);
+    if let Some(c) = &cover {
+        eprintln!("  embedding cover ({}, {} KB)", c.media_type, c.bytes.len() / 1024);
+    }
+
     let meta = EpubMeta {
         title: title
             .map(str::to_string)
@@ -61,6 +66,7 @@ pub fn run(
             .unwrap_or_else(|| "Unknown Author".to_string()),
         language: crate::ai::prompts::iso_from_long(&cfg.language).to_string(),
         identifier: format!("urn:uuid:{}", Uuid::now_v7()),
+        cover,
     };
 
     let dest = output
@@ -136,12 +142,57 @@ fn append_branch_prose(
             NodeKind::Subchapter => {
                 append_branch_prose(store, h, child, body, true)?;
             }
-            // Images are skipped in R.1 (cover + inline
-            // image support is an R.1.b polish).
+            // Inline Image nodes are still skipped — the
+            // R.1.b cover (see `detect_cover`) is in; inline
+            // figure embedding remains a follow-up.
             _ => {}
         }
     }
     Ok(())
+}
+
+/// 1.2.20+ R.1.b — find a cover image in the project
+/// root by convention.  Checks `cover.png`, `cover.jpg`,
+/// `cover.jpeg` in that order; the first that exists +
+/// reads becomes the EPUB cover.  Zero-config: drop a
+/// `cover.png` next to `inkhaven.hjson` and it ships.
+/// A read error logs a warning and is treated as
+/// "no cover" rather than failing the whole export.
+fn detect_cover(root: &Path) -> Option<EpubCover> {
+    for (name, ext, mt) in [
+        ("cover.png", "png", "image/png"),
+        ("cover.jpg", "jpg", "image/jpeg"),
+        ("cover.jpeg", "jpg", "image/jpeg"),
+    ] {
+        let path = root.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        match std::fs::read(&path) {
+            Ok(bytes) if !bytes.is_empty() => {
+                return Some(EpubCover {
+                    bytes,
+                    media_type: mt.to_string(),
+                    file_ext: ext.to_string(),
+                });
+            }
+            Ok(_) => {
+                tracing::warn!(
+                    target: "inkhaven::epub",
+                    "cover `{}` is empty — skipping",
+                    path.display(),
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "inkhaven::epub",
+                    "cover `{}` unreadable ({e}) — skipping",
+                    path.display(),
+                );
+            }
+        }
+    }
+    None
 }
 
 fn read_paragraph(store: &Store, node: &Node) -> Result<String> {
@@ -208,5 +259,47 @@ mod tests {
     #[test]
     fn clean_title_trims_whitespace() {
         assert_eq!(clean_title("  Padded  "), "Padded");
+    }
+
+    // ── detect_cover (R.1.b) ──────────────────────────
+
+    #[test]
+    fn detect_cover_none_when_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(detect_cover(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn detect_cover_finds_png() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("cover.png"), b"\x89PNG fake").unwrap();
+        let cover = detect_cover(tmp.path()).expect("cover detected");
+        assert_eq!(cover.media_type, "image/png");
+        assert_eq!(cover.file_ext, "png");
+        assert_eq!(cover.bytes, b"\x89PNG fake");
+    }
+
+    #[test]
+    fn detect_cover_prefers_png_over_jpg() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("cover.png"), b"png").unwrap();
+        std::fs::write(tmp.path().join("cover.jpg"), b"jpg").unwrap();
+        assert_eq!(detect_cover(tmp.path()).unwrap().media_type, "image/png");
+    }
+
+    #[test]
+    fn detect_cover_jpeg_maps_to_jpeg_mime() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("cover.jpeg"), b"jpegbytes").unwrap();
+        let cover = detect_cover(tmp.path()).unwrap();
+        assert_eq!(cover.media_type, "image/jpeg");
+        assert_eq!(cover.file_ext, "jpg");
+    }
+
+    #[test]
+    fn detect_cover_skips_empty_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("cover.png"), b"").unwrap();
+        assert!(detect_cover(tmp.path()).is_none());
     }
 }
