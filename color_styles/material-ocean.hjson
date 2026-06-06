@@ -1,0 +1,70 @@
+// Material Ocean — dark color scheme for Inkhaven (1.2.20+)
+//
+// A partial theme override. Two ways to use it:
+//   1. copy this file to ~/.config/inkhaven/conf/material-ocean.hjson
+//      (applies to every project — see Documentation/CONFIGURATION.md,
+//      "Global overrides"), or
+//   2. paste the `theme` block into a project's inkhaven.hjson.
+//
+// Palette: Material Theme (Ocean)
+{
+  theme: {
+    pane_bg:                         "#0f111a"
+    pane_fg:                         "#a6accd"
+    line_number_fg:                  "#464b5d"
+    current_line_bg:                 "#1f2233"
+
+    border_focused:                  "#c792ea"
+    border_unfocused:                "#464b5d"
+    border_dirty:                    "#ffcb6b"
+    border_saved:                    "#c3e88d"
+    border_readonly:                 "#89ddff"
+
+    modal_bg:                        "#090b10"
+    modal_border:                    "#c792ea"
+    modal_fg:                        "#a6accd"
+
+    places_fg:                       "#89ddff"
+    characters_fg:                   "#ffcb6b"
+    artefacts_fg:                    "#f78c6c"
+    notes_underline_fg:              "#a6accd"
+    language_word_fg:                "#c792ea"
+
+    style_warning_filter_word_fg:    "#ffcb6b"
+    style_warning_repeated_phrase_fg: "#ff5370"
+    style_warning_show_dont_tell_fg: "#89ddff"
+    style_warning_echo_fg:           "#c792ea"
+
+    pov_chip_bg:                     "#c792ea"
+    pov_chip_fg:                     "#ffffff"
+    search_match_bg:                 "#1f2233"
+    search_current_bg:               "#c792ea"
+
+    tree_open_marker:                "#c3e88d"
+    tree_book_fg:                    "#c792ea"
+    tree_chapter_fg:                 "#82aaff"
+    tree_subchapter_fg:              "#89ddff"
+    tree_paragraph_fg:               "#a6accd"
+    tree_image_fg:                   "#f78c6c"
+    tree_script_fg:                  "#c792ea"
+
+    editor_position_fg:              "#89ddff"
+    ai_scope_fg:                     "#f78c6c"
+    ai_infer_fg:                     "#89ddff"
+    grammar_change_fg:               "#ff5370"
+
+    syntax_heading:                  "#c792ea"
+    syntax_bold:                     "#ffcb6b"
+    syntax_italic:                   "#89ddff"
+    syntax_string:                   "#c3e88d"
+    syntax_number:                   "#f78c6c"
+    syntax_comment:                  "#464b5d"
+    syntax_keyword:                  "#c792ea"
+    syntax_function:                 "#82aaff"
+    syntax_operator:                 "#89ddff"
+    syntax_list_marker:              "#c792ea"
+    syntax_raw:                      "#f78c6c"
+    syntax_tag:                      "#82aaff"
+    syntax_quote:                    "#464b5d"
+  }
+}

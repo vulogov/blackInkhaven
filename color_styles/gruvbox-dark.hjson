@@ -1,0 +1,70 @@
+// Gruvbox Dark — dark color scheme for Inkhaven (1.2.20+)
+//
+// A partial theme override. Two ways to use it:
+//   1. copy this file to ~/.config/inkhaven/conf/gruvbox-dark.hjson
+//      (applies to every project — see Documentation/CONFIGURATION.md,
+//      "Global overrides"), or
+//   2. paste the `theme` block into a project's inkhaven.hjson.
+//
+// Palette: Gruvbox by morhetz
+{
+  theme: {
+    pane_bg:                         "#282828"
+    pane_fg:                         "#ebdbb2"
+    line_number_fg:                  "#928374"
+    current_line_bg:                 "#3c3836"
+
+    border_focused:                  "#d3869b"
+    border_unfocused:                "#928374"
+    border_dirty:                    "#fabd2f"
+    border_saved:                    "#b8bb26"
+    border_readonly:                 "#8ec07c"
+
+    modal_bg:                        "#1d2021"
+    modal_border:                    "#d3869b"
+    modal_fg:                        "#ebdbb2"
+
+    places_fg:                       "#8ec07c"
+    characters_fg:                   "#fabd2f"
+    artefacts_fg:                    "#fe8019"
+    notes_underline_fg:              "#ebdbb2"
+    language_word_fg:                "#d3869b"
+
+    style_warning_filter_word_fg:    "#fabd2f"
+    style_warning_repeated_phrase_fg: "#fb4934"
+    style_warning_show_dont_tell_fg: "#8ec07c"
+    style_warning_echo_fg:           "#d3869b"
+
+    pov_chip_bg:                     "#d3869b"
+    pov_chip_fg:                     "#ffffff"
+    search_match_bg:                 "#3c3836"
+    search_current_bg:               "#d3869b"
+
+    tree_open_marker:                "#b8bb26"
+    tree_book_fg:                    "#d3869b"
+    tree_chapter_fg:                 "#83a598"
+    tree_subchapter_fg:              "#8ec07c"
+    tree_paragraph_fg:               "#ebdbb2"
+    tree_image_fg:                   "#fe8019"
+    tree_script_fg:                  "#d3869b"
+
+    editor_position_fg:              "#8ec07c"
+    ai_scope_fg:                     "#fe8019"
+    ai_infer_fg:                     "#8ec07c"
+    grammar_change_fg:               "#fb4934"
+
+    syntax_heading:                  "#d3869b"
+    syntax_bold:                     "#fabd2f"
+    syntax_italic:                   "#8ec07c"
+    syntax_string:                   "#b8bb26"
+    syntax_number:                   "#fe8019"
+    syntax_comment:                  "#928374"
+    syntax_keyword:                  "#d3869b"
+    syntax_function:                 "#83a598"
+    syntax_operator:                 "#8ec07c"
+    syntax_list_marker:              "#d3869b"
+    syntax_raw:                      "#fe8019"
+    syntax_tag:                      "#83a598"
+    syntax_quote:                    "#928374"
+  }
+}

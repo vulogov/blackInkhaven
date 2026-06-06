@@ -1,0 +1,70 @@
+// Tokyo Night — dark color scheme for Inkhaven (1.2.20+)
+//
+// A partial theme override. Two ways to use it:
+//   1. copy this file to ~/.config/inkhaven/conf/tokyo-night.hjson
+//      (applies to every project — see Documentation/CONFIGURATION.md,
+//      "Global overrides"), or
+//   2. paste the `theme` block into a project's inkhaven.hjson.
+//
+// Palette: Tokyo Night by enkia
+{
+  theme: {
+    pane_bg:                         "#1a1b26"
+    pane_fg:                         "#c0caf5"
+    line_number_fg:                  "#565f89"
+    current_line_bg:                 "#292e42"
+
+    border_focused:                  "#bb9af7"
+    border_unfocused:                "#565f89"
+    border_dirty:                    "#e0af68"
+    border_saved:                    "#9ece6a"
+    border_readonly:                 "#7dcfff"
+
+    modal_bg:                        "#16161e"
+    modal_border:                    "#bb9af7"
+    modal_fg:                        "#c0caf5"
+
+    places_fg:                       "#7dcfff"
+    characters_fg:                   "#e0af68"
+    artefacts_fg:                    "#ff9e64"
+    notes_underline_fg:              "#c0caf5"
+    language_word_fg:                "#bb9af7"
+
+    style_warning_filter_word_fg:    "#e0af68"
+    style_warning_repeated_phrase_fg: "#f7768e"
+    style_warning_show_dont_tell_fg: "#7dcfff"
+    style_warning_echo_fg:           "#bb9af7"
+
+    pov_chip_bg:                     "#bb9af7"
+    pov_chip_fg:                     "#ffffff"
+    search_match_bg:                 "#292e42"
+    search_current_bg:               "#bb9af7"
+
+    tree_open_marker:                "#9ece6a"
+    tree_book_fg:                    "#bb9af7"
+    tree_chapter_fg:                 "#7aa2f7"
+    tree_subchapter_fg:              "#7dcfff"
+    tree_paragraph_fg:               "#c0caf5"
+    tree_image_fg:                   "#ff9e64"
+    tree_script_fg:                  "#bb9af7"
+
+    editor_position_fg:              "#7dcfff"
+    ai_scope_fg:                     "#ff9e64"
+    ai_infer_fg:                     "#7dcfff"
+    grammar_change_fg:               "#f7768e"
+
+    syntax_heading:                  "#bb9af7"
+    syntax_bold:                     "#e0af68"
+    syntax_italic:                   "#7dcfff"
+    syntax_string:                   "#9ece6a"
+    syntax_number:                   "#ff9e64"
+    syntax_comment:                  "#565f89"
+    syntax_keyword:                  "#bb9af7"
+    syntax_function:                 "#7aa2f7"
+    syntax_operator:                 "#7dcfff"
+    syntax_list_marker:              "#bb9af7"
+    syntax_raw:                      "#ff9e64"
+    syntax_tag:                      "#7aa2f7"
+    syntax_quote:                    "#565f89"
+  }
+}

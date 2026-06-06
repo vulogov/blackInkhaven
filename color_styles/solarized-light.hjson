@@ -1,0 +1,70 @@
+// Solarized Light — light color scheme for Inkhaven (1.2.20+)
+//
+// A partial theme override. Two ways to use it:
+//   1. copy this file to ~/.config/inkhaven/conf/solarized-light.hjson
+//      (applies to every project — see Documentation/CONFIGURATION.md,
+//      "Global overrides"), or
+//   2. paste the `theme` block into a project's inkhaven.hjson.
+//
+// Palette: Solarized by Ethan Schoonover
+{
+  theme: {
+    pane_bg:                         "#fdf6e3"
+    pane_fg:                         "#657b83"
+    line_number_fg:                  "#93a1a1"
+    current_line_bg:                 "#eee8d5"
+
+    border_focused:                  "#d33682"
+    border_unfocused:                "#93a1a1"
+    border_dirty:                    "#b58900"
+    border_saved:                    "#859900"
+    border_readonly:                 "#2aa198"
+
+    modal_bg:                        "#eee8d5"
+    modal_border:                    "#d33682"
+    modal_fg:                        "#657b83"
+
+    places_fg:                       "#2aa198"
+    characters_fg:                   "#b58900"
+    artefacts_fg:                    "#cb4b16"
+    notes_underline_fg:              "#657b83"
+    language_word_fg:                "#6c71c4"
+
+    style_warning_filter_word_fg:    "#b58900"
+    style_warning_repeated_phrase_fg: "#dc322f"
+    style_warning_show_dont_tell_fg: "#2aa198"
+    style_warning_echo_fg:           "#6c71c4"
+
+    pov_chip_bg:                     "#6c71c4"
+    pov_chip_fg:                     "#ffffff"
+    search_match_bg:                 "#eee8d5"
+    search_current_bg:               "#d33682"
+
+    tree_open_marker:                "#859900"
+    tree_book_fg:                    "#d33682"
+    tree_chapter_fg:                 "#268bd2"
+    tree_subchapter_fg:              "#2aa198"
+    tree_paragraph_fg:               "#657b83"
+    tree_image_fg:                   "#cb4b16"
+    tree_script_fg:                  "#6c71c4"
+
+    editor_position_fg:              "#2aa198"
+    ai_scope_fg:                     "#cb4b16"
+    ai_infer_fg:                     "#2aa198"
+    grammar_change_fg:               "#dc322f"
+
+    syntax_heading:                  "#6c71c4"
+    syntax_bold:                     "#b58900"
+    syntax_italic:                   "#2aa198"
+    syntax_string:                   "#859900"
+    syntax_number:                   "#cb4b16"
+    syntax_comment:                  "#93a1a1"
+    syntax_keyword:                  "#d33682"
+    syntax_function:                 "#268bd2"
+    syntax_operator:                 "#2aa198"
+    syntax_list_marker:              "#6c71c4"
+    syntax_raw:                      "#cb4b16"
+    syntax_tag:                      "#268bd2"
+    syntax_quote:                    "#93a1a1"
+  }
+}

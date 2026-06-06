@@ -1,0 +1,70 @@
+// Gruvbox Light — light color scheme for Inkhaven (1.2.20+)
+//
+// A partial theme override. Two ways to use it:
+//   1. copy this file to ~/.config/inkhaven/conf/gruvbox-light.hjson
+//      (applies to every project — see Documentation/CONFIGURATION.md,
+//      "Global overrides"), or
+//   2. paste the `theme` block into a project's inkhaven.hjson.
+//
+// Palette: Gruvbox by morhetz
+{
+  theme: {
+    pane_bg:                         "#fbf1c7"
+    pane_fg:                         "#3c3836"
+    line_number_fg:                  "#7c6f64"
+    current_line_bg:                 "#ebdbb2"
+
+    border_focused:                  "#8f3f71"
+    border_unfocused:                "#7c6f64"
+    border_dirty:                    "#b57614"
+    border_saved:                    "#79740e"
+    border_readonly:                 "#427b58"
+
+    modal_bg:                        "#f2e5bc"
+    modal_border:                    "#8f3f71"
+    modal_fg:                        "#3c3836"
+
+    places_fg:                       "#427b58"
+    characters_fg:                   "#b57614"
+    artefacts_fg:                    "#af3a03"
+    notes_underline_fg:              "#3c3836"
+    language_word_fg:                "#8f3f71"
+
+    style_warning_filter_word_fg:    "#b57614"
+    style_warning_repeated_phrase_fg: "#9d0006"
+    style_warning_show_dont_tell_fg: "#427b58"
+    style_warning_echo_fg:           "#8f3f71"
+
+    pov_chip_bg:                     "#8f3f71"
+    pov_chip_fg:                     "#ffffff"
+    search_match_bg:                 "#ebdbb2"
+    search_current_bg:               "#8f3f71"
+
+    tree_open_marker:                "#79740e"
+    tree_book_fg:                    "#8f3f71"
+    tree_chapter_fg:                 "#076678"
+    tree_subchapter_fg:              "#427b58"
+    tree_paragraph_fg:               "#3c3836"
+    tree_image_fg:                   "#af3a03"
+    tree_script_fg:                  "#8f3f71"
+
+    editor_position_fg:              "#427b58"
+    ai_scope_fg:                     "#af3a03"
+    ai_infer_fg:                     "#427b58"
+    grammar_change_fg:               "#9d0006"
+
+    syntax_heading:                  "#8f3f71"
+    syntax_bold:                     "#b57614"
+    syntax_italic:                   "#427b58"
+    syntax_string:                   "#79740e"
+    syntax_number:                   "#af3a03"
+    syntax_comment:                  "#7c6f64"
+    syntax_keyword:                  "#8f3f71"
+    syntax_function:                 "#076678"
+    syntax_operator:                 "#427b58"
+    syntax_list_marker:              "#8f3f71"
+    syntax_raw:                      "#af3a03"
+    syntax_tag:                      "#076678"
+    syntax_quote:                    "#7c6f64"
+  }
+}

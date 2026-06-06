@@ -1,0 +1,70 @@
+// Ayu Light — light color scheme for Inkhaven (1.2.20+)
+//
+// A partial theme override. Two ways to use it:
+//   1. copy this file to ~/.config/inkhaven/conf/ayu-light.hjson
+//      (applies to every project — see Documentation/CONFIGURATION.md,
+//      "Global overrides"), or
+//   2. paste the `theme` block into a project's inkhaven.hjson.
+//
+// Palette: Ayu by dempfi
+{
+  theme: {
+    pane_bg:                         "#fcfcfc"
+    pane_fg:                         "#5c6166"
+    line_number_fg:                  "#abb0b6"
+    current_line_bg:                 "#f0f0f0"
+
+    border_focused:                  "#a37acc"
+    border_unfocused:                "#abb0b6"
+    border_dirty:                    "#f2ae49"
+    border_saved:                    "#86b300"
+    border_readonly:                 "#4cbf99"
+
+    modal_bg:                        "#f3f4f5"
+    modal_border:                    "#a37acc"
+    modal_fg:                        "#5c6166"
+
+    places_fg:                       "#4cbf99"
+    characters_fg:                   "#f2ae49"
+    artefacts_fg:                    "#fa8d3e"
+    notes_underline_fg:              "#5c6166"
+    language_word_fg:                "#a37acc"
+
+    style_warning_filter_word_fg:    "#f2ae49"
+    style_warning_repeated_phrase_fg: "#f07171"
+    style_warning_show_dont_tell_fg: "#4cbf99"
+    style_warning_echo_fg:           "#a37acc"
+
+    pov_chip_bg:                     "#a37acc"
+    pov_chip_fg:                     "#ffffff"
+    search_match_bg:                 "#f0f0f0"
+    search_current_bg:               "#a37acc"
+
+    tree_open_marker:                "#86b300"
+    tree_book_fg:                    "#a37acc"
+    tree_chapter_fg:                 "#399ee6"
+    tree_subchapter_fg:              "#4cbf99"
+    tree_paragraph_fg:               "#5c6166"
+    tree_image_fg:                   "#fa8d3e"
+    tree_script_fg:                  "#a37acc"
+
+    editor_position_fg:              "#4cbf99"
+    ai_scope_fg:                     "#fa8d3e"
+    ai_infer_fg:                     "#4cbf99"
+    grammar_change_fg:               "#f07171"
+
+    syntax_heading:                  "#a37acc"
+    syntax_bold:                     "#f2ae49"
+    syntax_italic:                   "#4cbf99"
+    syntax_string:                   "#86b300"
+    syntax_number:                   "#fa8d3e"
+    syntax_comment:                  "#abb0b6"
+    syntax_keyword:                  "#a37acc"
+    syntax_function:                 "#399ee6"
+    syntax_operator:                 "#4cbf99"
+    syntax_list_marker:              "#a37acc"
+    syntax_raw:                      "#fa8d3e"
+    syntax_tag:                      "#399ee6"
+    syntax_quote:                    "#abb0b6"
+  }
+}

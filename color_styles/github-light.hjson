@@ -1,0 +1,70 @@
+// GitHub Light — light color scheme for Inkhaven (1.2.20+)
+//
+// A partial theme override. Two ways to use it:
+//   1. copy this file to ~/.config/inkhaven/conf/github-light.hjson
+//      (applies to every project — see Documentation/CONFIGURATION.md,
+//      "Global overrides"), or
+//   2. paste the `theme` block into a project's inkhaven.hjson.
+//
+// Palette: GitHub light
+{
+  theme: {
+    pane_bg:                         "#ffffff"
+    pane_fg:                         "#24292e"
+    line_number_fg:                  "#6a737d"
+    current_line_bg:                 "#f6f8fa"
+
+    border_focused:                  "#6f42c1"
+    border_unfocused:                "#6a737d"
+    border_dirty:                    "#b08800"
+    border_saved:                    "#22863a"
+    border_readonly:                 "#1b7c83"
+
+    modal_bg:                        "#f6f8fa"
+    modal_border:                    "#6f42c1"
+    modal_fg:                        "#24292e"
+
+    places_fg:                       "#1b7c83"
+    characters_fg:                   "#b08800"
+    artefacts_fg:                    "#e36209"
+    notes_underline_fg:              "#24292e"
+    language_word_fg:                "#6f42c1"
+
+    style_warning_filter_word_fg:    "#b08800"
+    style_warning_repeated_phrase_fg: "#d73a49"
+    style_warning_show_dont_tell_fg: "#1b7c83"
+    style_warning_echo_fg:           "#6f42c1"
+
+    pov_chip_bg:                     "#6f42c1"
+    pov_chip_fg:                     "#ffffff"
+    search_match_bg:                 "#f6f8fa"
+    search_current_bg:               "#6f42c1"
+
+    tree_open_marker:                "#22863a"
+    tree_book_fg:                    "#6f42c1"
+    tree_chapter_fg:                 "#005cc5"
+    tree_subchapter_fg:              "#1b7c83"
+    tree_paragraph_fg:               "#24292e"
+    tree_image_fg:                   "#e36209"
+    tree_script_fg:                  "#6f42c1"
+
+    editor_position_fg:              "#1b7c83"
+    ai_scope_fg:                     "#e36209"
+    ai_infer_fg:                     "#1b7c83"
+    grammar_change_fg:               "#d73a49"
+
+    syntax_heading:                  "#6f42c1"
+    syntax_bold:                     "#b08800"
+    syntax_italic:                   "#1b7c83"
+    syntax_string:                   "#22863a"
+    syntax_number:                   "#e36209"
+    syntax_comment:                  "#6a737d"
+    syntax_keyword:                  "#6f42c1"
+    syntax_function:                 "#005cc5"
+    syntax_operator:                 "#1b7c83"
+    syntax_list_marker:              "#6f42c1"
+    syntax_raw:                      "#e36209"
+    syntax_tag:                      "#005cc5"
+    syntax_quote:                    "#6a737d"
+  }
+}

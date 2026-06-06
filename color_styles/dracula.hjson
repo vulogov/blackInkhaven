@@ -1,0 +1,70 @@
+// Dracula — dark color scheme for Inkhaven (1.2.20+)
+//
+// A partial theme override. Two ways to use it:
+//   1. copy this file to ~/.config/inkhaven/conf/dracula.hjson
+//      (applies to every project — see Documentation/CONFIGURATION.md,
+//      "Global overrides"), or
+//   2. paste the `theme` block into a project's inkhaven.hjson.
+//
+// Palette: Dracula (draculatheme.com)
+{
+  theme: {
+    pane_bg:                         "#282a36"
+    pane_fg:                         "#f8f8f2"
+    line_number_fg:                  "#6272a4"
+    current_line_bg:                 "#44475a"
+
+    border_focused:                  "#ff79c6"
+    border_unfocused:                "#6272a4"
+    border_dirty:                    "#f1fa8c"
+    border_saved:                    "#50fa7b"
+    border_readonly:                 "#8be9fd"
+
+    modal_bg:                        "#21222c"
+    modal_border:                    "#ff79c6"
+    modal_fg:                        "#f8f8f2"
+
+    places_fg:                       "#8be9fd"
+    characters_fg:                   "#f1fa8c"
+    artefacts_fg:                    "#ffb86c"
+    notes_underline_fg:              "#f8f8f2"
+    language_word_fg:                "#bd93f9"
+
+    style_warning_filter_word_fg:    "#f1fa8c"
+    style_warning_repeated_phrase_fg: "#ff5555"
+    style_warning_show_dont_tell_fg: "#8be9fd"
+    style_warning_echo_fg:           "#bd93f9"
+
+    pov_chip_bg:                     "#bd93f9"
+    pov_chip_fg:                     "#ffffff"
+    search_match_bg:                 "#44475a"
+    search_current_bg:               "#ff79c6"
+
+    tree_open_marker:                "#50fa7b"
+    tree_book_fg:                    "#ff79c6"
+    tree_chapter_fg:                 "#8be9fd"
+    tree_subchapter_fg:              "#8be9fd"
+    tree_paragraph_fg:               "#f8f8f2"
+    tree_image_fg:                   "#ffb86c"
+    tree_script_fg:                  "#bd93f9"
+
+    editor_position_fg:              "#8be9fd"
+    ai_scope_fg:                     "#ffb86c"
+    ai_infer_fg:                     "#8be9fd"
+    grammar_change_fg:               "#ff5555"
+
+    syntax_heading:                  "#bd93f9"
+    syntax_bold:                     "#f1fa8c"
+    syntax_italic:                   "#8be9fd"
+    syntax_string:                   "#50fa7b"
+    syntax_number:                   "#ffb86c"
+    syntax_comment:                  "#6272a4"
+    syntax_keyword:                  "#ff79c6"
+    syntax_function:                 "#8be9fd"
+    syntax_operator:                 "#8be9fd"
+    syntax_list_marker:              "#bd93f9"
+    syntax_raw:                      "#ffb86c"
+    syntax_tag:                      "#8be9fd"
+    syntax_quote:                    "#6272a4"
+  }
+}

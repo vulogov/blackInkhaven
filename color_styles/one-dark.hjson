@@ -1,0 +1,70 @@
+// One Dark — dark color scheme for Inkhaven (1.2.20+)
+//
+// A partial theme override. Two ways to use it:
+//   1. copy this file to ~/.config/inkhaven/conf/one-dark.hjson
+//      (applies to every project — see Documentation/CONFIGURATION.md,
+//      "Global overrides"), or
+//   2. paste the `theme` block into a project's inkhaven.hjson.
+//
+// Palette: Atom One Dark
+{
+  theme: {
+    pane_bg:                         "#282c34"
+    pane_fg:                         "#abb2bf"
+    line_number_fg:                  "#5c6370"
+    current_line_bg:                 "#2c323c"
+
+    border_focused:                  "#c678dd"
+    border_unfocused:                "#5c6370"
+    border_dirty:                    "#e5c07b"
+    border_saved:                    "#98c379"
+    border_readonly:                 "#56b6c2"
+
+    modal_bg:                        "#21252b"
+    modal_border:                    "#c678dd"
+    modal_fg:                        "#abb2bf"
+
+    places_fg:                       "#56b6c2"
+    characters_fg:                   "#e5c07b"
+    artefacts_fg:                    "#d19a66"
+    notes_underline_fg:              "#abb2bf"
+    language_word_fg:                "#c678dd"
+
+    style_warning_filter_word_fg:    "#e5c07b"
+    style_warning_repeated_phrase_fg: "#e06c75"
+    style_warning_show_dont_tell_fg: "#56b6c2"
+    style_warning_echo_fg:           "#c678dd"
+
+    pov_chip_bg:                     "#c678dd"
+    pov_chip_fg:                     "#ffffff"
+    search_match_bg:                 "#2c323c"
+    search_current_bg:               "#c678dd"
+
+    tree_open_marker:                "#98c379"
+    tree_book_fg:                    "#c678dd"
+    tree_chapter_fg:                 "#61afef"
+    tree_subchapter_fg:              "#56b6c2"
+    tree_paragraph_fg:               "#abb2bf"
+    tree_image_fg:                   "#d19a66"
+    tree_script_fg:                  "#c678dd"
+
+    editor_position_fg:              "#56b6c2"
+    ai_scope_fg:                     "#d19a66"
+    ai_infer_fg:                     "#56b6c2"
+    grammar_change_fg:               "#e06c75"
+
+    syntax_heading:                  "#c678dd"
+    syntax_bold:                     "#e5c07b"
+    syntax_italic:                   "#56b6c2"
+    syntax_string:                   "#98c379"
+    syntax_number:                   "#d19a66"
+    syntax_comment:                  "#5c6370"
+    syntax_keyword:                  "#c678dd"
+    syntax_function:                 "#61afef"
+    syntax_operator:                 "#56b6c2"
+    syntax_list_marker:              "#c678dd"
+    syntax_raw:                      "#d19a66"
+    syntax_tag:                      "#61afef"
+    syntax_quote:                    "#5c6370"
+  }
+}

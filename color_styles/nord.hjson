@@ -1,0 +1,70 @@
+// Nord — dark color scheme for Inkhaven (1.2.20+)
+//
+// A partial theme override. Two ways to use it:
+//   1. copy this file to ~/.config/inkhaven/conf/nord.hjson
+//      (applies to every project — see Documentation/CONFIGURATION.md,
+//      "Global overrides"), or
+//   2. paste the `theme` block into a project's inkhaven.hjson.
+//
+// Palette: Nord (nordtheme.com)
+{
+  theme: {
+    pane_bg:                         "#2e3440"
+    pane_fg:                         "#d8dee9"
+    line_number_fg:                  "#4c566a"
+    current_line_bg:                 "#3b4252"
+
+    border_focused:                  "#b48ead"
+    border_unfocused:                "#4c566a"
+    border_dirty:                    "#ebcb8b"
+    border_saved:                    "#a3be8c"
+    border_readonly:                 "#88c0d0"
+
+    modal_bg:                        "#272c36"
+    modal_border:                    "#b48ead"
+    modal_fg:                        "#d8dee9"
+
+    places_fg:                       "#88c0d0"
+    characters_fg:                   "#ebcb8b"
+    artefacts_fg:                    "#d08770"
+    notes_underline_fg:              "#d8dee9"
+    language_word_fg:                "#b48ead"
+
+    style_warning_filter_word_fg:    "#ebcb8b"
+    style_warning_repeated_phrase_fg: "#bf616a"
+    style_warning_show_dont_tell_fg: "#88c0d0"
+    style_warning_echo_fg:           "#b48ead"
+
+    pov_chip_bg:                     "#b48ead"
+    pov_chip_fg:                     "#ffffff"
+    search_match_bg:                 "#3b4252"
+    search_current_bg:               "#b48ead"
+
+    tree_open_marker:                "#a3be8c"
+    tree_book_fg:                    "#b48ead"
+    tree_chapter_fg:                 "#81a1c1"
+    tree_subchapter_fg:              "#88c0d0"
+    tree_paragraph_fg:               "#d8dee9"
+    tree_image_fg:                   "#d08770"
+    tree_script_fg:                  "#b48ead"
+
+    editor_position_fg:              "#88c0d0"
+    ai_scope_fg:                     "#d08770"
+    ai_infer_fg:                     "#88c0d0"
+    grammar_change_fg:               "#bf616a"
+
+    syntax_heading:                  "#b48ead"
+    syntax_bold:                     "#ebcb8b"
+    syntax_italic:                   "#88c0d0"
+    syntax_string:                   "#a3be8c"
+    syntax_number:                   "#d08770"
+    syntax_comment:                  "#4c566a"
+    syntax_keyword:                  "#b48ead"
+    syntax_function:                 "#81a1c1"
+    syntax_operator:                 "#88c0d0"
+    syntax_list_marker:              "#b48ead"
+    syntax_raw:                      "#d08770"
+    syntax_tag:                      "#81a1c1"
+    syntax_quote:                    "#4c566a"
+  }
+}

@@ -3472,4 +3472,46 @@ mod layering_tests {
         // A field absent from the project comes from default.
         assert_eq!(cfg.theme.pane_fg, ThemeConfig::default().pane_fg);
     }
+
+    // The shipped `color_styles/*.hjson` presets must each
+    // be valid HJSON, contain only real `theme` colour keys
+    // that parse, and layer cleanly into a complete Config —
+    // guards the presets against bit-rot when fields change.
+    #[test]
+    fn color_style_presets_all_parse() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("color_styles");
+        let mut count = 0;
+        for entry in std::fs::read_dir(&dir).expect("color_styles dir exists") {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|s| s.to_str()) != Some("hjson") {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&path).unwrap();
+            let v: serde_json::Value = serde_hjson::from_str(&raw)
+                .unwrap_or_else(|e| panic!("{}: invalid HJSON: {e}", path.display()));
+            let theme = v
+                .get("theme")
+                .and_then(|t| t.as_object())
+                .unwrap_or_else(|| panic!("{}: no theme object", path.display()));
+            // Every value must be a parseable colour string.
+            for (k, val) in theme {
+                let hex = val.as_str().unwrap_or_else(|| {
+                    panic!("{}: theme.{k} is not a string", path.display())
+                });
+                assert!(
+                    parse_color(hex).is_some(),
+                    "{}: theme.{k} = `{hex}` is not a valid colour",
+                    path.display(),
+                );
+            }
+            // And the file must layer into a complete Config
+            // (the cascade the presets are meant for).
+            let mut merged = serde_json::to_value(Config::default()).unwrap();
+            merge_value(&mut merged, v);
+            let _: Config = serde_json::from_value(merged)
+                .unwrap_or_else(|e| panic!("{}: not a valid Config: {e}", path.display()));
+            count += 1;
+        }
+        assert!(count >= 15, "expected >= 15 presets, found {count}");
+    }
 }
