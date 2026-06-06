@@ -42,6 +42,18 @@ two weeks' travel north.
 There's no schema and no special syntax — if you can write a Note, you can
 write a Fact.
 
+Not sure where to start? Scaffold the usual categories and fill in the
+blanks:
+
+```text
+$ inkhaven facts init
+facts init: added 6 categories to the Facts book
+```
+
+It seeds **Climate, Geography, Seasons, Chronology, Culture, Rules** —
+each a paragraph with a one-line prompt to replace. It's idempotent
+(categories you already have are kept), so it's safe to re-run.
+
 ## 2. Interrogate your world — the Facts scope (`F9`)
 
 The AI assistant's scope cycles with **F9**:
@@ -75,7 +87,14 @@ The Facts scope is **sticky**: unlike the other scopes (which reset to
 `None` after one prompt), it stays active across follow-up questions so the
 whole conversation keeps the facts in view. Cycle **F9** away when you're
 done. The seed is loaded once — re-entering or reloading the project never
-duplicates it.
+duplicates it, and if you've edited or extracted facts since, re-cycling
+**F9** to Facts **refreshes** the loaded set (it tells you on the status
+bar when it does).
+
+The scope always runs **grounded / Local** — it treats your facts as the
+ground truth and won't let the model's real-world knowledge override the
+fiction, regardless of the F10 inference toggle (the `infer=Local` chip
+reflects this).
 
 ## 3. Check a paragraph — the fact-check chord (`Ctrl+B Shift+X`)
 

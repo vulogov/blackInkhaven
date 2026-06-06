@@ -12989,25 +12989,43 @@ impl App {
     /// chat, never duplicates it.  The fact-analysis system prompt is
     /// applied in the send path while the sticky scope stays `Facts`.
     fn seed_facts_session(&mut self) {
-        let already = self.chat_history.iter().any(
-            |t| matches!(t, ChatTurn::User(s) if s.starts_with(FACTS_SEED_MARKER)),
-        );
-        if already {
-            self.status =
-                "Facts session active — ask a fact-check question (F9 to exit)".into();
-            return;
-        }
         let chunks = self.gather_facts_chunks();
         if chunks.is_empty() {
             self.status =
                 "Facts scope — the Facts book is empty; collect some facts first".into();
             return;
         }
+        // 1.2.21+ FF.4a — freshness: a prior seed whose facts payload
+        // still matches the current Facts book is left as-is; if the
+        // book changed (you edited / extracted facts since), re-cycling
+        // F9 to Facts refreshes the seed rather than reporting "active".
+        let fresh_payload = chunks.join("\n\n");
+        let existing_payload = self.chat_history.iter().find_map(|t| match t {
+            ChatTurn::User(s) if s.starts_with(FACTS_SEED_MARKER) => {
+                s.split_once("\n\n").map(|(_, body)| body.to_string())
+            }
+            _ => None,
+        });
+        if existing_payload.as_deref() == Some(fresh_payload.as_str()) {
+            let n = chunks.len();
+            self.status = format!(
+                "Facts session active ({n} fact{}, unchanged) — ask a fact-check question (F9 to exit)",
+                if n == 1 { "" } else { "s" },
+            );
+            return;
+        }
+        let refreshed = existing_payload.is_some();
         let n = self.apply_facts_seed(chunks);
         let plural = if n == 1 { "y" } else { "ies" };
-        self.status = format!(
-            "Facts session: loaded {n} fact entr{plural} — ask a fact-check question (F9 to exit)"
-        );
+        self.status = if refreshed {
+            format!(
+                "Facts session: refreshed to {n} fact entr{plural} (the Facts book changed) — ask away"
+            )
+        } else {
+            format!(
+                "Facts session: loaded {n} fact entr{plural} — ask a fact-check question (F9 to exit)"
+            )
+        };
     }
 
     /// 1.2.21+ — (re)seed the chat with a Facts prologue built from

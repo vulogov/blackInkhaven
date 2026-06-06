@@ -64,7 +64,115 @@ pub fn run(project: &Path, cmd: FactsCommand) -> Result<()> {
             yes,
             dry_run,
         } => extract(project, provider.as_deref(), yes, dry_run),
+        FactsCommand::Init { force } => init(project, force),
     }
+}
+
+/// 1.2.21+ FF.4c — starter skeleton for the Facts book: the categories
+/// a world's invariants usually fall into, each a paragraph seeded with
+/// a one-line prompt the author replaces.  Turns an empty Facts book
+/// into fill-in-the-blanks.
+const FACTS_SKELETON: &[(&str, &str)] = &[
+    (
+        "Climate",
+        "Temperature bands, rainfall / monsoon, extremes — and what's impossible here (snow? drought?).",
+    ),
+    (
+        "Geography",
+        "Key places and the distances / travel-times between them; terrain, borders, the capital.",
+    ),
+    (
+        "Seasons",
+        "The seasonal cycle: names, lengths, and what each season brings.",
+    ),
+    (
+        "Chronology",
+        "The calendar and fixed dates: when the story sits, and what happened how long ago.",
+    ),
+    (
+        "Culture",
+        "Customs, social structure, religion, and language facts the prose relies on.",
+    ),
+    (
+        "Rules",
+        "The hard limits of the world — magic / technology / law the plot can't break.",
+    ),
+];
+
+/// `inkhaven facts init` — scaffold the starter category paragraphs in
+/// the Facts book.  Idempotent: a category already present is left
+/// untouched unless `--force` adds a second copy.
+fn init(project: &Path, force: bool) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+
+    let Some(facts_id) = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_FACTS)
+        })
+        .map(|n| n.id)
+    else {
+        return Err(Error::Store(
+            "facts init: this project has no Facts book".into(),
+        ));
+    };
+
+    // Titles already present under Facts (case-insensitive), for idempotence.
+    let existing: HashSet<String> = hierarchy
+        .collect_subtree(facts_id)
+        .into_iter()
+        .filter_map(|id| hierarchy.get(id))
+        .filter(|n| n.kind == NodeKind::Paragraph)
+        .map(|n| n.title.trim().to_lowercase())
+        .collect();
+
+    let mut added = 0usize;
+    let mut skipped = 0usize;
+    for (title, hint) in FACTS_SKELETON {
+        if !force && existing.contains(&title.to_lowercase()) {
+            skipped += 1;
+            continue;
+        }
+        // Fresh hierarchy each create for correct sibling ordering.
+        let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+        let facts_node = h
+            .iter()
+            .find(|n| n.id == facts_id)
+            .cloned()
+            .ok_or_else(|| Error::Store("facts init: Facts book vanished".into()))?;
+        let mut node = store.create_node(
+            &cfg,
+            &h,
+            NodeKind::Paragraph,
+            title,
+            Some(&facts_node),
+            None,
+            InsertPosition::End,
+        )?;
+        let body = format!("= {title}\n\n{hint}\n");
+        if let Some(rel) = &node.file {
+            let abs = store.project_root().join(rel);
+            std::fs::write(&abs, body.as_bytes()).map_err(Error::Io)?;
+            store.update_paragraph_content(&mut node, body.as_bytes())?;
+        }
+        added += 1;
+    }
+
+    println!(
+        "facts init: added {added} categor{}{} to the Facts book",
+        if added == 1 { "y" } else { "ies" },
+        if skipped > 0 {
+            format!(" ({skipped} already present, kept)")
+        } else {
+            String::new()
+        },
+    );
+    Ok(())
 }
 
 /// 1.2.21+ FF.3 — propose world-facts from the manuscript and (after an

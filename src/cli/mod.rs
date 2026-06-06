@@ -1023,6 +1023,15 @@ pub enum FactsCommand {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Scaffold the starter category paragraphs (Climate,
+    /// Geography, Seasons, Chronology, Culture, Rules) in
+    /// the Facts book — fill-in-the-blanks for a fresh
+    /// project.  Idempotent: existing categories are kept.
+    Init {
+        /// Add the skeleton even if categories already exist.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// 1.2.17+ T.7 — sub-subcommands under
