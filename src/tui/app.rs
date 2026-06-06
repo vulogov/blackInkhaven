@@ -12528,13 +12528,21 @@ impl App {
 
     fn cycle_ai_mode(&mut self) {
         self.ai_mode = self.ai_mode.next();
-        self.status = match self.ai_mode {
-            AiMode::None => "AI scope: None (only the prompt is sent)".into(),
-            other => format!(
-                "AI scope: {} (will prepend matching context to next prompt)",
-                other.label()
-            ),
-        };
+        match self.ai_mode {
+            AiMode::None => {
+                self.status = "AI scope: None (only the prompt is sent)".into()
+            }
+            // 1.2.21+ — Facts is a sticky *session* scope, not a per-query
+            // attach: entering it seeds the chat with the world's facts +
+            // a fact-analysis framing (which sets its own status).
+            AiMode::Facts => self.seed_facts_session(),
+            other => {
+                self.status = format!(
+                    "AI scope: {} (will prepend matching context to next prompt)",
+                    other.label()
+                )
+            }
+        }
     }
 
     fn toggle_inference_mode(&mut self) {
@@ -12691,56 +12699,87 @@ impl App {
                     mode_label.to_lowercase()
                 )))
             }
-            // 1.2.21+ — the Facts scope ignores the cursor entirely
-            // and loads the whole Facts system book as ground-truth
-            // reference: every paragraph of the world's invariants
-            // (climate, geography, seasons, chronology).  The chat
-            // framing (a fact-analysis system prompt) is layered on
-            // in the send path; here we just gather the reference.
-            AiMode::Facts => {
-                let Some(facts_id) = self.system_book_id(crate::store::SYSTEM_TAG_FACTS)
-                else {
-                    return Err(
-                        "AI scope `Facts` — this project has no Facts book".into(),
-                    );
-                };
-                let mut chunks: Vec<String> = Vec::new();
-                for id in self.hierarchy.collect_subtree(facts_id) {
-                    let Some(node) = self.hierarchy.get(id) else {
-                        continue;
-                    };
-                    if node.kind != NodeKind::Paragraph {
-                        continue;
-                    }
-                    if let Ok(Some(bytes)) = self.store.get_content(node.id) {
-                        let body = String::from_utf8_lossy(&bytes).to_string();
-                        if body.trim().is_empty() {
-                            continue;
-                        }
-                        chunks.push(format!(
-                            "── {} ──\n{}",
-                            self.title_breadcrumb(node.id),
-                            body
-                        ));
-                    }
+            // 1.2.21+ — the Facts scope delivers the Facts book as a
+            // pre-seeded, *visible* chat-history prologue (see
+            // `seed_facts_session`), not as a per-query prefix — so the
+            // scope contributes nothing here.  It stays sticky across
+            // turns (no auto-reset), so the seeded facts + the
+            // fact-analysis system prompt frame the whole conversation.
+            AiMode::Facts => Ok(None),
+        }
+    }
+
+    /// 1.2.21+ — every non-empty paragraph of the Facts system book,
+    /// each as a `── breadcrumb ──\nbody` chunk.  Empty when the project
+    /// has no Facts book or it holds nothing.  Backs the Facts-scope
+    /// chat seed and the `Ctrl+B Shift+X` fact-check grounding.
+    fn gather_facts_chunks(&self) -> Vec<String> {
+        let Some(facts_id) = self.system_book_id(crate::store::SYSTEM_TAG_FACTS) else {
+            return Vec::new();
+        };
+        let mut chunks = Vec::new();
+        for id in self.hierarchy.collect_subtree(facts_id) {
+            let Some(node) = self.hierarchy.get(id) else {
+                continue;
+            };
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            if let Ok(Some(bytes)) = self.store.get_content(node.id) {
+                let body = String::from_utf8_lossy(&bytes).to_string();
+                if body.trim().is_empty() {
+                    continue;
                 }
-                if chunks.is_empty() {
-                    return Err(
-                        "AI scope `Facts` — the Facts book is empty; collect some facts first"
-                            .into(),
-                    );
-                }
-                let header = format!(
-                    "── Facts reference ({} entr{}) ──",
-                    chunks.len(),
-                    if chunks.len() == 1 { "y" } else { "ies" },
-                );
-                Ok(Some(format!(
-                    "{header}\n\n{}\n── end facts reference ──",
-                    chunks.join("\n\n"),
-                )))
+                chunks.push(format!(
+                    "── {} ──\n{}",
+                    self.title_breadcrumb(node.id),
+                    body
+                ));
             }
         }
+        chunks
+    }
+
+    /// 1.2.21+ — entering the Facts scope seeds the chat with a visible
+    /// prologue: the world's established facts as a user turn (so the
+    /// model treats them as ground truth) plus a short assistant
+    /// acknowledgement.  Idempotent — a history that already carries the
+    /// seed (its user turn starts with [`FACTS_SEED_MARKER`]) isn't
+    /// re-seeded, so cycling F9 in and out, or reloading a persisted
+    /// chat, never duplicates it.  The fact-analysis system prompt is
+    /// applied in the send path while the sticky scope stays `Facts`.
+    fn seed_facts_session(&mut self) {
+        let already = self.chat_history.iter().any(
+            |t| matches!(t, ChatTurn::User(s) if s.starts_with(FACTS_SEED_MARKER)),
+        );
+        if already {
+            self.status =
+                "Facts session active — ask a fact-check question (F9 to exit)".into();
+            return;
+        }
+        let chunks = self.gather_facts_chunks();
+        if chunks.is_empty() {
+            self.status =
+                "Facts scope — the Facts book is empty; collect some facts first".into();
+            return;
+        }
+        let n = chunks.len();
+        let plural = if n == 1 { "y" } else { "ies" };
+        let lang = crate::ai::prompts::iso_from_long(&self.cfg.language);
+        let user_turn = format!(
+            "{FACTS_SEED_MARKER}{} ({n} entr{plural})\n\n{}",
+            facts_seed_intro(lang),
+            chunks.join("\n\n"),
+        );
+        let ack = facts_seed_ack(lang).to_string();
+        // Facts are the prologue — ahead of any existing conversation.
+        let mut seeded = vec![ChatTurn::User(user_turn), ChatTurn::Assistant(ack)];
+        seeded.append(&mut self.chat_history);
+        self.chat_history = seeded;
+        self.chat_history_scroll = 0;
+        self.status = format!(
+            "Facts session: loaded {n} fact entr{plural} — ask a fact-check question (F9 to exit)"
+        );
     }
 
     fn clear_chat_history(&mut self) {
@@ -19758,6 +19797,70 @@ pub(super) const TRANSLATION_BEGIN: &str = "<<<TRANSLATION>>>";
 /// Caller passes the ISO 639-1 code from
 /// `App::active_prompt_language()`.  The English arm is
 /// the canonical / reference variant; the other four are
+/// 1.2.21+ — sentinel prefixing the seeded Facts user turn in the
+/// chat history.  `seed_facts_session` matches on it for idempotence
+/// (so reloading a persisted chat or re-cycling F9 never duplicates
+/// the seed); it also reads as a clear "this is the loaded facts
+/// reference" label in the AI pane.
+pub(crate) const FACTS_SEED_MARKER: &str = "⟦Facts⟧ ";
+
+/// 1.2.21+ — one-line framing prepended to the seeded Facts user turn.
+pub(crate) fn facts_seed_intro(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Установленные факты мира — считай их истиной при проверке этой рукописи:",
+        "de" => "Etablierte Weltfakten — behandle sie als Grundwahrheit bei der Faktenprüfung dieses Manuskripts:",
+        "fr" => "Faits établis du monde — considère-les comme la vérité de référence pour vérifier ce manuscrit :",
+        "es" => "Hechos establecidos del mundo — trátalos como verdad de referencia al verificar este manuscrito:",
+        _ => "Established world facts — treat these as ground truth when fact-checking this manuscript:",
+    }
+}
+
+/// 1.2.21+ — the seeded assistant acknowledgement that follows the
+/// facts in the Facts-scope chat prologue.
+pub(crate) fn facts_seed_ack(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Факты мира загружены. Попроси проверить любой фрагмент по ним или вставь текст для проверки.",
+        "de" => "Weltfakten geladen. Bitte mich, eine Passage damit abzugleichen, oder füge Prosa zur Faktenprüfung ein.",
+        "fr" => "Faits du monde chargés. Demande-moi de vérifier un passage par rapport à eux, ou colle un texte à vérifier.",
+        "es" => "Hechos del mundo cargados. Pídeme verificar cualquier pasaje con ellos, o pega prosa para comprobar.",
+        _ => "Loaded the world facts. Ask me to check any passage against them, or paste prose to fact-check.",
+    }
+}
+
+/// 1.2.21+ — multilingual system prompt for the Facts scope + the
+/// `Ctrl+B Shift+X` fact-check chord.  Frames the model as a
+/// fact-analysis / fact-checking assistant grounded in the supplied
+/// established facts.  Unknown codes fall back to English.
+pub(crate) fn facts_scope_system_prompt(lang_iso: &str) -> &'static str {
+    match lang_iso {
+        "ru" => "Ты — внимательный помощник по проверке фактов в художественном произведении. \
+В разговор включены установленные факты мира истории — климат, география, времена года, расстояния, хронология. \
+Считай эти факты истиной. Когда автор спрашивает об отрывке, проверь его на противоречия с установленными фактами \
+и точно назови, какой факт нарушен и как. Если отрывок согласуется — кратко скажи об этом. Не выдумывай новых фактов; \
+если что-то не охвачено установленными фактами, скажи, что это не определено, а не угадывай.",
+        "de" => "Du bist ein sorgfältiger Assistent für Faktenprüfung und Faktenanalyse für ein belletristisches Werk. \
+Das Gespräch enthält die etablierten Fakten der Welt der Geschichte — Klima, Geografie, Jahreszeiten, Entfernungen, Chronologie. \
+Behandle diese Fakten als Grundwahrheit. Wenn die Autorin nach einer Passage fragt, prüfe sie auf Widersprüche zu den \
+etablierten Fakten und benenne genau, welcher Fakt wie verletzt wird. Ist eine Passage konsistent, sage es kurz. Erfinde \
+keine neuen Fakten; was nicht von den etablierten Fakten abgedeckt ist, bezeichne als unbestimmt, statt zu raten.",
+        "fr" => "Tu es un assistant méticuleux de vérification et d'analyse des faits pour une œuvre de fiction. \
+La conversation inclut les faits établis du monde de l'histoire — climat, géographie, saisons, distances, chronologie. \
+Considère ces faits comme la vérité de référence. Quand l'auteur t'interroge sur un passage, vérifie s'il contredit les \
+faits établis et nomme précisément quel fait est violé et comment. Si un passage est cohérent, dis-le brièvement. \
+N'invente jamais de faits ; si quelque chose n'est pas couvert par les faits établis, dis que c'est non spécifié plutôt que de deviner.",
+        "es" => "Eres un asistente meticuloso de verificación y análisis de hechos para una obra de ficción. \
+La conversación incluye los hechos establecidos del mundo de la historia — clima, geografía, estaciones, distancias, cronología. \
+Trata esos hechos como verdad de referencia. Cuando el autor pregunte por un pasaje, compruébalo en busca de contradicciones \
+con los hechos establecidos y nombra exactamente qué hecho se viola y cómo. Si un pasaje es coherente, dilo brevemente. \
+No inventes hechos nuevos; si algo no está cubierto por los hechos establecidos, di que no está especificado en lugar de adivinar.",
+        _ => "You are a meticulous fact-checking and facts-analysis assistant for a work of fiction. \
+The conversation includes the established facts of the story's world — climate, geography, seasons, distances, chronology. \
+Treat those facts as ground truth. When the author asks about a passage, check it for contradictions with the established \
+facts and name exactly which fact is violated and how. If a passage is consistent, say so briefly. Never invent new facts; \
+if something is not covered by the established facts, say it is unspecified rather than guessing.",
+    }
+}
+
 /// translations of the same instructions tuned for native
 /// grammatical idiom.  Unknown codes fall back to English
 /// so the resolver always has a floor.  Same shape for the
@@ -20549,5 +20652,38 @@ mod tests_split_view {
         }
         // Unknown codes fall back to English.
         assert_eq!(unknown, en);
+    }
+
+    /// 1.2.21+ — the Facts-scope system prompt (and the seed
+    /// intro / ack) follow the same five-language contract as
+    /// every other embedded prompt.
+    #[test]
+    fn facts_scope_prompts_cover_five_languages() {
+        for f in [
+            super::facts_scope_system_prompt
+                as fn(&str) -> &'static str,
+            super::facts_seed_intro,
+            super::facts_seed_ack,
+        ] {
+            let en = f("en");
+            let variants = [f("en"), f("ru"), f("de"), f("fr"), f("es")];
+            for body in variants {
+                assert!(!body.trim().is_empty(), "empty facts prompt body");
+            }
+            for i in 0..variants.len() {
+                for j in (i + 1)..variants.len() {
+                    assert_ne!(
+                        variants[i], variants[j],
+                        "facts prompt variants {i}/{j} identical — translation missed?",
+                    );
+                }
+            }
+            // Unknown codes fall back to English.
+            assert_eq!(f("klingon"), en);
+        }
+        // The system prompt names the fact-check job explicitly.
+        let sys = super::facts_scope_system_prompt("en").to_lowercase();
+        assert!(sys.contains("fact"));
+        assert!(sys.contains("ground truth"));
     }
 }
