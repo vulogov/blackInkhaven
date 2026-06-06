@@ -136,6 +136,40 @@ facts are the reference, the model flags what the prose contradicts. This
 is an AI pass (it costs LLM calls), so it's a CLI command rather than one
 of the offline `doctor --scan` classes.
 
+## 5. Already have a draft? Extract the facts from it
+
+If you didn't build the Facts book up front, you don't have to start from
+a blank page. `inkhaven facts extract` reads the manuscript and *proposes*
+the world-facts it has implicitly established — then you accept or reject
+each one:
+
+```text
+$ inkhaven facts extract
+inkhaven facts extract · language: English · model: gemini-2.5-flash · 18 chapter(s)
+  [1/18] Arrivals → 2 new candidate(s)
+  …
+
+[1/14] climate — The Sael basin is equatorial; the monsoon runs Jun–Sep.
+       (established in: Arrivals)
+       add to Facts? [y/N/a=all/q=quit]: y
+[2/14] geography — The capital sits three days' ride inland from Port Sael.
+       (established in: The Crossing)
+       add to Facts? [y/N/a=all/q=quit]: y
+…
+facts extract: added 9 fact(s) to the Facts book
+```
+
+Each accepted candidate becomes a paragraph in the Facts book (titled by
+category), ready for the scope, the chord, and the scan. Candidates that
+restate something already in the Facts book are dropped automatically
+(stemmer-normalised, so inflected restatements collapse) — so re-running
+extract after you've added more chapters only surfaces what's genuinely
+new.
+
+- `--dry-run` lists the proposals without adding anything.
+- `--yes` accepts them all (scripted bootstrap).
+- `--provider <name>` overrides the LLM.
+
 ## Multilingual
 
 Both tools are multilingual. The fact-analysis system prompt, the seed

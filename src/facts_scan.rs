@@ -14,8 +14,10 @@
 //! a standalone AI command (the `continuity` / `tension` pattern), not a
 //! ScanClass.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use rust_stemmers::Stemmer;
 use serde::{Deserialize, Serialize};
 
 /// One flagged contradiction between the prose and an established fact.
@@ -119,6 +121,81 @@ pub fn parse_findings(raw: &str, chapter: &str, chapter_index: usize) -> Vec<Fac
     out
 }
 
+// ── FF.3 — fact extraction from prose ─────────────────────
+
+/// One world-fact the AI proposes from the manuscript prose, awaiting
+/// the author's accept/reject before it joins the Facts book.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FactCandidate {
+    /// Coarse category (`climate`, `geography`, `chronology`, …).
+    pub category: String,
+    /// The proposed fact, a short self-contained sentence.
+    pub statement: String,
+    /// Chapter the fact was inferred from (provenance).
+    pub chapter: String,
+}
+
+/// Parse the AI extraction response — one candidate per line in the
+/// form `category | statement`.  Tolerant: blank + malformed lines,
+/// list markers, a header row, and a "none" sentinel are skipped.
+/// Pure.
+pub fn parse_candidates(raw: &str, chapter: &str) -> Vec<FactCandidate> {
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim().trim_start_matches(['-', '*', '•']).trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(2, '|').map(str::trim).collect();
+        if parts.len() != 2 {
+            continue;
+        }
+        let (category, statement) = (parts[0], parts[1]);
+        if category.is_empty() || statement.is_empty() {
+            continue;
+        }
+        if category.eq_ignore_ascii_case("category")
+            && statement.eq_ignore_ascii_case("statement")
+        {
+            continue;
+        }
+        if category.eq_ignore_ascii_case("none") {
+            continue;
+        }
+        out.push(FactCandidate {
+            category: category.to_string(),
+            statement: statement.to_string(),
+            chapter: chapter.to_string(),
+        });
+    }
+    out
+}
+
+/// Normalised token set for dedup: lowercase + `ё`-fold + Snowball-stem
+/// each word, drop punctuation/empties.  Inflected restatements of the
+/// same fact collapse to the same set.
+pub fn normalise_tokens(text: &str, stemmer: &Option<Stemmer>) -> BTreeSet<String> {
+    text.split_whitespace()
+        .map(|w| {
+            let trimmed = w.trim_matches(|c: char| !c.is_alphanumeric());
+            crate::text::normalize_stem(trimmed, stemmer)
+        })
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Jaccard similarity of two normalised token sets ≥ `threshold`?  Used
+/// to skip a candidate that restates an existing (or already-kept) fact.
+/// Empty sets are never near-duplicates.
+pub fn near_duplicate(a: &BTreeSet<String>, b: &BTreeSet<String>, threshold: f64) -> bool {
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    let inter = a.intersection(b).count() as f64;
+    let union = a.union(b).count() as f64;
+    union > 0.0 && (inter / union) >= threshold
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,5 +261,38 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let r = FactScanReport::load(tmp.path()).unwrap();
         assert!(r.findings.is_empty());
+    }
+
+    // ── FF.3 extraction ───────────────────────────────
+
+    #[test]
+    fn parses_category_statement_candidates() {
+        let raw = "Here are the world facts:\n\
+                   - climate | The Sael basin is equatorial; no winter.\n\
+                   geography | The capital is three days' ride inland.\n\
+                   category | statement\n\
+                   none\n\
+                   half a line";
+        let c = parse_candidates(raw, "Arrivals");
+        assert_eq!(c.len(), 2);
+        assert_eq!(c[0].category, "climate");
+        assert_eq!(c[0].statement, "The Sael basin is equatorial; no winter.");
+        assert_eq!(c[0].chapter, "Arrivals");
+        assert_eq!(c[1].category, "geography");
+    }
+
+    #[test]
+    fn near_duplicate_detects_inflected_restatement() {
+        let stemmer: Option<Stemmer> = crate::config::parse_stemmer_language("english")
+            .map(Stemmer::create);
+        let a = normalise_tokens("The capital is three days' ride inland", &stemmer);
+        let b = normalise_tokens("the capitals are three days riding inland", &stemmer);
+        // Inflected restatement → high overlap, flagged as duplicate.
+        assert!(near_duplicate(&a, &b, 0.6));
+        // A genuinely different fact is not.
+        let c = normalise_tokens("Winter lasts six months in the north", &stemmer);
+        assert!(!near_duplicate(&a, &c, 0.6));
+        // Empty never matches.
+        assert!(!near_duplicate(&a, &BTreeSet::new(), 0.6));
     }
 }
