@@ -1007,6 +1007,22 @@ pub enum FactsCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Propose world-facts from the manuscript prose and
+    /// (after an interactive y/N/a/q review) add the
+    /// accepted ones to the Facts book.  Deduped against
+    /// existing entries.  Solves the cold-start of an empty
+    /// Facts book.
+    Extract {
+        /// LLM provider override (defaults to `llm.default`).
+        #[arg(long)]
+        provider: Option<String>,
+        /// Accept every proposed fact without prompting.
+        #[arg(long)]
+        yes: bool,
+        /// List the proposed facts without adding any.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 /// 1.2.17+ T.7 — sub-subcommands under
