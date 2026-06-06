@@ -587,6 +587,15 @@ pub enum Action {
     /// prompt.
     #[serde(rename = "ai.fact_check")]
     FactCheck,
+    /// Ctrl+B Shift+S (1.2.21+) — open the Facts
+    /// semantic-search modal: type a query, semantic-
+    /// search the Facts book, mark the matches, and send
+    /// only those facts to a targeted Facts chat.  The
+    /// scalable path for a large Facts book — ground in
+    /// the relevant handful instead of the whole book.
+    /// Mnemonic `S` for Search facts.
+    #[serde(rename = "ai.search_facts")]
+    SearchFacts,
     /// Ctrl+B Shift+H (1.2.9+) — open the sentence-
     /// rhythm gauge modal for the open paragraph.
     /// Splits prose into sentences, computes word-
@@ -893,6 +902,7 @@ impl Action {
             Action::AiRewriteRhythm => "rhythm rewrite".into(),
             Action::AnalyseShowDontTell => "show↛tell AI".into(),
             Action::FactCheck => "fact check".into(),
+            Action::SearchFacts => "search facts".into(),
             Action::TranslateToInvented => "translate →".into(),
             Action::TranslateFromInvented => "translate ←".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
@@ -1143,6 +1153,8 @@ impl Action {
                 "AI-driven show-don't-tell scan of the open paragraph (1.2.9+, Ctrl+B Shift+T). Sends the paragraph to the configured LLM with a system prompt asking for telling passages plus suggested rewrites. The response streams into the AI pane. Complements the always-on regex overlay (`editor.style_warnings.show_dont_tell`) with deeper analysis — the regex catches the obvious 2-grams (`was angry`, `realised`); the AI scan catches subtler instances and proposes alternatives. Mnemonic: T for tell.".into(),
             Action::FactCheck =>
                 "AI fact-check of the open paragraph against the project's Facts book (1.2.21+, Ctrl+B Shift+X). Locks the AI scope to the local paragraph and grounds the check against every established world fact (climate, geography, seasons, distances, chronology), so the model flags any claim that contradicts the world — snow in a tropical region, a three-day ride that should be three weeks. With an empty Facts book it degrades to a generic local fact-check. Multilingual fact-analysis system prompt (en/ru/de/fr/es); prompt resolution: Prompts-book `fact-check` paragraph → `prompts.hjson` → embedded default. Streams the verdict into the AI pane. Mnemonic: X for fact eXamination. Pairs with the F9 `Facts` scope, which loads the same facts as a chat session.".into(),
+            Action::SearchFacts =>
+                "Open the Facts semantic-search modal (1.2.21+, Ctrl+B Shift+X's sibling, Ctrl+B Shift+S). Two-phase: type a query (multi-word OK) and Enter runs a semantic search over the Facts book (the same vector index as Ctrl+V S similar-paragraphs, post-filtered to the Facts subtree); then ↑↓ navigate the ranked matches, Space marks several (multi-select), Enter sends the marked facts — or the cursor's row — to a targeted Facts chat that's grounded in just those facts (reuses the F9 Facts-scope seed + fact-analysis system prompt). Any printable / Backspace in the results drops back to refine the query; Esc closes. The scalable path for a large Facts book: ground in the relevant handful instead of loading the whole book. Mnemonic: S for Search facts.".into(),
             Action::TranslateToInvented =>
                 "AI-driven translation of the open paragraph from the project's working language INTO an invented language defined under the Language system book (1.2.13+, Ctrl+B Q). Composes a prompt envelope from the language's Dictionary (RAG-filtered to words present in the source), Grammar (all rules), Phonology (all rules), and Sample-text chapters, then streams the response into the AI pane. With zero Language sub-books the chord errors out; with exactly one it translates directly; with two or more it pops a picker — ↑↓ + Enter, or type the first letter to jump-and-commit (the proposal's Ctrl+B Q Q for Quenya sub-letter pattern, unbundled). The translation block is wrapped between <<<TRANSLATION>>> / <<<END>>> markers so the I apply chord in the AI pane lifts only the target-language prose, no gloss table or commentary.".into(),
             Action::TranslateFromInvented =>
@@ -1356,6 +1368,7 @@ impl KeyBindings {
                 // show-don't-tell scan.
                 entry("Shift+t", Action::AnalyseShowDontTell, Scope::Editor),
                 entry("Shift+x", Action::FactCheck, Scope::Editor),
+                entry("Shift+s", Action::SearchFacts, Scope::Editor),
                 // 1.2.11+ — Ctrl+B Shift+M asks the
                 // LLM to rewrite the open paragraph
                 // for rhythm variety; AI diff modal

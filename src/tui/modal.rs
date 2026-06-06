@@ -326,6 +326,21 @@ pub(super) enum Modal {
         cursor: usize,
         scroll: usize,
     },
+    /// 1.2.21+ FF.1 — Facts semantic-search modal.  Two-phase to
+    /// avoid the Space-vs-space conflict (the query box accepts
+    /// multi-word queries): `browsing == false` while editing the
+    /// query (Enter runs the semantic search), `browsing == true`
+    /// while navigating results (↑↓ move, Space marks for
+    /// multi-select, Enter sends the marked facts — or the cursor's
+    /// — to a targeted Facts chat, any printable returns to the
+    /// query).  Reuses `SimilarPickerEntry` for the ranked rows.
+    FactsSearch {
+        input: super::input::TextInput,
+        entries: Vec<SimilarPickerEntry>,
+        cursor: usize,
+        marked: std::collections::BTreeSet<Uuid>,
+        browsing: bool,
+    },
     FilePicker(FilePicker),
     /// Ctrl+H quick reference. Pane-aware: content is fetched from
     /// `quickref::entries_for(focus_when_opened)`.

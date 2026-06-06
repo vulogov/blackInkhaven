@@ -183,6 +183,11 @@ impl super::App {
             self.draw_concordance_modal(f, area);
             return;
         }
+
+        if matches!(self.modal, Modal::FactsSearch { .. }) {
+            self.draw_facts_search_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SentenceRhythm { .. }) {
             self.draw_sentence_rhythm_modal(f, area);
             return;
