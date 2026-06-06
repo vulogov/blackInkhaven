@@ -31,6 +31,7 @@ pub mod bench_report;
 pub mod epub;
 pub mod audiobook;
 pub mod continuity;
+pub mod facts_scan;
 pub mod tension;
 pub mod manuscript;
 pub mod prompts;
@@ -599,6 +600,15 @@ pub enum Command {
     #[command(subcommand)]
     Tension(TensionCommand),
 
+    /// 1.2.21+ FF.2 — `inkhaven facts <subcommand>`.
+    /// `scan` runs the AI pass that checks every chapter's
+    /// prose against the Facts book (semantically-retrieved
+    /// relevant facts per chapter) and records contradictions
+    /// to `<project>/.inkhaven/facts_scan.json`; `list` dumps
+    /// them.  `--json` emits the report for CI gates.
+    #[command(subcommand)]
+    Facts(FactsCommand),
+
     /// Launch the TUI editor (default if no subcommand is given).
     Tui,
 
@@ -973,6 +983,30 @@ pub enum TensionCommand {
     },
     /// Dump the tension ledger.
     List,
+}
+
+/// 1.2.21+ FF.2 — sub-subcommands under
+/// `inkhaven facts …`.
+#[derive(Debug, Subcommand)]
+pub enum FactsCommand {
+    /// Run the AI fact-check pass: check every chapter's
+    /// prose against the Facts book (relevant facts
+    /// retrieved per chapter via semantic search) and write
+    /// contradictions to `<project>/.inkhaven/facts_scan.json`.
+    Scan {
+        /// LLM provider override (defaults to `llm.default`).
+        #[arg(long)]
+        provider: Option<String>,
+        /// Emit the report as JSON (for CI gates).
+        #[arg(long)]
+        json: bool,
+    },
+    /// Dump the last scan's findings (re-runs nothing).
+    List {
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// 1.2.17+ T.7 — sub-subcommands under
@@ -1769,6 +1803,9 @@ impl Cli {
             }
             Command::Tension(cmd) => {
                 tension::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Facts(cmd) => {
+                facts_scan::run(&project, cmd).map_err(Into::into)
             }
             Command::Manuscript {
                 book_name,

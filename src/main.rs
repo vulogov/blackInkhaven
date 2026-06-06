@@ -9,6 +9,7 @@ mod continuity;
 mod continuity_bible;
 mod crash;
 mod disk;
+mod facts_scan;
 mod health;
 mod io_atomic;
 mod path_safety;
