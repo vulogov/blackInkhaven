@@ -1,0 +1,70 @@
+// Catppuccin Latte — light color scheme for Inkhaven (1.2.20+)
+//
+// A partial theme override. Two ways to use it:
+//   1. copy this file to ~/.config/inkhaven/conf/catppuccin-latte.hjson
+//      (applies to every project — see Documentation/CONFIGURATION.md,
+//      "Global overrides"), or
+//   2. paste the `theme` block into a project's inkhaven.hjson.
+//
+// Palette: Catppuccin Latte
+{
+  theme: {
+    pane_bg:                         "#eff1f5"
+    pane_fg:                         "#4c4f69"
+    line_number_fg:                  "#9ca0b0"
+    current_line_bg:                 "#ccd0da"
+
+    border_focused:                  "#ea76cb"
+    border_unfocused:                "#9ca0b0"
+    border_dirty:                    "#df8e1d"
+    border_saved:                    "#40a02b"
+    border_readonly:                 "#04a5e5"
+
+    modal_bg:                        "#e6e9ef"
+    modal_border:                    "#ea76cb"
+    modal_fg:                        "#4c4f69"
+
+    places_fg:                       "#04a5e5"
+    characters_fg:                   "#df8e1d"
+    artefacts_fg:                    "#fe640b"
+    notes_underline_fg:              "#4c4f69"
+    language_word_fg:                "#8839ef"
+
+    style_warning_filter_word_fg:    "#df8e1d"
+    style_warning_repeated_phrase_fg: "#d20f39"
+    style_warning_show_dont_tell_fg: "#04a5e5"
+    style_warning_echo_fg:           "#8839ef"
+
+    pov_chip_bg:                     "#8839ef"
+    pov_chip_fg:                     "#ffffff"
+    search_match_bg:                 "#ccd0da"
+    search_current_bg:               "#ea76cb"
+
+    tree_open_marker:                "#40a02b"
+    tree_book_fg:                    "#ea76cb"
+    tree_chapter_fg:                 "#1e66f5"
+    tree_subchapter_fg:              "#04a5e5"
+    tree_paragraph_fg:               "#4c4f69"
+    tree_image_fg:                   "#fe640b"
+    tree_script_fg:                  "#8839ef"
+
+    editor_position_fg:              "#04a5e5"
+    ai_scope_fg:                     "#fe640b"
+    ai_infer_fg:                     "#04a5e5"
+    grammar_change_fg:               "#d20f39"
+
+    syntax_heading:                  "#8839ef"
+    syntax_bold:                     "#df8e1d"
+    syntax_italic:                   "#04a5e5"
+    syntax_string:                   "#40a02b"
+    syntax_number:                   "#fe640b"
+    syntax_comment:                  "#9ca0b0"
+    syntax_keyword:                  "#ea76cb"
+    syntax_function:                 "#1e66f5"
+    syntax_operator:                 "#04a5e5"
+    syntax_list_marker:              "#8839ef"
+    syntax_raw:                      "#fe640b"
+    syntax_tag:                      "#1e66f5"
+    syntax_quote:                    "#9ca0b0"
+  }
+}
