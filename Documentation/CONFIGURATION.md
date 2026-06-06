@@ -1315,6 +1315,27 @@ tells you the cast is thin; 50 named places
 across a 200-paragraph manuscript tells you
 the reader has a thicket to navigate.
 
+### `editor.show_facts_chip` (1.2.21+)
+
+Toggles a Facts chip in the status bar — `⚑<N>`,
+the number of entries in the **Facts** system
+book (the world's invariants).  Off by default
+(opt-in); auto-hides when the Facts book is
+empty.
+
+```hjson
+{
+  editor: {
+    show_facts_chip: true
+  }
+}
+```
+
+A companion to the glossary chip: it surfaces
+how richly the world's ground rules are
+documented, so you notice a 40-chapter
+manuscript still running on three facts.
+
 ### `snippets` — `bund:` prefix + picker placeholders (1.2.16+)
 
 Extends the 1.2.14 `snippets` block.  No new

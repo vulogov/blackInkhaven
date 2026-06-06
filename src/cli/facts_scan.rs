@@ -64,15 +64,18 @@ pub fn run(project: &Path, cmd: FactsCommand) -> Result<()> {
             yes,
             dry_run,
         } => extract(project, provider.as_deref(), yes, dry_run),
-        FactsCommand::Init { force } => init(project, force),
+        FactsCommand::Init { force, genre } => {
+            init(project, force, genre.as_deref())
+        }
     }
 }
 
 /// 1.2.21+ FF.4c — starter skeleton for the Facts book: the categories
 /// a world's invariants usually fall into, each a paragraph seeded with
 /// a one-line prompt the author replaces.  Turns an empty Facts book
-/// into fill-in-the-blanks.
-const FACTS_SKELETON: &[(&str, &str)] = &[
+/// into fill-in-the-blanks.  The general set applies to every project;
+/// `--genre` appends genre-specific categories (FF.4c genre-aware).
+const GENERAL_SKELETON: &[(&str, &str)] = &[
     (
         "Climate",
         "Temperature bands, rainfall / monsoon, extremes — and what's impossible here (snow? drought?).",
@@ -99,10 +102,89 @@ const FACTS_SKELETON: &[(&str, &str)] = &[
     ),
 ];
 
+/// The genre-specific categories appended to the general set by
+/// `--genre`.  Each is the genre's recurring continuity hot-spots.
+fn genre_extras(genre: &str) -> Option<&'static [(&'static str, &'static str)]> {
+    match genre.trim().to_lowercase().as_str() {
+        "" | "general" => Some(&[]),
+        "fantasy" => Some(&[
+            (
+                "Magic system",
+                "What magic can and can't do, who can use it, and its costs / limits — the rules a clever reader will hold you to.",
+            ),
+            (
+                "Cosmology & religion",
+                "Gods, planes, afterlife, prophecy — the metaphysics the plot leans on.",
+            ),
+            (
+                "Peoples & lineages",
+                "The races / peoples / bloodlines, their traits, lifespans, and relations.",
+            ),
+        ]),
+        "scifi" | "sci-fi" | "science-fiction" => Some(&[
+            (
+                "Technology",
+                "The tech baseline: what exists, what doesn't, and the hard limits (energy, comms, weapons).",
+            ),
+            (
+                "Physics & travel",
+                "FTL / sublight rules, travel-times between worlds, gravity, and any bent physics — kept consistent.",
+            ),
+            (
+                "Polity & factions",
+                "Governments, corporations, alliances, and who controls what.",
+            ),
+        ]),
+        "mystery" => Some(&[
+            (
+                "Timeline of events",
+                "The true sequence of what happened, with times — the spine the clues must fit.",
+            ),
+            (
+                "Suspects & alibis",
+                "Each suspect's whereabouts, motive, and means — what's verifiably true.",
+            ),
+            (
+                "Physical evidence",
+                "The clues, where they were, and what they actually prove (fair-play: no cheating).",
+            ),
+        ]),
+        "historical" => Some(&[
+            (
+                "Period & setting",
+                "The era's material facts: dress, technology, money, travel, daily life.",
+            ),
+            (
+                "Real events & figures",
+                "The historical events / people the story touches, and their real dates.",
+            ),
+            (
+                "Anachronism watch",
+                "Words, objects, and ideas that would be out of period — the things to never let slip in.",
+            ),
+        ]),
+        _ => None,
+    }
+}
+
+/// Genres `--genre` accepts (for help + error messages).
+const GENRES: &[&str] = &["general", "fantasy", "scifi", "mystery", "historical"];
+
 /// `inkhaven facts init` — scaffold the starter category paragraphs in
 /// the Facts book.  Idempotent: a category already present is left
-/// untouched unless `--force` adds a second copy.
-fn init(project: &Path, force: bool) -> Result<()> {
+/// untouched unless `--force` adds a second copy.  `--genre` appends
+/// genre-specific categories to the general set.
+fn init(project: &Path, force: bool, genre: Option<&str>) -> Result<()> {
+    let genre = genre.unwrap_or("general");
+    let Some(extras) = genre_extras(genre) else {
+        return Err(Error::Store(format!(
+            "facts init: unknown genre `{genre}` — try one of: {}",
+            GENRES.join(", "),
+        )));
+    };
+    let skeleton: Vec<(&str, &str)> =
+        GENERAL_SKELETON.iter().chain(extras.iter()).copied().collect();
+
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
@@ -133,7 +215,7 @@ fn init(project: &Path, force: bool) -> Result<()> {
 
     let mut added = 0usize;
     let mut skipped = 0usize;
-    for (title, hint) in FACTS_SKELETON {
+    for (title, hint) in &skeleton {
         if !force && existing.contains(&title.to_lowercase()) {
             skipped += 1;
             continue;
