@@ -288,6 +288,13 @@ theme: {
   style_warning_filter_word_modifier:       ""
   style_warning_repeated_phrase_modifier:   ""
   style_warning_show_dont_tell_modifier:    ""
+  // 1.2.20+ — the live echo overlay (Ctrl+B Shift+K).
+  // Its own colour (default a muted purple "#b48ead")
+  // so a cross-paragraph echo doesn't read as a
+  // within-paragraph repeated phrase; modifier accepts
+  // the same grammar as the three above.
+  style_warning_echo_fg:                    "#b48ead"
+  style_warning_echo_modifier:              ""
 
   // Typst syntax
   syntax_heading:    "#cba6f7"
@@ -1455,7 +1462,7 @@ distinctive word reused close together).
 | `echo_window` | usize | `5` | Window (consecutive paragraphs) for the echo scan.  A distinctive word reused `echo_min_repeats` times within this many paragraphs is flagged. |
 | `echo_min_repeats` | usize | `3` | Occurrences within `echo_window` required to flag.  Lower = more sensitive. |
 | `echo_max_global` | usize | `40` | Distinctiveness ceiling: words used more than this many times across a chapter are treated as common vocabulary (legitimately reused) and skipped, even when clustered.  Tune up for long works, down for short stories. |
-| `echo_overlay` | bool | `false` | Default state of the live echo overlay (`Ctrl+B Shift+K`, 1.2.20+ C.1.b): underline, in the open paragraph, words echoing across nearby paragraphs — the inline companion to the `echo-repetition` doctor scan, reusing the three `echo_*` tunables above.  The session toggle overrides this; set `true` to always start on. |
+| `echo_overlay` | bool | `false` | Default state of the live echo overlay (`Ctrl+B Shift+K`, 1.2.20+ C.1.b): underline, in the open paragraph, words echoing across nearby paragraphs — the inline companion to the `echo-repetition` doctor scan, reusing the three `echo_*` tunables above.  Painted in `theme.style_warning_echo_fg` (default `#b48ead`, distinct from the repeated-phrase overlay).  The session toggle overrides this; set `true` to always start on. |
 
 ### `editor.paragraph_long_secs` (1.2.20+)
 
