@@ -1114,6 +1114,14 @@ pub struct ThemeConfig {
     /// 1.2.9+ — colour for show-don't-tell warnings.
     #[serde(default)]
     pub style_warning_show_dont_tell_fg: String,
+    /// 1.2.20+ — colour for the live echo overlay
+    /// (`Ctrl+B Shift+K`).  Distinct from the
+    /// repeated-phrase magenta so a within-paragraph
+    /// repeat and a cross-paragraph echo read as
+    /// different findings.  Empty falls back to a
+    /// muted purple at runtime.
+    #[serde(default)]
+    pub style_warning_echo_fg: String,
     /// 1.2.13+ — colour for invented-language
     /// dictionary-entry overlays.  Empty falls back to
     /// a soft mauve-teal mix distinct from the four
@@ -1138,6 +1146,11 @@ pub struct ThemeConfig {
     pub style_warning_repeated_phrase_modifier: String,
     #[serde(default)]
     pub style_warning_show_dont_tell_modifier: String,
+    /// 1.2.20+ — modifier for the live echo overlay.
+    /// Same grammar as the other style-warning
+    /// modifiers; empty maps to `underline`.
+    #[serde(default)]
+    pub style_warning_echo_modifier: String,
     /// 1.2.14+ Phase C.1 — modifier applied to the
     /// character span of every inline comment.
     /// Empty string keeps the baked-in default
@@ -1232,6 +1245,10 @@ impl Default for ThemeConfig {
             style_warning_filter_word_fg: "#f9c44e".into(),
             style_warning_repeated_phrase_fg: "#eb6f92".into(),
             style_warning_show_dont_tell_fg: "#94e2d5".into(),
+            // 1.2.20+ — muted purple, distinct from the
+            // repeated-phrase magenta so the two
+            // repetition overlays don't read as one.
+            style_warning_echo_fg: "#b48ead".into(),
             // 1.2.13+ — invented-language overlay; empty
             // falls back to a soft mauve-teal at runtime.
             language_word_fg: String::new(),
@@ -1242,6 +1259,7 @@ impl Default for ThemeConfig {
             style_warning_filter_word_modifier: String::new(),
             style_warning_repeated_phrase_modifier: String::new(),
             style_warning_show_dont_tell_modifier: String::new(),
+            style_warning_echo_modifier: String::new(),
             comment_span_modifier: String::new(),
             pov_chip_bg: "#8b1d88".into(),
             pov_chip_fg: "#ffffff".into(),

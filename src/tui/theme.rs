@@ -44,6 +44,12 @@ pub struct Theme {
     /// so the three overlays stay distinguishable
     /// when adjacent.
     pub style_warning_show_dont_tell_fg: Color,
+    /// 1.2.20+ — colour for the live echo overlay
+    /// (`Ctrl+B Shift+K`).  Distinct from the
+    /// repeated-phrase magenta so a within-paragraph
+    /// repeat and a cross-paragraph echo stay
+    /// visually separate.
+    pub style_warning_echo_fg: Color,
     /// 1.2.13+ — colour for invented-language
     /// dictionary-entry overlays.  Painted on
     /// invented words in the manuscript when a
@@ -73,6 +79,8 @@ pub struct Theme {
     pub style_warning_filter_word_modifier: Modifier,
     pub style_warning_repeated_phrase_modifier: Modifier,
     pub style_warning_show_dont_tell_modifier: Modifier,
+    /// 1.2.20+ — modifier for the live echo overlay.
+    pub style_warning_echo_modifier: Modifier,
     /// 1.2.14+ Phase C.1 — modifier applied to the
     /// character span of every inline comment.
     /// Default `underline+italic` mirrors the
@@ -174,6 +182,14 @@ impl Theme {
                 // when adjacent.
                 Color::Rgb(0x94, 0xe2, 0xd5),
             ),
+            style_warning_echo_fg: color_or(
+                &cfg.style_warning_echo_fg,
+                // Muted purple — its own hue, distinct
+                // from the repeated-phrase magenta so a
+                // cross-paragraph echo doesn't read as a
+                // within-paragraph repeat.
+                Color::Rgb(0xb4, 0x8e, 0xad),
+            ),
             // 1.2.13+ — invented-language overlay.
             // Soft mauve-teal mix; distinct from the
             // four existing entity-overlay colours.
@@ -192,6 +208,9 @@ impl Theme {
             ),
             style_warning_show_dont_tell_modifier: parse_style_modifier(
                 &cfg.style_warning_show_dont_tell_modifier,
+            ),
+            style_warning_echo_modifier: parse_style_modifier(
+                &cfg.style_warning_echo_modifier,
             ),
             comment_span_modifier: {
                 let raw = cfg.comment_span_modifier.trim();
@@ -294,6 +313,7 @@ impl Theme {
             "style_warning_filter_word_fg" => self.style_warning_filter_word_fg = parsed,
             "style_warning_repeated_phrase_fg" => self.style_warning_repeated_phrase_fg = parsed,
             "style_warning_show_dont_tell_fg" => self.style_warning_show_dont_tell_fg = parsed,
+            "style_warning_echo_fg" => self.style_warning_echo_fg = parsed,
             "language_word_fg" => self.language_word_fg = parsed,
             "pov_chip_bg" => self.pov_chip_bg = parsed,
             "pov_chip_fg" => self.pov_chip_fg = parsed,
@@ -423,5 +443,42 @@ mod tests_style_modifier {
         assert!(m.contains(Modifier::DIM));
         assert!(m.contains(Modifier::ITALIC));
         assert!(m.contains(Modifier::REVERSED));
+    }
+
+    // 1.2.20+ — the echo overlay has its own colour so it
+    // doesn't collapse into the repeated-phrase overlay.
+    #[test]
+    fn echo_fg_defaults_distinct_from_repeated_phrase() {
+        let theme = Theme::from_config(&ThemeConfig::default());
+        assert_ne!(
+            theme.style_warning_echo_fg,
+            theme.style_warning_repeated_phrase_fg,
+        );
+        assert_eq!(
+            theme.style_warning_echo_fg,
+            Color::Rgb(0xb4, 0x8e, 0xad),
+        );
+    }
+
+    // An empty `style_warning_echo_fg` (older configs that
+    // predate the key) still resolves to the muted-purple
+    // default via `color_or`, not to a blank colour.
+    #[test]
+    fn echo_fg_empty_falls_back_to_default() {
+        let mut cfg = ThemeConfig::default();
+        cfg.style_warning_echo_fg = String::new();
+        let theme = Theme::from_config(&cfg);
+        assert_eq!(theme.style_warning_echo_fg, Color::Rgb(0xb4, 0x8e, 0xad));
+    }
+
+    // `set_by_name` recolours the echo overlay at runtime
+    // (the `ink.theme.set` script path).
+    #[test]
+    fn set_by_name_recolours_echo() {
+        let mut theme = Theme::from_config(&ThemeConfig::default());
+        theme
+            .set_by_name("style_warning_echo_fg", "#102030")
+            .unwrap();
+        assert_eq!(theme.style_warning_echo_fg, Color::Rgb(0x10, 0x20, 0x30));
     }
 }
