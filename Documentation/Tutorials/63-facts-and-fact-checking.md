@@ -109,6 +109,33 @@ The verdict streams into the AI pane — read it, fix the prose, move on. If
 the Facts book is empty, the chord still runs a generic local fact-check
 (no grounding).
 
+## 4. Scan the whole manuscript — `inkhaven facts scan`
+
+`Ctrl+B Shift+X` checks one paragraph; when you want to sweep the *whole*
+book, run the CLI scan. It walks every chapter, retrieves the facts
+relevant to each (semantic search, so a 300-fact book stays cheap), asks
+the model for contradictions, and writes them to a sidecar:
+
+```text
+$ inkhaven facts scan
+inkhaven facts scan · language: English · model: gemini-2.5-flash · 18 chapter(s) · 24 fact(s)
+  [1/18] Arrivals → 0 contradiction(s)
+  [7/18] The Crossing → 2 contradiction(s)
+  …
+facts scan: 3 contradiction(s) across 18 chapter(s) → .inkhaven/facts_scan.json
+```
+
+- `inkhaven facts list` re-prints the last scan without re-running it
+  (so you don't pay for the LLM calls twice).
+- `inkhaven facts scan --json` (or `facts list --json`) emits the report
+  for a CI gate — fail the build if `findings` is non-empty.
+- `--provider <name>` overrides the LLM for the run.
+
+It's the same grounding as the chord and the F9 scope — the established
+facts are the reference, the model flags what the prose contradicts. This
+is an AI pass (it costs LLM calls), so it's a CLI command rather than one
+of the offline `doctor --scan` classes.
+
 ## Multilingual
 
 Both tools are multilingual. The fact-analysis system prompt, the seed
