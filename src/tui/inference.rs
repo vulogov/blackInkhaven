@@ -38,9 +38,17 @@ impl InferenceAction {
 
 /// Scope of context an AI prompt sweeps in along with the user's query.
 /// Cycled by F9: None → Selection → Paragraph → Subchapter → Chapter →
-/// Book → None. Each non-None scope prepends the relevant text to the
-/// query before sending; after a successful submission the mode auto-
-/// resets to None so a follow-up prompt isn't surprised by stale scope.
+/// Book → Facts → None. Each non-None scope prepends the relevant text
+/// to the query before sending; after a successful submission the mode
+/// auto-resets to None so a follow-up prompt isn't surprised by stale
+/// scope.
+///
+/// `Facts` (1.2.21+) is the odd one out: instead of text drawn from the
+/// manuscript around the cursor, it loads every paragraph of the `Facts`
+/// system book — the world's invariants — as ground-truth context, and
+/// pre-seeds the chat with a fact-analysis system prompt.  It sits after
+/// `Book` (the widest manuscript scope) since it's broader still: not a
+/// slice of the book, but the reference the whole book answers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AiMode {
     None,
@@ -49,6 +57,7 @@ pub(super) enum AiMode {
     Subchapter,
     Chapter,
     Book,
+    Facts,
 }
 
 impl AiMode {
@@ -60,6 +69,7 @@ impl AiMode {
             AiMode::Subchapter => "Subchapter",
             AiMode::Chapter => "Chapter",
             AiMode::Book => "Book",
+            AiMode::Facts => "Facts",
         }
     }
     pub(super) fn next(self) -> Self {
@@ -69,7 +79,8 @@ impl AiMode {
             AiMode::Paragraph => AiMode::Subchapter,
             AiMode::Subchapter => AiMode::Chapter,
             AiMode::Chapter => AiMode::Book,
-            AiMode::Book => AiMode::None,
+            AiMode::Book => AiMode::Facts,
+            AiMode::Facts => AiMode::None,
         }
     }
 }
@@ -125,4 +136,36 @@ pub(super) enum InferenceStatus {
     Streaming,
     Done,
     Error(String),
+}
+
+#[cfg(test)]
+mod ai_mode_tests {
+    use super::AiMode;
+
+    // 1.2.21+ — Facts cycles after Book (the widest manuscript
+    // scope) and wraps back to None; F9 visits all seven scopes.
+    #[test]
+    fn cycle_includes_facts_after_book_and_wraps() {
+        let order: Vec<&str> = {
+            let mut m = AiMode::None;
+            let mut seen = vec![m.label()];
+            loop {
+                m = m.next();
+                if m == AiMode::None {
+                    break;
+                }
+                seen.push(m.label());
+            }
+            seen
+        };
+        assert_eq!(
+            order,
+            vec![
+                "None", "Selection", "Paragraph", "Subchapter", "Chapter", "Book", "Facts",
+            ],
+        );
+        // Explicit: the new edges.
+        assert_eq!(AiMode::Book.next(), AiMode::Facts);
+        assert_eq!(AiMode::Facts.next(), AiMode::None);
+    }
 }

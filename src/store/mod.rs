@@ -49,6 +49,12 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
 ];
 
 pub const SYSTEM_TAG_NOTES: &str = "notes";
+/// 1.2.21+ — top-level container for a world's invariants
+/// (climate, geography, seasons, distances, chronology).
+/// Free-form prose like Notes; the AI `Facts` scope loads
+/// every paragraph here as ground truth, and the
+/// `Ctrl+B Shift+X` fact-check chord grounds against it.
+pub const SYSTEM_TAG_FACTS: &str = "facts";
 pub const SYSTEM_TAG_PROMPTS: &str = "prompts";
 pub const SYSTEM_TAG_PLACES: &str = "places";
 pub const SYSTEM_TAG_CHARACTERS: &str = "characters";
