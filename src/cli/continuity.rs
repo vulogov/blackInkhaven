@@ -51,7 +51,7 @@ no durable facts, output nothing.";
 fn extract(project: &Path, provider: Option<&str>) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg)
         .map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy =

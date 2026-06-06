@@ -40,7 +40,7 @@ pub fn run(
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     if !cfg.timeline.enabled {
         return Err(anyhow!(
             "`inkhaven export-timeline` requires `timeline.enabled: true` in inkhaven.hjson"

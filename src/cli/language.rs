@@ -231,7 +231,7 @@ const META_OVERVIEW_BODY: &str = "{
 fn init(project: &Path, name: &str) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout, &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
     let lang_book = hierarchy
@@ -387,7 +387,7 @@ fn add_word(
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout, &cfg)?;
 
     let hierarchy = Hierarchy::load(&store)?;
@@ -1085,7 +1085,7 @@ fn doctor(project: &Path, language: &str, json: bool) -> Result<()> {
     use crate::store::node::NodeKind;
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout, &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
 
@@ -1423,7 +1423,7 @@ fn export(
     use crate::store::node::NodeKind;
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout, &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
 
@@ -2038,7 +2038,7 @@ fn define_rule(
     }
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
     use crate::store::node::NodeKind;
@@ -2226,7 +2226,7 @@ fn import_dictionary_csv(
     use crate::store::node::NodeKind;
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
 
@@ -2802,7 +2802,7 @@ fn list(project: &Path) -> Result<()> {
     use crate::store::node::NodeKind;
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout, &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
 
@@ -2890,7 +2890,7 @@ fn remove_word(project: &Path, language: &str, word: &str) -> Result<()> {
     use crate::store::node::NodeKind;
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
 

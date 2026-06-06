@@ -19,7 +19,7 @@ pub fn run(project: &Path, out: Option<&Path>) -> Result<()> {
     // a relative path that needs resolving against the project. We do NOT
     // open the store: a backup is filesystem-level, and we don't want to
     // initialise duckdb/HNSW just to copy bytes.
-    let _cfg = Config::load(&layout.config_path())?;
+    let _cfg = Config::load_layered(&layout.config_path())?;
 
     let abs_project = std::fs::canonicalize(&layout.root).map_err(crate::error::Error::Io)?;
     // `out` may be relative — resolve against the cwd, not the project

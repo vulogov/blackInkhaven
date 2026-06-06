@@ -14,6 +14,7 @@ into your file.
 ## Table of contents
 
 - [How the config is read](#how-the-config-is-read)
+- [Global overrides](#global-overrides-1220)
 - [Top-level fields](#top-level-fields)
 - [`embeddings`](#embeddings)
 - [`llm`](#llm)
@@ -49,6 +50,46 @@ inkhaven --project ~/Books/my-novel list >/dev/null
 
 If the config is malformed the CLI prints an error like
 `inkhaven: config error: found a punctuator character when expecting a quoteless string` and exits.
+
+## Global overrides (1.2.20+)
+
+You don't have to repeat yourself across projects. After a project's
+`inkhaven.hjson` is read, Inkhaven layers any **user-global override files**
+on top, so a personal preference (your theme, your keybinds) applies to
+*every* project without editing each project's config.
+
+Precedence, lowest → highest:
+
+1. compiled-in defaults
+2. the project's `inkhaven.hjson`
+3. `~/.config/inkhaven/config.hjson`
+4. `~/.config/inkhaven/conf/*.hjson` — every `.hjson` file in that folder,
+   in sorted (lexical) filename order, each overriding the previous
+
+So a global file **wins over the project**. This is deliberate: `inkhaven
+init` writes a *full* config, so if the project won you'd never see your
+global colours. The override files are **partial** — put in only the keys
+you want to change; everything else falls through to the project:
+
+```hjson
+// ~/.config/inkhaven/config.hjson — applies to all projects
+{
+  theme: {
+    style_warning_echo_fg: "#7aa2f7"
+    pane_fg: "#e0e0e0"
+  }
+}
+```
+
+Split overrides across `conf/` if you like — e.g.
+`conf/10-theme.hjson`, `conf/20-keys.hjson` — and the higher-numbered file
+wins on a conflict. The directory honours `$XDG_CONFIG_HOME` (falling back
+to `~/.config`).
+
+A malformed **global** file is skipped with a warning rather than breaking
+every project — only a malformed **project** `inkhaven.hjson` is fatal. The
+in-app config editor (`Ctrl+B A`) still edits the *project* file directly,
+so what it shows is the raw project config, not the global-merged result.
 
 ## Top-level fields
 

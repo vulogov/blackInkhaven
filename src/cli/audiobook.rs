@@ -52,7 +52,7 @@ pub fn run(
 
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
 
     if !cfg.editor.tts.enabled {
         return Err(Error::Store(

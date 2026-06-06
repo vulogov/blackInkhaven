@@ -2856,12 +2856,142 @@ impl Config {
         serde_hjson::from_str(&raw).map_err(|e| crate::error::Error::Config(e.to_string()))
     }
 
+    /// 1.2.20+ — load the project config, then layer any
+    /// user-global override files on top.  Precedence, low
+    /// → high: built-in defaults → project `inkhaven.hjson`
+    /// → `~/.config/inkhaven/config.hjson` →
+    /// `~/.config/inkhaven/conf/*.hjson` (sorted lexically).
+    ///
+    /// The global files are **partial** — only the keys
+    /// they contain override; everything else falls through
+    /// to the project.  This lets a user keep one personal
+    /// theme / keybind set that applies to every project
+    /// without editing each project's HJSON.
+    ///
+    /// Global overrides win over the project **deliberately**:
+    /// `inkhaven init` writes a *full* config, so a
+    /// project-wins cascade would mask the user's global
+    /// preferences entirely.  A malformed *global* file is
+    /// skipped with a WARN (a typo there must never brick
+    /// every project + command); a malformed *project* file
+    /// stays fatal, exactly like [`Config::load`].
+    pub fn load_layered(project_path: &Path) -> crate::error::Result<Self> {
+        Self::load_layered_from(project_path, global_config_dir().as_deref())
+    }
+
+    /// [`Config::load_layered`] with the global config
+    /// directory injected — the seam the tests drive without
+    /// touching the process-wide `$XDG_CONFIG_HOME`.
+    fn load_layered_from(
+        project_path: &Path,
+        global_dir: Option<&Path>,
+    ) -> crate::error::Result<Self> {
+        // Base = the built-in defaults as a JSON value, so
+        // the final typed `from_value` always sees a
+        // complete object no matter which keys the layers
+        // carry.
+        let mut merged = serde_json::to_value(Config::default())
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+
+        // Project layer — required + fatal on parse error,
+        // matching `load`.
+        let project = read_hjson_value(project_path)?;
+        merge_value(&mut merged, project);
+
+        // Global override layer(s) — best-effort: a broken
+        // file degrades to "skipped", never to a hard error.
+        if let Some(dir) = global_dir {
+            for path in global_config_files_in(dir) {
+                match read_hjson_value(&path) {
+                    Ok(v) => merge_value(&mut merged, v),
+                    Err(e) => tracing::warn!(
+                        target: "inkhaven::config",
+                        "skipping malformed global config `{}`: {e}",
+                        path.display(),
+                    ),
+                }
+            }
+        }
+
+        serde_json::from_value(merged)
+            .map_err(|e| crate::error::Error::Config(e.to_string()))
+    }
+
     #[allow(dead_code)]
     pub fn save(&self, path: &Path) -> crate::error::Result<()> {
         let s = serde_hjson::to_string(self)
             .map_err(|e| crate::error::Error::Config(e.to_string()))?;
         std::fs::write(path, s).map_err(crate::error::Error::Io)
     }
+}
+
+// ── config layering (1.2.20+) ────────────────────────────
+
+/// Parse an HJSON file into a generic JSON value for
+/// layering.  Going through `serde_json::Value` (rather
+/// than straight to `Config`) is what makes *partial*
+/// override files work: keys absent from the file simply
+/// aren't in the value, so the deep-merge leaves the lower
+/// layer's value in place.
+fn read_hjson_value(path: &Path) -> crate::error::Result<serde_json::Value> {
+    let raw = std::fs::read_to_string(path).map_err(crate::error::Error::Io)?;
+    serde_hjson::from_str::<serde_json::Value>(&raw)
+        .map_err(|e| crate::error::Error::Config(e.to_string()))
+}
+
+/// Deep-merge `overlay` onto `base`: two objects merge
+/// key-by-key (recursively); every other shape (scalar,
+/// array, or a type change) replaces wholesale.  The
+/// overlay always wins on a conflict.
+fn merge_value(base: &mut serde_json::Value, overlay: serde_json::Value) {
+    match (base, overlay) {
+        (serde_json::Value::Object(b), serde_json::Value::Object(o)) => {
+            for (k, v) in o {
+                merge_value(b.entry(k).or_insert(serde_json::Value::Null), v);
+            }
+        }
+        (b, o) => *b = o,
+    }
+}
+
+/// The user-global inkhaven config directory:
+/// `$XDG_CONFIG_HOME/inkhaven` when that env var is set +
+/// non-empty, else `$HOME/.config/inkhaven`.  `None` when
+/// neither is set (layering is then simply skipped).  This
+/// matches the `~/.config/inkhaven/inkhaven.hjson`
+/// convention already documented for provider API keys.
+fn global_config_dir() -> Option<PathBuf> {
+    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg).join("inkhaven"));
+        }
+    }
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config").join("inkhaven"))
+}
+
+/// The override files under the global dir, in ascending
+/// precedence: `config.hjson` first, then every
+/// `conf/*.hjson` in sorted (lexical) order — so a user can
+/// split overrides into `conf/10-theme.hjson`,
+/// `conf/20-keys.hjson`, … and reason about who wins.  A
+/// missing dir / `conf` subdir yields an empty list.
+fn global_config_files_in(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let top = dir.join("config.hjson");
+    if top.is_file() {
+        files.push(top);
+    }
+    if let Ok(entries) = std::fs::read_dir(dir.join("conf")) {
+        let mut confs: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("hjson")
+            })
+            .collect();
+        confs.sort();
+        files.extend(confs);
+    }
+    files
 }
 
 /// Writing-progress goals — fuels the status-bar widget +
@@ -3182,5 +3312,164 @@ mod settings_synth_tests {
         cfg.typst_page.columns = 2;
         let s = cfg.synthesised_settings_typ_header();
         assert!(s.contains("columns: 2"));
+    }
+}
+
+// ── config layering (1.2.20+) ────────────────────────────
+#[cfg(test)]
+mod layering_tests {
+    use super::*;
+    use std::path::Path;
+
+    fn write(path: &Path, body: &str) {
+        if let Some(p) = path.parent() {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        std::fs::write(path, body).unwrap();
+    }
+
+    // ── merge_value ───────────────────────────────────
+
+    #[test]
+    fn merge_objects_recursively_overlay_wins() {
+        let mut base = serde_json::json!({
+            "theme": { "pane_fg": "#aaa", "modal_fg": "#bbb" },
+            "editor": { "reading_wpm": 200 }
+        });
+        let overlay = serde_json::json!({
+            "theme": { "pane_fg": "#ccc" }
+        });
+        merge_value(&mut base, overlay);
+        // Overridden key wins…
+        assert_eq!(base["theme"]["pane_fg"], "#ccc");
+        // …siblings untouched…
+        assert_eq!(base["theme"]["modal_fg"], "#bbb");
+        // …unrelated subtrees untouched.
+        assert_eq!(base["editor"]["reading_wpm"], 200);
+    }
+
+    #[test]
+    fn merge_scalar_replaces_object_wholesale() {
+        // A type change (object → scalar) replaces, never
+        // tries to merge into the scalar.
+        let mut base = serde_json::json!({ "x": { "a": 1 } });
+        merge_value(&mut base, serde_json::json!({ "x": 7 }));
+        assert_eq!(base["x"], 7);
+    }
+
+    // ── global_config_files_in ────────────────────────
+
+    #[test]
+    fn global_files_config_first_then_sorted_conf() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        write(&dir.join("config.hjson"), "{}");
+        write(&dir.join("conf/20-b.hjson"), "{}");
+        write(&dir.join("conf/10-a.hjson"), "{}");
+        write(&dir.join("conf/ignore.txt"), "not hjson");
+        let files = global_config_files_in(dir);
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["config.hjson", "10-a.hjson", "20-b.hjson"]);
+    }
+
+    #[test]
+    fn global_files_empty_when_dir_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(global_config_files_in(&tmp.path().join("nope")).is_empty());
+    }
+
+    // ── load_layered_from ─────────────────────────────
+
+    fn project_with(tmp: &Path, body: &str) -> std::path::PathBuf {
+        let p = tmp.join("inkhaven.hjson");
+        write(&p, body);
+        p
+    }
+
+    #[test]
+    fn global_overrides_project_value() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = project_with(tmp.path(), r##"{ theme: { pane_fg: "#111111" } }"##);
+        let gdir = tmp.path().join("global");
+        write(&gdir.join("config.hjson"), r##"{ theme: { pane_fg: "#222222" } }"##);
+
+        let cfg = Config::load_layered_from(&proj, Some(&gdir)).unwrap();
+        // The whole point: global wins over the project's
+        // own (full) config so one personal override applies
+        // everywhere without editing each project.
+        assert_eq!(cfg.theme.pane_fg, "#222222");
+    }
+
+    #[test]
+    fn unset_global_key_falls_through_to_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = project_with(
+            tmp.path(),
+            r##"{ theme: { pane_fg: "#111111", modal_fg: "#999999" } }"##,
+        );
+        let gdir = tmp.path().join("global");
+        // Partial override — only pane_fg.
+        write(&gdir.join("config.hjson"), r##"{ theme: { pane_fg: "#222222" } }"##);
+
+        let cfg = Config::load_layered_from(&proj, Some(&gdir)).unwrap();
+        assert_eq!(cfg.theme.pane_fg, "#222222"); // overridden
+        assert_eq!(cfg.theme.modal_fg, "#999999"); // fell through
+    }
+
+    #[test]
+    fn conf_dir_later_file_wins_over_config_hjson() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = project_with(tmp.path(), r##"{ theme: { pane_fg: "#000000" } }"##);
+        let gdir = tmp.path().join("global");
+        write(&gdir.join("config.hjson"), r##"{ theme: { pane_fg: "#111111" } }"##);
+        write(&gdir.join("conf/50-late.hjson"), r##"{ theme: { pane_fg: "#222222" } }"##);
+
+        let cfg = Config::load_layered_from(&proj, Some(&gdir)).unwrap();
+        // config.hjson < conf/*.hjson in precedence.
+        assert_eq!(cfg.theme.pane_fg, "#222222");
+    }
+
+    #[test]
+    fn no_global_dir_is_plain_project_load() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = project_with(tmp.path(), r##"{ theme: { pane_fg: "#abcabc" } }"##);
+        let cfg = Config::load_layered_from(&proj, None).unwrap();
+        assert_eq!(cfg.theme.pane_fg, "#abcabc");
+    }
+
+    #[test]
+    fn malformed_global_is_skipped_not_fatal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = project_with(tmp.path(), r##"{ theme: { pane_fg: "#314159" } }"##);
+        let gdir = tmp.path().join("global");
+        // Not valid HJSON — a dangling brace.
+        write(&gdir.join("config.hjson"), "{ theme: { pane_fg: ");
+
+        // Must still succeed, keeping the project value.
+        let cfg = Config::load_layered_from(&proj, Some(&gdir)).unwrap();
+        assert_eq!(cfg.theme.pane_fg, "#314159");
+    }
+
+    #[test]
+    fn malformed_project_is_fatal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = project_with(tmp.path(), "{ broken ");
+        assert!(Config::load_layered_from(&proj, None).is_err());
+    }
+
+    #[test]
+    fn partial_project_fills_from_defaults() {
+        // A minimal (non-init) project config must still
+        // produce a complete Config — the defaults base
+        // guarantees it.
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = project_with(tmp.path(), r#"{ language: "russian" }"#);
+        let cfg = Config::load_layered_from(&proj, None).unwrap();
+        assert_eq!(cfg.language, "russian");
+        // A field absent from the project comes from default.
+        assert_eq!(cfg.theme.pane_fg, ThemeConfig::default().pane_fg);
     }
 }

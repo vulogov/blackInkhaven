@@ -164,7 +164,7 @@ fn add(
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout, &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
 
@@ -268,7 +268,7 @@ fn list(
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout, &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
 
@@ -389,7 +389,7 @@ fn doctor(project: &Path, json: bool) -> Result<()> {
     use crate::store::node::NodeKind;
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout, &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
 
@@ -554,7 +554,7 @@ fn export(
     use crate::store::node::NodeKind;
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout, &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
 

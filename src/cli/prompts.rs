@@ -109,7 +109,7 @@ fn bootstrap(
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
 
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let ai = AiClient::from_config(&cfg.llm)?;
     let (model, _env_var) = ai.resolve_provider(&cfg.llm, provider)?;
 

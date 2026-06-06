@@ -319,7 +319,7 @@ pub fn scan_project(
 ) -> Result<ScanReport> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy =
         crate::store::hierarchy::Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
@@ -876,7 +876,7 @@ pub fn apply_fix(
 ) -> Result<String> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy =
         crate::store::hierarchy::Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;

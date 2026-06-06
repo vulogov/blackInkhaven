@@ -127,7 +127,7 @@ pub fn run(path: &Path, spec: FixtureSpec) -> Result<FixtureStats> {
     super::init::run(path, spec.force, "empty")?;
 
     let layout = ProjectLayout::new(path);
-    let cfg = Config::load(&layout.config_path())?;
+    let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg)?;
 
     let mut rng = Xorshift64::new(spec.seed);
