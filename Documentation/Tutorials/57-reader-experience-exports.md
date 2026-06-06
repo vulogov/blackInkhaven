@@ -30,6 +30,27 @@ EPUB: my-novel.epub (12 chapters · 240 KB)
 The language tag comes from the project's `language`
 field (mapped to an ISO code).
 
+### Cover image (1.2.20+)
+
+Drop a `cover.png` (or `cover.jpg` / `cover.jpeg`) next
+to your `inkhaven.hjson` and `inkhaven epub` embeds it
+automatically — no flag, no config key:
+
+```text
+$ inkhaven epub --book-name "My Novel"
+Exporting `My Novel` → EPUB (12 chapters)…
+  embedding cover (image/png, 184 KB)
+EPUB: my-novel.epub (12 chapters · 424 KB)
+```
+
+The cover becomes the reader's library thumbnail (via
+the EPUB 3 `cover-image` property, with an EPUB 2
+`<meta name="cover">` for older readers) and the book's
+opening page.  `cover.png` wins if more than one is
+present; an unreadable or empty file is skipped with a
+warning rather than failing the export.  No cover file →
+the text-only output is unchanged.
+
 ### What's in the box
 
 Inkhaven builds the EPUB 3 container directly — no

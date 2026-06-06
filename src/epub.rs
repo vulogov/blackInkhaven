@@ -66,6 +66,27 @@ pub struct EpubMeta {
     /// export so re-exports replace cleanly in a
     /// reader's library.
     pub identifier: String,
+    /// 1.2.20+ R.1.b — optional cover image.  When
+    /// present it becomes the reader's library
+    /// thumbnail (`properties="cover-image"`) and the
+    /// first spine page.  `None` keeps the R.1
+    /// text-only output byte-for-byte.
+    pub cover: Option<EpubCover>,
+}
+
+/// 1.2.20+ R.1.b — a cover image to embed in the EPUB.
+#[derive(Debug, Clone)]
+pub struct EpubCover {
+    /// Raw image bytes, written verbatim into the
+    /// archive (stored, not re-deflated — JPEG/PNG are
+    /// already compressed).
+    pub bytes: Vec<u8>,
+    /// MIME type for the OPF manifest, e.g.
+    /// `image/jpeg` or `image/png`.
+    pub media_type: String,
+    /// Extension used for the in-archive filename
+    /// (`cover.jpg` / `cover.png`).
+    pub file_ext: String,
 }
 
 /// One chapter: a heading + pre-converted XHTML body
@@ -112,6 +133,15 @@ pub fn write_epub(
 
     zip.start_file("OEBPS/style.css", deflated)?;
     zip.write_all(STYLE_CSS.as_bytes())?;
+
+    // ── cover (R.1.b) — the image is `Stored` (already
+    //    a compressed format), the wrapper page deflated.
+    if let Some(cover) = &meta.cover {
+        zip.start_file(format!("OEBPS/cover.{}", cover.file_ext), stored)?;
+        zip.write_all(&cover.bytes)?;
+        zip.start_file("OEBPS/cover.xhtml", deflated)?;
+        zip.write_all(cover_xhtml(&cover.file_ext).as_bytes())?;
+    }
 
     // Chapter documents.
     for (i, ch) in chapters.iter().enumerate() {
@@ -298,6 +328,30 @@ fn chapter_xhtml(title: &str, body: &str) -> String {
     )
 }
 
+/// 1.2.20+ R.1.b — full-page cover wrapper.  A reader
+/// that honours `epub:type="cover"` shows this as the
+/// opening page; the image scales to the viewport.
+fn cover_xhtml(file_ext: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Cover</title>
+  <style>html, body {{ margin: 0; padding: 0; }} img {{ max-width: 100%; height: auto; display: block; margin: 0 auto; }}</style>
+</head>
+<body>
+  <section epub:type="cover">
+    <img src="cover.{ext}" alt="Cover"/>
+  </section>
+</body>
+</html>
+"#,
+        ext = file_ext,
+    )
+}
+
 fn nav_xhtml(chapters: &[EpubChapter]) -> String {
     let mut items = String::new();
     for (i, ch) in chapters.iter().enumerate() {
@@ -360,6 +414,24 @@ fn toc_ncx(meta: &EpubMeta, chapters: &[EpubChapter]) -> String {
 }
 
 fn content_opf(meta: &EpubMeta, chapters: &[EpubChapter]) -> String {
+    // ── cover (R.1.b) — EPUB3 `cover-image` property
+    //    drives the library thumbnail; the EPUB2
+    //    `<meta name="cover">` keeps older readers happy;
+    //    the wrapper page leads the spine.
+    let (cover_meta, cover_manifest, cover_spine) = match &meta.cover {
+        Some(c) => (
+            "    <meta name=\"cover\" content=\"cover-image\"/>\n".to_string(),
+            format!(
+                "    <item id=\"cover-image\" href=\"cover.{ext}\" media-type=\"{mt}\" properties=\"cover-image\"/>\n\
+                 \x20   <item id=\"cover\" href=\"cover.xhtml\" media-type=\"application/xhtml+xml\"/>\n",
+                ext = c.file_ext,
+                mt = escape_xml(&c.media_type),
+            ),
+            "    <itemref idref=\"cover\" linear=\"yes\"/>\n".to_string(),
+        ),
+        None => (String::new(), String::new(), String::new()),
+    };
+
     let mut manifest = String::new();
     let mut spine = String::new();
     for (i, _) in chapters.iter().enumerate() {
@@ -379,21 +451,24 @@ fn content_opf(meta: &EpubMeta, chapters: &[EpubChapter]) -> String {
     <dc:title>{title}</dc:title>
     <dc:creator>{author}</dc:creator>
     <dc:language>{lang}</dc:language>
-    <meta property="dcterms:modified">2026-01-01T00:00:00Z</meta>
+{cover_meta}    <meta property="dcterms:modified">2026-01-01T00:00:00Z</meta>
   </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
     <item id="css" href="style.css" media-type="text/css"/>
-{manifest}  </manifest>
+{cover_manifest}{manifest}  </manifest>
   <spine toc="ncx">
-{spine}  </spine>
+{cover_spine}{spine}  </spine>
 </package>
 "#,
         id = escape_xml(&meta.identifier),
         title = escape_xml(&meta.title),
         author = escape_xml(&meta.author),
         lang = escape_xml(&meta.language),
+        cover_meta = cover_meta,
+        cover_manifest = cover_manifest,
+        cover_spine = cover_spine,
         manifest = manifest,
         spine = spine,
     )
@@ -508,6 +583,7 @@ mod tests {
             author: "A. Writer".into(),
             language: "en".into(),
             identifier: "urn:uuid:test-1234".into(),
+            cover: None,
         }
     }
 
@@ -602,9 +678,70 @@ mod tests {
             author: "A \"Quoted\" Name".into(),
             language: "en".into(),
             identifier: "urn:uuid:x".into(),
+            cover: None,
         };
         let opf = content_opf(&meta, &sample_chapters());
         assert!(opf.contains("Tom &amp; Jerry &lt;draft&gt;"));
         assert!(opf.contains("A &quot;Quoted&quot; Name"));
+    }
+
+    // ── cover (R.1.b) ─────────────────────────────────
+
+    fn meta_with_cover() -> EpubMeta {
+        EpubMeta {
+            cover: Some(EpubCover {
+                bytes: vec![0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4],
+                media_type: "image/png".into(),
+                file_ext: "png".into(),
+            }),
+            ..sample_meta()
+        }
+    }
+
+    #[test]
+    fn no_cover_keeps_opf_cover_free() {
+        // The default (no cover) path must not emit any
+        // cover manifest / spine / meta entries.
+        let opf = content_opf(&sample_meta(), &sample_chapters());
+        assert!(!opf.contains("cover-image"));
+        assert!(!opf.contains("name=\"cover\""));
+        assert!(!opf.contains("cover.xhtml"));
+    }
+
+    #[test]
+    fn cover_opf_declares_image_and_leads_spine() {
+        let opf = content_opf(&meta_with_cover(), &sample_chapters());
+        // EPUB3 cover-image property + media type.
+        assert!(opf.contains(
+            "<item id=\"cover-image\" href=\"cover.png\" media-type=\"image/png\" properties=\"cover-image\"/>"
+        ));
+        // EPUB2 back-compat meta.
+        assert!(opf.contains("<meta name=\"cover\" content=\"cover-image\"/>"));
+        // The cover page leads the spine, ahead of ch001.
+        let cover_at = opf.find("idref=\"cover\"").expect("cover in spine");
+        let ch1_at = opf.find("idref=\"ch001\"").expect("ch001 in spine");
+        assert!(cover_at < ch1_at, "cover must precede the first chapter");
+    }
+
+    #[test]
+    fn cover_image_and_page_land_in_archive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("with-cover.epub");
+        write_epub(&meta_with_cover(), &sample_chapters(), &dest).unwrap();
+
+        let file = std::fs::File::open(&dest).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let names: Vec<String> = archive.file_names().map(String::from).collect();
+        assert!(names.iter().any(|n| n == "OEBPS/cover.png"), "cover image missing");
+        assert!(names.iter().any(|n| n == "OEBPS/cover.xhtml"), "cover page missing");
+
+        // The image bytes are stored verbatim (not deflated).
+        let entry = archive.by_name("OEBPS/cover.png").unwrap();
+        assert_eq!(entry.compression(), zip::CompressionMethod::Stored);
+        use std::io::Read;
+        let mut got = Vec::new();
+        let mut e = entry;
+        e.read_to_end(&mut got).unwrap();
+        assert_eq!(got, vec![0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
     }
 }
