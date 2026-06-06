@@ -21,69 +21,49 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.20 — Consolidation, hardening & global themes
+## Latest release · 1.2.21 — The Facts book
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.20.md`](Documentation/RELEASE_NOTES/1.2.20.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.21.md`](Documentation/RELEASE_NOTES/1.2.21.md)
 
-1.2.20 pays down the duplication the fast 1.2.19
-revision cycle left behind — fix the bugs the audit
-surfaced, collapse the copy-paste into shared
-helpers — then spends the headroom on three things a
-writer sees directly.
+Notes and Research hold your research; the **invariants** of a world —
+it's equatorial, no winter; the capital is three days' ride inland; the
+war ended a generation ago — are the ground truth every chapter must
+stay consistent with.  1.2.21 gives them a dedicated **Facts** system
+book and wires the AI to treat it as the authoritative reference, end to
+end.
 
-### Live echo overlay (`Ctrl+B Shift+K`)
+### Collect the facts
 
-The `echo-repetition` scan now has an inline
-companion: every occurrence in the open paragraph of
-a word echoing across nearby paragraphs of the
-chapter is underlined **as you write**, not just at
-scan time.  The open paragraph is read live (unsaved
-edits count), two-level caching means no per-keystroke
-I/O, and it paints in its own colour
-(`theme.style_warning_echo_fg`) distinct from the
-repeated-phrase overlay.
+A free-form **Facts** book (like Notes).  `inkhaven facts init` scaffolds
+the usual categories (Climate, Geography, Seasons, Chronology, Culture,
+Rules); `--genre fantasy|scifi|mystery|historical` adds genre-specific
+ones.  Or `inkhaven facts extract` reads the draft and **proposes** the
+world-facts the prose already establishes, for interactive accept — the
+cold-start solver.
 
-### EPUB cover images
+### Write against them
 
-Drop a `cover.png` (or `.jpg` / `.jpeg`) next to
-`inkhaven.hjson` and `inkhaven epub` embeds it — no
-flag, no config key.  It becomes the reader's library
-thumbnail (EPUB 3 `cover-image`) and the book's
-opening page.
+- **Facts scope (`F9`)** — a sticky, always-Local fact-analysis chat
+  seeded with your whole Facts book; refreshes when it changes.
+- **Fact-check (`Ctrl+B Shift+X`)** — check the open paragraph against
+  the facts; the verdict lists `claim | fact | detail`, and **`Ctrl+B
+  Shift+J`** jumps the cursor to each flagged claim.
+- **Facts search (`Ctrl+B Shift+S`)** — semantic-search modal to ground
+  a chat in just the relevant facts (scalable for a big book).
 
-### User-global config + 15 colour schemes
+### Sweep the manuscript
 
-A **config cascade** layers your personal overrides
-(`~/.config/inkhaven/config.hjson` +
-`conf/*.hjson`) on top of every project's
-`inkhaven.hjson`, so one theme / keybind set applies
-everywhere without per-project edits (global wins;
-partial overrides; honours `$XDG_CONFIG_HOME`).  The
-repo ships **`color_styles/`** — the 15 most popular
-classic, dark, and light schemes (Dracula, Nord,
-Gruvbox, Solarized, Tokyo Night, Monokai, One Dark,
-Material Ocean, Catppuccin, GitHub Light, Ayu Light,
-…) as drop-in `theme` overrides:
+`inkhaven facts scan` walks every chapter for contradictions
+(RAG-filtered, `--json` for a CI gate).  Facts also join the wiki-link
+system — provenance (`Ctrl+V A` → Notes/Research) and dependents (`Ctrl+V
+K` shows the scenes that rely on a fact).
 
-```bash
-mkdir -p ~/.config/inkhaven/conf
-cp color_styles/nord.hjson ~/.config/inkhaven/conf/   # Nord, every project
-```
+### Multilingual · test stats
 
-### Hardening
-
-A `paragraph-too-long` doctor class (read-time
-threshold at `editor.reading_wpm`), a low-disk
-pre-flight warning at startup, and an
-uncommitted-changes confirm on quit for git projects.
-
-### Test stats
-
-1121 → 1160.  One new Rust dependency (`fs2`, for the
-disk pre-flight); everything else reuses the existing
-stack.  Two new tutorials
-([61](Documentation/Tutorials/61-echo-overlay-and-long-paragraphs.md)
-+ [62](Documentation/Tutorials/62-global-config-and-themes.md)).
+Every AI surface ships in en / ru / de / fr / es.  Tests 1160 → 1169,
+**zero new Rust dependencies** (Facts reuses the existing store,
+embeddings, AI-stream, and wiki-link stack).  One new tutorial
+([63](Documentation/Tutorials/63-facts-and-fact-checking.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
