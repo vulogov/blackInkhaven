@@ -12718,22 +12718,31 @@ impl App {
         let Some(facts_id) = self.system_book_id(crate::store::SYSTEM_TAG_FACTS) else {
             return Vec::new();
         };
+        let ids = self.hierarchy.collect_subtree(facts_id);
+        self.facts_chunks_for(&ids)
+    }
+
+    /// 1.2.21+ — build `── breadcrumb ──\nbody` chunks for the given
+    /// node ids, keeping only non-empty paragraphs (empties + non-
+    /// paragraphs are skipped).  Order follows `ids`.  Backs both the
+    /// whole-book Facts seed and the FF.1 search-subset seed.
+    fn facts_chunks_for(&self, ids: &[Uuid]) -> Vec<String> {
         let mut chunks = Vec::new();
-        for id in self.hierarchy.collect_subtree(facts_id) {
+        for &id in ids {
             let Some(node) = self.hierarchy.get(id) else {
                 continue;
             };
             if node.kind != NodeKind::Paragraph {
                 continue;
             }
-            if let Ok(Some(bytes)) = self.store.get_content(node.id) {
+            if let Ok(Some(bytes)) = self.store.get_content(id) {
                 let body = String::from_utf8_lossy(&bytes).to_string();
                 if body.trim().is_empty() {
                     continue;
                 }
                 chunks.push(format!(
                     "── {} ──\n{}",
-                    self.title_breadcrumb(node.id),
+                    self.title_breadcrumb(id),
                     body
                 ));
             }
@@ -12764,6 +12773,36 @@ impl App {
                 "Facts scope — the Facts book is empty; collect some facts first".into();
             return;
         }
+        let n = self.apply_facts_seed(chunks);
+        let plural = if n == 1 { "y" } else { "ies" };
+        self.status = format!(
+            "Facts session: loaded {n} fact entr{plural} — ask a fact-check question (F9 to exit)"
+        );
+    }
+
+    /// 1.2.21+ — (re)seed the chat with a Facts prologue built from
+    /// `chunks`: a marked user turn carrying the facts (so the model
+    /// treats them as ground truth) + a short assistant ack, prepended
+    /// ahead of any existing conversation, and switch to the sticky
+    /// Facts scope.  Any prior facts seed (its `⟦Facts⟧` user turn + the
+    /// ack after it) is removed first, so a re-seed *swaps* the grounding
+    /// without duplicating or discarding the rest of the chat.  Shared by
+    /// the F9 whole-book seed and the FF.1 search-subset seed.  Returns
+    /// the number of facts seeded.
+    fn apply_facts_seed(&mut self, chunks: Vec<String>) -> usize {
+        if let Some(i) = self.chat_history.iter().position(
+            |t| matches!(t, ChatTurn::User(s) if s.starts_with(FACTS_SEED_MARKER)),
+        ) {
+            // Drop the ack right after the seed, then the seed itself.
+            if self
+                .chat_history
+                .get(i + 1)
+                .is_some_and(|t| matches!(t, ChatTurn::Assistant(_)))
+            {
+                self.chat_history.remove(i + 1);
+            }
+            self.chat_history.remove(i);
+        }
         let n = chunks.len();
         let plural = if n == 1 { "y" } else { "ies" };
         let lang = crate::ai::prompts::iso_from_long(&self.cfg.language);
@@ -12773,14 +12812,12 @@ impl App {
             chunks.join("\n\n"),
         );
         let ack = facts_seed_ack(lang).to_string();
-        // Facts are the prologue — ahead of any existing conversation.
         let mut seeded = vec![ChatTurn::User(user_turn), ChatTurn::Assistant(ack)];
         seeded.append(&mut self.chat_history);
         self.chat_history = seeded;
+        self.ai_mode = AiMode::Facts;
         self.chat_history_scroll = 0;
-        self.status = format!(
-            "Facts session: loaded {n} fact entr{plural} — ask a fact-check question (F9 to exit)"
-        );
+        n
     }
 
     fn clear_chat_history(&mut self) {
