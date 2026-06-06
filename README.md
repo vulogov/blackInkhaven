@@ -21,75 +21,69 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.19 — Revision & continuity (multilingual)
+## Latest release · 1.2.20 — Consolidation, hardening & global themes
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.19.md`](Documentation/RELEASE_NOTES/1.2.19.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.20.md`](Documentation/RELEASE_NOTES/1.2.20.md)
 
-First drafts get the words down; revision catches
-what slipped in.  1.2.19 adds the revision layer —
-four detectors + a submission export — built
-**multilingual from the start** across a three-tier
-model (AI prompts / Snowball stemmer / per-language
-quantity lexicons), so no feature is English-only.
+1.2.20 pays down the duplication the fast 1.2.19
+revision cycle left behind — fix the bugs the audit
+surfaced, collapse the copy-paste into shared
+helpers — then spends the headroom on three things a
+writer sees directly.
 
-All four detectors surface through
-`inkhaven doctor --scan` as Info-severity,
-author-judgment findings — they point, you decide.
+### Live echo overlay (`Ctrl+B Shift+K`)
 
-### The four detectors
+The `echo-repetition` scan now has an inline
+companion: every occurrence in the open paragraph of
+a word echoing across nearby paragraphs of the
+chapter is underlined **as you write**, not just at
+scan time.  The open paragraph is read live (unsaved
+edits count), two-level caching means no per-keystroke
+I/O, and it paints in its own colour
+(`theme.style_warning_echo_fg`) distinct from the
+repeated-phrase overlay.
 
-* **`echo-repetition`** — a distinctive word reused
-  close together ("she *walked* … he *walked* … they
-  *walked*").  Stem + window; works across all 18
-  Snowball languages.
-* **`numeric-contradiction`** — a reversed direction
-  or mismatched duration ("200 leagues north" …
-  "200 leagues south"; "three days" … "a week"),
-  via per-language quantity lexicons (English /
-  French / Spanish bundled).
-* **`continuity-drift`** (the headline) —
-  `inkhaven continuity extract` runs an AI pass that
-  builds a character-fact bible; the scan flags
-  attributes that change across chapters (eyes
-  green→brown).  Stemmer-normalised, so inflection
-  doesn't false-flag.
-* **`unresolved-tension`** (opt-in) —
-  `inkhaven tension scan` tags introduced + resolved
-  tensions; the scan flags the ones set up but never
-  paid off.
+### EPUB cover images
 
-### Submission export
+Drop a `cover.png` (or `.jpg` / `.jpeg`) next to
+`inkhaven.hjson` and `inkhaven epub` embeds it — no
+flag, no config key.  It becomes the reader's library
+thumbnail (EPUB 3 `cover-image`) and the book's
+opening page.
 
-`inkhaven manuscript` exports a user book to a
-submission-ready **Shunn standard manuscript format**
-typst document — monospace, double-spaced, title page
-with rounded word count, running `Surname / KEYWORD /
-page` header, scene breaks as `#`.  The agent/editor
-companion to the 1.2.18 ePub + audiobook reader
-exports.
+### User-global config + 15 colour schemes
 
-### Multilingual by design
+A **config cascade** layers your personal overrides
+(`~/.config/inkhaven/config.hjson` +
+`conf/*.hjson`) on top of every project's
+`inkhaven.hjson`, so one theme / keybind set applies
+everywhere without per-project edits (global wins;
+partial overrides; honours `$XDG_CONFIG_HOME`).  The
+repo ships **`color_styles/`** — the 15 most popular
+classic, dark, and light schemes (Dracula, Nord,
+Gruvbox, Solarized, Tokyo Night, Monokai, One Dark,
+Material Ocean, Catppuccin, GitHub Light, Ayu Light,
+…) as drop-in `theme` overrides:
 
-Each detector lands on a different tier — AI prompt,
-Snowball stemmer, or quantity lexicon — and degrades
-gracefully where a language isn't covered (a missing
-quantity lexicon skips the numeric scan rather than
-producing garbage).  A real lesson surfaced building
-it: the Russian Snowball stemmer needed a `ё`→`е`
-fold, and it's a stemmer not a lemmatiser (noun cases
-collapse, some verb forms don't) — documented, not
-papered over.
+```bash
+mkdir -p ~/.config/inkhaven/conf
+cp color_styles/nord.hjson ~/.config/inkhaven/conf/   # Nord, every project
+```
+
+### Hardening
+
+A `paragraph-too-long` doctor class (read-time
+threshold at `editor.reading_wpm`), a low-disk
+pre-flight warning at startup, and an
+uncommitted-changes confirm on quit for git projects.
 
 ### Test stats
 
-1053 → 1121.  Zero new Rust dependencies — the
-detectors reuse the existing Snowball / stop-word /
-whatlang / AI / typst stack.  Closes the deferred
-A.5.b + A.6.b.
-
-See [Tutorial 59](Documentation/Tutorials/59-revision-and-continuity.md)
-+ [Tutorial 60](Documentation/Tutorials/60-manuscript-format.md)
-for the full workflow.
+1121 → 1160.  One new Rust dependency (`fs2`, for the
+disk pre-flight); everything else reuses the existing
+stack.  Two new tutorials
+([61](Documentation/Tutorials/61-echo-overlay-and-long-paragraphs.md)
++ [62](Documentation/Tutorials/62-global-config-and-themes.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
