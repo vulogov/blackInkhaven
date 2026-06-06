@@ -1482,6 +1482,19 @@ fn truncate_to_lines(text: String, max_lines: usize) -> String {
     if head.is_empty() { marker } else { format!("{head}\n{marker}") }
 }
 
+/// 1.2.21+ FF.4d — navigable findings from the last `Ctrl+B Shift+X`
+/// fact-check, cycled by `Ctrl+B Shift+J`: each jumps the editor cursor
+/// to the flagged claim in the open paragraph.
+#[derive(Default)]
+pub(crate) struct FactCheckNav {
+    /// Paragraph the findings are for — navigation only works while it
+    /// is the open paragraph.
+    pub target: Option<Uuid>,
+    pub findings: Vec<crate::facts_scan::FactFinding>,
+    /// Cursor into `findings`; `usize::MAX` = "before the first".
+    pub idx: usize,
+}
+
 pub(crate) struct App {
     layout: ProjectLayout,
     store: Store,
@@ -1844,6 +1857,12 @@ pub(crate) struct App {
     /// snapshot.  Cleared after either auto-open OR
     /// an error path.
     pub(super) pending_rhythm_rewrite: bool,
+    /// 1.2.21+ FF.4d — a fact-check chord awaiting its stream's
+    /// completion: `(target paragraph id, title)`.  Consumed in
+    /// `pump_inference` to parse the verdict into `fact_check_nav`.
+    pub(super) fact_check_pending: Option<(Uuid, String)>,
+    /// 1.2.21+ FF.4d — the parsed, navigable findings.
+    pub(super) fact_check_nav: FactCheckNav,
 
     /// 1.2.13+ Phase C.2 — set true when a translation
     /// inference is in flight.  Drives translation-aware
@@ -2186,6 +2205,8 @@ impl App {
             pending_chat_user_msg: None,
             pending_paragraph_memory_target: None,
             pending_rhythm_rewrite: false,
+            fact_check_pending: None,
+            fact_check_nav: FactCheckNav::default(),
             pending_translation: false,
             pending_continuation_draft: false,
             pending_style_transfer: false,
@@ -2726,6 +2747,28 @@ impl App {
             }
         }
         if just_finished {
+            // 1.2.21+ FF.4d — if this completion was a fact-check chord,
+            // parse its `claim | fact | detail` verdict into navigable
+            // findings (cycled by Ctrl+B Shift+J).
+            if let Some((target, title)) = self.fact_check_pending.take() {
+                let resp = self
+                    .inference
+                    .as_ref()
+                    .map(|i| i.response.clone())
+                    .unwrap_or_default();
+                let findings = crate::facts_scan::parse_findings(&resp, &title, 0);
+                if !findings.is_empty() {
+                    self.status = format!(
+                        "fact check: {} contradiction(s) — Ctrl+B Shift+J to jump",
+                        findings.len(),
+                    );
+                }
+                self.fact_check_nav = FactCheckNav {
+                    target: Some(target),
+                    findings,
+                    idx: usize::MAX,
+                };
+            }
             // Pair the pending user message with this assistant response
             // and append both to chat_history. Help one-shots leave
             // `pending_chat_user_msg = None`, so they're skipped here.
@@ -8137,6 +8180,7 @@ impl App {
             A::AnalyseShowDontTell => self.start_show_dont_tell_scan(),
             A::FactCheck => self.start_fact_check(),
             A::SearchFacts => self.open_facts_search(),
+            A::NextFactFinding => self.next_fact_finding(),
             A::AiRewriteRhythm => self.start_sentence_rhythm_rewrite(),
             A::TranslateToInvented => self.start_translate_to_invented(),
             A::TranslateFromInvented => self.start_translate_from_invented(),
@@ -12991,6 +13035,72 @@ impl App {
                     .unwrap_or(false)
             })
             .collect()
+    }
+
+    /// 1.2.21+ FF.4d — Ctrl+B Shift+J — cycle through the last
+    /// fact-check's findings, jumping the editor cursor to each flagged
+    /// claim in the open paragraph.  Best-effort jump (the model's quoted
+    /// claim can be paraphrased); the fact + explanation always shows on
+    /// the status bar.
+    fn next_fact_finding(&mut self) {
+        let n = self.fact_check_nav.findings.len();
+        if n == 0 {
+            self.status =
+                "no fact-check findings — run Ctrl+B Shift+X first".into();
+            return;
+        }
+        let open_id = self.opened.as_ref().map(|d| d.id);
+        if open_id.is_none() || open_id != self.fact_check_nav.target {
+            self.status =
+                "fact-check findings are for another paragraph — re-run Ctrl+B Shift+X here"
+                    .into();
+            return;
+        }
+        let new_idx = self.fact_check_nav.idx.wrapping_add(1) % n;
+        self.fact_check_nav.idx = new_idx;
+        let f = self.fact_check_nav.findings[new_idx].clone();
+        let jumped = self.jump_cursor_to_text(&f.claim);
+        if jumped {
+            self.change_focus(Focus::Editor);
+        }
+        let loc = if jumped { "" } else { " (phrase not located)" };
+        self.status = format!(
+            "fact finding {}/{}{loc}: {} — {}",
+            new_idx + 1,
+            n,
+            f.fact,
+            f.detail,
+        );
+    }
+
+    /// Move the editor cursor to the first case-insensitive occurrence
+    /// of `needle` in the open paragraph.  Returns whether it landed.
+    fn jump_cursor_to_text(&mut self, needle: &str) -> bool {
+        let needle = needle.trim().to_lowercase();
+        if needle.is_empty() {
+            return false;
+        }
+        let Some(doc) = self.opened.as_mut() else {
+            return false;
+        };
+        let pos = doc
+            .textarea
+            .lines()
+            .iter()
+            .enumerate()
+            .find_map(|(row, line)| {
+                line.to_lowercase()
+                    .find(&needle)
+                    .map(|byte_col| (row, line[..byte_col].chars().count()))
+            });
+        match pos {
+            Some((row, col)) => {
+                doc.textarea
+                    .move_cursor(CursorMove::Jump(row as u16, col as u16));
+                true
+            }
+            None => false,
+        }
     }
 
     /// 1.2.21+ — build `── breadcrumb ──\nbody` chunks for the given
@@ -20200,31 +20310,36 @@ if something is not covered by the established facts, say it is unspecified rath
 /// appended by the caller.  Five-language; English is the floor.
 pub(crate) fn fact_check_default_prompt(lang_iso: &str) -> &'static str {
     match lang_iso {
-        "ru" => "Проверь абзац ниже на соответствие установленным фактам мира, приведённым в этом сообщении. \
-Для каждого конкретного утверждения в абзаце — места, расстояния, направления, климат, времена года, даты, длительности — \
-укажи, СОГЛАСУЕТСЯ ли оно, ПРОТИВОРЕЧИТ или НЕ ОХВАЧЕНО установленными фактами. Процитируй точную фразу, назови \
-относящийся факт и объясни противоречие одной строкой. Не переписывай абзац. Заверши одной строкой-вердиктом: \
-`согласуется` / `N противоречий` / `недостаточно фактов`.",
-        "de" => "Prüfe den Absatz unten gegen die in dieser Nachricht angegebenen etablierten Weltfakten. \
-Gib für jede konkrete Aussage im Absatz — Orte, Entfernungen, Richtungen, Klima, Jahreszeiten, Daten, Dauern — an, ob sie \
-mit den etablierten Fakten ÜBEREINSTIMMT, ihnen WIDERSPRICHT oder NICHT ABGEDECKT ist. Zitiere die genaue Formulierung, \
-nenne den betreffenden Fakt und erkläre jeden Widerspruch in einer Zeile. Schreibe den Absatz nicht um. Schließe mit einer \
-Urteilszeile: `konsistent` / `N Widerspruch/-sprüche` / `unzureichende Fakten`.",
+        "ru" => "Проверь абзац ниже на соответствие установленным фактам мира из этого сообщения. \
+Для КАЖДОГО утверждения в абзаце, которое ПРОТИВОРЕЧИТ установленному факту (места, расстояния, направления, климат, \
+времена года, даты, длительности), выведи ОДНУ строку строго в формате:\n\
+  claim | fact | detail\n\
+где `claim` — точная фраза из текста, `fact` — нарушенный установленный факт, `detail` — объяснение в одну строку. \
+Не переписывай абзац и не выводи ничего лишнего. Если противоречий нет — не выводи ничего.",
+        "de" => "Prüfe den Absatz unten gegen die etablierten Weltfakten aus dieser Nachricht. \
+Gib für JEDE Aussage im Absatz, die einem etablierten Fakt WIDERSPRICHT (Orte, Entfernungen, Richtungen, Klima, \
+Jahreszeiten, Daten, Dauern), GENAU EINE Zeile im Format aus:\n\
+  claim | fact | detail\n\
+wobei `claim` die genaue Formulierung aus dem Text ist, `fact` der verletzte etablierte Fakt und `detail` eine einzeilige \
+Erklärung. Schreibe den Absatz nicht um und gib nichts anderes aus. Gibt es keine Widersprüche, gib nichts aus.",
         "fr" => "Vérifie le paragraphe ci-dessous par rapport aux faits établis du monde fournis dans ce message. \
-Pour chaque affirmation concrète du paragraphe — lieux, distances, directions, climat, saisons, dates, durées — indique si \
-elle est COHÉRENTE avec, CONTREDIT, ou N'EST PAS COUVERTE par les faits établis. Cite la phrase exacte, nomme le fait \
-concerné et explique toute contradiction en une ligne. Ne réécris pas le paragraphe. Termine par une ligne de verdict : \
-`cohérent` / `N contradiction(s)` / `faits insuffisants`.",
+Pour CHAQUE affirmation du paragraphe qui CONTREDIT un fait établi (lieux, distances, directions, climat, saisons, dates, \
+durées), produis UNE ligne au format exact :\n\
+  claim | fact | detail\n\
+où `claim` est la phrase exacte du texte, `fact` le fait établi violé, et `detail` une explication d'une ligne. \
+Ne réécris pas le paragraphe et n'affiche rien d'autre. S'il n'y a aucune contradiction, n'affiche rien.",
         "es" => "Verifica el párrafo de abajo frente a los hechos establecidos del mundo incluidos en este mensaje. \
-Para cada afirmación concreta del párrafo — lugares, distancias, direcciones, clima, estaciones, fechas, duraciones — indica si \
-es COHERENTE con, CONTRADICE, o NO ESTÁ CUBIERTA por los hechos establecidos. Cita la frase exacta, nombra el hecho \
-relevante y explica cualquier contradicción en una línea. No reescribas el párrafo. Termina con una línea de veredicto: \
-`coherente` / `N contradicción(es)` / `hechos insuficientes`.",
+Para CADA afirmación del párrafo que CONTRADIGA un hecho establecido (lugares, distancias, direcciones, clima, estaciones, \
+fechas, duraciones), produce UNA línea con el formato exacto:\n\
+  claim | fact | detail\n\
+donde `claim` es la frase exacta del texto, `fact` el hecho establecido violado y `detail` una explicación de una línea. \
+No reescribas el párrafo ni muestres nada más. Si no hay contradicciones, no muestres nada.",
         _ => "Fact-check the paragraph below against the established world facts included in this message. \
-For each concrete claim in the paragraph — places, distances, directions, climate, seasons, dates, durations — say whether it \
-is CONSISTENT with, CONTRADICTS, or is NOT COVERED by the established facts. Quote the exact phrase, name the relevant fact, \
-and explain any contradiction in one line. Do not rewrite the paragraph. End with a single verdict line: \
-`consistent` / `N contradiction(s)` / `insufficient facts`.",
+For EACH claim in the paragraph that CONTRADICTS an established fact (places, distances, directions, climate, seasons, \
+dates, durations), output ONE line in exactly this format:\n\
+  claim | fact | detail\n\
+where `claim` is the exact phrase from the prose, `fact` is the established fact it violates, and `detail` is a one-line \
+explanation. Do not rewrite the paragraph and output nothing else. If nothing contradicts, output nothing.",
     }
 }
 
