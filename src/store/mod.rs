@@ -26,9 +26,17 @@ pub use node::NodeKind;
 /// particular user Book — global hooks, lint rules, AI templates.
 /// Scripts can also live inside any user Book if they belong to
 /// that book's workflow; nothing forces them under `Scripts`.
+///
+/// The `Facts` system book (1.2.21+) holds a world's invariants —
+/// climate, geography, seasons, distances, chronology — the ground
+/// truth every chapter must stay consistent with.  Free-form prose
+/// like `Notes`/`Research`; the AI's `Facts` scope and the
+/// `Ctrl+B Shift+X` fact-check chord treat it as the authoritative
+/// reference.
 pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("notes", "Notes"),
     ("research", "Research"),
+    ("facts", "Facts"),
     ("prompts", "Prompts"),
     ("places", "Places"),
     ("characters", "Characters"),
