@@ -1282,6 +1282,7 @@ impl super::App {
             return;
         }
         let title = doc.title.clone();
+        let para_id = doc.id;
         // Decision 1 — lock the AI scope to the local paragraph.
         self.ai_mode = AiMode::Paragraph;
         let template = self.resolve_prompt_template("fact-check", || {
@@ -1289,16 +1290,49 @@ impl super::App {
             super::super::app::fact_check_default_prompt(&want_lang).to_string()
         });
         let rendered = self.render_template(&template);
-        // Ground against the Facts book when it has content.
-        let facts = self.gather_facts_chunks();
-        let facts_block = if facts.is_empty() {
+        // Ground against the Facts book.  FF.5 — when the open paragraph
+        // is explicitly wiki-linked to particular facts (Ctrl+V A), those
+        // dependencies lead in a labelled block so the model weights
+        // them; the rest follow.  Additive: every fact is still sent, so
+        // coverage never drops.
+        let all_ids = self.facts_paragraph_ids();
+        let linked: std::collections::HashSet<Uuid> = self
+            .hierarchy
+            .get(para_id)
+            .map(|n| n.linked_paragraphs.iter().copied().collect())
+            .unwrap_or_default();
+        let linked_ids: Vec<Uuid> =
+            all_ids.iter().copied().filter(|id| linked.contains(id)).collect();
+        let n_linked = linked_ids.len();
+        let facts_block = if all_ids.is_empty() {
             String::new()
-        } else {
+        } else if linked_ids.is_empty() {
+            let facts = self.facts_chunks_for(&all_ids);
             format!(
                 "── Established facts ({} entr{}) ──\n{}\n── end facts ──\n\n",
                 facts.len(),
                 if facts.len() == 1 { "y" } else { "ies" },
                 facts.join("\n\n"),
+            )
+        } else {
+            let rest_ids: Vec<Uuid> =
+                all_ids.iter().copied().filter(|id| !linked.contains(id)).collect();
+            let linked_chunks = self.facts_chunks_for(&linked_ids);
+            let rest_chunks = self.facts_chunks_for(&rest_ids);
+            let rest_block = if rest_chunks.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "── Other established facts ({}) ──\n{}\n── end facts ──\n\n",
+                    rest_chunks.len(),
+                    rest_chunks.join("\n\n"),
+                )
+            };
+            format!(
+                "── Facts this scene is linked to ({}) — weight contradictions with these ──\n{}\n── end linked facts ──\n\n{}",
+                linked_chunks.len(),
+                linked_chunks.join("\n\n"),
+                rest_block,
             )
         };
         let prompt_text = format!(
@@ -1331,10 +1365,12 @@ impl super::App {
         });
         self.pending_chat_user_msg = None;
         self.change_focus(Focus::Ai);
-        let grounded = if facts.is_empty() {
-            " (no facts — generic check)"
+        let grounded = if all_ids.is_empty() {
+            " (no facts — generic check)".to_string()
+        } else if n_linked > 0 {
+            format!(" (grounded in Facts; {n_linked} linked to this scene)")
         } else {
-            " (grounded in Facts)"
+            " (grounded in Facts)".to_string()
         };
         self.status = format!("fact check{grounded}: streaming from {provider}…");
     }

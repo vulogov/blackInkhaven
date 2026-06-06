@@ -12945,11 +12945,27 @@ impl App {
     /// has no Facts book or it holds nothing.  Backs the Facts-scope
     /// chat seed and the `Ctrl+B Shift+X` fact-check grounding.
     fn gather_facts_chunks(&self) -> Vec<String> {
+        let ids = self.facts_paragraph_ids();
+        self.facts_chunks_for(&ids)
+    }
+
+    /// 1.2.21+ — every paragraph id under the Facts book, in subtree
+    /// order.  Empty when there's no Facts book.  Backs the seed and
+    /// FF.5's linked-fact prioritisation.
+    fn facts_paragraph_ids(&self) -> Vec<Uuid> {
         let Some(facts_id) = self.system_book_id(crate::store::SYSTEM_TAG_FACTS) else {
             return Vec::new();
         };
-        let ids = self.hierarchy.collect_subtree(facts_id);
-        self.facts_chunks_for(&ids)
+        self.hierarchy
+            .collect_subtree(facts_id)
+            .into_iter()
+            .filter(|id| {
+                self.hierarchy
+                    .get(*id)
+                    .map(|n| n.kind == NodeKind::Paragraph)
+                    .unwrap_or(false)
+            })
+            .collect()
     }
 
     /// 1.2.21+ — build `── breadcrumb ──\nbody` chunks for the given

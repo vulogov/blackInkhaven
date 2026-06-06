@@ -128,6 +128,26 @@ The verdict streams into the AI pane — read it, fix the prose, move on. If
 the Facts book is empty, the chord still runs a generic local fact-check
 (no grounding).
 
+### Tie a scene to the facts it depends on
+
+A Fact is just a paragraph, so it joins the wiki-link system
+([Tutorial 19](19-wiki-links.md)) like any other — across books:
+
+- **Provenance** — from a Fact, `Ctrl+V A` links it to the **Notes** or
+  **Research** paragraph it came from (where did "the war ended 1411"
+  come from?).
+- **Dependents** — from a manuscript paragraph, `Ctrl+V A` links it to
+  the Facts it relies on; from the *Fact*, `Ctrl+V K` (backlinks) then
+  shows every scene that depends on it — so when a fact changes you can
+  see what to re-check.
+
+These links also **sharpen the fact-check chord**: if the open paragraph
+is linked to particular facts, `Ctrl+B Shift+X` leads with them in a
+"Facts this scene is linked to" block (the model weights contradictions
+with those), then includes the rest — so coverage never drops, but the
+facts you said the scene depends on get priority. The status bar notes
+how many linked facts it prioritised.
+
 ## 4. Scan the whole manuscript — `inkhaven facts scan`
 
 `Ctrl+B Shift+X` checks one paragraph; when you want to sweep the *whole*
