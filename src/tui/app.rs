@@ -12691,6 +12691,55 @@ impl App {
                     mode_label.to_lowercase()
                 )))
             }
+            // 1.2.21+ — the Facts scope ignores the cursor entirely
+            // and loads the whole Facts system book as ground-truth
+            // reference: every paragraph of the world's invariants
+            // (climate, geography, seasons, chronology).  The chat
+            // framing (a fact-analysis system prompt) is layered on
+            // in the send path; here we just gather the reference.
+            AiMode::Facts => {
+                let Some(facts_id) = self.system_book_id(crate::store::SYSTEM_TAG_FACTS)
+                else {
+                    return Err(
+                        "AI scope `Facts` — this project has no Facts book".into(),
+                    );
+                };
+                let mut chunks: Vec<String> = Vec::new();
+                for id in self.hierarchy.collect_subtree(facts_id) {
+                    let Some(node) = self.hierarchy.get(id) else {
+                        continue;
+                    };
+                    if node.kind != NodeKind::Paragraph {
+                        continue;
+                    }
+                    if let Ok(Some(bytes)) = self.store.get_content(node.id) {
+                        let body = String::from_utf8_lossy(&bytes).to_string();
+                        if body.trim().is_empty() {
+                            continue;
+                        }
+                        chunks.push(format!(
+                            "── {} ──\n{}",
+                            self.title_breadcrumb(node.id),
+                            body
+                        ));
+                    }
+                }
+                if chunks.is_empty() {
+                    return Err(
+                        "AI scope `Facts` — the Facts book is empty; collect some facts first"
+                            .into(),
+                    );
+                }
+                let header = format!(
+                    "── Facts reference ({} entr{}) ──",
+                    chunks.len(),
+                    if chunks.len() == 1 { "y" } else { "ies" },
+                );
+                Ok(Some(format!(
+                    "{header}\n\n{}\n── end facts reference ──",
+                    chunks.join("\n\n"),
+                )))
+            }
         }
     }
 

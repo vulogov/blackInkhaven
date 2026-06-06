@@ -103,7 +103,7 @@ fn global_entries() -> Vec<Entry> {
         entry("Ctrl+Z", "Bund prefix (next key = bund action — see live section below)"),
         entry("F1", "Help-manual question (RAG over the Help book)"),
         entry("F7", "Grammar check the open paragraph (→ AI pane)"),
-        entry("F9", "Cycle AI scope: None→Sel→Para→Sub→Chap→Book→None"),
+        entry("F9", "Cycle AI scope: None→Sel→Para→Sub→Chap→Book→Facts→None"),
         entry("F10", "Toggle inference: Local↔Full (Help locked to Local)"),
         entry("Esc", "Close overlay / cancel"),
     ]
@@ -200,7 +200,7 @@ fn ai_entries() -> Vec<Entry> {
         entry("Esc", "Bounce to AI pane to read the answer"),
         blank(),
         header("─ Chat session ─"),
-        entry("F9", "Cycle scope: None / Sel / Para / Sub / Chap / Book"),
+        entry("F9", "Cycle scope: None / Sel / Para / Sub / Chap / Book / Facts"),
         entry("F10", "Toggle inference: Local ↔ Full (Help locked to Local)"),
     ]
 }

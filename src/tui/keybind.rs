@@ -1047,7 +1047,7 @@ impl Action {
             Action::Critique =>
                 "AI critique of the open paragraph. In edit mode: 'what's weak' prompt. In split-edit mode: 'evaluate changes' prompt. Prompt resolution: Prompts book > prompts.hjson > embedded default.".into(),
             Action::CycleAiMode =>
-                "Cycle AI scope: None → Selection → Paragraph → Subchapter → Chapter → Book → None.".into(),
+                "Cycle AI scope: None → Selection → Paragraph → Subchapter → Chapter → Book → Facts → None. The `Facts` scope (1.2.21+) ignores the cursor and loads the whole Facts system book as ground-truth reference.".into(),
             Action::ToggleInferenceMode =>
                 "Toggle inference mode: Local-only RAG ↔ Full general knowledge (Help is pinned to Local regardless).".into(),
 
