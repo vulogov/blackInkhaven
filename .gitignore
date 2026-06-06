@@ -59,3 +59,7 @@ target
 # screen.png, etc.) stay tracked.
 *-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9].png
 *-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]-page-*.png
+
+# Crash reports + rescue companions (written to cwd/project on panic)
+inkhaven-crash-*.hjson
+*.inkhaven-rescue
