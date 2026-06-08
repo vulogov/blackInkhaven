@@ -1,0 +1,326 @@
+//! 1.2.22 R.1 — pure find/replace primitives for the project-wide,
+//! review-gated replace.
+//!
+//! No I/O: this module finds matches in a text and applies an accepted
+//! subset.  The project walk, the review modal, the snapshots, and the
+//! atomic writes live in the TUI / CLI (R.2–R.5).  Matching is lexical
+//! — literal (default), word-boundary, opt-in regex, optional
+//! case-insensitive — backed by the `regex` crate (already in-tree).
+//! There is no full-text index: a manuscript is one book, so the caller
+//! scans paragraph bodies linearly; an inverted index can neither
+//! rank-replace nor do substring/regex/word-boundary, so it would not
+//! help.
+//!
+//! ## Why per-hit replacements are precomputed
+//!
+//! [`find_matches`] expands each regex match's replacement *at find
+//! time* (so `$1` capture references resolve against that match's
+//! captures) and stores it on the [`Hit`].  [`apply`] then just splices
+//! the accepted hits' byte ranges right-to-left — it needs neither the
+//! pattern nor the options, and the author can accept any subset.
+
+// R.1 ships the pure matcher ahead of its consumers (R.2 project scan,
+// R.3 review modal, R.5 CLI).  The `#[cfg(test)]` suite exercises every
+// item; this `allow` is removed when R.2 wires the first caller.
+#![allow(dead_code)]
+
+use std::fmt;
+
+use regex::RegexBuilder;
+
+/// How the pattern is matched.  `Default` encodes the safe default used
+/// by the TUI: a literal, whole-word match (no `Will`/`will` surprise).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplaceOpts {
+    /// Treat the pattern as a regular expression (else literal text).
+    pub regex: bool,
+    /// Match only at word boundaries (`\bpattern\b`).
+    pub word_boundary: bool,
+    /// Case-insensitive match.
+    pub ignore_case: bool,
+}
+
+impl Default for ReplaceOpts {
+    fn default() -> Self {
+        Self {
+            regex: false,
+            word_boundary: true,
+            ignore_case: false,
+        }
+    }
+}
+
+/// One match in a text, with everything the review UI + [`apply`] need.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hit {
+    /// Byte range `[start, end)` of the match in the full text.
+    pub start: usize,
+    pub end: usize,
+    /// 1-based line and 1-based char column of the match start.
+    pub line: usize,
+    pub col: usize,
+    /// The full line containing the match start — for KWIC context /
+    /// span highlighting in the review UI.
+    pub line_text: String,
+    /// The matched text.
+    pub matched: String,
+    /// The replacement for THIS match, with regex captures already
+    /// expanded (in literal mode it is the replacement verbatim).
+    pub replacement: String,
+}
+
+/// Why a find failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplaceError {
+    /// An empty pattern matches nothing useful — rejected up front.
+    EmptyPattern,
+    /// The pattern didn't compile as a regex (only in regex /
+    /// word-boundary mode; `e` is the engine's message).
+    BadRegex(String),
+}
+
+impl fmt::Display for ReplaceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ReplaceError::EmptyPattern => write!(f, "empty search pattern"),
+            ReplaceError::BadRegex(e) => write!(f, "invalid regex: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ReplaceError {}
+
+/// Find every match of `pattern` in `text`, computing each one's
+/// replacement from `repl` (regex captures expand in regex mode;
+/// literal mode uses `repl` verbatim).  Matches are non-overlapping and
+/// in source order; zero-width matches (e.g. from `a*`) are skipped.
+pub fn find_matches(
+    text: &str,
+    pattern: &str,
+    repl: &str,
+    opts: ReplaceOpts,
+) -> Result<Vec<Hit>, ReplaceError> {
+    if pattern.is_empty() {
+        return Err(ReplaceError::EmptyPattern);
+    }
+    let re = build_regex(pattern, opts)?;
+    let mut hits = Vec::new();
+    for caps in re.captures_iter(text) {
+        let m = caps.get(0).expect("group 0 always present");
+        let (start, end) = (m.start(), m.end());
+        if start == end {
+            // A zero-width match isn't a meaningful replace target.
+            continue;
+        }
+        let replacement = if opts.regex {
+            let mut out = String::new();
+            caps.expand(repl, &mut out);
+            out
+        } else {
+            repl.to_string()
+        };
+        let (line, col, line_text) = locate(text, start);
+        hits.push(Hit {
+            start,
+            end,
+            line,
+            col,
+            line_text,
+            matched: m.as_str().to_string(),
+            replacement,
+        });
+    }
+    Ok(hits)
+}
+
+/// Apply an accepted subset of hits to `text`, splicing right-to-left
+/// by byte offset so earlier replacements don't invalidate later
+/// positions.  The hits must be non-overlapping (as produced by
+/// [`find_matches`]); a subset of them is fine.
+pub fn apply(text: &str, accepted: &[Hit]) -> String {
+    let mut hits: Vec<&Hit> = accepted.iter().collect();
+    hits.sort_by(|a, b| b.start.cmp(&a.start));
+    let mut out = text.to_string();
+    for h in hits {
+        // Guard against stale ranges (the caller's text must match the
+        // one the hits were found in); skip rather than panic.
+        if h.start <= h.end && h.end <= out.len() && out.is_char_boundary(h.start) && out.is_char_boundary(h.end) {
+            out.replace_range(h.start..h.end, &h.replacement);
+        }
+    }
+    out
+}
+
+/// Compile the matcher: literal → escaped; word-boundary → `\b(?:…)\b`;
+/// case-insensitivity via the builder flag.
+fn build_regex(pattern: &str, opts: ReplaceOpts) -> Result<regex::Regex, ReplaceError> {
+    let body = if opts.regex {
+        pattern.to_string()
+    } else {
+        regex::escape(pattern)
+    };
+    let body = if opts.word_boundary {
+        format!(r"\b(?:{body})\b")
+    } else {
+        body
+    };
+    RegexBuilder::new(&body)
+        .case_insensitive(opts.ignore_case)
+        .build()
+        .map_err(|e| ReplaceError::BadRegex(e.to_string()))
+}
+
+/// `(1-based line, 1-based char column, full line text)` of byte
+/// offset `at` in `text`.
+fn locate(text: &str, at: usize) -> (usize, usize, String) {
+    let before = &text[..at];
+    let line0 = before.bytes().filter(|&b| b == b'\n').count();
+    let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let col0 = text[line_start..at].chars().count();
+    let line_end = text[at..]
+        .find('\n')
+        .map(|i| at + i)
+        .unwrap_or(text.len());
+    (line0 + 1, col0 + 1, text[line_start..line_end].to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opts(regex: bool, word_boundary: bool, ignore_case: bool) -> ReplaceOpts {
+        ReplaceOpts {
+            regex,
+            word_boundary,
+            ignore_case,
+        }
+    }
+
+    #[test]
+    fn literal_substring_match() {
+        let hits =
+            find_matches("Anne went home", "Anne", "Anna", opts(false, false, false)).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].matched, "Anne");
+        assert_eq!(hits[0].replacement, "Anna");
+        assert_eq!((hits[0].start, hits[0].end), (0, 4));
+        assert_eq!((hits[0].line, hits[0].col), (1, 1));
+    }
+
+    #[test]
+    fn word_boundary_excludes_partials() {
+        // "Anne" must not match inside "Anneliese".
+        let text = "Anne met Anneliese";
+        let wb = find_matches(text, "Anne", "Anna", opts(false, true, false)).unwrap();
+        assert_eq!(wb.len(), 1, "word-boundary should match only the standalone Anne");
+        assert_eq!(wb[0].start, 0);
+        // Without word-boundary it's a substring → both.
+        let sub = find_matches(text, "Anne", "Anna", opts(false, false, false)).unwrap();
+        assert_eq!(sub.len(), 2);
+    }
+
+    #[test]
+    fn the_will_will_footgun() {
+        let text = "Will will go.";
+        // Case-sensitive whole-word → only the capitalised name.
+        let cs = find_matches(text, "Will", "Bill", opts(false, true, false)).unwrap();
+        assert_eq!(cs.len(), 1);
+        assert_eq!(cs[0].start, 0);
+        // Case-insensitive → both.
+        let ci = find_matches(text, "Will", "Bill", opts(false, true, true)).unwrap();
+        assert_eq!(ci.len(), 2);
+    }
+
+    #[test]
+    fn regex_with_captures_expands_replacement() {
+        let hits =
+            find_matches("1999-2000", r"(\d{4})-(\d{4})", "$2/$1", opts(true, false, false))
+                .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].replacement, "2000/1999");
+    }
+
+    #[test]
+    fn literal_mode_does_not_expand_dollar() {
+        // In literal mode `$1` is part of the replacement, not a capture.
+        let hits = find_matches("a a", "a", "$1b", opts(false, false, false)).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].replacement, "$1b");
+    }
+
+    #[test]
+    fn apply_splices_right_to_left() {
+        let text = "aXaXa";
+        let hits = find_matches(text, "X", "YY", opts(false, false, false)).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(apply(text, &hits), "aYYaYYa");
+    }
+
+    #[test]
+    fn apply_accepts_a_subset() {
+        let text = "aXaXa";
+        let hits = find_matches(text, "X", "YY", opts(false, false, false)).unwrap();
+        // Accept only the second match.
+        assert_eq!(apply(text, &hits[1..]), "aXaYYa");
+        // Accept none → unchanged.
+        assert_eq!(apply(text, &[]), text);
+    }
+
+    #[test]
+    fn line_and_col_are_one_based() {
+        let text = "first line\nsecond Anne here\nthird";
+        let hits = find_matches(text, "Anne", "Anna", opts(false, true, false)).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].line, 2);
+        assert_eq!(hits[0].col, 8); // "second " = 7 chars, match at col 8
+        assert_eq!(hits[0].line_text, "second Anne here");
+    }
+
+    #[test]
+    fn unicode_columns_count_chars_not_bytes() {
+        let text = "Café Anne"; // 'é' is 2 bytes
+        let hits = find_matches(text, "Anne", "Anna", opts(false, true, false)).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].col, 6); // C a f é space = 5 chars, match at 6
+        // apply must still splice on byte boundaries correctly.
+        assert_eq!(apply(text, &hits), "Café Anna");
+    }
+
+    #[test]
+    fn ignore_case_literal() {
+        let hits = find_matches("ANNE", "anne", "x", opts(false, true, true)).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].matched, "ANNE");
+    }
+
+    #[test]
+    fn zero_width_matches_are_skipped() {
+        // `a*` matches empty strings around the b's; only the real "aa"
+        // run should survive.
+        let hits = find_matches("baab", "a*", "Z", opts(true, false, false)).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].matched, "aa");
+    }
+
+    #[test]
+    fn empty_pattern_is_rejected() {
+        assert_eq!(
+            find_matches("text", "", "x", ReplaceOpts::default()),
+            Err(ReplaceError::EmptyPattern),
+        );
+    }
+
+    #[test]
+    fn invalid_regex_errors_cleanly() {
+        let err = find_matches("text", "(unclosed", "x", opts(true, false, false));
+        assert!(matches!(err, Err(ReplaceError::BadRegex(_))));
+    }
+
+    #[test]
+    fn default_opts_are_literal_whole_word() {
+        let d = ReplaceOpts::default();
+        assert!(!d.regex);
+        assert!(d.word_boundary);
+        assert!(!d.ignore_case);
+    }
+}
