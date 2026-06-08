@@ -23,6 +23,7 @@ mod grammar;
 mod language_entry;
 mod manuscript;
 mod progress;
+mod replace;
 mod project;
 mod scripting;
 mod scrivener;
