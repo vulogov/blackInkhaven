@@ -1,15 +1,16 @@
-//! 1.2.22 R.1 — pure find/replace primitives for the project-wide,
+//! 1.2.22 R.1–R.2 — find/replace primitives for the project-wide,
 //! review-gated replace.
 //!
-//! No I/O: this module finds matches in a text and applies an accepted
-//! subset.  The project walk, the review modal, the snapshots, and the
-//! atomic writes live in the TUI / CLI (R.2–R.5).  Matching is lexical
-//! — literal (default), word-boundary, opt-in regex, optional
-//! case-insensitive — backed by the `regex` crate (already in-tree).
-//! There is no full-text index: a manuscript is one book, so the caller
-//! scans paragraph bodies linearly; an inverted index can neither
-//! rank-replace nor do substring/regex/word-boundary, so it would not
-//! help.
+//! The matcher is pure: [`find_matches`] / [`apply`] / [`scan_bodies`]
+//! do no I/O.  [`scan_project`] is the thin walk that reads paragraph
+//! bodies from the store + hierarchy and delegates to `scan_bodies`.
+//! The review modal, the snapshots, and the atomic writes stay in the
+//! TUI / CLI (R.3–R.5).  Matching is lexical — literal (default),
+//! word-boundary, opt-in regex, optional case-insensitive — backed by
+//! the `regex` crate (already in-tree).  There is no full-text index: a
+//! manuscript is one book, so the scan is linear over paragraph bodies;
+//! an inverted index can neither rank-replace nor do
+//! substring/regex/word-boundary, so it would not help.
 //!
 //! ## Why per-hit replacements are precomputed
 //!
@@ -19,9 +20,9 @@
 //! the accepted hits' byte ranges right-to-left — it needs neither the
 //! pattern nor the options, and the author can accept any subset.
 
-// R.1 ships the pure matcher ahead of its consumers (R.2 project scan,
-// R.3 review modal, R.5 CLI).  The `#[cfg(test)]` suite exercises every
-// item; this `allow` is removed when R.2 wires the first caller.
+// R.1–R.2 ship the matcher + project scan ahead of their consumers
+// (R.3 review modal, R.5 CLI).  Tests exercise the pure surface; this
+// `allow` is removed when R.3/R.5 wire the first caller.
 #![allow(dead_code)]
 
 use std::fmt;
@@ -104,6 +105,14 @@ pub fn find_matches(
         return Err(ReplaceError::EmptyPattern);
     }
     let re = build_regex(pattern, opts)?;
+    Ok(find_with(&re, text, repl, opts.regex))
+}
+
+/// The match loop over a pre-compiled regex — lets a project scan
+/// compile once and reuse across every paragraph.  `expand` is
+/// `opts.regex`: when set, `$1` capture references in `repl` resolve;
+/// otherwise `repl` is verbatim.
+fn find_with(re: &regex::Regex, text: &str, repl: &str, expand: bool) -> Vec<Hit> {
     let mut hits = Vec::new();
     for caps in re.captures_iter(text) {
         let m = caps.get(0).expect("group 0 always present");
@@ -112,7 +121,7 @@ pub fn find_matches(
             // A zero-width match isn't a meaningful replace target.
             continue;
         }
-        let replacement = if opts.regex {
+        let replacement = if expand {
             let mut out = String::new();
             caps.expand(repl, &mut out);
             out
@@ -130,7 +139,7 @@ pub fn find_matches(
             replacement,
         });
     }
-    Ok(hits)
+    hits
 }
 
 /// Apply an accepted subset of hits to `text`, splicing right-to-left
@@ -149,6 +158,132 @@ pub fn apply(text: &str, accepted: &[Hit]) -> String {
         }
     }
     out
+}
+
+// ── project scan (R.2) ────────────────────────────────────
+//
+// `scan_bodies` is pure (matches over supplied bodies — unit-tested);
+// `scan_project` is the thin I/O layer that gathers paragraph bodies
+// from the store + hierarchy and delegates.  The regex is compiled once
+// and reused across every paragraph.
+
+/// Which books a project scan covers.
+#[derive(Debug, Clone)]
+pub enum ScanScope {
+    /// Every user (non-system) book — the default; a manuscript rename
+    /// shouldn't touch Notes/Facts/Characters.
+    UserBooks,
+    /// User books **plus** the system books (Notes / Research / Facts /
+    /// Characters / …).
+    IncludingSystem,
+    /// A single book (its whole subtree), by id.
+    Book(uuid::Uuid),
+}
+
+/// One paragraph that has at least one match.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParaMatches {
+    pub para_id: uuid::Uuid,
+    pub title: String,
+    pub slug_path: String,
+    pub hits: Vec<Hit>,
+}
+
+/// Run the matcher over an iterator of `(id, title, slug_path, body)`
+/// paragraphs, returning only those with ≥1 hit, in input order.  Pure
+/// — the caller does the I/O.  Compiles the regex once.
+pub fn scan_bodies<I>(
+    bodies: I,
+    pattern: &str,
+    repl: &str,
+    opts: ReplaceOpts,
+) -> Result<Vec<ParaMatches>, ReplaceError>
+where
+    I: IntoIterator<Item = (uuid::Uuid, String, String, String)>,
+{
+    if pattern.is_empty() {
+        return Err(ReplaceError::EmptyPattern);
+    }
+    let re = build_regex(pattern, opts)?;
+    let mut out = Vec::new();
+    for (para_id, title, slug_path, body) in bodies {
+        let hits = find_with(&re, &body, repl, opts.regex);
+        if !hits.is_empty() {
+            out.push(ParaMatches {
+                para_id,
+                title,
+                slug_path,
+                hits,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Walk the in-scope paragraphs, read each body from the store, and
+/// scan it.  Linear, no index.  Validates the pattern up front so a bad
+/// regex / empty pattern errors even on an empty project.
+pub fn scan_project(
+    store: &crate::store::Store,
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    scope: &ScanScope,
+    pattern: &str,
+    repl: &str,
+    opts: ReplaceOpts,
+) -> Result<Vec<ParaMatches>, ReplaceError> {
+    if pattern.is_empty() {
+        return Err(ReplaceError::EmptyPattern);
+    }
+    build_regex(pattern, opts)?; // validate before any walk
+
+    let ids = paragraph_ids_in_scope(hierarchy, scope);
+    let bodies = ids.into_iter().filter_map(|id| {
+        let node = hierarchy.get(id)?;
+        let bytes = store.get_content(id).ok().flatten()?;
+        let body = String::from_utf8_lossy(&bytes).into_owned();
+        Some((id, node.title.clone(), hierarchy.slug_path(node), body))
+    });
+    scan_bodies(bodies, pattern, repl, opts)
+}
+
+/// Paragraph ids in `scope`, in document order.
+fn paragraph_ids_in_scope(
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    scope: &ScanScope,
+) -> Vec<uuid::Uuid> {
+    use crate::store::node::NodeKind;
+    let is_paragraph = |id: &uuid::Uuid| {
+        hierarchy
+            .get(*id)
+            .map(|n| n.kind == NodeKind::Paragraph)
+            .unwrap_or(false)
+    };
+    match scope {
+        ScanScope::Book(book_id) => hierarchy
+            .collect_subtree(*book_id)
+            .into_iter()
+            .filter(is_paragraph)
+            .collect(),
+        _ => {
+            let include_system = matches!(scope, ScanScope::IncludingSystem);
+            let mut ids = Vec::new();
+            for book in hierarchy.children_of(None) {
+                if book.kind != NodeKind::Book {
+                    continue;
+                }
+                if !include_system && book.system_tag.is_some() {
+                    continue;
+                }
+                ids.extend(
+                    hierarchy
+                        .collect_subtree(book.id)
+                        .into_iter()
+                        .filter(is_paragraph),
+                );
+            }
+            ids
+        }
+    }
 }
 
 /// Compile the matcher: literal → escaped; word-boundary → `\b(?:…)\b`;
@@ -322,5 +457,62 @@ mod tests {
         assert!(!d.regex);
         assert!(d.word_boundary);
         assert!(!d.ignore_case);
+    }
+
+    // ── scan_bodies ───────────────────────────────────
+
+    fn para(n: u8, title: &str, body: &str) -> (uuid::Uuid, String, String, String) {
+        (
+            uuid::Uuid::from_u128(n as u128),
+            title.into(),
+            format!("book/{title}"),
+            body.into(),
+        )
+    }
+
+    #[test]
+    fn scan_bodies_keeps_only_paragraphs_with_hits() {
+        let bodies = vec![
+            para(1, "ch1", "Anne walked in."),
+            para(2, "ch2", "Nothing here."),
+            para(3, "ch3", "Anne and Anne again."),
+        ];
+        let res =
+            scan_bodies(bodies, "Anne", "Anna", ReplaceOpts::default()).unwrap();
+        assert_eq!(res.len(), 2, "the empty paragraph is dropped");
+        assert_eq!(res[0].para_id, uuid::Uuid::from_u128(1));
+        assert_eq!(res[0].title, "ch1");
+        assert_eq!(res[0].slug_path, "book/ch1");
+        assert_eq!(res[0].hits.len(), 1);
+        // Order preserved; ch3 has two hits.
+        assert_eq!(res[1].para_id, uuid::Uuid::from_u128(3));
+        assert_eq!(res[1].hits.len(), 2);
+    }
+
+    #[test]
+    fn scan_bodies_word_boundary_respected_per_paragraph() {
+        let bodies = vec![para(1, "ch1", "Anneliese only")];
+        // Whole-word "Anne" must not match inside "Anneliese".
+        let res = scan_bodies(bodies, "Anne", "Anna", ReplaceOpts::default()).unwrap();
+        assert!(res.is_empty());
+    }
+
+    #[test]
+    fn scan_bodies_propagates_pattern_errors() {
+        let bodies = vec![para(1, "ch1", "text")];
+        assert_eq!(
+            scan_bodies(bodies.clone(), "", "x", ReplaceOpts::default()),
+            Err(ReplaceError::EmptyPattern),
+        );
+        let bad = scan_bodies(
+            bodies,
+            "(unclosed",
+            "x",
+            ReplaceOpts {
+                regex: true,
+                ..ReplaceOpts::default()
+            },
+        );
+        assert!(matches!(bad, Err(ReplaceError::BadRegex(_))));
     }
 }
