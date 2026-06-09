@@ -5842,23 +5842,200 @@ impl App {
                 None
             },
             focus_replace: false,
+            scope_book: false,
         };
     }
 
+    /// 1.2.22 R.3 — scan the whole manuscript for `pattern` and open the
+    /// per-match review modal.  Default opts are literal whole-word (the
+    /// safe rename default); regex / substring stay on `inkhaven replace`
+    /// for now.  User books only — a manuscript rename shouldn't touch
+    /// Notes/Facts.
+    fn open_replace_review(&mut self, pattern: String, replacement: String) {
+        let opts = crate::replace::ReplaceOpts::default();
+        let matches = match crate::replace::scan_project(
+            &self.store,
+            &self.hierarchy,
+            &crate::replace::ScanScope::UserBooks,
+            &pattern,
+            &replacement,
+            opts,
+        ) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status = format!("replace: {e}");
+                self.modal = Modal::None;
+                return;
+            }
+        };
+        if matches.is_empty() {
+            self.status = format!("replace: no whole-word matches for `{pattern}`");
+            self.modal = Modal::None;
+            return;
+        }
+        let flat: Vec<(usize, usize)> = matches
+            .iter()
+            .enumerate()
+            .flat_map(|(pi, pm)| (0..pm.hits.len()).map(move |hi| (pi, hi)))
+            .collect();
+        let n = flat.len();
+        self.modal = Modal::ReplaceReview {
+            pattern,
+            replacement,
+            matches,
+            flat,
+            cursor: 0,
+            skipped: std::collections::HashSet::new(),
+        };
+        self.status = format!(
+            "replace: {n} match(es) · ↑↓ move · Space skip · a all · n none · Enter apply · Esc cancel"
+        );
+    }
+
+    /// Key handler for the project-replace review modal.
+    fn replace_review_handle_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::KeyCode;
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "replace: cancelled".into();
+            }
+            KeyCode::Up => {
+                if let Modal::ReplaceReview { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::ReplaceReview { cursor, flat, .. } = &mut self.modal {
+                    if !flat.is_empty() && *cursor + 1 < flat.len() {
+                        *cursor += 1;
+                    }
+                }
+            }
+            KeyCode::Char(' ') => {
+                if let Modal::ReplaceReview {
+                    cursor,
+                    flat,
+                    skipped,
+                    ..
+                } = &mut self.modal
+                {
+                    if let Some(m) = flat.get(*cursor).copied() {
+                        if !skipped.insert(m) {
+                            skipped.remove(&m);
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                if let Modal::ReplaceReview { skipped, .. } = &mut self.modal {
+                    skipped.clear();
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                if let Modal::ReplaceReview { flat, skipped, .. } = &mut self.modal {
+                    *skipped = flat.iter().copied().collect();
+                }
+            }
+            KeyCode::Enter => self.apply_replace_review(),
+            _ => {}
+        }
+    }
+
+    /// Apply the non-skipped matches from the review modal: snapshot +
+    /// rewrite each touched paragraph, reload the open buffer if it was
+    /// among them.
+    fn apply_replace_review(&mut self) {
+        let (pattern, replacement, selected) = match &self.modal {
+            Modal::ReplaceReview {
+                pattern,
+                replacement,
+                matches,
+                skipped,
+                ..
+            } => {
+                let mut sel: Vec<crate::replace::ParaMatches> = Vec::new();
+                for (pi, pm) in matches.iter().enumerate() {
+                    let hits: Vec<crate::replace::Hit> = pm
+                        .hits
+                        .iter()
+                        .enumerate()
+                        .filter(|(hi, _)| !skipped.contains(&(pi, *hi)))
+                        .map(|(_, h)| h.clone())
+                        .collect();
+                    if !hits.is_empty() {
+                        sel.push(crate::replace::ParaMatches {
+                            para_id: pm.para_id,
+                            title: pm.title.clone(),
+                            slug_path: pm.slug_path.clone(),
+                            body: pm.body.clone(),
+                            hits,
+                        });
+                    }
+                }
+                (pattern.clone(), replacement.clone(), sel)
+            }
+            _ => return,
+        };
+        if selected.is_empty() {
+            self.status = "replace: every match was skipped — nothing to do".into();
+            self.modal = Modal::None;
+            return;
+        }
+        let annotation = format!("replace: {pattern} → {replacement}");
+        let report = match crate::replace::apply_project(
+            &self.store,
+            &self.hierarchy,
+            &selected,
+            &annotation,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status = format!("replace: {e}");
+                self.modal = Modal::None;
+                return;
+            }
+        };
+        self.modal = Modal::None;
+        // Reload the open paragraph if it was among the rewritten ones.
+        if let Some(open_id) = self.opened.as_ref().map(|d| d.id) {
+            if selected.iter().any(|pm| pm.para_id == open_id) {
+                let _ = self.open_paragraph_by_uuid(open_id);
+            }
+        }
+        self.status = format!(
+            "replace: applied {} in {} paragraph(s); {} snapshot(s) taken (F6 to restore)",
+            report.occurrences, report.paragraphs, report.snapshots,
+        );
+    }
+
     fn commit_find(&mut self) {
-        let (pattern, replace_with) = match &self.modal {
+        let (pattern, replace_with, scope_book) = match &self.modal {
             Modal::FindReplace {
                 search_input,
                 replace_input,
+                scope_book,
                 ..
             } => (
                 search_input.as_str().to_string(),
                 replace_input.as_ref().map(|i| i.as_str().to_string()),
+                *scope_book,
             ),
             _ => return,
         };
         if pattern.is_empty() {
             self.status = "search pattern is empty".into();
+            return;
+        }
+        // 1.2.22 R.3 — project (book) scope: scan the whole manuscript
+        // and open the per-match review instead of the in-buffer search.
+        if scope_book {
+            match replace_with {
+                Some(repl) => self.open_replace_review(pattern, repl),
+                None => {
+                    self.status = "book replace needs a replacement (Ctrl+R)".into()
+                }
+            }
             return;
         }
         let Some(doc) = self.opened.as_mut() else {
@@ -15185,6 +15362,7 @@ impl App {
         let is_renaming = matches!(self.modal, Modal::Renaming { .. });
         let is_file_picker = matches!(self.modal, Modal::FilePicker(_));
         let is_find = matches!(self.modal, Modal::FindReplace { .. });
+        let is_replace_review = matches!(self.modal, Modal::ReplaceReview { .. });
         let is_quickref = matches!(self.modal, Modal::QuickRef { .. });
         let is_credits = matches!(self.modal, Modal::Credits { .. });
         let is_book_info = matches!(self.modal, Modal::BookInfo { .. });
@@ -15878,10 +16056,19 @@ impl App {
                 search_input,
                 replace_input,
                 focus_replace,
+                scope_book,
             } = &mut self.modal
             {
                 match key.code {
                     KeyCode::Enter => commit = true,
+                    // 1.2.22 R.3 — Ctrl+B toggles project (book) scope.
+                    KeyCode::Char('b') | KeyCode::Char('B')
+                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        if replace_input.is_some() {
+                            *scope_book = !*scope_book;
+                        }
+                    }
                     KeyCode::Tab => {
                         if replace_input.is_some() {
                             *focus_replace = !*focus_replace;
@@ -15967,6 +16154,11 @@ impl App {
             if commit {
                 self.commit_find();
             }
+            return Ok(false);
+        }
+
+        if is_replace_review {
+            self.replace_review_handle_key(key);
             return Ok(false);
         }
 

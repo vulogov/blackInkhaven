@@ -121,6 +121,33 @@ fn wrap_diff_row(
 }
 
 
+/// 1.2.22 R.3 — KWIC spans for a replace hit: the matched span
+/// highlighted in its line, ~30 chars of context each side, ellipsed.
+fn match_spans(hit: &crate::replace::Hit) -> Vec<Span<'static>> {
+    let chars: Vec<char> = hit.line_text.chars().collect();
+    let start = (hit.col.saturating_sub(1)).min(chars.len());
+    let end = (start + hit.matched.chars().count()).min(chars.len());
+    let lead = start.saturating_sub(30);
+    let trail = (end + 30).min(chars.len());
+    let before: String = chars[lead..start].iter().collect();
+    let matched: String = chars[start..end].iter().collect();
+    let after: String = chars[end..trail].iter().collect();
+    let mut out: Vec<Span<'static>> = Vec::new();
+    if lead > 0 {
+        out.push(Span::raw("…"));
+    }
+    out.push(Span::raw(before));
+    out.push(Span::styled(
+        matched,
+        Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    ));
+    out.push(Span::raw(after));
+    if trail < chars.len() {
+        out.push(Span::raw("…"));
+    }
+    out
+}
+
 impl super::super::App {
 
     pub(in crate::tui::app) fn draw_book_info_modal(
@@ -3838,6 +3865,112 @@ impl super::super::App {
                 entries.len()
             )
         };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    /// 1.2.22 R.3 — the project-replace review: matches grouped by
+    /// paragraph, each with a `[x]`/`[ ]` keep/skip box and the matched
+    /// span highlighted in its line.  Enter applies the kept ones.
+    pub(in crate::tui::app) fn draw_replace_review_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::ReplaceReview {
+            pattern,
+            replacement,
+            matches,
+            flat,
+            cursor,
+            skipped,
+            ..
+        } = &self.modal
+        else {
+            return;
+        };
+        let width = area.width.saturating_sub(6).max(64);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let kept = flat.len().saturating_sub(skipped.len());
+        let header = format!(
+            " Replace: {pattern} → {replacement}  ({kept}/{} kept) ",
+            flat.len(),
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+
+        // Build every line (paragraph headers + hit rows), noting the
+        // rendered index of the cursor row so we keep it in view.
+        let mut lines: Vec<Line<'_>> = Vec::new();
+        let mut cursor_render = 0usize;
+        let mut flat_idx = 0usize;
+        for (pi, pm) in matches.iter().enumerate() {
+            lines.push(Line::from(Span::styled(
+                pm.slug_path.clone(),
+                Style::default().add_modifier(Modifier::DIM | Modifier::BOLD),
+            )));
+            for (hi, hit) in pm.hits.iter().enumerate() {
+                let on_cursor = flat_idx == *cursor;
+                if on_cursor {
+                    cursor_render = lines.len();
+                }
+                let kept = !skipped.contains(&(pi, hi));
+                let mut spans: Vec<Span> = vec![Span::raw(format!(
+                    "  {} {:>3}:{:<3} ",
+                    if kept { "[x]" } else { "[ ]" },
+                    hit.line,
+                    hit.col,
+                ))];
+                spans.extend(match_spans(hit));
+                let mut line = Line::from(spans);
+                if on_cursor {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                } else if !kept {
+                    line = line.style(Style::default().add_modifier(Modifier::DIM));
+                }
+                lines.push(line);
+                flat_idx += 1;
+            }
+        }
+        let view_scroll = if body_h > 0 && cursor_render >= body_h {
+            cursor_render + 1 - body_h
+        } else {
+            0
+        };
+        let view: Vec<Line<'_>> = lines.into_iter().skip(view_scroll).take(body_h).collect();
+        f.render_widget(Paragraph::new(view), body_rect);
+
+        let hint =
+            " ↑↓ move · Space skip · a keep all · n skip none · Enter apply · Esc cancel ";
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 hint,

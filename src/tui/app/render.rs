@@ -188,6 +188,10 @@ impl super::App {
             self.draw_facts_search_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::ReplaceReview { .. }) {
+            self.draw_replace_review_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SentenceRhythm { .. }) {
             self.draw_sentence_rhythm_modal(f, area);
             return;
@@ -534,6 +538,7 @@ impl super::App {
                 search_input,
                 replace_input,
                 focus_replace,
+                scope_book,
             } => {
                 let cursor_char = '│';
                 let search_marker = if *focus_replace { " " } else { ">" };
@@ -567,9 +572,24 @@ impl super::App {
                         },
                     )));
                 }
+                if replace_input.is_some() {
+                    // 1.2.22 R.3 — scope chip (Ctrl+B toggles).
+                    body.push(Line::from(Span::styled(
+                        if *scope_book {
+                            "   scope: whole book — every match reviewed before applying"
+                        } else {
+                            "   scope: this paragraph"
+                        },
+                        Style::default().add_modifier(if *scope_book {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::DIM
+                        }),
+                    )));
+                }
                 body.push(Line::from(""));
                 let hint = if replace_input.is_some() {
-                    " Enter run · Tab switch field · Esc cancel "
+                    " Enter run · Tab switch field · Ctrl+B scope (¶ ↔ book) · Esc cancel "
                 } else {
                     " Enter find · Esc cancel "
                 };

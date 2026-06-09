@@ -636,6 +636,26 @@ pub(super) enum Modal {
         search_input: TextInput,
         replace_input: Option<TextInput>,
         focus_replace: bool,
+        /// 1.2.22 R.3 — when true, committing scans the whole book and
+        /// opens a [`Modal::ReplaceReview`] instead of searching the
+        /// open paragraph.  Toggled with `Ctrl+B` in the modal.
+        scope_book: bool,
+    },
+    /// 1.2.22 R.3 — review the project-wide replace matches before
+    /// applying.  Each match is individually skippable (`Space`);
+    /// `Enter` applies the non-skipped ones, snapshotting every touched
+    /// paragraph first.  Whole-word literal matching (the safe default);
+    /// regex / substring are the CLI's `inkhaven replace` for now.
+    ReplaceReview {
+        pattern: String,
+        replacement: String,
+        matches: Vec<crate::replace::ParaMatches>,
+        /// `(para index, hit index)` flattened, for cursor navigation.
+        flat: Vec<(usize, usize)>,
+        cursor: usize,
+        /// Matches the user has skipped — default empty, so every match
+        /// applies unless explicitly skipped.
+        skipped: std::collections::HashSet<(usize, usize)>,
     },
     SnapshotPicker {
         /// Kept for potential refresh ops after future snapshot mutations.
