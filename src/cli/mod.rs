@@ -32,6 +32,7 @@ pub mod epub;
 pub mod audiobook;
 pub mod continuity;
 pub mod facts_scan;
+pub mod replace;
 pub mod tension;
 pub mod manuscript;
 pub mod prompts;
@@ -608,6 +609,41 @@ pub enum Command {
     /// them.  `--json` emits the report for CI gates.
     #[command(subcommand)]
     Facts(FactsCommand),
+
+    /// 1.2.22 R.5 — `inkhaven replace <pattern> <replacement>`.
+    /// Project-wide find & replace: literal + whole-word by default
+    /// (`--substring` opts out, `--regex` for a regex), optional
+    /// `--ignore-case`.  `--dry-run` previews; `--yes` applies,
+    /// snapshotting each touched paragraph first.  System books are
+    /// excluded unless `--include-system`; `--book <name>` narrows to
+    /// one.
+    Replace {
+        /// Text to find (or a regex with `--regex`).
+        pattern: String,
+        /// Replacement (regex captures `$1`… with `--regex`).
+        replacement: String,
+        /// Treat the pattern as a regular expression.
+        #[arg(long)]
+        regex: bool,
+        /// Match substrings too (default: whole-word only).
+        #[arg(long)]
+        substring: bool,
+        /// Case-insensitive match.
+        #[arg(long)]
+        ignore_case: bool,
+        /// Limit to one book by name (default: all user books).
+        #[arg(long)]
+        book: Option<String>,
+        /// Include system books (Notes / Facts / …) in the scan.
+        #[arg(long)]
+        include_system: bool,
+        /// Preview matches without changing anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Apply the replacements (required to write).
+        #[arg(long)]
+        yes: bool,
+    },
 
     /// Launch the TUI editor (default if no subcommand is given).
     Tui,
@@ -1838,6 +1874,29 @@ impl Cli {
             Command::Facts(cmd) => {
                 facts_scan::run(&project, cmd).map_err(Into::into)
             }
+            Command::Replace {
+                pattern,
+                replacement,
+                regex,
+                substring,
+                ignore_case,
+                book,
+                include_system,
+                dry_run,
+                yes,
+            } => replace::run(
+                &project,
+                &pattern,
+                &replacement,
+                regex,
+                substring,
+                ignore_case,
+                book.as_deref(),
+                include_system,
+                dry_run,
+                yes,
+            )
+            .map_err(Into::into),
             Command::Manuscript {
                 book_name,
                 output,

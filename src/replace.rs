@@ -20,11 +20,6 @@
 //! the accepted hits' byte ranges right-to-left — it needs neither the
 //! pattern nor the options, and the author can accept any subset.
 
-// R.1–R.2 ship the matcher + project scan ahead of their consumers
-// (R.3 review modal, R.5 CLI).  Tests exercise the pure surface; this
-// `allow` is removed when R.3/R.5 wire the first caller.
-#![allow(dead_code)]
-
 use std::fmt;
 
 use regex::RegexBuilder;
@@ -95,6 +90,10 @@ impl std::error::Error for ReplaceError {}
 /// replacement from `repl` (regex captures expand in regex mode;
 /// literal mode uses `repl` verbatim).  Matches are non-overlapping and
 /// in source order; zero-width matches (e.g. from `a*`) are skipped.
+// The single-text primitive: the canonical "find in one string" entry
+// + test surface.  The project scan uses `find_with` (compile-once);
+// kept for the API and future single-buffer callers.
+#[allow(dead_code)]
 pub fn find_matches(
     text: &str,
     pattern: &str,
@@ -186,6 +185,9 @@ pub struct ParaMatches {
     pub para_id: uuid::Uuid,
     pub title: String,
     pub slug_path: String,
+    /// The paragraph body the hits were found in — `apply` splices into
+    /// exactly this, so the byte ranges stay valid.
+    pub body: String,
     pub hits: Vec<Hit>,
 }
 
@@ -213,6 +215,7 @@ where
                 para_id,
                 title,
                 slug_path,
+                body,
                 hits,
             });
         }
@@ -244,6 +247,54 @@ pub fn scan_project(
         Some((id, node.title.clone(), hierarchy.slug_path(node), body))
     });
     scan_bodies(bodies, pattern, repl, opts)
+}
+
+/// Outcome of applying a set of `ParaMatches`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ApplyReport {
+    pub paragraphs: usize,
+    pub occurrences: usize,
+    pub snapshots: usize,
+}
+
+/// Apply every hit in `matches` to its paragraph: **snapshot the
+/// current body first** (annotated, for undo), then write the new body
+/// to the `.typ` file + the store.  I/O.  The caller has already gated
+/// this — the CLI behind `--yes`, the TUI behind the review's accepted
+/// set — so this just executes.  File-backed paragraphs only.
+pub fn apply_project(
+    store: &crate::store::Store,
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    matches: &[ParaMatches],
+    annotation: &str,
+) -> Result<ApplyReport, String> {
+    let mut report = ApplyReport::default();
+    for pm in matches {
+        if pm.hits.is_empty() {
+            continue;
+        }
+        let Some(node) = hierarchy.get(pm.para_id) else {
+            continue;
+        };
+        let Some(rel) = node.file.clone() else {
+            continue;
+        };
+        let new_body = apply(&pm.body, &pm.hits);
+        store
+            .create_snapshot_annotated(node, pm.body.as_bytes(), annotation)
+            .map_err(|e| format!("snapshot `{}`: {e}", pm.title))?;
+        report.snapshots += 1;
+        let abs = store.project_root().join(&rel);
+        std::fs::write(&abs, new_body.as_bytes())
+            .map_err(|e| format!("write `{}`: {e}", abs.display()))?;
+        let mut node_mut = node.clone();
+        store
+            .update_paragraph_content(&mut node_mut, new_body.as_bytes())
+            .map_err(|e| format!("update `{}`: {e}", pm.title))?;
+        report.paragraphs += 1;
+        report.occurrences += pm.hits.len();
+    }
+    Ok(report)
 }
 
 /// Paragraph ids in `scope`, in document order.
