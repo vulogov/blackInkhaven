@@ -119,6 +119,10 @@ fn collect_chapters(
 /// order, appending paragraph prose + subheadings to
 /// `body`.  `is_sub` adds the subchapter's own title as
 /// an `<h2>` before recursing.
+///
+/// 1.2.22 D.3.b — kept separate from
+/// `cli::audiobook::append_branch_prose` (xhtml + `<h2>` vs
+/// plain text); see the rationale there.
 fn append_branch_prose(
     store: &Store,
     h: &Hierarchy,

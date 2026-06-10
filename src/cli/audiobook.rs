@@ -223,6 +223,18 @@ fn collect_chapter_texts(
     Ok(out)
 }
 
+/// Walk a chapter/subchapter's children, appending each
+/// paragraph's *plain* prose (newline-separated, empties
+/// dropped) for TTS synthesis.
+///
+/// 1.2.22 D.3.b — intentionally NOT shared with
+/// `cli::epub::append_branch_prose`: only the recursion
+/// skeleton matches.  epub takes `is_sub`, emits `<h2>` on
+/// subchapter entry, and uses `typst_to_xhtml` with no
+/// empty-skip or separator; this emits no headings, uses
+/// `typst_to_plain`, drops empties, and newline-joins.  A
+/// shared higher-order walk would be net-positive LOC for
+/// two callers.
 fn append_branch_prose(
     store: &Store,
     h: &Hierarchy,
