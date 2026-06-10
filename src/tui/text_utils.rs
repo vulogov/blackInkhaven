@@ -113,6 +113,14 @@ pub(super) fn format_active_duration(seconds: i64) -> String {
 /// (`~`) so the status bar reads it as an estimate, not a
 /// hard count. Matches the Ctrl+B I info-panel rounding so
 /// both surfaces agree.
+///
+/// 1.2.22 D.7a — intentionally NOT shared with
+/// `tui::reading_time` (the reading-pace chip): that is
+/// floor-seconds at the configurable `editor.reading_wpm`
+/// with an `XhYYm`/`Xs` format; this is ceil-minutes at a
+/// fixed 250 with a `~Xm`/`<1m` *estimate* format.  Different
+/// rounding, rate, format, and consumer — merging would
+/// change the displayed output (and the threshold tests).
 pub(super) fn format_reading_time(words: usize) -> String {
     if words == 0 {
         return "<1m".to_string();

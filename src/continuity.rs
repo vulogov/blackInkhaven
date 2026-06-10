@@ -284,6 +284,14 @@ fn spanish() -> ContinuityLexicon {
 /// Coarse but adequate — the detector only needs sentence
 /// *grouping* for the proximity windows, not linguistic
 /// precision.
+///
+/// 1.2.22 D.7b — intentionally NOT shared with
+/// `tui::sentence_rhythm::split_sentences`: that one is
+/// abbreviation-aware (suppresses `Mr.`/`Dr.`/`e.g.`/…) and
+/// returns position-carrying `RawSentence`s for the rhythm
+/// bar chart.  This naive split is all the proximity-window
+/// detector needs; adopting the abbreviation-aware boundary
+/// would change *this* function's behaviour for no gain.
 pub fn split_sentences(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
