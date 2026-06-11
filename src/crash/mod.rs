@@ -187,9 +187,41 @@ pub fn set_terminal_restore(restore: Option<TerminalRestore>) {
 ///   - chain to the previously-installed hook
 ///     (the default Rust hook prints the panic + an
 ///     optional backtrace).
+/// True for the panic the `print!` / `println!` (and `eprintln!`) macros
+/// raise when their write fails with a **broken pipe** — i.e. a reader
+/// like `inkhaven … | head` closed the pipe early.  Rust ignores
+/// SIGPIPE, so the failed write panics; this is normal shell behaviour,
+/// not a crash, and shouldn't emit a crash report.  Deliberately narrow:
+/// it requires the print-macro prefix *and* a broken-pipe error, so
+/// other output failures (e.g. disk-full on a redirected stdout) still
+/// surface a report.
+pub(crate) fn is_broken_pipe_panic(msg: &str) -> bool {
+    msg.contains("failed printing to std")
+        && (msg.contains("Broken pipe") || msg.contains("os error 32"))
+}
+
 pub fn install_panic_hook() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        // Step 0 — a broken pipe on stdout/stderr (a piped reader closed
+        // early) is not a crash.  Restore the terminal (a no-op for the
+        // one-shot CLI commands where this actually happens) and exit
+        // cleanly, skipping the crash report + rescue flush.
+        let payload = info.payload();
+        let msg = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("");
+        if is_broken_pipe_panic(msg) {
+            if let Ok(slot) = terminal_restore_slot().lock() {
+                if let Some(restore) = slot.as_ref() {
+                    restore();
+                }
+            }
+            std::process::exit(0);
+        }
+
         // Step 1 — restore the terminal so anything we
         // print is actually visible.  Must come first
         // because the rest of the steps may take a
@@ -272,6 +304,27 @@ pub(crate) fn write_atomic(target: &std::path::Path, body: &[u8]) -> std::io::Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn broken_pipe_panic_detected_narrowly() {
+        // The print-macro broken-pipe panic → clean exit.
+        assert!(is_broken_pipe_panic(
+            "failed printing to stdout: Broken pipe (os error 32)"
+        ));
+        assert!(is_broken_pipe_panic(
+            "failed printing to stderr: Broken pipe (os error 32)"
+        ));
+        // A different output failure (disk full) still reports.
+        assert!(!is_broken_pipe_panic(
+            "failed printing to stdout: No space left on device (os error 28)"
+        ));
+        // A genuine logic panic is never mistaken for a pipe close.
+        assert!(!is_broken_pipe_panic(
+            "index out of bounds: the len is 3 but the index is 5"
+        ));
+        // "Broken pipe" from somewhere that isn't a print macro stays a crash.
+        assert!(!is_broken_pipe_panic("subprocess died: Broken pipe"));
+    }
 
     #[test]
     fn context_starts_empty() {
