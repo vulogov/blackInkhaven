@@ -211,3 +211,33 @@ has a complete RFC.
 Next P0: `PdfDoc`/`PdfSource`, `geometry`, `paper`, `ingest`, `emit`
 (atomic), `meta`, `ops`, then `outline` (with the `assemble` `#metadata`
 change), wired to `Command::Pdf` + `ink.pdf.*`.
+
+### P0.2 — geometry + paper + PdfDoc (landed)
+
+The pure-math core + the value type, all unit-tested:
+
+- **`pdf::geometry`** — `mm`/`pt`/`in` conversions, `Size` (points, with
+  portrait/landscape), `Rect` (points, PDF `MediaBox` order, corner-
+  normalising), and `page_size(name)` presets (ISO A3–A6/B5, US
+  Letter/Legal/Tabloid, trade trims 6×9 / 5.5×8.5 / pocket).  4 tests.
+- **`pdf::paper`** — `PaperStock { name, thickness_mm }` + the RFC §8.2.4
+  preset table, case-insensitive `paper_stock(name)`, `DEFAULT_INTERIOR`
+  / `DEFAULT_COVER`, `binding_compensation_mm`.  4 tests.
+- **`pdf::doc`** — `PdfDoc` (wraps `lopdf::Document`, caches page order +
+  inherited `MediaBox` sizes) and `PdfSource` (`Inkhaven { typst_root }`
+  / `External`).  `load` / `load_mem` / `from_document`, `page_count` /
+  `page_ids` / `page_size`, `to_bytes`, and **`save` via `io_atomic`**
+  (atomic emit — no torn PDF).  `page_mediabox` walks the `Parent` chain
+  (inheritable attr) with a cycle guard + Letter fallback.  3 tests
+  (build a minimal n-page PDF → load → assert pages/sizes/source →
+  round-trip).
+- **`pdf::Error`/`Result`** (mod.rs): `Lopdf` / `Io` / `NotInkhavenSource`
+  / `Other`, with `From<lopdf::Error>` + `From<io::Error>`.
+
+Module-level `#![allow(dead_code)]` (the library is built ahead of its
+`Command::Pdf` / `ink.pdf.*` wiring; removed when the first caller lands).
+Suite 1190 → 1201.
+
+Next P0: `ingest` (richer page indexing), `ops` (extract/split/merge/
+rotate/reorder/delete via the lopdf page tree), `meta`, then `outline`
+(with the `assemble` `#metadata` change).

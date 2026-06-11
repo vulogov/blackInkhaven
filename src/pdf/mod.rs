@@ -13,8 +13,66 @@
 //! PDFs inkhaven produces — embedded font subsets, image XObjects,
 //! vector content, multiple pages.  This is RFC §14's make-or-break
 //! risk: if typst-pdf output doesn't load cleanly in `lopdf`, the whole
-//! subsystem is blocked.  (Empty in non-test builds; the real `PdfDoc`,
-//! `ops`, etc. land next in P0.)
+//! subsystem is blocked.  `PdfDoc` + `geometry` + `paper` land in this
+//! step; `ops` / `outline` and the CLI / TUI / Bund surfaces follow.
+
+// P0 builds the library bottom-up, ahead of its CLI/TUI/Bund wiring
+// (`Command::Pdf`, `ink.pdf.*`).  The `#[cfg(test)]` suites exercise the
+// surface; this `allow` is removed when the first caller lands.
+#![allow(dead_code)]
+
+pub mod doc;
+pub mod geometry;
+pub mod paper;
+
+// Re-export the public value type; consumed once `Command::Pdf` lands.
+#[allow(unused_imports)]
+pub use doc::{PdfDoc, PdfSource};
+
+use std::fmt;
+
+/// Errors from the PDF subsystem.
+#[derive(Debug)]
+pub enum Error {
+    /// An error from the underlying `lopdf` parse/serialize.
+    Lopdf(lopdf::Error),
+    /// Filesystem I/O.
+    Io(std::io::Error),
+    /// A tree-aware operation (outline injection, by-chapter ops) was
+    /// requested on a PDF inkhaven didn't author.
+    NotInkhavenSource,
+    /// Anything else, with a message.
+    Other(String),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Lopdf(e) => write!(f, "pdf: {e}"),
+            Error::Io(e) => write!(f, "pdf io: {e}"),
+            Error::NotInkhavenSource => {
+                write!(f, "pdf: operation requires an inkhaven-authored PDF")
+            }
+            Error::Other(m) => write!(f, "pdf: {m}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+impl From<lopdf::Error> for Error {
+    fn from(e: lopdf::Error) -> Self {
+        Error::Lopdf(e)
+    }
+}
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Io(e)
+    }
+}
+
+/// Result alias for the PDF subsystem.
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(test)]
 mod corpus_tests {
