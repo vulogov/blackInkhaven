@@ -3881,11 +3881,11 @@ impl super::super::App {
         let Modal::ReplaceReview {
             pattern,
             replacement,
+            opts,
             matches,
             flat,
             cursor,
             skipped,
-            ..
         } = &self.modal
         else {
             return;
@@ -3899,7 +3899,8 @@ impl super::super::App {
 
         let kept = flat.len().saturating_sub(skipped.len());
         let header = format!(
-            " Replace: {pattern} → {replacement}  ({kept}/{} kept) ",
+            " Replace: {pattern} → {replacement}  [{}]  ({kept}/{} kept) ",
+            crate::replace::opts_label(*opts),
             flat.len(),
         );
         let block = Block::default()
@@ -3970,7 +3971,7 @@ impl super::super::App {
         f.render_widget(Paragraph::new(view), body_rect);
 
         let hint =
-            " ↑↓ move · Space skip · a keep all · n skip none · Enter apply · Esc cancel ";
+            " ↑↓ move · Space skip · a/n keep/skip all · w whole-word · i case · x regex · Enter apply · Esc cancel ";
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 hint,

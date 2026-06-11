@@ -644,11 +644,14 @@ pub(super) enum Modal {
     /// 1.2.22 R.3 — review the project-wide replace matches before
     /// applying.  Each match is individually skippable (`Space`);
     /// `Enter` applies the non-skipped ones, snapshotting every touched
-    /// paragraph first.  Whole-word literal matching (the safe default);
-    /// regex / substring are the CLI's `inkhaven replace` for now.
+    /// paragraph first.  Whole-word literal matching is the default;
+    /// `w`/`i`/`x` toggle whole-word / ignore-case / regex (re-scanning).
     ReplaceReview {
         pattern: String,
         replacement: String,
+        /// The active matching options — toggled in the modal (`w`/`i`/
+        /// `x`); each toggle re-runs the scan.
+        opts: crate::replace::ReplaceOpts,
         matches: Vec<crate::replace::ParaMatches>,
         /// `(para index, hit index)` flattened, for cursor navigation.
         flat: Vec<(usize, usize)>,
