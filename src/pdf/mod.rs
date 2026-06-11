@@ -23,6 +23,8 @@
 
 pub mod doc;
 pub mod geometry;
+pub mod meta;
+pub mod ops;
 pub mod paper;
 
 // Re-export the public value type; consumed once `Command::Pdf` lands.
@@ -73,6 +75,48 @@ impl From<std::io::Error> for Error {
 
 /// Result alias for the PDF subsystem.
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use lopdf::{Dictionary, Document, Object};
+
+    /// A minimal valid `n`-page PDF, each page `w × h` points — the
+    /// shared fixture for the `doc` / `ops` / `meta` unit tests.
+    pub fn minimal_pdf(n: usize, w: f32, h: f32) -> Vec<u8> {
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let kids: Vec<Object> = (0..n)
+            .map(|_| {
+                let mut page = Dictionary::new();
+                page.set("Type", "Page");
+                page.set("Parent", pages_id);
+                page.set(
+                    "MediaBox",
+                    vec![
+                        Object::Integer(0),
+                        Object::Integer(0),
+                        Object::Real(w),
+                        Object::Real(h),
+                    ],
+                );
+                Object::Reference(doc.add_object(page))
+            })
+            .collect();
+        let mut pages = Dictionary::new();
+        pages.set("Type", "Pages");
+        pages.set("Count", n as i64);
+        pages.set("Kids", kids);
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let mut cat = Dictionary::new();
+        cat.set("Type", "Catalog");
+        cat.set("Pages", pages_id);
+        let cat_id = doc.add_object(cat);
+        doc.trailer.set("Root", cat_id);
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf).unwrap();
+        buf
+    }
+}
 
 #[cfg(test)]
 mod corpus_tests {
@@ -163,6 +207,35 @@ More prose on a second page so the page tree has real depth."#;
             reloaded.get_pages().len(),
             2,
             "round-trip preserves page count"
+        );
+    }
+
+    /// PDF-1 P0.3 — `merge` reparents each source's page subtree rather
+    /// than flattening, so inherited Resources (the image XObject) survive
+    /// on *real* typst output.  The riskiest op, validated end-to-end.
+    #[test]
+    #[ignore = "compiles typst; PDF-1 merge fidelity on real output"]
+    fn merge_preserves_typst_resources() {
+        let dir = tempfile::tempdir().unwrap();
+        image::RgbImage::from_pixel(8, 8, image::Rgb([10, 150, 40]))
+            .save(dir.path().join("px.png"))
+            .unwrap();
+        let body = r#"#set page(width: 200pt, height: 260pt)
+= Doc
+Some prose and #image("px.png", width: 40pt)."#;
+        let bytes = typst_pdf_bytes(dir.path(), body);
+        let a = crate::pdf::PdfDoc::load_mem(&bytes).unwrap();
+        let b = crate::pdf::PdfDoc::load_mem(&bytes).unwrap();
+        let mut merged = crate::pdf::ops::merge(&[a, b]).unwrap();
+        assert_eq!(merged.page_count(), 2, "merged page count");
+        let out = merged.to_bytes().unwrap();
+        let reloaded = lopdf::Document::load_mem(&out).expect("merged output reloads");
+        assert_eq!(reloaded.get_pages().len(), 2);
+        // The image XObject survives — proves inherited Resources weren't
+        // dropped by the merge.
+        assert!(
+            dicts(&reloaded).any(|d| name_eq(d, b"Subtype", b"Image")),
+            "image XObjects survive the merge"
         );
     }
 }

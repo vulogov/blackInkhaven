@@ -171,44 +171,8 @@ fn object_as_f32(o: &Object) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lopdf::{Dictionary, Document, Object};
-
-    /// Build a minimal valid `n`-page PDF with each page's `MediaBox` set
-    /// to `w × h` points.
-    fn minimal_pdf(n: usize, w: f32, h: f32) -> Vec<u8> {
-        let mut doc = Document::with_version("1.5");
-        let pages_id = doc.new_object_id();
-        let kids: Vec<Object> = (0..n)
-            .map(|_| {
-                let mut page = Dictionary::new();
-                page.set("Type", "Page");
-                page.set("Parent", pages_id);
-                page.set(
-                    "MediaBox",
-                    vec![
-                        Object::Integer(0),
-                        Object::Integer(0),
-                        Object::Real(w),
-                        Object::Real(h),
-                    ],
-                );
-                Object::Reference(doc.add_object(page))
-            })
-            .collect();
-        let mut pages = Dictionary::new();
-        pages.set("Type", "Pages");
-        pages.set("Count", n as i64);
-        pages.set("Kids", kids);
-        doc.objects.insert(pages_id, Object::Dictionary(pages));
-        let mut cat = Dictionary::new();
-        cat.set("Type", "Catalog");
-        cat.set("Pages", pages_id);
-        let cat_id = doc.add_object(cat);
-        doc.trailer.set("Root", cat_id);
-        let mut buf = Vec::new();
-        doc.save_to(&mut buf).unwrap();
-        buf
-    }
+    use crate::pdf::test_support::minimal_pdf;
+    use lopdf::Document;
 
     #[test]
     fn loads_pages_sizes_and_source() {

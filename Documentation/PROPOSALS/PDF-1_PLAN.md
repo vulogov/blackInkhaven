@@ -241,3 +241,34 @@ Suite 1190 → 1201.
 Next P0: `ingest` (richer page indexing), `ops` (extract/split/merge/
 rotate/reorder/delete via the lopdf page tree), `meta`, then `outline`
 (with the `assemble` `#metadata` change).
+
+### P0.3 — ops + meta (landed)
+
+- **`pdf::ops`** — page operations on the lopdf page tree:
+  - `PageSpec` (`All`/`Single`/`Range`/`List`, 1-based) with a CLI
+    parser (`1,3,5-8,12` / `all`) and `resolve(count)` (sorted, deduped,
+    clamped, reversed-range tolerant).
+  - `extract` (clone + delete-complement + prune; source untouched),
+    `delete` (in place, guards emptying), `rotate` (`Rotation` 90/180/270,
+    accumulates `/Rotate`), `reorder` (0-based permutation, validated),
+    `split` (`EveryNPages` / `OnPages`, via `extract`).
+  - **`merge`** reparents each source's page **subtree** under a fresh
+    top `Pages` node (object-IDs renumbered via `renumber_objects_with`)
+    rather than flattening — so inherited `MediaBox` / `Resources`
+    survive.  Validated on *real typst output*: merging two typst PDFs
+    keeps the image XObjects (new `#[ignore]` corpus gate
+    `merge_preserves_typst_resources`).
+  - 7 unit tests + the merge corpus gate.
+- **`pdf::meta`** — `PdfMetadata` (title/author/subject/keywords/creator/
+  producer) over the `Info` dictionary: `read_metadata`, `write_metadata`
+  (creates `Info` if absent; `None`/empty removes), `strip_metadata`.
+  PDF text strings are ASCII-literal or UTF-16BE-with-BOM (non-ASCII
+  titles round-trip).  3 unit tests (round-trip, strip, unicode title).
+- Shared `test_support::minimal_pdf` fixture (used by doc/ops/meta).
+
+Normal suite 1201 → 1211; 2 ignored corpus gates (run with
+`cargo test --bin inkhaven -- --ignored`).
+
+Next P0: `outline` injection (the additive `assemble` `#metadata` change),
+then the surfaces — `Command::Pdf` (`src/cli/pdf.rs`) + `ink.pdf.*`
+(`scripting/stdlib/pdf.rs`) — which retire the module `dead_code` allow.
