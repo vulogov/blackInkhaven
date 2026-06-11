@@ -292,7 +292,7 @@ fn extract(project: &Path, provider: Option<&str>, yes: bool, dry_run: bool) -> 
     };
     let facts_ids: HashSet<Uuid> = hierarchy.collect_subtree(facts_id).into_iter().collect();
 
-    let chapters = user_book_chapters(&hierarchy);
+    let chapters = hierarchy.user_book_chapters();
     if chapters.is_empty() {
         return Err(Error::Store(
             "facts extract: no user-book chapters found".into(),
@@ -518,7 +518,7 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
         ));
     }
 
-    let chapters = user_book_chapters(&hierarchy);
+    let chapters = hierarchy.user_book_chapters();
     if chapters.is_empty() {
         return Err(Error::Store(
             "facts scan: no user-book chapters found".into(),
@@ -686,21 +686,3 @@ fn list(project: &Path, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Top-level (non-system) book chapters in display order — mirrors the
-/// `continuity` / `tension` walk.
-fn user_book_chapters(h: &Hierarchy) -> Vec<(Uuid, String)> {
-    let mut out = Vec::new();
-    for node in h.iter() {
-        if node.kind != NodeKind::Chapter {
-            continue;
-        }
-        let under_system = h
-            .ancestors(node)
-            .iter()
-            .any(|a| a.kind == NodeKind::Book && a.system_tag.is_some());
-        if !under_system {
-            out.push((node.id, node.title.clone()));
-        }
-    }
-    out
-}
