@@ -272,3 +272,34 @@ Normal suite 1201 → 1211; 2 ignored corpus gates (run with
 Next P0: `outline` injection (the additive `assemble` `#metadata` change),
 then the surfaces — `Command::Pdf` (`src/cli/pdf.rs`) + `ink.pdf.*`
 (`scripting/stdlib/pdf.rs`) — which retire the module `dead_code` allow.
+
+### P0.4 — outline injection + assemble marker + feature-proof (landed)
+
+- **`pdf::outline`** — `OutlineItem { title, page, children }`,
+  `inject_outline` (builds a `/Outlines` bookmark tree with proper
+  First/Last/Next/Prev/Parent/Count linking + `/Dest [page /Fit]`,
+  page-index clamped, replaces any existing outline) and `read_outline`
+  (reads it back; handles `/Dest` arrays *and* `/A /GoTo /D` actions, so
+  it also reads typst's own heading bookmarks).  3 unit tests
+  (nested round-trip, unicode title + page clamp, empty).
+- **Assemble marker (additive)** — `build_branch_index` now emits a
+  zero-size `#metadata((node_id: "<uuid>"))` at each branch's body start.
+  `#metadata` is query-only — invisible to layout, absent from the PDF —
+  and carries no label (so branches can't collide).  The hook for the
+  future node↔page correlation (introspector query at compile time);
+  nothing consumes it yet, so output is byte-for-byte the same to the
+  reader.
+- **End-to-end feature-proof** (`full_pdf_feature_proof`, `#[ignore]`d) —
+  compiles a synthetic multi-chapter `.typ` *including the `#metadata`
+  marker* (proving it compiles inertly) and exercises the whole
+  manipulation set on the real PDF: meta write/read/strip, outline
+  inject/read round-trip, extract, split (counts sum back), merge (image
+  survives), rotate, delete, reorder, and an atomic `save`→`load`.
+
+The PDF *manipulation* feature set (P0 minus the surfaces) is now complete
+and proven on real typst output.  Normal suite 1211 → 1214; 3 ignored
+corpus gates.
+
+Next: the **surfaces** — `Command::Pdf` (`src/cli/pdf.rs`) + `ink.pdf.*`
+(`scripting/stdlib/pdf.rs`) — which make all this usable and retire the
+module `dead_code` allow.
