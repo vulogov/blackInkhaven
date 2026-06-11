@@ -21,49 +21,48 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.21 — The Facts book
+## Latest release · 1.2.22 — Project-wide find & replace
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.21.md`](Documentation/RELEASE_NOTES/1.2.21.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.22.md`](Documentation/RELEASE_NOTES/1.2.22.md)
 
-Notes and Research hold your research; the **invariants** of a world —
-it's equatorial, no winter; the capital is three days' ride inland; the
-war ended a generation ago — are the ground truth every chapter must
-stay consistent with.  1.2.21 gives them a dedicated **Facts** system
-book and wires the AI to treat it as the authoritative reference, end to
-end.
+The edit a novelist needs most — changing something *across the whole
+book* — is the one Inkhaven couldn't do.  1.2.22 adds **project-wide find
+& replace**, and does it **safely**: nothing changes without review, and
+every touched paragraph is snapshotted first.
 
-### Collect the facts
+### In the editor
 
-A free-form **Facts** book (like Notes).  `inkhaven facts init` scaffolds
-the usual categories (Climate, Geography, Seasons, Chronology, Culture,
-Rules); `--genre fantasy|scifi|mystery|historical` adds genre-specific
-ones.  Or `inkhaven facts extract` reads the draft and **proposes** the
-world-facts the prose already establishes, for interactive accept — the
-cold-start solver.
+Open Find & Replace (`Ctrl+R`), type the pattern + replacement, then
+**`Ctrl+B`** toggles the scope to *the whole book*.  Enter opens a
+**review modal** — every match in context, **`Space`** to skip individual
+ones, **`Enter`** to apply only the kept ones.  Each changed paragraph is
+snapshotted first (annotated `replace: X → Y`), so **`F6`** is your undo.
 
-### Write against them
+### From the command line
 
-- **Facts scope (`F9`)** — a sticky, always-Local fact-analysis chat
-  seeded with your whole Facts book; refreshes when it changes.
-- **Fact-check (`Ctrl+B Shift+X`)** — check the open paragraph against
-  the facts; the verdict lists `claim | fact | detail`, and **`Ctrl+B
-  Shift+J`** jumps the cursor to each flagged claim.
-- **Facts search (`Ctrl+B Shift+S`)** — semantic-search modal to ground
-  a chat in just the relevant facts (scalable for a big book).
+```bash
+inkhaven replace "Anne" "Anna" --dry-run   # preview, change nothing
+inkhaven replace "Anne" "Anna" --yes       # apply (snapshots each paragraph)
+```
 
-### Sweep the manuscript
+A bare `inkhaven replace …` refuses to write and just reports the count.
+Flags: `--regex` (with `$1` captures), `--substring`, `--ignore-case`,
+`--book <name>`, `--include-system`.
 
-`inkhaven facts scan` walks every chapter for contradictions
-(RAG-filtered, `--json` for a CI gate).  Facts also join the wiki-link
-system — provenance (`Ctrl+V A` → Notes/Research) and dependents (`Ctrl+V
-K` shows the scenes that rely on a fact).
+### Safe by design
 
-### Multilingual · test stats
+Lexical, not semantic — literal / whole-word / opt-in regex over a linear
+scan (no full-text index; the scan never touches the embeddings).
+**Whole-word by default** (no `Will`/`will` footgun), **user books only by
+default** (won't rewrite your Notes / Facts), and **always reversible**
+via the snapshots.  The review-gated apply machinery is the substrate for
+the upcoming 1.3 *editorial pass*.
 
-Every AI surface ships in en / ru / de / fr / es.  Tests 1160 → 1169,
-**zero new Rust dependencies** (Facts reuses the existing store,
-embeddings, AI-stream, and wiki-link stack).  One new tutorial
-([63](Documentation/Tutorials/63-facts-and-fact-checking.md)).
+### Test stats
+
+Tests 1169 → 1186, **zero new Rust dependencies** (the matcher rides the
+`regex` crate already in-tree).  One new tutorial
+([64](Documentation/Tutorials/64-project-find-and-replace.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
