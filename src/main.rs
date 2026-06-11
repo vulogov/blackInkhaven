@@ -13,6 +13,7 @@ mod facts_scan;
 mod health;
 mod io_atomic;
 mod path_safety;
+mod pdf;
 mod prompts_tui;
 mod echo;
 mod epub;

@@ -60,8 +60,9 @@ tree and diffed against inkhaven's:
   vendors far heavier native deps (DuckDB via `libduckdb-sys`, ONNX via
   `ort-sys`); `lopdf` adds none.  **Cleared to add.**  (Still run
   `cargo deny` at add-time for ongoing advisory/license tracking.)
-  `barcoders` is optional — hand-rolling EAN-13 (~150 lines) drops it if
-  the dep surface should be even tighter.
+  **`barcoders` is kept** (project decision) rather than hand-rolling
+  EAN-13 — the crate is clean and audited; a hand-rolled encoder would be
+  avoidable tech debt.
 
 ## Module layout
 
@@ -72,6 +73,31 @@ pure-math pieces (`geometry`, `paper`, `impose::layout`, `impose::creep`,
 `barcode`) are unit-testable with no I/O — build and test those first
 inside each phase, the way `replace.rs` separated the matcher from the
 walk.
+
+## Configuration — HJSON through the cascade (firm)
+
+All PDF-subsystem configuration is HJSON, deserialized through the
+existing `Config::load_layered` cascade — **the same path as every other
+setting**, so it merges defaults → project `inkhaven.hjson` → global
+`~/.config/inkhaven/config.hjson` + `conf/*.hjson`, with the global
+layer winning (1.2.20).  That means:
+
+- **`imposition:`** (binding style, sheets-per-signature, sheet size,
+  margins, creep + paper stock, marks, blank-page policy), **`cover:`**
+  (paper stocks, spine text, barcode), **`preflight:`** (target DPI,
+  profile) are top-level keys, each supporting **named profiles** (RFC
+  App. A — e.g. `default`, `chapbook`) selected by name from the CLI
+  (`--config <key>`) / book-take (`imposed_pdf_config`) / Bund.
+- A user can keep a house imposition profile in their **global** config
+  and have it apply to every project — exactly the override pattern the
+  1.2.20 cascade was built for.
+- New `ImpositionConfig` / `CoverConfig` / `PreflightConfig` serde
+  structs land in `config.rs` in **P1/P2**, with `#[serde(default)]` so a
+  project that sets nothing still gets sane defaults.
+
+No imposition parameter is hard-coded or CLI-only; the config block is
+the source of truth, the CLI/TUI/Bund just select a profile or override
+individual fields.
 
 ## Stability-bar requirements (1.2.15 standard applies)
 
@@ -162,4 +188,26 @@ has a complete RFC.
 
 ## Implementation log
 
-_(entries land here as the work lands)_
+### P0.1 — deps added + fidelity gate PASSED (landed)
+
+- `lopdf 0.41` (`default-features = false`, `features = ["chrono",
+  "rayon", "time"]` — drops the redundant `jiff`) + `barcoders 2` added
+  to `Cargo.toml`; both compile cleanly into inkhaven.
+- New `src/pdf/` module (`mod pdf;`), so far just the **fidelity gate**:
+  `src/pdf/mod.rs` `corpus_tests::lopdf_round_trips_typst_pdf_output`.
+  It compiles a rich typst body (heading + bold/italic prose + `#line` /
+  `#rect` / `#circle` vector + a real PNG `#image` + a `#pagebreak`) to
+  genuine typst-pdf bytes via `InkhavenWorld::in_memory` + `typst_pdf::pdf`
+  (the same path `Ctrl+B B` uses), then asserts `lopdf` (1) parses it,
+  (2) sees the embedded font subset (`FontDescriptor` + `FontFile*`),
+  (3) sees the image XObject (`Subtype /Image`), and (4) round-trips
+  (load → save → reload) preserving the 2-page tree.
+- `#[ignore]`d (compiles typst, per the existing convention), run with
+  `cargo test --bin inkhaven -- --ignored lopdf_round_trips`.  **Result:
+  PASS** — RFC §14's make-or-break risk is cleared; `lopdf` handles real
+  typst-pdf output (fonts, images, vector, multi-page).  Normal suite
+  1190 + 1 ignored gate.
+
+Next P0: `PdfDoc`/`PdfSource`, `geometry`, `paper`, `ingest`, `emit`
+(atomic), `meta`, `ops`, then `outline` (with the `assemble` `#metadata`
+change), wired to `Command::Pdf` + `ink.pdf.*`.

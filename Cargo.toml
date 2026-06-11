@@ -164,6 +164,13 @@ arboard = "3"
 slug = "0.1"
 walkdir = "2"
 regex = "1"
+# PDF management + imposition (PDF-1). Pure-Rust, audited: no external
+# apps / native libs (the only -sys crate in the tree, core-foundation-sys,
+# is already vendored). `lopdf` is trimmed with default-features=false to
+# drop the redundant `jiff` date lib — inkhaven already has time + chrono.
+# `barcoders` (EAN-13) is kept rather than hand-rolling the encoder.
+lopdf = { version = "0.41", default-features = false, features = ["chrono", "rayon", "time"] }
+barcoders = "2"
 # Snowball stemmers (English, Russian, and 17 other languages). Used by the
 # editor's Place/Character highlight overlay so a paragraph named
 # "Москва" lights up "Москве", "Москвою", etc.
