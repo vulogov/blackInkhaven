@@ -21,48 +21,39 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.22 — Project-wide find & replace
+## Latest release · 1.2.23 — Stability & fixes
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.22.md`](Documentation/RELEASE_NOTES/1.2.22.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.2.23.md`](Documentation/RELEASE_NOTES/1.2.23.md)
 
-The edit a novelist needs most — changing something *across the whole
-book* — is the one Inkhaven couldn't do.  1.2.22 adds **project-wide find
-& replace**, and does it **safely**: nothing changes without review, and
-every touched paragraph is snapshotted first.
+The last 1.2 housekeeping pass before the 1.3 *editorial pass* cycle — no
+new headline feature, just a calmer, harder base: a crash-behaviour fix, a
+whole-tree panic-surface re-audit, SQL hardening, and the deferred find &
+replace polish.
 
-### In the editor
+### Fixes & hardening
 
-Open Find & Replace (`Ctrl+R`), type the pattern + replacement, then
-**`Ctrl+B`** toggles the scope to *the whole book*.  Enter opens a
-**review modal** — every match in context, **`Space`** to skip individual
-ones, **`Enter`** to apply only the kept ones.  Each changed paragraph is
-snapshotted first (annotated `replace: X → Y`), so **`F6`** is your undo.
+- **Broken pipe is no longer a crash.** `inkhaven … | head` used to write
+  a spurious crash-report file (Rust ignores SIGPIPE, so the failed write
+  panicked); the panic hook now exits cleanly on a broken stdout pipe,
+  while leaving the long-running TUI's pipe handling untouched.
+- **Panic-surface re-audit** across the whole tree fixed three reachable
+  UTF-8 byte-boundary slice panics — theme-colour parsing, fact-check
+  cursor jump, and the doctor naming scan, all triggerable on
+  multilingual or malformed input — and routed four `store` writes through
+  the atomic-write path.
+- **SQL hardening.** The JSON / blob and progress stores now bind
+  parameters instead of string-interpolating; both `sql_escape` copies are
+  gone, pinned by an adversarial round-trip test.
 
-### From the command line
+### Find & replace polish
 
-```bash
-inkhaven replace "Anne" "Anna" --dry-run   # preview, change nothing
-inkhaven replace "Anne" "Anna" --yes       # apply (snapshots each paragraph)
-```
-
-A bare `inkhaven replace …` refuses to write and just reports the count.
-Flags: `--regex` (with `$1` captures), `--substring`, `--ignore-case`,
-`--book <name>`, `--include-system`.
-
-### Safe by design
-
-Lexical, not semantic — literal / whole-word / opt-in regex over a linear
-scan (no full-text index; the scan never touches the embeddings).
-**Whole-word by default** (no `Will`/`will` footgun), **user books only by
-default** (won't rewrite your Notes / Facts), and **always reversible**
-via the snapshots.  The review-gated apply machinery is the substrate for
-the upcoming 1.3 *editorial pass*.
+Inside the project-replace review modal (1.2.22), **`w` / `i` / `x`** now
+toggle whole-word / ignore-case / regex in place — the same matching modes
+the CLI flags reach — starting from the safe whole-word default.
 
 ### Test stats
 
-Tests 1169 → 1186, **zero new Rust dependencies** (the matcher rides the
-`regex` crate already in-tree).  One new tutorial
-([64](Documentation/Tutorials/64-project-find-and-replace.md)).
+Tests 1186 → 1190, **zero new Rust dependencies**.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
