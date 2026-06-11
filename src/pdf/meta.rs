@@ -4,10 +4,10 @@
 //! `Keywords` / `Creator` / `Producer` fields.  On book-take these are
 //! auto-populated from project HJSON (`book.title`/`author`/`keywords`).
 
-use lopdf::{Dictionary, Document, Object, ObjectId, StringFormat};
+use lopdf::{Dictionary, Document, Object, ObjectId};
 
 use super::doc::PdfDoc;
-use super::Result;
+use super::{decode_pdf_string, pdf_string, Result};
 
 /// The standard PDF document-information fields.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -110,32 +110,6 @@ fn as_pdf_string(o: &Object) -> Option<String> {
     match o {
         Object::String(b, _) => Some(decode_pdf_string(b)),
         _ => None,
-    }
-}
-
-/// Encode a Rust string as a PDF text string — ASCII as a literal,
-/// otherwise UTF-16BE with a BOM (the PDF way to carry non-ASCII).
-fn pdf_string(s: &str) -> Object {
-    if s.is_ascii() {
-        Object::String(s.as_bytes().to_vec(), StringFormat::Literal)
-    } else {
-        let mut bytes = vec![0xFE, 0xFF];
-        for u in s.encode_utf16() {
-            bytes.extend_from_slice(&u.to_be_bytes());
-        }
-        Object::String(bytes, StringFormat::Literal)
-    }
-}
-
-fn decode_pdf_string(bytes: &[u8]) -> String {
-    if bytes.starts_with(&[0xFE, 0xFF]) {
-        let u16s: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
-            .map(|c| u16::from_be_bytes([c[0], c[1]]))
-            .collect();
-        String::from_utf16_lossy(&u16s)
-    } else {
-        String::from_utf8_lossy(bytes).into_owned()
     }
 }
 

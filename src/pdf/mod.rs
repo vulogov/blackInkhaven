@@ -25,6 +25,7 @@ pub mod doc;
 pub mod geometry;
 pub mod meta;
 pub mod ops;
+pub mod outline;
 pub mod paper;
 
 // Re-export the public value type; consumed once `Command::Pdf` lands.
@@ -75,6 +76,34 @@ impl From<std::io::Error> for Error {
 
 /// Result alias for the PDF subsystem.
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Encode a Rust string as a PDF text string — ASCII as a literal,
+/// otherwise UTF-16BE with a BOM.  Shared by `meta` + `outline`.
+pub(crate) fn pdf_string(s: &str) -> lopdf::Object {
+    use lopdf::{Object, StringFormat};
+    if s.is_ascii() {
+        Object::String(s.as_bytes().to_vec(), StringFormat::Literal)
+    } else {
+        let mut bytes = vec![0xFE, 0xFF];
+        for u in s.encode_utf16() {
+            bytes.extend_from_slice(&u.to_be_bytes());
+        }
+        Object::String(bytes, StringFormat::Literal)
+    }
+}
+
+/// Decode a PDF text string — UTF-16BE-with-BOM, else lossy UTF-8/Latin.
+pub(crate) fn decode_pdf_string(bytes: &[u8]) -> String {
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        let u16s: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
+        String::from_utf16_lossy(&u16s)
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+}
 
 #[cfg(test)]
 pub(crate) mod test_support {
@@ -237,5 +266,141 @@ Some prose and #image("px.png", width: 40pt)."#;
             dicts(&reloaded).any(|d| name_eq(d, b"Subtype", b"Image")),
             "image XObjects survive the merge"
         );
+    }
+
+    /// PDF-1 — end-to-end feature-proof: compile a synthetic multi-chapter
+    /// `.typ` (with the additive `#metadata` marker the assemble step now
+    /// emits) and exercise the *whole* manipulation set against the real
+    /// PDF — meta, outline inject/read, extract, split, merge, rotate,
+    /// delete, reorder, and an atomic save→reload.
+    #[test]
+    #[ignore = "compiles typst; PDF-1 end-to-end feature-proof on real output"]
+    fn full_pdf_feature_proof() {
+        use crate::pdf::{meta, ops, outline, PdfDoc};
+
+        let dir = tempfile::tempdir().unwrap();
+        image::RgbImage::from_pixel(8, 8, image::Rgb([30, 90, 200]))
+            .save(dir.path().join("px.png"))
+            .unwrap();
+
+        let body = r#"#set page(width: 300pt, height: 400pt)
+#metadata((node_id: "11111111-1111-1111-1111-111111111111"))
+= Chapter One
+Opening prose with an image. #image("px.png", width: 50pt)
+#pagebreak()
+Chapter one continues on a second page.
+#pagebreak()
+= Chapter Two
+Second chapter prose.
+#pagebreak()
+== Section 2.1
+A subsection of chapter two.
+#pagebreak()
+= Chapter Three
+The third and final chapter.
+#pagebreak()
+The end."#;
+        let bytes = typst_pdf_bytes(dir.path(), body);
+        assert!(bytes.starts_with(b"%PDF-"), "the #metadata marker compiles inertly");
+
+        let base = PdfDoc::load_mem(&bytes).unwrap();
+        let pages = base.page_count();
+        assert!(pages >= 5, "synthetic doc paginates to >=5 pages (got {pages})");
+
+        // Reading an outline never panics (typst may emit its own).
+        let _ = outline::read_outline(&base);
+
+        // metadata: write → read-back → strip.
+        {
+            let mut doc = PdfDoc::load_mem(&bytes).unwrap();
+            let m = meta::PdfMetadata {
+                title: Some("Proof".into()),
+                author: Some("Tester".into()),
+                keywords: vec!["a".into(), "b".into()],
+                ..Default::default()
+            };
+            meta::write_metadata(&mut doc, &m).unwrap();
+            let rt = PdfDoc::load_mem(&doc.to_bytes().unwrap()).unwrap();
+            let read = meta::read_metadata(&rt);
+            assert_eq!(read.title.as_deref(), Some("Proof"));
+            assert_eq!(read.keywords, vec!["a".to_string(), "b".to_string()]);
+            let mut d2 = PdfDoc::load_mem(&doc.to_bytes().unwrap()).unwrap();
+            meta::strip_metadata(&mut d2).unwrap();
+            assert_eq!(meta::read_metadata(&d2).title, None);
+        }
+
+        // outline: inject a custom tree → read it back off the real PDF.
+        {
+            let mut doc = PdfDoc::load_mem(&bytes).unwrap();
+            let items = vec![
+                outline::OutlineItem::new("Chapter One", 0),
+                outline::OutlineItem::new("Chapter Two", 2)
+                    .with_children(vec![outline::OutlineItem::new("Section 2.1", 3)]),
+                outline::OutlineItem::new("Chapter Three", 4),
+            ];
+            outline::inject_outline(&mut doc, &items).unwrap();
+            let rt = PdfDoc::load_mem(&doc.to_bytes().unwrap()).unwrap();
+            assert_eq!(outline::read_outline(&rt), items, "injected outline round-trips");
+        }
+
+        // extract a contiguous range.
+        assert_eq!(
+            ops::extract(&base, &ops::PageSpec::parse("2-4").unwrap())
+                .unwrap()
+                .page_count(),
+            3
+        );
+
+        // split into 2-page pieces (counts sum back to the whole).
+        {
+            let parts = ops::split(&base, &ops::SplitMode::EveryNPages(2)).unwrap();
+            assert_eq!(parts.iter().map(|p| p.page_count()).sum::<usize>(), pages);
+            assert_eq!(parts.len(), pages.div_ceil(2));
+        }
+
+        // merge two copies; the image survives the concat.
+        {
+            let a = PdfDoc::load_mem(&bytes).unwrap();
+            let b = PdfDoc::load_mem(&bytes).unwrap();
+            let mut merged = ops::merge(&[a, b]).unwrap();
+            assert_eq!(merged.page_count(), pages * 2);
+            let reloaded = lopdf::Document::load_mem(&merged.to_bytes().unwrap()).unwrap();
+            assert!(dicts(&reloaded).any(|d| name_eq(d, b"Subtype", b"Image")));
+        }
+
+        // rotate page 1 by 90°.
+        {
+            let mut doc = PdfDoc::load_mem(&bytes).unwrap();
+            ops::rotate(&mut doc, &ops::PageSpec::Single(1), ops::Rotation::D90).unwrap();
+            let id = doc.document().get_pages()[&1];
+            let r = match doc.document().get_dictionary(id).unwrap().get(b"Rotate") {
+                Ok(lopdf::Object::Integer(i)) => *i,
+                _ => 0,
+            };
+            assert_eq!(r, 90);
+        }
+
+        // delete two pages.
+        {
+            let mut doc = PdfDoc::load_mem(&bytes).unwrap();
+            ops::delete(&mut doc, &ops::PageSpec::parse("1,2").unwrap()).unwrap();
+            assert_eq!(doc.page_count(), pages - 2);
+        }
+
+        // reverse the page order.
+        {
+            let mut doc = PdfDoc::load_mem(&bytes).unwrap();
+            let rev: Vec<usize> = (0..pages).rev().collect();
+            ops::reorder(&mut doc, &rev).unwrap();
+            assert_eq!(doc.page_count(), pages);
+        }
+
+        // atomic save to disk → reload.
+        {
+            let mut doc = PdfDoc::load_mem(&bytes).unwrap();
+            let out_path = dir.path().join("out.pdf");
+            doc.save(&out_path).unwrap();
+            assert_eq!(PdfDoc::load(&out_path).unwrap().page_count(), pages);
+        }
     }
 }
