@@ -46,6 +46,23 @@ impl Default for ReplaceOpts {
     }
 }
 
+/// A compact human label for the active matching mode — for status
+/// lines and the review-modal header.
+pub fn opts_label(opts: ReplaceOpts) -> String {
+    let mode = if opts.regex {
+        "regex"
+    } else if opts.word_boundary {
+        "whole-word"
+    } else {
+        "substring"
+    };
+    if opts.ignore_case {
+        format!("{mode}, ignore-case")
+    } else {
+        mode.to_string()
+    }
+}
+
 /// One match in a text, with everything the review UI + [`apply`] need.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hit {
@@ -508,6 +525,32 @@ mod tests {
         assert!(!d.regex);
         assert!(d.word_boundary);
         assert!(!d.ignore_case);
+    }
+
+    #[test]
+    fn opts_label_describes_mode() {
+        assert_eq!(opts_label(ReplaceOpts::default()), "whole-word");
+        assert_eq!(
+            opts_label(ReplaceOpts {
+                word_boundary: false,
+                ..ReplaceOpts::default()
+            }),
+            "substring"
+        );
+        assert_eq!(
+            opts_label(ReplaceOpts {
+                regex: true,
+                ..ReplaceOpts::default()
+            }),
+            "regex"
+        );
+        assert_eq!(
+            opts_label(ReplaceOpts {
+                ignore_case: true,
+                ..ReplaceOpts::default()
+            }),
+            "whole-word, ignore-case"
+        );
     }
 
     // ── scan_bodies ───────────────────────────────────

@@ -5847,12 +5847,16 @@ impl App {
     }
 
     /// 1.2.22 R.3 — scan the whole manuscript for `pattern` and open the
-    /// per-match review modal.  Default opts are literal whole-word (the
-    /// safe rename default); regex / substring stay on `inkhaven replace`
-    /// for now.  User books only — a manuscript rename shouldn't touch
-    /// Notes/Facts.
-    fn open_replace_review(&mut self, pattern: String, replacement: String) {
-        let opts = crate::replace::ReplaceOpts::default();
+    /// per-match review modal.  `opts` starts literal whole-word (the
+    /// safe rename default) and is toggled in the modal (`w`/`i`/`x`),
+    /// each toggle re-entering here.  User books only — a manuscript
+    /// rename shouldn't touch Notes/Facts.
+    fn open_replace_review(
+        &mut self,
+        pattern: String,
+        replacement: String,
+        opts: crate::replace::ReplaceOpts,
+    ) {
         let matches = match crate::replace::scan_project(
             &self.store,
             &self.hierarchy,
@@ -5869,7 +5873,10 @@ impl App {
             }
         };
         if matches.is_empty() {
-            self.status = format!("replace: no whole-word matches for `{pattern}`");
+            self.status = format!(
+                "replace: no matches for `{pattern}` ({})",
+                crate::replace::opts_label(opts)
+            );
             self.modal = Modal::None;
             return;
         }
@@ -5882,14 +5889,32 @@ impl App {
         self.modal = Modal::ReplaceReview {
             pattern,
             replacement,
+            opts,
             matches,
             flat,
             cursor: 0,
             skipped: std::collections::HashSet::new(),
         };
         self.status = format!(
-            "replace: {n} match(es) · ↑↓ move · Space skip · a all · n none · Enter apply · Esc cancel"
+            "replace: {n} match(es) · ↑↓ move · Space skip · w/i/x opts · Enter apply · Esc cancel"
         );
+    }
+
+    /// Flip one matching option (`opts_field` mutates a copy) and re-run
+    /// the scan, reopening the review fresh.
+    fn retoggle_replace_review(&mut self, flip: impl FnOnce(&mut crate::replace::ReplaceOpts)) {
+        let Modal::ReplaceReview {
+            pattern,
+            replacement,
+            opts,
+            ..
+        } = &self.modal
+        else {
+            return;
+        };
+        let (p, r, mut o) = (pattern.clone(), replacement.clone(), *opts);
+        flip(&mut o);
+        self.open_replace_review(p, r, o);
     }
 
     /// Key handler for the project-replace review modal.
@@ -5936,6 +5961,16 @@ impl App {
                 if let Modal::ReplaceReview { flat, skipped, .. } = &mut self.modal {
                     *skipped = flat.iter().copied().collect();
                 }
+            }
+            // 1.2.23 R.3 polish — toggle matching options, re-scanning.
+            KeyCode::Char('w') | KeyCode::Char('W') => {
+                self.retoggle_replace_review(|o| o.word_boundary = !o.word_boundary);
+            }
+            KeyCode::Char('i') | KeyCode::Char('I') => {
+                self.retoggle_replace_review(|o| o.ignore_case = !o.ignore_case);
+            }
+            KeyCode::Char('x') | KeyCode::Char('X') => {
+                self.retoggle_replace_review(|o| o.regex = !o.regex);
             }
             KeyCode::Enter => self.apply_replace_review(),
             _ => {}
@@ -6031,7 +6066,11 @@ impl App {
         // and open the per-match review instead of the in-buffer search.
         if scope_book {
             match replace_with {
-                Some(repl) => self.open_replace_review(pattern, repl),
+                Some(repl) => self.open_replace_review(
+                    pattern,
+                    repl,
+                    crate::replace::ReplaceOpts::default(),
+                ),
                 None => {
                     self.status = "book replace needs a replacement (Ctrl+R)".into()
                 }
