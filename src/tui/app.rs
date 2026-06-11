@@ -13266,9 +13266,16 @@ impl App {
             .iter()
             .enumerate()
             .find_map(|(row, line)| {
-                line.to_lowercase()
+                // `byte_col` is an offset into the *lowercased* line; slice
+                // that same string, not the original — `to_lowercase()` can
+                // change byte length (Turkish İ, ẞ, ligatures), so reusing
+                // the offset against `line` could split a char and panic.
+                // The char column matches the original except for the rare
+                // length-changing fold, which is fine for a "jump near" move.
+                let lower = line.to_lowercase();
+                lower
                     .find(&needle)
-                    .map(|byte_col| (row, line[..byte_col].chars().count()))
+                    .map(|byte_col| (row, lower[..byte_col].chars().count()))
             });
         match pos {
             Some((row, col)) => {

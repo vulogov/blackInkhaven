@@ -1388,6 +1388,14 @@ pub(crate) fn classify_naming_inconsistencies(
             // After head: skip whitespace, capture
             // the next `canonical_tail.len()`-word
             // chunk.
+            // `search_start` is a byte offset into `prose_lc`;
+            // `to_lowercase()` can change byte length (Turkish İ, ẞ,
+            // ligatures), so it may not be a char boundary in the
+            // original `prose` — skip the rare mismatch rather than
+            // panic on the slice.
+            if !prose.is_char_boundary(search_start) {
+                continue;
+            }
             let rest = &prose[search_start..];
             let after = rest.trim_start();
             let need_words = canonical_tail.split_whitespace().count();
