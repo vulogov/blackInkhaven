@@ -30,11 +30,38 @@ rejected (lopdf alone covers cover layout).
 
 This is a **deliberate exception to the project's zero-new-deps habit** —
 justified because there is no in-tree way to manipulate PDF objects and
-both crates are pure Rust, so the single-binary promise holds.  **Gate
-before P0 starts:** audit `lopdf` + `barcoders` (and their transitive
-trees) for (a) pure-Rust / no new native libs, (b) license compatibility,
-(c) maintenance health, (d) `cargo deny` clean.  If `barcoders` drags in
-anything, hand-roll EAN-13 (the RFC says ~150 lines incl. check digit).
+both crates are pure Rust, so the single-binary promise holds.
+
+### Audit result (2026-06-11) — GREEN ✓
+
+Empirically resolved `lopdf 0.41.0` + `barcoders 2.0.0` against a fresh
+tree and diffed against inkhaven's:
+
+- **No external-app dependency, no native-library build.** The *only*
+  `-sys` crate anywhere in the combined tree is `core-foundation-sys`,
+  which is **already in inkhaven** and is a pure-Rust macOS OS-FFI shim
+  (not an external app/lib).  No `cc`/`cmake`/`bindgen`/`pkg-config`/
+  `openssl`/`freetype`/`pdfium`/`ghostscript`.  Confirmed by building
+  `lopdf` + `barcoders` from scratch with no external tool, and a runtime
+  round-trip (load → save → reload a PDF) + EAN-13 generation, both clean.
+- **10 new crates, all pure Rust, all permissive (MIT or MIT/Apache):**
+  `lopdf`, `barcoders`, the RustCrypto set pulled for encrypted-PDF
+  reading (`aes`, `cbc`, `ecb`, `cipher`, `block-padding`, `inout`),
+  `rangemap`, `stringprep`.  The crypto crates are non-optional (can't be
+  feature-gated off) but are tiny, well-audited RustCrypto.
+- **Everything else lopdf needs is already vendored** — `flate2` +
+  `miniz_oxide` + `zlib-rs` (pure-Rust compression), `nom`, `weezl`,
+  `encoding_rs`, `md-5`, `linked-hash-map`, `rayon`, `time`.
+- **Trim option:** lopdf's default features pull three date libs
+  (`chrono` + `jiff` + `time`); add it with `default-features = false`
+  and reuse inkhaven's existing `time` (or `chrono`) to avoid `jiff`.
+- **Verdict:** meets the constraint exactly — solves the PDF problem with
+  pure-Rust crates, zero external-app dependency.  inkhaven already
+  vendors far heavier native deps (DuckDB via `libduckdb-sys`, ONNX via
+  `ort-sys`); `lopdf` adds none.  **Cleared to add.**  (Still run
+  `cargo deny` at add-time for ongoing advisory/license tracking.)
+  `barcoders` is optional — hand-rolling EAN-13 (~150 lines) drops it if
+  the dep surface should be even tighter.
 
 ## Module layout
 
