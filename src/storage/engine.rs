@@ -90,6 +90,38 @@ impl StorageEngine {
         Ok(results)
     }
 
+    /// Same as [`select_all`] but with positional parameters — for
+    /// SELECTs that filter on an id/key value, so it binds rather than
+    /// string-interpolating (no escaping, no injection surface).
+    pub fn select_all_with(
+        &self,
+        sql: &str,
+        args: &[&dyn duckdb::ToSql],
+    ) -> Result<Vec<Vec<DuckValue>>> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| anyhow!("pool checkout failed: {e}"))?;
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| anyhow!("query preparation failed: {e}"))?;
+        let rows = stmt
+            .query_map(duckdb::params_from_iter(args.iter().copied()), |row| {
+                let n = row.as_ref().column_count();
+                let mut out = Vec::with_capacity(n);
+                for i in 0..n {
+                    out.push(row.get::<_, DuckValue>(i)?);
+                }
+                Ok(out)
+            })
+            .map_err(|e| anyhow!("execution of select_all_with failed: {e}"))?;
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| anyhow!("error fetching row: {e}"))?);
+        }
+        Ok(results)
+    }
+
     /// Execute a DML statement (no result rows).
     pub fn execute(&self, sql: &str) -> Result<()> {
         let conn = self
@@ -188,10 +220,10 @@ impl BlobStorage {
     }
 
     pub fn get_blob(&self, id: Uuid) -> Result<Option<Vec<u8>>> {
-        let rows = self.engine.select_all(&format!(
-            "SELECT data FROM blobs WHERE id = '{}'",
-            sql_escape(&id.to_string()),
-        ))?;
+        let id_str = id.to_string();
+        let rows = self
+            .engine
+            .select_all_with("SELECT data FROM blobs WHERE id = ?", &[&id_str])?;
         match rows.into_iter().next() {
             None => Ok(None),
             Some(row) => {
@@ -220,10 +252,9 @@ impl BlobStorage {
     }
 
     pub fn drop_blob(&self, id: Uuid) -> Result<()> {
-        self.engine.execute(&format!(
-            "DELETE FROM blobs WHERE id = '{}'",
-            sql_escape(&id.to_string()),
-        ))
+        let id_str = id.to_string();
+        self.engine
+            .execute_with("DELETE FROM blobs WHERE id = ?", &[&id_str])
     }
 
     pub fn checkpoint(&self) -> Result<()> {
@@ -274,20 +305,20 @@ impl JsonStorage {
         let id_str = id.to_string();
         let doc_str = serde_json::to_string(&document)
             .map_err(|e| anyhow!("JSON serialisation failed: {e}"))?;
-        self.engine.execute(&format!(
+        let key: &str = &self.default_key;
+        self.engine.execute_with(
             "INSERT INTO json_docs (id, created_at, updated_at, key, document) \
-             VALUES ('{}', {ts}, {ts}, '{}', '{}'::JSON)",
-            sql_escape(&id_str),
-            sql_escape(&self.default_key),
-            sql_escape(&doc_str),
-        ))
+             VALUES (?, ?, ?, ?, CAST(? AS JSON))",
+            &[&id_str, &ts, &ts, &key, &doc_str],
+        )
     }
 
     pub fn get_json(&self, id: Uuid) -> Result<Option<JsonValue>> {
-        let rows = self.engine.select_all(&format!(
-            "SELECT document FROM json_docs WHERE id = '{}'",
-            sql_escape(&id.to_string()),
-        ))?;
+        let id_str = id.to_string();
+        let rows = self.engine.select_all_with(
+            "SELECT document FROM json_docs WHERE id = ?",
+            &[&id_str],
+        )?;
         match rows.into_iter().next() {
             None => Ok(None),
             Some(row) => {
@@ -316,21 +347,19 @@ impl JsonStorage {
         let id_str = id.to_string();
         let doc_str = serde_json::to_string(&document)
             .map_err(|e| anyhow!("JSON serialisation failed: {e}"))?;
-        self.engine.execute(&format!(
+        let key: &str = &self.default_key;
+        self.engine.execute_with(
             "UPDATE json_docs \
-             SET document = '{}'::JSON, key = '{}', updated_at = {ts} \
-             WHERE id = '{}'",
-            sql_escape(&doc_str),
-            sql_escape(&self.default_key),
-            sql_escape(&id_str),
-        ))
+             SET document = CAST(? AS JSON), key = ?, updated_at = ? \
+             WHERE id = ?",
+            &[&doc_str, &key, &ts, &id_str],
+        )
     }
 
     pub fn drop_json(&self, id: Uuid) -> Result<()> {
-        self.engine.execute(&format!(
-            "DELETE FROM json_docs WHERE id = '{}'",
-            sql_escape(&id.to_string()),
-        ))
+        let id_str = id.to_string();
+        self.engine
+            .execute_with("DELETE FROM json_docs WHERE id = ?", &[&id_str])
     }
 
     pub fn list_all(&self) -> Result<Vec<(Uuid, JsonValue)>> {
@@ -380,12 +409,6 @@ impl JsonStorage {
 
 // ── helpers ──────────────────────────────────────────────────────────
 
-/// Escape a string for safe interpolation into a SQL single-quoted
-/// literal. Doubles every `'` (`'` → `''`).
-pub(crate) fn sql_escape(s: &str) -> String {
-    s.replace('\'', "''")
-}
-
 fn now_unix_secs() -> i64 {
     chrono::Utc::now().timestamp()
 }
@@ -395,6 +418,33 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tempfile::TempDir;
+
+    /// 1.2.23 SQL hardening — the JSON store binds parameters instead of
+    /// string-interpolating, so content with single quotes, double
+    /// quotes, and backslashes round-trips intact (the old
+    /// quote-doubling `sql_escape` didn't touch backslashes).
+    #[test]
+    fn json_store_roundtrips_adversarial_content() {
+        let dir = TempDir::new().unwrap();
+        let store = JsonStorage::new(&dir.path().join("meta.db"), 2, "doc").unwrap();
+        let id = Uuid::now_v7();
+        let doc = json!({
+            "title": "O'Brien's \"tale\" — back\\slash and a ' quote",
+            "note": "'; DROP TABLE json_docs; --",
+            "path": "C:\\Users\\x\\é.txt",
+        });
+        store.add_json_with_id(id, doc.clone()).unwrap();
+        assert_eq!(store.get_json(id).unwrap(), Some(doc.clone()));
+
+        let updated = json!({ "title": "still O'Brien's", "n": 2 });
+        store.update_json(id, updated.clone()).unwrap();
+        assert_eq!(store.get_json(id).unwrap(), Some(updated));
+
+        // The table is intact (the injection-looking string was data).
+        assert_eq!(store.list_all().unwrap().len(), 1);
+        store.drop_json(id).unwrap();
+        assert_eq!(store.get_json(id).unwrap(), None);
+    }
 
     /// `App::shutdown_flush` calls `Store::checkpoint()`, which fans out to
     /// `JsonStorage::checkpoint()` + `BlobStorage::checkpoint()`. Verify
