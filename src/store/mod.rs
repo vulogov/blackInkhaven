@@ -398,7 +398,7 @@ impl Store {
             // `create_node`'s paragraph branch.
             if let Some(rel) = &created.file {
                 let abs = self.layout.root.join(rel);
-                std::fs::write(&abs, body.as_bytes()).map_err(Error::Io)?;
+                crate::io_atomic::write(&abs, body.as_bytes()).map_err(Error::Io)?;
                 self.update_paragraph_content(&mut created, body.as_bytes())?;
             }
         }
@@ -794,7 +794,7 @@ impl Store {
                 } else {
                     format!("= {}\n\n", node.title)
                 };
-                std::fs::write(&abs_path, &template)?;
+                crate::io_atomic::write(&abs_path, template.as_bytes())?;
                 node.file = Some(rel_path.to_string_lossy().into_owned());
                 node.word_count = template.split_whitespace().count() as u64;
                 template.into_bytes()
@@ -809,7 +809,7 @@ impl Store {
                      //   \"hook.on_save\" {{ drop \"saved\" println }} register\n\n",
                     node.title
                 );
-                std::fs::write(&abs_path, &template)?;
+                crate::io_atomic::write(&abs_path, template.as_bytes())?;
                 node.file = Some(rel_path.to_string_lossy().into_owned());
                 node.word_count = template.split_whitespace().count() as u64;
                 // Drive the Bund syntax highlighter via the same
@@ -1290,7 +1290,7 @@ impl Store {
         let abs = self.layout.root.join(
             node.file.as_deref().unwrap_or(""),
         );
-        std::fs::write(&abs, bytes).map_err(Error::Io)?;
+        crate::io_atomic::write(&abs, bytes).map_err(Error::Io)?;
         // Rename the on-disk file from `NN-slug.typ` (what create_node
         // wrote) to `NN-slug.<ext>` so the on-disk extension matches.
         let abs_typ = abs.clone();

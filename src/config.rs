@@ -1309,6 +1309,14 @@ pub fn parse_color(s: &str) -> Option<ratatui::style::Color> {
         return None;
     }
     let hex = t.strip_prefix('#').unwrap_or(t);
+    // Guard the byte-slicing below: a non-ASCII char makes `hex.len()`
+    // (bytes) disagree with char positions, so `hex[0..1]` could split a
+    // multibyte char and panic (e.g. `"#aé"` → `len()==3`).  Non-ASCII
+    // can't be hex anyway, so reject it up front — keeping the module's
+    // "never panic on a malformed theme" guarantee.
+    if !hex.is_ascii() {
+        return None;
+    }
     let parse_byte = |h: &str| u8::from_str_radix(h, 16).ok();
     match hex.len() {
         3 => {
@@ -3483,6 +3491,22 @@ mod layering_tests {
 
     // The shipped `color_styles/*.hjson` presets must each
     // be valid HJSON, contain only real `theme` colour keys
+    #[test]
+    fn parse_color_handles_non_ascii_without_panic() {
+        // 1.2.23 stability fix: a multibyte char in a 3- or 6-byte hex
+        // string used to split a UTF-8 char and panic; now → None.
+        assert_eq!(parse_color("#aé"), None); // "aé" = 3 bytes
+        assert_eq!(parse_color("aébcd"), None); // 5 chars / 6 bytes
+        assert_eq!(parse_color("#ñ"), None);
+        assert_eq!(parse_color("日本語"), None);
+        // The valid cases still work.
+        assert!(parse_color("#fff").is_some());
+        assert!(parse_color("#89b4fa").is_some());
+        assert!(parse_color("89b4fa").is_some());
+        assert_eq!(parse_color(""), None);
+        assert_eq!(parse_color("#xyz"), None); // ASCII but not hex
+    }
+
     // that parse, and layer cleanly into a complete Config —
     // guards the presets against bit-rot when fields change.
     #[test]
