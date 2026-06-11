@@ -308,6 +308,27 @@ impl Hierarchy {
         chain
     }
 
+    /// 1.2.23 D.8 — every Chapter under a *user* (non-system) book, as
+    /// `(id, title)` in hierarchy order.  The shared manuscript walk for
+    /// the analysis commands (continuity / tension / facts scan), which
+    /// each used to re-implement it.
+    pub fn user_book_chapters(&self) -> Vec<(Uuid, String)> {
+        let mut out = Vec::new();
+        for node in self.iter() {
+            if node.kind != NodeKind::Chapter {
+                continue;
+            }
+            let under_system = self
+                .ancestors(node)
+                .iter()
+                .any(|a| a.kind == NodeKind::Book && a.system_tag.is_some());
+            if !under_system {
+                out.push((node.id, node.title.clone()));
+            }
+        }
+        out
+    }
+
     /// Slash-separated slug path used in CLI args (e.g. `my-book/01-chapter`).
     pub fn slug_path(&self, node: &Node) -> String {
         let mut parts: Vec<&str> = self

@@ -22,7 +22,6 @@ use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
 use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
-use crate::store::node::NodeKind;
 use crate::tension::{parse_tension_lines, TensionKind, TensionLedger};
 
 use super::TensionCommand;
@@ -65,7 +64,7 @@ fn scan(project: &Path, provider: Option<&str>) -> Result<()> {
         cfg.language.clone()
     };
 
-    let chapters = user_book_chapters(&hierarchy);
+    let chapters = hierarchy.user_book_chapters();
     if chapters.is_empty() {
         return Err(Error::Store(
             "tension scan: no user-book chapters found".into(),
@@ -159,22 +158,5 @@ fn list(project: &Path) -> Result<()> {
         println!("  {mark}  {:<32} [{}]", t.topic, t.chapter);
     }
     Ok(())
-}
-
-fn user_book_chapters(h: &Hierarchy) -> Vec<(uuid::Uuid, String)> {
-    let mut out = Vec::new();
-    for node in h.iter() {
-        if node.kind != NodeKind::Chapter {
-            continue;
-        }
-        let under_system = h
-            .ancestors(node)
-            .iter()
-            .any(|a| a.kind == NodeKind::Book && a.system_tag.is_some());
-        if !under_system {
-            out.push((node.id, node.title.clone()));
-        }
-    }
-    out
 }
 
