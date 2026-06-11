@@ -38,8 +38,12 @@ individually toggleable — **`Space`** skips (or un-skips) the one under the
 cursor, **`a`** keeps all, **`n`** skips all. **`Enter`** applies only the
 kept matches; **`Esc`** cancels.
 
-The default is **whole-word**, so `Anne` won't touch `Anneliese` — but the
-review still shows you everything, so you decide. When you apply, each
+The review starts in **whole-word** mode, so `Anne` won't touch `Anneliese`
+— but you can change the matching mode without leaving the review *(1.2.23)*:
+**`w`** toggles whole-word, **`i`** ignore-case, **`x`** regex. Each re-runs
+the scan and the header shows the active mode (`[whole-word]`, `[substring]`,
+`[regex]`, `…, ignore-case`) — the same modes the CLI flags below reach. The
+review always shows you everything, so you decide. When you apply, each
 changed paragraph gets a snapshot annotated `replace: Anne → Anna` first —
 **`F6`** restores any of them.
 
