@@ -131,11 +131,11 @@ impl ProgressStore {
     /// no baseline exists — the project wasn't open that day.
     pub fn baseline_for(&self, day: i64, book_id: Uuid) -> Result<Option<i64>> {
         let book_str = book_id.to_string();
-        let rows = self.engine.select_all(&format!(
+        let rows = self.engine.select_all_with(
             "SELECT total_words FROM writing_baselines
-             WHERE day = {day} AND book_id = '{book}'",
-            book = sql_escape(&book_str),
-        ))?;
+             WHERE day = ? AND book_id = ?",
+            &[&day, &book_str],
+        )?;
         match rows.into_iter().next() {
             None => Ok(None),
             Some(row) => match row.into_iter().next() {
@@ -177,12 +177,12 @@ impl ProgressStore {
         // efficiently.
         let book_str = book_id.to_string();
         let earliest = today - n as i64;
-        let rows = self.engine.select_all(&format!(
+        let rows = self.engine.select_all_with(
             "SELECT day, total_words FROM writing_baselines
-             WHERE book_id = '{book}' AND day >= {earliest}
+             WHERE book_id = ? AND day >= ?
              ORDER BY day ASC",
-            book = sql_escape(&book_str),
-        ))?;
+            &[&book_str, &earliest],
+        )?;
         let mut bl: std::collections::HashMap<i64, i64> =
             std::collections::HashMap::new();
         for row in rows {
@@ -227,14 +227,15 @@ impl ProgressStore {
         days_back: i64,
     ) -> Result<Vec<(String, i64)>> {
         let cutoff_secs = now_unix_secs() - days_back * 86_400;
-        let rows = self.engine.select_all(&format!(
+        let rows = self.engine.select_all_with(
             "SELECT
                  json_extract_string(extra_json, '$.to') AS to_status,
                  COUNT(*) AS n
              FROM writing_events
-             WHERE kind = 'status_change' AND ts >= {cutoff_secs}
+             WHERE kind = 'status_change' AND ts >= ?
              GROUP BY to_status",
-        ))?;
+            &[&cutoff_secs],
+        )?;
         let mut out: Vec<(String, i64)> = Vec::new();
         for row in rows {
             let mut it = row.into_iter();
@@ -259,12 +260,13 @@ impl ProgressStore {
     /// streak computation.
     pub fn writing_days_recent(&self, days_back: i64) -> Result<Vec<i64>> {
         let cutoff_secs = now_unix_secs() - days_back * 86_400;
-        let rows = self.engine.select_all(&format!(
+        let rows = self.engine.select_all_with(
             "SELECT DISTINCT (ts / 86400) AS day
              FROM writing_events
-             WHERE kind = 'save' AND word_delta > 0 AND ts >= {cutoff_secs}
+             WHERE kind = 'save' AND word_delta > 0 AND ts >= ?
              ORDER BY day DESC",
-        ))?;
+            &[&cutoff_secs],
+        )?;
         let mut out = Vec::new();
         for row in rows {
             match row.into_iter().next() {
@@ -296,18 +298,19 @@ impl ProgressStore {
         // DuckDB's LAG inside a CTE gives us the prior save's
         // timestamp; LEAST clamps each gap to the cap. We coalesce
         // the SUM so a no-events window returns 0 instead of NULL.
-        let rows = self.engine.select_all(&format!(
+        let rows = self.engine.select_all_with(
             "WITH saves AS (
                  SELECT ts FROM writing_events
-                 WHERE kind = 'save' AND ts >= {from_secs} AND ts < {until_secs}
+                 WHERE kind = 'save' AND ts >= ? AND ts < ?
                  ORDER BY ts
              ),
              gaps AS (
                  SELECT ts - LAG(ts) OVER (ORDER BY ts) AS gap FROM saves
              )
-             SELECT COALESCE(SUM(LEAST(gap, {cap_seconds})), 0)
+             SELECT COALESCE(SUM(LEAST(gap, ?)), 0)
              FROM gaps WHERE gap IS NOT NULL",
-        ))?;
+            &[&from_secs, &until_secs, &cap_seconds],
+        )?;
         let value = rows
             .into_iter()
             .next()
@@ -333,9 +336,5 @@ fn now_unix_secs() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
-}
-
-fn sql_escape(s: &str) -> String {
-    s.replace('\'', "''")
 }
 
