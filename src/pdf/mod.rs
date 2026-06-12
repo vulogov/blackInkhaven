@@ -443,6 +443,9 @@ Page four."#; // 4 pages
                 sheet_size: Size::new(600.0, 400.0), // 2-up of 300pt pages
                 creep: CreepStrategy::Shingle,
                 paper_thickness_mm: 0.1,
+                marks: impose::marks::MarkConfig::default(),
+                crop_offset_mm: 5.0,
+                fold_mark_length_mm: 8.0,
             },
         )
         .unwrap();

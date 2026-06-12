@@ -421,3 +421,34 @@ Imposition produces valid, content-preserving PDFs on real output.  Suite
 fold / registration / spine collation-bars / signature numbers), then the
 `imposition:` config + `inkhaven pdf impose` + `Ctrl+B I` preview +
 `ink.pdf.impose`.
+
+### P1.3 — printer marks (landed)
+
+`impose::marks` — pure PDF content-stream ops (no SVG), appended to each
+imposed sheet side by `sheet::emit`:
+
+- **crop** — four L-marks at the trim-box corners, offset out by
+  `crop_offset_mm`, 5 mm long.
+- **fold** — dashed segments across the spine fold at block top + bottom
+  (`fold_mark_length_mm`); folded styles only.
+- **registration** — a printer's cross (crosshair + a 4-Bézier circle)
+  centred above + below the block.
+- **spine_marker** — the collation bar across the spine fold, its y
+  **descending monotonically with the signature** (`spine_bar_y`) so the
+  gathered spine shows a staircase; folded styles only.
+- **signature_number** — the 1-based numeral near the fold, via a base-14
+  `/F1` Helvetica resource the emitter adds when the mark is on.
+- **color_bar** — a grayscale calibration strip (off by default).
+
+`MarkConfig` (default: all but color_bar) + `MarkGeometry`; the emitter
+computes the layout-wide block geometry and the per-sheet signature.
+`ImpositionParams` gains `marks` / `crop_offset_mm` / `fold_mark_length_mm`.
+
+6 mark unit tests (crop = 8 segments, fold dashed + folded-only,
+registration crosshair+circle, **staircase monotonicity**, signature
+text, default config) — all pure.  The real-typst imposition corpus gate
+still passes with marks drawn.  Suite 1231 → 1237.
+
+Next P1: the **surfaces** — the `imposition:` HJSON config (named
+profiles via the cascade), `inkhaven pdf impose`, the `Ctrl+B I` preview
+overlay, and `ink.pdf.impose`.

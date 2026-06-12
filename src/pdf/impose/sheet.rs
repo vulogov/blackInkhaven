@@ -39,7 +39,24 @@ pub fn emit(src: &PdfDoc, layout: &Layout, params: &ImpositionParams) -> Result<
         xobjs.push((xid, rect.size()));
     }
 
-    // 2. Build the imposed pages.
+    // 2. Build the imposed pages.  Mark geometry is layout-wide (uniform
+    //    page size assumed); the imposed block is centred on the sheet.
+    let page_size = xobjs.first().map(|&(_, sz)| sz).unwrap_or(Size::new(612.0, 792.0));
+    let cols = layout.columns_per_side;
+    let block_w = cols as f32 * page_size.width;
+    let mark_geom = super::marks::MarkGeometry {
+        sheet: params.sheet_size,
+        page: page_size,
+        columns: cols,
+        block_x0: ((params.sheet_size.width - block_w) / 2.0).max(0.0),
+        block_y0: ((params.sheet_size.height - page_size.height) / 2.0).max(0.0),
+        crop_offset_mm: params.crop_offset_mm,
+        fold_len_mm: params.fold_mark_length_mm,
+    };
+    let is_folded = layout.style.is_folded();
+    let total_sigs = layout.signatures;
+    let needs_font = params.marks.needs_font();
+
     let pages_root = inner.new_object_id();
     let mut kids: Vec<ObjectId> = Vec::new();
     for sheet in &layout.sheets {
@@ -48,15 +65,19 @@ pub fn emit(src: &PdfDoc, layout: &Layout, params: &ImpositionParams) -> Result<
             sheet.sheet_in_sig,
             params.paper_thickness_mm,
         ));
+        let marks =
+            super::marks::marks_ops(&params.marks, &mark_geom, sheet.signature, total_sigs, is_folded);
         for side in [&sheet.front, &sheet.back] {
             kids.push(build_side_page(
                 &mut inner,
                 pages_root,
                 side,
                 &xobjs,
-                layout.columns_per_side,
+                cols,
                 params.sheet_size,
                 creep_pt,
+                &marks,
+                needs_font,
             )?);
         }
     }
@@ -85,6 +106,7 @@ pub fn emit(src: &PdfDoc, layout: &Layout, params: &ImpositionParams) -> Result<
 
 /// One physical side (front or back) of a sheet: a Page sized to the
 /// target sheet, placing each non-blank slot's source-page XObject.
+#[allow(clippy::too_many_arguments)]
 fn build_side_page(
     inner: &mut Document,
     parent: ObjectId,
@@ -93,6 +115,8 @@ fn build_side_page(
     columns_per_side: usize,
     sheet_size: Size,
     creep_pt: f32,
+    marks: &str,
+    needs_font: bool,
 ) -> Result<ObjectId> {
     let mut xobj_dict = Dictionary::new();
     let mut content = String::new();
@@ -108,10 +132,23 @@ fn build_side_page(
         let (tx, ty) = place(slot.column, columns_per_side, page_size, sheet_size, creep_pt);
         content.push_str(&format!("q 1 0 0 1 {tx:.4} {ty:.4} cm /{name} Do Q\n"));
     }
+    // Printer marks are drawn on top of the placed pages.
+    content.push_str(marks);
 
     let content_id = inner.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
     let mut res = Dictionary::new();
     res.set("XObject", Object::Dictionary(xobj_dict));
+    if needs_font {
+        // Base-14 Helvetica — no embedding needed; carries the signature
+        // numeral.
+        let mut helv = Dictionary::new();
+        helv.set("Type", "Font");
+        helv.set("Subtype", "Type1");
+        helv.set("BaseFont", "Helvetica");
+        let mut font = Dictionary::new();
+        font.set("F1", Object::Dictionary(helv));
+        res.set("Font", Object::Dictionary(font));
+    }
     let mut page = Dictionary::new();
     page.set("Type", "Page");
     page.set("Parent", Object::Reference(parent));
@@ -175,6 +212,9 @@ mod tests {
             sheet_size: sheet,
             creep: CreepStrategy::None,
             paper_thickness_mm: 0.1,
+            marks: super::super::marks::MarkConfig::default(),
+            crop_offset_mm: 5.0,
+            fold_mark_length_mm: 8.0,
         }
     }
 
