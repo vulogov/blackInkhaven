@@ -1095,6 +1095,18 @@ pub enum PdfCommand {
     Info {
         input: std::path::PathBuf,
     },
+    /// Impose into print-ready signatures using a named `imposition:`
+    /// profile (binding style / sheet size / creep / marks).  The
+    /// profile comes through the config cascade (project + global);
+    /// `default` and `chapbook` are built in.
+    Impose {
+        input: std::path::PathBuf,
+        /// Imposition profile name.
+        #[arg(long, default_value = "default")]
+        config: String,
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
     /// Keep only the given pages (e.g. `--pages 2-4,7`).
     Extract {
         input: std::path::PathBuf,
@@ -1970,7 +1982,7 @@ impl Cli {
             Command::Facts(cmd) => {
                 facts_scan::run(&project, cmd).map_err(Into::into)
             }
-            Command::Pdf(cmd) => pdf::run(cmd).map_err(Into::into),
+            Command::Pdf(cmd) => pdf::run(cmd, &project).map_err(Into::into),
             Command::Replace {
                 pattern,
                 replacement,
