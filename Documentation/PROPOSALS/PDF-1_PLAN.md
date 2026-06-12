@@ -499,3 +499,21 @@ The RFC §9 example release script now works: `… ink.pdf.load …
 imposition-profile ink.pdf.impose "…-imposed.pdf" ink.pdf.save`.  P1 is
 functionally complete bar the `Ctrl+B I` TUI preview overlay + the
 `imposed_pdf` book-take format.
+
+### P1.6a — imposition preview generator + `pdf impose --dry-run` (landed)
+
+`impose::preview` — pure: `build(profile, source_pages, params) ->
+ImpositionPreview` runs the layout + creep math and `lines()` renders the
+RFC App. D content: profile / source pages / style / signature size /
+signatures (imposed pages + blanks) / sheet size (pt + mm) / paper +
+creep (max shift) / marks, plus the first sheet's schematic
+(`Front: [   8 ][   1 ]` / `Back:  [   2 ][   7 ]`, blanks as `[  —  ]`).
+3 tests (saddle summary + schematic, padding blanks, stab 1-up).
+
+`inkhaven pdf impose --dry-run` prints it without imposing — the same
+generator the `Ctrl+B I` overlay will render.  Suite 1242 → 1245.
+
+**TUI chord note:** `Ctrl+B I` is already `OpenBookInfo` and `Ctrl+B
+Shift+I` is taken (`ViewEditEventMetadata`), so the overlay needs a
+different chord or to fold into book-info — a product decision parked for
+the user.  The preview *content* + generator are done and reusable.

@@ -19,7 +19,12 @@ use super::PdfCommand;
 pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
     match cmd {
         PdfCommand::Info { input } => info(&input),
-        PdfCommand::Impose { input, config, out } => impose(&input, &config, project, out),
+        PdfCommand::Impose {
+            input,
+            config,
+            out,
+            dry_run,
+        } => impose(&input, &config, project, out, dry_run),
         PdfCommand::Extract { input, pages, out } => {
             let doc = load(&input)?;
             let spec = PageSpec::parse(&pages).map_err(pdferr)?;
@@ -130,11 +135,26 @@ fn imposition_config(project: &Path) -> crate::pdf::impose::config::ImpositionCo
         .unwrap_or_default()
 }
 
-fn impose(input: &Path, profile: &str, project: &Path, out: Option<PathBuf>) -> Result<()> {
+fn impose(
+    input: &Path,
+    profile: &str,
+    project: &Path,
+    out: Option<PathBuf>,
+    dry_run: bool,
+) -> Result<()> {
     let params = imposition_config(project)
         .resolve(profile)
         .map_err(Error::Store)?;
     let src = load(input)?;
+    if dry_run {
+        // Preview the plan (RFC App. D) — the same generator the TUI
+        // overlay renders — without imposing.
+        let preview = pdf::impose::preview::build(profile, src.page_count(), &params);
+        for line in preview.lines() {
+            println!("{line}");
+        }
+        return Ok(());
+    }
     // Layout summary for the report (cheap to recompute).
     let layout = pdf::impose::layout::plan(
         params.style,
