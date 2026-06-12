@@ -80,6 +80,33 @@ pub fn active_config(err_prefix: &str) -> Result<&'static crate::config::Config>
     })
 }
 
+/// 1.2.15+ Phase S.6 — confine a Bund-supplied path to the project
+/// root.  Shared by `ink.fs.*` and `ink.pdf.*`.  No active store →
+/// reject (can't confine); `scripting.fs_unsandboxed: true` → pass
+/// through; otherwise resolve within the project root.
+pub(crate) fn resolve_fs_path(tag: &str, raw: &str) -> Result<std::path::PathBuf> {
+    let unsandboxed = crate::scripting::active_policy()
+        .map(|p| p.fs_unsandboxed)
+        .unwrap_or(false);
+    if unsandboxed {
+        return Ok(std::path::PathBuf::from(raw));
+    }
+    let store = crate::scripting::active_store().ok_or_else(|| {
+        anyhow!(
+            "{tag} `{raw}`: rejected — no project store registered; \
+             paths can't be confined.  Enable `scripting.fs_unsandboxed: true` \
+             to opt out (trusted projects only)."
+        )
+    })?;
+    let root = store.project_root();
+    crate::path_safety::resolve_within_str(root, raw).map_err(|e| {
+        anyhow!(
+            "{tag} `{raw}`: rejected by sandbox: {e}.  \
+             Enable `scripting.fs_unsandboxed: true` to opt out (trusted projects only)."
+        )
+    })
+}
+
 /// Resolve a slug-path (`"book/chapter/paragraph"`) to a node
 /// UUID by walking the hierarchy. Empty path returns `None`
 /// (signalling "root").

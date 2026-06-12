@@ -332,3 +332,31 @@ the module `dead_code` allow covers only the P1/P2-bound remainder
 Suite 1214 (+ 3 ignored corpus gates).
 
 P0 (foundations) is functionally complete bar the `ink.pdf.*` Bund layer.
+
+### P0.6 — `ink.pdf.*` Bund stdlib (landed)
+
+`src/scripting/stdlib/pdf.rs`: PDFs held as opaque **handles** (ints) in
+a thread-local registry (RFC §9 open-Q 3 — no copy on every word
+boundary).  Words: `ink.pdf.load` ( path -- h ), `save` ( h path -- ),
+`pages` ( h -- n ), `extract` ( h spec -- h' ), `delete` / `rotate` /
+`reorder` ( … -- h, in place), `merge` ( h1 h2 -- h', consumes inputs),
+`title` / `set_title` / `set_author` / `strip_metadata`.  Thin wrappers
+over the proven `pdf` lib.
+
+Sandbox: only the disk-crossing words are categorised in `policy.rs` —
+`ink.pdf.load` → `fs_read` (default-allowed, path-confined to the project
+root), `ink.pdf.save` → `fs_write` (**default-denied**); both `load`/
+`save` confine paths via the shared `helpers::resolve_fs_path` (moved out
+of `fs.rs`).  The in-memory ops stay uncategorised (allowed; they persist
+only via `save`).  Drift-guard test pins `save → fs_write`.
+
+Verified: words register + error cleanly (unknown handle, stack
+underflow), `save` denied-by-default at init, `load` path-confined.
+Suite 1214 → 1215.  **Deferred live-check:** a happy-path VM round-trip
+(load real PDF → set_title → save → reload) — needs `build --compile`,
+held off to avoid re-triggering the session OOM; the underlying lib is
+already proven on a real 169-page book (P0.5).
+
+**P0 (Foundations) is complete** — deps + fidelity gate, geometry/paper,
+PdfDoc, ops, meta, outline, the `inkhaven pdf` CLI, and the `ink.pdf.*`
+Bund layer.  Next: **P1 — imposition** (the marquee feature).

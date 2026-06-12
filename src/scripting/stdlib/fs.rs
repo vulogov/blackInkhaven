@@ -26,7 +26,7 @@ use easy_error::Error as BundError;
 use rust_dynamic::value::Value;
 use rust_multistackvm::multistackvm::VM;
 
-use super::helpers::{pull, push, require_depth, value_to_string};
+use super::helpers::{pull, push, require_depth, resolve_fs_path, value_to_string};
 
 pub fn register(vm: &mut VM) -> Result<()> {
     vm.register_inline("ink.fs.read".to_string(), ink_fs_read)
@@ -88,42 +88,3 @@ fn do_ink_fs_write(vm: &mut VM) -> Result<&mut VM> {
     Ok(vm)
 }
 
-/// 1.2.15+ Phase S.6 (H2) — resolve a Bund-supplied
-/// path against the project root.  Returns the
-/// absolute path on success or a security error on
-/// rejection.
-///
-/// Behaviour:
-///   * No active store registered → reject (Bund
-///     scripts run from CLI flows without
-///     `--project` can't use `ink.fs.*` against
-///     the project tree because they don't HAVE
-///     one).  Power users can fall back to
-///     `scripting.fs_unsandboxed: true` if they
-///     genuinely need that.
-///   * Active store + sandbox enabled → confine
-///     via `path_safety::resolve_within`.
-///   * Active store + `fs_unsandboxed: true` →
-///     pass through as-is (legacy behaviour).
-fn resolve_fs_path(tag: &str, raw: &str) -> Result<std::path::PathBuf> {
-    let unsandboxed = crate::scripting::active_policy()
-        .map(|p| p.fs_unsandboxed)
-        .unwrap_or(false);
-    if unsandboxed {
-        return Ok(std::path::PathBuf::from(raw));
-    }
-    let store = crate::scripting::active_store().ok_or_else(|| {
-        anyhow!(
-            "{tag} `{raw}`: rejected — no project store registered; \
-             paths can't be confined.  Enable `scripting.fs_unsandboxed: true` \
-             to opt out (trusted projects only)."
-        )
-    })?;
-    let root = store.project_root();
-    crate::path_safety::resolve_within_str(root, raw).map_err(|e| {
-        anyhow!(
-            "{tag} `{raw}`: rejected by sandbox: {e}.  \
-             Enable `scripting.fs_unsandboxed: true` to opt out (trusted projects only)."
-        )
-    })
-}
