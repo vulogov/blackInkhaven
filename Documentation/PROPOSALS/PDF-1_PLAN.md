@@ -480,3 +480,22 @@ signature math), no crash artifacts.  Suite 1237 → 1242.
 Imposition is now usable end-to-end from the CLI.  Next P1: the `Ctrl+B I`
 preview overlay + `ink.pdf.impose` Bund word (and the `imposed_pdf`
 book-take format).
+
+### P1.5 — `ink.pdf.impose` Bund word (landed)
+
+`ink.pdf.impose` ( handle profile -- handle' ) over the existing handle
+registry: resolves the named profile from `active_config().imposition`
+(project + global cascade) — falling back to the built-in `default` /
+`chapbook` profiles when no project is registered — then runs the proven
+`impose::impose`, returning a fresh handle.  In-memory (no disk I/O →
+uncategorised, allowed); `load`/`save` still gate the disk crossing.
+
+Verified: registered + clean errors (unknown profile resolved against the
+fallback config, unknown handle, stack underflow), and a **full VM
+round-trip on a real 56-page book** — `load → impose "default" → save`
+produced 32 A3-landscape imposed pages (matching the CLI).  Suite 1242.
+
+The RFC §9 example release script now works: `… ink.pdf.load …
+imposition-profile ink.pdf.impose "…-imposed.pdf" ink.pdf.save`.  P1 is
+functionally complete bar the `Ctrl+B I` TUI preview overlay + the
+`imposed_pdf` book-take format.

@@ -74,6 +74,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.pdf.rotate", w_rotate),
         ("ink.pdf.reorder", w_reorder),
         ("ink.pdf.merge", w_merge),
+        ("ink.pdf.impose", w_impose),
         ("ink.pdf.title", w_title),
         ("ink.pdf.set_title", w_set_title),
         ("ink.pdf.set_author", w_set_author),
@@ -215,6 +216,31 @@ fn do_merge(vm: &mut VM) -> Result<&mut VM> {
     let d2 = take_doc(h2, tag)?;
     let merged = ops::merge(&[d1, d2]).map_err(pe)?;
     push(vm, Value::from_int(store_doc(merged)));
+    Ok(vm)
+}
+
+// ( handle profile -- handle' )   impose into signatures, new doc
+fn w_impose(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_impose(vm).map_err(to_bund_err)
+}
+fn do_impose(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.pdf.impose";
+    require_depth(vm, 2, tag)?;
+    let profile = value_to_string(pull(vm, tag)?, "profile", tag)?;
+    let handle = value_to_i64(pull(vm, tag)?, "handle", tag)?;
+    // Imposition profiles from the active project config (project +
+    // global cascade); the built-in `default` / `chapbook` profiles work
+    // even with no project registered.
+    let imp_cfg = crate::scripting::active_config()
+        .map(|c| c.imposition.clone())
+        .unwrap_or_default();
+    let params = imp_cfg
+        .resolve(&profile)
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    let new = with_doc(handle, tag, |doc| {
+        crate::pdf::impose::impose(&*doc, &params).map_err(pe)
+    })?;
+    push(vm, Value::from_int(store_doc(new)));
     Ok(vm)
 }
 
