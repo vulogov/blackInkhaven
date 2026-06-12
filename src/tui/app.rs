@@ -14902,6 +14902,22 @@ impl App {
                 std::thread::sleep(step_pause);
             }
             let fmt = raw.trim().to_ascii_lowercase();
+            // 1.3.0 PDF-1 — `imposed_pdf` operates on the just-built PDF,
+            // not the `.typ` source, so it's handled out of band.
+            if fmt == "imposed_pdf" {
+                match self.take_imposed_pdf(pdf_dest) {
+                    Ok(name) => {
+                        statuses[i] = '✓';
+                        produced.push(name);
+                    }
+                    Err(e) => {
+                        tracing::warn!(target: "inkhaven::take", "imposed_pdf: {e}");
+                        statuses[i] = '✗';
+                        produced.push("imposed_pdf error".into());
+                    }
+                }
+                continue;
+            }
             let outcome = self.build_one_extra_format(&fmt, &combined, &book.title);
             let artefact = match outcome {
                 Some(Ok(art)) => art,
@@ -14980,6 +14996,31 @@ impl App {
             std::thread::sleep(step_pause);
         }
         produced
+    }
+
+    /// 1.3.0 PDF-1 — the `imposed_pdf` book-take format: impose the
+    /// just-built PDF with the `output.imposed_pdf_config` profile,
+    /// writing `<stem>-imposed.pdf` next to it.  Returns the filename.
+    fn take_imposed_pdf(&self, pdf_dest: &Path) -> anyhow::Result<String> {
+        use anyhow::anyhow;
+        let profile = &self.cfg.output.imposed_pdf_config;
+        let params = self.cfg.imposition.resolve(profile).map_err(|e| anyhow!(e))?;
+        let src = crate::pdf::PdfDoc::load(pdf_dest)
+            .map_err(|e| anyhow!("load {}: {e}", pdf_dest.display()))?;
+        let mut imposed = crate::pdf::impose::impose(&src, &params).map_err(|e| anyhow!("{e}"))?;
+        let stem = pdf_dest
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("book");
+        let out = pdf_dest.with_file_name(format!("{stem}-imposed.pdf"));
+        imposed
+            .save(&out)
+            .map_err(|e| anyhow!("save {}: {e}", out.display()))?;
+        Ok(out
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("imposed.pdf")
+            .to_string())
     }
 
     fn build_one_extra_format(

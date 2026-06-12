@@ -3113,6 +3113,15 @@ pub struct OutputConfig {
     /// `Ctrl+B O` doesn't trap the user behind a key prompt.
     /// Default `false`.
     pub extras_wait_for_key: bool,
+    /// 1.3.0 PDF-1 — the imposition profile used when `imposed_pdf` is in
+    /// `extra_formats`.  Names a profile from `imposition.profiles`
+    /// (default `default`).
+    #[serde(default = "default_imposed_pdf_config")]
+    pub imposed_pdf_config: String,
+}
+
+fn default_imposed_pdf_config() -> String {
+    "default".to_string()
 }
 
 impl Default for OutputConfig {
@@ -3121,6 +3130,7 @@ impl Default for OutputConfig {
             extra_formats: Vec::new(),
             extras_step_pause_ms: 400,
             extras_wait_for_key: false,
+            imposed_pdf_config: default_imposed_pdf_config(),
         }
     }
 }
