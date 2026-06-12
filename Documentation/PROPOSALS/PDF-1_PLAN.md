@@ -543,3 +543,24 @@ engine + generator + open/apply paths are proven.
 emission · marks · config · `inkhaven pdf impose` (+`--dry-run`) ·
 `ink.pdf.impose` · `Ctrl+B Q` preview.  Remaining P1 nicety: the
 `imposed_pdf` book-take format (a `Ctrl+B O` extra-format entry).
+
+### P1.7 — `imposed_pdf` book-take format (landed)
+
+`imposed_pdf` in `output.extra_formats` makes `Ctrl+B O` impose the
+just-built PDF as part of the take, writing `<stem>-imposed.pdf` next to
+it.  Unlike markdown/tex/epub (which convert the `.typ` *source*), it
+operates on the built PDF, so it's special-cased in `take_extra_formats`:
+`take_imposed_pdf(pdf_dest)` resolves the `output.imposed_pdf_config`
+profile (default `default`) from `cfg.imposition`, loads the built PDF,
+runs `impose::impose`, and saves atomically.  Per-format error isolation
+(an impose failure → `✗`, never aborts the take or the other formats).
+
+New `output.imposed_pdf_config` config field (default `default`).  Suite
+1245 (compiles + serde defaults; the Ctrl+B O take is interactive, the
+underlying impose is CLI-verified on a real book).  The CLI counterpart is
+`inkhaven pdf impose`.
+
+**P1 (imposition) is complete** — engine (layout / creep / sheet / marks)
++ all four surfaces (config, `inkhaven pdf impose`, `ink.pdf.impose`,
+`Ctrl+B Q` preview) + the `imposed_pdf` book-take.  The marquee feature
+ships from CLI, Bund, the TUI overlay, and the book take.
