@@ -405,4 +405,64 @@ The end."#;
             assert_eq!(PdfDoc::load(&out_path).unwrap().page_count(), pages);
         }
     }
+
+    /// PDF-1 P1 — imposition on *real* typst output: the source pages
+    /// become Form XObjects, and the embedded font + image must survive
+    /// (carried through the XObject resources, kept alive past `prune`).
+    #[test]
+    #[ignore = "compiles typst; PDF-1 imposition fidelity on real output"]
+    fn imposition_preserves_typst_content() {
+        use crate::pdf::geometry::Size;
+        use crate::pdf::impose::{
+            self, BindingStyle, BlankPolicy, CreepStrategy, ImpositionParams,
+        };
+        use crate::pdf::PdfDoc;
+
+        let dir = tempfile::tempdir().unwrap();
+        image::RgbImage::from_pixel(8, 8, image::Rgb([40, 120, 200]))
+            .save(dir.path().join("px.png"))
+            .unwrap();
+        let body = r#"#set page(width: 300pt, height: 400pt)
+= Chapter
+Prose with an image. #image("px.png", width: 50pt)
+#pagebreak()
+Page two.
+#pagebreak()
+Page three.
+#pagebreak()
+Page four."#; // 4 pages
+        let src = PdfDoc::load_mem(&typst_pdf_bytes(dir.path(), body)).unwrap();
+        let n = src.page_count();
+
+        let mut out = impose::impose(
+            &src,
+            &ImpositionParams {
+                style: BindingStyle::SaddleStitch,
+                sheets_per_signature: 1,
+                blank: BlankPolicy::Append,
+                sheet_size: Size::new(600.0, 400.0), // 2-up of 300pt pages
+                creep: CreepStrategy::Shingle,
+                paper_thickness_mm: 0.1,
+            },
+        )
+        .unwrap();
+
+        let sides = n.div_ceil(4) * 2; // saddle: ⌈n/4⌉ sheets × 2 sides
+        assert_eq!(out.page_count(), sides);
+
+        let reloaded = lopdf::Document::load_mem(&out.to_bytes().unwrap()).unwrap();
+        assert_eq!(reloaded.get_pages().len(), sides, "imposed output reloads");
+        assert!(
+            dicts(&reloaded).any(|d| name_eq(d, b"Subtype", b"Form")),
+            "Form XObjects present"
+        );
+        assert!(
+            dicts(&reloaded).any(|d| name_eq(d, b"Subtype", b"Image")),
+            "image survives imposition"
+        );
+        assert!(
+            dicts(&reloaded).any(|d| name_eq(d, b"Type", b"FontDescriptor")),
+            "embedded font survives imposition"
+        );
+    }
 }

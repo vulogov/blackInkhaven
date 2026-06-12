@@ -6,6 +6,38 @@
 
 pub mod creep;
 pub mod layout;
+pub mod sheet;
+
+use super::doc::PdfDoc;
+use super::geometry::Size;
+use super::Result;
+
+/// Resolved imposition parameters (the config layer maps HJSON → this).
+#[derive(Debug, Clone, Copy)]
+pub struct ImpositionParams {
+    pub style: BindingStyle,
+    /// Sheets per signature (PerfectBound only).
+    pub sheets_per_signature: usize,
+    pub blank: BlankPolicy,
+    /// Target physical sheet size, in points.
+    pub sheet_size: Size,
+    pub creep: CreepStrategy,
+    /// Paper caliper (mm) for creep.
+    pub paper_thickness_mm: f32,
+}
+
+/// Impose `src` into print-ready sheets: plan the layout, then emit the
+/// imposed pages (front/back per sheet) with each source page placed as a
+/// Form XObject + creep offset.
+pub fn impose(src: &PdfDoc, params: &ImpositionParams) -> Result<PdfDoc> {
+    let layout = layout::plan(
+        params.style,
+        params.sheets_per_signature,
+        src.page_count(),
+        params.blank,
+    );
+    sheet::emit(src, &layout, params)
+}
 
 /// The four binding styles PDF-1 targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
