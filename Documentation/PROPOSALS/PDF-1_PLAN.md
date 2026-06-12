@@ -390,3 +390,34 @@ Suite 1215 → 1228.  Next P1: `impose::sheet` (Form-XObject placement of
 each slot, with creep offset + the target sheet geometry), then `marks`,
 then the `imposition:` config + `inkhaven pdf impose` + `Ctrl+B I`
 preview + `ink.pdf.impose`.
+
+### P1.2 — sheet emission (Form XObjects) (landed)
+
+`impose::sheet::emit(src, layout, params)` + the `impose::impose(src,
+ImpositionParams)` coordinator turn a linear PDF into print-ready sheets:
+
+- Each **source page → a Form XObject** (`lopdf::xobject::form`): BBox =
+  the page MediaBox, content = `get_page_content` (decoded), `/Resources`
+  = the page's effective resources (inline dict cloned, or the nearest
+  reference up the page→parent chain — so fonts/images/vector carry).
+- The imposed pages (front + back per sheet, **duplex order**) are sized
+  to `params.sheet_size`; each `Slot` places its XObject with a
+  `q 1 0 0 1 tx ty cm /Pg<n> Do Q` op.  `place()` centres the 2-up block
+  (1-up centres one page) and applies the **creep** offset toward the
+  spine (left page +creep, right page −creep).
+- A fresh page tree + catalog roots at the imposed pages; `prune_objects`
+  drops the orphaned source pages (the XObjects embed the content + hold
+  the resources alive).
+- `ImpositionParams { style, sheets_per_signature, blank, sheet_size,
+  creep, paper_thickness_mm }`.
+
+3 unit tests (8-pp saddle → 4 sides, 5-pp stab → 6 sides, creep
+placement) + a **real-typst corpus gate** (`imposition_preserves_typst_
+content`, ignored): imposing a 4-page typst doc keeps the Form XObjects,
+the **embedded font, and the image** through the conversion.
+
+Imposition produces valid, content-preserving PDFs on real output.  Suite
+1228 → 1231 (+ 4 ignored corpus gates).  Next P1: `impose::marks` (crop /
+fold / registration / spine collation-bars / signature numbers), then the
+`imposition:` config + `inkhaven pdf impose` + `Ctrl+B I` preview +
+`ink.pdf.impose`.
