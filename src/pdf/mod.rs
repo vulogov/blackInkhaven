@@ -24,6 +24,7 @@
 
 pub mod doc;
 pub mod geometry;
+pub mod impose;
 pub mod meta;
 pub mod ops;
 pub mod outline;
