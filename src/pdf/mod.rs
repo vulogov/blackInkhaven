@@ -31,6 +31,7 @@ pub mod meta;
 pub mod ops;
 pub mod outline;
 pub mod paper;
+pub mod preflight;
 
 // Re-export the public value type; consumed once `Command::Pdf` lands.
 #[allow(unused_imports)]
