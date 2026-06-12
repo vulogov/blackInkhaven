@@ -660,6 +660,16 @@ pub(super) enum Modal {
         /// applies unless explicitly skipped.
         skipped: std::collections::HashSet<(usize, usize)>,
     },
+    /// 1.3.0 PDF-1 — `Ctrl+B Q` imposition preview for the current book's
+    /// built PDF.  `Enter` imposes (→ `out`); `Esc` cancels.
+    ImpositionPreview {
+        source: std::path::PathBuf,
+        out: std::path::PathBuf,
+        profile: String,
+        params: crate::pdf::impose::ImpositionParams,
+        /// Pre-rendered preview lines (RFC App. D).
+        lines: Vec<String>,
+    },
     SnapshotPicker {
         /// Kept for potential refresh ops after future snapshot mutations.
         #[allow(dead_code)]
