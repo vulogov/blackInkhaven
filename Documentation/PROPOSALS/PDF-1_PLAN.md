@@ -352,10 +352,11 @@ only via `save`).  Drift-guard test pins `save → fs_write`.
 
 Verified: words register + error cleanly (unknown handle, stack
 underflow), `save` denied-by-default at init, `load` path-confined.
-Suite 1214 → 1215.  **Deferred live-check:** a happy-path VM round-trip
-(load real PDF → set_title → save → reload) — needs `build --compile`,
-held off to avoid re-triggering the session OOM; the underlying lib is
-already proven on a real 169-page book (P0.5).
+Suite 1214 → 1215.  **VM round-trip — verified.** A `bund` script on a
+real typst-built PDF (`ink.pdf.load` → `set_title` → `save`, with
+`fs_write` enabled) wrote the output, and an independent
+`inkhaven pdf metadata` read back the exact title — proving the full
+load → mutate → save chain round-trips through the Adam VM.
 
 **P0 (Foundations) is complete** — deps + fidelity gate, geometry/paper,
 PdfDoc, ops, meta, outline, the `inkhaven pdf` CLI, and the `ink.pdf.*`
