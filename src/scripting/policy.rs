@@ -251,6 +251,15 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // user gets the responsibility.
     ("ink.fs.read", category::FS_READ),
     ("ink.fs.write", category::FS_WRITE),
+
+    // 1.3.0 PDF-1 — only the disk-crossing `ink.pdf.*` words are
+    // categorised.  `load` reads a file (fs_read); `save` writes one
+    // (fs_write, default-denied — a script can't write PDFs without the
+    // capability).  The in-memory ops (pages / extract / delete / rotate
+    // / reorder / merge / metadata) touch neither store nor disk, so they
+    // stay uncategorised (allowed; they only persist via `save`).
+    ("ink.pdf.load", category::FS_READ),
+    ("ink.pdf.save", category::FS_WRITE),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
@@ -528,6 +537,19 @@ mod tests {
             .find(|(w, _)| *w == "ink.thread.list")
             .map(|(_, c)| *c);
         assert_eq!(cat, Some(category::STORE_READ));
+    }
+
+    // 1.3.0 PDF-1 — pin the disk-crossing pdf words so a refactor can't
+    // silently un-gate `ink.pdf.save` (file write).
+    #[test]
+    fn pdf_disk_words_classified() {
+        let cat = |w: &str| WORD_CATEGORIES.iter().find(|(n, _)| *n == w).map(|(_, c)| *c);
+        assert_eq!(cat("ink.pdf.load"), Some(category::FS_READ));
+        assert_eq!(
+            cat("ink.pdf.save"),
+            Some(category::FS_WRITE),
+            "ink.pdf.save must inherit the fs_write deny-by-default gate"
+        );
     }
 
     #[test]

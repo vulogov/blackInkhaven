@@ -14,6 +14,7 @@ pub mod helpers;
 mod ink;
 pub mod io;
 mod keymap;
+mod pdf;
 mod review;
 
 use anyhow::Result;
@@ -32,5 +33,6 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     app::register(vm)?;
     fs::register(vm)?;
     review::register(vm)?;
+    pdf::register(vm)?;
     Ok(())
 }
