@@ -8,6 +8,7 @@ pub mod config;
 pub mod creep;
 pub mod layout;
 pub mod marks;
+pub mod preview;
 pub mod sheet;
 
 use super::doc::PdfDoc;

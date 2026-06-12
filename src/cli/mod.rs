@@ -1106,6 +1106,10 @@ pub enum PdfCommand {
         config: String,
         #[arg(long)]
         out: Option<std::path::PathBuf>,
+        /// Preview the plan (signatures / sheets / creep / first-sheet
+        /// schematic) without imposing.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Keep only the given pages (e.g. `--pages 2-4,7`).
     Extract {
