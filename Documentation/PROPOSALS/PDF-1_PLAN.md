@@ -303,3 +303,32 @@ corpus gates.
 Next: the **surfaces** — `Command::Pdf` (`src/cli/pdf.rs`) + `ink.pdf.*`
 (`scripting/stdlib/pdf.rs`) — which make all this usable and retire the
 module `dead_code` allow.
+
+### P0.5 — `Command::Pdf` CLI surface (landed)
+
+`inkhaven pdf <subcommand>` (`src/cli/pdf.rs` + `PdfCommand` in
+`cli/mod.rs`) over the P0 library:
+
+- `info` (pages, page-1 size in pt+mm, source, title/author, outline
+  size), `extract --pages`, `delete --pages`, `rotate --pages --degrees`,
+  `reorder --mapping` (1-based), `split --every|--at [--out-dir]`,
+  `merge <inputs>... --out`, `metadata` (read / `--title|--author|
+  --subject|--keywords` set / `--strip`), `outline` (list bookmarks).
+- Output via a `write_pdf` helper: **atomic** (`PdfDoc::save` →
+  `io_atomic`) and **creates the parent dir**; a mutating op never
+  silently overwrites its input — defaults to a `<stem>-<op>.pdf` sibling.
+
+**Live-verified** end-to-end on a real **169-page** typst-built book
+(`inkhaven build --compile` → `inkhaven pdf …`): `info` (A4, 3 bookmarks),
+`outline` correctly read typst's own heading bookmarks (Ch1→p.1, Ch2→p.56,
+Ch3→p.111 — proving `read_outline` handles typst's `/A /GoTo` actions),
+metadata set/read (creator `Typst 0.14.2`), extract, merge→171pp, rotate,
+reorder — no crash artifacts.  One bug found + fixed: `split` into a
+non-existent `--out-dir` (now created first).
+
+The library now has real callers — `doc`/`ops`/`meta`/`outline` are live;
+the module `dead_code` allow covers only the P1/P2-bound remainder
+(`paper`, imposition geometry, `inject_outline`, the `ink.pdf.*` layer).
+Suite 1214 (+ 3 ignored corpus gates).
+
+P0 (foundations) is functionally complete bar the `ink.pdf.*` Bund layer.
