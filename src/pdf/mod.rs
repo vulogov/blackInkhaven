@@ -16,9 +16,10 @@
 //! subsystem is blocked.  `PdfDoc` + `geometry` + `paper` land in this
 //! step; `ops` / `outline` and the CLI / TUI / Bund surfaces follow.
 
-// P0 builds the library bottom-up, ahead of its CLI/TUI/Bund wiring
-// (`Command::Pdf`, `ink.pdf.*`).  The `#[cfg(test)]` suites exercise the
-// surface; this `allow` is removed when the first caller lands.
+// The `Command::Pdf` CLI now consumes `doc`/`ops`/`meta`/`outline`; the
+// remaining unused surface (`paper`, imposition-only `geometry`,
+// `inject_outline`) is built ahead of P1/P2 (imposition, cover) + the
+// `ink.pdf.*` Bund layer.  This `allow` retires when those land.
 #![allow(dead_code)]
 
 pub mod doc;

@@ -32,6 +32,7 @@ pub mod epub;
 pub mod audiobook;
 pub mod continuity;
 pub mod facts_scan;
+pub mod pdf;
 pub mod replace;
 pub mod tension;
 pub mod manuscript;
@@ -610,6 +611,13 @@ pub enum Command {
     #[command(subcommand)]
     Facts(FactsCommand),
 
+    /// 1.3.0 PDF-1 — `inkhaven pdf <subcommand>`.  Page operations
+    /// (extract / split / merge / rotate / reorder / delete), metadata,
+    /// and outline over an existing PDF.  Writes are atomic and never
+    /// silently overwrite the input.
+    #[command(subcommand)]
+    Pdf(PdfCommand),
+
     /// 1.2.22 R.5 — `inkhaven replace <pattern> <replacement>`.
     /// Project-wide find & replace: literal + whole-word by default
     /// (`--substring` opts out, `--regex` for a regex), optional
@@ -1073,6 +1081,94 @@ pub enum FactsCommand {
         /// fantasy, scifi, mystery, historical.
         #[arg(long)]
         genre: Option<String>,
+    },
+}
+
+/// 1.3.0 PDF-1 — `inkhaven pdf …` page operations + metadata + outline
+/// over an existing PDF (typically inkhaven's own `Ctrl+B B` output).
+/// Mutating ops write a `<stem>-<op>.pdf` sibling unless `--out` is
+/// given; writes are atomic.  Imposition / cover / barcode / preflight
+/// arrive in later phases.
+#[derive(Debug, Subcommand)]
+pub enum PdfCommand {
+    /// Print page count, page-1 size, source, title/author, outline size.
+    Info {
+        input: std::path::PathBuf,
+    },
+    /// Keep only the given pages (e.g. `--pages 2-4,7`).
+    Extract {
+        input: std::path::PathBuf,
+        #[arg(long)]
+        pages: String,
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
+    /// Delete the given pages.
+    Delete {
+        input: std::path::PathBuf,
+        #[arg(long)]
+        pages: String,
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
+    /// Rotate the given pages by 90 / 180 / 270 degrees (added to any
+    /// existing rotation).
+    Rotate {
+        input: std::path::PathBuf,
+        #[arg(long)]
+        pages: String,
+        #[arg(long)]
+        degrees: i64,
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
+    /// Reorder pages by a comma-separated 1-based permutation
+    /// (e.g. `--mapping 3,1,2`).
+    Reorder {
+        input: std::path::PathBuf,
+        #[arg(long)]
+        mapping: String,
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
+    /// Split into pieces by `--every <n>` pages or `--at <p,p,…>`
+    /// (split before those 1-based pages).
+    Split {
+        input: std::path::PathBuf,
+        #[arg(long)]
+        every: Option<usize>,
+        #[arg(long)]
+        at: Option<String>,
+        #[arg(long)]
+        out_dir: Option<std::path::PathBuf>,
+    },
+    /// Concatenate two or more PDFs into `--out`.
+    Merge {
+        inputs: Vec<std::path::PathBuf>,
+        #[arg(long)]
+        out: std::path::PathBuf,
+    },
+    /// Read (no flags), set (`--title`/`--author`/`--subject`/
+    /// `--keywords`), or `--strip` the document metadata.
+    Metadata {
+        input: std::path::PathBuf,
+        #[arg(long)]
+        strip: bool,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        author: Option<String>,
+        #[arg(long)]
+        subject: Option<String>,
+        /// Comma-separated keywords.
+        #[arg(long)]
+        keywords: Option<String>,
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
+    /// List the document outline (bookmarks).
+    Outline {
+        input: std::path::PathBuf,
     },
 }
 
@@ -1874,6 +1970,7 @@ impl Cli {
             Command::Facts(cmd) => {
                 facts_scan::run(&project, cmd).map_err(Into::into)
             }
+            Command::Pdf(cmd) => pdf::run(cmd).map_err(Into::into),
             Command::Replace {
                 pattern,
                 replacement,
