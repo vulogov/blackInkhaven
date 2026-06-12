@@ -577,3 +577,17 @@ PNG round-trip → any DPI), with the 13 human-readable digits below via
 quiet-zone margin.  4 tests (known check digit, bars+text render + width,
 bad-ISBN rejection incl. wrong check digit, 1-page PDF round-trip).
 Suite 1245 → 1249.
+
+### P2.2 — cover + spine generation (landed)
+
+`pdf::cover`: `spine_width_mm(page_count, interior, cover)` (RFC §8.4:
+interior stack ÷2 + cover wrap ×2 + binding allowance) and `build_cover`
+— a single landscape page `[ bleed | back | spine | front | bleed ]`
+generated natively (no Typst).  Places an optional **front image** (hand-
+built Flate image XObject from the in-tree `image` crate + `Stream::
+compress` — no lopdf image feature, no `flate2`/duplicate-`image` dep),
+**spine text** rotated 90° (`Tm 0 1 -1 0`), **back text**, the **EAN-13
+barcode** (back, bottom-right), and **crop marks** at the trim corners.
+`CoverSpec` / `SpineText`.  3 tests (spine width for a 200-page novel =
+11.6 mm, cover page dimensions + round-trip, front-image XObject
+embedded).  Suite 1249 → 1252.
