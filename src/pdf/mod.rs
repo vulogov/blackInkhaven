@@ -22,6 +22,7 @@
 // `ink.pdf.*` Bund layer.  This `allow` retires when those land.
 #![allow(dead_code)]
 
+pub mod barcode;
 pub mod doc;
 pub mod geometry;
 pub mod impose;

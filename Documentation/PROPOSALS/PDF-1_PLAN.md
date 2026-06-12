@@ -564,3 +564,16 @@ underlying impose is CLI-verified on a real book).  The CLI counterpart is
 + all four surfaces (config, `inkhaven pdf impose`, `ink.pdf.impose`,
 `Ctrl+B Q` preview) + the `imposed_pdf` book-take.  The marquee feature
 ships from CLI, Bund, the TUI overlay, and the book take.
+
+### P2.1 — ISBN EAN-13 barcode (landed)
+
+`pdf::barcode` (activates the `barcoders` crate): `BarcodeSpec { isbn,
+height_mm, module_width_mm, include_human_readable }`, `check_digit`
+(mod-10), `render_ean13 -> RenderedBarcode { ops, width_pt, height_pt }`
+— `barcoders` encodes the 95-module pattern (validating ISBN + check
+digit), and each run of dark modules becomes a filled PDF rectangle (no
+PNG round-trip → any DPI), with the 13 human-readable digits below via
+`/F1`.  `build_barcode_pdf` wraps it in a standalone 1-page PDF with a
+quiet-zone margin.  4 tests (known check digit, bars+text render + width,
+bad-ISBN rejection incl. wrong check digit, 1-page PDF round-trip).
+Suite 1245 → 1249.
