@@ -452,3 +452,31 @@ still passes with marks drawn.  Suite 1231 → 1237.
 Next P1: the **surfaces** — the `imposition:` HJSON config (named
 profiles via the cascade), `inkhaven pdf impose`, the `Ctrl+B I` preview
 overlay, and `ink.pdf.impose`.
+
+### P1.4 — imposition config + `inkhaven pdf impose` (landed)
+
+- **`impose::config`** — the HJSON `imposition:` block: `ImpositionConfig
+  { profiles }` (default `default` = perfect-bound/A3/shingle + `chapbook`
+  = saddle/A4/no-creep), `ImpositionProfile` (style / sheets_per_signature
+  / target_sheet_size [preset name *or* `{width_mm,height_mm}`, untagged]
+  / orientation / margins / creep [enabled + stock + override + strategy]
+  / marks / blank_page_policy).  `resolve(profile) -> ImpositionParams`
+  parses the enums, resolves the sheet size + orientation (auto →
+  landscape for 2-up), and the paper caliper (override → stock → 0.1).
+- **Config wiring** — `Config.imposition` (`#[serde(default)]`), so
+  profiles merge through `Config::load_layered` (project + global) like
+  every other setting — the HJSON-configurable requirement, honoured.
+- **`inkhaven pdf impose <input> [--config <profile>] [--out <file>]`** —
+  loads the cascade config, resolves the profile, imposes, writes
+  atomically; reports signatures / sheets / pages.  Unknown profile →
+  clean error listing the available ones.
+
+5 config tests (default + chapbook resolve, unknown-profile error, JSON
+deserialize with custom sheet + thickness override, bad-style error).
+**Live-verified** on a real 56-page A4 book: `--config default` →
+4 signatures, 16 sheets → 32 A3-landscape imposed pages (correct
+signature math), no crash artifacts.  Suite 1237 → 1242.
+
+Imposition is now usable end-to-end from the CLI.  Next P1: the `Ctrl+B I`
+preview overlay + `ink.pdf.impose` Bund word (and the `imposed_pdf`
+book-take format).

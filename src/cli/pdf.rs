@@ -16,9 +16,10 @@ use crate::pdf::{self, PdfDoc};
 
 use super::PdfCommand;
 
-pub fn run(cmd: PdfCommand) -> Result<()> {
+pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
     match cmd {
         PdfCommand::Info { input } => info(&input),
+        PdfCommand::Impose { input, config, out } => impose(&input, &config, project, out),
         PdfCommand::Extract { input, pages, out } => {
             let doc = load(&input)?;
             let spec = PageSpec::parse(&pages).map_err(pdferr)?;
@@ -118,6 +119,40 @@ pub fn run(cmd: PdfCommand) -> Result<()> {
         } => metadata(&input, strip, title, author, subject, keywords, out),
         PdfCommand::Outline { input } => outline_list(&input),
     }
+}
+
+/// Imposition profiles come through the full config cascade (project +
+/// global); falls back to the built-in defaults if no config loads.
+fn imposition_config(project: &Path) -> crate::pdf::impose::config::ImpositionConfig {
+    let cfg_path = crate::project::ProjectLayout::new(project).config_path();
+    crate::config::Config::load_layered(&cfg_path)
+        .map(|c| c.imposition)
+        .unwrap_or_default()
+}
+
+fn impose(input: &Path, profile: &str, project: &Path, out: Option<PathBuf>) -> Result<()> {
+    let params = imposition_config(project)
+        .resolve(profile)
+        .map_err(Error::Store)?;
+    let src = load(input)?;
+    // Layout summary for the report (cheap to recompute).
+    let layout = pdf::impose::layout::plan(
+        params.style,
+        params.sheets_per_signature,
+        src.page_count(),
+        params.blank,
+    );
+    let mut out_doc = pdf::impose::impose(&src, &params).map_err(pdferr)?;
+    let path = out_or_default(input, out, "imposed");
+    write_pdf(&mut out_doc, &path)?;
+    println!(
+        "pdf impose: `{profile}` · {} signature(s), {} sheet(s) → {} ({} imposed page(s))",
+        layout.signatures,
+        layout.sheets.len(),
+        path.display(),
+        out_doc.page_count(),
+    );
+    Ok(())
 }
 
 fn info(input: &Path) -> Result<()> {

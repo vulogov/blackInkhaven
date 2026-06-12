@@ -4,6 +4,7 @@
 //! The math is pure + unit-tested first (`layout`, `creep`); the sheet
 //! emission (Form XObjects), marks, config, and surfaces build on top.
 
+pub mod config;
 pub mod creep;
 pub mod layout;
 pub mod marks;

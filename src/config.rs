@@ -76,6 +76,11 @@ pub struct Config {
     /// See `src/scripting/policy.rs`.
     #[serde(default)]
     pub scripting: crate::scripting::policy::Policy,
+    /// 1.3.0 PDF-1 — imposition profiles for `inkhaven pdf impose`
+    /// (binding style, sheet size, creep, marks).  Named profiles merge
+    /// through the config cascade like everything else.
+    #[serde(default)]
+    pub imposition: crate::pdf::impose::config::ImpositionConfig,
     /// Primary writing language of the project. Drives:
     /// * Snowball stemmers for the editor's Places/Characters highlight
     ///   overlay (overrides `editor.stemming.languages` when non-empty).
@@ -167,6 +172,7 @@ impl Default for Config {
             scrivener: ScrivenerConfig::default(),
             shell: ShellConfig::default(),
             scripting: crate::scripting::policy::Policy::default(),
+            imposition: crate::pdf::impose::config::ImpositionConfig::default(),
             language: default_language(),
             project: ProjectConfig::default(),
             health: HealthConfig::default(),
