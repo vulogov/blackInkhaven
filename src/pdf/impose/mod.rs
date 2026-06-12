@@ -6,6 +6,7 @@
 
 pub mod creep;
 pub mod layout;
+pub mod marks;
 pub mod sheet;
 
 use super::doc::PdfDoc;
@@ -24,6 +25,12 @@ pub struct ImpositionParams {
     pub creep: CreepStrategy,
     /// Paper caliper (mm) for creep.
     pub paper_thickness_mm: f32,
+    /// Which printer marks to draw.
+    pub marks: marks::MarkConfig,
+    /// Crop-mark offset outside the trim (mm).
+    pub crop_offset_mm: f32,
+    /// Fold-mark length (mm).
+    pub fold_mark_length_mm: f32,
 }
 
 /// Impose `src` into print-ready sheets: plan the layout, then emit the
