@@ -8342,6 +8342,7 @@ impl App {
             // ── Global ────────────────────────────────────────
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
+            A::OpenImpositionPreview => self.open_imposition_preview(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
             A::ToggleMouseCapture => self.toggle_mouse_capture(),
@@ -8842,6 +8843,104 @@ impl App {
         self.modal = Modal::BookInfo { scroll: 0 };
         self.status =
             "Book info · ↑↓/PgUp/PgDn scroll · Esc close".into();
+    }
+
+    /// 1.3.0 PDF-1 — `Ctrl+B Q`: preview the imposition plan for the
+    /// current book's built PDF, with `Enter` to impose.
+    fn open_imposition_preview(&mut self) {
+        let Some(book) = self.current_book_node(&self.hierarchy) else {
+            self.status = "imposition: select a book first".into();
+            return;
+        };
+        let artefacts_book = self
+            .store
+            .resolve_artefacts_dir(&self.cfg)
+            .join(&book.slug);
+        let source = artefacts_book.join(format!("{}.pdf", book.slug));
+        if !source.exists() {
+            self.status = "imposition: build the book first (Ctrl+B B)".into();
+            return;
+        }
+        let doc = match crate::pdf::PdfDoc::load(&source) {
+            Ok(d) => d,
+            Err(e) => {
+                self.status = format!("imposition: {e}");
+                return;
+            }
+        };
+        let profile = "default".to_string();
+        let params = match self.cfg.imposition.resolve(&profile) {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!("imposition: {e}");
+                return;
+            }
+        };
+        let lines = crate::pdf::impose::preview::build(&profile, doc.page_count(), &params).lines();
+        let out = artefacts_book.join(format!("{}-imposed.pdf", book.slug));
+        self.modal = Modal::ImpositionPreview {
+            source,
+            out,
+            profile,
+            params,
+            lines,
+        };
+        self.status = "Imposition preview · Enter impose · Esc cancel".into();
+    }
+
+    /// Apply the previewed imposition: load the source, impose, save (atomic).
+    fn apply_imposition_preview(&mut self) {
+        let (source, out, profile, params) = match &self.modal {
+            Modal::ImpositionPreview {
+                source,
+                out,
+                profile,
+                params,
+                ..
+            } => (source.clone(), out.clone(), profile.clone(), *params),
+            _ => return,
+        };
+        self.modal = Modal::None;
+        let src = match crate::pdf::PdfDoc::load(&source) {
+            Ok(d) => d,
+            Err(e) => {
+                self.status = format!("impose: {e}");
+                return;
+            }
+        };
+        let mut imposed = match crate::pdf::impose::impose(&src, &params) {
+            Ok(d) => d,
+            Err(e) => {
+                self.status = format!("impose: {e}");
+                return;
+            }
+        };
+        match imposed.save(&out) {
+            Ok(()) => {
+                self.status = format!(
+                    "imposed `{profile}` → {} ({} pages)",
+                    out.display(),
+                    imposed.page_count()
+                )
+            }
+            Err(e) => self.status = format!("impose: {e}"),
+        }
+    }
+
+    /// Key handler for the imposition-preview modal.
+    fn imposition_preview_handle_key(&mut self, key: KeyEvent) -> bool {
+        if !matches!(self.modal, Modal::ImpositionPreview { .. }) {
+            return false;
+        }
+        match key.code {
+            KeyCode::Enter => self.apply_imposition_preview(),
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "imposition: cancelled".into();
+            }
+            _ => {}
+        }
+        true
     }
 
     /// Scroll handler for the BookInfo modal — mirrors
@@ -15494,6 +15593,10 @@ impl App {
         }
         if is_book_info {
             self.book_info_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::ImpositionPreview { .. }) {
+            self.imposition_preview_handle_key(key);
             return Ok(false);
         }
         if is_llm_picker {

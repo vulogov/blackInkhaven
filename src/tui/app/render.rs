@@ -192,6 +192,10 @@ impl super::App {
             self.draw_replace_review_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::ImpositionPreview { .. }) {
+            self.draw_imposition_preview_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SentenceRhythm { .. }) {
             self.draw_sentence_rhythm_modal(f, area);
             return;

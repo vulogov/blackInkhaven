@@ -114,6 +114,8 @@ pub enum Action {
     OpenCredits,
     #[serde(rename = "global.open_book_info")]
     OpenBookInfo,
+    #[serde(rename = "global.open_imposition_preview")]
+    OpenImpositionPreview,
     #[serde(rename = "global.open_llm_picker")]
     OpenLlmPicker,
     #[serde(rename = "global.toggle_sound")]
@@ -819,6 +821,7 @@ impl Action {
 
             Action::OpenCredits => "credits".into(),
             Action::OpenBookInfo => "info".into(),
+            Action::OpenImpositionPreview => "impose".into(),
             Action::OpenLlmPicker => "LLM".into(),
             Action::ToggleSound => "sound".into(),
             Action::ScheduleAssemble => "assemble".into(),
@@ -982,6 +985,8 @@ impl Action {
                 "Show inkhaven version, author, and bundled-component credits.".into(),
             Action::OpenBookInfo =>
                 "Open the current book's info panel: paths, stats, PDF status.".into(),
+            Action::OpenImpositionPreview =>
+                "Preview the imposition plan (signatures / sheets / creep) for the built book PDF — Enter imposes (Ctrl+B B to build first). Mnemonic: Q for quire.".into(),
             Action::OpenLlmPicker =>
                 "Switch the active LLM provider — choice is persisted to inkhaven.hjson.".into(),
             Action::ToggleSound =>
@@ -1291,6 +1296,7 @@ impl KeyBindings {
                 entry("h", Action::OpenQuickref, Scope::Any),
                 entry("v", Action::OpenCredits, Scope::Any),
                 entry("i", Action::OpenBookInfo, Scope::Any),
+                entry("q", Action::OpenImpositionPreview, Scope::Any),
                 entry("l", Action::OpenLlmPicker, Scope::Any),
                 entry("e", Action::ToggleSound, Scope::Any),
                 entry("a", Action::ScheduleAssemble, Scope::Any),

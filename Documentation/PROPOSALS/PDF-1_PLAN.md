@@ -517,3 +517,29 @@ generator the `Ctrl+B I` overlay will render.  Suite 1242 → 1245.
 Shift+I` is taken (`ViewEditEventMetadata`), so the overlay needs a
 different chord or to fold into book-info — a product decision parked for
 the user.  The preview *content* + generator are done and reusable.
+
+### P1.6b — `Ctrl+B Q` imposition-preview overlay (landed)
+
+`Ctrl+B I` was taken (book-info), so the overlay gets a dedicated chord
+**`Ctrl+B Q`** — *Q for quire* (a gathering of folded sheets = exactly
+what imposition makes).  `Action::OpenImpositionPreview` (label/help/entry
+in keybind.rs, `run_action` arm).
+
+`open_imposition_preview` resolves the current book's built PDF
+(`resolve_artefacts_dir`/`<slug>.pdf` — the open_book_info path), loads it
+for the page count, resolves the `default` profile from `self.cfg.
+imposition`, builds the preview, and opens `Modal::ImpositionPreview {
+source, out, profile, params, lines }`.  The modal renders the App. D
+preview text (`draw_imposition_preview_modal`); **Enter** imposes (load →
+`impose::impose` → atomic save to `<slug>-imposed.pdf`, status report),
+**Esc** cancels.  Missing PDF → "build the book first (Ctrl+B B)".
+
+Suite 1245 (compiles + keybind registry green; the pure preview content is
+unit-tested).  Interactive overlay — the on-screen click-through isn't
+headless-verifiable (same caveat as the find/replace review modal); the
+engine + generator + open/apply paths are proven.
+
+**P1 (imposition) is functionally complete**: layout · creep · sheet
+emission · marks · config · `inkhaven pdf impose` (+`--dry-run`) ·
+`ink.pdf.impose` · `Ctrl+B Q` preview.  Remaining P1 nicety: the
+`imposed_pdf` book-take format (a `Ctrl+B O` extra-format entry).

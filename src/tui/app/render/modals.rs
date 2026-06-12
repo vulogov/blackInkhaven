@@ -3874,6 +3874,69 @@ impl super::super::App {
         );
     }
 
+    /// 1.3.0 PDF-1 — `Ctrl+B Q` imposition preview: the plan (signatures
+    /// / sheets / creep) + the first sheet's schematic, with an
+    /// impose/cancel footer.
+    pub(in crate::tui::app) fn draw_imposition_preview_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::ImpositionPreview { lines, .. } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).clamp(50, 80);
+        let height = (lines.len() as u16 + 4).min(area.height.saturating_sub(2));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Imposition preview ")
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1);
+        let body = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: body_h,
+        };
+        let footer = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: 1,
+        };
+        let text: Vec<Line> = lines.iter().map(|l| Line::from(l.clone())).collect();
+        f.render_widget(Paragraph::new(text), body);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " Enter: impose · Esc: cancel ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer,
+        );
+    }
+
     /// 1.2.22 R.3 — the project-replace review: matches grouped by
     /// paragraph, each with a `[x]`/`[ ]` keep/skip box and the matched
     /// span highlighted in its line.  Enter applies the kept ones.
