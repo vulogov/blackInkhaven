@@ -361,3 +361,32 @@ load → mutate → save chain round-trips through the Adam VM.
 **P0 (Foundations) is complete** — deps + fidelity gate, geometry/paper,
 PdfDoc, ops, meta, outline, the `inkhaven pdf` CLI, and the `ink.pdf.*`
 Bund layer.  Next: **P1 — imposition** (the marquee feature).
+
+### P1.1 — imposition layout + creep math (landed)
+
+The pure, unit-tested core of the marquee feature (no I/O), opening P1:
+
+- **`impose` enums** — `BindingStyle` (saddle-stitch / perfect-bound /
+  concertina / stab, with `parse` + `columns_per_side` + `is_folded`),
+  `BlankPolicy` (prepend / append / balance / error), `CreepStrategy`
+  (none / shingle / pushout).
+- **`impose::layout`** — `plan(style, sheets_per_signature, source_pages,
+  blank) -> Layout` of `Sheet { signature, sheet_in_sig, front, back }`
+  with `Slot { page: Option<usize>, column }`.  Folded styles use the RFC
+  §8.2.2 signature formula (`folded_positions`: front-left `4S-2i+2`,
+  front-right `2i-1`, back-left `2i`, back-right `4S-2i+1`, offset by
+  `g·4S`); stab/concertina are sequential 1-up (leaf k = pages 2k-1 / 2k).
+  Padding blanks placed per `BlankPolicy`.
+- **`impose::creep`** — `creep_shift_mm(strategy, i, thickness_mm)`: zero
+  on the outermost sheet, growing one caliper per nested sheet toward the
+  spine (shingling); `max_creep_mm` for the preview.  Direction applied at
+  emission; shingle/pushout share the magnitude.
+- 13 tests, incl. the **RFC §13 correctness property** (every source page
+  appears exactly once) swept over all 4 styles × 10 page counts × 3
+  blank policies, plus the classic 4-/8-page saddle layouts pinned by
+  hand, multi-signature perfect-bound, and creep monotonicity.
+
+Suite 1215 → 1228.  Next P1: `impose::sheet` (Form-XObject placement of
+each slot, with creep offset + the target sheet geometry), then `marks`,
+then the `imposition:` config + `inkhaven pdf impose` + `Ctrl+B I`
+preview + `ink.pdf.impose`.
