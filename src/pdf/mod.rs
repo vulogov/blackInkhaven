@@ -23,6 +23,7 @@
 #![allow(dead_code)]
 
 pub mod barcode;
+pub mod cover;
 pub mod doc;
 pub mod geometry;
 pub mod impose;
