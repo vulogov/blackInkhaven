@@ -75,6 +75,9 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.pdf.reorder", w_reorder),
         ("ink.pdf.merge", w_merge),
         ("ink.pdf.impose", w_impose),
+        ("ink.pdf.cover", w_cover),
+        ("ink.pdf.barcode", w_barcode),
+        ("ink.pdf.preflight", w_preflight),
         ("ink.pdf.title", w_title),
         ("ink.pdf.set_title", w_set_title),
         ("ink.pdf.set_author", w_set_author),
@@ -241,6 +244,75 @@ fn do_impose(vm: &mut VM) -> Result<&mut VM> {
         crate::pdf::impose::impose(&*doc, &params).map_err(pe)
     })?;
     push(vm, Value::from_int(store_doc(new)));
+    Ok(vm)
+}
+
+// ( handle isbn -- handle' )   build a cover from a book PDF: page count
+// + title/author come from the source doc, the rest from the `cover:`
+// config.  `isbn` "" → no barcode.  Returns a fresh cover handle.
+fn w_cover(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_cover(vm).map_err(to_bund_err)
+}
+fn do_cover(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.pdf.cover";
+    require_depth(vm, 2, tag)?;
+    let isbn = value_to_string(pull(vm, tag)?, "isbn", tag)?;
+    let handle = value_to_i64(pull(vm, tag)?, "handle", tag)?;
+    let (pages, meta) = with_doc(handle, tag, |doc| {
+        Ok((doc.page_count(), pdf::meta::read_metadata(doc)))
+    })?;
+    let cfg = crate::scripting::active_config()
+        .map(|c| c.cover.clone())
+        .unwrap_or_default();
+    let req = crate::pdf::cover::CoverRequest {
+        page_count: pages,
+        title: meta.title,
+        author: meta.author,
+        back_text: None,
+        front_image: None,
+        isbn: (!isbn.trim().is_empty()).then_some(isbn),
+        spine_mm_override: None,
+    };
+    let doc = crate::pdf::cover::build_cover(&cfg.build_spec(&req)).map_err(pe)?;
+    push(vm, Value::from_int(store_doc(doc)));
+    Ok(vm)
+}
+
+// ( isbn -- handle )   standalone EAN-13 barcode PDF
+fn w_barcode(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_barcode(vm).map_err(to_bund_err)
+}
+fn do_barcode(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.pdf.barcode";
+    require_depth(vm, 1, tag)?;
+    let isbn = value_to_string(pull(vm, tag)?, "isbn", tag)?;
+    let spec = crate::pdf::barcode::BarcodeSpec {
+        isbn,
+        ..Default::default()
+    };
+    let doc = crate::pdf::barcode::build_barcode_pdf(&spec).map_err(pe)?;
+    push(vm, Value::from_int(store_doc(doc)));
+    Ok(vm)
+}
+
+// ( handle profile -- warning_count )   preflight; 0 = print-ready
+fn w_preflight(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_preflight(vm).map_err(to_bund_err)
+}
+fn do_preflight(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.pdf.preflight";
+    require_depth(vm, 2, tag)?;
+    let profile = value_to_string(pull(vm, tag)?, "profile", tag)?;
+    let handle = value_to_i64(pull(vm, tag)?, "handle", tag)?;
+    let prof = crate::scripting::active_config()
+        .map(|c| c.preflight.clone())
+        .unwrap_or_default()
+        .resolve(&profile, None)
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    let n = with_doc(handle, tag, |doc| {
+        Ok(crate::pdf::preflight::preflight(doc, prof).warnings.len() as i64)
+    })?;
+    push(vm, Value::from_int(n));
     Ok(vm)
 }
 

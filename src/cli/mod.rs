@@ -1186,6 +1186,66 @@ pub enum PdfCommand {
     Outline {
         input: std::path::PathBuf,
     },
+    /// Check a PDF is print-ready (RFC §8.6): effective image DPI, font
+    /// embedding, page-size consistency, blank/colour pages.  Profile
+    /// (`--profile hand_binding|print_shop|strict`) sets the DPI target;
+    /// `--dpi` overrides it.
+    Preflight {
+        input: std::path::PathBuf,
+        #[arg(long, default_value = "hand_binding")]
+        profile: String,
+        #[arg(long)]
+        dpi: Option<u32>,
+    },
+    /// Generate a standalone EAN-13 ISBN barcode PDF (RFC §8.5).
+    Barcode {
+        /// 12- or 13-digit ISBN (hyphens/spaces ignored).
+        isbn: String,
+        #[arg(long)]
+        out: std::path::PathBuf,
+        /// Bar height in mm (EAN-13 nominal ≈ 22.85).
+        #[arg(long)]
+        height_mm: Option<f32>,
+        /// X-dimension (single module width) in mm (SC2 ≈ 0.33).
+        #[arg(long)]
+        module_mm: Option<f32>,
+        /// Omit the human-readable digits under the bars.
+        #[arg(long)]
+        no_text: bool,
+    },
+    /// Generate a full cover-and-spine PDF (RFC §8.4): one landscape page
+    /// `[bleed | back | spine | front | bleed]`.  Trim/bleed/stocks come
+    /// from the `cover:` config; the spine width is computed from
+    /// `--pages` + stocks (or forced with `--spine-mm`).
+    Cover {
+        #[arg(long)]
+        out: std::path::PathBuf,
+        /// Interior page count (drives the computed spine width).
+        #[arg(long)]
+        pages: usize,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        author: Option<String>,
+        /// Back-cover blurb (top-left of the back panel).
+        #[arg(long)]
+        back: Option<String>,
+        /// Front-cover art (any format the `image` crate reads).
+        #[arg(long)]
+        image: Option<std::path::PathBuf>,
+        /// ISBN — renders an EAN-13 barcode on the back panel.
+        #[arg(long)]
+        isbn: Option<String>,
+        /// Override the computed spine width (mm).
+        #[arg(long)]
+        spine_mm: Option<f32>,
+        /// Override the config trim width (mm).
+        #[arg(long)]
+        width_mm: Option<f32>,
+        /// Override the config trim height (mm).
+        #[arg(long)]
+        height_mm: Option<f32>,
+    },
 }
 
 /// 1.2.17+ T.7 — sub-subcommands under

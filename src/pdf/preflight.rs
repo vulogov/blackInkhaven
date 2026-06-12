@@ -10,6 +10,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use lopdf::{Dictionary, Document, Object, ObjectId};
+use serde::{Deserialize, Serialize};
 
 use super::doc::PdfDoc;
 
@@ -27,6 +28,50 @@ impl PreflightProfile {
             | PreflightProfile::PrintShop { target_dpi } => *target_dpi,
             PreflightProfile::Strict => 300,
         }
+    }
+}
+
+/// The `preflight:` HJSON block — house DPI targets, selectable by name.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PreflightConfig {
+    pub default_profile: String,
+    pub hand_binding_dpi: u32,
+    pub print_shop_dpi: u32,
+}
+
+impl Default for PreflightConfig {
+    fn default() -> Self {
+        Self {
+            default_profile: "hand_binding".into(),
+            hand_binding_dpi: 300,
+            print_shop_dpi: 300,
+        }
+    }
+}
+
+impl PreflightConfig {
+    /// Resolve a profile name (`hand_binding` | `print_shop` | `strict`)
+    /// to a [`PreflightProfile`], applying an optional `--dpi` override.
+    pub fn resolve(&self, name: &str, dpi_override: Option<u32>) -> Result<PreflightProfile, String> {
+        let p = match name.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+            "hand_binding" | "handbinding" | "hand" => PreflightProfile::HandBinding {
+                target_dpi: dpi_override.unwrap_or(self.hand_binding_dpi),
+            },
+            "print_shop" | "printshop" | "shop" | "print" => PreflightProfile::PrintShop {
+                target_dpi: dpi_override.unwrap_or(self.print_shop_dpi),
+            },
+            "strict" => match dpi_override {
+                Some(d) => PreflightProfile::PrintShop { target_dpi: d },
+                None => PreflightProfile::Strict,
+            },
+            other => {
+                return Err(format!(
+                    "preflight: unknown profile `{other}` (have: hand_binding, print_shop, strict)"
+                ))
+            }
+        };
+        Ok(p)
     }
 }
 
@@ -330,6 +375,22 @@ mod tests {
         // translate then scale: cm [2 0 0 2 0 0] under [1 0 0 1 10 20]
         let m = mat_mul([2.0, 0.0, 0.0, 2.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0, 10.0, 20.0]);
         assert_eq!(m, [2.0, 0.0, 0.0, 2.0, 10.0, 20.0]);
+    }
+
+    #[test]
+    fn config_resolves_profiles_and_dpi_override() {
+        let cfg = PreflightConfig::default();
+        assert_eq!(
+            cfg.resolve("hand_binding", None).unwrap().target_dpi(),
+            300
+        );
+        // hyphen + override
+        assert_eq!(cfg.resolve("print-shop", Some(150)).unwrap().target_dpi(), 150);
+        assert!(matches!(
+            cfg.resolve("strict", None).unwrap(),
+            PreflightProfile::Strict
+        ));
+        assert!(cfg.resolve("bogus", None).is_err());
     }
 
     #[test]
