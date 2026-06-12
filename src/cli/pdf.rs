@@ -123,7 +123,171 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             out,
         } => metadata(&input, strip, title, author, subject, keywords, out),
         PdfCommand::Outline { input } => outline_list(&input),
+        PdfCommand::Preflight {
+            input,
+            profile,
+            dpi,
+        } => preflight_cmd(&input, &profile, dpi, project),
+        PdfCommand::Barcode {
+            isbn,
+            out,
+            height_mm,
+            module_mm,
+            no_text,
+        } => barcode_cmd(&isbn, &out, height_mm, module_mm, no_text),
+        PdfCommand::Cover {
+            out,
+            pages,
+            title,
+            author,
+            back,
+            image,
+            isbn,
+            spine_mm,
+            width_mm,
+            height_mm,
+        } => cover_cmd(CoverArgs {
+            out,
+            pages,
+            title,
+            author,
+            back,
+            image,
+            isbn,
+            spine_mm,
+            width_mm,
+            height_mm,
+            project,
+        }),
     }
+}
+
+/// Load the merged project + global config (for `cover:` / `preflight:`
+/// blocks); falls back to built-in defaults if no config loads.
+fn project_config(project: &Path) -> crate::config::Config {
+    let cfg_path = crate::project::ProjectLayout::new(project).config_path();
+    crate::config::Config::load_layered(&cfg_path).unwrap_or_default()
+}
+
+fn preflight_cmd(input: &Path, profile: &str, dpi: Option<u32>, project: &Path) -> Result<()> {
+    let prof = project_config(project)
+        .preflight
+        .resolve(profile, dpi)
+        .map_err(Error::Store)?;
+    let doc = load(input)?;
+    let r = pdf::preflight::preflight(&doc, prof);
+    println!("{}", input.display());
+    println!("  pages: {}", r.page_count);
+    println!(
+        "  page size: {}",
+        if r.consistent_page_size {
+            "consistent"
+        } else {
+            "INCONSISTENT"
+        }
+    );
+    println!("  target: {} dpi", prof.target_dpi());
+    if r.fonts.is_empty() {
+        println!("  fonts: (none)");
+    } else {
+        for f in &r.fonts {
+            println!(
+                "  font: {} [{}]",
+                f.name,
+                if f.embedded { "embedded" } else { "NOT EMBEDDED" }
+            );
+        }
+    }
+    for img in &r.images {
+        println!(
+            "  image: p.{} {} {}×{}px @ {} dpi ({})",
+            img.page, img.name, img.pixel_w, img.pixel_h, img.effective_dpi, img.colorspace
+        );
+    }
+    if !r.color_pages.is_empty() {
+        println!("  colour pages: {:?}", r.color_pages);
+    }
+    if !r.blank_pages.is_empty() {
+        println!("  blank pages: {:?}", r.blank_pages);
+    }
+    if r.warnings.is_empty() {
+        println!("  ✓ no warnings");
+    } else {
+        println!("  {} warning(s):", r.warnings.len());
+        for w in &r.warnings {
+            println!("    ⚠ {w}");
+        }
+    }
+    Ok(())
+}
+
+fn barcode_cmd(
+    isbn: &str,
+    out: &Path,
+    height_mm: Option<f32>,
+    module_mm: Option<f32>,
+    no_text: bool,
+) -> Result<()> {
+    use crate::pdf::barcode::BarcodeSpec;
+    let mut spec = BarcodeSpec {
+        isbn: isbn.to_string(),
+        include_human_readable: !no_text,
+        ..Default::default()
+    };
+    if let Some(h) = height_mm {
+        spec.height_mm = h;
+    }
+    if let Some(m) = module_mm {
+        spec.module_width_mm = m;
+    }
+    let mut doc = pdf::barcode::build_barcode_pdf(&spec).map_err(pdferr)?;
+    write_pdf(&mut doc, out)?;
+    println!("pdf barcode: {isbn} → {}", out.display());
+    Ok(())
+}
+
+struct CoverArgs<'a> {
+    out: PathBuf,
+    pages: usize,
+    title: Option<String>,
+    author: Option<String>,
+    back: Option<String>,
+    image: Option<PathBuf>,
+    isbn: Option<String>,
+    spine_mm: Option<f32>,
+    width_mm: Option<f32>,
+    height_mm: Option<f32>,
+    project: &'a Path,
+}
+
+fn cover_cmd(a: CoverArgs) -> Result<()> {
+    use crate::pdf::cover::{build_cover, CoverRequest};
+    let mut cfg = project_config(a.project).cover;
+    if let Some(w) = a.width_mm {
+        cfg.front_width_mm = w;
+    }
+    if let Some(h) = a.height_mm {
+        cfg.front_height_mm = h;
+    }
+    let req = CoverRequest {
+        page_count: a.pages,
+        title: a.title,
+        author: a.author,
+        back_text: a.back,
+        front_image: a.image,
+        isbn: a.isbn,
+        spine_mm_override: a.spine_mm,
+    };
+    let spec = cfg.build_spec(&req);
+    let spine = spec.spine_width_mm;
+    let mut doc = build_cover(&spec).map_err(pdferr)?;
+    write_pdf(&mut doc, &a.out)?;
+    println!(
+        "pdf cover: {} pages → spine {spine:.1} mm → {}",
+        a.pages,
+        a.out.display()
+    );
+    Ok(())
 }
 
 /// Imposition profiles come through the full config cascade (project +

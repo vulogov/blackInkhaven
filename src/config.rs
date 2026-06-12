@@ -81,6 +81,13 @@ pub struct Config {
     /// through the config cascade like everything else.
     #[serde(default)]
     pub imposition: crate::pdf::impose::config::ImpositionConfig,
+    /// 1.3.0 PDF-1 P2 — cover/spine defaults for `inkhaven pdf cover`
+    /// (trim size, bleed, paper stocks for the computed spine).
+    #[serde(default)]
+    pub cover: crate::pdf::cover::CoverConfig,
+    /// 1.3.0 PDF-1 P2 — preflight DPI targets for `inkhaven pdf preflight`.
+    #[serde(default)]
+    pub preflight: crate::pdf::preflight::PreflightConfig,
     /// Primary writing language of the project. Drives:
     /// * Snowball stemmers for the editor's Places/Characters highlight
     ///   overlay (overrides `editor.stemming.languages` when non-empty).
@@ -173,6 +180,8 @@ impl Default for Config {
             shell: ShellConfig::default(),
             scripting: crate::scripting::policy::Policy::default(),
             imposition: crate::pdf::impose::config::ImpositionConfig::default(),
+            cover: crate::pdf::cover::CoverConfig::default(),
+            preflight: crate::pdf::preflight::PreflightConfig::default(),
             language: default_language(),
             project: ProjectConfig::default(),
             health: HealthConfig::default(),
@@ -3091,6 +3100,10 @@ pub struct BookGoal {
 /// in `src/export/` and the resulting files land next to the
 /// PDF with matching stem. Each entry is a case-insensitive
 /// format name — supported today: `markdown`, `tex`, `epub`.
+/// Two 1.3.0 PDF-1 entries operate on the just-built PDF rather
+/// than the `.typ` source: `imposed_pdf` (impose into signatures,
+/// see `imposed_pdf_config`) and `cover_pdf` (generate a
+/// cover-and-spine from the page count + `cover:` config).
 /// Unknown entries log a WARN and are skipped. Per-format
 /// errors are reported in the status bar but never abort the
 /// take.

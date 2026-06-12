@@ -7,14 +7,15 @@
 //! XObject (decoded via the in-tree `image` crate — no lopdf image
 //! feature, no duplicate `image` version).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use lopdf::{Dictionary, Document, Object, Stream};
+use serde::{Deserialize, Serialize};
 
 use super::barcode::{render_ean13, BarcodeSpec};
 use super::doc::{PdfDoc, PdfSource};
 use super::geometry::mm_to_pt;
-use super::paper::PaperStock;
+use super::paper::{self, PaperStock};
 use super::{Error, Result};
 
 /// Spine width in mm (RFC §8.4): the interior stack (2 pages per sheet)
@@ -45,6 +46,88 @@ pub struct CoverSpec {
     pub spine_text: SpineText,
     pub back_text: Option<String>,
     pub barcode: Option<BarcodeSpec>,
+}
+
+/// The `cover:` HJSON block — house defaults for trim size, bleed, paper
+/// stocks (for the computed spine), and spine type size.  Merges through
+/// the config cascade like every other setting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CoverConfig {
+    pub front_width_mm: f32,
+    pub front_height_mm: f32,
+    pub bleed_mm: f32,
+    pub interior_stock: String,
+    pub cover_stock: String,
+    pub spine_font_size_pt: f32,
+}
+
+impl Default for CoverConfig {
+    fn default() -> Self {
+        Self {
+            front_width_mm: 152.0,  // 6 in
+            front_height_mm: 229.0, // 9 in trade
+            bleed_mm: 3.0,
+            interior_stock: paper::DEFAULT_INTERIOR.into(),
+            cover_stock: paper::DEFAULT_COVER.into(),
+            spine_font_size_pt: 11.0,
+        }
+    }
+}
+
+/// The per-invocation cover inputs (page count, text, art, ISBN) that the
+/// CLI / book-take supplies on top of [`CoverConfig`].
+#[derive(Debug, Clone, Default)]
+pub struct CoverRequest {
+    pub page_count: usize,
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub back_text: Option<String>,
+    pub front_image: Option<PathBuf>,
+    pub isbn: Option<String>,
+    /// Override the computed spine width (e.g. printer-supplied).
+    pub spine_mm_override: Option<f32>,
+}
+
+impl CoverConfig {
+    fn stock(&self, name: &str, fallback: &str) -> PaperStock {
+        paper::paper_stock(name)
+            .or_else(|| paper::paper_stock(fallback))
+            .unwrap_or_else(|| PaperStock::custom("fallback", 0.1))
+    }
+
+    /// Spine width (mm) for `page_count` using this profile's stocks.
+    pub fn spine_mm(&self, page_count: usize) -> f32 {
+        spine_width_mm(
+            page_count,
+            self.stock(&self.interior_stock, paper::DEFAULT_INTERIOR),
+            self.stock(&self.cover_stock, paper::DEFAULT_COVER),
+        )
+    }
+
+    /// Combine these defaults with a [`CoverRequest`] into a [`CoverSpec`].
+    pub fn build_spec(&self, req: &CoverRequest) -> CoverSpec {
+        let spine = req
+            .spine_mm_override
+            .unwrap_or_else(|| self.spine_mm(req.page_count));
+        CoverSpec {
+            front_width_mm: self.front_width_mm,
+            front_height_mm: self.front_height_mm,
+            spine_width_mm: spine,
+            bleed_mm: self.bleed_mm,
+            front_image: req.front_image.clone(),
+            spine_text: SpineText {
+                title: req.title.clone(),
+                author: req.author.clone(),
+                font_size_pt: self.spine_font_size_pt,
+            },
+            back_text: req.back_text.clone(),
+            barcode: req.isbn.as_ref().map(|isbn| BarcodeSpec {
+                isbn: isbn.clone(),
+                ..Default::default()
+            }),
+        }
+    }
 }
 
 /// Build the cover PDF (one page).
@@ -257,6 +340,28 @@ mod tests {
         let expect_w = mm_to_pt(2.0 * 152.0 + 12.0 + 2.0 * 3.0);
         assert!((sz.width() - expect_w).abs() < 1.0, "got {}", sz.width());
         assert_eq!(PdfDoc::load_mem(&doc.to_bytes().unwrap()).unwrap().page_count(), 1);
+    }
+
+    #[test]
+    fn config_build_spec_computes_spine_from_pages() {
+        let cfg = CoverConfig::default();
+        let req = CoverRequest {
+            page_count: 200,
+            title: Some("The Lantern Room".into()),
+            isbn: Some("9780306406157".into()),
+            ..Default::default()
+        };
+        let spec = cfg.build_spec(&req);
+        // same 11.6 mm as the standalone spine_width_mm novel case
+        assert!((spec.spine_width_mm - 11.6).abs() < 1e-2, "got {}", spec.spine_width_mm);
+        assert_eq!(spec.front_width_mm, 152.0);
+        assert!(spec.barcode.is_some(), "isbn → barcode");
+        // override wins
+        let forced = cfg.build_spec(&CoverRequest {
+            spine_mm_override: Some(20.0),
+            ..req
+        });
+        assert_eq!(forced.spine_width_mm, 20.0);
     }
 
     #[test]

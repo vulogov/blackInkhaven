@@ -14918,6 +14918,20 @@ impl App {
                 }
                 continue;
             }
+            if fmt == "cover_pdf" {
+                match self.take_cover_pdf(pdf_dest, &book.title) {
+                    Ok(name) => {
+                        statuses[i] = '✓';
+                        produced.push(name);
+                    }
+                    Err(e) => {
+                        tracing::warn!(target: "inkhaven::take", "cover_pdf: {e}");
+                        statuses[i] = '✗';
+                        produced.push("cover_pdf error".into());
+                    }
+                }
+                continue;
+            }
             let outcome = self.build_one_extra_format(&fmt, &combined, &book.title);
             let artefact = match outcome {
                 Some(Ok(art)) => art,
@@ -15020,6 +15034,49 @@ impl App {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("imposed.pdf")
+            .to_string())
+    }
+
+    /// 1.3.0 PDF-1 P2 — the `cover_pdf` book-take format: generate a
+    /// cover-and-spine PDF for the just-built book.  The spine width is
+    /// computed from the interior PDF's page count + the `cover:` config
+    /// paper stocks; title/author come from `book.title` + the PDF
+    /// metadata.  Writes `<stem>-cover.pdf` next to the interior.
+    fn take_cover_pdf(&self, pdf_dest: &Path, book_title: &str) -> anyhow::Result<String> {
+        use anyhow::anyhow;
+        let src = crate::pdf::PdfDoc::load(pdf_dest)
+            .map_err(|e| anyhow!("load {}: {e}", pdf_dest.display()))?;
+        let meta = crate::pdf::meta::read_metadata(&src);
+        let title = meta.title.filter(|t| !t.is_empty()).unwrap_or_else(|| {
+            if book_title.is_empty() {
+                "Untitled".into()
+            } else {
+                book_title.to_string()
+            }
+        });
+        let req = crate::pdf::cover::CoverRequest {
+            page_count: src.page_count(),
+            title: Some(title),
+            author: meta.author,
+            back_text: None,
+            front_image: None,
+            isbn: None,
+            spine_mm_override: None,
+        };
+        let spec = self.cfg.cover.build_spec(&req);
+        let mut cover = crate::pdf::cover::build_cover(&spec).map_err(|e| anyhow!("{e}"))?;
+        let stem = pdf_dest
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("book");
+        let out = pdf_dest.with_file_name(format!("{stem}-cover.pdf"));
+        cover
+            .save(&out)
+            .map_err(|e| anyhow!("save {}: {e}", out.display()))?;
+        Ok(out
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("cover.pdf")
             .to_string())
     }
 
