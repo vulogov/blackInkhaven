@@ -243,7 +243,7 @@ pub fn build_cover(spec: &CoverSpec) -> Result<PdfDoc> {
 /// Decode an image to RGB8 and wrap it as a Flate-compressed PDF image
 /// XObject (the in-tree `image` crate + lopdf's `Stream::compress`; no
 /// lopdf image feature, no `flate2` dep).
-fn image_xobject(path: &Path) -> Result<Stream> {
+pub(crate) fn image_xobject(path: &Path) -> Result<Stream> {
     let img =
         image::open(path).map_err(|e| Error::Other(format!("cover image `{}`: {e}", path.display())))?;
     let rgb = img.to_rgb8();
