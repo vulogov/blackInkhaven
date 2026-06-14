@@ -1246,6 +1246,58 @@ pub enum PdfCommand {
         #[arg(long)]
         height_mm: Option<f32>,
     },
+    /// Convert to grayscale (RFC §8.7): neutralize content-stream colour
+    /// + convert DeviceRGB/CMYK images to DeviceGray.  Best-effort —
+    /// JPEG / exotic colour spaces are left as-is.
+    Grayscale {
+        input: std::path::PathBuf,
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
+    /// Losslessly slim a PDF: prune orphan objects + Flate-compress every
+    /// uncompressed stream.
+    Optimize {
+        input: std::path::PathBuf,
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
+    /// Stamp text and/or an image onto a page range (RFC §8.7).
+    Watermark {
+        input: std::path::PathBuf,
+        /// Stamp text (e.g. `DRAFT`).
+        #[arg(long)]
+        text: Option<String>,
+        /// Stamp image (logo); any format the `image` crate reads.
+        #[arg(long)]
+        image: Option<std::path::PathBuf>,
+        /// Constant alpha 0..1 (default 0.18).
+        #[arg(long)]
+        opacity: Option<f32>,
+        /// Text rotation in degrees (default 45).
+        #[arg(long)]
+        rotation: Option<f32>,
+        /// Font size in pt (default 72).
+        #[arg(long)]
+        size: Option<f32>,
+        /// Anchor: `center` | `top-left` | `top-right` | `bottom-left` |
+        /// `bottom-right` (default center).
+        #[arg(long, default_value = "center")]
+        position: String,
+        /// Limit to a page range (e.g. `1` or `2-4,7`); default all.
+        #[arg(long)]
+        pages: Option<String>,
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
+    /// Quick-proof subset: keep `--count` evenly-spaced pages (first +
+    /// last always included).
+    Sample {
+        input: std::path::PathBuf,
+        #[arg(long, default_value_t = 8)]
+        count: usize,
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
 }
 
 /// 1.2.17+ T.7 — sub-subcommands under
