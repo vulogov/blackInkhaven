@@ -1595,3 +1595,94 @@ See [Tutorial 59](Tutorials/59-revision-and-continuity.md)
 for the full revision workflow + the multilingual-coverage
 table, and [Tutorial 60](Tutorials/60-manuscript-format.md)
 for the manuscript-format export.
+
+## 1.3.0 — PDF production blocks
+
+The PDF-1 subsystem (`inkhaven pdf …`, the `ink.pdf.*` Bund words, and
+the `imposed_pdf` / `cover_pdf` book-takes) reads three new top-level
+blocks. All merge through the normal cascade (project `inkhaven.hjson` →
+global `~/.config/inkhaven`, global wins). See
+[Tutorial 65](Tutorials/65-hand-binding.md) for the end-to-end workflow.
+
+### `imposition` (1.3.0+) — folding-signature profiles
+
+Named profiles for `inkhaven pdf impose --config <name>`, the `Ctrl+B Q`
+preview, and the `imposed_pdf` book-take. `default` and `chapbook` are
+built in; add your own keys to extend (a missing profile is an error
+listing the known names).
+
+```hjson
+imposition: {
+  profiles: {
+    default: {
+      style: "perfect_bound"          // perfect_bound | saddle_stitch | side_stab
+      sheets_per_signature: 4
+      target_sheet_size: "A3"          // a preset name, or { width_mm, height_mm }
+      orientation: "auto"              // auto | portrait | landscape
+      margins: { bleed_mm: 3.0, crop_offset_mm: 5.0, fold_mark_length_mm: 8.0 }
+      creep: {
+        enabled: true
+        paper_stock: "uncoated_80gsm"  // caliper source for the shingle
+        thickness_mm_override: null    // set to bypass the stock caliper
+        strategy: "shingle"            // shingle | pushout | none
+      }
+      marks: {
+        crop: true, fold: true, registration: true,
+        spine_marker: true, signature_number: true, color_bar: false
+      }
+      blank_page_policy: "append"      // append | balance
+    }
+    // chapbook: saddle_stitch, A4, creep off — a single folded booklet.
+  }
+}
+```
+
+### `cover` (1.3.0+) — cover/spine defaults
+
+House defaults for `inkhaven pdf cover` and the `cover_pdf` book-take.
+The spine width is **computed** from the interior page count + these
+paper stocks (`spine = pages × interior_caliper × 0.5 + 2 × cover_caliper
++ binding allowance`); CLI flags (`--width-mm` / `--height-mm` /
+`--spine-mm`) override per run.
+
+```hjson
+cover: {
+  front_width_mm: 152.0      // 6 in
+  front_height_mm: 229.0     // 9 in trade
+  bleed_mm: 3.0
+  interior_stock: "uncoated_80gsm"
+  cover_stock: "cover_250gsm"
+  spine_font_size_pt: 11.0
+}
+```
+
+### `preflight` (1.3.0+) — print-readiness DPI targets
+
+Selectable targets for `inkhaven pdf preflight --profile <name>` (the
+`--dpi N` flag overrides). `strict` uses 300 dpi with no override.
+
+```hjson
+preflight: {
+  default_profile: "hand_binding"   // hand_binding | print_shop | strict
+  hand_binding_dpi: 300
+  print_shop_dpi: 300
+}
+```
+
+### `output` additions (1.3.0+)
+
+Two `output.extra_formats` entries operate on the just-built PDF rather
+than the `.typ` source, so they run after the PDF lands:
+
+- `imposed_pdf` — impose with `output.imposed_pdf_config` (a profile name
+  from `imposition.profiles`, default `"default"`), writing
+  `…-imposed.pdf`.
+- `cover_pdf` — generate `…-cover.pdf` from the page count + the `cover:`
+  block (title from the book, no barcode).
+
+```hjson
+output: {
+  extra_formats: ["imposed_pdf", "cover_pdf"]
+  imposed_pdf_config: "default"
+}
+```

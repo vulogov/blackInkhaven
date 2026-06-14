@@ -1296,7 +1296,10 @@ impl KeyBindings {
                 entry("h", Action::OpenQuickref, Scope::Any),
                 entry("v", Action::OpenCredits, Scope::Any),
                 entry("i", Action::OpenBookInfo, Scope::Any),
-                entry("q", Action::OpenImpositionPreview, Scope::Any),
+                // 1.3.0 PDF-1 — Ctrl+B Q (quire): imposition preview for
+                // the selected book.  Tree-scoped so it does NOT shadow
+                // the editor's Ctrl+B Q (TranslateToInvented, 1.2.13).
+                entry("q", Action::OpenImpositionPreview, Scope::Tree),
                 entry("l", Action::OpenLlmPicker, Scope::Any),
                 entry("e", Action::ToggleSound, Scope::Any),
                 entry("a", Action::ScheduleAssemble, Scope::Any),
@@ -2006,6 +2009,23 @@ mod tests {
         assert_eq!(
             k.resolve_meta_sub(&ev('p'), Focus::Tree),
             Some(Action::AddParagraph)
+        );
+    }
+
+    #[test]
+    fn meta_q_does_not_shadow_editor_translate() {
+        // 1.3.0 PDF-1: Ctrl+B Q is imposition-preview in the tree but
+        // MUST stay translate-to-invented in the editor (1.2.13 feature).
+        let k = KeyBindings::defaults();
+        assert_eq!(
+            k.resolve_meta_sub(&ev('q'), Focus::Editor),
+            Some(Action::TranslateToInvented),
+            "editor Ctrl+B Q must remain translate-to-invented",
+        );
+        assert_eq!(
+            k.resolve_meta_sub(&ev('q'), Focus::Tree),
+            Some(Action::OpenImpositionPreview),
+            "tree Ctrl+B Q opens the imposition preview",
         );
     }
 
