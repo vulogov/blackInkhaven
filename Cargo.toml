@@ -54,6 +54,10 @@ exclude = [
     # top-level .gitignore protects against.
     "/*.pdf",
     "/*.epub",
+    # PDF-1 imposition proof corpus — a fake book + its compiled /
+    # imposed PDFs, kept for local verification only. Never ships in
+    # the crate.
+    "proof_corpus/**",
     # NB: do NOT exclude `*.png` globally — `logo.png` at the
     # repo root is `include_bytes!`'d into the binary; the
     # build breaks without it. assets/* is also untouched

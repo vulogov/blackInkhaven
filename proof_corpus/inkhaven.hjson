@@ -1,0 +1,30 @@
+{
+  // PDF-1 imposition proof — a perfect-bound profile with SIX sheets per
+  // signature (24 pages/signature 2-up).  The 48-page lantern.pdf imposes
+  // to exactly two signatures.
+  imposition: {
+    profiles: {
+      sixup: {
+        style: "perfect_bound"
+        sheets_per_signature: 6
+        target_sheet_size: "A3"
+        orientation: "auto"
+        margins: { bleed_mm: 3.0, crop_offset_mm: 5.0, fold_mark_length_mm: 8.0 }
+        creep: {
+          enabled: true
+          paper_stock: "uncoated_80gsm"
+          strategy: "shingle"
+        }
+        marks: {
+          crop: true
+          fold: true
+          registration: true
+          spine_marker: true
+          signature_number: true
+          color_bar: false
+        }
+        blank_page_policy: "append"
+      }
+    }
+  }
+}
