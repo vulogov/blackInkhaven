@@ -591,3 +591,63 @@ barcode** (back, bottom-right), and **crop marks** at the trim corners.
 `CoverSpec` / `SpineText`.  3 tests (spine width for a 200-page novel =
 11.6 mm, cover page dimensions + round-trip, front-image XObject
 embedded).  Suite 1249 → 1252.
+
+### P2.3 — preflight (landed)
+
+`pdf::preflight` (RFC §8.6).  The flagship check is **effective image
+DPI**: walk each page's content stream tracking the CTM (`q`/`Q`/`cm`),
+and at every image `Do` divide pixel size by the placed size in inches,
+so a screenshot blown up to full page is flagged regardless of its file
+resolution.  Plus font embedding (FontDescriptor/FontFile* walk incl.
+Type0 `DescendantFonts`), page-size consistency, blank pages, colour-image
+detection.  `PreflightProfile` = HandBinding / PrintShop / Strict.  Fixed
+a latent bug: image `Width`/`Height` + `cm` operands were read with
+`as_f32` (Real-only) so the common Integer form read as 0 — switched to
+`as_float`.  Tests: matrix product; blank pages on `minimal_pdf`; a 16×24
+image stretched on a cover flagged sub-50-dpi with the pixel size pinned.
+
+### P2.4 — surfaces for cover / barcode / preflight (landed)
+
+Wire the three engines to every surface.  CLI: `pdf preflight`
+(`--profile`/`--dpi`), `pdf barcode <isbn>`, `pdf cover --pages N`.  HJSON:
+`cover:` (`CoverConfig`, `build_spec` computes the spine from page count +
+stocks) and `preflight:` (`PreflightConfig::resolve`).  Bund:
+`ink.pdf.cover` / `.barcode` / `.preflight` (pure-compute, no new fs
+gates).  Book-take: `cover_pdf` in `output.extra_formats` →
+`<stem>-cover.pdf` on `Ctrl+B O`, parallel to `imposed_pdf`.
+
+### P3.1 — grayscale + optimize (landed)
+
+`pdf::transform` (RFC §8.7).  **grayscale** desaturates without
+re-rendering: it *neutralizes* colour operands in each page's content
+stream (`r g b rg` → `y y y rg`; `c m y k k` → `0 0 0 (1-y) k`), so the
+operator and colour space are preserved and the stream stays valid;
+DeviceRGB/CMYK 8-bpc image XObjects convert to DeviceGray (JPEG / exotic
+spaces left as-is by design).  **optimize** prunes orphan objects +
+Flate-compresses every uncompressed stream, returning an `OptimizeReport`.
+
+### P3.2 — watermark / stamp (landed)
+
+`pdf::watermark`.  Stamp text and/or an image onto a page range, appended
+as a self-contained `q … Q` block under a constant-alpha ExtGState so it
+never disturbs the body.  Text centred + rotatable (45° `DRAFT` default);
+image centred + aspect-scaled to a page-width fraction.  `WmPosition`
+(center / four corners), optional `PageSpec` range.
+
+### P3.3 — `pdf sample` + P3 surfaces (landed)
+
+`ops::sample(src, n)` — n evenly-spaced pages (first + last always), a
+quick-proof subset built on `extract`.  CLI `pdf grayscale` / `optimize`
+/ `watermark` / `sample`; Bund `ink.pdf.grayscale` / `.optimize` /
+`.watermark` / `.sample`.
+
+### P3.5 — docs + `Ctrl+B Q` scope fix (landed)
+
+Tutorial 65 (hand-binding); KEYBINDING (`Ctrl+B Q` tree-scope) and
+CONFIGURATION (`imposition:` / `cover:` / `preflight:`) references.  Fixed
+a chord regression: imposition preview was `Scope::Any` and shadowed the
+editor's 1.2.13 `Ctrl+B Q` (TranslateToInvented) since `resolve_in` takes
+the first match — re-scoped to `Scope::Tree` (its natural book-level home)
+with a regression test pinning both resolutions.
+
+**PDF-1 complete (P0–P3).**  Suite 1252 → 1270.
