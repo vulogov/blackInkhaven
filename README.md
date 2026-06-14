@@ -21,39 +21,50 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.2.23 — Stability & fixes
+## Latest release · 1.3.0 — Print production (PDF-1)
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.2.23.md`](Documentation/RELEASE_NOTES/1.2.23.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.0.md`](Documentation/RELEASE_NOTES/1.3.0.md)
 
-The last 1.2 housekeeping pass before the 1.3 *editorial pass* cycle — no
-new headline feature, just a calmer, harder base: a crash-behaviour fix, a
-whole-tree panic-surface re-audit, SQL hardening, and the deferred find &
-replace polish.
+The first minor since the 1.2 line. A reading PDF comes off `inkhaven
+export pdf` in reading order — the wrong order for a printer, missing a
+cover, unchecked for the problems that only show up in print. 1.3.0 ships
+a complete, self-contained **PDF production subsystem** that closes every
+one of those gaps, over a pure-Rust core (`lopdf` + `barcoders`) with **no
+external apps**, exposed identically across the CLI, the `ink.pdf.*` Bund
+stdlib, and the `Ctrl+B O` book-take.
 
-### Fixes & hardening
+### Imposition (the marquee)
 
-- **Broken pipe is no longer a crash.** `inkhaven … | head` used to write
-  a spurious crash-report file (Rust ignores SIGPIPE, so the failed write
-  panicked); the panic hook now exits cleanly on a broken stdout pipe,
-  while leaving the long-running TUI's pipe handling untouched.
-- **Panic-surface re-audit** across the whole tree fixed three reachable
-  UTF-8 byte-boundary slice panics — theme-colour parsing, fact-check
-  cursor jump, and the doctor naming scan, all triggerable on
-  multilingual or malformed input — and routed four `store` writes through
-  the atomic-write path.
-- **SQL hardening.** The JSON / blob and progress stores now bind
-  parameters instead of string-interpolating; both `sql_escape` copies are
-  gone, pinned by an adversarial round-trip test.
+`inkhaven pdf impose` reorders a book into folding **signatures** for
+hand-binding or a small print shop — perfect-bound / saddle-stitch /
+side-stab, **creep / shingling** from the paper caliper, and crop / fold /
+registration / spine / signature-number marks. Configurable through HJSON
+`imposition:` profiles (`default`, `chapbook`, or your own with any
+`sheets_per_signature`). `--dry-run` prints the plan; **`Ctrl+B Q`**
+previews it in the TUI; `imposed_pdf` imposes the just-built book on
+`Ctrl+B O`.
 
-### Find & replace polish
+### Cover, spine, barcode · preflight · finishing
 
-Inside the project-replace review modal (1.2.22), **`w` / `i` / `x`** now
-toggle whole-word / ignore-case / regex in place — the same matching modes
-the CLI flags reach — starting from the safe whole-word default.
+- **`pdf cover --pages N`** generates a cover with the **spine width
+  computed** from the page count + paper stocks, optional front art / back
+  blurb, and a validated **EAN-13 ISBN barcode** (`cover_pdf` book-take;
+  standalone `pdf barcode`).
+- **`pdf preflight`** catches print-only problems — the flagship check is
+  **effective image DPI** via transformation-matrix tracking (the
+  screenshot blown up to fill the page), plus font embedding, page-size
+  consistency, and blanks.
+- **`pdf grayscale` / `optimize` / `watermark` / `sample`** for the
+  finishing pass, alongside the structural toolkit (`info` / `extract` /
+  `delete` / `rotate` / `reorder` / `split` / `merge` / `metadata` /
+  `outline`).
 
 ### Test stats
 
-Tests 1186 → 1190, **zero new Rust dependencies**.
+Tests 1190 → 1270. Two new runtime dependencies — `lopdf` and `barcoders`,
+both pure-Rust and audited (the first new deps in several cycles, a
+deliberate exception to the zero-new-deps stance). One new tutorial
+([65, Hand-binding](Documentation/Tutorials/65-hand-binding.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
