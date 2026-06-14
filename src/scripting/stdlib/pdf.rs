@@ -78,6 +78,10 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.pdf.cover", w_cover),
         ("ink.pdf.barcode", w_barcode),
         ("ink.pdf.preflight", w_preflight),
+        ("ink.pdf.grayscale", w_grayscale),
+        ("ink.pdf.optimize", w_optimize),
+        ("ink.pdf.watermark", w_watermark),
+        ("ink.pdf.sample", w_sample),
         ("ink.pdf.title", w_title),
         ("ink.pdf.set_title", w_set_title),
         ("ink.pdf.set_author", w_set_author),
@@ -313,6 +317,70 @@ fn do_preflight(vm: &mut VM) -> Result<&mut VM> {
         Ok(crate::pdf::preflight::preflight(doc, prof).warnings.len() as i64)
     })?;
     push(vm, Value::from_int(n));
+    Ok(vm)
+}
+
+// ( handle -- handle )   convert to grayscale in place
+fn w_grayscale(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_grayscale(vm).map_err(to_bund_err)
+}
+fn do_grayscale(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.pdf.grayscale";
+    require_depth(vm, 1, tag)?;
+    let handle = value_to_i64(pull(vm, tag)?, "handle", tag)?;
+    with_doc(handle, tag, |doc| {
+        crate::pdf::transform::to_grayscale(doc).map_err(pe)
+    })?;
+    push(vm, Value::from_int(handle));
+    Ok(vm)
+}
+
+// ( handle -- handle )   prune + compress in place
+fn w_optimize(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_optimize(vm).map_err(to_bund_err)
+}
+fn do_optimize(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.pdf.optimize";
+    require_depth(vm, 1, tag)?;
+    let handle = value_to_i64(pull(vm, tag)?, "handle", tag)?;
+    with_doc(handle, tag, |doc| crate::pdf::transform::optimize(doc).map_err(pe))?;
+    push(vm, Value::from_int(handle));
+    Ok(vm)
+}
+
+// ( handle text -- handle )   stamp centred 45° text (config-free defaults)
+fn w_watermark(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_watermark(vm).map_err(to_bund_err)
+}
+fn do_watermark(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.pdf.watermark";
+    require_depth(vm, 2, tag)?;
+    let text = value_to_string(pull(vm, tag)?, "text", tag)?;
+    let handle = value_to_i64(pull(vm, tag)?, "handle", tag)?;
+    let spec = crate::pdf::watermark::WatermarkSpec {
+        text: Some(text),
+        ..Default::default()
+    };
+    with_doc(handle, tag, |doc| {
+        crate::pdf::watermark::apply_watermark(doc, &spec)
+            .map(|_| ())
+            .map_err(pe)
+    })?;
+    push(vm, Value::from_int(handle));
+    Ok(vm)
+}
+
+// ( handle n -- handle' )   quick-proof subset, new doc
+fn w_sample(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_sample(vm).map_err(to_bund_err)
+}
+fn do_sample(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.pdf.sample";
+    require_depth(vm, 2, tag)?;
+    let n = value_to_i64(pull(vm, tag)?, "n", tag)?.max(1) as usize;
+    let handle = value_to_i64(pull(vm, tag)?, "handle", tag)?;
+    let new = with_doc(handle, tag, |doc| ops::sample(&*doc, n).map_err(pe))?;
+    push(vm, Value::from_int(store_doc(new)));
     Ok(vm)
 }
 

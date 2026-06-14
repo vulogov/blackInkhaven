@@ -159,7 +159,112 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             height_mm,
             project,
         }),
+        PdfCommand::Grayscale { input, out } => {
+            let mut doc = load(&input)?;
+            let imgs = pdf::transform::to_grayscale(&mut doc).map_err(pdferr)?;
+            let path = out_or_default(&input, out, "gray");
+            write_pdf(&mut doc, &path)?;
+            println!("pdf grayscale: {imgs} image(s) converted → {}", path.display());
+            Ok(())
+        }
+        PdfCommand::Optimize { input, out } => {
+            let mut doc = load(&input)?;
+            let r = pdf::transform::optimize(&mut doc).map_err(pdferr)?;
+            let path = out_or_default(&input, out, "opt");
+            write_pdf(&mut doc, &path)?;
+            println!(
+                "pdf optimize: {} → {} objects ({} pruned) → {}",
+                r.objects_before,
+                r.objects_after,
+                r.pruned,
+                path.display()
+            );
+            Ok(())
+        }
+        PdfCommand::Watermark {
+            input,
+            text,
+            image,
+            opacity,
+            rotation,
+            size,
+            position,
+            pages,
+            out,
+        } => watermark_cmd(WatermarkArgs {
+            input,
+            text,
+            image,
+            opacity,
+            rotation,
+            size,
+            position,
+            pages,
+            out,
+        }),
+        PdfCommand::Sample { input, count, out } => {
+            let src = load(&input)?;
+            let mut sampled = ops::sample(&src, count).map_err(pdferr)?;
+            let path = out_or_default(&input, out, "sample");
+            write_pdf(&mut sampled, &path)?;
+            println!(
+                "pdf sample: {} of {} page(s) → {}",
+                sampled.page_count(),
+                src.page_count(),
+                path.display()
+            );
+            Ok(())
+        }
     }
+}
+
+struct WatermarkArgs {
+    input: PathBuf,
+    text: Option<String>,
+    image: Option<PathBuf>,
+    opacity: Option<f32>,
+    rotation: Option<f32>,
+    size: Option<f32>,
+    position: String,
+    pages: Option<String>,
+    out: Option<PathBuf>,
+}
+
+fn watermark_cmd(a: WatermarkArgs) -> Result<()> {
+    use crate::pdf::watermark::{apply_watermark, WatermarkSpec, WmPosition};
+    if a.text.is_none() && a.image.is_none() {
+        return Err(Error::Store(
+            "pdf watermark: pass --text and/or --image".into(),
+        ));
+    }
+    let position = WmPosition::parse(&a.position)
+        .ok_or_else(|| Error::Store(format!("pdf watermark: bad --position `{}`", a.position)))?;
+    let pages = match &a.pages {
+        Some(p) => Some(PageSpec::parse(p).map_err(pdferr)?),
+        None => None,
+    };
+    let mut spec = WatermarkSpec {
+        text: a.text,
+        image: a.image,
+        position,
+        pages,
+        ..Default::default()
+    };
+    if let Some(o) = a.opacity {
+        spec.opacity = o;
+    }
+    if let Some(r) = a.rotation {
+        spec.rotation_deg = r;
+    }
+    if let Some(s) = a.size {
+        spec.font_size_pt = s;
+    }
+    let mut doc = load(&a.input)?;
+    let n = apply_watermark(&mut doc, &spec).map_err(pdferr)?;
+    let path = out_or_default(&a.input, a.out, "watermark");
+    write_pdf(&mut doc, &path)?;
+    println!("pdf watermark: {n} page(s) stamped → {}", path.display());
+    Ok(())
 }
 
 /// Load the merged project + global config (for `cover:` / `preflight:`

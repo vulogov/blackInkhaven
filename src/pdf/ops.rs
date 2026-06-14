@@ -129,6 +129,31 @@ pub fn extract(src: &PdfDoc, pages: &PageSpec) -> Result<PdfDoc> {
     Ok(PdfDoc::from_document(inner, src.source().clone()))
 }
 
+/// Build a quick-proof subset: `n` evenly-spaced pages, always including
+/// the first and last.  If the document has `≤ n` pages, all are kept.
+/// Handy for a fast print check before committing to the full run.
+pub fn sample(src: &PdfDoc, n: usize) -> Result<PdfDoc> {
+    let count = src.page_count();
+    if count == 0 {
+        return Err(Error::Other("sample: empty document".into()));
+    }
+    let n = n.max(1);
+    let pages: Vec<PageSpec> = if count <= n {
+        (1..=count).map(PageSpec::Single).collect()
+    } else if n == 1 {
+        vec![PageSpec::Single(1)]
+    } else {
+        let mut set = BTreeSet::new();
+        for i in 0..n {
+            // even spacing across [0, count-1], rounding to nearest page.
+            let idx = ((i as f64) * (count - 1) as f64 / (n - 1) as f64).round() as usize;
+            set.insert(idx + 1);
+        }
+        set.into_iter().map(PageSpec::Single).collect()
+    };
+    extract(src, &PageSpec::List(pages))
+}
+
 /// Delete `pages` in place (errors if it would empty the document).
 pub fn delete(doc: &mut PdfDoc, pages: &PageSpec) -> Result<()> {
     let count = doc.page_count();
@@ -320,6 +345,18 @@ mod tests {
         assert_eq!(out.page_count(), 2);
         // source untouched
         assert_eq!(src.page_count(), 5);
+    }
+
+    #[test]
+    fn sample_picks_evenly_spaced_pages() {
+        let src = load(100);
+        let out = sample(&src, 5).unwrap();
+        assert_eq!(out.page_count(), 5, "first, last, and 3 interior");
+        // a short doc keeps everything; n is never an error
+        assert_eq!(sample(&load(3), 5).unwrap().page_count(), 3);
+        assert_eq!(sample(&load(8), 1).unwrap().page_count(), 1);
+        // source untouched
+        assert_eq!(src.page_count(), 100);
     }
 
     #[test]
