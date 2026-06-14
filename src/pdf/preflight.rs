@@ -261,7 +261,8 @@ fn read6(ops: &[Object]) -> Option<[f32; 6]> {
     }
     let mut m = [0.0f32; 6];
     for (i, o) in ops.iter().enumerate() {
-        m[i] = o.as_f32().ok()?;
+        // `as_float` so Integer operands (e.g. `1 0 0 1 0 0 cm`) parse too.
+        m[i] = o.as_float().ok()?;
     }
     Some(m)
 }
@@ -345,8 +346,9 @@ fn page_image_xobjects(doc: &Document, page_id: ObjectId) -> HashMap<Vec<u8>, (u
         if !name_is(&st.dict, b"Subtype", b"Image") {
             continue;
         }
-        let w = st.dict.get(b"Width").ok().and_then(|o| o.as_f32().ok()).unwrap_or(0.0) as u32;
-        let h = st.dict.get(b"Height").ok().and_then(|o| o.as_f32().ok()).unwrap_or(0.0) as u32;
+        // Width/Height are Integers — `as_float` casts them.
+        let w = st.dict.get(b"Width").ok().and_then(|o| o.as_float().ok()).unwrap_or(0.0) as u32;
+        let h = st.dict.get(b"Height").ok().and_then(|o| o.as_float().ok()).unwrap_or(0.0) as u32;
         let cs = st
             .dict
             .get(b"ColorSpace")
@@ -428,6 +430,7 @@ mod tests {
         let reloaded = PdfDoc::load_mem(&doc.to_bytes().unwrap()).unwrap();
         let r = preflight(&reloaded, PreflightProfile::PrintShop { target_dpi: 300 });
         assert_eq!(r.images.len(), 1, "the front image is found");
+        assert_eq!((r.images[0].pixel_w, r.images[0].pixel_h), (16, 24), "pixel size read");
         assert!(r.images[0].effective_dpi < 50, "16px stretched → very low dpi");
         assert!(r.color_pages.contains(&1), "RGB image → colour page");
         assert!(r.warnings.iter().any(|w| w.contains("dpi")), "low-dpi warning");
