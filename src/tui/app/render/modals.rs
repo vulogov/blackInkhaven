@@ -4132,6 +4132,145 @@ impl super::super::App {
         );
     }
 
+    /// 1.3.2 PLANNING-1 P2 — the structure outline: the `plan check` report
+    /// as a per-beat position bar (target `|` vs actual `●`) + act pacing.
+    pub(in crate::tui::app) fn draw_plan_outline_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        use ratatui::style::Color;
+        let Modal::PlanOutline {
+            book_title,
+            framework,
+            report,
+            cursor,
+        } = &self.modal
+        else {
+            return;
+        };
+        let drift = 0.10_f32;
+        let bar_w = 20usize;
+        let rows = report.beats.len() + report.acts.len() + 5;
+        let width = area.width.saturating_sub(6).clamp(54, 88);
+        let height = (rows as u16 + 4).min(area.height.saturating_sub(2));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let fw_label = crate::planning::Framework::parse(framework)
+            .map(|f| f.label().to_string())
+            .unwrap_or_else(|| framework.clone());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Structure · {book_title} · {fw_label} "))
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+        let body_h = inner.height.saturating_sub(1);
+        let body = Rect { x: inner.x, y: inner.y, width: inner.width, height: body_h };
+        let footer = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: 1,
+        };
+
+        // Position bar: baseline ·, target |, actual ● (# when they overlap).
+        let pos_bar = |target: f32, actual: Option<f32>| -> String {
+            let mut cells = vec!['·'; bar_w];
+            let ti = ((target * bar_w as f32) as usize).min(bar_w - 1);
+            cells[ti] = '|';
+            if let Some(a) = actual {
+                let ai = ((a * bar_w as f32) as usize).min(bar_w - 1);
+                cells[ai] = if ai == ti { '#' } else { '●' };
+            }
+            cells.into_iter().collect()
+        };
+
+        let mut lines: Vec<Line> = Vec::new();
+        lines.push(Line::from(Span::styled("BEATS", Style::default().add_modifier(Modifier::DIM))));
+        for (i, b) in report.beats.iter().enumerate() {
+            let sel = i == *cursor;
+            let (icon, color, info) = match (b.actual_position, b.drift) {
+                (Some(a), Some(d)) => {
+                    let warn = d.abs() > drift;
+                    (
+                        if warn { '⚠' } else { '✓' },
+                        if warn { Color::Yellow } else { Color::Green },
+                        format!("a{:>3.0}% {:+.0}%", a * 100.0, d * 100.0),
+                    )
+                }
+                _ => ('✗', Color::Red, "gap".to_string()),
+            };
+            let row = format!(
+                "{icon} {:<22} {} t{:>3.0}% {}",
+                truncate_to(&b.beat, 22),
+                pos_bar(b.target_position, b.actual_position),
+                b.target_position * 100.0,
+                info,
+            );
+            let line = Line::from(Span::styled(row, Style::default().fg(color)));
+            lines.push(if sel {
+                line.style(Style::default().fg(color).add_modifier(Modifier::REVERSED))
+            } else {
+                line
+            });
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "PACING (act word-share)",
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+        for p in &report.acts {
+            let (actual, flag, color) = match p.actual {
+                Some(a) => {
+                    let dev = a - p.expected;
+                    if dev.abs() > drift {
+                        (
+                            format!("{:.0}%", a * 100.0),
+                            if dev > 0.0 { " ⚠ long" } else { " ⚠ short" },
+                            Color::Yellow,
+                        )
+                    } else {
+                        (format!("{:.0}%", a * 100.0), "", Color::Green)
+                    }
+                }
+                None => ("?".to_string(), " (map the act boundary)", Color::DarkGray),
+            };
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  Act {}  expected {:>3.0}%  actual {:>4}{flag}",
+                    p.act,
+                    p.expected * 100.0,
+                    actual
+                ),
+                Style::default().fg(color),
+            )));
+        }
+
+        f.render_widget(Paragraph::new(lines), body);
+        let summary = if report.warnings.is_empty() {
+            " ✓ no findings · ↑↓ navigate · Esc close ".to_string()
+        } else {
+            format!(" {} finding(s) · ↑↓ navigate · Esc close ", report.warnings.len())
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                summary,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer,
+        );
+    }
+
     /// 1.2.22 R.3 — the project-replace review: matches grouped by
     /// paragraph, each with a `[x]`/`[ ]` keep/skip box and the matched
     /// span highlighted in its line.  Enter applies the kept ones.

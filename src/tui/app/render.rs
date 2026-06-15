@@ -204,6 +204,10 @@ impl super::App {
             self.draw_submission_gen_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::PlanOutline { .. }) {
+            self.draw_plan_outline_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SentenceRhythm { .. }) {
             self.draw_sentence_rhythm_modal(f, area);
             return;

@@ -120,6 +120,8 @@ pub enum Action {
     OpenSubmissionsTracker,
     #[serde(rename = "view.open_submission_generator")]
     OpenSubmissionGen,
+    #[serde(rename = "view.open_plan_outline")]
+    OpenPlanOutline,
     #[serde(rename = "global.open_llm_picker")]
     OpenLlmPicker,
     #[serde(rename = "global.toggle_sound")]
@@ -828,6 +830,7 @@ impl Action {
             Action::OpenImpositionPreview => "impose".into(),
             Action::OpenSubmissionsTracker => "submissions".into(),
             Action::OpenSubmissionGen => "submission gen".into(),
+            Action::OpenPlanOutline => "structure".into(),
             Action::OpenLlmPicker => "LLM".into(),
             Action::ToggleSound => "sound".into(),
             Action::ScheduleAssemble => "assemble".into(),
@@ -997,6 +1000,8 @@ impl Action {
                 "Open the submission tracker (the .inkhaven/submissions.json log): Space/s cycles the selected record's status, d removes it (both persist), Esc closes. Add records with `inkhaven submissions add`. Mnemonic: U for sUbmissions.".into(),
             Action::OpenSubmissionGen =>
                 "Pick a submission-package generator (query letter / synopsis / comps / logline) and stream it into the AI pane from the current book's cached digest. Build the digest first with `inkhaven submission digest`. Mnemonic: Q for Query.".into(),
+            Action::OpenPlanOutline =>
+                "Open the structure outline (the `inkhaven plan check` report) for the current book: each beat's target vs actual position + drift, act word-share pacing, and coverage gaps, as a position bar. Scaffold a framework first with `inkhaven plan init`; map a beat by setting `mapped_chapter` in its Planning-book paragraph. `↑↓` navigate, `Esc` closes. Mnemonic: K for sKeleton.".into(),
             Action::OpenLlmPicker =>
                 "Switch the active LLM provider — choice is persisted to inkhaven.hjson.".into(),
             Action::ToggleSound =>
@@ -1460,6 +1465,9 @@ impl KeyBindings {
                 // 1.3.1 SUBMISSION-1 P3.3 — submission-package generator
                 // picker (Q for Query) → streams into the AI pane.
                 entry("q", Action::OpenSubmissionGen, Scope::Any),
+                // 1.3.2 PLANNING-1 P2 — structure outline (K for sKeleton;
+                // o/b/p taken). The `plan check` report as a position bar.
+                entry("Shift+k", Action::OpenPlanOutline, Scope::Any),
                 // 1.2.8+ — hidden-character report on the open paragraph.
                 entry("h", Action::ViewHiddenCharsReport, Scope::Any),
                 // 1.2.8+ — show cursor breadcrumb on the status bar.
@@ -2011,6 +2019,12 @@ mod tests {
         assert_eq!(
             k.resolve_view_sub(&q, Focus::Editor),
             Some(Action::OpenSubmissionGen)
+        );
+        // 1.3.2 P2: Ctrl+V Shift+K opens the structure outline.
+        let kk = KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT);
+        assert_eq!(
+            k.resolve_view_sub(&kk, Focus::Editor),
+            Some(Action::OpenPlanOutline)
         );
     }
 
