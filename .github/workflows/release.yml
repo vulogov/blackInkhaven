@@ -143,6 +143,17 @@ jobs:
           echo "PKG_CONFIG_PATH=$pkgcfg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           echo "VCPKGRS_TRIPLET=x64-windows-static-md" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      # See ci.yml: the duckdb-heavy rust-cache (~3.7 GB) can overflow the
+      # Linux runner disk on extract. Reclaim ~20 GB of unused tooling
+      # first. Linux-only — the paths don't exist on macOS / Windows.
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+
       # Caches `~/.cargo` + `target/` between runs. Critical: bdslib
       # pulls in duckdb / tantivy / fastembed / augurs, so a cold build
       # is 10–15 minutes. The cache key includes Cargo.lock so a real

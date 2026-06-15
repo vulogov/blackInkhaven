@@ -63,6 +63,15 @@ jobs:
             libasound2-dev \
             fonts-dejavu-core
 
+      # See ci.yml: free ~20 GB so the ~3.7 GB duckdb-heavy rust-cache can
+      # extract without overflowing the runner disk.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
