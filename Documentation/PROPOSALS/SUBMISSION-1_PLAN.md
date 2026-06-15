@@ -136,29 +136,33 @@ the surfaces and shares the chapter walk:
 - **Deferred** — the optional `stale-submission` doctor scan (sent, no
   response past N days → nudge); a small follow-up, not blocking.
 
-### P3 — Submission-package generators (AI, RAG-grounded)
+### P3 — Submission-package generators (AI, RAG-grounded) (landed)
 
-The design risk is **whole-book context** — a novel doesn't fit a prompt.
+The design risk was **whole-book context** — a novel doesn't fit a prompt.
+Solved with the digest.
 
-- **Book digest** (the context substrate) — cached per-chapter one-line AI
-  summaries + the existing blurb/logline + Characters + Threads, stored in
-  the Submissions book (or a sidecar) and regenerated on demand. Generators
-  consume the digest + RAG-pulled passages, never the raw manuscript.
-- **Generators** — each a resolvable prompt (precedence Prompts-book →
-  `prompts.hjson` → built-in; slugs `submission-query`,
-  `submission-synopsis-short`, `submission-synopsis-long`,
-  `submission-comps`, `submission-logline`):
-  - **query letter** — hook + mini-synopsis + bio + comps.
-  - **short synopsis** (~1 pp) / **long synopsis** (2–3 pp) — full arc,
-    *including the ending* (synopses spoil by design).
-  - **comp titles** — suggestions + rationale, **Local-pinned** (no web)
-    and clearly labelled *suggestions* — never assert sales figures
-    (Risk 3).
-  - **logline / pitch**.
-- **Surfaces** — `inkhaven submission <kind>` writes a draft into the
-  Submissions book and links it to a tracker record; TUI chords stream into
-  the AI pane with `I`-lift into the Submissions book (reuse the
-  translate/extract apply pattern). Multilingual prompt fragments.
+- **P3.1 — book digest** (`src/book_digest.rs`). `BookDigest` (title /
+  author / word count / per-chapter one-line AI summary + the Characters
+  and Threads books) cached in `.inkhaven/digest-<slug>.json`, invalidated
+  by a cheap structural `content_hash` (`matches()`). `as_context()`
+  renders the prompt block. `inkhaven submission digest [--refresh
+  --provider]` builds it (deterministic skeleton via the shared
+  `build_model` + an AI summary pass over each chapter, the established
+  `AiClient` + `collect_blocking` pattern). The generators consume the
+  digest, never the raw manuscript.
+- **P3.2 — generators** (`cli::submission`, `Gen` enum; `gen` is a 2024
+  keyword so the variable is `kind`). `inkhaven submission query |
+  synopsis [--long] | comps | logline`: each builds its prompt from
+  `digest.as_context()`, calls the LLM, and **upserts** the draft as a
+  paragraph in the `Submissions` book (overwrites the same-titled draft,
+  reports the slug for `submissions add --draft <slug>`). Comps are
+  Local-pinned + labelled *suggestions* (no invented sales data); synopses
+  spoil the ending by design. The system prompt resolves **`prompts.hjson`
+  override (key = slug) → built-in**.
+- **Deferred to P3.3** — the **Prompts-book paragraph** override tier
+  (needs the store-walk resolver `App` has); **TUI chords** that stream a
+  generator into the AI pane with `I`-lift; **multilingual** prompt
+  fragments; auto-linking a draft to a tracker record on generate.
 
 ### P3.5 — `ink.export.*` Bund surface (planned)
 
