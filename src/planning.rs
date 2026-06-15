@@ -167,16 +167,158 @@ fn esc(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+// ── coverage + pacing analysis (P1, deterministic) ──────────────────
+
+/// A chapter's slug + its **start** position as a fraction of the book's
+/// total words (`0.0..1.0`).  A beat mapped to a chapter "occurs at" that
+/// chapter's start.
+#[derive(Debug, Clone)]
+pub struct ChapterPos {
+    pub slug: String,
+    pub start: f32,
+}
+
+/// One beat's coverage/drift status.
+#[derive(Debug, Clone, Serialize)]
+pub struct BeatStatus {
+    pub beat: String,
+    pub act: u8,
+    pub target_position: f32,
+    pub mapped_chapter: Option<String>,
+    /// Where the mapped chapter actually starts (None if unmapped or the
+    /// slug doesn't resolve).
+    pub actual_position: Option<f32>,
+    /// `actual - target` (None if unmapped).
+    pub drift: Option<f32>,
+}
+
+/// Word-share of one act: the framework's expected fraction vs. the
+/// draft's actual fraction (None when an act-boundary beat is unmapped).
+#[derive(Debug, Clone, Serialize)]
+pub struct ActPacing {
+    pub act: u8,
+    pub expected: f32,
+    pub actual: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PlanReport {
+    pub beats: Vec<BeatStatus>,
+    /// Unmapped beat names.
+    pub gaps: Vec<String>,
+    pub acts: Vec<ActPacing>,
+    pub warnings: Vec<String>,
+}
+
+/// Diagnose a structure: coverage (gaps), per-beat position drift, and
+/// per-act word-share pacing.  Pure — `chapters` carry the word-derived
+/// positions, so this is fully testable with synthetic inputs.
+pub fn analyze(beats: &[Beat], chapters: &[ChapterPos], drift_threshold: f32) -> PlanReport {
+    use std::collections::{BTreeSet, HashMap};
+    let pos: HashMap<&str, f32> =
+        chapters.iter().map(|c| (c.slug.as_str(), c.start)).collect();
+
+    let mut statuses = Vec::with_capacity(beats.len());
+    let mut gaps = Vec::new();
+    for b in beats {
+        let actual = b
+            .mapped_chapter
+            .as_deref()
+            .and_then(|c| pos.get(c).copied());
+        if b.mapped_chapter.is_none() {
+            gaps.push(b.beat.clone());
+        }
+        statuses.push(BeatStatus {
+            beat: b.beat.clone(),
+            act: b.act,
+            target_position: b.target_position,
+            mapped_chapter: b.mapped_chapter.clone(),
+            actual_position: actual,
+            drift: actual.map(|a| a - b.target_position),
+        });
+    }
+
+    // Acts present, in order. Each act spans [first beat of act, first beat
+    // of the next act) — by target for "expected", by the act-start beat's
+    // mapped chapter for "actual".
+    let acts_vec: Vec<u8> = beats.iter().map(|b| b.act).collect::<BTreeSet<_>>().into_iter().collect();
+    let first_of = |act: u8| beats.iter().find(|b| b.act == act);
+    let target_start = |act: u8| -> f32 {
+        if acts_vec.first() == Some(&act) {
+            0.0
+        } else {
+            first_of(act).map(|b| b.target_position).unwrap_or(0.0)
+        }
+    };
+    let actual_start = |act: u8| -> Option<f32> {
+        if acts_vec.first() == Some(&act) {
+            return Some(0.0); // the book starts at the first act
+        }
+        first_of(act)
+            .and_then(|b| b.mapped_chapter.as_deref())
+            .and_then(|c| pos.get(c).copied())
+    };
+
+    let mut acts = Vec::new();
+    for (i, &a) in acts_vec.iter().enumerate() {
+        let exp_end = acts_vec.get(i + 1).map(|&n| target_start(n)).unwrap_or(1.0);
+        let expected = (exp_end - target_start(a)).max(0.0);
+        let act_end = acts_vec.get(i + 1).map(|&n| actual_start(n)).unwrap_or(Some(1.0));
+        let actual = match (actual_start(a), act_end) {
+            (Some(s), Some(e)) => Some((e - s).max(0.0)),
+            _ => None,
+        };
+        acts.push(ActPacing { act: a, expected, actual });
+    }
+
+    let mut warnings = Vec::new();
+    for g in &gaps {
+        warnings.push(format!("gap: `{g}` is unmapped"));
+    }
+    for s in &statuses {
+        if let (Some(d), Some(a)) = (s.drift, s.actual_position) {
+            if d.abs() > drift_threshold {
+                warnings.push(format!(
+                    "drift: `{}` lands at {:.0}% (target {:.0}%, {:+.0}%)",
+                    s.beat,
+                    a * 100.0,
+                    s.target_position * 100.0,
+                    d * 100.0
+                ));
+            }
+        }
+    }
+    for p in &acts {
+        if let Some(a) = p.actual {
+            let dev = a - p.expected;
+            if dev.abs() > drift_threshold {
+                warnings.push(format!(
+                    "pacing: Act {} is {:.0}% of words (expected {:.0}%, {})",
+                    p.act,
+                    a * 100.0,
+                    p.expected * 100.0,
+                    if dev > 0.0 { "long" } else { "short" }
+                ));
+            }
+        }
+    }
+
+    PlanReport { beats: statuses, gaps, acts, warnings }
+}
+
 // ── built-in framework tables (positions monotonic non-decreasing) ──
 
 const THREE_ACT: &[BeatSpec] = &[
     BeatSpec { name: "Opening", act: 1, target_position: 0.00 },
     BeatSpec { name: "Inciting Incident", act: 1, target_position: 0.10 },
-    BeatSpec { name: "Plot Point One", act: 1, target_position: 0.25 },
+    // Plot Point One launches act 2 (the act-1 turning point); Plot Point
+    // Two launches act 3 — so the act boundaries land at 25% / 75% and the
+    // expected word-share is the canonical 25 / 50 / 25.
+    BeatSpec { name: "Plot Point One", act: 2, target_position: 0.25 },
     BeatSpec { name: "First Pinch Point", act: 2, target_position: 0.375 },
     BeatSpec { name: "Midpoint", act: 2, target_position: 0.50 },
     BeatSpec { name: "Second Pinch Point", act: 2, target_position: 0.625 },
-    BeatSpec { name: "Plot Point Two", act: 2, target_position: 0.75 },
+    BeatSpec { name: "Plot Point Two", act: 3, target_position: 0.75 },
     BeatSpec { name: "Climax", act: 3, target_position: 0.90 },
     BeatSpec { name: "Resolution", act: 3, target_position: 1.00 },
 ];
@@ -279,6 +421,87 @@ mod tests {
         assert_eq!(Framework::parse("Save The Cat"), Some(Framework::SaveTheCat));
         assert_eq!(Framework::parse("7point"), Some(Framework::SevenPoint));
         assert!(Framework::parse("freytag").is_none());
+    }
+
+    fn beat(name: &str, act: u8, target: f32, mapped: Option<&str>) -> Beat {
+        Beat {
+            framework: "t".into(),
+            beat: name.into(),
+            act,
+            target_position: target,
+            mapped_chapter: mapped.map(|s| s.to_string()),
+            threads: vec![],
+            status: "planned".into(),
+            notes: String::new(),
+        }
+    }
+
+    #[test]
+    fn analyze_flags_gaps_drift_and_pacing() {
+        let beats = vec![
+            beat("A", 1, 0.0, Some("c1")),
+            beat("B", 2, 0.5, Some("c2")), // act-2 boundary, lands late
+            beat("C", 3, 0.9, None),       // gap — act-3 boundary unmapped
+        ];
+        let chapters = vec![
+            ChapterPos { slug: "c1".into(), start: 0.0 },
+            ChapterPos { slug: "c2".into(), start: 0.65 },
+        ];
+        let r = analyze(&beats, &chapters, 0.10);
+        assert_eq!(r.gaps, vec!["C"]);
+        let b = r.beats.iter().find(|s| s.beat == "B").unwrap();
+        assert!((b.drift.unwrap() - 0.15).abs() < 1e-5, "B drifts +15%");
+        assert!(r.beats.iter().find(|s| s.beat == "A").unwrap().drift.unwrap().abs() < 1e-6);
+        let act1 = r.acts.iter().find(|p| p.act == 1).unwrap();
+        assert!((act1.expected - 0.5).abs() < 1e-6, "act1 expected 0..0.5");
+        assert!((act1.actual.unwrap() - 0.65).abs() < 1e-5, "act1 actual 0..0.65");
+        // act2's end boundary (C) is unmapped → its actual is unknown.
+        assert!(r.acts.iter().find(|p| p.act == 2).unwrap().actual.is_none());
+        assert!(r.warnings.iter().any(|w| w.contains("gap: `C`")));
+        assert!(r.warnings.iter().any(|w| w.contains("drift: `B`")));
+        assert!(r.warnings.iter().any(|w| w.contains("Act 1") && w.contains("long")));
+    }
+
+    #[test]
+    fn expected_act_proportions_are_canonical() {
+        // Three-act resolves to the canonical 25 / 50 / 25 word-share.
+        let r = analyze(&Framework::ThreeAct.seed_beats(), &[], 0.10);
+        let exp: Vec<f32> = r.acts.iter().map(|a| a.expected).collect();
+        assert_eq!(exp.len(), 3);
+        assert!((exp[0] - 0.25).abs() < 1e-6, "act1 25%");
+        assert!((exp[1] - 0.50).abs() < 1e-6, "act2 50%");
+        assert!((exp[2] - 0.25).abs() < 1e-6, "act3 25%");
+        // Every framework: proportions sum to 1 and act 1 is a sane setup.
+        for fw in Framework::ALL {
+            let r = analyze(&fw.seed_beats(), &[], 0.10);
+            let sum: f32 = r.acts.iter().map(|a| a.expected).sum();
+            assert!((sum - 1.0).abs() < 1e-5, "{} sums to 1", fw.slug());
+            assert!(
+                (0.15..=0.30).contains(&r.acts[0].expected),
+                "{} act1 is a sane setup ({})",
+                fw.slug(),
+                r.acts[0].expected
+            );
+        }
+    }
+
+    #[test]
+    fn analyze_clean_structure_has_no_warnings() {
+        // every beat mapped exactly at its act boundary → expected == actual.
+        let beats = vec![
+            beat("A", 1, 0.0, Some("c1")),
+            beat("B", 2, 0.25, Some("c2")),
+            beat("C", 3, 0.75, Some("c3")),
+        ];
+        let chapters = vec![
+            ChapterPos { slug: "c1".into(), start: 0.0 },
+            ChapterPos { slug: "c2".into(), start: 0.25 },
+            ChapterPos { slug: "c3".into(), start: 0.75 },
+        ];
+        let r = analyze(&beats, &chapters, 0.10);
+        assert!(r.gaps.is_empty());
+        assert!(r.warnings.is_empty(), "unexpected warnings: {:?}", r.warnings);
+        assert!((r.acts.iter().find(|p| p.act == 2).unwrap().actual.unwrap() - 0.5).abs() < 1e-5);
     }
 
     #[test]

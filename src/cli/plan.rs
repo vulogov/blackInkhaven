@@ -20,6 +20,148 @@ use super::PlanCommand;
 pub fn run(project: &Path, cmd: PlanCommand) -> Result<()> {
     match cmd {
         PlanCommand::Init { framework } => init(project, framework.as_deref()),
+        PlanCommand::Check {
+            book_name,
+            json,
+            drift,
+        } => check(project, book_name.as_deref(), json, drift),
+    }
+}
+
+fn check(project: &Path, book_name: Option<&str>, json: bool, drift_pct: Option<u32>) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+
+    // Load the beats from the Planning book (in order).
+    let planning = planning_book(&h)?;
+    let beats: Vec<crate::planning::Beat> = h
+        .children_of(Some(planning.id))
+        .iter()
+        .filter(|n| n.kind == NodeKind::Paragraph)
+        .filter_map(|n| store.get_content(n.id).ok().flatten())
+        .filter_map(|bytes| crate::planning::parse_beat(&String::from_utf8_lossy(&bytes)))
+        .collect();
+    if beats.is_empty() {
+        return Err(Error::Store(
+            "plan check: no beats yet — run `inkhaven plan init` first".into(),
+        ));
+    }
+
+    let book = super::resolve_user_book(&h, book_name, "plan check")
+        .map_err(Error::Store)?
+        .clone();
+    let chapters = chapter_positions(&layout, &h, &book);
+    if chapters.is_empty() {
+        return Err(Error::Store(format!(
+            "plan check: `{}` has no chapters to measure against",
+            book.title
+        )));
+    }
+
+    let drift = (drift_pct.unwrap_or(10) as f32) / 100.0;
+    let report = crate::planning::analyze(&beats, &chapters, drift);
+
+    if json {
+        let out = serde_json::to_string_pretty(&report)
+            .map_err(|e| Error::Store(format!("plan check: {e}")))?;
+        println!("{out}");
+    } else {
+        let fw = beats.first().map(|b| b.framework.as_str()).unwrap_or("");
+        render(&report, &book.title, &chapters, fw, drift);
+    }
+    Ok(())
+}
+
+/// Each chapter's slug + start position as a fraction of the book's total
+/// words (scene-break markers excluded, as the manuscript export does).
+fn chapter_positions(
+    layout: &ProjectLayout,
+    h: &Hierarchy,
+    book: &crate::store::node::Node,
+) -> Vec<crate::planning::ChapterPos> {
+    let mut raw: Vec<(String, usize)> = Vec::new();
+    for ch in h.children_of(Some(book.id)) {
+        if ch.kind != NodeKind::Chapter {
+            continue;
+        }
+        let words: usize = crate::cli::book_walk::chapter_paragraphs_raw(layout, h, ch.id)
+            .iter()
+            .map(|p| crate::audiobook::typst_to_plain(p))
+            .filter(|p| !crate::manuscript::is_scene_break(p))
+            .map(|p| crate::progress::count_words(&p).max(0) as usize)
+            .sum();
+        raw.push((ch.slug.clone(), words));
+    }
+    let total = raw.iter().map(|(_, w)| *w).sum::<usize>().max(1);
+    let mut cum = 0usize;
+    raw.into_iter()
+        .map(|(slug, w)| {
+            let start = cum as f32 / total as f32;
+            cum += w;
+            crate::planning::ChapterPos { slug, start }
+        })
+        .collect()
+}
+
+fn render(
+    report: &crate::planning::PlanReport,
+    book_title: &str,
+    chapters: &[crate::planning::ChapterPos],
+    framework_slug: &str,
+    drift: f32,
+) {
+    let fw = Framework::parse(framework_slug)
+        .map(|f| f.label().to_string())
+        .unwrap_or_else(|| framework_slug.to_string());
+    println!("plan check · {book_title} · {fw} · {} chapter(s)", chapters.len());
+    println!("\nBEATS");
+    for b in &report.beats {
+        let (icon, detail) = match (&b.mapped_chapter, b.actual_position, b.drift) {
+            (None, _, _) => ('✗', "(unmapped)".to_string()),
+            (Some(ch), Some(a), Some(d)) => {
+                let icon = if d.abs() > drift { '⚠' } else { '✓' };
+                (icon, format!("→ {ch} ({:.0}%, {:+.0}%)", a * 100.0, d * 100.0))
+            }
+            (Some(ch), _, _) => ('?', format!("→ {ch} (chapter not found)")),
+        };
+        println!(
+            "  {icon} {:<28} act {}  target {:>3.0}%  {detail}",
+            b.beat,
+            b.act,
+            b.target_position * 100.0,
+        );
+    }
+    println!("\nPACING (act word-share)");
+    for p in &report.acts {
+        let actual = p.actual.map(|a| format!("{:.0}%", a * 100.0)).unwrap_or_else(|| "?".into());
+        let flag = match p.actual {
+            Some(a) if (a - p.expected).abs() > drift => {
+                if a > p.expected {
+                    " ⚠ long"
+                } else {
+                    " ⚠ short"
+                }
+            }
+            _ => "",
+        };
+        println!(
+            "  Act {}  expected {:>3.0}%  actual {:>4}{flag}",
+            p.act,
+            p.expected * 100.0,
+            actual,
+        );
+    }
+    println!();
+    if report.warnings.is_empty() {
+        println!("✓ no structural warnings");
+    } else {
+        println!("{} finding(s):", report.warnings.len());
+        for w in &report.warnings {
+            println!("  ⚠ {w}");
+        }
     }
 }
 
