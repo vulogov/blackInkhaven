@@ -222,6 +222,10 @@ pub struct BeatStatus {
     pub actual_position: Option<f32>,
     /// `actual - target` (None if unmapped).
     pub drift: Option<f32>,
+    /// Thread (arc) slugs this beat advances.
+    pub threads: Vec<String>,
+    /// Referenced thread slugs that don't exist in the Threads book.
+    pub unknown_threads: Vec<String>,
 }
 
 /// Word-share of one act: the framework's expected fraction vs. the
@@ -245,13 +249,19 @@ pub struct PlanReport {
 /// Diagnose a structure: coverage (gaps), per-beat position drift, and
 /// per-act word-share pacing.  Pure — `chapters` carry the word-derived
 /// positions, so this is fully testable with synthetic inputs.
-pub fn analyze(beats: &[Beat], chapters: &[ChapterPos], drift_threshold: f32) -> PlanReport {
+pub fn analyze(
+    beats: &[Beat],
+    chapters: &[ChapterPos],
+    drift_threshold: f32,
+    known_threads: &std::collections::BTreeSet<String>,
+) -> PlanReport {
     use std::collections::{BTreeSet, HashMap};
     let pos: HashMap<&str, f32> =
         chapters.iter().map(|c| (c.slug.as_str(), c.start)).collect();
 
     let mut statuses = Vec::with_capacity(beats.len());
     let mut gaps = Vec::new();
+    let mut mapped_without_thread = 0usize;
     for b in beats {
         let actual = b
             .mapped_chapter
@@ -260,6 +270,15 @@ pub fn analyze(beats: &[Beat], chapters: &[ChapterPos], drift_threshold: f32) ->
         if b.mapped_chapter.is_none() {
             gaps.push(b.beat.clone());
         }
+        let unknown_threads: Vec<String> = b
+            .threads
+            .iter()
+            .filter(|t| !known_threads.is_empty() && !known_threads.contains(*t))
+            .cloned()
+            .collect();
+        if b.mapped_chapter.is_some() && b.threads.is_empty() {
+            mapped_without_thread += 1;
+        }
         statuses.push(BeatStatus {
             beat: b.beat.clone(),
             act: b.act,
@@ -267,6 +286,8 @@ pub fn analyze(beats: &[Beat], chapters: &[ChapterPos], drift_threshold: f32) ->
             mapped_chapter: b.mapped_chapter.clone(),
             actual_position: actual,
             drift: actual.map(|a| a - b.target_position),
+            threads: b.threads.clone(),
+            unknown_threads,
         });
     }
 
@@ -333,6 +354,18 @@ pub fn analyze(beats: &[Beat], chapters: &[ChapterPos], drift_threshold: f32) ->
                 ));
             }
         }
+    }
+    for s in &statuses {
+        for t in &s.unknown_threads {
+            warnings.push(format!("thread: `{}` references unknown thread `{t}`", s.beat));
+        }
+    }
+    // Only nudge once the author is actually using thread-links — don't
+    // nag projects that haven't adopted them.
+    if mapped_without_thread > 0 && beats.iter().any(|b| !b.threads.is_empty()) {
+        warnings.push(format!(
+            "threads: {mapped_without_thread} mapped beat(s) advance no tracked thread — link them in each beat's `threads`"
+        ));
     }
 
     PlanReport { beats: statuses, gaps, acts, warnings }
@@ -479,7 +512,7 @@ mod tests {
             ChapterPos { slug: "c1".into(), start: 0.0 },
             ChapterPos { slug: "c2".into(), start: 0.65 },
         ];
-        let r = analyze(&beats, &chapters, 0.10);
+        let r = analyze(&beats, &chapters, 0.10, &Default::default());
         assert_eq!(r.gaps, vec!["C"]);
         let b = r.beats.iter().find(|s| s.beat == "B").unwrap();
         assert!((b.drift.unwrap() - 0.15).abs() < 1e-5, "B drifts +15%");
@@ -497,7 +530,7 @@ mod tests {
     #[test]
     fn expected_act_proportions_are_canonical() {
         // Three-act resolves to the canonical 25 / 50 / 25 word-share.
-        let r = analyze(&Framework::ThreeAct.seed_beats(), &[], 0.10);
+        let r = analyze(&Framework::ThreeAct.seed_beats(), &[], 0.10, &Default::default());
         let exp: Vec<f32> = r.acts.iter().map(|a| a.expected).collect();
         assert_eq!(exp.len(), 3);
         assert!((exp[0] - 0.25).abs() < 1e-6, "act1 25%");
@@ -505,7 +538,7 @@ mod tests {
         assert!((exp[2] - 0.25).abs() < 1e-6, "act3 25%");
         // Every framework: proportions sum to 1 and act 1 is a sane setup.
         for fw in Framework::ALL {
-            let r = analyze(&fw.seed_beats(), &[], 0.10);
+            let r = analyze(&fw.seed_beats(), &[], 0.10, &Default::default());
             let sum: f32 = r.acts.iter().map(|a| a.expected).sum();
             assert!((sum - 1.0).abs() < 1e-5, "{} sums to 1", fw.slug());
             assert!(
@@ -515,6 +548,30 @@ mod tests {
                 r.acts[0].expected
             );
         }
+    }
+
+    #[test]
+    fn analyze_surfaces_and_validates_thread_links() {
+        let mut a = beat("A", 1, 0.0, Some("c1"));
+        a.threads = vec!["the-inheritance".into()];
+        let mut b = beat("B", 2, 0.5, Some("c2"));
+        b.threads = vec!["ghost-thread".into()]; // not in Threads
+        let c = beat("C", 3, 0.9, Some("c3")); // mapped, no thread
+        let chapters = vec![
+            ChapterPos { slug: "c1".into(), start: 0.0 },
+            ChapterPos { slug: "c2".into(), start: 0.5 },
+            ChapterPos { slug: "c3".into(), start: 0.9 },
+        ];
+        let known: std::collections::BTreeSet<String> =
+            ["the-inheritance".to_string()].into_iter().collect();
+        let r = analyze(&[a, b, c], &chapters, 0.10, &known);
+        // surfaced on the status
+        assert_eq!(r.beats[0].threads, vec!["the-inheritance"]);
+        // unknown thread flagged
+        assert_eq!(r.beats[1].unknown_threads, vec!["ghost-thread"]);
+        assert!(r.warnings.iter().any(|w| w.contains("unknown thread `ghost-thread`")));
+        // C is mapped with no thread, and the author IS using threads → nudge
+        assert!(r.warnings.iter().any(|w| w.contains("advance no tracked thread")));
     }
 
     #[test]
@@ -530,7 +587,7 @@ mod tests {
             ChapterPos { slug: "c2".into(), start: 0.25 },
             ChapterPos { slug: "c3".into(), start: 0.75 },
         ];
-        let r = analyze(&beats, &chapters, 0.10);
+        let r = analyze(&beats, &chapters, 0.10, &Default::default());
         assert!(r.gaps.is_empty());
         assert!(r.warnings.is_empty(), "unexpected warnings: {:?}", r.warnings);
         assert!((r.acts.iter().find(|p| p.act == 2).unwrap().actual.unwrap() - 0.5).abs() < 1e-5);
