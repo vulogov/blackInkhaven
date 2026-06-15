@@ -1155,6 +1155,38 @@ pub enum SubmissionCommand {
         #[arg(long)]
         provider: Option<String>,
     },
+    /// Draft a query letter from the digest into the `Submissions` book.
+    Query {
+        #[arg(long)]
+        book_name: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+    },
+    /// Draft a synopsis (one page; `--long` for 2–3 pages). Spoils the
+    /// ending by design.
+    Synopsis {
+        #[arg(long)]
+        book_name: Option<String>,
+        #[arg(long)]
+        long: bool,
+        #[arg(long)]
+        provider: Option<String>,
+    },
+    /// Suggest comp titles (general-knowledge suggestions, not market
+    /// data).
+    Comps {
+        #[arg(long)]
+        book_name: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+    },
+    /// Draft a logline + elevator pitch.
+    Logline {
+        #[arg(long)]
+        book_name: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+    },
 }
 
 /// 1.3.1+ SUBMISSION-1 — `inkhaven submissions …` sub-subcommands.
