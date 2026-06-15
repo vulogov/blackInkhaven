@@ -21,50 +21,45 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.0 — Print production (PDF-1)
+## Latest release · 1.3.1 — Submission track
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.0.md`](Documentation/RELEASE_NOTES/1.3.0.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.1.md`](Documentation/RELEASE_NOTES/1.3.1.md)
 
-The first minor since the 1.2 line. A reading PDF comes off `inkhaven
-export pdf` in reading order — the wrong order for a printer, missing a
-cover, unchecked for the problems that only show up in print. 1.3.0 ships
-a complete, self-contained **PDF production subsystem** that closes every
-one of those gaps, over a pure-Rust core (`lopdf` + `barcoders`) with **no
-external apps**, exposed identically across the CLI, the `ink.pdf.*` Bund
-stdlib, and the `Ctrl+B O` book-take.
+1.3.0 took a finished book to *print*. 1.3.1 takes it the other way — to an
+**agent or editor**: the format they require, the package around the
+manuscript, and a record of where it went. Pure-Rust, no external apps,
+**no new dependencies**, exposed across the CLI, the `ink.export.*` Bund
+stdlib, and the TUI.
 
-### Imposition (the marquee)
+### The Word document agents require
 
-`inkhaven pdf impose` reorders a book into folding **signatures** for
-hand-binding or a small print shop — perfect-bound / saddle-stitch /
-side-stab, **creep / shingling** from the paper caliper, and crop / fold /
-registration / spine / signature-number marks. Configurable through HJSON
-`imposition:` profiles (`default`, `chapbook`, or your own with any
-`sheets_per_signature`). `--dry-run` prints the plan; **`Ctrl+B Q`**
-previews it in the TUI; `imposed_pdf` imposes the just-built book on
-`Ctrl+B O`.
+`inkhaven docx` emits a Shunn-format **`.docx`** (title page, double-spaced
+12 pt, running header from page 2, scene breaks as `#`) — **hand-rolled
+OOXML** over the in-tree `zip`, so no `docx` dependency and no Word needed
+to produce it. The audit rejected `docx-rs` for hard-pulling a duplicate
+`zip` major version. `docx` is also a `Ctrl+B O` book-take.
 
-### Cover, spine, barcode · preflight · finishing
+### The submission package (AI)
 
-- **`pdf cover --pages N`** generates a cover with the **spine width
-  computed** from the page count + paper stocks, optional front art / back
-  blurb, and a validated **EAN-13 ISBN barcode** (`cover_pdf` book-take;
-  standalone `pdf barcode`).
-- **`pdf preflight`** catches print-only problems — the flagship check is
-  **effective image DPI** via transformation-matrix tracking (the
-  screenshot blown up to fill the page), plus font embedding, page-size
-  consistency, and blanks.
-- **`pdf grayscale` / `optimize` / `watermark` / `sample`** for the
-  finishing pass, alongside the structural toolkit (`info` / `extract` /
-  `delete` / `rotate` / `reorder` / `split` / `merge` / `metadata` /
-  `outline`).
+A novel doesn't fit a prompt, so the generators work against a compact,
+cached **digest** (per-chapter one-line summaries + Characters/Threads).
+`inkhaven submission query | synopsis [--long] | comps | logline` draft
+into a new **Submissions** system book — synopses spoil the ending by
+design, comp titles are Local-pinned, labelled *suggestions*. **`Ctrl+V q`**
+picks a generator and streams it into the AI pane; prompts resolve through
+the Prompts book → `prompts.hjson` → built-in tiers.
+
+### The tracker
+
+`inkhaven submissions add | list | status | add-note | remove` — the
+`.inkhaven/submissions.json` log of where the manuscript went and what came
+back, with a **`Ctrl+V u`** modal. `add-note` is a **timestamped event
+trail** (sent → requested edits → round two).
 
 ### Test stats
 
-Tests 1190 → 1270. Two new runtime dependencies — `lopdf` and `barcoders`,
-both pure-Rust and audited (the first new deps in several cycles, a
-deliberate exception to the zero-new-deps stance). One new tutorial
-([65, Hand-binding](Documentation/Tutorials/65-hand-binding.md)).
+Tests 1270 → 1286, **zero new dependencies**. One new tutorial
+([66, From draft to submission](Documentation/Tutorials/66-submission-package.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
