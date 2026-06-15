@@ -17,11 +17,6 @@
 //! / `header_keyword` / `is_scene_break` from [`crate::manuscript`], so the
 //! typst and `.docx` paths share one notion of the format.
 
-// P0 lands the writer + its fidelity gate; the public API has no in-binary
-// caller until P1 wires the `inkhaven docx` CLI + the `docx` book-take.
-// Retire this allow when P1 lands.
-#![allow(dead_code)]
-
 use std::io::Write;
 
 use anyhow::Result;

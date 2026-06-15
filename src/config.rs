@@ -3104,6 +3104,8 @@ pub struct BookGoal {
 /// than the `.typ` source: `imposed_pdf` (impose into signatures,
 /// see `imposed_pdf_config`) and `cover_pdf` (generate a
 /// cover-and-spine from the page count + `cover:` config).
+/// `docx` (1.3.1) builds a Shunn-format Word document from the
+/// book's chapters (the same model as `inkhaven docx`).
 /// Unknown entries log a WARN and are skipped. Per-format
 /// errors are reported in the status bar but never abort the
 /// take.

@@ -36,6 +36,7 @@ pub mod pdf;
 pub mod replace;
 pub mod tension;
 pub mod manuscript;
+pub mod docx;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -524,6 +525,38 @@ pub enum Command {
         /// breaks (default: the author name).
         #[arg(long)]
         contact: Option<String>,
+    },
+
+    /// 1.3.1+ SUBMISSION-1 — export a user book to a
+    /// Shunn standard-manuscript-format **Word** document
+    /// (`.docx`) — the format agents actually require.
+    /// Same layout as `manuscript` (double-spaced 12 pt,
+    /// title page, `Surname / KEYWORD / page` header from
+    /// page 2, scene breaks as `#`), emitted as OOXML.
+    Docx {
+        /// User-book name (case-insensitive title or
+        /// slug).  Optional when the project has exactly
+        /// one user book.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Output path.  Defaults to
+        /// `<project>/<book-slug>-manuscript.docx`.
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
+        /// Override the title (default: the book's title).
+        #[arg(long)]
+        title: Option<String>,
+        /// Author / byline (default:
+        /// `editor.comment_author`).
+        #[arg(long)]
+        author: Option<String>,
+        /// Title-page contact block; use `\n` for line
+        /// breaks (default: the author name).
+        #[arg(long)]
+        contact: Option<String>,
+        /// Body typeface: `times` (default) or `courier`.
+        #[arg(long)]
+        font: Option<String>,
     },
 
     /// 1.2.18+ R.1 — export a user book to a
@@ -2135,6 +2168,23 @@ impl Cli {
                 title.as_deref(),
                 author.as_deref(),
                 contact.as_deref(),
+            )
+            .map_err(Into::into),
+            Command::Docx {
+                book_name,
+                output,
+                title,
+                author,
+                contact,
+                font,
+            } => docx::run(
+                &project,
+                book_name.as_deref(),
+                output.as_deref(),
+                title.as_deref(),
+                author.as_deref(),
+                contact.as_deref(),
+                font.as_deref(),
             )
             .map_err(Into::into),
             Command::BenchLoad { query, iterations } => {
