@@ -23,6 +23,7 @@
 //! same source-of-truth produces every artefact regardless of how
 //! the user triggered it.
 
+pub mod docx;
 pub mod epub;
 pub mod markdown;
 pub mod tex;

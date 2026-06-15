@@ -58,35 +58,51 @@ panic surfaces, atomic `io_atomic` writes, poison recovery).
 
 ## Phases
 
-### P0 — `.docx` dependency audit + fidelity gate
+### P0 — `.docx` dependency audit + fidelity gate (landed)
 
 The make-or-break risk for track 1 is **whether Word honours what the
 library emits** — running header, double-spacing, page breaks, title-page
-layout. De-risk first, before building on top (the PDF-1 lesson).
+layout. De-risked first, before building on top (the PDF-1 lesson).
 
-- Audit `docx-rs` (above); decide lib vs hand-rolled.
-- Emit a minimal Shunn `.docx` (title page + 2 chapters + a scene break +
-  running header) and verify: (a) a structural unzip test over
-  `word/document.xml` + `word/header*.xml` + `word/styles.xml`, and
-  (b) a manual open in Word / LibreOffice / Google Docs (documented
-  checklist — fonts, double-space, header from page 2, page breaks).
-- Gate: header + double-spacing + different-first-page must survive a Word
-  round-trip. If `docx-rs` can't, hand-roll.
+**Audit outcome — hand-roll, zero new deps.** `docx-rs v0.4.20` (even with
+`--no-default-features`) hard-pulls **`zip v0.6.6`** — a second major
+version alongside the in-tree `zip v2` (EPUB) — plus its own `flate2`
+chain. That duplicate is exactly the tech debt the lopdf `embed_image`
+audit rejected, and `quick-xml`/`serde`/`thiserror` are already shared, so
+the lib buys little. A `.docx` is six small XML parts in a zip, and the
+EPUB writer already hand-rolls a zip container over `zip v2`. Decision:
+**hand-roll OOXML**, no new dependency.
 
-### P1 — Shunn `.docx` export
+**Writer landed.** `src/export/docx.rs` — `build_docx(&ManuscriptMeta,
+&[ManuscriptChapter], DocxFont) -> Result<Vec<u8>>`: the six OOXML parts
+(`[Content_Types].xml`, `_rels/.rels`, `word/_rels/document.xml.rels`,
+`word/styles.xml`, `word/header2.xml`, `word/document.xml`), Shunn layout —
+title page (contact corner + rounded word count + centred title/byline),
+double-spaced 12 pt Times/Courier via `docDefaults`, 1″ margins, ½″
+first-line indent, `<w:titlePg/>` so page 1 has no header, a
+`Surname / KEYWORD / PAGE`-field running header from page 2, chapter
+`pageBreakBefore`, scene breaks as a centred `#`. Reuses `ManuscriptMeta` +
+`round_word_count` / `header_keyword` / `is_scene_break`.
 
-- `src/export/docx.rs` — `build_docx(&ManuscriptMeta, &[ManuscriptChapter])
-  -> Result<Vec<u8>>`:
-  - **Title page** — contact block top-left; word count top-right
-    (`round_word_count`); title + byline centred ~⅓ down.
-  - **Body** — Times New Roman 12 (default) or Courier 12 (`--font` /
-    config), double line spacing, 1″ margins, ½″ first-line indent,
-    each chapter starting a new page ~⅓ down, scene breaks as a centred
-    `#`.
-  - **Running header** from page 2: `Surname / KEYWORD / #`
-    (different-first-page section property).
-  - Reuses `ManuscriptMeta` + the shared `collect_chapters`; word count
-    excludes scene-break markers (as the typst path does).
+**Gate — passed.** Structural unzip tests assert every part, the font +
+`w:line="480"` double-spacing, the header keyword + live `PAGE` field,
+`titlePg` + header ref + page breaks + scene break + XML-escaping;
+`document.xml` parses well-formed via `quick-xml`. `file(1)` identifies the
+output as *Microsoft Word 2007+*. An `#[ignore]`d
+`emit_sample_docx_for_manual_word_check` writes
+`/tmp/inkhaven-shunn-sample.docx` for the manual Word open (the one check a
+headless box can't do; LibreOffice headless convert is the CI option when
+available).
+
+### P1 — Shunn `.docx` surfaces
+
+The writer (`src/export/docx.rs::build_docx`) landed in P0. P1 wires it to
+the surfaces and shares the chapter walk:
+
+- **Shared collector** — promote `cli/manuscript.rs::collect_chapters` to
+  `manuscript::collect_chapters` so the typst and `.docx` paths build their
+  `ManuscriptChapter` list from one place (word count excludes scene-break
+  markers, as today).
 - **CLI** — `inkhaven docx [book] [--out --title --author --contact
   --font times|courier]`, mirroring `inkhaven manuscript`.
 - **Book-take** — `docx` in `output.extra_formats` (source-derived, like
