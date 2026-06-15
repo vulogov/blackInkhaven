@@ -22,6 +22,7 @@ mod export;
 mod git;
 mod grammar;
 mod language_entry;
+mod book_digest;
 mod manuscript;
 mod progress;
 mod replace;
