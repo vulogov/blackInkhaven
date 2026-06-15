@@ -152,6 +152,48 @@ The design risk is **whole-book context** — a novel doesn't fit a prompt.
   the AI pane with `I`-lift into the Submissions book (reuse the
   translate/extract apply pattern). Multilingual prompt fragments.
 
+### P3.5 — `ink.export.*` Bund surface (planned)
+
+P1 deferred a lone `ink.export.docx` because there was no export Bund
+surface to slot into.  This phase adds the whole family, so a release /
+automation script — the thing Bund exists for — can emit every artefact in
+one pass (`ink.pdf.*` already lets a script impose + cover; this completes
+it for the prose formats).
+
+**Feasibility (confirmed).** Bund words reach the project exactly like the
+existing `ink.node.*` words: `active_store(tag)` → `store.project_root()` →
+`ProjectLayout` + `Hierarchy::load(store)`; `active_config(tag)` for
+defaults; `resolve_fs_path` sandboxes the output path (same as
+`ink.pdf.save`).  Book resolution reuses `cli::resolve_user_book`
+(case-insensitive title / slug).  So the words are thin glue over the same
+`build_model` / `build_docx` / `build_typst` / `build_epub` the CLI calls.
+
+**Surface** — new `src/scripting/stdlib/export.rs`, registered in
+`stdlib/mod.rs`:
+
+- `ink.export.docx ( book path -- )` — Shunn Word (Times default).
+- `ink.export.manuscript ( book path -- )` — Shunn typst.
+- `ink.export.epub ( book path -- )`.
+- `ink.export.markdown ( book path -- )` / `ink.export.tex ( book path -- )`.
+
+Each: pull `path` (sandboxed via `resolve_fs_path`), pull `book` (string →
+`resolve_user_book`; empty / `NODATA` → the sole user book when
+unambiguous, mirroring the CLI's optional `--book-name`), build, write via
+`io_atomic`.  v1 is positional; font / title / author overrides via a
+trailing options dict (`ink.export.docx ( book path opts -- )`) is a
+follow-up — the CLI flags already cover the interactive path.
+
+**Policy.** Every `ink.export.*` writes a file → category `FS_WRITE` in
+`WORD_CATEGORIES` (like `ink.pdf.save`), pinned by an
+`export_disk_words_classified` test (mirror `pdf_disk_words_classified`).
+
+**Tests.** A register-on-a-VM smoke (mirror the existing stdlib register
+tests) + the policy classification; export correctness is already covered
+by the `build_docx` / `build_typst` / `build_epub` unit tests.
+
+Small, no new deps, low risk — lands after the generators (P3) or
+independently.
+
 ### P4 — Docs + release
 
 - Tutorial 66 (submission workflow: `.docx` → package → tracker).
