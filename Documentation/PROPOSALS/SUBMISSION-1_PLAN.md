@@ -159,10 +159,27 @@ Solved with the digest.
   Local-pinned + labelled *suggestions* (no invented sales data); synopses
   spoil the ending by design. The system prompt resolves **`prompts.hjson`
   override (key = slug) → built-in**.
-- **Deferred to P3.3** — the **Prompts-book paragraph** override tier
-  (needs the store-walk resolver `App` has); **TUI chords** that stream a
-  generator into the AI pane with `I`-lift; **multilingual** prompt
-  fragments; auto-linking a draft to a tracker record on generate.
+- **P3.3 — TUI generator picker (landed).** `Ctrl+V q` opens
+  `Modal::SubmissionGenPicker`; Enter streams the chosen generator into the
+  AI pane (one-shot, like the typst-error inference) from the current
+  book's **cached** digest. Generator metadata lifted to a shared
+  `src/submission_gen.rs` (`SubmissionKind`) so CLI + TUI agree. The fire
+  path resolves the system prompt through `App::resolve_prompt_template`,
+  so the TUI generators get the **Prompts-book override tier + multilingual
+  fragments for free** (reuse, not new code). *Remaining follow-ups:* a CLI
+  Prompts-book tier; `I`-lift of the streamed draft into the Submissions
+  book; auto-linking a draft to a tracker record.
+
+### P3.5 — `ink.export.*` Bund surface (landed)
+
+`src/scripting/stdlib/export.rs`: `ink.export.docx | manuscript | markdown
+| tex | epub`, each `( book path -- )` — book resolved via
+`cli::resolve_user_book` (empty → sole user book), output sandboxed via
+`resolve_fs_path`, thin glue over the same `build_model`/`build_docx`/
+`build_typst`/`assemble`+`build_markdown`/`build_tex`/`build_epub` builders
+the CLI uses. All five gated `fs_write` (default-denied), pinned by
+`export_disk_words_classified`. Completes for the prose formats what
+`ink.pdf.*` started.
 
 ### P3.5 — `ink.export.*` Bund surface (planned)
 
