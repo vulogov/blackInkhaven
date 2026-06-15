@@ -8345,6 +8345,7 @@ impl App {
             A::OpenImpositionPreview => self.open_imposition_preview(),
             A::OpenSubmissionsTracker => self.open_submissions_tracker(),
             A::OpenSubmissionGen => self.open_submission_gen(),
+            A::OpenPlanOutline => self.open_plan_outline(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
             A::ToggleMouseCapture => self.toggle_mouse_capture(),
@@ -9046,6 +9047,52 @@ impl App {
                     "submission: no digest yet — run `inkhaven submission digest` first".into();
             }
         }
+    }
+
+    /// 1.3.2 PLANNING-1 P2 — open the structure outline (the `plan check`
+    /// report) for the current book.
+    fn open_plan_outline(&mut self) {
+        let Some(book) = self.current_book_node(&self.hierarchy) else {
+            self.status = "plan: select a book first".into();
+            return;
+        };
+        match crate::cli::plan::build_report(&self.store, &self.layout, &self.hierarchy, &book, 0.10)
+        {
+            Ok((report, framework, _n)) => {
+                let warn = report.warnings.len();
+                self.modal = Modal::PlanOutline {
+                    book_title: book.title.clone(),
+                    framework,
+                    report,
+                    cursor: 0,
+                };
+                self.status = format!(
+                    "Structure · {warn} finding(s) · ↑↓ navigate · Esc close"
+                );
+            }
+            Err(e) => self.status = format!("plan: {e}"),
+        }
+    }
+
+    fn plan_outline_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::PlanOutline { report, cursor, .. } = &mut self.modal else {
+            return false;
+        };
+        let n = report.beats.len();
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "plan: closed".into();
+            }
+            KeyCode::Up => *cursor = cursor.saturating_sub(1),
+            KeyCode::Down => {
+                if n > 0 {
+                    *cursor = (*cursor + 1).min(n - 1);
+                }
+            }
+            _ => {}
+        }
+        true
     }
 
     fn submission_gen_handle_key(&mut self, key: KeyEvent) -> bool {
@@ -15926,6 +15973,10 @@ impl App {
         }
         if matches!(self.modal, Modal::SubmissionGenPicker { .. }) {
             self.submission_gen_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::PlanOutline { .. }) {
+            self.plan_outline_handle_key(key);
             return Ok(false);
         }
         if is_llm_picker {

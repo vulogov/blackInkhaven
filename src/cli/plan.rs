@@ -35,8 +35,34 @@ fn check(project: &Path, book_name: Option<&str>, json: bool, drift_pct: Option<
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
 
-    // Load the beats from the Planning book (in order).
-    let planning = planning_book(&h)?;
+    let book = super::resolve_user_book(&h, book_name, "plan check")
+        .map_err(Error::Store)?
+        .clone();
+    let drift = (drift_pct.unwrap_or(10) as f32) / 100.0;
+    let (report, fw, n_chapters) = build_report(&store, &layout, &h, &book, drift)?;
+
+    if json {
+        let out = serde_json::to_string_pretty(&report)
+            .map_err(|e| Error::Store(format!("plan check: {e}")))?;
+        println!("{out}");
+    } else {
+        render(&report, &book.title, n_chapters, &fw, drift);
+    }
+    Ok(())
+}
+
+/// Build the structure report for `book`: load the Planning-book beats,
+/// measure them against the book's chapter positions, and analyze.
+/// Returns `(report, framework_slug, chapter_count)`.  Shared by `plan
+/// check` and the TUI structure-outline view.
+pub(crate) fn build_report(
+    store: &Store,
+    layout: &ProjectLayout,
+    h: &Hierarchy,
+    book: &crate::store::node::Node,
+    drift: f32,
+) -> Result<(crate::planning::PlanReport, String, usize)> {
+    let planning = planning_book(h)?;
     let beats: Vec<crate::planning::Beat> = h
         .children_of(Some(planning.id))
         .iter()
@@ -46,33 +72,19 @@ fn check(project: &Path, book_name: Option<&str>, json: bool, drift_pct: Option<
         .collect();
     if beats.is_empty() {
         return Err(Error::Store(
-            "plan check: no beats yet — run `inkhaven plan init` first".into(),
+            "plan: no beats yet — run `inkhaven plan init` first".into(),
         ));
     }
-
-    let book = super::resolve_user_book(&h, book_name, "plan check")
-        .map_err(Error::Store)?
-        .clone();
-    let chapters = chapter_positions(&layout, &h, &book);
+    let chapters = chapter_positions(layout, h, book);
     if chapters.is_empty() {
         return Err(Error::Store(format!(
-            "plan check: `{}` has no chapters to measure against",
+            "plan: `{}` has no chapters to measure against",
             book.title
         )));
     }
-
-    let drift = (drift_pct.unwrap_or(10) as f32) / 100.0;
-    let report = crate::planning::analyze(&beats, &chapters, drift);
-
-    if json {
-        let out = serde_json::to_string_pretty(&report)
-            .map_err(|e| Error::Store(format!("plan check: {e}")))?;
-        println!("{out}");
-    } else {
-        let fw = beats.first().map(|b| b.framework.as_str()).unwrap_or("");
-        render(&report, &book.title, &chapters, fw, drift);
-    }
-    Ok(())
+    let fw = beats.first().map(|b| b.framework.clone()).unwrap_or_default();
+    let n = chapters.len();
+    Ok((crate::planning::analyze(&beats, &chapters, drift), fw, n))
 }
 
 /// Each chapter's slug + start position as a fraction of the book's total
@@ -109,14 +121,14 @@ fn chapter_positions(
 fn render(
     report: &crate::planning::PlanReport,
     book_title: &str,
-    chapters: &[crate::planning::ChapterPos],
+    chapter_count: usize,
     framework_slug: &str,
     drift: f32,
 ) {
     let fw = Framework::parse(framework_slug)
         .map(|f| f.label().to_string())
         .unwrap_or_else(|| framework_slug.to_string());
-    println!("plan check · {book_title} · {fw} · {} chapter(s)", chapters.len());
+    println!("plan check · {book_title} · {fw} · {chapter_count} chapter(s)");
     println!("\nBEATS");
     for b in &report.beats {
         let (icon, detail) = match (&b.mapped_chapter, b.actual_position, b.drift) {

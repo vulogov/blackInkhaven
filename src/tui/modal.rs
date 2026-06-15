@@ -686,6 +686,15 @@ pub(super) enum Modal {
         /// The cached `BookDigest::as_context()` for the current book.
         context: String,
     },
+    /// 1.3.2 PLANNING-1 P2 — `Ctrl+V Shift+K` structure outline: the
+    /// `plan check` report for the current book, rendered as a position /
+    /// coverage bar per beat + act pacing.  `↑↓` navigate; `Esc` closes.
+    PlanOutline {
+        book_title: String,
+        framework: String,
+        report: crate::planning::PlanReport,
+        cursor: usize,
+    },
     SnapshotPicker {
         /// Kept for potential refresh ops after future snapshot mutations.
         #[allow(dead_code)]
