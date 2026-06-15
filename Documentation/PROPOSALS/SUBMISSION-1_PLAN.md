@@ -111,22 +111,30 @@ the surfaces and shares the chapter walk:
 - Tests: unzip → assert paragraph/section structure, header text, double-
   spacing run property, title-page fields; empty-book guard; font switch.
 
-### P2 — `Submissions` book + tracker
+### P2 — `Submissions` book + tracker (landed)
 
-- Add `("submissions", "Submissions")` to `SYSTEM_BOOKS`. The book holds
-  generated **prose drafts** (query letter v1, synopsis, …) as chapters/
-  paragraphs — first-class, editable, snapshot-able like any prose.
-- **Tracker** — structured sidecar `.inkhaven/submissions.json` (comments/
-  threads precedent), records:
-  `{ id, market, agent, draft_ref (paragraph slug), date_sent,
-     status (drafting|sent|rejected|offer|withdrawn), response_date,
-     next_action_date, notes }`. Atomic writes via `io_atomic`.
-- **CLI** — `inkhaven submissions add|list|set-status|log|export [--json]`.
-- **TUI** — a tracker modal (new `Ctrl+V` chord — pick a free one) listing
-  records with status colours + next-action highlighting; add / update /
-  close inline.
-- **doctor** — optional `stale-submission` scan class (sent, no response
-  past N days → nudge), `--json` for CI parity with the other scans.
+- **P2.1** — `("submissions", "Submissions")` added to `SYSTEM_BOOKS`
+  (after Language; auto-seeds via `ensure_system_books`, existing projects
+  included). The book holds generated **prose drafts**. Tracker:
+  `src/submissions.rs` over the `.inkhaven/submissions.json` sidecar —
+  `SubmissionStatus` / `SubmissionRecord` `{ id, market, agent, draft_ref,
+  date_sent, status (drafting|sent|rejected|offer|withdrawn),
+  response_date, next_action_date, notes, log }` / `SubmissionLog` (atomic
+  `io_atomic`, sequential `S<n>` ids). CLI `inkhaven submissions
+  add|list|status|remove` (`list --json/--status/--open`).
+- **P2.2** — TUI tracker modal on **`Ctrl+V u`** (free in the view table;
+  distinct from `Ctrl+V Shift+U` kill-ring): colour-coded status, yellow
+  next-action dates, cursor row reversed; ↑↓ navigate, `Space`/`s` cycle
+  status (stamps a response date for rejected/offer), `d` remove — both
+  persist. Keybind test pins it vs the kill-ring.
+- **Timestamped note trail** (added on request) — `SubmissionRecord.log:
+  Vec<NoteEntry { date, text }>` (append-only, serde-default,
+  backward-compatible). `inkhaven submissions add-note <id> <text>` stamps
+  today; `list` prints the trail; the modal expands the selected record's
+  trail + chips a 📝N count. Tracks a submission's progression — got a
+  call, requested edits, moving to round two.
+- **Deferred** — the optional `stale-submission` doctor scan (sent, no
+  response past N days → nudge); a small follow-up, not blocking.
 
 ### P3 — Submission-package generators (AI, RAG-grounded)
 
