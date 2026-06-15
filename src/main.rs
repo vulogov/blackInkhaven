@@ -24,6 +24,7 @@ mod grammar;
 mod language_entry;
 mod book_digest;
 mod manuscript;
+mod planning;
 mod progress;
 mod replace;
 mod submission_gen;
