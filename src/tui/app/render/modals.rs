@@ -4069,6 +4069,69 @@ impl super::super::App {
         );
     }
 
+    /// 1.3.1 SUBMISSION-1 P3.3 — the generator picker: a short menu of the
+    /// package pieces; Enter streams the selected one into the AI pane.
+    pub(in crate::tui::app) fn draw_submission_gen_picker_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::SubmissionGenPicker { cursor, .. } = &self.modal else {
+            return;
+        };
+        let kinds = crate::submission_gen::SubmissionKind::ALL;
+        let width = area.width.saturating_sub(6).clamp(40, 64);
+        let height = (kinds.len() as u16 + 4).min(area.height.saturating_sub(2));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Generate submission piece ")
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1);
+        let body = Rect { x: inner.x, y: inner.y, width: inner.width, height: body_h };
+        let footer = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: 1,
+        };
+
+        let lines: Vec<Line> = kinds
+            .iter()
+            .enumerate()
+            .map(|(i, k)| {
+                let sel = i == *cursor;
+                let text = format!("{} {}", if sel { "▶" } else { " " }, k.title());
+                let line = Line::from(text);
+                if sel {
+                    line.style(Style::default().add_modifier(Modifier::REVERSED))
+                } else {
+                    line
+                }
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ pick · Enter → AI pane · Esc cancel ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer,
+        );
+    }
+
     /// 1.2.22 R.3 — the project-replace review: matches grouped by
     /// paragraph, each with a `[x]`/`[ ]` keep/skip box and the matched
     /// span highlighted in its line.  Enter applies the kept ones.

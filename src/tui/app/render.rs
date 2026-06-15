@@ -200,6 +200,10 @@ impl super::App {
             self.draw_submissions_tracker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::SubmissionGenPicker { .. }) {
+            self.draw_submission_gen_picker_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SentenceRhythm { .. }) {
             self.draw_sentence_rhythm_modal(f, area);
             return;

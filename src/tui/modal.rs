@@ -678,6 +678,14 @@ pub(super) enum Modal {
         records: Vec<crate::submissions::SubmissionRecord>,
         cursor: usize,
     },
+    /// 1.3.1 SUBMISSION-1 P3.3 — `Ctrl+V q` submission-package generator
+    /// picker.  `Enter` fires the selected generator into the AI pane using
+    /// the book's cached digest (`context`); `Esc` cancels.
+    SubmissionGenPicker {
+        cursor: usize,
+        /// The cached `BookDigest::as_context()` for the current book.
+        context: String,
+    },
     SnapshotPicker {
         /// Kept for potential refresh ops after future snapshot mutations.
         #[allow(dead_code)]
