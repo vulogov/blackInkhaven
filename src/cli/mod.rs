@@ -1155,6 +1155,19 @@ pub enum PlanCommand {
         #[arg(long)]
         framework: Option<String>,
     },
+    /// Diagnose structure against a book: beat coverage (gaps), per-beat
+    /// position drift, and per-act word-share pacing.  Deterministic — no
+    /// AI.  Map a beat to a chapter by setting `mapped_chapter` in its
+    /// Planning-book paragraph.
+    Check {
+        #[arg(long)]
+        book_name: Option<String>,
+        #[arg(long)]
+        json: bool,
+        /// Drift / pacing tolerance in percent (default 10).
+        #[arg(long)]
+        drift: Option<u32>,
+    },
 }
 
 /// 1.3.1+ SUBMISSION-1 P3 — `inkhaven submission …` (singular): the AI
