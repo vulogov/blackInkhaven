@@ -14932,6 +14932,23 @@ impl App {
                 }
                 continue;
             }
+            // 1.3.1 SUBMISSION-1 — `docx` builds the Shunn Word document
+            // from the store (proper chapters / scene breaks / word count),
+            // not from the combined typst, so it's handled out of band.
+            if fmt == "docx" {
+                match self.take_docx(book, pdf_dest) {
+                    Ok(name) => {
+                        statuses[i] = '✓';
+                        produced.push(name);
+                    }
+                    Err(e) => {
+                        tracing::warn!(target: "inkhaven::take", "docx: {e}");
+                        statuses[i] = '✗';
+                        produced.push("docx error".into());
+                    }
+                }
+                continue;
+            }
             let outcome = self.build_one_extra_format(&fmt, &combined, &book.title);
             let artefact = match outcome {
                 Some(Ok(art)) => art,
@@ -15077,6 +15094,38 @@ impl App {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("cover.pdf")
+            .to_string())
+    }
+
+    /// 1.3.1 SUBMISSION-1 — the `docx` book-take: build the Shunn Word
+    /// document for the just-built book from the store (shared
+    /// `build_model`), writing `<stem>.docx` beside the interior PDF.
+    /// Title/author default from the book + `editor.comment_author`.
+    fn take_docx(&self, book: &crate::store::node::Node, pdf_dest: &Path) -> anyhow::Result<String> {
+        use anyhow::anyhow;
+        let layout = crate::project::ProjectLayout::new(self.store.project_root());
+        let h = crate::store::hierarchy::Hierarchy::load(&self.store)
+            .map_err(|e| anyhow!("hierarchy: {e}"))?;
+        let (meta, chapters) =
+            crate::cli::manuscript::build_model(&layout, &self.cfg, &h, book, None, None, None)
+                .map_err(|e| anyhow!("{e}"))?;
+        let bytes = crate::export::docx::build_docx(
+            &meta,
+            &chapters,
+            crate::export::docx::DocxFont::TimesNewRoman,
+        )
+        .map_err(|e| anyhow!("{e}"))?;
+        let stem = pdf_dest
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("book");
+        let out = pdf_dest.with_file_name(format!("{stem}.docx"));
+        crate::io_atomic::write(&out, &bytes)
+            .map_err(|e| anyhow!("write {}: {e}", out.display()))?;
+        Ok(out
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("book.docx")
             .to_string())
     }
 

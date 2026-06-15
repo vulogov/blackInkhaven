@@ -45,46 +45,8 @@ pub fn run(
         .map_err(Error::Store)?
         .clone();
 
-    let chapters = collect_chapters(&layout, &h, &book);
-    if chapters.is_empty() {
-        return Err(Error::Store(format!(
-            "manuscript: `{}` has no chapters to export",
-            book.title,
-        )));
-    }
-
-    // Word count across the prose (scene-break markers
-    // excluded).
-    let word_count: usize = chapters
-        .iter()
-        .flat_map(|c| &c.paragraphs)
-        .filter(|p| !crate::manuscript::is_scene_break(p))
-        .map(|p| crate::progress::count_words(p).max(0) as usize)
-        .sum();
-
-    let author_name = author
-        .map(str::to_string)
-        .or_else(|| cfg.editor.comment_author.clone())
-        .unwrap_or_else(|| "Author Name".to_string());
-    let surname = author_name
-        .split_whitespace()
-        .last()
-        .unwrap_or("Author")
-        .to_string();
-    let book_title = title
-        .map(str::to_string)
-        .unwrap_or_else(|| crate::cli::epub::clean_title(&book.title));
-
-    let meta = ManuscriptMeta {
-        title: book_title,
-        contact: contact
-            .map(|c| c.replace("\\n", "\n"))
-            .unwrap_or_else(|| author_name.clone()),
-        byline: author_name,
-        surname,
-        word_count,
-    };
-
+    let (meta, chapters) =
+        build_model(&layout, &cfg, &h, &book, title, author, contact)?;
     let typst = build_typst(&meta, &chapters);
 
     let dest = output.map(PathBuf::from).unwrap_or_else(|| {
@@ -100,14 +62,65 @@ pub fn run(
          compile to PDF with: typst compile {}",
         dest.display(),
         chapters.len(),
-        word_count,
-        crate::manuscript::round_word_count(word_count),
+        meta.word_count,
+        crate::manuscript::round_word_count(meta.word_count),
         dest.display(),
     );
     Ok(())
 }
 
-fn collect_chapters(
+/// Build the `(ManuscriptMeta, chapters)` model for a user book — shared by
+/// `inkhaven manuscript` (typst), `inkhaven docx`, and the `docx`
+/// book-take, so all three agree on chapters / word count / title-page
+/// fields.  Errors if the book has no exportable chapters.
+pub(crate) fn build_model(
+    layout: &ProjectLayout,
+    cfg: &Config,
+    h: &Hierarchy,
+    book: &Node,
+    title: Option<&str>,
+    author: Option<&str>,
+    contact: Option<&str>,
+) -> Result<(ManuscriptMeta, Vec<ManuscriptChapter>)> {
+    let chapters = collect_chapters(layout, h, book);
+    if chapters.is_empty() {
+        return Err(Error::Store(format!(
+            "manuscript: `{}` has no chapters to export",
+            book.title,
+        )));
+    }
+    // Word count across the prose (scene-break markers excluded).
+    let word_count: usize = chapters
+        .iter()
+        .flat_map(|c| &c.paragraphs)
+        .filter(|p| !crate::manuscript::is_scene_break(p))
+        .map(|p| crate::progress::count_words(p).max(0) as usize)
+        .sum();
+    let author_name = author
+        .map(str::to_string)
+        .or_else(|| cfg.editor.comment_author.clone())
+        .unwrap_or_else(|| "Author Name".to_string());
+    let surname = author_name
+        .split_whitespace()
+        .last()
+        .unwrap_or("Author")
+        .to_string();
+    let book_title = title
+        .map(str::to_string)
+        .unwrap_or_else(|| crate::cli::epub::clean_title(&book.title));
+    let meta = ManuscriptMeta {
+        title: book_title,
+        contact: contact
+            .map(|c| c.replace("\\n", "\n"))
+            .unwrap_or_else(|| author_name.clone()),
+        byline: author_name,
+        surname,
+        word_count,
+    };
+    Ok((meta, chapters))
+}
+
+pub(crate) fn collect_chapters(
     layout: &ProjectLayout,
     h: &Hierarchy,
     book: &Node,
