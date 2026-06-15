@@ -38,6 +38,7 @@ pub mod tension;
 pub mod manuscript;
 pub mod docx;
 pub mod submissions;
+pub mod submission;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -567,6 +568,12 @@ pub enum Command {
     /// `Submissions` system book.
     #[command(subcommand)]
     Submissions(SubmissionsCommand),
+
+    /// 1.3.1+ SUBMISSION-1 — build the submission package
+    /// (singular): the AI book `digest` now, the query /
+    /// synopsis / comp / logline generators next.
+    #[command(subcommand)]
+    Submission(SubmissionCommand),
 
     /// 1.2.18+ R.1 — export a user book to a
     /// standards-compliant EPUB 3 file.  Walks the
@@ -1128,6 +1135,28 @@ pub enum FactsCommand {
 
 /// 1.3.0 PDF-1 — `inkhaven pdf …` page operations + metadata + outline
 /// over an existing PDF (typically inkhaven's own `Ctrl+B B` output).
+/// 1.3.1+ SUBMISSION-1 P3 — `inkhaven submission …` (singular): the AI
+/// package-build side.  `digest` lands in P3.1; the query / synopsis /
+/// comps / logline generators arrive in P3.2.
+#[derive(Debug, Subcommand)]
+pub enum SubmissionCommand {
+    /// Build (or show the cached) book digest — the compact whole-book
+    /// context the package generators consume: title / author / length /
+    /// chapter one-line summaries + the Characters and Threads books.
+    /// Cached in `.inkhaven/digest-<slug>.json`, rebuilt when the
+    /// manuscript's structure changes or with `--refresh`.
+    Digest {
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Rebuild even if the cached digest is still valid.
+        #[arg(long)]
+        refresh: bool,
+        /// Override the LLM provider for the summary pass.
+        #[arg(long)]
+        provider: Option<String>,
+    },
+}
+
 /// 1.3.1+ SUBMISSION-1 — `inkhaven submissions …` sub-subcommands.
 #[derive(Debug, Subcommand)]
 pub enum SubmissionsCommand {
@@ -2254,6 +2283,9 @@ impl Cli {
             .map_err(Into::into),
             Command::Submissions(cmd) => {
                 submissions::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Submission(cmd) => {
+                submission::run(&project, cmd).map_err(Into::into)
             }
             Command::BenchLoad { query, iterations } => {
                 bench_load::run(&project, &query, iterations)
