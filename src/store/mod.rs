@@ -42,6 +42,7 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("characters", "Characters"),
     ("artefacts", "Artefacts"),
     ("threads", "Threads"),
+    ("planning", "Planning"),
     ("language", "Language"),
     ("submissions", "Submissions"),
     ("typst", "Typst"),
@@ -85,6 +86,13 @@ pub const SYSTEM_TAG_THREADS: &str = "threads";
 /// Arabic, Asian scripts) can use logical
 /// groupings instead of per-letter sections.
 /// See `Documentation/PROPOSALS/LANGUAGE_BOOK.md`.
+/// 1.3.2+ PLANNING-1 — top-level container for story
+/// structure: beats / acts / turning points of a chosen
+/// framework (three-act / Save the Cat / …) as HJSON-fronted
+/// paragraphs (`crate::planning`).  The Planning Board's data
+/// home; the `inkhaven plan` CLI + the structure-outline view
+/// read it.  Orthogonal to Threads (arc payoff) + Timeline (when).
+pub const SYSTEM_TAG_PLANNING: &str = "planning";
 pub const SYSTEM_TAG_LANGUAGES: &str = "language";
 /// 1.3.1+ SUBMISSION-1 — top-level container for the
 /// submission package: generated query-letter / synopsis /

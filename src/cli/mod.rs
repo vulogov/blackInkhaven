@@ -39,6 +39,7 @@ pub mod manuscript;
 pub mod docx;
 pub mod submissions;
 pub mod submission;
+pub mod plan;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -574,6 +575,12 @@ pub enum Command {
     /// synopsis / comp / logline generators next.
     #[command(subcommand)]
     Submission(SubmissionCommand),
+
+    /// 1.3.2+ PLANNING-1 — the Planning Board (story
+    /// structure): `plan init` scaffolds a framework's
+    /// beats; coverage/pacing + AI analyze follow.
+    #[command(subcommand)]
+    Plan(PlanCommand),
 
     /// 1.2.18+ R.1 — export a user book to a
     /// standards-compliant EPUB 3 file.  Walks the
@@ -1135,6 +1142,21 @@ pub enum FactsCommand {
 
 /// 1.3.0 PDF-1 — `inkhaven pdf …` page operations + metadata + outline
 /// over an existing PDF (typically inkhaven's own `Ctrl+B B` output).
+/// 1.3.2+ PLANNING-1 — `inkhaven plan …`: the Planning Board (story
+/// structure).  `init` scaffolds a framework's beats in P0; `check`
+/// (coverage + pacing) and `analyze` (AI) arrive in later phases.
+#[derive(Debug, Subcommand)]
+pub enum PlanCommand {
+    /// Scaffold a story-structure framework's beats into the `Planning`
+    /// system book.
+    Init {
+        /// `three_act` (default) | `save_the_cat` | `story_circle` |
+        /// `hero_journey` | `seven_point`.
+        #[arg(long)]
+        framework: Option<String>,
+    },
+}
+
 /// 1.3.1+ SUBMISSION-1 P3 — `inkhaven submission …` (singular): the AI
 /// package-build side.  `digest` lands in P3.1; the query / synopsis /
 /// comps / logline generators arrive in P3.2.
@@ -2318,6 +2340,9 @@ impl Cli {
             }
             Command::Submission(cmd) => {
                 submission::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Plan(cmd) => {
+                plan::run(&project, cmd).map_err(Into::into)
             }
             Command::BenchLoad { query, iterations } => {
                 bench_load::run(&project, &query, iterations)
