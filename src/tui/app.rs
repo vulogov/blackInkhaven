@@ -8343,6 +8343,7 @@ impl App {
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
             A::OpenImpositionPreview => self.open_imposition_preview(),
+            A::OpenSubmissionsTracker => self.open_submissions_tracker(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
             A::ToggleMouseCapture => self.toggle_mouse_capture(),
@@ -8937,6 +8938,85 @@ impl App {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "imposition: cancelled".into();
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// 1.3.1 SUBMISSION-1 — open the submission tracker modal, loading the
+    /// `.inkhaven/submissions.json` log for the active project.
+    fn open_submissions_tracker(&mut self) {
+        match crate::submissions::SubmissionLog::load(&self.layout.root) {
+            Ok(log) => {
+                self.modal = Modal::SubmissionsTracker {
+                    records: log.records,
+                    cursor: 0,
+                };
+                self.status =
+                    "Submissions · ↑↓ move · Space/s status · d remove · Esc close".into();
+            }
+            Err(e) => self.status = format!("submissions: {e}"),
+        }
+    }
+
+    /// Persist the modal's current record list back to the sidecar.
+    fn save_submissions_modal(&mut self) {
+        if let Modal::SubmissionsTracker { records, .. } = &self.modal {
+            let log = crate::submissions::SubmissionLog {
+                records: records.clone(),
+            };
+            if let Err(e) = log.save(&self.layout.root) {
+                self.status = format!("submissions: {e}");
+            }
+        }
+    }
+
+    fn submissions_tracker_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::SubmissionsTracker { records, cursor } = &mut self.modal else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "submissions: closed".into();
+            }
+            KeyCode::Up => {
+                *cursor = cursor.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                if !records.is_empty() {
+                    *cursor = (*cursor + 1).min(records.len() - 1);
+                }
+            }
+            // Cycle the selected record's status (and persist).
+            KeyCode::Char(' ') | KeyCode::Char('s') => {
+                if let Some(rec) = records.get_mut(*cursor) {
+                    let all = crate::submissions::SubmissionStatus::ALL;
+                    let i = all.iter().position(|s| *s == rec.status).unwrap_or(0);
+                    let next = all[(i + 1) % all.len()];
+                    rec.status = next;
+                    // A terminal response stamps today if none recorded yet.
+                    if matches!(
+                        next,
+                        crate::submissions::SubmissionStatus::Rejected
+                            | crate::submissions::SubmissionStatus::Offer
+                    ) && rec.response_date.is_none()
+                    {
+                        rec.response_date = Some(crate::submissions::today());
+                    }
+                    self.save_submissions_modal();
+                }
+            }
+            // Remove the selected record (and persist).
+            KeyCode::Char('d') => {
+                if *cursor < records.len() {
+                    records.remove(*cursor);
+                    if *cursor > 0 && *cursor >= records.len() {
+                        *cursor -= 1;
+                    }
+                    self.save_submissions_modal();
+                }
             }
             _ => {}
         }
@@ -15744,6 +15824,10 @@ impl App {
         }
         if matches!(self.modal, Modal::ImpositionPreview { .. }) {
             self.imposition_preview_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::SubmissionsTracker { .. }) {
+            self.submissions_tracker_handle_key(key);
             return Ok(false);
         }
         if is_llm_picker {

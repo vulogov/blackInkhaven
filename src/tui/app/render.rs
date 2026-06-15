@@ -196,6 +196,10 @@ impl super::App {
             self.draw_imposition_preview_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::SubmissionsTracker { .. }) {
+            self.draw_submissions_tracker_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SentenceRhythm { .. }) {
             self.draw_sentence_rhythm_modal(f, area);
             return;

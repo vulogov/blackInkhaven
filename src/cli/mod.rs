@@ -1173,6 +1173,13 @@ pub enum SubmissionsCommand {
         #[arg(long)]
         response_date: Option<String>,
     },
+    /// Append a timestamped note to a submission's event trail
+    /// (e.g. "got a call", "requested edits", "moving to round two").
+    AddNote {
+        id: String,
+        /// The note text.
+        text: String,
+    },
     /// Remove a record.
     Remove { id: String },
 }

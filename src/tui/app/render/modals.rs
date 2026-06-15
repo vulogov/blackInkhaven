@@ -3937,6 +3937,138 @@ impl super::super::App {
         );
     }
 
+    /// 1.3.1 SUBMISSION-1 — the submission tracker: one row per record with
+    /// a colour-coded status, the cursor row reversed.  Space/`s` cycles
+    /// status, `d` removes (both persist), Esc closes.
+    pub(in crate::tui::app) fn draw_submissions_tracker_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        use ratatui::style::Color;
+        let Modal::SubmissionsTracker { records, cursor } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(6).clamp(50, 92);
+        // The selected record expands to show its note trail, so reserve
+        // those extra lines too.
+        let extra = records.get(*cursor).map(|r| r.log.len()).unwrap_or(0) as u16;
+        let rows = (records.len() as u16 + extra).max(1);
+        let height = (rows + 4).min(area.height.saturating_sub(2));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Submissions ({}) ", records.len()))
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1);
+        let body = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: body_h,
+        };
+        let footer = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: 1,
+        };
+
+        let status_color = |s: crate::submissions::SubmissionStatus| -> Color {
+            use crate::submissions::SubmissionStatus as S;
+            match s {
+                S::Drafting => Color::Gray,
+                S::Sent => Color::Cyan,
+                S::Rejected => Color::Red,
+                S::Offer => Color::Green,
+                S::Withdrawn => Color::DarkGray,
+            }
+        };
+
+        let mut lines: Vec<Line> = Vec::new();
+        if records.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  No submissions yet — add with: inkhaven submissions add --market \"…\"",
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        } else {
+            for (i, r) in records.iter().enumerate() {
+                let sel = i == *cursor;
+                let mut spans = vec![
+                    Span::raw(if sel { "▶ " } else { "  " }),
+                    Span::raw(format!("{:<4} ", r.id)),
+                    Span::styled(
+                        format!("{:<9} ", r.status.label()),
+                        Style::default()
+                            .fg(status_color(r.status))
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(r.market.clone()),
+                ];
+                if let Some(a) = &r.agent {
+                    spans.push(Span::raw(format!(" · {a}")));
+                }
+                if let Some(d) = &r.date_sent {
+                    spans.push(Span::raw(format!(" · sent {d}")));
+                }
+                if let Some(d) = &r.response_date {
+                    spans.push(Span::raw(format!(" · heard {d}")));
+                }
+                if let Some(d) = &r.next_action_date {
+                    spans.push(Span::styled(
+                        format!(" · next {d}"),
+                        Style::default().fg(Color::Yellow),
+                    ));
+                }
+                if !r.log.is_empty() {
+                    spans.push(Span::styled(
+                        format!(" · 📝{}", r.log.len()),
+                        Style::default().add_modifier(Modifier::DIM),
+                    ));
+                }
+                let line = Line::from(spans);
+                lines.push(if sel {
+                    line.style(Style::default().add_modifier(Modifier::REVERSED))
+                } else {
+                    line
+                });
+                // Expand the selected record's timestamped note trail.
+                if sel {
+                    for entry in &r.log {
+                        lines.push(Line::from(Span::styled(
+                            format!("      [{}] {}", entry.date, entry.text),
+                            Style::default().add_modifier(Modifier::DIM),
+                        )));
+                    }
+                }
+            }
+        }
+        f.render_widget(Paragraph::new(lines), body);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ move · Space/s status · d remove · Esc close ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer,
+        );
+    }
+
     /// 1.2.22 R.3 — the project-replace review: matches grouped by
     /// paragraph, each with a `[x]`/`[ ]` keep/skip box and the matched
     /// span highlighted in its line.  Enter applies the kept ones.

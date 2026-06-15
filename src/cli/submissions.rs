@@ -51,6 +51,7 @@ pub fn run(project: &Path, cmd: SubmissionsCommand) -> Result<()> {
                 response_date: None,
                 next_action_date: next,
                 notes,
+                log: Vec::new(),
             });
             log.save(root).map_err(Error::Store)?;
             println!("submissions: added {id} ({})", status.label());
@@ -101,6 +102,16 @@ pub fn run(project: &Path, cmd: SubmissionsCommand) -> Result<()> {
             println!("submissions: {id} → {label}");
             Ok(())
         }
+        SubmissionsCommand::AddNote { id, text } => {
+            let rec = log
+                .find_mut(&id)
+                .ok_or_else(|| Error::Store(format!("submissions: no record `{id}`")))?;
+            rec.add_note(text);
+            let when = rec.log.last().map(|n| n.date.clone()).unwrap_or_default();
+            log.save(root).map_err(Error::Store)?;
+            println!("submissions: noted {id} ({when})");
+            Ok(())
+        }
         SubmissionsCommand::Remove { id } => {
             if log.remove(&id) {
                 log.save(root).map_err(Error::Store)?;
@@ -136,5 +147,8 @@ fn print_row(r: &SubmissionRecord) {
     println!("{line}");
     if let Some(n) = &r.notes {
         println!("       {n}");
+    }
+    for entry in &r.log {
+        println!("       [{}] {}", entry.date, entry.text);
     }
 }
