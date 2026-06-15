@@ -25,6 +25,7 @@ mod language_entry;
 mod manuscript;
 mod progress;
 mod replace;
+mod submissions;
 mod project;
 mod scripting;
 mod scrivener;
