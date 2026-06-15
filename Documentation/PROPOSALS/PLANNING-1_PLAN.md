@@ -62,7 +62,7 @@ ordered list of `{ beat, act, target_position }`:
 
 ## Phases
 
-### P0 — frameworks + the structure model
+### P0 — frameworks + the structure model (landed)
 
 `src/planning/` (or `src/planning.rs`): the `Framework` enum + the
 built-in beat tables (`{ beat, act, target_position }`), the `Beat` record
@@ -72,7 +72,7 @@ paragraphs in the Planning book. Tests: every built-in framework has
 monotonic target positions in `[0,1]`, act boundaries consistent, distinct
 beat names; round-trip of a beat through HJSON.
 
-### P1 — coverage + pacing engine (deterministic — the sleeper feature)
+### P1 — coverage + pacing engine (deterministic — the sleeper feature) (landed)
 
 The diagnosis, no AI:
 
@@ -88,7 +88,7 @@ The diagnosis, no AI:
 synthetic books with known word distributions → expected drift / pacing
 findings; gap detection; act proportions.
 
-### P2 — the structure-outline view (TUI)
+### P2 — the structure-outline view (TUI) (landed)
 
 A new `Ctrl+V` chord opens the **structure outline** (not a 2-D corkboard —
 terminal-hostile, lower value): beats down the page, each with its target
@@ -96,7 +96,7 @@ position, mapped chapter, status, linked threads, and a **position /
 coverage bar** that shows drift + gaps + act pacing at a glance. Navigate /
 map a beat to the chapter under the cursor / jump to a beat's chapter.
 
-### P3 — AI analyze (the headline)
+### P3 — AI analyze (the headline) (landed)
 
 `inkhaven plan analyze [--book] [--provider]`: over the **1.3.1 digest** +
 the chosen framework, the LLM proposes a beat→chapter mapping and names the
@@ -107,7 +107,7 @@ view + a TUI chord that streams the analysis into the AI pane. Prompt
 resolves through the 3-tier resolver (`plan-analyze` slug → Prompts book →
 `prompts.hjson` → built-in).
 
-### P4 — insight integrations
+### P4 — insight integrations (threads landed; tension overlay deferred)
 
 - **Tension overlay** — plot the actual `tension scan` curve against the
   framework's *expected* tension shape; flag where they diverge ("tension
@@ -115,6 +115,8 @@ resolves through the 3-tier resolver (`plan-analyze` slug → Prompts book →
 - **Threads / Timeline links** — each beat references which thread advances
   + the timeline event(s) it covers, so a beat *does narrative work*. The
   view shows them; `plan check` flags beats that advance no thread.
+
+> **P4 status:** thread-links landed (beats surface + validate their `threads`; `plan check`/outline show them, unknown refs + a no-thread nudge warn). The **tension-curve overlay is deferred** — `tension scan` tracks introduced/resolved threads, not a positional curve; a faithful overlay needs a tension model (expected-tension per beat + derivation from linked-thread tensions), a P4.2.
 
 ### P5 — docs + release
 
