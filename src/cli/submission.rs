@@ -130,61 +130,7 @@ fn ensure_digest(
 
 // ── generators (P3.2) ───────────────────────────────────────────────
 
-/// The submission-package pieces.  Each maps to a draft title + slug (the
-/// paragraph in the `Submissions` book, and the `prompts.hjson` override
-/// key) and a built-in system prompt.
-#[derive(Debug, Clone, Copy)]
-enum Gen {
-    Query,
-    SynopsisShort,
-    SynopsisLong,
-    Comps,
-    Logline,
-}
-
-impl Gen {
-    fn slug(self) -> &'static str {
-        match self {
-            Gen::Query => "submission-query",
-            Gen::SynopsisShort => "submission-synopsis-short",
-            Gen::SynopsisLong => "submission-synopsis-long",
-            Gen::Comps => "submission-comps",
-            Gen::Logline => "submission-logline",
-        }
-    }
-    fn title(self) -> &'static str {
-        match self {
-            Gen::Query => "Query Letter",
-            Gen::SynopsisShort => "Synopsis (short)",
-            Gen::SynopsisLong => "Synopsis (long)",
-            Gen::Comps => "Comp Titles",
-            Gen::Logline => "Logline & Pitch",
-        }
-    }
-    fn builtin_system(self) -> &'static str {
-        match self {
-            Gen::Query => "You are an expert query-letter writer. Using ONLY the supplied book \
-information, draft a one-page query letter: a hook paragraph, a 1–2 paragraph mini-synopsis that \
-does NOT reveal the ending, a short bio line (use a [BIO] placeholder), and a professional closing. \
-~250–350 words. No markdown, no preamble — just the letter.",
-            Gen::SynopsisShort => "You are an expert synopsis writer. Using ONLY the supplied book \
-information, write a ONE-PAGE synopsis (~500 words) covering the COMPLETE arc INCLUDING the ending \
-(a synopsis spoils by design). Present tense, third person, plain prose — no preamble.",
-            Gen::SynopsisLong => "You are an expert synopsis writer. Using ONLY the supplied book \
-information, write a 2–3 page synopsis (~1000–1500 words) covering the COMPLETE arc INCLUDING the \
-ending. Present tense, third person; put each major character's name in CAPS on first mention. \
-Plain prose, no preamble.",
-            Gen::Comps => "You are a well-read acquisitions assistant. Suggest 3–5 comparable \
-published titles (comps) for this book. For each: 'Title by Author — one line on why it's \
-comparable (tone / theme / readership)'. Prefer titles from roughly the last decade in the same \
-category. These are SUGGESTIONS from general knowledge, NOT verified market data — do not invent \
-sales figures or award claims. No preamble.",
-            Gen::Logline => "You are a pitch doctor. Using ONLY the supplied book information, write \
-a single compelling logline (1–2 sentences) followed by a 2–3 sentence elevator pitch. No \
-preamble, no markdown headers.",
-        }
-    }
-}
+use crate::submission_gen::SubmissionKind as Gen;
 
 fn generate(
     project: &Path,
@@ -207,11 +153,7 @@ fn generate(
     let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
     // prompts.hjson override → built-in.
     let system = resolve_system(&layout, kind);
-    let prompt = format!(
-        "BOOK INFORMATION:\n{}\n\nWrite the {} now.",
-        digest.as_context(),
-        kind.title().to_lowercase(),
-    );
+    let prompt = kind.user_prompt(&digest.as_context());
     eprintln!("inkhaven submission {} · model: {model}", kind.slug());
     let raw = run_blocking(&ai, model, &system, &prompt)?;
     let draft = raw.trim().to_string();
@@ -360,22 +302,4 @@ mod tests {
         assert_eq!(truncate_chars(s, 100), s);
     }
 
-    #[test]
-    fn every_generator_has_slug_title_and_builtin() {
-        for g in [Gen::Query, Gen::SynopsisShort, Gen::SynopsisLong, Gen::Comps, Gen::Logline] {
-            assert!(g.slug().starts_with("submission-"));
-            assert!(!g.title().is_empty());
-            assert!(g.builtin_system().len() > 40, "{} has a real prompt", g.slug());
-        }
-        // distinct slugs
-        let slugs: std::collections::BTreeSet<_> =
-            [Gen::Query, Gen::SynopsisShort, Gen::SynopsisLong, Gen::Comps, Gen::Logline]
-                .iter()
-                .map(|g| g.slug())
-                .collect();
-        assert_eq!(slugs.len(), 5);
-        // synopsis instructions diverge short vs long
-        assert!(Gen::SynopsisLong.builtin_system().contains("2–3 page"));
-        assert!(Gen::SynopsisShort.builtin_system().contains("ONE-PAGE"));
-    }
 }

@@ -26,6 +26,7 @@ mod book_digest;
 mod manuscript;
 mod progress;
 mod replace;
+mod submission_gen;
 mod submissions;
 mod project;
 mod scripting;

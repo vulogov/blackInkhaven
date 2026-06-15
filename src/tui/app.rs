@@ -8344,6 +8344,7 @@ impl App {
             A::OpenBookInfo => self.open_book_info(),
             A::OpenImpositionPreview => self.open_imposition_preview(),
             A::OpenSubmissionsTracker => self.open_submissions_tracker(),
+            A::OpenSubmissionGen => self.open_submission_gen(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
             A::ToggleMouseCapture => self.toggle_mouse_capture(),
@@ -9021,6 +9022,99 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// 1.3.1 SUBMISSION-1 P3.3 — open the generator picker, loading the
+    /// current book's *cached* digest (we never block the UI building it —
+    /// the user runs `inkhaven submission digest` first).
+    fn open_submission_gen(&mut self) {
+        let Some(book) = self.current_book_node(&self.hierarchy) else {
+            self.status = "submission: select a book first".into();
+            return;
+        };
+        match crate::book_digest::BookDigest::load(&self.layout.root, &book.slug) {
+            Some(d) => {
+                self.modal = Modal::SubmissionGenPicker {
+                    cursor: 0,
+                    context: d.as_context(),
+                };
+                self.status =
+                    "Submission generator · ↑↓ pick · Enter → AI pane · Esc cancel".into();
+            }
+            None => {
+                self.status =
+                    "submission: no digest yet — run `inkhaven submission digest` first".into();
+            }
+        }
+    }
+
+    fn submission_gen_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::SubmissionGenPicker { cursor, context } = &mut self.modal else {
+            return false;
+        };
+        let n = crate::submission_gen::SubmissionKind::ALL.len();
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "submission: cancelled".into();
+            }
+            KeyCode::Up => *cursor = cursor.saturating_sub(1),
+            KeyCode::Down => *cursor = (*cursor + 1).min(n - 1),
+            KeyCode::Enter => {
+                let kind = crate::submission_gen::SubmissionKind::ALL[(*cursor).min(n - 1)];
+                let context = context.clone();
+                self.fire_submission_generator(kind, &context);
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Fire a generator as a one-shot streaming inference into the AI pane,
+    /// resolving the system prompt through the 3-tier resolver (Prompts
+    /// book → `prompts.hjson` → built-in, language-aware).
+    fn fire_submission_generator(
+        &mut self,
+        kind: crate::submission_gen::SubmissionKind,
+        context: &str,
+    ) {
+        let system = self.resolve_prompt_template(kind.slug(), || kind.builtin_system().to_string());
+        let user_prompt = kind.user_prompt(context);
+        let (model, _env) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("submission: can't reach LLM ({e})");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        self.chat_history.clear();
+        self.inference = None;
+        self.ai_mode = AiMode::None;
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            Some(system),
+            Vec::new(),
+            user_prompt.clone(),
+        );
+        self.inference = Some(Inference {
+            provider,
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = Some(user_prompt);
+        self.modal = Modal::None;
+        self.change_focus(Focus::Ai);
+        self.status = format!(
+            "Generating {} → AI pane (Ctrl+C to select/insert; save the final via `inkhaven submission {}`)",
+            kind.title(),
+            kind.slug(),
+        );
     }
 
     /// Scroll handler for the BookInfo modal — mirrors
@@ -15828,6 +15922,10 @@ impl App {
         }
         if matches!(self.modal, Modal::SubmissionsTracker { .. }) {
             self.submissions_tracker_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::SubmissionGenPicker { .. }) {
+            self.submission_gen_handle_key(key);
             return Ok(false);
         }
         if is_llm_picker {
