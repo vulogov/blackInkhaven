@@ -37,6 +37,7 @@ pub mod replace;
 pub mod tension;
 pub mod manuscript;
 pub mod docx;
+pub mod submissions;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -558,6 +559,14 @@ pub enum Command {
         #[arg(long)]
         font: Option<String>,
     },
+
+    /// 1.3.1+ SUBMISSION-1 — the submission tracker:
+    /// record where the manuscript went, when, and what
+    /// came back (the `.inkhaven/submissions.json`
+    /// sidecar).  The generated drafts live in the
+    /// `Submissions` system book.
+    #[command(subcommand)]
+    Submissions(SubmissionsCommand),
 
     /// 1.2.18+ R.1 — export a user book to a
     /// standards-compliant EPUB 3 file.  Walks the
@@ -1119,6 +1128,55 @@ pub enum FactsCommand {
 
 /// 1.3.0 PDF-1 — `inkhaven pdf …` page operations + metadata + outline
 /// over an existing PDF (typically inkhaven's own `Ctrl+B B` output).
+/// 1.3.1+ SUBMISSION-1 — `inkhaven submissions …` sub-subcommands.
+#[derive(Debug, Subcommand)]
+pub enum SubmissionsCommand {
+    /// Record a new submission.
+    Add {
+        /// Agency / publication / contest.
+        #[arg(long)]
+        market: String,
+        #[arg(long)]
+        agent: Option<String>,
+        /// Paragraph slug of the draft used (in the `Submissions` book).
+        #[arg(long)]
+        draft: Option<String>,
+        /// `drafting` (default) | `sent` | `rejected` | `offer` |
+        /// `withdrawn`.
+        #[arg(long)]
+        status: Option<String>,
+        /// ISO `YYYY-MM-DD` (defaults to today when `--status sent`).
+        #[arg(long)]
+        date_sent: Option<String>,
+        /// Next-action date (ISO `YYYY-MM-DD`).
+        #[arg(long)]
+        next: Option<String>,
+        #[arg(long)]
+        notes: Option<String>,
+    },
+    /// List the log (optionally `--json`, filtered by `--status` or just
+    /// the still-`--open` ones).
+    List {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        status: Option<String>,
+        /// Only submissions still awaiting a response.
+        #[arg(long)]
+        open: bool,
+    },
+    /// Move a record to a new status (stamps a response date for
+    /// `rejected` / `offer`).
+    Status {
+        id: String,
+        status: String,
+        #[arg(long)]
+        response_date: Option<String>,
+    },
+    /// Remove a record.
+    Remove { id: String },
+}
+
 /// Mutating ops write a `<stem>-<op>.pdf` sibling unless `--out` is
 /// given; writes are atomic.  Imposition / cover / barcode / preflight
 /// arrive in later phases.
@@ -2187,6 +2245,9 @@ impl Cli {
                 font.as_deref(),
             )
             .map_err(Into::into),
+            Command::Submissions(cmd) => {
+                submissions::run(&project, cmd).map_err(Into::into)
+            }
             Command::BenchLoad { query, iterations } => {
                 bench_load::run(&project, &query, iterations)
                     .map_err(Into::into)

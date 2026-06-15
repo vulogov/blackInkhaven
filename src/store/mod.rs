@@ -43,6 +43,7 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("artefacts", "Artefacts"),
     ("threads", "Threads"),
     ("language", "Language"),
+    ("submissions", "Submissions"),
     ("typst", "Typst"),
     ("scripts", "Scripts"),
     ("help", "Help"),
@@ -85,6 +86,16 @@ pub const SYSTEM_TAG_THREADS: &str = "threads";
 /// groupings instead of per-letter sections.
 /// See `Documentation/PROPOSALS/LANGUAGE_BOOK.md`.
 pub const SYSTEM_TAG_LANGUAGES: &str = "language";
+/// 1.3.1+ SUBMISSION-1 — top-level container for the
+/// submission package: generated query-letter / synopsis /
+/// comp-title / logline drafts as editable prose paragraphs.
+/// Paired with the `.inkhaven/submissions.json` tracker
+/// sidecar (`crate::submissions`) + the `inkhaven submissions`
+/// CLI; a record's `draft_ref` points at a paragraph slug here.
+// Consumed by P3 (the generators write drafts into this book) + the P2.2
+// TUI; the P2.1 tracker only needs the SYSTEM_BOOKS entry to seed it.
+#[allow(dead_code)]
+pub const SYSTEM_TAG_SUBMISSIONS: &str = "submissions";
 pub const SYSTEM_TAG_TYPST: &str = "typst";
 pub const SYSTEM_TAG_SCRIPTS: &str = "scripts";
 pub const SYSTEM_TAG_HELP: &str = "help";
