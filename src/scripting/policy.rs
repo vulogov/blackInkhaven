@@ -260,6 +260,14 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // stay uncategorised (allowed; they only persist via `save`).
     ("ink.pdf.load", category::FS_READ),
     ("ink.pdf.save", category::FS_WRITE),
+
+    // 1.3.1 SUBMISSION-1 — every `ink.export.*` word writes an artefact to
+    // a (sandboxed) path, so all are fs_write (default-denied).
+    ("ink.export.docx", category::FS_WRITE),
+    ("ink.export.manuscript", category::FS_WRITE),
+    ("ink.export.markdown", category::FS_WRITE),
+    ("ink.export.tex", category::FS_WRITE),
+    ("ink.export.epub", category::FS_WRITE),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
@@ -550,6 +558,22 @@ mod tests {
             Some(category::FS_WRITE),
             "ink.pdf.save must inherit the fs_write deny-by-default gate"
         );
+    }
+
+    // 1.3.1 SUBMISSION-1 — every ink.export.* word writes a file and must
+    // stay fs_write (default-denied).
+    #[test]
+    fn export_disk_words_classified() {
+        let cat = |w: &str| WORD_CATEGORIES.iter().find(|(n, _)| *n == w).map(|(_, c)| *c);
+        for w in [
+            "ink.export.docx",
+            "ink.export.manuscript",
+            "ink.export.markdown",
+            "ink.export.tex",
+            "ink.export.epub",
+        ] {
+            assert_eq!(cat(w), Some(category::FS_WRITE), "{w} must be fs_write");
+        }
     }
 
     #[test]
