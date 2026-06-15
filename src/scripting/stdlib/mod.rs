@@ -9,6 +9,7 @@
 //! of the policy sandbox (P3).
 
 mod app;
+mod export;
 mod fs;
 pub mod helpers;
 mod ink;
@@ -34,5 +35,6 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     fs::register(vm)?;
     review::register(vm)?;
     pdf::register(vm)?;
+    export::register(vm)?;
     Ok(())
 }
