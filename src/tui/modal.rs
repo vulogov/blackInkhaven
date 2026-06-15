@@ -670,6 +670,14 @@ pub(super) enum Modal {
         /// Pre-rendered preview lines (RFC App. D).
         lines: Vec<String>,
     },
+    /// 1.3.1 SUBMISSION-1 — `Ctrl+V u` submission tracker.  Lists the
+    /// `.inkhaven/submissions.json` records; `Space`/`s` cycles the
+    /// selected record's status, `d` removes it (both persist), `Esc`
+    /// closes.
+    SubmissionsTracker {
+        records: Vec<crate::submissions::SubmissionRecord>,
+        cursor: usize,
+    },
     SnapshotPicker {
         /// Kept for potential refresh ops after future snapshot mutations.
         #[allow(dead_code)]

@@ -116,6 +116,8 @@ pub enum Action {
     OpenBookInfo,
     #[serde(rename = "global.open_imposition_preview")]
     OpenImpositionPreview,
+    #[serde(rename = "view.open_submissions_tracker")]
+    OpenSubmissionsTracker,
     #[serde(rename = "global.open_llm_picker")]
     OpenLlmPicker,
     #[serde(rename = "global.toggle_sound")]
@@ -822,6 +824,7 @@ impl Action {
             Action::OpenCredits => "credits".into(),
             Action::OpenBookInfo => "info".into(),
             Action::OpenImpositionPreview => "impose".into(),
+            Action::OpenSubmissionsTracker => "submissions".into(),
             Action::OpenLlmPicker => "LLM".into(),
             Action::ToggleSound => "sound".into(),
             Action::ScheduleAssemble => "assemble".into(),
@@ -987,6 +990,8 @@ impl Action {
                 "Open the current book's info panel: paths, stats, PDF status.".into(),
             Action::OpenImpositionPreview =>
                 "Preview the imposition plan (signatures / sheets / creep) for the built book PDF — Enter imposes (Ctrl+B B to build first). Mnemonic: Q for quire.".into(),
+            Action::OpenSubmissionsTracker =>
+                "Open the submission tracker (the .inkhaven/submissions.json log): Space/s cycles the selected record's status, d removes it (both persist), Esc closes. Add records with `inkhaven submissions add`. Mnemonic: U for sUbmissions.".into(),
             Action::OpenLlmPicker =>
                 "Switch the active LLM provider — choice is persisted to inkhaven.hjson.".into(),
             Action::ToggleSound =>
@@ -1444,6 +1449,9 @@ impl KeyBindings {
                 entry("Shift+p", Action::ViewRecentParagraphPicker, Scope::Any),
                 // 1.2.8+ — kill-ring picker (paragraph undelete history).
                 entry("Shift+u", Action::ViewKillRingPicker, Scope::Any),
+                // 1.3.1 SUBMISSION-1 — submission tracker (U for sUbmissions;
+                // `s` is taken). Distinct from Shift+u (kill-ring picker).
+                entry("u", Action::OpenSubmissionsTracker, Scope::Any),
                 // 1.2.8+ — hidden-character report on the open paragraph.
                 entry("h", Action::ViewHiddenCharsReport, Scope::Any),
                 // 1.2.8+ — show cursor breadcrumb on the status bar.
@@ -1972,6 +1980,23 @@ mod tests {
         assert_eq!(
             k.resolve_view_sub(&upper, Focus::Editor),
             Some(Action::ViewTimeline)
+        );
+    }
+
+    #[test]
+    fn view_u_is_submissions_distinct_from_shift_u_killring() {
+        // 1.3.1: Ctrl+V u opens the submission tracker; Ctrl+V Shift+U
+        // stays the kill-ring picker. Distinct actions, no shadowing.
+        let k = KeyBindings::defaults();
+        let lower = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE);
+        assert_eq!(
+            k.resolve_view_sub(&lower, Focus::Editor),
+            Some(Action::OpenSubmissionsTracker)
+        );
+        let upper = KeyEvent::new(KeyCode::Char('U'), KeyModifiers::SHIFT);
+        assert_eq!(
+            k.resolve_view_sub(&upper, Focus::Editor),
+            Some(Action::ViewKillRingPicker)
         );
     }
 

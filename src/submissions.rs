@@ -55,6 +55,15 @@ impl SubmissionStatus {
     ];
 }
 
+/// One timestamped entry in a submission's running note log — the event
+/// trail (got a call, requested edits, moving to round two, …).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteEntry {
+    /// ISO `YYYY-MM-DD` the note was added.
+    pub date: String,
+    pub text: String,
+}
+
 /// One submission to one market.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubmissionRecord {
@@ -77,6 +86,19 @@ pub struct SubmissionRecord {
     pub next_action_date: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    /// Append-only timestamped event trail (`submissions add-note`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub log: Vec<NoteEntry>,
+}
+
+impl SubmissionRecord {
+    /// Append a timestamped note to the event trail.
+    pub fn add_note(&mut self, text: impl Into<String>) {
+        self.log.push(NoteEntry {
+            date: today(),
+            text: text.into(),
+        });
+    }
 }
 
 /// The whole tracker.
@@ -172,6 +194,7 @@ mod tests {
             response_date: None,
             next_action_date: None,
             notes: None,
+            log: vec![],
         });
         log.records.push(SubmissionRecord {
             id: "S7".into(),
@@ -183,10 +206,33 @@ mod tests {
             response_date: None,
             next_action_date: None,
             notes: None,
+            log: vec![],
         });
         assert_eq!(log.next_id(), "S8", "one past the highest, not the count");
         assert!(log.find_mut("s1").is_some(), "id match is case-insensitive");
         assert!(log.remove("S7") && log.records.len() == 1);
+    }
+
+    #[test]
+    fn add_note_appends_timestamped_entries() {
+        let mut rec = SubmissionRecord {
+            id: "S1".into(),
+            market: "Dream Lit".into(),
+            agent: None,
+            draft_ref: None,
+            date_sent: None,
+            status: SubmissionStatus::Sent,
+            response_date: None,
+            next_action_date: None,
+            notes: None,
+            log: vec![],
+        };
+        rec.add_note("got a call");
+        rec.add_note("requested first 50 pages");
+        assert_eq!(rec.log.len(), 2);
+        assert_eq!(rec.log[0].text, "got a call");
+        assert_eq!(rec.log[1].text, "requested first 50 pages");
+        assert!(!rec.log[0].date.is_empty(), "each note is dated");
     }
 
     #[test]
@@ -205,6 +251,7 @@ mod tests {
             response_date: None,
             next_action_date: Some("2026-08-15".into()),
             notes: None,
+            log: vec![],
         });
         log.save(root).unwrap();
         let back = SubmissionLog::load(root).unwrap();
