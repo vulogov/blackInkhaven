@@ -21,45 +21,41 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.1 — Submission track
+## Latest release · 1.3.2 — The Planning Board
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.1.md`](Documentation/RELEASE_NOTES/1.3.1.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.2.md`](Documentation/RELEASE_NOTES/1.3.2.md)
 
-1.3.0 took a finished book to *print*. 1.3.1 takes it the other way — to an
-**agent or editor**: the format they require, the package around the
-manuscript, and a record of where it went. Pure-Rust, no external apps,
-**no new dependencies**, exposed across the CLI, the `ink.export.*` Bund
-stdlib, and the TUI.
+After taking a book to print (1.3.0) and to an agent (1.3.1), 1.3.2 turns to
+the **front** of the lifecycle — *structure*. Most tools help you organize;
+the Planning Board helps you **diagnose**, turning "something's wrong with
+my middle but I can't see it" into a specific, objective finding. Structure
+is the third axis alongside the Timeline (*when*) and Threads (*arc
+payoff*). Pure-Rust, **no new dependencies**.
 
-### The Word document agents require
+### Lay a framework, then diagnose
 
-`inkhaven docx` emits a Shunn-format **`.docx`** (title page, double-spaced
-12 pt, running header from page 2, scene breaks as `#`) — **hand-rolled
-OOXML** over the in-tree `zip`, so no `docx` dependency and no Word needed
-to produce it. The audit rejected `docx-rs` for hard-pulling a duplicate
-`zip` major version. `docx` is also a `Ctrl+B O` book-take.
+`inkhaven plan init --framework save_the_cat` (or three-act / Story Circle /
+Hero's Journey / Seven-Point) scaffolds a framework's beats into a new
+**Planning** system book; map a beat to a chapter with `mapped_chapter`.
+Then **`inkhaven plan check`** gives the deterministic finding — no AI:
 
-### The submission package (AI)
+- **Coverage** — which beats have a home, which are gaps.
+- **Position drift** — "your Midpoint lands at 64%, target 50%".
+- **Pacing** — each act's *word share* vs. the framework's shape ("Act 1 is
+  30% of your words — long"), the factual version of "the opening drags".
 
-A novel doesn't fit a prompt, so the generators work against a compact,
-cached **digest** (per-chapter one-line summaries + Characters/Threads).
-`inkhaven submission query | synopsis [--long] | comps | logline` draft
-into a new **Submissions** system book — synopses spoil the ending by
-design, comp titles are Local-pinned, labelled *suggestions*. **`Ctrl+V q`**
-picks a generator and streams it into the AI pane; prompts resolve through
-the Prompts book → `prompts.hjson` → built-in tiers.
+### See it, then ask the AI
 
-### The tracker
-
-`inkhaven submissions add | list | status | add-note | remove` — the
-`.inkhaven/submissions.json` log of where the manuscript went and what came
-back, with a **`Ctrl+V u`** modal. `add-note` is a **timestamped event
-trail** (sent → requested edits → round two).
+**`Ctrl+V Shift+K`** renders the report as a position bar per beat (`|`
+target vs `●` actual), colour-coded, with act pacing. **`inkhaven plan
+analyze`** (and `a` in the outline) reads it qualitatively over the 1.3.1
+book digest — naming the sag — and a beat's `threads` connect structure to
+arcs.
 
 ### Test stats
 
-Tests 1270 → 1286, **zero new dependencies**. One new tutorial
-([66, From draft to submission](Documentation/Tutorials/66-submission-package.md)).
+Tests 1286 → 1294, **zero new dependencies**. One new tutorial
+([67, The Planning Board](Documentation/Tutorials/67-planning-board.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
