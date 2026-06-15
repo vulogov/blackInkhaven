@@ -44,6 +44,17 @@ jobs:
             libasound2-dev \
             fonts-dejavu-core
 
+      # The duckdb `bundled` static lib makes the rust-cache balloon to
+      # ~3.7 GB; extracting it on top of the runner's preinstalled
+      # toolchains overflows the disk (tar: "Wrote only 512 of 10240
+      # bytes" = ENOSPC). Reclaim ~20 GB of unused tooling first.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
