@@ -4145,6 +4145,7 @@ impl super::super::App {
             framework,
             report,
             cursor,
+            ..
         } = &self.modal
         else {
             return;
@@ -4258,9 +4259,9 @@ impl super::super::App {
 
         f.render_widget(Paragraph::new(lines), body);
         let summary = if report.warnings.is_empty() {
-            " ✓ no findings · ↑↓ navigate · Esc close ".to_string()
+            " ✓ no findings · ↑↓ · a analyze · Esc ".to_string()
         } else {
-            format!(" {} finding(s) · ↑↓ navigate · Esc close ", report.warnings.len())
+            format!(" {} finding(s) · ↑↓ · a analyze · Esc ", report.warnings.len())
         };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(

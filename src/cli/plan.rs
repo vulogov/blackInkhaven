@@ -25,7 +25,69 @@ pub fn run(project: &Path, cmd: PlanCommand) -> Result<()> {
             json,
             drift,
         } => check(project, book_name.as_deref(), json, drift),
+        PlanCommand::Analyze {
+            book_name,
+            provider,
+        } => analyze(project, book_name.as_deref(), provider.as_deref()),
     }
+}
+
+/// AI structure analysis: over the book digest + the framework, the LLM
+/// maps beats to chapters and names the structural problems.
+fn analyze(project: &Path, book_name: Option<&str>, provider: Option<&str>) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    let book = super::resolve_user_book(&h, book_name, "plan analyze")
+        .map_err(Error::Store)?
+        .clone();
+
+    // Validates beats+chapters exist + yields the framework slug.
+    let (_report, fw_slug, _n) = build_report(&store, &layout, &h, &book, 0.10)?;
+    let fw = Framework::parse(&fw_slug)
+        .ok_or_else(|| Error::Store(format!("plan analyze: unknown framework `{fw_slug}`")))?;
+
+    let digest =
+        crate::cli::submission::ensure_digest(&layout, &cfg, &store, &h, &book, provider, false)?;
+
+    let system = resolve_plan_system(&layout);
+    let prompt = crate::planning::analyze_user_prompt(fw, &digest.as_context());
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    eprintln!("inkhaven plan analyze · {} · model: {model}", fw.label());
+    let raw = run_blocking(&ai, model, &system, &prompt)?;
+    println!("{}", raw.trim());
+    Ok(())
+}
+
+/// `prompts.hjson` override (key = `plan-analyze`) → the built-in system
+/// prompt.
+fn resolve_plan_system(layout: &ProjectLayout) -> String {
+    let path = layout.root.join("prompts.hjson");
+    crate::ai::prompts::PromptLibrary::load(&path)
+        .ok()
+        .and_then(|lib| {
+            lib.find(crate::planning::ANALYZE_SLUG).map(|p| p.template.clone())
+        })
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| crate::planning::analyze_system_prompt().to_string())
+}
+
+fn run_blocking(
+    ai: &crate::ai::AiClient,
+    model: &str,
+    system: &str,
+    prompt: &str,
+) -> Result<String> {
+    crate::ai::stream::collect_blocking(
+        ai.client.clone(),
+        model.to_string(),
+        Some(system.to_string()),
+        prompt.to_string(),
+    )
+    .map_err(|e| Error::Store(format!("inference error: {e}")))
 }
 
 fn check(project: &Path, book_name: Option<&str>, json: bool, drift_pct: Option<u32>) -> Result<()> {
