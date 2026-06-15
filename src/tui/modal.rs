@@ -691,6 +691,7 @@ pub(super) enum Modal {
     /// coverage bar per beat + act pacing.  `↑↓` navigate; `Esc` closes.
     PlanOutline {
         book_title: String,
+        book_slug: String,
         framework: String,
         report: crate::planning::PlanReport,
         cursor: usize,

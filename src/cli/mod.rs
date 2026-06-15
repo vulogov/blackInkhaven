@@ -1168,6 +1168,15 @@ pub enum PlanCommand {
         #[arg(long)]
         drift: Option<u32>,
     },
+    /// AI structure analysis: over the book digest + the framework, map
+    /// the beats to chapters and name the structural problems (the sag,
+    /// missing beats).  Builds the digest if needed.
+    Analyze {
+        #[arg(long)]
+        book_name: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+    },
 }
 
 /// 1.3.1+ SUBMISSION-1 P3 — `inkhaven submission …` (singular): the AI

@@ -167,6 +167,38 @@ fn esc(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+// ── AI analyze (P3) — prompt composers shared by CLI + TUI ──────────
+
+/// The prompt-override slug (Prompts book / `prompts.hjson`) + the title
+/// of the analysis draft.
+pub const ANALYZE_SLUG: &str = "plan-analyze";
+
+pub fn analyze_system_prompt() -> &'static str {
+    "You are a developmental editor with deep command of story structure. Using ONLY the supplied \
+chapter summaries — never invent plot — do two things: (1) map each framework beat to the single \
+best-fitting chapter, or say it has no clear home; (2) diagnose the structure plainly: missing or \
+weak beats, where the middle sags, and pacing problems. Be specific and concise. No preamble."
+}
+
+/// Compose the analyze user prompt from a framework + the book digest's
+/// rendered context (`BookDigest::as_context`).
+pub fn analyze_user_prompt(framework: Framework, digest_context: &str) -> String {
+    let mut beats = String::new();
+    for b in framework.beats() {
+        beats.push_str(&format!(
+            "- {} (act {}, ~{:.0}%)\n",
+            b.name,
+            b.act,
+            b.target_position * 100.0
+        ));
+    }
+    format!(
+        "STORY-STRUCTURE FRAMEWORK: {label}\nBeats (with target position through the book):\n{beats}\n\
+BOOK:\n{digest_context}\n\nMap the beats to chapters, then diagnose the structure.",
+        label = framework.label(),
+    )
+}
+
 // ── coverage + pacing analysis (P1, deterministic) ──────────────────
 
 /// A chapter's slug + its **start** position as a fraction of the book's
@@ -502,6 +534,15 @@ mod tests {
         assert!(r.gaps.is_empty());
         assert!(r.warnings.is_empty(), "unexpected warnings: {:?}", r.warnings);
         assert!((r.acts.iter().find(|p| p.act == 2).unwrap().actual.unwrap() - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn analyze_prompt_carries_framework_and_context() {
+        let p = analyze_user_prompt(Framework::SaveTheCat, "TITLE: X\nCHAPTER SUMMARIES:\n1. Foo");
+        assert!(p.contains("Save the Cat"));
+        assert!(p.contains("Midpoint (act 2, ~50%)"));
+        assert!(p.contains("CHAPTER SUMMARIES:"));
+        assert!(!analyze_system_prompt().is_empty());
     }
 
     #[test]

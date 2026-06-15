@@ -69,8 +69,8 @@ pub fn run(project: &Path, cmd: SubmissionCommand) -> Result<()> {
 
 /// Load the cached digest if it still matches the live manuscript, else
 /// (re)build it with an AI summary pass.  Shared by the `digest`
-/// subcommand and every generator.
-fn ensure_digest(
+/// subcommand, every generator, and `plan analyze`.
+pub(crate) fn ensure_digest(
     layout: &ProjectLayout,
     cfg: &Config,
     store: &Store,

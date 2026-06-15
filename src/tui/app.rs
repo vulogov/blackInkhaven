@@ -9062,12 +9062,13 @@ impl App {
                 let warn = report.warnings.len();
                 self.modal = Modal::PlanOutline {
                     book_title: book.title.clone(),
+                    book_slug: book.slug.clone(),
                     framework,
                     report,
                     cursor: 0,
                 };
                 self.status = format!(
-                    "Structure · {warn} finding(s) · ↑↓ navigate · Esc close"
+                    "Structure · {warn} finding(s) · ↑↓ navigate · a analyze · Esc close"
                 );
             }
             Err(e) => self.status = format!("plan: {e}"),
@@ -9075,7 +9076,14 @@ impl App {
     }
 
     fn plan_outline_handle_key(&mut self, key: KeyEvent) -> bool {
-        let Modal::PlanOutline { report, cursor, .. } = &mut self.modal else {
+        let Modal::PlanOutline {
+            report,
+            cursor,
+            book_slug,
+            framework,
+            ..
+        } = &mut self.modal
+        else {
             return false;
         };
         let n = report.beats.len();
@@ -9090,9 +9098,64 @@ impl App {
                     *cursor = (*cursor + 1).min(n - 1);
                 }
             }
+            // Stream the AI structure analysis into the AI pane.
+            KeyCode::Char('a') => {
+                let (slug, fw) = (book_slug.clone(), framework.clone());
+                self.fire_plan_analysis(&slug, &fw);
+            }
             _ => {}
         }
         true
+    }
+
+    /// 1.3.2 PLANNING-1 P3 — stream the AI structure analysis into the AI
+    /// pane, over the book's **cached** digest + the framework.
+    fn fire_plan_analysis(&mut self, book_slug: &str, framework: &str) {
+        let Some(fw) = crate::planning::Framework::parse(framework) else {
+            self.status = format!("plan: unknown framework `{framework}`");
+            return;
+        };
+        let Some(digest) = crate::book_digest::BookDigest::load(&self.layout.root, book_slug) else {
+            self.status =
+                "plan: no digest yet — run `inkhaven plan analyze` or `submission digest` first".into();
+            return;
+        };
+        let system =
+            self.resolve_prompt_template(crate::planning::ANALYZE_SLUG, || {
+                crate::planning::analyze_system_prompt().to_string()
+            });
+        let user_prompt = crate::planning::analyze_user_prompt(fw, &digest.as_context());
+        let (model, _env) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!("plan: can't reach LLM ({e})");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        self.chat_history.clear();
+        self.inference = None;
+        self.ai_mode = AiMode::None;
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            Some(system),
+            Vec::new(),
+            user_prompt.clone(),
+        );
+        self.inference = Some(Inference {
+            provider,
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = Some(user_prompt);
+        self.modal = Modal::None;
+        self.change_focus(Focus::Ai);
+        self.status = "Analyzing structure → AI pane".into();
     }
 
     fn submission_gen_handle_key(&mut self, key: KeyEvent) -> bool {
