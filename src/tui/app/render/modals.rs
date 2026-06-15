@@ -4210,8 +4210,15 @@ impl super::super::App {
                 }
                 _ => ('✗', Color::Red, "gap".to_string()),
             };
+            let threads = if b.threads.is_empty() {
+                String::new()
+            } else if b.unknown_threads.is_empty() {
+                format!(" ↪{}", b.threads.len())
+            } else {
+                format!(" ↪{}?", b.threads.len())
+            };
             let row = format!(
-                "{icon} {:<22} {} t{:>3.0}% {}",
+                "{icon} {:<22} {} t{:>3.0}% {}{threads}",
                 truncate_to(&b.beat, 22),
                 pos_bar(b.target_position, b.actual_position),
                 b.target_position * 100.0,

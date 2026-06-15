@@ -144,9 +144,31 @@ pub(crate) fn build_report(
             book.title
         )));
     }
+    // Known thread slugs (paragraph slugs under the Threads book) — lets
+    // analyze flag beats referencing a thread that doesn't exist.
+    let known_threads: std::collections::BTreeSet<String> = h
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_THREADS)
+        })
+        .map(|tb| {
+            h.collect_subtree(tb.id)
+                .into_iter()
+                .filter_map(|id| h.get(id))
+                .filter(|n| n.kind == NodeKind::Paragraph)
+                .map(|n| n.slug.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+
     let fw = beats.first().map(|b| b.framework.clone()).unwrap_or_default();
     let n = chapters.len();
-    Ok((crate::planning::analyze(&beats, &chapters, drift), fw, n))
+    Ok((
+        crate::planning::analyze(&beats, &chapters, drift, &known_threads),
+        fw,
+        n,
+    ))
 }
 
 /// Each chapter's slug + start position as a fraction of the book's total
@@ -201,8 +223,13 @@ fn render(
             }
             (Some(ch), _, _) => ('?', format!("→ {ch} (chapter not found)")),
         };
+        let threads = if b.threads.is_empty() {
+            String::new()
+        } else {
+            format!("  ↪ {}", b.threads.join(", "))
+        };
         println!(
-            "  {icon} {:<28} act {}  target {:>3.0}%  {detail}",
+            "  {icon} {:<28} act {}  target {:>3.0}%  {detail}{threads}",
             b.beat,
             b.act,
             b.target_position * 100.0,
