@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use lopdf::{Dictionary, Object, Stream};
+use lopdf::{Dictionary, Object};
 
 use super::doc::PdfDoc;
 use super::geometry::mm_to_pt;
@@ -231,6 +231,7 @@ fn esc(s: &str) -> String {
 mod tests {
     use super::*;
     use crate::pdf::PdfDoc;
+    use lopdf::Stream;
 
     /// A small helper PDF whose pages carry a trivial content stream.
     fn doc_with_content(n: usize) -> PdfDoc {
