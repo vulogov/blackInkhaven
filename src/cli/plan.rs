@@ -342,11 +342,135 @@ pub(crate) fn build_report(
 
     let fw = beats.first().map(|b| b.framework.clone()).unwrap_or_default();
     let n = chapters.len();
-    Ok((
-        crate::planning::analyze(&beats, &chapters, drift, &known_threads),
-        fw,
-        n,
-    ))
+    let mut report = crate::planning::analyze(&beats, &chapters, drift, &known_threads);
+    // Tension curve (1.3.4 P0): expected (framework) vs actual (open-
+    // obligation density). Flat-beat findings join the report's warnings.
+    let curve = build_tension_curve(store, layout, h, book, &beats, &chapters);
+    report.warnings.extend(curve.warnings.iter().cloned());
+    report.tension = Some(curve);
+    Ok((report, fw, n))
+}
+
+/// Assemble the open-obligation spans — the tension ledger (one open
+/// question = weight 1.0) plus open Threads (weight = the thread's 0–10
+/// tension / 10) — and build the tension curve for `book`.
+fn build_tension_curve(
+    store: &Store,
+    layout: &ProjectLayout,
+    h: &Hierarchy,
+    book: &crate::store::node::Node,
+    beats: &[crate::planning::Beat],
+    chapters: &[crate::planning::ChapterPos],
+) -> crate::planning::TensionCurve {
+    use crate::planning::OpenSpan;
+    let mut spans: Vec<OpenSpan> = Vec::new();
+    let idx_pos = |i: usize| chapters.get(i).map(|c| c.start).unwrap_or(1.0);
+
+    // 1) Ledger obligations.
+    if let Ok(ledger) = crate::tension::TensionLedger::load(&layout.root) {
+        let lang = if ledger.language.trim().is_empty() {
+            "english".to_string()
+        } else {
+            ledger.language.clone()
+        };
+        for (intro, resolve) in crate::tension::obligation_spans(&ledger, &lang) {
+            let start = idx_pos(intro);
+            let end = match resolve {
+                Some(r) if r > intro => idx_pos(r),
+                // resolved in its own chapter → still open across it
+                Some(_) => idx_pos(intro + 1),
+                None => 1.0,
+            };
+            spans.push(OpenSpan { start, end: end.max(start), weight: 1.0 });
+        }
+    }
+
+    // 2) Open threads.
+    spans.extend(thread_spans(store, h, book, chapters));
+
+    crate::planning::tension_curve(beats, chapters, &spans, FLAT_THRESHOLD)
+}
+
+/// A beat is flagged *flat* when its actual intensity falls this far below
+/// its (high) expected intensity. Shared by the curve builder + renderer.
+const FLAT_THRESHOLD: f32 = 0.25;
+
+/// For each Threads-book arc the manuscript actually references, an
+/// `OpenSpan` from the first to the last chapter that links it, weighted by
+/// the thread's `tension` (0–10 → 0..1). Best-effort: a thread nothing
+/// links contributes nothing.
+fn thread_spans(
+    store: &Store,
+    h: &Hierarchy,
+    book: &crate::store::node::Node,
+    chapters: &[crate::planning::ChapterPos],
+) -> Vec<crate::planning::OpenSpan> {
+    use crate::planning::OpenSpan;
+    let Some(threads_book) = h.iter().find(|n| {
+        n.kind == NodeKind::Book
+            && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_THREADS)
+    }) else {
+        return Vec::new();
+    };
+    let chapter_idx: std::collections::HashMap<&str, usize> = chapters
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.slug.as_str(), i))
+        .collect();
+
+    let mut spans = Vec::new();
+    for thread in h.children_of(Some(threads_book.id)) {
+        if thread.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let tid = thread.id;
+        let (mut first, mut last): (Option<usize>, Option<usize>) = (None, None);
+        for ch in h.children_of(Some(book.id)) {
+            if ch.kind != NodeKind::Chapter {
+                continue;
+            }
+            let Some(&ci) = chapter_idx.get(ch.slug.as_str()) else {
+                continue;
+            };
+            let references = h.collect_subtree(ch.id).into_iter().any(|pid| {
+                h.get(pid)
+                    .map(|n| n.linked_paragraphs.contains(&tid))
+                    .unwrap_or(false)
+            });
+            if references {
+                first.get_or_insert(ci);
+                last = Some(ci);
+            }
+        }
+        if let (Some(f), Some(l)) = (first, last) {
+            let start = chapters.get(f).map(|c| c.start).unwrap_or(0.0);
+            // open through the last referencing chapter (to the next start)
+            let end = chapters.get(l + 1).map(|c| c.start).unwrap_or(1.0);
+            spans.push(OpenSpan {
+                start,
+                end: end.max(start),
+                weight: thread_tension_weight(store, tid),
+            });
+        }
+    }
+    spans
+}
+
+/// A thread's tension weight: its HJSON `tension` (0–10) / 10, default 0.5
+/// when absent or unparseable.
+fn thread_tension_weight(store: &Store, thread_id: uuid::Uuid) -> f32 {
+    #[derive(serde::Deserialize)]
+    struct T {
+        tension: Option<i32>,
+    }
+    store
+        .get_content(thread_id)
+        .ok()
+        .flatten()
+        .and_then(|b| serde_hjson::from_str::<T>(&String::from_utf8_lossy(&b)).ok())
+        .and_then(|t| t.tension)
+        .map(|t| (t as f32 / 10.0).clamp(0.0, 1.0))
+        .unwrap_or(0.5)
 }
 
 /// Each chapter's slug + start position as a fraction of the book's total
@@ -433,6 +557,35 @@ fn render(
             actual,
         );
     }
+
+    // TENSION (1.3.4): the framework's expected intensity vs the actual
+    // open-obligation density. Deterministic — the overlay (Ctrl+V Shift+K)
+    // draws the same curve graphically.
+    if let Some(t) = &report.tension {
+        println!("\nTENSION (expected vs actual intensity)");
+        if !t.has_actual {
+            println!(
+                "  (no tension data yet — run `inkhaven tension scan`, or link threads to\n   \
+                 beats, to chart the actual curve against the expected shape below)"
+            );
+        }
+        for p in &t.points {
+            let actual = match p.actual {
+                Some(a) => format!("{:>3.0}%", a * 100.0),
+                None => "  —".to_string(),
+            };
+            let flat = matches!((p.gap, p.actual), (Some(g), Some(_)) if p.expected >= 0.5 && g > FLAT_THRESHOLD)
+                .then_some(" ⚠ flat")
+                .unwrap_or("");
+            println!(
+                "  {:<28} expected {:>3.0}%  actual {}{flat}",
+                p.beat,
+                p.expected * 100.0,
+                actual,
+            );
+        }
+    }
+
     println!();
     if report.warnings.is_empty() {
         println!("✓ no structural warnings");

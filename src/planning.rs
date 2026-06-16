@@ -11,12 +11,17 @@
 use serde::{Deserialize, Serialize};
 
 /// A position in the framework's table: name + act (1/2/3) + the target
-/// fraction through the book (`0.0..=1.0`).
+/// fraction through the book (`0.0..=1.0`) + the beat's place on the
+/// framework's dramatic-intensity curve (`expected_tension`, 0 = calm,
+/// 1 = peak). Both `target_position` and `expected_tension` are authored
+/// canon — the shape of the rise and fall — not author data, so nothing
+/// about them is stored per-project or migrated.
 #[derive(Debug, Clone, Copy)]
 pub struct BeatSpec {
     pub name: &'static str,
     pub act: u8,
     pub target_position: f32,
+    pub expected_tension: f32,
 }
 
 /// A beat as stored in a Planning-book paragraph (pure HJSON body).
@@ -324,6 +329,10 @@ pub struct PlanReport {
     /// Thread slugs in the Threads book — the values to put in a beat's
     /// `threads`.
     pub available_threads: Vec<String>,
+    /// Expected-vs-actual narrative intensity (P0 1.3.4). `None` until the
+    /// caller attaches it (the CLI builds the open-obligation spans).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tension: Option<TensionCurve>,
 }
 
 /// Diagnose a structure: coverage (gaps), per-beat position drift, and
@@ -460,78 +469,212 @@ pub fn analyze(
         warnings,
         chapters: chapter_refs,
         available_threads: known_threads.iter().cloned().collect(),
+        tension: None,
+    }
+}
+
+// ── tension curve (P0 1.3.4, deterministic) ─────────────────────────
+
+/// A narrative obligation carrying `weight` tension while it is *open*
+/// across the book-position span `[start, end)` (positions 0..1). Built by
+/// the CLI from the tension ledger (one open question = weight 1.0) and
+/// from open Threads (weight = the thread's 0–10 `tension` / 10). Pure data
+/// so [`tension_curve`] stays testable without any I/O.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenSpan {
+    pub start: f32,
+    pub end: f32,
+    pub weight: f32,
+}
+
+/// One beat on the tension curve: the framework's `expected` intensity vs
+/// the manuscript's `actual` (normalized open-obligation load at the beat's
+/// mapped position).
+#[derive(Debug, Clone, Serialize)]
+pub struct TensionPoint {
+    pub beat: String,
+    /// The beat's mapped chapter start (None if unmapped).
+    pub position: Option<f32>,
+    pub expected: f32,
+    /// Normalized 0..1 open-load at `position` (None if unmapped or no data).
+    pub actual: Option<f32>,
+    /// `expected - actual` (positive = flat against the framework's shape).
+    pub gap: Option<f32>,
+}
+
+/// Expected vs actual narrative intensity across the book.
+#[derive(Debug, Clone, Serialize)]
+pub struct TensionCurve {
+    pub points: Vec<TensionPoint>,
+    /// `(position, normalized actual)` sampled at each chapter start plus
+    /// the book end — the overlay's actual line.
+    pub series: Vec<(f32, f32)>,
+    /// False when there were zero open obligations (no ledger, no linked
+    /// threads): only `expected` is meaningful, render a hint not a curve.
+    pub has_actual: bool,
+    /// Beats flagged flat (high expected, low actual beyond the threshold).
+    pub warnings: Vec<String>,
+}
+
+/// Summed weight of the obligations open at `position`.
+fn open_load(spans: &[OpenSpan], position: f32) -> f32 {
+    spans
+        .iter()
+        .filter(|s| s.start <= position && position < s.end)
+        .map(|s| s.weight)
+        .sum()
+}
+
+/// A stored beat's expected intensity, looked up from its framework table
+/// (canonical — not author data, so nothing to store or migrate). Unknown
+/// framework / beat falls back to a neutral 0.5.
+fn expected_tension_for(framework: &str, beat: &str) -> f32 {
+    Framework::parse(framework)
+        .and_then(|fw| {
+            fw.beats()
+                .iter()
+                .find(|b| b.name == beat)
+                .map(|b| b.expected_tension)
+        })
+        .unwrap_or(0.5)
+}
+
+/// Build the tension curve. Pure: `chapters` supply the sample positions,
+/// `spans` the open obligations. A beat is flagged *flat* when its expected
+/// intensity is high (≥ 0.5) and its actual falls more than `flat_threshold`
+/// below it. Actual is normalized to the book's own peak load, so the
+/// **shape** is comparable to expected even for a lightly-tagged book.
+pub fn tension_curve(
+    beats: &[Beat],
+    chapters: &[ChapterPos],
+    spans: &[OpenSpan],
+    flat_threshold: f32,
+) -> TensionCurve {
+    use std::collections::HashMap;
+    let pos: HashMap<&str, f32> = chapters.iter().map(|c| (c.slug.as_str(), c.start)).collect();
+
+    // Sample at every chapter start, plus the book end.
+    let mut sample_pos: Vec<f32> = chapters.iter().map(|c| c.start).collect();
+    sample_pos.push(1.0);
+    let raw: Vec<f32> = sample_pos.iter().map(|&p| open_load(spans, p)).collect();
+    let max_load = raw.iter().copied().fold(0.0f32, f32::max);
+    let has_actual = max_load > 0.0;
+    let norm = |load: f32| if max_load > 0.0 { (load / max_load).clamp(0.0, 1.0) } else { 0.0 };
+
+    let series: Vec<(f32, f32)> = sample_pos
+        .iter()
+        .zip(&raw)
+        .map(|(&p, &l)| (p, norm(l)))
+        .collect();
+
+    let mut points = Vec::with_capacity(beats.len());
+    let mut warnings = Vec::new();
+    for b in beats {
+        let expected = expected_tension_for(&b.framework, &b.beat);
+        let position = b.mapped_chapter.as_deref().and_then(|c| pos.get(c).copied());
+        let actual = if has_actual {
+            position.map(|p| norm(open_load(spans, p)))
+        } else {
+            None
+        };
+        let gap = actual.map(|a| expected - a);
+        if let Some(g) = gap {
+            if expected >= 0.5 && g > flat_threshold {
+                warnings.push(format!(
+                    "tension: `{}` is flat — actual {:.0}% vs expected {:.0}%",
+                    b.beat,
+                    actual.unwrap_or(0.0) * 100.0,
+                    expected * 100.0
+                ));
+            }
+        }
+        points.push(TensionPoint {
+            beat: b.beat.clone(),
+            position,
+            expected,
+            actual,
+            gap,
+        });
+    }
+    TensionCurve {
+        points,
+        series,
+        has_actual,
+        warnings,
     }
 }
 
 // ── built-in framework tables (positions monotonic non-decreasing) ──
 
 const THREE_ACT: &[BeatSpec] = &[
-    BeatSpec { name: "Opening", act: 1, target_position: 0.00 },
-    BeatSpec { name: "Inciting Incident", act: 1, target_position: 0.10 },
+    BeatSpec { name: "Opening", act: 1, target_position: 0.00, expected_tension: 0.10 },
+    BeatSpec { name: "Inciting Incident", act: 1, target_position: 0.10, expected_tension: 0.35 },
     // Plot Point One launches act 2 (the act-1 turning point); Plot Point
     // Two launches act 3 — so the act boundaries land at 25% / 75% and the
     // expected word-share is the canonical 25 / 50 / 25.
-    BeatSpec { name: "Plot Point One", act: 2, target_position: 0.25 },
-    BeatSpec { name: "First Pinch Point", act: 2, target_position: 0.375 },
-    BeatSpec { name: "Midpoint", act: 2, target_position: 0.50 },
-    BeatSpec { name: "Second Pinch Point", act: 2, target_position: 0.625 },
-    BeatSpec { name: "Plot Point Two", act: 3, target_position: 0.75 },
-    BeatSpec { name: "Climax", act: 3, target_position: 0.90 },
-    BeatSpec { name: "Resolution", act: 3, target_position: 1.00 },
+    BeatSpec { name: "Plot Point One", act: 2, target_position: 0.25, expected_tension: 0.45 },
+    BeatSpec { name: "First Pinch Point", act: 2, target_position: 0.375, expected_tension: 0.55 },
+    BeatSpec { name: "Midpoint", act: 2, target_position: 0.50, expected_tension: 0.65 },
+    BeatSpec { name: "Second Pinch Point", act: 2, target_position: 0.625, expected_tension: 0.75 },
+    BeatSpec { name: "Plot Point Two", act: 3, target_position: 0.75, expected_tension: 0.85 },
+    BeatSpec { name: "Climax", act: 3, target_position: 0.90, expected_tension: 1.00 },
+    BeatSpec { name: "Resolution", act: 3, target_position: 1.00, expected_tension: 0.15 },
 ];
 
 const SAVE_THE_CAT: &[BeatSpec] = &[
-    BeatSpec { name: "Opening Image", act: 1, target_position: 0.00 },
-    BeatSpec { name: "Theme Stated", act: 1, target_position: 0.05 },
-    BeatSpec { name: "Set-Up", act: 1, target_position: 0.08 },
-    BeatSpec { name: "Catalyst", act: 1, target_position: 0.10 },
-    BeatSpec { name: "Debate", act: 1, target_position: 0.15 },
-    BeatSpec { name: "Break into Two", act: 2, target_position: 0.20 },
-    BeatSpec { name: "B Story", act: 2, target_position: 0.22 },
-    BeatSpec { name: "Fun and Games", act: 2, target_position: 0.30 },
-    BeatSpec { name: "Midpoint", act: 2, target_position: 0.50 },
-    BeatSpec { name: "Bad Guys Close In", act: 2, target_position: 0.62 },
-    BeatSpec { name: "All Is Lost", act: 2, target_position: 0.75 },
-    BeatSpec { name: "Dark Night of the Soul", act: 2, target_position: 0.77 },
-    BeatSpec { name: "Break into Three", act: 3, target_position: 0.80 },
-    BeatSpec { name: "Finale", act: 3, target_position: 0.90 },
-    BeatSpec { name: "Final Image", act: 3, target_position: 1.00 },
+    BeatSpec { name: "Opening Image", act: 1, target_position: 0.00, expected_tension: 0.10 },
+    BeatSpec { name: "Theme Stated", act: 1, target_position: 0.05, expected_tension: 0.15 },
+    BeatSpec { name: "Set-Up", act: 1, target_position: 0.08, expected_tension: 0.20 },
+    BeatSpec { name: "Catalyst", act: 1, target_position: 0.10, expected_tension: 0.35 },
+    BeatSpec { name: "Debate", act: 1, target_position: 0.15, expected_tension: 0.30 },
+    BeatSpec { name: "Break into Two", act: 2, target_position: 0.20, expected_tension: 0.40 },
+    BeatSpec { name: "B Story", act: 2, target_position: 0.22, expected_tension: 0.35 },
+    BeatSpec { name: "Fun and Games", act: 2, target_position: 0.30, expected_tension: 0.45 },
+    BeatSpec { name: "Midpoint", act: 2, target_position: 0.50, expected_tension: 0.65 },
+    BeatSpec { name: "Bad Guys Close In", act: 2, target_position: 0.62, expected_tension: 0.75 },
+    BeatSpec { name: "All Is Lost", act: 2, target_position: 0.75, expected_tension: 0.90 },
+    BeatSpec { name: "Dark Night of the Soul", act: 2, target_position: 0.77, expected_tension: 0.80 },
+    BeatSpec { name: "Break into Three", act: 3, target_position: 0.80, expected_tension: 0.70 },
+    BeatSpec { name: "Finale", act: 3, target_position: 0.90, expected_tension: 1.00 },
+    BeatSpec { name: "Final Image", act: 3, target_position: 1.00, expected_tension: 0.15 },
 ];
 
 const STORY_CIRCLE: &[BeatSpec] = &[
-    BeatSpec { name: "You (comfort zone)", act: 1, target_position: 0.00 },
-    BeatSpec { name: "Need", act: 1, target_position: 0.125 },
-    BeatSpec { name: "Go (cross the threshold)", act: 2, target_position: 0.25 },
-    BeatSpec { name: "Search (adapt)", act: 2, target_position: 0.375 },
-    BeatSpec { name: "Find (get what they wanted)", act: 2, target_position: 0.50 },
-    BeatSpec { name: "Take (pay the price)", act: 2, target_position: 0.625 },
-    BeatSpec { name: "Return", act: 3, target_position: 0.75 },
-    BeatSpec { name: "Change", act: 3, target_position: 0.875 },
+    BeatSpec { name: "You (comfort zone)", act: 1, target_position: 0.00, expected_tension: 0.10 },
+    BeatSpec { name: "Need", act: 1, target_position: 0.125, expected_tension: 0.30 },
+    BeatSpec { name: "Go (cross the threshold)", act: 2, target_position: 0.25, expected_tension: 0.45 },
+    BeatSpec { name: "Search (adapt)", act: 2, target_position: 0.375, expected_tension: 0.55 },
+    BeatSpec { name: "Find (get what they wanted)", act: 2, target_position: 0.50, expected_tension: 0.65 },
+    BeatSpec { name: "Take (pay the price)", act: 2, target_position: 0.625, expected_tension: 0.85 },
+    BeatSpec { name: "Return", act: 3, target_position: 0.75, expected_tension: 1.00 },
+    BeatSpec { name: "Change", act: 3, target_position: 0.875, expected_tension: 0.25 },
 ];
 
 const HERO_JOURNEY: &[BeatSpec] = &[
-    BeatSpec { name: "Ordinary World", act: 1, target_position: 0.00 },
-    BeatSpec { name: "Call to Adventure", act: 1, target_position: 0.08 },
-    BeatSpec { name: "Refusal of the Call", act: 1, target_position: 0.12 },
-    BeatSpec { name: "Meeting the Mentor", act: 1, target_position: 0.17 },
-    BeatSpec { name: "Crossing the Threshold", act: 2, target_position: 0.25 },
-    BeatSpec { name: "Tests, Allies, Enemies", act: 2, target_position: 0.35 },
-    BeatSpec { name: "Approach to the Inmost Cave", act: 2, target_position: 0.45 },
-    BeatSpec { name: "The Ordeal", act: 2, target_position: 0.50 },
-    BeatSpec { name: "Reward", act: 2, target_position: 0.60 },
-    BeatSpec { name: "The Road Back", act: 3, target_position: 0.75 },
-    BeatSpec { name: "Resurrection", act: 3, target_position: 0.90 },
-    BeatSpec { name: "Return with the Elixir", act: 3, target_position: 1.00 },
+    BeatSpec { name: "Ordinary World", act: 1, target_position: 0.00, expected_tension: 0.10 },
+    BeatSpec { name: "Call to Adventure", act: 1, target_position: 0.08, expected_tension: 0.35 },
+    BeatSpec { name: "Refusal of the Call", act: 1, target_position: 0.12, expected_tension: 0.30 },
+    BeatSpec { name: "Meeting the Mentor", act: 1, target_position: 0.17, expected_tension: 0.28 },
+    BeatSpec { name: "Crossing the Threshold", act: 2, target_position: 0.25, expected_tension: 0.45 },
+    BeatSpec { name: "Tests, Allies, Enemies", act: 2, target_position: 0.35, expected_tension: 0.50 },
+    BeatSpec { name: "Approach to the Inmost Cave", act: 2, target_position: 0.45, expected_tension: 0.60 },
+    BeatSpec { name: "The Ordeal", act: 2, target_position: 0.50, expected_tension: 0.80 },
+    BeatSpec { name: "Reward", act: 2, target_position: 0.60, expected_tension: 0.45 },
+    BeatSpec { name: "The Road Back", act: 3, target_position: 0.75, expected_tension: 0.65 },
+    BeatSpec { name: "Resurrection", act: 3, target_position: 0.90, expected_tension: 1.00 },
+    BeatSpec { name: "Return with the Elixir", act: 3, target_position: 1.00, expected_tension: 0.15 },
 ];
 
 const SEVEN_POINT: &[BeatSpec] = &[
-    BeatSpec { name: "Hook", act: 1, target_position: 0.00 },
-    BeatSpec { name: "Plot Turn One", act: 2, target_position: 0.25 },
-    BeatSpec { name: "Pinch Point One", act: 2, target_position: 0.375 },
-    BeatSpec { name: "Midpoint", act: 2, target_position: 0.50 },
-    BeatSpec { name: "Pinch Point Two", act: 2, target_position: 0.625 },
-    BeatSpec { name: "Plot Turn Two", act: 3, target_position: 0.75 },
-    BeatSpec { name: "Resolution", act: 3, target_position: 1.00 },
+    BeatSpec { name: "Hook", act: 1, target_position: 0.00, expected_tension: 0.15 },
+    BeatSpec { name: "Plot Turn One", act: 2, target_position: 0.25, expected_tension: 0.40 },
+    BeatSpec { name: "Pinch Point One", act: 2, target_position: 0.375, expected_tension: 0.55 },
+    BeatSpec { name: "Midpoint", act: 2, target_position: 0.50, expected_tension: 0.65 },
+    BeatSpec { name: "Pinch Point Two", act: 2, target_position: 0.625, expected_tension: 0.80 },
+    BeatSpec { name: "Plot Turn Two", act: 3, target_position: 0.75, expected_tension: 0.90 },
+    // The seven-point Resolution *is* the climax-and-wrap, not a separate
+    // denouement — so it carries peak tension, unlike three-act's Resolution.
+    BeatSpec { name: "Resolution", act: 3, target_position: 1.00, expected_tension: 1.00 },
 ];
 
 #[cfg(test)]
@@ -563,10 +706,25 @@ mod tests {
                 );
                 assert!((1..=3).contains(&b.act), "{}/{} act 1..3", fw.slug(), b.name);
                 assert!(b.act >= prev_act, "{}/{} acts non-decreasing", fw.slug(), b.name);
+                assert!(
+                    (0.0..=1.0).contains(&b.expected_tension),
+                    "{}/{} expected_tension in range",
+                    fw.slug(),
+                    b.name
+                );
                 prev_pos = b.target_position;
                 prev_act = b.act;
             }
             assert!(beats[0].target_position < 1e-6, "{} opens at 0", fw.slug());
+            // The opening is calm and the dramatic peak sits in the back half
+            // — the canonical rise-and-fall shape every framework encodes.
+            let peak = beats
+                .iter()
+                .max_by(|a, b| a.expected_tension.partial_cmp(&b.expected_tension).unwrap())
+                .unwrap();
+            assert!((peak.expected_tension - 1.0).abs() < 1e-6, "{} peaks at 1.0", fw.slug());
+            assert!(peak.target_position >= 0.6, "{} peak is in the back half", fw.slug());
+            assert!(beats[0].expected_tension < 0.3, "{} opens calm", fw.slug());
         }
     }
 
@@ -738,5 +896,78 @@ mod tests {
         assert_eq!(back.mapped_chapter.as_deref(), Some("the-wharf"));
         assert_eq!(back.threads, vec!["the-inheritance", "the-secret"]);
         assert_eq!(back.notes, "The truth lands; she can't unsee it.");
+    }
+
+    // ── tension curve (P0 1.3.4) ────────────────────────────────────
+
+    #[test]
+    fn open_load_counts_covering_spans() {
+        let spans = vec![
+            OpenSpan { start: 0.0, end: 0.5, weight: 1.0 },
+            OpenSpan { start: 0.2, end: 0.8, weight: 1.0 },
+            OpenSpan { start: 0.6, end: 1.0, weight: 2.0 },
+        ];
+        assert_eq!(open_load(&spans, 0.1), 1.0); // first only
+        assert_eq!(open_load(&spans, 0.3), 2.0); // first + second
+        assert_eq!(open_load(&spans, 0.7), 3.0); // second + third (weight 2)
+        assert_eq!(open_load(&spans, 0.9), 2.0); // third only
+        assert_eq!(open_load(&spans, 0.5), 1.0); // half-open: first closed at its end
+    }
+
+    #[test]
+    fn expected_tension_resolves_from_framework_table() {
+        assert!((expected_tension_for("three_act", "Climax") - 1.0).abs() < 1e-6);
+        assert!(expected_tension_for("three_act", "Opening") < 0.3);
+        // unknown framework / beat → neutral 0.5
+        assert!((expected_tension_for("nope", "x") - 0.5).abs() < 1e-6);
+        assert!((expected_tension_for("three_act", "Nonexistent") - 0.5).abs() < 1e-6);
+    }
+
+    fn tbeat(name: &str, target: f32, mapped: &str) -> Beat {
+        Beat {
+            framework: "three_act".into(),
+            beat: name.into(),
+            act: 2,
+            target_position: target,
+            mapped_chapter: Some(mapped.into()),
+            threads: vec![],
+            status: "planned".into(),
+            notes: String::new(),
+        }
+    }
+
+    #[test]
+    fn tension_curve_flags_a_flat_high_beat() {
+        let beats = vec![tbeat("Midpoint", 0.5, "mid"), tbeat("Climax", 0.9, "end")];
+        let chapters = vec![
+            ChapterPos { slug: "mid".into(), start: 0.5 },
+            ChapterPos { slug: "end".into(), start: 0.9 },
+        ];
+        // heavy obligations only around the climax; the midpoint is empty
+        let spans = vec![
+            OpenSpan { start: 0.85, end: 1.0, weight: 1.0 },
+            OpenSpan { start: 0.85, end: 1.0, weight: 1.0 },
+            OpenSpan { start: 0.85, end: 1.0, weight: 1.0 },
+        ];
+        let curve = tension_curve(&beats, &chapters, &spans, 0.25);
+        assert!(curve.has_actual);
+        let mid = curve.points.iter().find(|p| p.beat == "Midpoint").unwrap();
+        let climax = curve.points.iter().find(|p| p.beat == "Climax").unwrap();
+        assert_eq!(mid.actual, Some(0.0), "no obligations open at the midpoint");
+        assert_eq!(climax.actual, Some(1.0), "climax carries the normalized peak");
+        // midpoint expected 0.65, actual 0.0 → gap 0.65 > 0.25 → flat
+        assert!(curve.warnings.iter().any(|w| w.contains("Midpoint") && w.contains("flat")));
+        assert!(!curve.warnings.iter().any(|w| w.contains("Climax")), "climax isn't flat");
+    }
+
+    #[test]
+    fn tension_curve_no_data_is_expected_only() {
+        let beats = vec![tbeat("Midpoint", 0.5, "mid")];
+        let chapters = vec![ChapterPos { slug: "mid".into(), start: 0.5 }];
+        let curve = tension_curve(&beats, &chapters, &[], 0.25);
+        assert!(!curve.has_actual, "no spans → no actual curve");
+        assert_eq!(curve.points[0].actual, None);
+        assert!(curve.points[0].expected > 0.6, "expected still resolves from the table");
+        assert!(curve.warnings.is_empty(), "no flat flags without data");
     }
 }
