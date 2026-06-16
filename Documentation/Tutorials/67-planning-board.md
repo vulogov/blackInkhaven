@@ -89,6 +89,18 @@ Re-run `plan check` and the beat resolves:
 (Prefer the editor, but the same edit works from any text editor on the
 beat's `.typ` file under `books/planning/` — inkhaven reloads it.)
 
+**Or skip the hand-edit entirely.** `plan map` does the write-back for you,
+straight from the slugs `plan check` just printed:
+
+```sh
+inkhaven plan map Midpoint --chapter the-reveal --threads the-inheritance
+inkhaven plan unmap "All Is Lost"     # clears mapped_chapter back to null
+```
+
+The beat is matched by name, slug, or beat-number; the mapping lands in its
+Planning-book HJSON exactly as the hand-edit would. This is the same
+primitive the interactive outline (§4) uses.
+
 ## 3. Check the structure
 
 ```sh
@@ -137,6 +149,17 @@ outline: every beat as a position bar — `|` is where the framework wants
 it, `●` where it actually lands — colour-coded on-target / drift / gap,
 with the act pacing below. `↪N` marks beats that advance threads.
 
+The outline is **interactive** — you map without leaving it:
+
+- `↑↓` browse beats; the selected beat's intention shows under the bar.
+- **`m`** opens a chapter picker and maps the selected beat to your choice
+  (the write-back from §2, no HJSON editing).
+- **`s`** cycles the beat's status (planned → drafted → revised → done).
+- **`a`** streams the AI analysis into the AI pane (§5).
+
+So the tighten-the-structure loop — *see the drift, map the beat, watch it
+snap to target* — never leaves this one view.
+
 ## 5. Ask the AI
 
 For the qualitative read, over the book digest:
@@ -150,7 +173,36 @@ It maps each beat to the best-fitting chapter and names the problems —
 real midpoint is missing."* From the outline view, **`a`** streams the same
 analysis into the AI pane. Its prompt resolves through the usual three
 tiers (a `plan-analyze` paragraph in your Prompts book → `prompts.hjson` →
-built-in), so the editorial voice is tunable.
+built-in), so the editorial voice is tunable. To keep an analysis you like,
+press **`L`** in the AI pane — it files the response as a *Structural
+Analysis* paragraph in the Planning book, next to your beats.
+
+## 6. Start from nothing (plan-first)
+
+The sections above diagnose an existing draft. You can also run the Board
+the other way — skeleton first, prose later. Give a framework a one-line
+premise and let it write the beat sheet:
+
+```sh
+inkhaven plan init --framework save_the_cat
+inkhaven plan scaffold --premise "A lighthouse keeper's daughter inherits a
+  debt that can only be paid by the secret her father drowned to keep."
+```
+
+`scaffold` writes a concrete **intention** into every beat — what actually
+happens there in *this* story, not the generic beat description — which the
+outline then shows under each bar. Add `--chapters` to materialize a
+**chapter shell** per beat, named from the beat and pre-linked via
+`mapped_chapter`:
+
+```sh
+inkhaven plan scaffold --premise "…" --chapters
+```
+
+That's opt-in and guarded — it refuses to run once the book has chapters,
+so it can't clobber a draft. The result is a mapped beat sheet and a
+chapter scaffold you can start writing into, with `plan check` already
+green because every beat has a home.
 
 ## Threads do narrative work
 
