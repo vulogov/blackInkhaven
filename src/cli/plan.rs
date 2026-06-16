@@ -139,19 +139,13 @@ pub(crate) fn build_report(
     book: &crate::store::node::Node,
     drift: f32,
 ) -> Result<(crate::planning::PlanReport, String, usize)> {
-    let planning = planning_book(h)?;
-    let beats: Vec<crate::planning::Beat> = h
-        .children_of(Some(planning.id))
-        .iter()
-        .filter(|n| n.kind == NodeKind::Paragraph)
-        .filter_map(|n| store.get_content(n.id).ok().flatten())
-        .filter_map(|bytes| crate::planning::parse_beat(&String::from_utf8_lossy(&bytes)))
-        .collect();
-    if beats.is_empty() {
+    let pairs = load_beats(store, h);
+    if pairs.is_empty() {
         return Err(Error::Store(
             "plan: no beats yet — run `inkhaven plan init` first".into(),
         ));
     }
+    let beats: Vec<crate::planning::Beat> = pairs.into_iter().map(|(_, b)| b).collect();
     let chapters = chapter_positions(layout, h, book);
     if chapters.is_empty() {
         return Err(Error::Store(format!(
@@ -377,6 +371,47 @@ fn known_thread_slugs(h: &Hierarchy) -> std::collections::BTreeSet<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The Planning-book beats as `(node id, Beat)`, in order — the report's
+/// `beats` aligns with this by index.  Shared by `build_report` and the
+/// TUI (which needs the node ids to write a mapping back).
+pub(crate) fn load_beats(
+    store: &Store,
+    h: &Hierarchy,
+) -> Vec<(uuid::Uuid, crate::planning::Beat)> {
+    let Ok(planning) = planning_book(h) else {
+        return Vec::new();
+    };
+    h.children_of(Some(planning.id))
+        .iter()
+        .filter(|n| n.kind == NodeKind::Paragraph)
+        .filter_map(|n| {
+            store
+                .get_content(n.id)
+                .ok()
+                .flatten()
+                .and_then(|b| crate::planning::parse_beat(&String::from_utf8_lossy(&b)))
+                .map(|beat| (n.id, beat))
+        })
+        .collect()
+}
+
+/// Load a beat's HJSON, apply `edit`, and write it back (disk-first, then
+/// the bdslib content update).  The interactive-mapping primitive.
+pub(crate) fn edit_beat(
+    store: &Store,
+    node: &mut crate::store::node::Node,
+    edit: impl FnOnce(&mut crate::planning::Beat),
+) -> Result<()> {
+    let body = store
+        .get_content(node.id)
+        .map_err(|e| Error::Store(e.to_string()))?
+        .ok_or_else(|| Error::Store("plan: beat has no content".into()))?;
+    let mut beat = crate::planning::parse_beat(&String::from_utf8_lossy(&body))
+        .ok_or_else(|| Error::Store("plan: beat body is not valid HJSON".into()))?;
+    edit(&mut beat);
+    save_beat(store, node, &beat)
 }
 
 /// Re-render a beat into its Planning-book paragraph (disk-first, then the
