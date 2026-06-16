@@ -44,6 +44,11 @@ pub fn run(project: &Path, cmd: PlanCommand) -> Result<()> {
             book_name.as_deref(),
         ),
         PlanCommand::Unmap { beat } => unmap(project, &beat),
+        PlanCommand::Scaffold {
+            premise,
+            framework,
+            provider,
+        } => scaffold(project, &premise, framework.as_deref(), provider.as_deref()),
     }
 }
 
@@ -67,7 +72,11 @@ fn analyze(project: &Path, book_name: Option<&str>, provider: Option<&str>) -> R
     let digest =
         crate::cli::submission::ensure_digest(&layout, &cfg, &store, &h, &book, provider, false)?;
 
-    let system = resolve_plan_system(&layout);
+    let system = resolve_plan_prompt(
+        &layout,
+        crate::planning::ANALYZE_SLUG,
+        crate::planning::analyze_system_prompt(),
+    );
     let prompt = crate::planning::analyze_user_prompt(fw, &digest.as_context());
     let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
     let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
@@ -77,17 +86,72 @@ fn analyze(project: &Path, book_name: Option<&str>, provider: Option<&str>) -> R
     Ok(())
 }
 
-/// `prompts.hjson` override (key = `plan-analyze`) → the built-in system
-/// prompt.
-fn resolve_plan_system(layout: &ProjectLayout) -> String {
+/// `prompts.hjson` override (key = `slug`) → `builtin`.
+fn resolve_plan_prompt(layout: &ProjectLayout, slug: &str, builtin: &str) -> String {
     let path = layout.root.join("prompts.hjson");
     crate::ai::prompts::PromptLibrary::load(&path)
         .ok()
-        .and_then(|lib| {
-            lib.find(crate::planning::ANALYZE_SLUG).map(|p| p.template.clone())
-        })
+        .and_then(|lib| lib.find(slug).map(|p| p.template.clone()))
         .filter(|t| !t.trim().is_empty())
-        .unwrap_or_else(|| crate::planning::analyze_system_prompt().to_string())
+        .unwrap_or_else(|| builtin.to_string())
+}
+
+/// PLANNING-2 P2 — fill each beat's intention from a premise.
+fn scaffold(
+    project: &Path,
+    premise: &str,
+    framework_override: Option<&str>,
+    provider: Option<&str>,
+) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+
+    let pairs = load_beats(&store, &h);
+    if pairs.is_empty() {
+        return Err(Error::Store(
+            "plan scaffold: no beats — run `inkhaven plan init` first".into(),
+        ));
+    }
+    let fw_slug = framework_override
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| pairs[0].1.framework.clone());
+    let fw = Framework::parse(&fw_slug)
+        .ok_or_else(|| Error::Store(format!("plan scaffold: unknown framework `{fw_slug}`")))?;
+    let beats: Vec<crate::planning::Beat> = pairs.iter().map(|(_, b)| b.clone()).collect();
+
+    let system = resolve_plan_prompt(
+        &layout,
+        crate::planning::SCAFFOLD_SLUG,
+        crate::planning::scaffold_system_prompt(),
+    );
+    let prompt = crate::planning::scaffold_user_prompt(fw, premise);
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    eprintln!("inkhaven plan scaffold · {} · model: {model}", fw.label());
+    let raw = run_blocking(&ai, model, &system, &prompt)?;
+    let intentions = crate::planning::parse_scaffold(&raw, &beats);
+
+    let mut filled = 0usize;
+    for (id, beat) in &pairs {
+        if let Some((_, intention)) = intentions.iter().find(|(n, _)| n == &beat.beat) {
+            let intention = intention.clone();
+            if let Some(mut node) = h.get(*id).cloned() {
+                edit_beat(&store, &mut node, |b| b.notes = intention)?;
+                filled += 1;
+            }
+        }
+    }
+    println!("plan scaffold: filled {filled}/{} beat intentions", beats.len());
+    if filled < beats.len() {
+        eprintln!(
+            "  ({} beat(s) unmatched — fill those by hand, or re-run)",
+            beats.len() - filled
+        );
+    }
+    Ok(())
 }
 
 fn run_blocking(
