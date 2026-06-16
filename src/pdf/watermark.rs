@@ -94,11 +94,9 @@ pub fn apply_watermark(doc: &mut PdfDoc, spec: &WatermarkSpec) -> Result<usize> 
     // Image pixel size (to preserve aspect) + the shared XObject, added once.
     let image_obj = match &spec.image {
         Some(path) => {
-            let stream = super::cover::image_xobject(path)?;
-            let w = stream.dict.get(b"Width").ok().and_then(|o| o.as_float().ok()).unwrap_or(1.0);
-            let h = stream.dict.get(b"Height").ok().and_then(|o| o.as_float().ok()).unwrap_or(1.0);
+            let (stream, w, h) = super::cover::image_xobject(path)?;
             let id = doc.document_mut().add_object(stream);
-            Some((id, w.max(1.0), h.max(1.0)))
+            Some((id, (w.max(1) as f32), (h.max(1) as f32)))
         }
         None => None,
     };

@@ -43,6 +43,7 @@ pub struct CoverSpec {
     pub spine_width_mm: f32,
     pub bleed_mm: f32,
     pub front_image: Option<std::path::PathBuf>,
+    pub image_fit: ImageFit,
     pub spine_text: SpineText,
     pub back_text: Option<String>,
     pub barcode: Option<BarcodeSpec>,
@@ -60,6 +61,9 @@ pub struct CoverConfig {
     pub interior_stock: String,
     pub cover_stock: String,
     pub spine_font_size_pt: f32,
+    /// `cover` (default) | `fit` | `stretch` — how the front art fills its
+    /// region (see [`ImageFit`]).
+    pub image_fit: String,
 }
 
 impl Default for CoverConfig {
@@ -71,6 +75,7 @@ impl Default for CoverConfig {
             interior_stock: paper::DEFAULT_INTERIOR.into(),
             cover_stock: paper::DEFAULT_COVER.into(),
             spine_font_size_pt: 11.0,
+            image_fit: "cover".into(),
         }
     }
 }
@@ -116,6 +121,7 @@ impl CoverConfig {
             spine_width_mm: spine,
             bleed_mm: self.bleed_mm,
             front_image: req.front_image.clone(),
+            image_fit: ImageFit::parse(&self.image_fit),
             spine_text: SpineText {
                 title: req.title.clone(),
                 author: req.author.clone(),
@@ -147,15 +153,14 @@ pub fn build_cover(spec: &CoverSpec) -> Result<PdfDoc> {
     let mut xobj = Dictionary::new();
     let mut c = String::new();
 
-    // Front image — fills the front region out to the right bleed edge.
+    // Front image — fills the front region out to the right / top / bottom
+    // bleed edges, aspect-preserved per `image_fit` (default Cover).
     if let Some(path) = &spec.front_image {
-        let stream = image_xobject(path)?;
+        let (stream, iw, ih) = image_xobject(path)?;
         let id = doc.add_object(stream);
         xobj.set("CoverImg", Object::Reference(id));
-        let w = total_w - front_x;
-        c.push_str(&format!(
-            "q {w:.3} 0 0 {total_h:.3} {front_x:.3} 0 cm /CoverImg Do Q\n"
-        ));
+        let region_w = total_w - front_x; // front panel + right bleed
+        place_front_image(&mut c, spec.image_fit, front_x, region_w, total_h, iw, ih);
     }
 
     // Spine text, rotated 90° CCW (reads bottom-to-top).
@@ -170,13 +175,24 @@ pub fn build_cover(spec: &CoverSpec) -> Result<PdfDoc> {
         label.push_str(a);
     }
     if !label.is_empty() {
-        let size = spec.spine_text.font_size_pt.max(6.0);
-        let cx = spine_x + sw / 2.0 + size * 0.35;
-        let y = region_y + fh * 0.18;
-        c.push_str(&format!(
-            "0 g\nBT /F1 {size:.1} Tf 0 1 -1 0 {cx:.3} {y:.3} Tm ({}) Tj ET\n",
-            esc(&label)
-        ));
+        // Auto-fit: never exceed the configured size, but shrink so the
+        // label runs along the spine height (Helvetica advances ~0.5em)
+        // and the cap-height fits across the spine thickness. Skip entirely
+        // when the spine is too thin to carry legible type.
+        let configured = spec.spine_text.font_size_pt.max(6.0);
+        let chars = label.chars().count().max(1) as f32;
+        let by_length = (fh * 0.9) / (chars * 0.5);
+        let by_thickness = sw * 0.6;
+        let size = configured.min(by_length).min(by_thickness);
+        if size >= 5.0 {
+            let run = chars * size * 0.5; // approx printed length up the spine
+            let cx = spine_x + sw / 2.0 + size * 0.35;
+            let y = region_y + (fh - run).max(0.0) / 2.0;
+            c.push_str(&format!(
+                "0 g\nBT /F1 {size:.1} Tf 0 1 -1 0 {cx:.3} {y:.3} Tm ({}) Tj ET\n",
+                esc(&label)
+            ));
+        }
     }
 
     // Back text (top-left of the back region).
@@ -242,8 +258,9 @@ pub fn build_cover(spec: &CoverSpec) -> Result<PdfDoc> {
 
 /// Decode an image to RGB8 and wrap it as a Flate-compressed PDF image
 /// XObject (the in-tree `image` crate + lopdf's `Stream::compress`; no
-/// lopdf image feature, no `flate2` dep).
-pub(crate) fn image_xobject(path: &Path) -> Result<Stream> {
+/// lopdf image feature, no `flate2` dep).  Returns the XObject plus the
+/// pixel `(width, height)` so the caller can preserve aspect ratio.
+pub(crate) fn image_xobject(path: &Path) -> Result<(Stream, u32, u32)> {
     let img =
         image::open(path).map_err(|e| Error::Other(format!("cover image `{}`: {e}", path.display())))?;
     let rgb = img.to_rgb8();
@@ -257,7 +274,58 @@ pub(crate) fn image_xobject(path: &Path) -> Result<Stream> {
     d.set("BitsPerComponent", 8i64);
     let mut stream = Stream::new(d, rgb.into_raw());
     let _ = stream.compress(); // flate + sets /Filter /FlateDecode
-    Ok(stream)
+    Ok((stream, w, h))
+}
+
+/// How the front image fills its region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImageFit {
+    /// Scale to fill the whole region (incl. bleed), preserving aspect and
+    /// centre-cropping the overflow.  The right default for a full-bleed
+    /// cover — no white gaps, no distortion.
+    #[default]
+    Cover,
+    /// Scale to fit inside the region, preserving aspect; may leave gaps.
+    Fit,
+    /// Stretch to the region, ignoring aspect (legacy behaviour).
+    Stretch,
+}
+
+impl ImageFit {
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "fit" | "contain" => ImageFit::Fit,
+            "stretch" | "fill" => ImageFit::Stretch,
+            _ => ImageFit::Cover,
+        }
+    }
+}
+
+/// Emit the placement operators for the front image into `c`: a clip to the
+/// front region `[rx, 0, rw, rh]` then a `cm` that scales the unit image
+/// square per `fit` (image pixel size `iw × ih`).
+fn place_front_image(c: &mut String, fit: ImageFit, rx: f32, rw: f32, rh: f32, iw: u32, ih: u32) {
+    let (iw, ih) = (iw.max(1) as f32, ih.max(1) as f32);
+    match fit {
+        ImageFit::Stretch => {
+            c.push_str(&format!("q {rw:.3} 0 0 {rh:.3} {rx:.3} 0 cm /CoverImg Do Q\n"));
+        }
+        ImageFit::Cover | ImageFit::Fit => {
+            let s = if fit == ImageFit::Cover {
+                (rw / iw).max(rh / ih)
+            } else {
+                (rw / iw).min(rh / ih)
+            };
+            let (dw, dh) = (iw * s, ih * s);
+            let ox = rx + (rw - dw) / 2.0;
+            let oy = (rh - dh) / 2.0;
+            // Clip to the region so Cover's overflow is cropped (and a Fit
+            // that rounds slightly over stays inside the trim).
+            c.push_str(&format!(
+                "q {rx:.3} 0 {rw:.3} {rh:.3} re W n {dw:.3} 0 0 {dh:.3} {ox:.3} {oy:.3} cm /CoverImg Do Q\n"
+            ));
+        }
+    }
 }
 
 fn tick(c: &mut String, ax: f32, ay: f32, bx: f32, by: f32) {
@@ -318,6 +386,7 @@ mod tests {
             spine_width_mm: 12.0,
             bleed_mm: 3.0,
             front_image: None,
+            image_fit: ImageFit::default(),
             spine_text: SpineText {
                 title: Some("The Lantern Room".into()),
                 author: Some("V. Ulogov".into()),
@@ -362,6 +431,53 @@ mod tests {
             ..req
         });
         assert_eq!(forced.spine_width_mm, 20.0);
+    }
+
+    #[test]
+    fn image_fit_parses_known_modes() {
+        assert_eq!(ImageFit::parse("cover"), ImageFit::Cover);
+        assert_eq!(ImageFit::parse("FIT"), ImageFit::Fit);
+        assert_eq!(ImageFit::parse("contain"), ImageFit::Fit);
+        assert_eq!(ImageFit::parse("stretch"), ImageFit::Stretch);
+        assert_eq!(ImageFit::parse("garbage"), ImageFit::Cover); // safe default
+    }
+
+    #[test]
+    fn cover_fit_preserves_aspect_and_clips() {
+        // A square region with a 2:1 image → Cover scales by the larger
+        // ratio (fills width AND height) and clips; the matrix is uniform.
+        let mut c = String::new();
+        place_front_image(&mut c, ImageFit::Cover, 0.0, 100.0, 100.0, 200, 100);
+        // s = max(100/200, 100/100) = 1.0 → dw=200, dh=100, clipped to 100²
+        assert!(c.contains("re W n"), "region is clipped");
+        assert!(c.contains("200.000 0 0 100.000"), "uniform scale, no distortion: {c}");
+    }
+
+    #[test]
+    fn cover_fit_stretch_is_non_uniform() {
+        let mut c = String::new();
+        place_front_image(&mut c, ImageFit::Stretch, 10.0, 80.0, 120.0, 4, 4);
+        // legacy: maps the unit square straight to the region (distorts)
+        assert!(c.contains("80.000 0 0 120.000 10.000 0 cm"), "{c}");
+        assert!(!c.contains("re W n"), "stretch does not clip");
+    }
+
+    #[test]
+    fn thin_spine_drops_text_thick_spine_keeps_it() {
+        // The rotated spine label is the only `Tm` in the content stream
+        // (back text uses Td, the barcode uses cm), so its presence is a
+        // clean proxy for "spine text was drawn".
+        let has_spine_text = |spine_mm: f32| {
+            let mut s = spec();
+            s.spine_width_mm = spine_mm;
+            let doc = build_cover(&s).unwrap();
+            let pid = doc.page_ids()[0];
+            let content = doc.document().get_and_decode_page_content(pid).unwrap();
+            content.operations.iter().any(|o| o.operator == "Tm")
+        };
+        assert!(has_spine_text(12.0), "a normal spine carries the title");
+        // 0.4 mm spine → by_thickness ≈ 0.7 pt forces size < 5 pt → skipped
+        assert!(!has_spine_text(0.4), "a hairline spine omits the text");
     }
 
     #[test]

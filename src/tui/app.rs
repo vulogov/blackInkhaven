@@ -67,7 +67,7 @@ use super::hjson_edit::{
     set_sound_enabled_in_hjson,
 };
 use super::inference::{
-    AiMode, Inference, InferenceAction, InferenceMode, InferenceStatus,
+    AiMode, Inference, InferenceAction, InferenceMode, InferenceStatus, LiftTarget,
 };
 use super::state::{
     BookStats, ChatSearchState, ChatSelectionState, DeletedParagraphStash,
@@ -1807,6 +1807,11 @@ pub(crate) struct App {
     language_entries: super::lexicon_build::LanguageEntryIndex,
 
     inference: Option<Inference>,
+    /// Destination for the AI-pane `L` (lift) chord — set by the
+    /// submission / structural-analysis generators so their finished output
+    /// can be filed into its system book. Stamped with the owning
+    /// inference's `started_at`; ignored once a different inference is shown.
+    lift_target: Option<LiftTarget>,
     show_prompt_picker: bool,
     prompt_picker_cursor: usize,
 
@@ -2197,6 +2202,7 @@ impl App {
             lexicon,
             language_entries,
             inference: None,
+            lift_target: None,
             show_prompt_picker: false,
             prompt_picker_cursor: 0,
             paragraph_cursors: std::collections::HashMap::new(),
@@ -4278,6 +4284,16 @@ impl App {
                 }
                 KeyCode::Char('c') | KeyCode::Char('C') => {
                     self.apply_inference(InferenceAction::CopyOnly);
+                    return Ok(false);
+                }
+                // `l` / `L` — lift a generator response into its system book
+                // (submission draft → Submissions, structural analysis →
+                // Planning). Only when the finished response actually carries
+                // a destination, so plain chat replies leave `l` untouched.
+                KeyCode::Char('l') | KeyCode::Char('L')
+                    if self.lift_target_matches_current() =>
+                {
+                    self.lift_inference_to_book();
                     return Ok(false);
                 }
                 _ => {}
@@ -9066,9 +9082,10 @@ impl App {
                     framework,
                     report,
                     cursor: 0,
+                    picking: None,
                 };
                 self.status = format!(
-                    "Structure · {warn} finding(s) · ↑↓ navigate · a analyze · Esc close"
+                    "Structure · {warn} finding(s) · ↑↓ · m map · s status · a analyze · Esc"
                 );
             }
             Err(e) => self.status = format!("plan: {e}"),
@@ -9076,36 +9093,150 @@ impl App {
     }
 
     fn plan_outline_handle_key(&mut self, key: KeyEvent) -> bool {
-        let Modal::PlanOutline {
-            report,
-            cursor,
-            book_slug,
-            framework,
-            ..
-        } = &mut self.modal
-        else {
-            return false;
+        // Read state, then drop the modal borrow so the edit helpers can
+        // touch the store.
+        let (n_beats, n_chaps, cursor, picking, book_slug, framework) = {
+            let Modal::PlanOutline {
+                report,
+                cursor,
+                picking,
+                book_slug,
+                framework,
+                ..
+            } = &self.modal
+            else {
+                return false;
+            };
+            (
+                report.beats.len(),
+                report.chapters.len(),
+                *cursor,
+                *picking,
+                book_slug.clone(),
+                framework.clone(),
+            )
         };
-        let n = report.beats.len();
-        match key.code {
-            KeyCode::Esc => {
+        match (picking, key.code) {
+            // ── picking a chapter for the cursor beat ──
+            (Some(_), KeyCode::Esc) => self.set_plan_picking(None),
+            (Some(pc), KeyCode::Up) => self.set_plan_picking(Some(pc.saturating_sub(1))),
+            (Some(pc), KeyCode::Down) => {
+                if n_chaps > 0 {
+                    self.set_plan_picking(Some((pc + 1).min(n_chaps - 1)));
+                }
+            }
+            (Some(pc), KeyCode::Enter) => self.map_plan_beat(cursor, pc),
+            (Some(_), _) => {}
+            // ── browsing beats ──
+            (None, KeyCode::Esc) => {
                 self.modal = Modal::None;
                 self.status = "plan: closed".into();
             }
-            KeyCode::Up => *cursor = cursor.saturating_sub(1),
-            KeyCode::Down => {
-                if n > 0 {
-                    *cursor = (*cursor + 1).min(n - 1);
+            (None, KeyCode::Up) => self.set_plan_cursor(cursor.saturating_sub(1)),
+            (None, KeyCode::Down) => {
+                if n_beats > 0 {
+                    self.set_plan_cursor((cursor + 1).min(n_beats - 1));
                 }
             }
-            // Stream the AI structure analysis into the AI pane.
-            KeyCode::Char('a') => {
-                let (slug, fw) = (book_slug.clone(), framework.clone());
-                self.fire_plan_analysis(&slug, &fw);
+            (None, KeyCode::Char('m')) => {
+                if n_chaps > 0 {
+                    self.set_plan_picking(Some(0));
+                    self.status = "Map this beat to a chapter · ↑↓ · Enter · Esc".into();
+                } else {
+                    self.status = "plan: no chapters to map to".into();
+                }
             }
-            _ => {}
+            (None, KeyCode::Char('s')) => self.cycle_plan_status(cursor),
+            (None, KeyCode::Char('a')) => self.fire_plan_analysis(&book_slug, &framework),
+            (None, _) => {}
         }
         true
+    }
+
+    fn set_plan_cursor(&mut self, v: usize) {
+        if let Modal::PlanOutline { cursor, .. } = &mut self.modal {
+            *cursor = v;
+        }
+    }
+    fn set_plan_picking(&mut self, v: Option<usize>) {
+        if let Modal::PlanOutline { picking, .. } = &mut self.modal {
+            *picking = v;
+        }
+    }
+
+    /// Map the `beat_idx` beat to the `chap_idx` chapter (write-back +
+    /// refresh) — reuses the P0 `edit_beat` primitive.
+    fn map_plan_beat(&mut self, beat_idx: usize, chap_idx: usize) {
+        let Some(chapter) = (match &self.modal {
+            Modal::PlanOutline { report, .. } => report.chapters.get(chap_idx).map(|c| c.slug.clone()),
+            _ => None,
+        }) else {
+            return;
+        };
+        let pairs = crate::cli::plan::load_beats(&self.store, &self.hierarchy);
+        let Some((id, _)) = pairs.get(beat_idx) else { return };
+        let mut node = match self.hierarchy.get(*id) {
+            Some(n) => n.clone(),
+            None => return,
+        };
+        if let Err(e) =
+            crate::cli::plan::edit_beat(&self.store, &mut node, |b| b.mapped_chapter = Some(chapter.clone()))
+        {
+            self.status = format!("plan: {e}");
+            return;
+        }
+        self.rebuild_plan_outline();
+        self.status = format!("mapped → {chapter}");
+    }
+
+    fn cycle_plan_status(&mut self, beat_idx: usize) {
+        let pairs = crate::cli::plan::load_beats(&self.store, &self.hierarchy);
+        let Some((id, _)) = pairs.get(beat_idx) else { return };
+        let mut node = match self.hierarchy.get(*id) {
+            Some(n) => n.clone(),
+            None => return,
+        };
+        if let Err(e) = crate::cli::plan::edit_beat(&self.store, &mut node, |b| {
+            b.status = match b.status.as_str() {
+                "planned" => "drafted",
+                "drafted" => "done",
+                _ => "planned",
+            }
+            .to_string();
+        }) {
+            self.status = format!("plan: {e}");
+            return;
+        }
+        self.rebuild_plan_outline();
+    }
+
+    /// Recompute the report after an edit (keeps cursor; clears picking).
+    fn rebuild_plan_outline(&mut self) {
+        let Some(book) = self.current_book_node(&self.hierarchy) else {
+            return;
+        };
+        let report =
+            match crate::cli::plan::build_report(&self.store, &self.layout, &self.hierarchy, &book, 0.10) {
+                Ok((r, _, _)) => r,
+                Err(e) => {
+                    self.status = format!("plan: {e}");
+                    return;
+                }
+            };
+        if let Modal::PlanOutline {
+            report: r,
+            cursor,
+            picking,
+            ..
+        } = &mut self.modal
+        {
+            let max = report.beats.len().saturating_sub(1);
+            if *cursor > max {
+                *cursor = max;
+            }
+            *r = report;
+            *picking = None;
+        }
     }
 
     /// 1.3.2 PLANNING-1 P3 — stream the AI structure analysis into the AI
@@ -9144,18 +9275,26 @@ impl App {
             Vec::new(),
             user_prompt.clone(),
         );
+        let started_at = std::time::Instant::now();
         self.inference = Some(Inference {
             provider,
             model,
             response: String::new(),
             status: InferenceStatus::Streaming,
             rx,
-            started_at: std::time::Instant::now(),
+            started_at,
+        });
+        self.lift_target = Some(LiftTarget {
+            book_tag: crate::store::SYSTEM_TAG_PLANNING,
+            book_label: "Planning",
+            title: "Structural Analysis".into(),
+            what: "structural analysis".into(),
+            stamp: started_at,
         });
         self.pending_chat_user_msg = Some(user_prompt);
         self.modal = Modal::None;
         self.change_focus(Focus::Ai);
-        self.status = "Analyzing structure → AI pane".into();
+        self.status = "Analyzing structure → AI pane (L files it into Planning)".into();
     }
 
     fn submission_gen_handle_key(&mut self, key: KeyEvent) -> bool {
@@ -9209,22 +9348,138 @@ impl App {
             Vec::new(),
             user_prompt.clone(),
         );
+        let started_at = std::time::Instant::now();
         self.inference = Some(Inference {
             provider,
             model,
             response: String::new(),
             status: InferenceStatus::Streaming,
             rx,
-            started_at: std::time::Instant::now(),
+            started_at,
+        });
+        self.lift_target = Some(LiftTarget {
+            book_tag: crate::store::SYSTEM_TAG_SUBMISSIONS,
+            book_label: "Submissions",
+            title: kind.title().to_string(),
+            what: kind.title().to_lowercase(),
+            stamp: started_at,
         });
         self.pending_chat_user_msg = Some(user_prompt);
         self.modal = Modal::None;
         self.change_focus(Focus::Ai);
         self.status = format!(
-            "Generating {} → AI pane (Ctrl+C to select/insert; save the final via `inkhaven submission {}`)",
+            "Generating {} → AI pane (L files it into Submissions; or save via `inkhaven submission {}`)",
             kind.title(),
             kind.slug(),
         );
+    }
+
+    /// Whether a `lift_target` exists *and* belongs to the inference
+    /// currently shown in the AI pane (matched by `started_at`). Guards the
+    /// `L` chord so a stale target from an earlier generator can never file
+    /// the wrong text, and so `L` is inert for ordinary chat replies.
+    pub(super) fn lift_target_matches_current(&self) -> bool {
+        matches!(
+            (&self.lift_target, &self.inference),
+            (Some(t), Some(inf)) if t.stamp == inf.started_at
+        )
+    }
+
+    /// `L` in the AI pane: file the finished generator response into its
+    /// system book — a submission draft into Submissions, the structural
+    /// analysis into Planning — upserting by title so re-running a generator
+    /// overwrites rather than piling up. Mirrors the CLI `write_draft` path.
+    pub(super) fn lift_inference_to_book(&mut self) {
+        let Some(target) = self.lift_target.clone() else {
+            return;
+        };
+        let text = match self.inference.as_ref() {
+            Some(inf) if inf.started_at == target.stamp => inf.response.trim().to_string(),
+            // The shown inference is no longer the one this target was made
+            // for — drop the stale target rather than file the wrong text.
+            _ => {
+                self.lift_target = None;
+                return;
+            }
+        };
+        if text.is_empty() {
+            self.status = "lift: nothing to file yet".into();
+            return;
+        }
+        match self.upsert_system_draft(target.book_tag, &target.title, &text) {
+            Ok(slug) => {
+                self.status = format!(
+                    "Filed {} → {}/{slug}",
+                    target.what, target.book_label
+                );
+                self.lift_target = None;
+                self.reload_hierarchy();
+            }
+            Err(e) => self.status = format!("lift failed: {e}"),
+        }
+    }
+
+    /// Upsert a prose draft paragraph (keyed by title, case-insensitive)
+    /// into the system book tagged `book_tag`. Disk-first, then the bdslib
+    /// content update — the system-book write discipline. Returns the
+    /// paragraph slug.
+    fn upsert_system_draft(
+        &mut self,
+        book_tag: &str,
+        title: &str,
+        body_text: &str,
+    ) -> std::result::Result<String, String> {
+        let book = self
+            .hierarchy
+            .iter()
+            .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(book_tag))
+            .cloned()
+            .ok_or_else(|| format!("no system book `{book_tag}` (reopen the project)"))?;
+        let body = format!("= {title}\n\n{}\n", body_text.trim());
+
+        // Overwrite an existing draft of the same title rather than piling up.
+        let existing = self.hierarchy.collect_subtree(book.id).into_iter().find_map(|id| {
+            self.hierarchy
+                .get(id)
+                .filter(|n| {
+                    n.kind == NodeKind::Paragraph
+                        && n.title.trim().eq_ignore_ascii_case(title)
+                })
+                .cloned()
+        });
+        if let Some(mut node) = existing {
+            if let Some(rel) = node.file.clone() {
+                let abs = self.layout.root.join(&rel);
+                std::fs::write(&abs, body.as_bytes()).map_err(|e| e.to_string())?;
+            }
+            self.store
+                .update_paragraph_content(&mut node, body.as_bytes())
+                .map_err(|e| e.to_string())?;
+            let _ = self.store.sync();
+            return Ok(node.slug);
+        }
+
+        let mut node = self
+            .store
+            .create_node(
+                &self.cfg,
+                &self.hierarchy,
+                NodeKind::Paragraph,
+                title,
+                Some(&book),
+                None,
+                crate::store::InsertPosition::End,
+            )
+            .map_err(|e| e.to_string())?;
+        if let Some(rel) = node.file.clone() {
+            let abs = self.layout.root.join(&rel);
+            std::fs::write(&abs, body.as_bytes()).map_err(|e| e.to_string())?;
+            self.store
+                .update_paragraph_content(&mut node, body.as_bytes())
+                .map_err(|e| e.to_string())?;
+        }
+        let _ = self.store.sync();
+        Ok(node.slug)
     }
 
     /// Scroll handler for the BookInfo modal — mirrors

@@ -151,8 +151,8 @@ fn generate(
 
     let ai = AiClient::from_config(&cfg.llm)?;
     let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
-    // prompts.hjson override → built-in.
-    let system = resolve_system(&layout, kind);
+    // Prompts book → prompts.hjson → built-in.
+    let system = resolve_system(&store, &h, &layout, kind);
     let prompt = kind.user_prompt(&digest.as_context());
     eprintln!("inkhaven submission {} · model: {model}", kind.slug());
     let raw = run_blocking(&ai, model, &system, &prompt)?;
@@ -173,14 +173,18 @@ fn generate(
     Ok(())
 }
 
-/// Resolve the system prompt: a matching `prompts.hjson` entry overrides
-/// the built-in (the Prompts-book paragraph tier is a P3.3 follow-up).
-fn resolve_system(layout: &ProjectLayout, kind: Gen) -> String {
-    let path = layout.root.join("prompts.hjson");
-    crate::ai::prompts::PromptLibrary::load(&path)
-        .ok()
-        .and_then(|lib| lib.find(kind.slug()).map(|p| p.template.clone()))
-        .filter(|t| !t.trim().is_empty())
+/// Three-tier system-prompt resolution (parity with the TUI): a paragraph
+/// in the Prompts book → a `prompts.hjson` entry → the built-in, keyed by
+/// the generator slug.
+fn resolve_system(store: &Store, h: &Hierarchy, layout: &ProjectLayout, kind: Gen) -> String {
+    super::resolve_book_prompt(store, h, kind.slug())
+        .or_else(|| {
+            let path = layout.root.join("prompts.hjson");
+            crate::ai::prompts::PromptLibrary::load(&path)
+                .ok()
+                .and_then(|lib| lib.find(kind.slug()).map(|p| p.template.clone()))
+                .filter(|t| !t.trim().is_empty())
+        })
         .unwrap_or_else(|| kind.builtin_system().to_string())
 }
 

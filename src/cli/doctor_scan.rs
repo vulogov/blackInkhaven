@@ -160,6 +160,11 @@ pub enum ScanClass {
     /// deliberate (a breathless run-on, a dense
     /// exposition).  No autofix.
     ParagraphTooLong,
+    /// 1.3.3+ — a submission still marked `sent` with no
+    /// response logged for more than 30 days.  Info
+    /// severity — a nudge to follow up or move on.  No
+    /// autofix.
+    StaleSubmission,
 }
 
 impl ScanClass {
@@ -181,6 +186,7 @@ impl ScanClass {
             ScanClass::ContinuityDrift => "continuity-drift",
             ScanClass::UnresolvedTension => "unresolved-tension",
             ScanClass::ParagraphTooLong => "paragraph-too-long",
+            ScanClass::StaleSubmission => "stale-submission",
         }
     }
 
@@ -201,11 +207,12 @@ impl ScanClass {
             "continuity-drift" => ScanClass::ContinuityDrift,
             "unresolved-tension" => ScanClass::UnresolvedTension,
             "paragraph-too-long" => ScanClass::ParagraphTooLong,
+            "stale-submission" => ScanClass::StaleSubmission,
             _ => return None,
         })
     }
 
-    pub const ALL: [ScanClass; 14] = [
+    pub const ALL: [ScanClass; 15] = [
         ScanClass::ZeroByteFile,
         ScanClass::OrphanParagraphRow,
         ScanClass::MissingReferencedFile,
@@ -220,6 +227,7 @@ impl ScanClass {
         ScanClass::ContinuityDrift,
         ScanClass::UnresolvedTension,
         ScanClass::ParagraphTooLong,
+        ScanClass::StaleSubmission,
     ];
 
     /// 1.2.19+ C.4 — classes excluded from the default
@@ -396,8 +404,47 @@ pub fn scan_project(
     if run(ScanClass::ParagraphTooLong) {
         report.findings.extend(scan_paragraphs_too_long(&layout, &hierarchy, &cfg));
     }
+    // 1.3.3+ — submissions sent but unanswered for a while.
+    if run(ScanClass::StaleSubmission) {
+        report.findings.extend(scan_stale_submissions(&layout));
+    }
 
     Ok(report)
+}
+
+/// 1.3.3+ — a submission still `sent` (no response) for more than 30 days.
+fn scan_stale_submissions(layout: &ProjectLayout) -> Vec<ScanFinding> {
+    const STALE_DAYS: i64 = 30;
+    let Ok(log) = crate::submissions::SubmissionLog::load(&layout.root) else {
+        return Vec::new();
+    };
+    let today = chrono::Local::now().date_naive();
+    let mut out = Vec::new();
+    for r in &log.records {
+        if r.status != crate::submissions::SubmissionStatus::Sent || r.response_date.is_some() {
+            continue;
+        }
+        let Some(sent) = r
+            .date_sent
+            .as_deref()
+            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+        else {
+            continue;
+        };
+        let days = (today - sent).num_days();
+        if days > STALE_DAYS {
+            out.push(ScanFinding {
+                class: ScanClass::StaleSubmission,
+                severity: ScanSeverity::Info,
+                path: None,
+                detail: format!(
+                    "submission {} to {} sent {sent} — no response in {days} days",
+                    r.id, r.market
+                ),
+            });
+        }
+    }
+    out
 }
 
 /// 1.2.19+ C.4 — flag introduced tensions with no
@@ -1006,7 +1053,8 @@ pub fn apply_fix(
         | ScanClass::NumericContradiction
         | ScanClass::ContinuityDrift
         | ScanClass::UnresolvedTension
-        | ScanClass::ParagraphTooLong => Err(Error::Store(format!(
+        | ScanClass::ParagraphTooLong
+        | ScanClass::StaleSubmission => Err(Error::Store(format!(
             "no autofix for class `{}` — this is an author-judgment finding (review the prose / outline / threads)",
             finding.class.slug(),
         ))),

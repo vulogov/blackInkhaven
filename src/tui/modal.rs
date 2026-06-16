@@ -695,6 +695,9 @@ pub(super) enum Modal {
         framework: String,
         report: crate::planning::PlanReport,
         cursor: usize,
+        /// `Some(chapter_cursor)` when picking a chapter to map the
+        /// `cursor` beat to; `None` while browsing beats.
+        picking: Option<usize>,
     },
     SnapshotPicker {
         /// Kept for potential refresh ops after future snapshot mutations.
