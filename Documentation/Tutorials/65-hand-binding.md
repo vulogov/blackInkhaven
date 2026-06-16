@@ -60,12 +60,17 @@ creep: shingle, 0.10 mm/sheet, max 0.60 mm at the spine
 sheet 1 front:  [ 16 |  1 ]   back:  [  2 | 15 ]
 ```
 
-Two profiles ship built in:
+Five profiles ship built in:
 
 - **`default`** — perfect-bound, 4 sheets/signature, A3, creep on.
 - **`chapbook`** — saddle-stitch, A4, no creep (a single folded booklet).
+- **`us_perfect`** — `default` on Tabloid (11×17) sheets, the US-paper
+  analogue that folds to two US-Letter-half pages.
+- **`us_chapbook`** — `chapbook` on Tabloid sheets.
+- **`thick`** — heavy perfect-bound: 8-sheet (32-page) signatures with
+  push-out creep so the outer leaves don't bind short after trimming.
 
-Both are just named entries in the `imposition:` config block, and you
+They're just named entries in the `imposition:` config block, and you
 can add your own — see [Configuration](#configuration) below.
 
 ### Creep (shingling)
@@ -118,6 +123,14 @@ so a 220-page novel on 80 gsm uncoated stock with a 250 gsm cover comes
 out around 12 mm. If your printer hands you an exact spine, pass
 `--spine-mm` and skip the calculation.
 
+The **front art** fills the front panel out to the bleed, aspect-preserved.
+`--fit cover` (the default) scales to fill and centre-crops the overflow —
+no distortion, no white gaps; `--fit fit` scales to fit inside (may leave
+gaps); `--fit stretch` is the old distort-to-fill. The **spine text**
+auto-fits: it never exceeds the configured `spine_font_size_pt` but shrinks
+to run the title along the spine height and sit within the spine thickness,
+and is dropped entirely when the spine is too thin to carry legible type.
+
 The `--isbn` flag renders a real **EAN-13 barcode** (validated check
 digit) on the back panel. You can also produce a standalone barcode:
 
@@ -156,6 +169,15 @@ is flagged as 96 dpi even though the file says 480. Preflight also checks
 font embedding, page-size consistency, blank pages, and colour usage.
 Profiles set the DPI target: `hand_binding`, `print_shop`, `strict`
 (or `--dpi N`).
+
+It also flags the **press hazards** that silently change on output:
+**overprint** (`/OP` graphics states — a knockout you meant to trap, or
+vice-versa), **transparency** (constant alpha < 1, a non-Normal blend
+mode, or a soft mask — flatten before a non-PDF/X workflow), and **spot
+colours** (Separation / DeviceN colorants, each a separate plate). If you
+only intend black ink, `inkhaven pdf grayscale` collapses content colour
+and converts images — now including DCTDecode (JPEG) photos, re-embedded as
+grayscale JPEGs — to DeviceGray.
 
 ## Finishing touches
 

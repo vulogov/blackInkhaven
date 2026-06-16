@@ -1519,6 +1519,10 @@ pub enum PdfCommand {
         /// Front-cover art (any format the `image` crate reads).
         #[arg(long)]
         image: Option<std::path::PathBuf>,
+        /// How the front art fills its region: `cover` (default, aspect-
+        /// preserving full-bleed crop), `fit`, or `stretch`.
+        #[arg(long)]
+        fit: Option<String>,
         /// ISBN — renders an EAN-13 barcode on the back panel.
         #[arg(long)]
         isbn: Option<String>,
@@ -1533,8 +1537,9 @@ pub enum PdfCommand {
         height_mm: Option<f32>,
     },
     /// Convert to grayscale (RFC §8.7): neutralize content-stream colour
-    /// + convert DeviceRGB/CMYK images to DeviceGray.  Best-effort —
-    /// JPEG / exotic colour spaces are left as-is.
+    /// + convert DeviceRGB/CMYK images to DeviceGray, including DCTDecode
+    /// (JPEG) photos (re-embedded as grayscale JPEGs).  Best-effort —
+    /// CMYK JPEGs / exotic colour spaces are left as-is.
     Grayscale {
         input: std::path::PathBuf,
         #[arg(long)]

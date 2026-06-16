@@ -5,7 +5,8 @@
 //! size, so we walk each page's content stream tracking the CTM
 //! (`q`/`Q`/`cm`) and, at each image `Do`, divide the pixel size by the
 //! placed size.  Plus: font embedding, page-size consistency, blank
-//! pages, and (image-)colour usage.
+//! pages, (image-)colour usage, and the press hazards that silently change
+//! on output — overprint, transparency, and spot colours.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -101,6 +102,13 @@ pub struct PreflightReport {
     pub blank_pages: Vec<usize>,
     /// 1-based pages carrying a non-grayscale image.
     pub color_pages: Vec<usize>,
+    /// 1-based pages with an overprint ExtGState (`/OP` or `/op` true).
+    pub overprint_pages: Vec<usize>,
+    /// 1-based pages using transparency — constant alpha < 1, a non-Normal
+    /// blend mode, a soft mask, or a soft-masked image.
+    pub transparency_pages: Vec<usize>,
+    /// Spot-colour names found (Separation / DeviceN colorants), deduped.
+    pub spot_colors: Vec<String>,
     pub warnings: Vec<String>,
 }
 
@@ -202,6 +210,40 @@ pub fn preflight(doc: &PdfDoc, profile: PreflightProfile) -> PreflightReport {
         }
     }
 
+    // Print-hazard scan: overprint, transparency, and spot colours — the
+    // things that silently change on press (or force a flatten / extra
+    // plate). Read from each page's resources.
+    let mut overprint_pages = Vec::new();
+    let mut transparency_pages = Vec::new();
+    let mut spot = BTreeSet::new();
+    for (idx, &pid) in page_ids.iter().enumerate() {
+        let page_no = idx + 1;
+        let Some(res) = page_resources(inner, pid) else {
+            continue;
+        };
+        let (op, tr) = scan_extgstate(inner, res);
+        let smask_image = res
+            .get(b"XObject")
+            .ok()
+            .and_then(|o| deref(inner, o))
+            .and_then(|o| o.as_dict().ok())
+            .map(|xo| {
+                xo.iter().any(|(_, v)| {
+                    matches!(deref(inner, v), Some(Object::Stream(st))
+                        if name_is(&st.dict, b"Subtype", b"Image") && st.dict.has(b"SMask"))
+                })
+            })
+            .unwrap_or(false);
+        if op {
+            overprint_pages.push(page_no);
+        }
+        if tr || smask_image {
+            transparency_pages.push(page_no);
+        }
+        scan_spot_colors(inner, res, &mut spot);
+    }
+    let spot_colors: Vec<String> = spot.into_iter().collect();
+
     // Warnings.
     let mut warnings = Vec::new();
     if !consistent {
@@ -223,6 +265,21 @@ pub fn preflight(doc: &PdfDoc, profile: PreflightProfile) -> PreflightReport {
     for &p in &blank_pages {
         warnings.push(format!("page {p} is blank"));
     }
+    if !overprint_pages.is_empty() {
+        warnings.push(format!(
+            "overprint set on page(s) {overprint_pages:?} — verify this is intentional (knockout vs trap)"
+        ));
+    }
+    if !transparency_pages.is_empty() {
+        warnings.push(format!(
+            "transparency on page(s) {transparency_pages:?} — flatten before sending to a non-PDF/X workflow"
+        ));
+    }
+    if !spot_colors.is_empty() {
+        warnings.push(format!(
+            "spot colour(s) {spot_colors:?} — each is a separate plate; convert to process if not intended"
+        ));
+    }
 
     PreflightReport {
         page_count,
@@ -231,6 +288,9 @@ pub fn preflight(doc: &PdfDoc, profile: PreflightProfile) -> PreflightReport {
         images,
         blank_pages,
         color_pages: color_pages.into_iter().collect(),
+        overprint_pages,
+        transparency_pages,
+        spot_colors,
         warnings,
     }
 }
@@ -361,6 +421,97 @@ fn page_image_xobjects(doc: &Document, page_id: ObjectId) -> HashMap<Vec<u8>, (u
     map
 }
 
+/// Scan a resource dict's `/ExtGState` graphics states for overprint and
+/// transparency. Returns `(overprint, transparency)`.
+fn scan_extgstate(doc: &Document, res: &Dictionary) -> (bool, bool) {
+    let Some(gs) = res
+        .get(b"ExtGState")
+        .ok()
+        .and_then(|o| deref(doc, o))
+        .and_then(|o| o.as_dict().ok())
+    else {
+        return (false, false);
+    };
+    let (mut overprint, mut transparency) = (false, false);
+    for (_, v) in gs.iter() {
+        let Some(g) = deref(doc, v).and_then(|o| o.as_dict().ok()) else {
+            continue;
+        };
+        if matches!(g.get(b"OP"), Ok(Object::Boolean(true)))
+            || matches!(g.get(b"op"), Ok(Object::Boolean(true)))
+        {
+            overprint = true;
+        }
+        for key in [b"CA".as_ref(), b"ca".as_ref()] {
+            if let Some(a) = g.get(key).ok().and_then(|o| o.as_float().ok()) {
+                if a < 0.999 {
+                    transparency = true;
+                }
+            }
+        }
+        // A blend mode other than Normal/Compatible is transparency.
+        let bm_name = match g.get(b"BM") {
+            Ok(Object::Name(n)) => Some(n.clone()),
+            Ok(Object::Array(a)) => a.first().and_then(|o| o.as_name().ok().map(<[u8]>::to_vec)),
+            _ => None,
+        };
+        if let Some(n) = bm_name {
+            if n != b"Normal" && n != b"Compatible" {
+                transparency = true;
+            }
+        }
+        // A soft mask other than the explicit /None is transparency.
+        if let Ok(sm) = g.get(b"SMask") {
+            if !matches!(sm, Object::Name(n) if n.as_slice() == b"None") {
+                transparency = true;
+            }
+        }
+    }
+    (overprint, transparency)
+}
+
+/// Collect Separation / DeviceN colorant names from a resource dict's
+/// `/ColorSpace` entries into `out`.
+fn scan_spot_colors(doc: &Document, res: &Dictionary, out: &mut BTreeSet<String>) {
+    let Some(cs) = res
+        .get(b"ColorSpace")
+        .ok()
+        .and_then(|o| deref(doc, o))
+        .and_then(|o| o.as_dict().ok())
+    else {
+        return;
+    };
+    for (_, v) in cs.iter() {
+        let Some(arr) = deref(doc, v).and_then(|o| o.as_array().ok()) else {
+            continue;
+        };
+        let Some(head) = arr.first().and_then(|o| o.as_name().ok()) else {
+            continue;
+        };
+        match head {
+            b"Separation" => {
+                if let Some(name) = arr.get(1).and_then(|o| o.as_name().ok()) {
+                    out.insert(String::from_utf8_lossy(name).into_owned());
+                }
+            }
+            b"DeviceN" => {
+                if let Some(names) = arr
+                    .get(1)
+                    .and_then(|o| deref(doc, o))
+                    .and_then(|o| o.as_array().ok())
+                {
+                    for n in names {
+                        if let Ok(nm) = n.as_name() {
+                            out.insert(String::from_utf8_lossy(nm).into_owned());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn page_resources<'a>(doc: &'a Document, page_id: ObjectId) -> Option<&'a Dictionary> {
     let (inline, ids) = doc.get_page_resources(page_id).ok()?;
     inline.or_else(|| ids.first().and_then(|&id| doc.get_dictionary(id).ok()))
@@ -407,6 +558,53 @@ mod tests {
     }
 
     #[test]
+    fn flags_overprint_transparency_and_spot_colours() {
+        use lopdf::{Dictionary, Object};
+        let mut pdf = PdfDoc::load_mem(&minimal_pdf(1, 200.0, 200.0)).unwrap();
+        let pid = pdf.page_ids()[0];
+        let inner = pdf.document_mut();
+
+        // ExtGState GS0: overprint on + 50% constant alpha.
+        let mut gs0 = Dictionary::new();
+        gs0.set("OP", Object::Boolean(true));
+        gs0.set("ca", Object::Real(0.5));
+        let mut egs = Dictionary::new();
+        egs.set("GS0", Object::Dictionary(gs0));
+        // ColorSpace CS0: a PANTONE Separation (tint fn placeholder).
+        let sep = Object::Array(vec![
+            Object::Name(b"Separation".to_vec()),
+            Object::Name(b"PANTONE_021_C".to_vec()),
+            Object::Name(b"DeviceCMYK".to_vec()),
+            Object::Null,
+        ]);
+        let mut cs = Dictionary::new();
+        cs.set("CS0", sep);
+        let mut res = Dictionary::new();
+        res.set("ExtGState", Object::Dictionary(egs));
+        res.set("ColorSpace", Object::Dictionary(cs));
+        if let Ok(Object::Dictionary(p)) = inner.get_object_mut(pid) {
+            p.set("Resources", Object::Dictionary(res));
+        }
+
+        let r = preflight(&pdf, PreflightProfile::Strict);
+        assert_eq!(r.overprint_pages, vec![1], "overprint detected");
+        assert_eq!(r.transparency_pages, vec![1], "ca < 1 → transparency");
+        assert_eq!(r.spot_colors, vec!["PANTONE_021_C".to_string()]);
+        assert!(r.warnings.iter().any(|w| w.contains("overprint")));
+        assert!(r.warnings.iter().any(|w| w.contains("transparency")));
+        assert!(r.warnings.iter().any(|w| w.contains("spot colour")));
+    }
+
+    #[test]
+    fn clean_pdf_has_no_press_hazards() {
+        let doc = PdfDoc::load_mem(&minimal_pdf(2, 612.0, 792.0)).unwrap();
+        let r = preflight(&doc, PreflightProfile::Strict);
+        assert!(r.overprint_pages.is_empty());
+        assert!(r.transparency_pages.is_empty());
+        assert!(r.spot_colors.is_empty());
+    }
+
+    #[test]
     fn low_dpi_image_is_flagged() {
         // A 16×24-px image stretched across a cover region → tiny DPI.
         use crate::pdf::cover::{build_cover, CoverSpec, SpineText};
@@ -421,6 +619,7 @@ mod tests {
             spine_width_mm: 12.0,
             bleed_mm: 3.0,
             front_image: Some(path),
+            image_fit: crate::pdf::cover::ImageFit::Stretch,
             spine_text: SpineText::default(),
             back_text: None,
             barcode: None,
