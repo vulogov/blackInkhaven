@@ -1607,9 +1607,11 @@ global `~/.config/inkhaven`, global wins). See
 ### `imposition` (1.3.0+) — folding-signature profiles
 
 Named profiles for `inkhaven pdf impose --config <name>`, the `Ctrl+B Q`
-preview, and the `imposed_pdf` book-take. `default` and `chapbook` are
-built in; add your own keys to extend (a missing profile is an error
-listing the known names).
+preview, and the `imposed_pdf` book-take. Five are built in — `default`
+and `chapbook` (A-series), `us_perfect` and `us_chapbook` (their Tabloid /
+US-Letter analogues), and `thick` (8-sheet push-out signatures for heavy
+books) — and you add your own keys to extend (a missing profile is an
+error listing the known names).
 
 ```hjson
 imposition: {
@@ -1652,9 +1654,15 @@ cover: {
   bleed_mm: 3.0
   interior_stock: "uncoated_80gsm"
   cover_stock: "cover_250gsm"
-  spine_font_size_pt: 11.0
+  spine_font_size_pt: 11.0    // max size; auto-shrinks to fit the spine
+  image_fit: "cover"          // cover (default) | fit | stretch
 }
 ```
+
+`image_fit` controls how the front art fills its region: `cover`
+(aspect-preserving full-bleed crop — the right default), `fit` (scale to
+fit inside, may leave gaps), or `stretch` (distort to fill). Per run,
+`inkhaven pdf cover --fit <mode>` overrides it.
 
 ### `preflight` (1.3.0+) — print-readiness DPI targets
 
@@ -1668,6 +1676,12 @@ preflight: {
   print_shop_dpi: 300
 }
 ```
+
+Beyond the DPI target, every profile also reports the press hazards that
+silently change on output — **overprint**, **transparency** (alpha < 1,
+non-Normal blend modes, soft masks), and **spot colours** (Separation /
+DeviceN colorants, one plate each) — as warnings; there are no knobs to
+turn these off.
 
 ### `output` additions (1.3.0+)
 

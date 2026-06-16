@@ -5,8 +5,10 @@
 //! `y y y rg` (luminance `y`), `c m y k k` becomes `0 0 0 (1-y) k` — so
 //! the operator and its colour space are untouched and the output stays
 //! structurally valid, just neutral.  Raster images are converted
-//! DeviceRGB/CMYK → DeviceGray.  Best-effort: JPEG (`DCTDecode`) and
-//! exotic colour spaces are left as-is (documented).
+//! DeviceRGB/CMYK → DeviceGray; JPEG (`DCTDecode`) photos are decoded,
+//! dropped to luma, and re-embedded as grayscale JPEGs (filter preserved).
+//! Best-effort: CMYK JPEGs, multi-filter chains, and exotic colour spaces
+//! are left as-is (documented).
 //!
 //! **optimize** prunes orphan objects and Flate-compresses every
 //! uncompressed stream — a lossless size pass after imposition / merge.
@@ -156,8 +158,15 @@ fn grayscale_image(st: &mut Stream) -> bool {
         Some(b"DeviceCMYK") => 4,
         _ => return false, // DeviceGray (noop), Indexed, ICCBased, … skip
     };
+    // JPEG (DCTDecode) can't be desaturated by component math — the bytes
+    // are an encoded image, not raster samples. Decode it, drop to luma,
+    // and re-embed as a grayscale JPEG so the /Filter stays DCTDecode (no
+    // bloat from re-Flating a photo).
+    if has_filter(st, b"DCTDecode") {
+        return grayscale_jpeg(st);
+    }
     let Ok(data) = st.decompressed_content() else {
-        return false; // e.g. DCTDecode (JPEG) — leave as-is
+        return false; // an encoding we don't decode — leave as-is
     };
     if data.len() % comps != 0 {
         return false;
@@ -179,6 +188,61 @@ fn grayscale_image(st: &mut Stream) -> bool {
     st.dict.set("ColorSpace", Object::Name(b"DeviceGray".to_vec()));
     st.set_plain_content(gray); // drops the old /Filter
     let _ = st.compress(); // re-flate
+    true
+}
+
+/// Does the stream's `/Filter` (a name or an array of names) include
+/// `target`?
+fn has_filter(st: &Stream, target: &[u8]) -> bool {
+    match st.dict.get(b"Filter") {
+        Ok(Object::Name(n)) => n.as_slice() == target,
+        Ok(Object::Array(a)) => a
+            .iter()
+            .any(|o| matches!(o, Object::Name(n) if n.as_slice() == target)),
+        _ => false,
+    }
+}
+
+/// Desaturate a DCTDecode (JPEG) image XObject: decode it, drop to luma,
+/// and re-embed it as a baseline grayscale JPEG — `/ColorSpace DeviceGray`
+/// with the `/Filter` left as DCTDecode, so a photo stays compactly
+/// encoded instead of being re-Flated.  Returns true on success; leaves
+/// the stream untouched for anything it can't decode (CMYK JPEGs with an
+/// Adobe APP14 marker, multi-filter chains, corrupt data).
+fn grayscale_jpeg(st: &mut Stream) -> bool {
+    use image::codecs::jpeg::JpegEncoder;
+    use image::{ExtendedColorType, ImageEncoder, ImageFormat};
+
+    // Only a lone DCTDecode carries raw JPEG bytes in `content`; a chain
+    // like `[FlateDecode DCTDecode]` we don't unwind here.
+    let lone_dct = match st.dict.get(b"Filter") {
+        Ok(Object::Name(n)) => n.as_slice() == b"DCTDecode",
+        Ok(Object::Array(a)) => {
+            a.len() == 1 && matches!(&a[0], Object::Name(n) if n.as_slice() == b"DCTDecode")
+        }
+        _ => false,
+    };
+    if !lone_dct {
+        return false;
+    }
+    let Ok(img) = image::load_from_memory_with_format(&st.content, ImageFormat::Jpeg) else {
+        return false;
+    };
+    let luma = img.to_luma8();
+    let (w, h) = (luma.width(), luma.height());
+    let mut out = Vec::new();
+    if JpegEncoder::new_with_quality(&mut out, 90)
+        .write_image(luma.as_raw(), w, h, ExtendedColorType::L8)
+        .is_err()
+    {
+        return false;
+    }
+    st.dict.set("ColorSpace", Object::Name(b"DeviceGray".to_vec()));
+    st.dict.set("BitsPerComponent", 8i64);
+    st.dict.set("Width", w as i64);
+    st.dict.set("Height", h as i64);
+    st.dict.remove(b"DecodeParms"); // any colour-transform parm is now moot
+    st.set_content(out); // keeps /Filter DCTDecode, refreshes /Length
     true
 }
 
@@ -279,6 +343,44 @@ mod tests {
             .expect("rg op survives");
         let v = nums(&rg.operands).unwrap();
         assert!((v[0] - v[1]).abs() < 1e-6 && (v[1] - v[2]).abs() < 1e-6, "now neutral");
+    }
+
+    #[test]
+    fn grayscale_converts_a_dctdecode_jpeg_to_devicegray() {
+        use image::codecs::jpeg::JpegEncoder;
+        use image::{ExtendedColorType, ImageEncoder};
+        use lopdf::Dictionary;
+
+        // Encode a tiny RGB JPEG and embed it as a DCTDecode image XObject.
+        let rgb = image::RgbImage::from_pixel(8, 8, image::Rgb([200, 40, 40]));
+        let mut jpg = Vec::new();
+        JpegEncoder::new_with_quality(&mut jpg, 85)
+            .write_image(rgb.as_raw(), 8, 8, ExtendedColorType::Rgb8)
+            .unwrap();
+        let mut d = Dictionary::new();
+        d.set("Type", "XObject");
+        d.set("Subtype", "Image");
+        d.set("Width", 8i64);
+        d.set("Height", 8i64);
+        d.set("ColorSpace", Object::Name(b"DeviceRGB".to_vec()));
+        d.set("BitsPerComponent", 8i64);
+        d.set("Filter", Object::Name(b"DCTDecode".to_vec()));
+        let mut st = Stream::new(d, jpg);
+
+        assert!(grayscale_image(&mut st), "DCTDecode RGB JPEG is desaturated");
+        assert_eq!(
+            st.dict.get(b"ColorSpace").unwrap().as_name().unwrap(),
+            b"DeviceGray"
+        );
+        // still a JPEG (filter preserved) and re-decodes as 8×8 luma
+        assert_eq!(
+            st.dict.get(b"Filter").unwrap().as_name().unwrap(),
+            b"DCTDecode"
+        );
+        let back = image::load_from_memory_with_format(&st.content, image::ImageFormat::Jpeg)
+            .unwrap()
+            .to_luma8();
+        assert_eq!((back.width(), back.height()), (8, 8));
     }
 
     #[test]
