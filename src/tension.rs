@@ -185,6 +185,40 @@ pub fn detect_unresolved(ledger: &TensionLedger, language: &str) -> Vec<Unresolv
     out
 }
 
+/// For each introduced tension, its open span as `(intro_chapter_index,
+/// earliest_resolve_index_or_None)` — the same shared-stem matcher as
+/// [`detect_unresolved`], but it returns *where* the obligation closes (the
+/// earliest qualifying `Resolve` at or after the intro), or `None` when it
+/// never does. Feeds the 1.3.4 tension curve (`planning::OpenSpan`). Pure.
+pub fn obligation_spans(ledger: &TensionLedger, language: &str) -> Vec<(usize, Option<usize>)> {
+    let stemmer = parse_stemmer_language(language).map(Stemmer::create);
+    let stop: std::collections::HashSet<String> = built_in_stop_words(language)
+        .iter()
+        .map(|w| crate::text::normalize_stem(w, &stemmer))
+        .collect();
+    let resolves: Vec<(usize, std::collections::HashSet<String>)> = ledger
+        .tags
+        .iter()
+        .filter(|t| t.kind == TensionKind::Resolve)
+        .map(|t| (t.chapter_index, significant_stems(&t.topic, &stemmer, &stop)))
+        .collect();
+
+    let mut out = Vec::new();
+    for intro in ledger.tags.iter().filter(|t| t.kind == TensionKind::Introduce) {
+        let intro_stems = significant_stems(&intro.topic, &stemmer, &stop);
+        if intro_stems.is_empty() {
+            continue;
+        }
+        let resolve_idx = resolves
+            .iter()
+            .filter(|(r_idx, r_stems)| *r_idx >= intro.chapter_index && !r_stems.is_disjoint(&intro_stems))
+            .map(|(r_idx, _)| *r_idx)
+            .min();
+        out.push((intro.chapter_index, resolve_idx));
+    }
+    out
+}
+
 /// Parse the AI tagging response for one chapter: one tag
 /// per line, `introduce | topic` or `resolve | topic`.
 /// Tolerant of list markers, preamble, and blank lines.
@@ -249,6 +283,23 @@ mod tests {
         };
         // "letter" stem shared, resolve is downstream.
         assert!(detect_unresolved(&l, "english").is_empty());
+    }
+
+    #[test]
+    fn obligation_spans_pair_intro_with_earliest_resolve() {
+        let l = TensionLedger {
+            tags: vec![
+                tag(Introduce, "the missing letter", "Ch1", 0),
+                tag(Introduce, "Helena's secret", "Ch2", 1), // never resolved
+                tag(Resolve, "found the letter", "Ch4", 3),
+                tag(Resolve, "the letter explained", "Ch6", 5), // later dup → not earliest
+            ],
+            ..Default::default()
+        };
+        let spans = obligation_spans(&l, "english");
+        // the letter: intro 0 → earliest resolve 3; the secret: intro 1 → None
+        assert!(spans.contains(&(0, Some(3))), "earliest resolve picked: {spans:?}");
+        assert!(spans.contains(&(1, None)), "unresolved → open to the end: {spans:?}");
     }
 
     #[test]
