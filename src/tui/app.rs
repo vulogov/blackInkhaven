@@ -9066,9 +9066,10 @@ impl App {
                     framework,
                     report,
                     cursor: 0,
+                    picking: None,
                 };
                 self.status = format!(
-                    "Structure · {warn} finding(s) · ↑↓ navigate · a analyze · Esc close"
+                    "Structure · {warn} finding(s) · ↑↓ · m map · s status · a analyze · Esc"
                 );
             }
             Err(e) => self.status = format!("plan: {e}"),
@@ -9076,36 +9077,150 @@ impl App {
     }
 
     fn plan_outline_handle_key(&mut self, key: KeyEvent) -> bool {
-        let Modal::PlanOutline {
-            report,
-            cursor,
-            book_slug,
-            framework,
-            ..
-        } = &mut self.modal
-        else {
-            return false;
+        // Read state, then drop the modal borrow so the edit helpers can
+        // touch the store.
+        let (n_beats, n_chaps, cursor, picking, book_slug, framework) = {
+            let Modal::PlanOutline {
+                report,
+                cursor,
+                picking,
+                book_slug,
+                framework,
+                ..
+            } = &self.modal
+            else {
+                return false;
+            };
+            (
+                report.beats.len(),
+                report.chapters.len(),
+                *cursor,
+                *picking,
+                book_slug.clone(),
+                framework.clone(),
+            )
         };
-        let n = report.beats.len();
-        match key.code {
-            KeyCode::Esc => {
+        match (picking, key.code) {
+            // ── picking a chapter for the cursor beat ──
+            (Some(_), KeyCode::Esc) => self.set_plan_picking(None),
+            (Some(pc), KeyCode::Up) => self.set_plan_picking(Some(pc.saturating_sub(1))),
+            (Some(pc), KeyCode::Down) => {
+                if n_chaps > 0 {
+                    self.set_plan_picking(Some((pc + 1).min(n_chaps - 1)));
+                }
+            }
+            (Some(pc), KeyCode::Enter) => self.map_plan_beat(cursor, pc),
+            (Some(_), _) => {}
+            // ── browsing beats ──
+            (None, KeyCode::Esc) => {
                 self.modal = Modal::None;
                 self.status = "plan: closed".into();
             }
-            KeyCode::Up => *cursor = cursor.saturating_sub(1),
-            KeyCode::Down => {
-                if n > 0 {
-                    *cursor = (*cursor + 1).min(n - 1);
+            (None, KeyCode::Up) => self.set_plan_cursor(cursor.saturating_sub(1)),
+            (None, KeyCode::Down) => {
+                if n_beats > 0 {
+                    self.set_plan_cursor((cursor + 1).min(n_beats - 1));
                 }
             }
-            // Stream the AI structure analysis into the AI pane.
-            KeyCode::Char('a') => {
-                let (slug, fw) = (book_slug.clone(), framework.clone());
-                self.fire_plan_analysis(&slug, &fw);
+            (None, KeyCode::Char('m')) => {
+                if n_chaps > 0 {
+                    self.set_plan_picking(Some(0));
+                    self.status = "Map this beat to a chapter · ↑↓ · Enter · Esc".into();
+                } else {
+                    self.status = "plan: no chapters to map to".into();
+                }
             }
-            _ => {}
+            (None, KeyCode::Char('s')) => self.cycle_plan_status(cursor),
+            (None, KeyCode::Char('a')) => self.fire_plan_analysis(&book_slug, &framework),
+            (None, _) => {}
         }
         true
+    }
+
+    fn set_plan_cursor(&mut self, v: usize) {
+        if let Modal::PlanOutline { cursor, .. } = &mut self.modal {
+            *cursor = v;
+        }
+    }
+    fn set_plan_picking(&mut self, v: Option<usize>) {
+        if let Modal::PlanOutline { picking, .. } = &mut self.modal {
+            *picking = v;
+        }
+    }
+
+    /// Map the `beat_idx` beat to the `chap_idx` chapter (write-back +
+    /// refresh) — reuses the P0 `edit_beat` primitive.
+    fn map_plan_beat(&mut self, beat_idx: usize, chap_idx: usize) {
+        let Some(chapter) = (match &self.modal {
+            Modal::PlanOutline { report, .. } => report.chapters.get(chap_idx).map(|c| c.slug.clone()),
+            _ => None,
+        }) else {
+            return;
+        };
+        let pairs = crate::cli::plan::load_beats(&self.store, &self.hierarchy);
+        let Some((id, _)) = pairs.get(beat_idx) else { return };
+        let mut node = match self.hierarchy.get(*id) {
+            Some(n) => n.clone(),
+            None => return,
+        };
+        if let Err(e) =
+            crate::cli::plan::edit_beat(&self.store, &mut node, |b| b.mapped_chapter = Some(chapter.clone()))
+        {
+            self.status = format!("plan: {e}");
+            return;
+        }
+        self.rebuild_plan_outline();
+        self.status = format!("mapped → {chapter}");
+    }
+
+    fn cycle_plan_status(&mut self, beat_idx: usize) {
+        let pairs = crate::cli::plan::load_beats(&self.store, &self.hierarchy);
+        let Some((id, _)) = pairs.get(beat_idx) else { return };
+        let mut node = match self.hierarchy.get(*id) {
+            Some(n) => n.clone(),
+            None => return,
+        };
+        if let Err(e) = crate::cli::plan::edit_beat(&self.store, &mut node, |b| {
+            b.status = match b.status.as_str() {
+                "planned" => "drafted",
+                "drafted" => "done",
+                _ => "planned",
+            }
+            .to_string();
+        }) {
+            self.status = format!("plan: {e}");
+            return;
+        }
+        self.rebuild_plan_outline();
+    }
+
+    /// Recompute the report after an edit (keeps cursor; clears picking).
+    fn rebuild_plan_outline(&mut self) {
+        let Some(book) = self.current_book_node(&self.hierarchy) else {
+            return;
+        };
+        let report =
+            match crate::cli::plan::build_report(&self.store, &self.layout, &self.hierarchy, &book, 0.10) {
+                Ok((r, _, _)) => r,
+                Err(e) => {
+                    self.status = format!("plan: {e}");
+                    return;
+                }
+            };
+        if let Modal::PlanOutline {
+            report: r,
+            cursor,
+            picking,
+            ..
+        } = &mut self.modal
+        {
+            let max = report.beats.len().saturating_sub(1);
+            if *cursor > max {
+                *cursor = max;
+            }
+            *r = report;
+            *picking = None;
+        }
     }
 
     /// 1.3.2 PLANNING-1 P3 — stream the AI structure analysis into the AI
