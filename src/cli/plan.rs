@@ -46,9 +46,26 @@ pub fn run(project: &Path, cmd: PlanCommand) -> Result<()> {
         PlanCommand::Unmap { beat } => unmap(project, &beat),
         PlanCommand::Scaffold {
             premise,
+            chapters,
+            book_name,
             framework,
             provider,
-        } => scaffold(project, &premise, framework.as_deref(), provider.as_deref()),
+        } => {
+            if premise.is_none() && !chapters {
+                return Err(Error::Store(
+                    "plan scaffold: pass --premise (fill intentions) and/or --chapters \
+                     (scaffold chapter shells)"
+                        .into(),
+                ));
+            }
+            if let Some(p) = premise.as_deref() {
+                scaffold_intentions(project, p, framework.as_deref(), provider.as_deref())?;
+            }
+            if chapters {
+                scaffold_chapters(project, book_name.as_deref())?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -96,8 +113,96 @@ fn resolve_plan_prompt(layout: &ProjectLayout, slug: &str, builtin: &str) -> Str
         .unwrap_or_else(|| builtin.to_string())
 }
 
+/// PLANNING-2 P3 — materialize a chapter shell per beat under the
+/// manuscript book, seed each with its intention, and back-link the beat.
+/// Opt-in + guarded: refuses if the book already has chapters.
+fn scaffold_chapters(project: &Path, book_name: Option<&str>) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let h0 = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+
+    let pairs = load_beats(&store, &h0);
+    if pairs.is_empty() {
+        return Err(Error::Store(
+            "plan scaffold: no beats — run `inkhaven plan init` first".into(),
+        ));
+    }
+    let book = super::resolve_user_book(&h0, book_name, "plan scaffold")
+        .map_err(Error::Store)?
+        .clone();
+    let existing = h0
+        .children_of(Some(book.id))
+        .iter()
+        .filter(|n| n.kind == NodeKind::Chapter)
+        .count();
+    if existing > 0 {
+        return Err(Error::Store(format!(
+            "plan scaffold --chapters: `{}` already has {existing} chapter(s) — refusing to \
+             clobber. Scaffold into a fresh book.",
+            book.title
+        )));
+    }
+
+    let mut created = 0usize;
+    for (beat_id, beat) in &pairs {
+        // Reload so each new chapter orders after the previous one.
+        let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+        let book_node = h
+            .get(book.id)
+            .cloned()
+            .ok_or_else(|| Error::Store("plan scaffold: book vanished".into()))?;
+        let chapter = store.create_node(
+            &cfg,
+            &h,
+            NodeKind::Chapter,
+            &beat.beat,
+            Some(&book_node),
+            None,
+            InsertPosition::End,
+        )?;
+        let chapter_slug = chapter.slug.clone();
+
+        // A starter paragraph seeded with the beat's intention.
+        let mut para = store.create_node(
+            &cfg,
+            &h,
+            NodeKind::Paragraph,
+            &beat.beat,
+            Some(&chapter),
+            None,
+            InsertPosition::End,
+        )?;
+        let intention = if beat.notes.trim().is_empty() {
+            "(plan this beat)".to_string()
+        } else {
+            beat.notes.clone()
+        };
+        let body = format!("= {}\n\n{intention}\n", beat.beat);
+        if let Some(rel) = &para.file {
+            std::fs::write(store.project_root().join(rel), body.as_bytes()).map_err(Error::Io)?;
+        }
+        store
+            .update_paragraph_content(&mut para, body.as_bytes())
+            .map_err(|e| Error::Store(format!("plan scaffold: seed paragraph: {e}")))?;
+
+        // Back-link the beat to its new chapter.
+        if let Some(mut bn) = h.get(*beat_id).cloned() {
+            edit_beat(&store, &mut bn, |b| b.mapped_chapter = Some(chapter_slug.clone()))?;
+        }
+        created += 1;
+    }
+
+    println!(
+        "plan scaffold: created {created} chapter shell(s) under `{}` and mapped {created} beat(s)",
+        book.title
+    );
+    Ok(())
+}
+
 /// PLANNING-2 P2 — fill each beat's intention from a premise.
-fn scaffold(
+fn scaffold_intentions(
     project: &Path,
     premise: &str,
     framework_override: Option<&str>,

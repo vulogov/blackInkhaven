@@ -1194,13 +1194,20 @@ pub enum PlanCommand {
     },
     /// Clear a beat's `mapped_chapter` (turn it back into an open gap).
     Unmap { beat: String },
-    /// Plan-first: expand each framework beat into a 1–2 sentence
-    /// intention for a premise, written into the beats' notes.  Run
-    /// `plan init` first.
+    /// Plan-first.  `--premise "<logline>"` expands each beat into an
+    /// intention (AI); `--chapters` materializes a chapter shell per beat
+    /// under the manuscript book (opt-in, refuses to clobber an existing
+    /// book) and back-links each beat.  Pass either or both.  Run `plan
+    /// init` first.
     Scaffold {
-        /// The premise / logline to plan around.
+        /// The premise / logline to plan around (fills beat intentions).
         #[arg(long)]
-        premise: String,
+        premise: Option<String>,
+        /// Create a chapter shell per beat under the manuscript book.
+        #[arg(long)]
+        chapters: bool,
+        #[arg(long)]
+        book_name: Option<String>,
         #[arg(long)]
         framework: Option<String>,
         #[arg(long)]
