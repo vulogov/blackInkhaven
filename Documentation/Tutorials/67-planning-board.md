@@ -37,11 +37,59 @@ editor and it reads like a Thread:
 }
 ```
 
-**Map a beat to a chapter** by setting `mapped_chapter` to that chapter's
-slug, and (optionally) listing the `threads` it advances. That's the whole
-input the diagnosis needs.
+## 2. Find the slugs, then map a beat
 
-## 2. Check the structure
+A beat maps to a chapter by the chapter's **slug**, and to arcs by their
+**thread slugs**. You don't have to guess them — **`inkhaven plan check`
+prints both lists at the bottom of its report**, so the loop is *init →
+check → map → check again*:
+
+```
+CHAPTER SLUGS (set `mapped_chapter:` to one of these)
+  the-wharf            0%
+  the-letter          12%
+  the-reveal          48%
+  the-long-night      71%
+  …
+THREAD SLUGS (add to a beat's `threads:` list)
+  the-inheritance
+  the-lighthouse-secret
+```
+
+These are the **bare** slugs — the title lowercased and hyphenated, with
+**no** leading `NN-` number. (That `01-`/`02-` prefix you see on the folder
+names under `books/…/` only orders the files on disk; it is *not* part of
+the slug.) Threads come from the **Threads** book — add an arc with
+`inkhaven thread add "The Inheritance"` and its slug is `the-inheritance`.
+
+Now open the beat in the editor — it's a paragraph under **Planning** in
+the tree (`Planning ▸ Midpoint`) — and fill the two fields, copying the
+slugs from the lists above:
+
+```hjson
+{
+  framework:       "save_the_cat"
+  beat:            "Midpoint"
+  act:             2
+  target_position: 0.50
+  mapped_chapter:  "the-reveal"          // ← was null
+  threads:         ["the-inheritance"]   // ← was []
+  status:          "drafted"
+}
+```
+
+Save with `Ctrl+S`. One chapter can host several beats, and a beat can
+carry several threads (`["the-inheritance", "the-lighthouse-secret"]`).
+Re-run `plan check` and the beat resolves:
+
+```
+✓ Midpoint          act 2  target  50%  → the-reveal (48%, -2%)  ↪ the-inheritance
+```
+
+(Prefer the editor, but the same edit works from any text editor on the
+beat's `.typ` file under `books/planning/` — inkhaven reloads it.)
+
+## 3. Check the structure
 
 ```sh
 inkhaven plan check                 # or --json / --drift 15 / --book-name "My Novel"
@@ -51,8 +99,8 @@ inkhaven plan check                 # or --json / --drift 15 / --book-name "My N
 plan check · My Novel · Save the Cat · 24 chapter(s)
 
 BEATS
-  ✓ Catalyst          act 1  target  10%  → 03-the-letter (12%, +2%)
-  ⚠ Midpoint          act 2  target  50%  → 14-the-reveal (64%, +14%)  ↪ inheritance
+  ✓ Catalyst          act 1  target  10%  → the-letter (12%, +2%)
+  ⚠ Midpoint          act 2  target  50%  → the-reveal (64%, +14%)  ↪ the-inheritance
   ✗ All Is Lost       act 2  target  75%  (unmapped)
 
 PACING (act word-share)
@@ -63,6 +111,13 @@ PACING (act word-share)
   ⚠ gap: `All Is Lost` is unmapped
   ⚠ drift: `Midpoint` lands at 64% (target 50%, +14%)
   ⚠ pacing: Act 1 is 30% of words (expected 20%, long)
+
+CHAPTER SLUGS (set `mapped_chapter:` to one of these)
+  the-wharf            0%
+  the-letter          12%
+  …
+THREAD SLUGS (add to a beat's `threads:` list)
+  the-inheritance
 ```
 
 Three diagnoses, none of them AI:
@@ -75,14 +130,14 @@ Three diagnoses, none of them AI:
 
 These are factual, not verdicts — prompts to think.
 
-## 3. See it at a glance
+## 4. See it at a glance
 
 In the editor, **`Ctrl+V Shift+K`** (K for sKeleton) opens the structure
 outline: every beat as a position bar — `|` is where the framework wants
 it, `●` where it actually lands — colour-coded on-target / drift / gap,
 with the act pacing below. `↪N` marks beats that advance threads.
 
-## 4. Ask the AI
+## 5. Ask the AI
 
 For the qualitative read, over the book digest:
 

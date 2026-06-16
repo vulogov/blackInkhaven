@@ -264,6 +264,21 @@ fn render(
             println!("  ⚠ {w}");
         }
     }
+
+    // The slugs to copy into a beat's `mapped_chapter` / `threads` — so you
+    // can map without hunting for them.
+    println!("\nCHAPTER SLUGS (set `mapped_chapter:` to one of these)");
+    for c in &report.chapters {
+        println!("  {:<32} {:>3.0}%", c.slug, c.position * 100.0);
+    }
+    if report.available_threads.is_empty() {
+        println!("\nTHREAD SLUGS: (none — add arcs with `inkhaven thread add`)");
+    } else {
+        println!("\nTHREAD SLUGS (add to a beat's `threads:` list)");
+        for t in &report.available_threads {
+            println!("  {t}");
+        }
+    }
 }
 
 fn init(project: &Path, framework: Option<&str>) -> Result<()> {

@@ -237,6 +237,14 @@ pub struct ActPacing {
     pub actual: Option<f32>,
 }
 
+/// A mapping target: a chapter's slug (the `mapped_chapter` value) + where
+/// it sits in the book.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChapterRef {
+    pub slug: String,
+    pub position: f32,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanReport {
     pub beats: Vec<BeatStatus>,
@@ -244,6 +252,12 @@ pub struct PlanReport {
     pub gaps: Vec<String>,
     pub acts: Vec<ActPacing>,
     pub warnings: Vec<String>,
+    /// The book's chapters (slug + position) — the values to put in a
+    /// beat's `mapped_chapter`.
+    pub chapters: Vec<ChapterRef>,
+    /// Thread slugs in the Threads book — the values to put in a beat's
+    /// `threads`.
+    pub available_threads: Vec<String>,
 }
 
 /// Diagnose a structure: coverage (gaps), per-beat position drift, and
@@ -368,7 +382,18 @@ pub fn analyze(
         ));
     }
 
-    PlanReport { beats: statuses, gaps, acts, warnings }
+    let chapter_refs = chapters
+        .iter()
+        .map(|c| ChapterRef { slug: c.slug.clone(), position: c.start })
+        .collect();
+    PlanReport {
+        beats: statuses,
+        gaps,
+        acts,
+        warnings,
+        chapters: chapter_refs,
+        available_threads: known_threads.iter().cloned().collect(),
+    }
 }
 
 // ── built-in framework tables (positions monotonic non-decreasing) ──
