@@ -1621,7 +1621,7 @@ impl super::super::App {
                         width: inner.width,
                         height: 1,
                     };
-                    let hints = Line::from(vec![
+                    let mut hint_spans = vec![
                         Span::styled(" r ", reverse_chip(Color::Yellow)),
                         Span::raw("replace  "),
                         Span::styled(" i ", reverse_chip(Color::Yellow)),
@@ -1634,8 +1634,15 @@ impl super::super::App {
                         Span::raw("copy  "),
                         Span::styled(" g ", reverse_chip(Color::Green)),
                         Span::raw("grammar"),
-                    ]);
-                    f.render_widget(Paragraph::new(hints), hints_rect);
+                    ];
+                    // Only offered when this response carries a system-book
+                    // destination (a submission draft / structural analysis).
+                    if self.lift_target_matches_current() {
+                        hint_spans.push(Span::raw("  "));
+                        hint_spans.push(Span::styled(" L ", reverse_chip(Color::Cyan)));
+                        hint_spans.push(Span::raw("file"));
+                    }
+                    f.render_widget(Paragraph::new(Line::from(hint_spans)), hints_rect);
                 }
             }
         }

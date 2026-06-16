@@ -67,7 +67,7 @@ use super::hjson_edit::{
     set_sound_enabled_in_hjson,
 };
 use super::inference::{
-    AiMode, Inference, InferenceAction, InferenceMode, InferenceStatus,
+    AiMode, Inference, InferenceAction, InferenceMode, InferenceStatus, LiftTarget,
 };
 use super::state::{
     BookStats, ChatSearchState, ChatSelectionState, DeletedParagraphStash,
@@ -1807,6 +1807,11 @@ pub(crate) struct App {
     language_entries: super::lexicon_build::LanguageEntryIndex,
 
     inference: Option<Inference>,
+    /// Destination for the AI-pane `L` (lift) chord — set by the
+    /// submission / structural-analysis generators so their finished output
+    /// can be filed into its system book. Stamped with the owning
+    /// inference's `started_at`; ignored once a different inference is shown.
+    lift_target: Option<LiftTarget>,
     show_prompt_picker: bool,
     prompt_picker_cursor: usize,
 
@@ -2197,6 +2202,7 @@ impl App {
             lexicon,
             language_entries,
             inference: None,
+            lift_target: None,
             show_prompt_picker: false,
             prompt_picker_cursor: 0,
             paragraph_cursors: std::collections::HashMap::new(),
@@ -4278,6 +4284,16 @@ impl App {
                 }
                 KeyCode::Char('c') | KeyCode::Char('C') => {
                     self.apply_inference(InferenceAction::CopyOnly);
+                    return Ok(false);
+                }
+                // `l` / `L` — lift a generator response into its system book
+                // (submission draft → Submissions, structural analysis →
+                // Planning). Only when the finished response actually carries
+                // a destination, so plain chat replies leave `l` untouched.
+                KeyCode::Char('l') | KeyCode::Char('L')
+                    if self.lift_target_matches_current() =>
+                {
+                    self.lift_inference_to_book();
                     return Ok(false);
                 }
                 _ => {}
@@ -9259,18 +9275,26 @@ impl App {
             Vec::new(),
             user_prompt.clone(),
         );
+        let started_at = std::time::Instant::now();
         self.inference = Some(Inference {
             provider,
             model,
             response: String::new(),
             status: InferenceStatus::Streaming,
             rx,
-            started_at: std::time::Instant::now(),
+            started_at,
+        });
+        self.lift_target = Some(LiftTarget {
+            book_tag: crate::store::SYSTEM_TAG_PLANNING,
+            book_label: "Planning",
+            title: "Structural Analysis".into(),
+            what: "structural analysis".into(),
+            stamp: started_at,
         });
         self.pending_chat_user_msg = Some(user_prompt);
         self.modal = Modal::None;
         self.change_focus(Focus::Ai);
-        self.status = "Analyzing structure → AI pane".into();
+        self.status = "Analyzing structure → AI pane (L files it into Planning)".into();
     }
 
     fn submission_gen_handle_key(&mut self, key: KeyEvent) -> bool {
@@ -9324,22 +9348,138 @@ impl App {
             Vec::new(),
             user_prompt.clone(),
         );
+        let started_at = std::time::Instant::now();
         self.inference = Some(Inference {
             provider,
             model,
             response: String::new(),
             status: InferenceStatus::Streaming,
             rx,
-            started_at: std::time::Instant::now(),
+            started_at,
+        });
+        self.lift_target = Some(LiftTarget {
+            book_tag: crate::store::SYSTEM_TAG_SUBMISSIONS,
+            book_label: "Submissions",
+            title: kind.title().to_string(),
+            what: kind.title().to_lowercase(),
+            stamp: started_at,
         });
         self.pending_chat_user_msg = Some(user_prompt);
         self.modal = Modal::None;
         self.change_focus(Focus::Ai);
         self.status = format!(
-            "Generating {} → AI pane (Ctrl+C to select/insert; save the final via `inkhaven submission {}`)",
+            "Generating {} → AI pane (L files it into Submissions; or save via `inkhaven submission {}`)",
             kind.title(),
             kind.slug(),
         );
+    }
+
+    /// Whether a `lift_target` exists *and* belongs to the inference
+    /// currently shown in the AI pane (matched by `started_at`). Guards the
+    /// `L` chord so a stale target from an earlier generator can never file
+    /// the wrong text, and so `L` is inert for ordinary chat replies.
+    pub(super) fn lift_target_matches_current(&self) -> bool {
+        matches!(
+            (&self.lift_target, &self.inference),
+            (Some(t), Some(inf)) if t.stamp == inf.started_at
+        )
+    }
+
+    /// `L` in the AI pane: file the finished generator response into its
+    /// system book — a submission draft into Submissions, the structural
+    /// analysis into Planning — upserting by title so re-running a generator
+    /// overwrites rather than piling up. Mirrors the CLI `write_draft` path.
+    pub(super) fn lift_inference_to_book(&mut self) {
+        let Some(target) = self.lift_target.clone() else {
+            return;
+        };
+        let text = match self.inference.as_ref() {
+            Some(inf) if inf.started_at == target.stamp => inf.response.trim().to_string(),
+            // The shown inference is no longer the one this target was made
+            // for — drop the stale target rather than file the wrong text.
+            _ => {
+                self.lift_target = None;
+                return;
+            }
+        };
+        if text.is_empty() {
+            self.status = "lift: nothing to file yet".into();
+            return;
+        }
+        match self.upsert_system_draft(target.book_tag, &target.title, &text) {
+            Ok(slug) => {
+                self.status = format!(
+                    "Filed {} → {}/{slug}",
+                    target.what, target.book_label
+                );
+                self.lift_target = None;
+                self.reload_hierarchy();
+            }
+            Err(e) => self.status = format!("lift failed: {e}"),
+        }
+    }
+
+    /// Upsert a prose draft paragraph (keyed by title, case-insensitive)
+    /// into the system book tagged `book_tag`. Disk-first, then the bdslib
+    /// content update — the system-book write discipline. Returns the
+    /// paragraph slug.
+    fn upsert_system_draft(
+        &mut self,
+        book_tag: &str,
+        title: &str,
+        body_text: &str,
+    ) -> std::result::Result<String, String> {
+        let book = self
+            .hierarchy
+            .iter()
+            .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(book_tag))
+            .cloned()
+            .ok_or_else(|| format!("no system book `{book_tag}` (reopen the project)"))?;
+        let body = format!("= {title}\n\n{}\n", body_text.trim());
+
+        // Overwrite an existing draft of the same title rather than piling up.
+        let existing = self.hierarchy.collect_subtree(book.id).into_iter().find_map(|id| {
+            self.hierarchy
+                .get(id)
+                .filter(|n| {
+                    n.kind == NodeKind::Paragraph
+                        && n.title.trim().eq_ignore_ascii_case(title)
+                })
+                .cloned()
+        });
+        if let Some(mut node) = existing {
+            if let Some(rel) = node.file.clone() {
+                let abs = self.layout.root.join(&rel);
+                std::fs::write(&abs, body.as_bytes()).map_err(|e| e.to_string())?;
+            }
+            self.store
+                .update_paragraph_content(&mut node, body.as_bytes())
+                .map_err(|e| e.to_string())?;
+            let _ = self.store.sync();
+            return Ok(node.slug);
+        }
+
+        let mut node = self
+            .store
+            .create_node(
+                &self.cfg,
+                &self.hierarchy,
+                NodeKind::Paragraph,
+                title,
+                Some(&book),
+                None,
+                crate::store::InsertPosition::End,
+            )
+            .map_err(|e| e.to_string())?;
+        if let Some(rel) = node.file.clone() {
+            let abs = self.layout.root.join(&rel);
+            std::fs::write(&abs, body.as_bytes()).map_err(|e| e.to_string())?;
+            self.store
+                .update_paragraph_content(&mut node, body.as_bytes())
+                .map_err(|e| e.to_string())?;
+        }
+        let _ = self.store.sync();
+        Ok(node.slug)
     }
 
     /// Scroll handler for the BookInfo modal — mirrors
