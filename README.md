@@ -21,41 +21,44 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.2 — The Planning Board
+## Latest release · 1.3.3 — The Planning Board, fluent & complete
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.2.md`](Documentation/RELEASE_NOTES/1.3.2.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.3.md`](Documentation/RELEASE_NOTES/1.3.3.md)
 
-After taking a book to print (1.3.0) and to an agent (1.3.1), 1.3.2 turns to
-the **front** of the lifecycle — *structure*. Most tools help you organize;
-the Planning Board helps you **diagnose**, turning "something's wrong with
-my middle but I can't see it" into a specific, objective finding. Structure
-is the third axis alongside the Timeline (*when*) and Threads (*arc
-payoff*). Pure-Rust, **no new dependencies**.
+1.3.2 opened the Planning Board to **diagnose** a draft's structure. 1.3.3
+makes it **fluent** (map beats without hand-editing HJSON) and **complete**
+(a from-nothing plan-first mode), then folds in four print-pipeline
+follow-ups. Pure-Rust, **no new dependencies**.
 
-### Lay a framework, then diagnose
+### Fluent — map without leaving the view
 
-`inkhaven plan init --framework save_the_cat` (or three-act / Story Circle /
-Hero's Journey / Seven-Point) scaffolds a framework's beats into a new
-**Planning** system book; map a beat to a chapter with `mapped_chapter`.
-Then **`inkhaven plan check`** gives the deterministic finding — no AI:
+`inkhaven plan check` now prints the **chapter** and **thread** slugs to
+use, and `inkhaven plan map <beat> --chapter <slug> [--threads …]` writes
+the mapping in for you (no HJSON editing). The **`Ctrl+V Shift+K`** outline
+is interactive: `↑↓` browse, **`m`** maps a beat from a chapter picker,
+**`s`** cycles its status, **`a`** streams the AI analysis (then **`L`**
+files it into the Planning book). See the drift, map the beat, watch it snap
+to target — all in one view.
 
-- **Coverage** — which beats have a home, which are gaps.
-- **Position drift** — "your Midpoint lands at 64%, target 50%".
-- **Pacing** — each act's *word share* vs. the framework's shape ("Act 1 is
-  30% of your words — long"), the factual version of "the opening drags".
+### Complete — start from nothing
 
-### See it, then ask the AI
+`inkhaven plan scaffold --premise "<logline>"` writes a concrete intention
+into every framework beat; `--chapters` materializes back-linked chapter
+shells (opt-in, guarded against clobbering a draft). Skeleton first, prose
+later.
 
-**`Ctrl+V Shift+K`** renders the report as a position bar per beat (`|`
-target vs `●` actual), colour-coded, with act pacing. **`inkhaven plan
-analyze`** (and `a` in the outline) reads it qualitatively over the 1.3.1
-book digest — naming the sag — and a beat's `threads` connect structure to
-arcs.
+### PDF-1 follow-ups
+
+Three new imposition profiles (`us_perfect` / `us_chapbook` / `thick`),
+aspect-preserving cover art (`--fit cover|fit|stretch`) with spine-text
+auto-fit, grayscale for JPEG (DCTDecode) photos, and preflight
+press-hazard reporting — overprint, transparency, and spot colours.
 
 ### Test stats
 
-Tests 1286 → 1294, **zero new dependencies**. One new tutorial
-([67, The Planning Board](Documentation/Tutorials/67-planning-board.md)).
+Tests 1294 → 1307, **zero new dependencies**. Two tutorials refreshed
+([65, hand-binding](Documentation/Tutorials/65-hand-binding.md) and
+[67, the Planning Board](Documentation/Tutorials/67-planning-board.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

@@ -129,6 +129,18 @@ pub fn beat_body(b: &Beat) -> String {
         Some(c) => format!("\"{}\"", esc(c)),
         None => "null".to_string(),
     };
+    let threads = if b.threads.is_empty() {
+        "[]".to_string()
+    } else {
+        format!(
+            "[{}]",
+            b.threads
+                .iter()
+                .map(|t| format!("\"{}\"", esc(t)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
     format!(
         "// planning beat — framework: {fw}\n\
 {{\n  \
@@ -140,18 +152,20 @@ pub fn beat_body(b: &Beat) -> String {
   // Chapter slug this beat maps to (null = a gap).\n  \
   mapped_chapter:  {mapped}\n  \
   // Thread (arc) slugs this beat advances.\n  \
-  threads:         []\n  \
+  threads:         {threads}\n  \
   // planned | drafted | done\n  \
   status:          \"{status}\"\n  \
   // Author's notes for this structural beat.\n  \
-  notes:           \"\"\n\
+  notes:           \"{notes}\"\n\
 }}\n",
         fw = esc(&b.framework),
         beat = esc(&b.beat),
         act = b.act,
         pos = b.target_position,
         mapped = mapped,
+        threads = threads,
         status = esc(&b.status),
+        notes = esc(&b.notes),
     )
 }
 
@@ -199,6 +213,56 @@ BOOK:\n{digest_context}\n\nMap the beats to chapters, then diagnose the structur
     )
 }
 
+// ── plan-first scaffolding (PLANNING-2 P2) ──────────────────────────
+
+pub const SCAFFOLD_SLUG: &str = "plan-scaffold";
+
+pub fn scaffold_system_prompt() -> &'static str {
+    "You are a story architect. Given a premise and a beat sheet, write a concrete 1–2 sentence \
+intention for EACH beat — what actually happens at that beat in this story. These are planning \
+notes, not prose. Output exactly one line per beat in the form `<Beat Name>: <intention>`, using \
+the beat names verbatim, in order, with no numbering and no preamble."
+}
+
+pub fn scaffold_user_prompt(framework: Framework, premise: &str) -> String {
+    let mut names = String::new();
+    for b in framework.beats() {
+        names.push_str(&format!("- {}\n", b.name));
+    }
+    format!(
+        "PREMISE / LOGLINE: {premise}\n\nSTORY-STRUCTURE FRAMEWORK: {label}\n\nWrite a `<Beat Name>: \
+<intention>` line for each beat below, in order.\n\nBEATS:\n{names}",
+        label = framework.label(),
+    )
+}
+
+/// Parse a scaffold response into `(beat name, intention)` pairs, matching
+/// each line's leading label (case-insensitive, tolerant of a `1.`/`-`
+/// prefix) to a beat.  Unmatched beats are simply absent — never
+/// mis-assigned.
+pub fn parse_scaffold(raw: &str, beats: &[Beat]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        let Some((name, intention)) = line.split_once(':') else {
+            continue;
+        };
+        let name = name
+            .trim()
+            .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == '-' || c == ')')
+            .trim();
+        let intention = intention.trim();
+        if intention.is_empty() {
+            continue;
+        }
+        if let Some(b) = beats.iter().find(|b| b.beat.eq_ignore_ascii_case(name)) {
+            if !out.iter().any(|(n, _): &(String, String)| n == &b.beat) {
+                out.push((b.beat.clone(), intention.to_string()));
+            }
+        }
+    }
+    out
+}
+
 // ── coverage + pacing analysis (P1, deterministic) ──────────────────
 
 /// A chapter's slug + its **start** position as a fraction of the book's
@@ -226,6 +290,8 @@ pub struct BeatStatus {
     pub threads: Vec<String>,
     /// Referenced thread slugs that don't exist in the Threads book.
     pub unknown_threads: Vec<String>,
+    /// The beat's intention note (filled by `plan scaffold`, or by hand).
+    pub notes: String,
 }
 
 /// Word-share of one act: the framework's expected fraction vs. the
@@ -237,6 +303,14 @@ pub struct ActPacing {
     pub actual: Option<f32>,
 }
 
+/// A mapping target: a chapter's slug (the `mapped_chapter` value) + where
+/// it sits in the book.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChapterRef {
+    pub slug: String,
+    pub position: f32,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanReport {
     pub beats: Vec<BeatStatus>,
@@ -244,6 +318,12 @@ pub struct PlanReport {
     pub gaps: Vec<String>,
     pub acts: Vec<ActPacing>,
     pub warnings: Vec<String>,
+    /// The book's chapters (slug + position) — the values to put in a
+    /// beat's `mapped_chapter`.
+    pub chapters: Vec<ChapterRef>,
+    /// Thread slugs in the Threads book — the values to put in a beat's
+    /// `threads`.
+    pub available_threads: Vec<String>,
 }
 
 /// Diagnose a structure: coverage (gaps), per-beat position drift, and
@@ -288,6 +368,7 @@ pub fn analyze(
             drift: actual.map(|a| a - b.target_position),
             threads: b.threads.clone(),
             unknown_threads,
+            notes: b.notes.clone(),
         });
     }
 
@@ -368,7 +449,18 @@ pub fn analyze(
         ));
     }
 
-    PlanReport { beats: statuses, gaps, acts, warnings }
+    let chapter_refs = chapters
+        .iter()
+        .map(|c| ChapterRef { slug: c.slug.clone(), position: c.start })
+        .collect();
+    PlanReport {
+        beats: statuses,
+        gaps,
+        acts,
+        warnings,
+        chapters: chapter_refs,
+        available_threads: known_threads.iter().cloned().collect(),
+    }
 }
 
 // ── built-in framework tables (positions monotonic non-decreasing) ──
@@ -594,6 +686,29 @@ mod tests {
     }
 
     #[test]
+    fn scaffold_prompt_and_parse() {
+        let p = scaffold_user_prompt(Framework::ThreeAct, "A lighthouse keeper hides a body");
+        assert!(p.contains("A lighthouse keeper hides a body"));
+        assert!(p.contains("Three-Act"));
+        assert!(p.contains("- Midpoint"));
+
+        let beats = Framework::ThreeAct.seed_beats();
+        let raw = "Opening: A quiet town wakes.\n\
+                   1. Midpoint: The truth lands hard.\n\
+                   Climax: They finally face it.\n\
+                   Nonsense: ignore me\n\
+                   Resolution:   ";
+        let out = parse_scaffold(raw, &beats);
+        assert!(out.iter().any(|(n, i)| n == "Opening" && i == "A quiet town wakes."));
+        // the "1. " prefix is stripped before matching
+        assert!(out.iter().any(|(n, i)| n == "Midpoint" && i == "The truth lands hard."));
+        assert!(out.iter().any(|(n, _)| n == "Climax"));
+        // a non-beat label is ignored; an empty intention is skipped
+        assert!(!out.iter().any(|(n, _)| n == "Nonsense"));
+        assert!(!out.iter().any(|(n, _)| n == "Resolution"));
+    }
+
+    #[test]
     fn analyze_prompt_carries_framework_and_context() {
         let p = analyze_user_prompt(Framework::SaveTheCat, "TITLE: X\nCHAPTER SUMMARIES:\n1. Foo");
         assert!(p.contains("Save the Cat"));
@@ -613,12 +728,15 @@ mod tests {
         assert!((back.target_position - 0.50).abs() < 1e-6);
         assert_eq!(back.status, "planned");
         assert!(back.mapped_chapter.is_none());
-        // a mapped beat round-trips its chapter slug
+        // a mapped beat round-trips its chapter slug, threads, and notes
+        // (these were once hard-coded in beat_body — pin them).
         let mut mapped = mid.clone();
-        mapped.mapped_chapter = Some("03-the-wharf".into());
-        assert_eq!(
-            parse_beat(&beat_body(&mapped)).unwrap().mapped_chapter.as_deref(),
-            Some("03-the-wharf")
-        );
+        mapped.mapped_chapter = Some("the-wharf".into());
+        mapped.threads = vec!["the-inheritance".into(), "the-secret".into()];
+        mapped.notes = "The truth lands; she can't unsee it.".into();
+        let back = parse_beat(&beat_body(&mapped)).unwrap();
+        assert_eq!(back.mapped_chapter.as_deref(), Some("the-wharf"));
+        assert_eq!(back.threads, vec!["the-inheritance", "the-secret"]);
+        assert_eq!(back.notes, "The truth lands; she can't unsee it.");
     }
 }

@@ -36,6 +36,26 @@ impl InferenceAction {
     }
 }
 
+/// Where the AI-pane `L` (lift) chord should file a finished generator
+/// response. Set only by the generators whose output belongs in a system
+/// book — the submission drafts (Submissions) and the structural analysis
+/// (Planning). Scoped to a single inference via `stamp` (the owning
+/// `Inference::started_at`) so a stale target can never leak into a later
+/// plain chat that reuses the AI pane.
+#[derive(Debug, Clone)]
+pub(super) struct LiftTarget {
+    /// `SYSTEM_TAG_SUBMISSIONS` or `SYSTEM_TAG_PLANNING`.
+    pub book_tag: &'static str,
+    /// Human label of the destination book, for the status line.
+    pub book_label: &'static str,
+    /// Paragraph title to upsert (overwrites an existing same-titled draft).
+    pub title: String,
+    /// Short label of the artefact ("query letter", "structural analysis").
+    pub what: String,
+    /// Identity of the inference this target belongs to.
+    pub stamp: std::time::Instant,
+}
+
 /// Scope of context an AI prompt sweeps in along with the user's query.
 /// Cycled by F9: None → Selection → Paragraph → Subchapter → Chapter →
 /// Book → Facts → None. Each non-None scope prepends the relevant text

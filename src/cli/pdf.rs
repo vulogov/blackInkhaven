@@ -142,6 +142,7 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             author,
             back,
             image,
+            fit,
             isbn,
             spine_mm,
             width_mm,
@@ -153,6 +154,7 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             author,
             back,
             image,
+            fit,
             isbn,
             spine_mm,
             width_mm,
@@ -312,6 +314,15 @@ fn preflight_cmd(input: &Path, profile: &str, dpi: Option<u32>, project: &Path) 
     if !r.color_pages.is_empty() {
         println!("  colour pages: {:?}", r.color_pages);
     }
+    if !r.overprint_pages.is_empty() {
+        println!("  overprint pages: {:?}", r.overprint_pages);
+    }
+    if !r.transparency_pages.is_empty() {
+        println!("  transparency pages: {:?}", r.transparency_pages);
+    }
+    if !r.spot_colors.is_empty() {
+        println!("  spot colours: {}", r.spot_colors.join(", "));
+    }
     if !r.blank_pages.is_empty() {
         println!("  blank pages: {:?}", r.blank_pages);
     }
@@ -358,6 +369,7 @@ struct CoverArgs<'a> {
     author: Option<String>,
     back: Option<String>,
     image: Option<PathBuf>,
+    fit: Option<String>,
     isbn: Option<String>,
     spine_mm: Option<f32>,
     width_mm: Option<f32>,
@@ -373,6 +385,9 @@ fn cover_cmd(a: CoverArgs) -> Result<()> {
     }
     if let Some(h) = a.height_mm {
         cfg.front_height_mm = h;
+    }
+    if let Some(fit) = a.fit {
+        cfg.image_fit = fit;
     }
     let req = CoverRequest {
         page_count: a.pages,

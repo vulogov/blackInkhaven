@@ -34,6 +34,11 @@ fn default_profiles() -> BTreeMap<String, ImpositionProfile> {
     let mut m = BTreeMap::new();
     m.insert("default".into(), ImpositionProfile::default());
     m.insert("chapbook".into(), ImpositionProfile::chapbook());
+    // US-paper analogues (Tabloid 11×17 folds to two Letter-half pages) and
+    // a heavy-book profile for thick perfect-bound titles.
+    m.insert("us_perfect".into(), ImpositionProfile::us_perfect());
+    m.insert("us_chapbook".into(), ImpositionProfile::us_chapbook());
+    m.insert("thick".into(), ImpositionProfile::thick());
     m
 }
 
@@ -98,6 +103,37 @@ impl ImpositionProfile {
                 ..MarksConfig::default()
             },
             blank_page_policy: "balance".into(),
+            ..Self::default()
+        }
+    }
+
+    /// US trade analogue of `default`: perfect-bound on Tabloid (11×17)
+    /// sheets, which fold to two US-Letter-half pages per side.
+    fn us_perfect() -> Self {
+        Self {
+            target_sheet_size: SheetSize::Preset("TABLOID".into()),
+            ..Self::default()
+        }
+    }
+
+    /// US analogue of `chapbook`: saddle-stitched on Tabloid sheets, no
+    /// creep, minimal marks.
+    fn us_chapbook() -> Self {
+        Self {
+            target_sheet_size: SheetSize::Preset("TABLOID".into()),
+            ..Self::chapbook()
+        }
+    }
+
+    /// Heavy perfect-bound book: large 8-sheet (32-page) signatures with
+    /// push-out creep so the outer leaves don't bind short after trimming.
+    fn thick() -> Self {
+        Self {
+            sheets_per_signature: 8,
+            creep: CreepConfig {
+                strategy: "pushout".into(),
+                ..CreepConfig::default()
+            },
             ..Self::default()
         }
     }
@@ -268,6 +304,35 @@ mod tests {
     #[test]
     fn unknown_profile_errors() {
         assert!(ImpositionConfig::default().resolve("nope").is_err());
+    }
+
+    #[test]
+    fn us_profiles_use_tabloid_sheets() {
+        let cfg = ImpositionConfig::default();
+        // 11×17 in points = 792 × 1224; folded 2-up → landscape (wider).
+        let p = cfg.resolve("us_perfect").unwrap();
+        assert_eq!(p.style, BindingStyle::PerfectBound);
+        assert!((p.sheet_size.width - 1224.0).abs() < 0.5, "Tabloid long edge across");
+        assert!(p.sheet_size.width > p.sheet_size.height);
+        let c = cfg.resolve("us_chapbook").unwrap();
+        assert_eq!(c.style, BindingStyle::SaddleStitch);
+        assert!(matches!(c.creep, CreepStrategy::None));
+        assert!(!c.marks.spine_marker);
+    }
+
+    #[test]
+    fn thick_profile_is_big_pushout_signatures() {
+        let p = ImpositionConfig::default().resolve("thick").unwrap();
+        assert_eq!(p.sheets_per_signature, 8);
+        assert!(matches!(p.creep, CreepStrategy::Pushout));
+    }
+
+    #[test]
+    fn profile_names_lists_all_builtins() {
+        let names = ImpositionConfig::default().profile_names();
+        for n in ["default", "chapbook", "us_perfect", "us_chapbook", "thick"] {
+            assert!(names.contains(n), "`{n}` missing from {names}");
+        }
     }
 
     #[test]

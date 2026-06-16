@@ -4145,6 +4145,7 @@ impl super::super::App {
             framework,
             report,
             cursor,
+            picking,
             ..
         } = &self.modal
         else {
@@ -4182,6 +4183,42 @@ impl super::super::App {
             width: inner.width,
             height: 1,
         };
+
+        // Chapter-picker sub-mode (after `m`): list the chapters to map the
+        // selected beat to.
+        if let Some(pc) = picking {
+            let beat = report.beats.get(*cursor).map(|b| b.beat.clone()).unwrap_or_default();
+            let mut lines: Vec<Line> = vec![
+                Line::from(Span::styled(
+                    format!("Map “{beat}” to a chapter:"),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+            ];
+            for (i, c) in report.chapters.iter().enumerate() {
+                let row = format!(
+                    "{} {:<30} {:>3.0}%",
+                    if i == *pc { "▶" } else { " " },
+                    c.slug,
+                    c.position * 100.0
+                );
+                let line = Line::from(row);
+                lines.push(if i == *pc {
+                    line.style(Style::default().add_modifier(Modifier::REVERSED))
+                } else {
+                    line
+                });
+            }
+            f.render_widget(Paragraph::new(lines), body);
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    " ↑↓ pick · Enter map · Esc cancel ",
+                    Style::default().add_modifier(Modifier::DIM),
+                ))),
+                footer,
+            );
+            return;
+        }
 
         // Position bar: baseline ·, target |, actual ● (# when they overlap).
         let pos_bar = |target: f32, actual: Option<f32>| -> String {
@@ -4264,11 +4301,23 @@ impl super::super::App {
             )));
         }
 
+        // The selected beat's intention (filled by `plan scaffold`).
+        if let Some(b) = report.beats.get(*cursor) {
+            if !b.notes.trim().is_empty() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    format!("↳ {}", b.notes.trim()),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
+                )));
+            }
+        }
+
         f.render_widget(Paragraph::new(lines), body);
+        let keys = "↑↓ · m map · s status · a analyze · Esc";
         let summary = if report.warnings.is_empty() {
-            " ✓ no findings · ↑↓ · a analyze · Esc ".to_string()
+            format!(" ✓ no findings · {keys} ")
         } else {
-            format!(" {} finding(s) · ↑↓ · a analyze · Esc ", report.warnings.len())
+            format!(" {} finding(s) · {keys} ", report.warnings.len())
         };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
