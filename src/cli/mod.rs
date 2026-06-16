@@ -1194,6 +1194,18 @@ pub enum PlanCommand {
     },
     /// Clear a beat's `mapped_chapter` (turn it back into an open gap).
     Unmap { beat: String },
+    /// Plan-first: expand each framework beat into a 1–2 sentence
+    /// intention for a premise, written into the beats' notes.  Run
+    /// `plan init` first.
+    Scaffold {
+        /// The premise / logline to plan around.
+        #[arg(long)]
+        premise: String,
+        #[arg(long)]
+        framework: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+    },
 }
 
 /// 1.3.1+ SUBMISSION-1 P3 — `inkhaven submission …` (singular): the AI

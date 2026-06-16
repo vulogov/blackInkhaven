@@ -4301,6 +4301,17 @@ impl super::super::App {
             )));
         }
 
+        // The selected beat's intention (filled by `plan scaffold`).
+        if let Some(b) = report.beats.get(*cursor) {
+            if !b.notes.trim().is_empty() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    format!("↳ {}", b.notes.trim()),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
+                )));
+            }
+        }
+
         f.render_widget(Paragraph::new(lines), body);
         let keys = "↑↓ · m map · s status · a analyze · Esc";
         let summary = if report.warnings.is_empty() {
