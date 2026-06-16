@@ -29,6 +29,21 @@ pub fn run(project: &Path, cmd: PlanCommand) -> Result<()> {
             book_name,
             provider,
         } => analyze(project, book_name.as_deref(), provider.as_deref()),
+        PlanCommand::Map {
+            beat,
+            chapter,
+            threads,
+            status,
+            book_name,
+        } => map(
+            project,
+            &beat,
+            &chapter,
+            threads,
+            status.as_deref(),
+            book_name.as_deref(),
+        ),
+        PlanCommand::Unmap { beat } => unmap(project, &beat),
     }
 }
 
@@ -144,23 +159,9 @@ pub(crate) fn build_report(
             book.title
         )));
     }
-    // Known thread slugs (paragraph slugs under the Threads book) — lets
-    // analyze flag beats referencing a thread that doesn't exist.
-    let known_threads: std::collections::BTreeSet<String> = h
-        .iter()
-        .find(|n| {
-            n.kind == NodeKind::Book
-                && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_THREADS)
-        })
-        .map(|tb| {
-            h.collect_subtree(tb.id)
-                .into_iter()
-                .filter_map(|id| h.get(id))
-                .filter(|n| n.kind == NodeKind::Paragraph)
-                .map(|n| n.slug.clone())
-                .collect()
-        })
-        .unwrap_or_default();
+    // Known thread slugs — lets analyze flag beats referencing a thread
+    // that doesn't exist.
+    let known_threads = known_thread_slugs(h);
 
     let fw = beats.first().map(|b| b.framework.clone()).unwrap_or_default();
     let n = chapters.len();
@@ -343,6 +344,146 @@ fn init(project: &Path, framework: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+// ── P0: plan map / unmap (HJSON write-back) ─────────────────────────
+
+/// True when `ident` names this beat — by slug, slugified title, or title
+/// (all case-insensitive). So `Midpoint`, `midpoint` both resolve.
+fn beat_matches(slug: &str, title: &str, ident: &str) -> bool {
+    slug.eq_ignore_ascii_case(ident)
+        || slug.eq_ignore_ascii_case(&slug::slugify(ident))
+        || title.eq_ignore_ascii_case(ident)
+}
+
+fn find_beat(h: &Hierarchy, planning_id: uuid::Uuid, ident: &str) -> Option<crate::store::node::Node> {
+    h.children_of(Some(planning_id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Paragraph && beat_matches(&n.slug, &n.title, ident))
+        .cloned()
+}
+
+/// Thread paragraph slugs in the Threads book.
+fn known_thread_slugs(h: &Hierarchy) -> std::collections::BTreeSet<String> {
+    h.iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_THREADS)
+        })
+        .map(|tb| {
+            h.collect_subtree(tb.id)
+                .into_iter()
+                .filter_map(|id| h.get(id))
+                .filter(|n| n.kind == NodeKind::Paragraph)
+                .map(|n| n.slug.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Re-render a beat into its Planning-book paragraph (disk-first, then the
+/// bdslib content update — the Threads pattern).
+fn save_beat(
+    store: &Store,
+    node: &mut crate::store::node::Node,
+    beat: &crate::planning::Beat,
+) -> Result<()> {
+    let body = crate::planning::beat_body(beat);
+    node.content_type = Some("hjson".to_string());
+    if let Some(rel) = &node.file {
+        let abs = store.project_root().join(rel);
+        std::fs::write(&abs, body.as_bytes()).map_err(Error::Io)?;
+    }
+    store
+        .update_paragraph_content(node, body.as_bytes())
+        .map_err(|e| Error::Store(format!("plan: save beat: {e}")))?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn map(
+    project: &Path,
+    beat_ident: &str,
+    chapter: &str,
+    threads: Option<Vec<String>>,
+    status: Option<&str>,
+    book_name: Option<&str>,
+) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+
+    let planning = planning_book(&h)?;
+    let mut node = find_beat(&h, planning.id, beat_ident).ok_or_else(|| {
+        Error::Store(format!("plan map: no beat `{beat_ident}` (see `inkhaven plan check`)"))
+    })?;
+
+    // Validate the chapter slug against the target book.
+    let book = super::resolve_user_book(&h, book_name, "plan map")
+        .map_err(Error::Store)?
+        .clone();
+    let chapter_slugs: std::collections::BTreeSet<String> = chapter_positions(&layout, &h, &book)
+        .into_iter()
+        .map(|c| c.slug)
+        .collect();
+    if !chapter_slugs.contains(chapter) {
+        return Err(Error::Store(format!(
+            "plan map: no chapter `{chapter}` in `{}` — run `inkhaven plan check` for the slug list",
+            book.title
+        )));
+    }
+    // Validate thread slugs (if given).
+    if let Some(ts) = &threads {
+        let known = known_thread_slugs(&h);
+        for t in ts {
+            if !known.contains(t) {
+                return Err(Error::Store(format!(
+                    "plan map: no thread `{t}` — add it with `inkhaven thread add`"
+                )));
+            }
+        }
+    }
+
+    let body = store
+        .get_content(node.id)
+        .map_err(|e| Error::Store(e.to_string()))?
+        .ok_or_else(|| Error::Store("plan map: beat has no content".into()))?;
+    let mut beat = crate::planning::parse_beat(&String::from_utf8_lossy(&body))
+        .ok_or_else(|| Error::Store("plan map: beat body is not valid HJSON".into()))?;
+    beat.mapped_chapter = Some(chapter.to_string());
+    if let Some(ts) = threads {
+        beat.threads = ts;
+    }
+    if let Some(st) = status {
+        beat.status = st.to_string();
+    }
+    save_beat(&store, &mut node, &beat)?;
+    println!("plan map: {} → {chapter}", beat.beat);
+    Ok(())
+}
+
+fn unmap(project: &Path, beat_ident: &str) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    let planning = planning_book(&h)?;
+    let mut node = find_beat(&h, planning.id, beat_ident).ok_or_else(|| {
+        Error::Store(format!("plan unmap: no beat `{beat_ident}`"))
+    })?;
+    let body = store
+        .get_content(node.id)
+        .map_err(|e| Error::Store(e.to_string()))?
+        .ok_or_else(|| Error::Store("plan unmap: beat has no content".into()))?;
+    let mut beat = crate::planning::parse_beat(&String::from_utf8_lossy(&body))
+        .ok_or_else(|| Error::Store("plan unmap: beat body is not valid HJSON".into()))?;
+    beat.mapped_chapter = None;
+    save_beat(&store, &mut node, &beat)?;
+    println!("plan unmap: {} is now an open gap", beat.beat);
+    Ok(())
+}
+
 fn planning_book(h: &Hierarchy) -> Result<crate::store::node::Node> {
     h.iter()
         .find(|n| {
@@ -352,4 +493,21 @@ fn planning_book(h: &Hierarchy) -> Result<crate::store::node::Node> {
         .ok_or_else(|| {
             Error::Store("plan init: Planning book missing — reopen the project to seed it".into())
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::beat_matches;
+
+    #[test]
+    fn beat_ident_matches_slug_title_and_name() {
+        // node slug "midpoint", title "Midpoint"
+        assert!(beat_matches("midpoint", "Midpoint", "Midpoint"));
+        assert!(beat_matches("midpoint", "Midpoint", "midpoint"));
+        assert!(beat_matches("midpoint", "Midpoint", "MIDPOINT"));
+        // multi-word: slug "all-is-lost", user types the name or slug
+        assert!(beat_matches("all-is-lost", "All Is Lost", "All Is Lost"));
+        assert!(beat_matches("all-is-lost", "All Is Lost", "all-is-lost"));
+        assert!(!beat_matches("midpoint", "Midpoint", "climax"));
+    }
 }

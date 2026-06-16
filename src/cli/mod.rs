@@ -1177,6 +1177,23 @@ pub enum PlanCommand {
         #[arg(long)]
         provider: Option<String>,
     },
+    /// Map a beat to a chapter (set its `mapped_chapter`), optionally
+    /// linking threads + setting status.  `<beat>` is the beat name or
+    /// slug; `<chapter>` is a chapter slug (see `plan check`).
+    Map {
+        beat: String,
+        chapter: String,
+        /// Comma-separated thread slugs to link.
+        #[arg(long, value_delimiter = ',')]
+        threads: Option<Vec<String>>,
+        /// `planned` | `drafted` | `done`.
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        book_name: Option<String>,
+    },
+    /// Clear a beat's `mapped_chapter` (turn it back into an open gap).
+    Unmap { beat: String },
 }
 
 /// 1.3.1+ SUBMISSION-1 P3 — `inkhaven submission …` (singular): the AI
