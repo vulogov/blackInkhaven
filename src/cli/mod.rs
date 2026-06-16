@@ -120,6 +120,53 @@ pub(crate) fn resolve_user_book<'a>(
     }
 }
 
+/// 1.3.3 — the Prompts-book tier of the CLI prompt resolver: a paragraph
+/// in the Prompts system book whose slug or title matches `name` (the
+/// `submission-*` / `plan-*` slug).  Gives the CLI generators the same
+/// three-tier resolution the TUI has (Prompts book → `prompts.hjson` →
+/// built-in).  Returns the body with a leading `= heading` stripped.
+pub(crate) fn resolve_book_prompt(
+    store: &crate::store::Store,
+    h: &crate::store::hierarchy::Hierarchy,
+    name: &str,
+) -> Option<String> {
+    let book = h.iter().find(|n| {
+        n.kind == NodeKind::Book
+            && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_PROMPTS)
+    })?;
+    let lower = name.to_lowercase();
+    let spaced = lower.replace('-', " ");
+    for id in h.collect_subtree(book.id) {
+        let Some(node) = h.get(id) else { continue };
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let s = node.slug.to_lowercase();
+        let t = node.title.to_lowercase();
+        if s != lower && t != lower && t != spaced {
+            continue;
+        }
+        let bytes = store.get_content(node.id).ok().flatten()?;
+        let stripped = strip_typst_heading(&String::from_utf8_lossy(&bytes));
+        if !stripped.trim().is_empty() {
+            return Some(stripped);
+        }
+    }
+    None
+}
+
+/// Drop a single leading `= heading` line (and the blank after it).
+fn strip_typst_heading(body: &str) -> String {
+    let mut lines = body.lines().peekable();
+    if lines.peek().is_some_and(|l| l.trim_start().starts_with("= ")) {
+        lines.next();
+        if lines.peek().is_some_and(|l| l.trim().is_empty()) {
+            lines.next();
+        }
+    }
+    lines.collect::<Vec<_>>().join("\n").trim().to_string()
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "inkhaven", version, about = "TUI literary work editor for Typst books")]
 pub struct Cli {
@@ -2518,4 +2565,21 @@ fn run_autofix(project: &std::path::Path, report: &doctor_scan::ScanReport, yes:
         "\nAutofix done: {applied} applied, {skipped} skipped, {errors} error(s).",
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod prompt_resolve_tests {
+    use super::strip_typst_heading;
+
+    #[test]
+    fn strips_a_single_leading_heading() {
+        assert_eq!(
+            strip_typst_heading("= Plan Analyze\n\nYou are an editor.\nBe terse."),
+            "You are an editor.\nBe terse."
+        );
+        // no heading → unchanged (trimmed)
+        assert_eq!(strip_typst_heading("Just a prompt.\n"), "Just a prompt.");
+        // only the FIRST heading is dropped
+        assert_eq!(strip_typst_heading("= Title\nbody = x"), "body = x");
+    }
 }

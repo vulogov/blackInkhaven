@@ -90,6 +90,8 @@ fn analyze(project: &Path, book_name: Option<&str>, provider: Option<&str>) -> R
         crate::cli::submission::ensure_digest(&layout, &cfg, &store, &h, &book, provider, false)?;
 
     let system = resolve_plan_prompt(
+        &store,
+        &h,
         &layout,
         crate::planning::ANALYZE_SLUG,
         crate::planning::analyze_system_prompt(),
@@ -103,13 +105,23 @@ fn analyze(project: &Path, book_name: Option<&str>, provider: Option<&str>) -> R
     Ok(())
 }
 
-/// `prompts.hjson` override (key = `slug`) → `builtin`.
-fn resolve_plan_prompt(layout: &ProjectLayout, slug: &str, builtin: &str) -> String {
-    let path = layout.root.join("prompts.hjson");
-    crate::ai::prompts::PromptLibrary::load(&path)
-        .ok()
-        .and_then(|lib| lib.find(slug).map(|p| p.template.clone()))
-        .filter(|t| !t.trim().is_empty())
+/// Three-tier prompt resolution: Prompts book → `prompts.hjson` →
+/// `builtin` (parity with the TUI).
+fn resolve_plan_prompt(
+    store: &Store,
+    h: &Hierarchy,
+    layout: &ProjectLayout,
+    slug: &str,
+    builtin: &str,
+) -> String {
+    super::resolve_book_prompt(store, h, slug)
+        .or_else(|| {
+            let path = layout.root.join("prompts.hjson");
+            crate::ai::prompts::PromptLibrary::load(&path)
+                .ok()
+                .and_then(|lib| lib.find(slug).map(|p| p.template.clone()))
+                .filter(|t| !t.trim().is_empty())
+        })
         .unwrap_or_else(|| builtin.to_string())
 }
 
@@ -228,6 +240,8 @@ fn scaffold_intentions(
     let beats: Vec<crate::planning::Beat> = pairs.iter().map(|(_, b)| b.clone()).collect();
 
     let system = resolve_plan_prompt(
+        &store,
+        &h,
         &layout,
         crate::planning::SCAFFOLD_SLUG,
         crate::planning::scaffold_system_prompt(),
