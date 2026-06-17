@@ -1813,6 +1813,33 @@ pub struct StyleWarningsConfig {
     /// the master toggle.  See `ShowDontTellConfig`
     /// for per-language knobs.
     pub show_dont_tell: ShowDontTellConfig,
+    /// 1.3.8 — anachronism detector. Set `anachronism.year` to the
+    /// manuscript's setting; terms in the built-in lexicon (plus your
+    /// `terms` additions) whose earliest plausible year is *after* the
+    /// setting are flagged ("wristwatch" in an 1840 novel). Off until a
+    /// year is set.
+    #[serde(default)]
+    pub anachronism: AnachronismConfig,
+}
+
+/// `editor.style_warnings.anachronism.*` — the setting year + any
+/// project-specific period-bound terms (each with its earliest plausible
+/// year). Empty / no year → the detector is off.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct AnachronismConfig {
+    /// The manuscript's setting year (e.g. `1840`). `None` disables the
+    /// detector.
+    pub year: Option<i32>,
+    /// Project additions / overrides to the built-in lexicon.
+    pub terms: Vec<AnachronismTerm>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AnachronismTerm {
+    pub term: String,
+    /// The earliest year the term/concept plausibly appears.
+    pub earliest: i32,
 }
 
 /// 1.2.9+ — `editor.style_warnings.show_dont_tell.*`
@@ -2377,6 +2404,7 @@ impl Default for StyleWarningsConfig {
             filter_words: FilterWordsConfig::default(),
             repeated_phrases: RepeatedPhrasesConfig::default(),
             show_dont_tell: ShowDontTellConfig::default(),
+            anachronism: AnachronismConfig::default(),
         }
     }
 }
