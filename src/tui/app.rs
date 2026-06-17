@@ -1864,6 +1864,13 @@ pub(crate) struct App {
     /// or a 1.3.7 editorial fix) streams — the annotation is the snapshot
     /// label the diff-apply uses; `None` when no rewrite is pending.
     pub(super) pending_rewrite_diff: Option<String>,
+    /// 1.3.9+ — when a span-scoped editorial fix (`f` on a localized finding)
+    /// is streaming, the paragraph-relative char range `[start, end)` whose
+    /// text the model's reply replaces. `Some` → splice the reply into that
+    /// range and diff the whole paragraph; `None` → whole-paragraph replace
+    /// (the pre-1.3.9 behaviour). Paired with `pending_rewrite_diff`; cleared
+    /// on the same auto-open / error paths.
+    pub(super) pending_rewrite_span: Option<(usize, usize)>,
     /// 1.2.21+ FF.4d — a fact-check chord awaiting its stream's
     /// completion: `(target paragraph id, title)`.  Consumed in
     /// `pump_inference` to parse the verdict into `fact_check_nav`.
@@ -2213,6 +2220,7 @@ impl App {
             pending_chat_user_msg: None,
             pending_paragraph_memory_target: None,
             pending_rewrite_diff: None,
+            pending_rewrite_span: None,
             fact_check_pending: None,
             fact_check_nav: FactCheckNav::default(),
             pending_translation: false,
@@ -2822,19 +2830,37 @@ impl App {
             // preserves the pre-rewrite state under
             // "Sentence rhythm rewrite".
             if let Some(annotation) = self.pending_rewrite_diff.take() {
+                let span = self.pending_rewrite_span.take();
                 let raw = self
                     .inference
                     .as_ref()
                     .map(|i| i.response.clone())
                     .unwrap_or_default();
-                if !raw.trim().is_empty() {
+                if raw.trim().is_empty() {
+                    self.status = "rewrite: model returned empty response".into();
+                } else if let Some(range) = span {
+                    // 1.3.9 span-scoped fix: the reply is just the replacement
+                    // phrase — splice it into the paragraph's char range, then
+                    // diff the whole paragraph for context.
+                    match self.opened.as_ref().map(|d| d.textarea.lines().join("\n")) {
+                        Some(original) => {
+                            let replacement = crate::editorial::extract_phrase(&raw);
+                            let spliced =
+                                crate::editorial::splice_span(&original, range, &replacement);
+                            self.open_ai_diff_review_final(
+                                InferenceAction::Replace,
+                                &spliced,
+                                &annotation,
+                            );
+                        }
+                        None => self.status = "rewrite: no paragraph open".into(),
+                    }
+                } else {
                     self.open_ai_diff_review_with_snapshot(
                         InferenceAction::Replace,
                         &raw,
                         &annotation,
                     );
-                } else {
-                    self.status = "rewrite: model returned empty response".into();
                 }
             }
         } else if matches!(
@@ -2842,9 +2868,10 @@ impl App {
             Some(InferenceStatus::Error(_))
         ) && self.pending_rewrite_diff.is_some()
         {
-            // Error path: clear the pending flag so a future rewrite
+            // Error path: clear the pending flags so a future rewrite
             // starts clean.
             self.pending_rewrite_diff = None;
+            self.pending_rewrite_span = None;
         }
     }
 
@@ -9151,9 +9178,9 @@ impl App {
                 sel.and_then(|f| f.location.paragraph),
                 sel.map(|f| f.location.paragraph.is_some()).unwrap_or(false),
                 sel.map(|f| f.fingerprint()),
-                // (category, paragraph) when the finding is AI-rewritable
+                // (category, paragraph, span) when the finding is AI-rewritable
                 sel.filter(|f| f.rewritable())
-                    .map(|f| (f.category.clone(), f.location.paragraph.unwrap())),
+                    .map(|f| (f.category.clone(), f.location.paragraph.unwrap(), f.location.char_range)),
             )
         };
         match key.code {
@@ -9184,10 +9211,10 @@ impl App {
             KeyCode::Char('D') => self.editorial_clear_deferred(),
             // AI rewrite-in-place: open the paragraph, stream a fix → diff.
             KeyCode::Char('f') => match sel_rewrite {
-                Some((category, pid)) => {
+                Some((category, pid, span)) => {
                     self.modal = Modal::None;
                     match self.open_paragraph_by_uuid(pid) {
-                        Ok(()) => self.start_editorial_rewrite(&category),
+                        Ok(()) => self.start_editorial_rewrite(&category, span),
                         Err(e) => self.status = format!("edit: {e}"),
                     }
                 }
@@ -19150,6 +19177,39 @@ impl App {
         } else {
             "rhythm rewrite · a accept (snapshot + replace) · r reject · ↑↓ scroll".into()
         };
+    }
+
+    /// 1.3.9+ — open the diff review with an ALREADY-FINAL after-text (no
+    /// `select_apply_text` extraction). Used by the span-scoped editorial fix:
+    /// the reply phrase has already been cleaned + spliced into the full
+    /// paragraph, so the diff shows the whole paragraph and the apply lands it
+    /// verbatim under an F6-discoverable snapshot.
+    fn open_ai_diff_review_final(
+        &mut self,
+        action: InferenceAction,
+        after_text: &str,
+        annotation: &str,
+    ) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "no paragraph open — apply needs a focused paragraph".into();
+            return;
+        };
+        let before_lines: Vec<String> = doc.textarea.lines().to_vec();
+        let after_lines: Vec<String> = if after_text.is_empty() {
+            vec![String::new()]
+        } else {
+            after_text.split('\n').map(String::from).collect()
+        };
+        self.modal = Modal::AiDiffReview {
+            before_lines,
+            after_lines,
+            action,
+            scroll: 0,
+            post_accept_snapshot: Some(annotation.to_string()),
+            wrapped_total: 0,
+        };
+        self.status =
+            "editorial fix (phrase) · a accept (snapshot + replace) · r reject · ↑↓ scroll".into();
     }
 
     /// Commit step for `Modal::AiDiffReview`. `after_text` is
