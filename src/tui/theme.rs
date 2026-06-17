@@ -44,6 +44,10 @@ pub struct Theme {
     /// so the three overlays stay distinguishable
     /// when adjacent.
     pub style_warning_show_dont_tell_fg: Color,
+    /// 1.3.9+ — colour for live anachronism warnings.
+    /// A warm amber-orange "wrong era" caution,
+    /// distinct from the other style-warning hues.
+    pub style_warning_anachronism_fg: Color,
     /// 1.2.20+ — colour for the live echo overlay
     /// (`Ctrl+B Shift+K`).  Distinct from the
     /// repeated-phrase magenta so a within-paragraph
@@ -182,6 +186,13 @@ impl Theme {
                 // when adjacent.
                 Color::Rgb(0x94, 0xe2, 0xd5),
             ),
+            style_warning_anachronism_fg: color_or(
+                &cfg.style_warning_anachronism_fg,
+                // Warm amber-orange — "wrong era" caution,
+                // distinct from the filter-word gold and
+                // the show-don't-tell teal.
+                Color::Rgb(0xeb, 0xa6, 0x72),
+            ),
             style_warning_echo_fg: color_or(
                 &cfg.style_warning_echo_fg,
                 // Muted purple — its own hue, distinct
@@ -313,6 +324,7 @@ impl Theme {
             "style_warning_filter_word_fg" => self.style_warning_filter_word_fg = parsed,
             "style_warning_repeated_phrase_fg" => self.style_warning_repeated_phrase_fg = parsed,
             "style_warning_show_dont_tell_fg" => self.style_warning_show_dont_tell_fg = parsed,
+            "style_warning_anachronism_fg" => self.style_warning_anachronism_fg = parsed,
             "style_warning_echo_fg" => self.style_warning_echo_fg = parsed,
             "language_word_fg" => self.language_word_fg = parsed,
             "pov_chip_bg" => self.pov_chip_bg = parsed,
@@ -458,6 +470,23 @@ mod tests_style_modifier {
             theme.style_warning_echo_fg,
             Color::Rgb(0xb4, 0x8e, 0xad),
         );
+    }
+
+    // 1.3.9 — the anachronism overlay has its own amber-orange
+    // hue, distinct from the show-don't-tell teal it borrowed in
+    // 1.3.8, and an empty key falls back to that default.
+    #[test]
+    fn anachronism_fg_is_distinct_and_falls_back() {
+        let theme = Theme::from_config(&ThemeConfig::default());
+        assert_eq!(theme.style_warning_anachronism_fg, Color::Rgb(0xeb, 0xa6, 0x72));
+        assert_ne!(
+            theme.style_warning_anachronism_fg,
+            theme.style_warning_show_dont_tell_fg,
+        );
+        let mut cfg = ThemeConfig::default();
+        cfg.style_warning_anachronism_fg = String::new();
+        let theme = Theme::from_config(&cfg);
+        assert_eq!(theme.style_warning_anachronism_fg, Color::Rgb(0xeb, 0xa6, 0x72));
     }
 
     // An empty `style_warning_echo_fg` (older configs that
