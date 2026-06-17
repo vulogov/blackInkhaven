@@ -238,6 +238,23 @@ impl ScanClass {
     pub fn is_opt_in(&self) -> bool {
         matches!(self, ScanClass::UnresolvedTension)
     }
+
+    /// 1.3.6 — the editorial (manuscript-readiness) category for the
+    /// Editorial Pass worklist, or `None` for project-integrity classes
+    /// (zero-byte files, orphan rows, bdslib drift, corrupt sidecars, stale
+    /// submissions) — those belong to `doctor`, not `edit`.
+    pub fn editorial_category(&self) -> Option<&'static str> {
+        Some(match self {
+            ScanClass::DroppedCharacter => "character",
+            ScanClass::PacingCollapse | ScanClass::ParagraphTooLong => "pacing",
+            ScanClass::StalledThread => "thread",
+            ScanClass::NamingInconsistency => "naming",
+            ScanClass::EchoRepetition => "echo",
+            ScanClass::NumericContradiction | ScanClass::ContinuityDrift => "continuity",
+            ScanClass::UnresolvedTension => "tension",
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
