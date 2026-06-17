@@ -194,14 +194,16 @@ pub const ANALYZE_SLUG: &str = "plan-analyze";
 
 pub fn analyze_system_prompt() -> &'static str {
     "You are a developmental editor with deep command of story structure. Using ONLY the supplied \
-chapter summaries — never invent plot — do two things: (1) map each framework beat to the single \
+chapter summaries — never invent plot — do these: (1) map each framework beat to the single \
 best-fitting chapter, or say it has no clear home; (2) diagnose the structure plainly: missing or \
-weak beats, where the middle sags, and pacing problems. Be specific and concise. No preamble."
+weak beats, where the middle sags, and pacing problems; (3) if scene cards are listed, flag any \
+scene that states a goal but doesn't turn (no disaster) and suggest the turn it's missing. Be \
+specific and concise. No preamble."
 }
 
 /// Compose the analyze user prompt from a framework + the book digest's
-/// rendered context (`BookDigest::as_context`).
-pub fn analyze_user_prompt(framework: Framework, digest_context: &str) -> String {
+/// rendered context (`BookDigest::as_context`) + any scene cards.
+pub fn analyze_user_prompt(framework: Framework, digest_context: &str, scenes: &[Scene]) -> String {
     let mut beats = String::new();
     for b in framework.beats() {
         beats.push_str(&format!(
@@ -211,8 +213,24 @@ pub fn analyze_user_prompt(framework: Framework, digest_context: &str) -> String
             b.target_position * 100.0
         ));
     }
+    let scene_block = if scenes.is_empty() {
+        String::new()
+    } else {
+        let mut s = String::from("\nSCENE CARDS (goal → conflict → disaster):\n");
+        for sc in scenes {
+            s.push_str(&format!(
+                "- [{}] {}: goal={} | conflict={} | disaster={}\n",
+                if sc.chapter.is_empty() { "?" } else { &sc.chapter },
+                sc.title,
+                if sc.goal.trim().is_empty() { "—" } else { sc.goal.trim() },
+                if sc.conflict.trim().is_empty() { "—" } else { sc.conflict.trim() },
+                if sc.disaster.trim().is_empty() { "—" } else { sc.disaster.trim() },
+            ));
+        }
+        s
+    };
     format!(
-        "STORY-STRUCTURE FRAMEWORK: {label}\nBeats (with target position through the book):\n{beats}\n\
+        "STORY-STRUCTURE FRAMEWORK: {label}\nBeats (with target position through the book):\n{beats}{scene_block}\n\
 BOOK:\n{digest_context}\n\nMap the beats to chapters, then diagnose the structure.",
         label = framework.label(),
     )
@@ -1004,11 +1022,29 @@ mod tests {
 
     #[test]
     fn analyze_prompt_carries_framework_and_context() {
-        let p = analyze_user_prompt(Framework::SaveTheCat, "TITLE: X\nCHAPTER SUMMARIES:\n1. Foo");
+        let p = analyze_user_prompt(Framework::SaveTheCat, "TITLE: X\nCHAPTER SUMMARIES:\n1. Foo", &[]);
         assert!(p.contains("Save the Cat"));
         assert!(p.contains("Midpoint (act 2, ~50%)"));
         assert!(p.contains("CHAPTER SUMMARIES:"));
+        assert!(!p.contains("SCENE CARDS"), "no scene block when none supplied");
         assert!(!analyze_system_prompt().is_empty());
+    }
+
+    #[test]
+    fn analyze_prompt_includes_scene_cards() {
+        let scenes = vec![Scene {
+            chapter: "the-wharf".into(),
+            title: "Confrontation".into(),
+            goal: "get the manifest".into(),
+            conflict: "he stonewalls".into(),
+            disaster: "".into(),
+            status: "planned".into(),
+        }];
+        let p = analyze_user_prompt(Framework::ThreeAct, "TITLE: X", &scenes);
+        assert!(p.contains("SCENE CARDS"));
+        assert!(p.contains("Confrontation"));
+        assert!(p.contains("get the manifest"));
+        assert!(p.contains("disaster=—"), "empty disaster rendered as —");
     }
 
     #[test]

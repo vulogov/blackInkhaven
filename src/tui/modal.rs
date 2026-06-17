@@ -701,6 +701,14 @@ pub(super) enum Modal {
         /// `Some(thread_cursor)` when picking threads to link to the
         /// `cursor` beat (Space toggles); `None` otherwise. (1.3.4 P2)
         thread_pick: Option<usize>,
+        /// The Planning book's scene cards (1.3.4 P4) — for the `v`
+        /// scene-view sub-mode.
+        scenes: Vec<crate::planning::Scene>,
+        /// When true, the modal shows the scene board instead of the
+        /// beats/tension view (toggled by `v`).
+        scene_view: bool,
+        /// Cursor within the scene list while in scene view.
+        scene_cursor: usize,
     },
     SnapshotPicker {
         /// Kept for potential refresh ops after future snapshot mutations.
