@@ -108,13 +108,24 @@ fn resolve_locations(findings: &mut [EditorialFinding], h: &Hierarchy, layout: &
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     project: &Path,
     json: bool,
     only: Option<Vec<String>>,
     book_name: Option<&str>,
     show_deferred: bool,
+    deep: bool,
+    provider: Option<&str>,
 ) -> Result<()> {
+    if deep {
+        if json {
+            return Err(Error::Store(
+                "edit: --deep can't combine with --json (the AI scans print progress) — run the scans separately, then `edit --json`".into(),
+            ));
+        }
+        deep_refresh(project, provider);
+    }
     let report = collect(project, book_name, only.as_deref(), show_deferred)?;
 
     if json {
@@ -125,6 +136,26 @@ pub fn run(
         render(&report);
     }
     Ok(())
+}
+
+/// `--deep` — run the AI scans that populate the editorial sidecars (Facts
+/// contradictions, the tension ledger, the continuity bible), each printing
+/// its own progress, so the next `collect` sees the fresh semantic
+/// findings. A scan that can't run (no provider) is skipped with a note —
+/// the pass degrades to deterministic-only rather than aborting.
+fn deep_refresh(project: &Path, provider: Option<&str>) {
+    eprintln!("edit --deep: refreshing AI sidecars (facts · tension · continuity)…");
+    let p = || provider.map(String::from);
+    if let Err(e) = super::facts_scan::run(project, super::FactsCommand::Scan { provider: p(), json: false }) {
+        eprintln!("  facts scan skipped: {e}");
+    }
+    if let Err(e) = super::tension::run(project, super::TensionCommand::Scan { provider: p() }) {
+        eprintln!("  tension scan skipped: {e}");
+    }
+    if let Err(e) = super::continuity::run(project, super::ContinuityCommand::Extract { provider: p() }) {
+        eprintln!("  continuity extract skipped: {e}");
+    }
+    eprintln!();
 }
 
 /// The `plan check` warnings for the book, or empty when there's no plan

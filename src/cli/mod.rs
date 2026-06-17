@@ -650,6 +650,14 @@ pub enum Command {
         /// default).
         #[arg(long)]
         show_deferred: bool,
+        /// Run the AI scans first (Facts / tension / continuity) to refresh
+        /// their sidecars, then aggregate — the semantic tier. Needs a
+        /// provider; not combinable with `--json`.
+        #[arg(long)]
+        deep: bool,
+        /// LLM provider override for `--deep`.
+        #[arg(long)]
+        provider: Option<String>,
     },
 
     /// 1.2.18+ R.1 — export a user book to a
@@ -2607,9 +2615,17 @@ impl Cli {
             Command::Plan(cmd) => {
                 plan::run(&project, cmd).map_err(Into::into)
             }
-            Command::Edit { json, only, book_name, show_deferred } => {
-                editorial::run(&project, json, only, book_name.as_deref(), show_deferred)
-                    .map_err(Into::into)
+            Command::Edit { json, only, book_name, show_deferred, deep, provider } => {
+                editorial::run(
+                    &project,
+                    json,
+                    only,
+                    book_name.as_deref(),
+                    show_deferred,
+                    deep,
+                    provider.as_deref(),
+                )
+                .map_err(Into::into)
             }
             Command::BenchLoad { query, iterations } => {
                 bench_load::run(&project, &query, iterations)
