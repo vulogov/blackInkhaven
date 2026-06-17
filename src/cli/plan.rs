@@ -97,7 +97,9 @@ fn analyze(project: &Path, book_name: Option<&str>, provider: Option<&str>) -> R
         crate::planning::ANALYZE_SLUG,
         crate::planning::analyze_system_prompt(),
     );
-    let prompt = crate::planning::analyze_user_prompt(fw, &digest.as_context());
+    let scenes: Vec<crate::planning::Scene> =
+        load_scenes(&store, &h).into_iter().map(|(_, s)| s).collect();
+    let prompt = crate::planning::analyze_user_prompt(fw, &digest.as_context(), &scenes);
     let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
     let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
     eprintln!("inkhaven plan analyze · {} · model: {model}", fw.label());

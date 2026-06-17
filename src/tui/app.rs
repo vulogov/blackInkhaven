@@ -9076,6 +9076,10 @@ impl App {
         {
             Ok((report, framework, _n)) => {
                 let warn = report.warnings.len();
+                let scenes = crate::cli::plan::load_scenes(&self.store, &self.hierarchy)
+                    .into_iter()
+                    .map(|(_, s)| s)
+                    .collect();
                 self.modal = Modal::PlanOutline {
                     book_title: book.title.clone(),
                     book_slug: book.slug.clone(),
@@ -9084,9 +9088,12 @@ impl App {
                     cursor: 0,
                     picking: None,
                     thread_pick: None,
+                    scenes,
+                    scene_view: false,
+                    scene_cursor: 0,
                 };
                 self.status = format!(
-                    "Structure · {warn} finding(s) · ↑↓ · m map · t threads · s status · a analyze · ⏎ open · Esc"
+                    "Structure · {warn} finding(s) · ↑↓ · m map · t threads · s status · v scenes · a analyze · ⏎ open · Esc"
                 );
             }
             Err(e) => self.status = format!("plan: {e}"),
@@ -9096,12 +9103,15 @@ impl App {
     fn plan_outline_handle_key(&mut self, key: KeyEvent) -> bool {
         // Read state, then drop the modal borrow so the edit helpers can
         // touch the store.
-        let (n_beats, n_chaps, n_threads, cursor, picking, thread_pick, book_slug, framework) = {
+        let (n_beats, n_chaps, n_threads, n_scenes, cursor, scene_cursor, picking, thread_pick, scene_view, book_slug, framework) = {
             let Modal::PlanOutline {
                 report,
                 cursor,
+                scene_cursor,
                 picking,
                 thread_pick,
+                scene_view,
+                scenes,
                 book_slug,
                 framework,
                 ..
@@ -9113,13 +9123,30 @@ impl App {
                 report.beats.len(),
                 report.chapters.len(),
                 report.available_threads.len(),
+                scenes.len(),
                 *cursor,
+                *scene_cursor,
                 *picking,
                 *thread_pick,
+                *scene_view,
                 book_slug.clone(),
                 framework.clone(),
             )
         };
+        // ── scene board sub-mode (`v`) ──
+        if scene_view {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('v') => self.set_plan_scene_view(false),
+                KeyCode::Up => self.set_plan_scene_cursor(scene_cursor.saturating_sub(1)),
+                KeyCode::Down => {
+                    if n_scenes > 0 {
+                        self.set_plan_scene_cursor((scene_cursor + 1).min(n_scenes - 1));
+                    }
+                }
+                _ => {}
+            }
+            return true;
+        }
         // ── picking threads for the cursor beat (Space toggles) ──
         if let Some(tp) = thread_pick {
             match key.code {
@@ -9176,10 +9203,33 @@ impl App {
                     self.status = "plan: no threads yet — add with `inkhaven thread add`".into();
                 }
             }
+            (None, KeyCode::Char('v')) => {
+                if n_scenes > 0 {
+                    self.set_plan_scene_view(true);
+                    self.status = "Scene board · ↑↓ · v/Esc back".into();
+                } else {
+                    self.status =
+                        "plan: no scene cards yet — add with `inkhaven plan scene add`".into();
+                }
+            }
             (None, KeyCode::Enter) => self.jump_to_beat_chapter(cursor),
             (None, _) => {}
         }
         true
+    }
+
+    fn set_plan_scene_view(&mut self, v: bool) {
+        if let Modal::PlanOutline { scene_view, scene_cursor, .. } = &mut self.modal {
+            *scene_view = v;
+            if v {
+                *scene_cursor = 0;
+            }
+        }
+    }
+    fn set_plan_scene_cursor(&mut self, v: usize) {
+        if let Modal::PlanOutline { scene_cursor, .. } = &mut self.modal {
+            *scene_cursor = v;
+        }
     }
 
     fn set_plan_cursor(&mut self, v: usize) {
@@ -9341,10 +9391,17 @@ impl App {
                     return;
                 }
             };
+        let fresh_scenes: Vec<crate::planning::Scene> =
+            crate::cli::plan::load_scenes(&self.store, &self.hierarchy)
+                .into_iter()
+                .map(|(_, s)| s)
+                .collect();
         if let Modal::PlanOutline {
             report: r,
             cursor,
             picking,
+            scenes,
+            scene_cursor,
             ..
         } = &mut self.modal
         {
@@ -9354,6 +9411,8 @@ impl App {
             }
             *r = report;
             *picking = None;
+            *scene_cursor = (*scene_cursor).min(fresh_scenes.len().saturating_sub(1));
+            *scenes = fresh_scenes;
         }
     }
 
@@ -9373,7 +9432,12 @@ impl App {
             self.resolve_prompt_template(crate::planning::ANALYZE_SLUG, || {
                 crate::planning::analyze_system_prompt().to_string()
             });
-        let user_prompt = crate::planning::analyze_user_prompt(fw, &digest.as_context());
+        let scenes: Vec<crate::planning::Scene> =
+            crate::cli::plan::load_scenes(&self.store, &self.hierarchy)
+                .into_iter()
+                .map(|(_, s)| s)
+                .collect();
+        let user_prompt = crate::planning::analyze_user_prompt(fw, &digest.as_context(), &scenes);
         let (model, _env) = match self.ai.resolve_provider(&self.cfg.llm, None) {
             Ok(p) => p,
             Err(e) => {

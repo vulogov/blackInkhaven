@@ -4147,6 +4147,9 @@ impl super::super::App {
             cursor,
             picking,
             thread_pick,
+            scenes,
+            scene_view,
+            scene_cursor,
             ..
         } = &self.modal
         else {
@@ -4186,6 +4189,69 @@ impl super::super::App {
             width: inner.width,
             height: 1,
         };
+
+        // Scene board sub-mode (`v`): the Planning book's scene cards
+        // grouped by chapter, the selected one's goal/conflict/disaster
+        // spine expanded.
+        if *scene_view {
+            let mut lines: Vec<Line> = vec![Line::from(Span::styled(
+                format!("SCENES ({} card{})", scenes.len(), if scenes.len() == 1 { "" } else { "s" }),
+                Style::default().add_modifier(Modifier::DIM),
+            ))];
+            let mut last_ch = String::new();
+            let mk = |b: bool| if b { '●' } else { '○' };
+            for (i, s) in scenes.iter().enumerate() {
+                if s.chapter != last_ch {
+                    last_ch = s.chapter.clone();
+                    lines.push(Line::from(Span::styled(
+                        if s.chapter.is_empty() { "(no chapter)".to_string() } else { s.chapter.clone() },
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
+                let goal = !s.goal.trim().is_empty();
+                let conflict = !s.conflict.trim().is_empty();
+                let disaster = !s.disaster.trim().is_empty();
+                let no_turn = goal && !disaster;
+                let sel = i == *scene_cursor;
+                let head = format!(
+                    "{} {:<26} G{} C{} D{}{}",
+                    if no_turn { '⚠' } else { '·' },
+                    truncate_to(&s.title, 26),
+                    mk(goal),
+                    mk(conflict),
+                    mk(disaster),
+                    if no_turn { "  no turn" } else { "" },
+                );
+                let color = if no_turn { Color::Yellow } else { Color::Green };
+                let line = Line::from(Span::styled(head, Style::default().fg(color)));
+                lines.push(if sel {
+                    line.style(Style::default().fg(color).add_modifier(Modifier::REVERSED))
+                } else {
+                    line
+                });
+                if sel {
+                    for (label, text) in
+                        [("goal", &s.goal), ("conflict", &s.conflict), ("disaster", &s.disaster)]
+                    {
+                        if !text.trim().is_empty() {
+                            lines.push(Line::from(Span::styled(
+                                format!("     {label}: {}", text.trim()),
+                                Style::default().add_modifier(Modifier::ITALIC),
+                            )));
+                        }
+                    }
+                }
+            }
+            f.render_widget(Paragraph::new(lines), body);
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    " ↑↓ · v/Esc back to beats ",
+                    Style::default().add_modifier(Modifier::DIM),
+                ))),
+                footer,
+            );
+            return;
+        }
 
         // Chapter-picker sub-mode (after `m`): list the chapters to map the
         // selected beat to.
@@ -4409,7 +4475,7 @@ impl super::super::App {
         }
 
         f.render_widget(Paragraph::new(lines), body);
-        let keys = "↑↓ · m map · t threads · s status · a analyze · ⏎ open · Esc";
+        let keys = "↑↓ · m map · t threads · s status · v scenes · a analyze · ⏎ open · Esc";
         let summary = if report.warnings.is_empty() {
             format!(" ✓ no findings · {keys} ")
         } else {
