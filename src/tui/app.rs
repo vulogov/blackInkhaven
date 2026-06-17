@@ -1860,8 +1860,10 @@ pub(crate) struct App {
     /// rhythm rewrite")` so the apply step preserves
     /// the pre-rewrite state under an F6-discoverable
     /// snapshot.  Cleared after either auto-open OR
-    /// an error path.
-    pub(super) pending_rhythm_rewrite: bool,
+    /// an error path. `Some(annotation)` while a rewrite (sentence-rhythm,
+    /// or a 1.3.7 editorial fix) streams — the annotation is the snapshot
+    /// label the diff-apply uses; `None` when no rewrite is pending.
+    pub(super) pending_rewrite_diff: Option<String>,
     /// 1.2.21+ FF.4d — a fact-check chord awaiting its stream's
     /// completion: `(target paragraph id, title)`.  Consumed in
     /// `pump_inference` to parse the verdict into `fact_check_nav`.
@@ -2210,7 +2212,7 @@ impl App {
             system_prompt_override: None,
             pending_chat_user_msg: None,
             pending_paragraph_memory_target: None,
-            pending_rhythm_rewrite: false,
+            pending_rewrite_diff: None,
             fact_check_pending: None,
             fact_check_nav: FactCheckNav::default(),
             pending_translation: false,
@@ -2819,8 +2821,7 @@ impl App {
             // snapshot annotation so the apply step
             // preserves the pre-rewrite state under
             // "Sentence rhythm rewrite".
-            if self.pending_rhythm_rewrite {
-                self.pending_rhythm_rewrite = false;
+            if let Some(annotation) = self.pending_rewrite_diff.take() {
                 let raw = self
                     .inference
                     .as_ref()
@@ -2830,20 +2831,20 @@ impl App {
                     self.open_ai_diff_review_with_snapshot(
                         InferenceAction::Replace,
                         &raw,
-                        "Sentence rhythm rewrite",
+                        &annotation,
                     );
                 } else {
-                    self.status = "rhythm rewrite: model returned empty response".into();
+                    self.status = "rewrite: model returned empty response".into();
                 }
             }
         } else if matches!(
             self.inference.as_ref().map(|i| &i.status),
             Some(InferenceStatus::Error(_))
-        ) && self.pending_rhythm_rewrite
+        ) && self.pending_rewrite_diff.is_some()
         {
-            // Error path: clear the pending flag so a
-            // future Ctrl+B Shift+M starts clean.
-            self.pending_rhythm_rewrite = false;
+            // Error path: clear the pending flag so a future rewrite
+            // starts clean.
+            self.pending_rewrite_diff = None;
         }
     }
 
@@ -9120,7 +9121,7 @@ impl App {
                     String::new()
                 };
                 self.status = format!(
-                    "Editorial Pass · {n} finding(s){note} · ↑↓ · [ ] filter · ⏎ jump · s skip · d defer · Esc"
+                    "Editorial Pass · {n} finding(s){note} · ↑↓ · ⏎ jump · ✎ f fix · s skip · d defer · Esc"
                 );
             }
             Err(e) => self.status = format!("edit: {e}"),
@@ -9130,7 +9131,7 @@ impl App {
     fn editorial_pass_handle_key(&mut self, key: KeyEvent) -> bool {
         // Read everything into locals, then drop the borrow before calling
         // self methods (the established modal pattern).
-        let (filtered_len, cursor, cats, target, has_jump, sel_fp) = {
+        let (filtered_len, cursor, cats, target, has_jump, sel_fp, sel_rewrite) = {
             let Modal::EditorialPass { findings, cursor, filter, .. } = &self.modal else {
                 return false;
             };
@@ -9149,6 +9150,9 @@ impl App {
                 sel.and_then(|f| f.location.paragraph),
                 sel.map(|f| f.location.paragraph.is_some()).unwrap_or(false),
                 sel.map(|f| f.fingerprint()),
+                // (category, paragraph) when the finding is AI-rewritable
+                sel.filter(|f| f.rewritable())
+                    .map(|f| (f.category.clone(), f.location.paragraph.unwrap())),
             )
         };
         match key.code {
@@ -9177,6 +9181,20 @@ impl App {
             }
             // clear all deferrals + reload.
             KeyCode::Char('D') => self.editorial_clear_deferred(),
+            // AI rewrite-in-place: open the paragraph, stream a fix → diff.
+            KeyCode::Char('f') => match sel_rewrite {
+                Some((category, pid)) => {
+                    self.modal = Modal::None;
+                    match self.open_paragraph_by_uuid(pid) {
+                        Ok(()) => self.start_editorial_rewrite(&category),
+                        Err(e) => self.status = format!("edit: {e}"),
+                    }
+                }
+                None => {
+                    self.status =
+                        "editorial: this finding isn't AI-rewritable — jump (⏎) and edit it".into();
+                }
+            },
             KeyCode::Enter => match (has_jump, target) {
                 (true, Some(pid)) => {
                     self.modal = Modal::None;

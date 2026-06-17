@@ -53,7 +53,7 @@ pub(crate) mod piper;
 // `Ctrl+B Shift+V` voice picker modal.
 mod voice_picker;
 mod sentence_rhythm;
-mod style_warnings;
+pub(crate) mod style_warnings;
 mod echo_overlay;
 mod quickref;
 mod sound;

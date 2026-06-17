@@ -44,19 +44,21 @@ pub fn collect(
     // 3) `plan check` structural findings (skipped when there's no plan).
     raw.extend(plan_warnings(project, book_name).into_iter().map(|w| editorial::from_plan_warning(&w)));
 
-    // --only category filter.
-    if let Some(cats) = only {
-        raw.retain(|f| cats.iter().any(|c| c.trim().eq_ignore_ascii_case(&f.category)));
-    }
-
-    // Resolve each finding's location to a paragraph node id where it can,
-    // so the cockpit can jump (P1). Best-effort; needs the hierarchy.
+    // 4) deterministic prose-style detectors (show-don't-tell) over each
+    //    paragraph + resolve every finding's location to a node id (so the
+    //    cockpit can jump / rewrite). One store open.
     if let Ok(cfg) = crate::config::Config::load_layered(&layout.config_path()) {
         if let Ok(store) = crate::store::Store::open(layout.clone(), &cfg) {
             if let Ok(h) = Hierarchy::load(&store) {
+                raw.extend(prose_style_findings(&cfg, &store, &h));
                 resolve_locations(&mut raw, &h, &layout);
             }
         }
+    }
+
+    // --only category filter (after every source, incl. the prose scan).
+    if let Some(cats) = only {
+        raw.retain(|f| cats.iter().any(|c| c.trim().eq_ignore_ascii_case(&f.category)));
     }
 
     // Hide deferred findings (P2) unless explicitly included.
@@ -72,6 +74,115 @@ pub fn collect(
     let mut report = editorial::aggregate(raw);
     report.deferred = deferred;
     Ok(report)
+}
+
+/// Surface the deterministic **show-don't-tell** regex (the editor overlay's
+/// detector) into the worklist: walk every user-book paragraph, run the
+/// detector per line, and emit a finding per telling phrase with a
+/// paragraph-and-char-range location (jumpable, `f`-rewritable). The overlay's
+/// *enabled* flag governs the live underline, not this deliberate pass; only
+/// an empty word-list (nothing to match) skips it.
+fn prose_style_findings(
+    cfg: &crate::config::Config,
+    store: &crate::store::Store,
+    h: &Hierarchy,
+) -> Vec<EditorialFinding> {
+    let det = crate::tui::style_warnings::ShowDontTellDetector::new(
+        &cfg.editor.style_warnings.show_dont_tell,
+        &cfg.language,
+    );
+    if det.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for book in h.iter().filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none()) {
+        for chapter in h.children_of(Some(book.id)) {
+            if chapter.kind != NodeKind::Chapter {
+                continue;
+            }
+            let chap = if chapter.title.trim().is_empty() {
+                chapter.slug.clone()
+            } else {
+                chapter.title.clone()
+            };
+            for pid in h.collect_subtree(chapter.id) {
+                if h.get(pid).map(|n| n.kind) != Some(NodeKind::Paragraph) {
+                    continue;
+                }
+                let Some(body) = store.get_content(pid).ok().flatten() else {
+                    continue;
+                };
+                out.extend(paragraph_show_tell_findings(
+                    &String::from_utf8_lossy(&body),
+                    pid,
+                    &chap,
+                    &det,
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// Map a paragraph's text through the show-don't-tell detector into
+/// `EditorialFinding`s — one per telling phrase, with its paragraph-relative
+/// char range. Pure (the detector + text in, findings out).
+fn paragraph_show_tell_findings(
+    text: &str,
+    pid: uuid::Uuid,
+    chapter: &str,
+    det: &crate::tui::style_warnings::ShowDontTellDetector,
+) -> Vec<EditorialFinding> {
+    let mut out = Vec::new();
+    let mut row_off = 0usize; // char offset of the line's start in the paragraph
+    for line in text.lines() {
+        for hit in det.detect(line) {
+            let phrase: String = line
+                .chars()
+                .skip(hit.col_start)
+                .take(hit.col_end.saturating_sub(hit.col_start))
+                .collect();
+            out.push(EditorialFinding {
+                category: "show-tell".into(),
+                severity: editorial::Severity::Info,
+                location: editorial::Location {
+                    chapter: Some(chapter.to_string()),
+                    paragraph: Some(pid),
+                    char_range: Some((row_off + hit.col_start, row_off + hit.col_end)),
+                    path: None,
+                },
+                message: format!("telling: “{}” — show it instead", phrase.trim()),
+                hint: None,
+                source: "style",
+                autofixable: false,
+            });
+        }
+        row_off += line.chars().count() + 1; // + the newline
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn show_tell_mapping_locates_the_phrase_and_is_rewritable() {
+        let det = crate::tui::style_warnings::ShowDontTellDetector::new(
+            &crate::config::ShowDontTellConfig::default(),
+            "english",
+        );
+        // "was angry" is a copula + emotion adjective → a telling hit.
+        let id = uuid::Uuid::now_v7();
+        let f = paragraph_show_tell_findings("She was angry at the news.", id, "ch-1", &det);
+        assert_eq!(f.len(), 1, "one telling phrase flagged");
+        let e = &f[0];
+        assert_eq!(e.category, "show-tell");
+        assert_eq!(e.location.paragraph, Some(id));
+        assert!(e.location.char_range.is_some(), "carries a char range");
+        assert!(e.rewritable(), "show-tell + a paragraph → f-rewritable");
+        assert!(e.message.contains("show it instead"));
+    }
 }
 
 /// Fill `location.paragraph` (the jump target) from a `path` (file match) or

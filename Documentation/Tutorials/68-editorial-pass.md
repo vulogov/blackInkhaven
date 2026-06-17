@@ -34,13 +34,14 @@ EDITORIAL PASS · 14 finding(s)  (2 error · 9 warn · 3 info)
 ```
 
 Every finding carries a **category**, a **severity** (error → warn → info),
-a **location**, and the message. They come from three places, unified:
+a **location**, and the message. They come from four places, unified:
 
 - the editorial **`doctor`** classes (echo, pacing, continuity, naming,
   dropped-character, stalled-thread, numeric-contradiction, …),
 - the Planning Board's **`plan check`** structural findings (gaps, drift,
   pacing, flat tension, weak scenes / sequels),
-- the **Facts-scan** sidecar (contradictions against your world facts).
+- the **Facts-scan** sidecar (contradictions against your world facts),
+- the **show-don't-tell** detector (telling phrases, per paragraph).
 
 The pass is **deterministic** — it reads what's already computed, runs no
 AI, and so works offline and in CI:
@@ -65,9 +66,34 @@ worklist as a walkable modal:
   paragraph opens in the editor, cursor placed. A `→` marks the jumpable
   ones. (Book-level structural findings have no single location.)
 
-This is the loop: see the drift, jump to it, fix it in the prose, come back.
 Most editorial findings are *author judgment* — there's no auto-rewrite for
 "the midpoint sags"; the fix is you editing at the jumped-to spot.
+
+### Let the AI fix it: `f`
+
+The prose-level findings *can* be fixed for you. A **`✎`** marks the
+rewritable ones — **echo** (vary the over-repeated word), **pacing** (tighten
+an overlong paragraph), and **show-don't-tell** (rewrite a telling passage to
+show). Press **`f`** on one:
+
+```
+EDITORIAL · ch.2 · show-don't-tell
+finding: "she was furious" — telling
+
+  f → AI rewrite (streams into the AI pane):
+  "Her knuckles whitened on the rail; she didn't
+   trust her own voice."
+
+  [a]ccept (snapshots first) · [r]eject
+```
+
+`f` opens the finding's paragraph, streams a category-specific rewrite, and
+pops the **diff review** — the same one the sentence-rhythm rewrite uses.
+**`a`** snapshots the paragraph (so the original is one `F6` away) then
+replaces it; **`r`** discards. The prompt resolves through the usual three
+tiers (a `editorial-fix-<category>` entry in your Prompts book →
+`prompts.hjson` → built-in), so the rewriting voice is yours to tune. This is
+the loop: see it, `f`, accept — or jump and write it yourself.
 
 ### Clearing the list: skip and defer
 
