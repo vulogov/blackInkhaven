@@ -15,7 +15,7 @@ use crate::store::hierarchy::Hierarchy;
 use crate::store::node::NodeKind;
 use crate::store::{InsertPosition, Store, SYSTEM_TAG_PLANNING};
 
-use super::{PlanCommand, PlanSceneCommand, PlanSequelCommand};
+use super::{PlanCommand, PlanSceneCommand, PlanSequelCommand, PlanTensionCommand};
 
 pub fn run(project: &Path, cmd: PlanCommand) -> Result<()> {
     match cmd {
@@ -68,6 +68,13 @@ pub fn run(project: &Path, cmd: PlanCommand) -> Result<()> {
         }
         PlanCommand::Scene { cmd } => scene_cmd(project, cmd),
         PlanCommand::Sequel { cmd } => sequel_cmd(project, cmd),
+        PlanCommand::Tension { cmd } => match cmd {
+            PlanTensionCommand::Rate {
+                book_name,
+                provider,
+                refresh,
+            } => tension_rate(project, book_name.as_deref(), provider.as_deref(), refresh),
+        },
     }
 }
 
@@ -398,7 +405,12 @@ fn build_tension_curve(
     // 2) Open threads.
     spans.extend(thread_spans(store, h, book, chapters));
 
-    crate::planning::tension_curve(beats, chapters, &spans, FLAT_THRESHOLD)
+    // 3) AI second opinion (1.3.5 P3), if `plan tension rate` has run.
+    let ai_ratings = crate::tension::AiTensionCache::load(&layout.root, &book.slug)
+        .map(|c| c.ratings)
+        .unwrap_or_default();
+
+    crate::planning::tension_curve(beats, chapters, &spans, &ai_ratings, FLAT_THRESHOLD)
 }
 
 /// A beat is flagged *flat* when its actual intensity falls this far below
@@ -572,7 +584,7 @@ fn render(
     // open-obligation density. Deterministic — the overlay (Ctrl+V Shift+K)
     // draws the same curve graphically.
     if let Some(t) = &report.tension {
-        println!("\nTENSION (expected vs actual intensity)");
+        println!("\nTENSION (expected vs actual{} intensity)", if t.has_ai { " vs ai" } else { "" });
         if !t.has_actual {
             println!(
                 "  (no tension data yet — run `inkhaven tension scan`, or link threads to\n   \
@@ -584,15 +596,26 @@ fn render(
                 Some(a) => format!("{:>3.0}%", a * 100.0),
                 None => "  —".to_string(),
             };
+            let ai = if t.has_ai {
+                match p.ai {
+                    Some(a) => format!("  ai {:>3.0}%", a * 100.0),
+                    None => "  ai   —".to_string(),
+                }
+            } else {
+                String::new()
+            };
             let flat = matches!((p.gap, p.actual), (Some(g), Some(_)) if p.expected >= 0.5 && g > FLAT_THRESHOLD)
                 .then_some(" ⚠ flat")
                 .unwrap_or("");
             println!(
-                "  {:<28} expected {:>3.0}%  actual {}{flat}",
+                "  {:<28} expected {:>3.0}%  actual {}{ai}{flat}",
                 p.beat,
                 p.expected * 100.0,
                 actual,
             );
+        }
+        if t.has_ai {
+            eprintln!("  (ai = AI-rated intensity from `plan tension rate`)");
         }
     }
 
@@ -1311,6 +1334,101 @@ fn scene_scaffold(
         done += 1;
     }
     eprintln!("plan scene scaffold: {done} card(s) written");
+    Ok(())
+}
+
+/// AI-rate each chapter's dramatic intensity (0–100) and cache it (the
+/// 1.3.5 tension second opinion).
+fn tension_rate(
+    project: &Path,
+    book_name: Option<&str>,
+    provider: Option<&str>,
+    refresh: bool,
+) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    let book = super::resolve_user_book(&h, book_name, "plan tension rate")
+        .map_err(Error::Store)?
+        .clone();
+
+    let positions = chapter_positions(&layout, &h, &book);
+    if positions.is_empty() {
+        return Err(Error::Store(format!(
+            "plan tension rate: `{}` has no chapters",
+            book.title
+        )));
+    }
+    let hash_input: Vec<(String, f32)> =
+        positions.iter().map(|c| (c.slug.clone(), c.start)).collect();
+    let hash = crate::tension::AiTensionCache::compute_hash(&hash_input);
+    if !refresh {
+        if let Some(cache) = crate::tension::AiTensionCache::load(&layout.root, &book.slug) {
+            if cache.content_hash == hash && !cache.ratings.is_empty() {
+                println!(
+                    "plan tension rate: cache is current ({} chapter(s)) — pass --refresh to re-rate",
+                    cache.ratings.len()
+                );
+                return Ok(());
+            }
+        }
+    }
+
+    let system = resolve_plan_prompt(
+        &store,
+        &h,
+        &layout,
+        crate::planning::TENSION_RATE_SLUG,
+        crate::planning::tension_rate_system_prompt(),
+    );
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    eprintln!(
+        "inkhaven plan tension rate · model: {model} · {} chapter(s)",
+        positions.len()
+    );
+
+    let mut ratings: std::collections::BTreeMap<String, f32> = std::collections::BTreeMap::new();
+    for ch in h.children_of(Some(book.id)) {
+        if ch.kind != NodeKind::Chapter {
+            continue;
+        }
+        let prose: String = crate::cli::book_walk::chapter_paragraphs_raw(&layout, &h, ch.id)
+            .iter()
+            .map(|p| crate::audiobook::typst_to_plain(p))
+            .filter(|p| !crate::manuscript::is_scene_break(p))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        if prose.trim().is_empty() {
+            eprintln!("  skip `{}` — no prose", ch.slug);
+            continue;
+        }
+        let prompt =
+            crate::planning::tension_rate_user_prompt(&ch.title, &truncate_chars(&prose, 6000));
+        eprint!("  {} … ", ch.slug);
+        let raw = run_blocking(&ai, model, &system, &prompt)?;
+        match crate::planning::parse_intensity(&raw) {
+            Some(v) => {
+                eprintln!("{:.0}", v * 100.0);
+                ratings.insert(ch.slug.clone(), v);
+            }
+            None => eprintln!("(no number — skipped)"),
+        }
+    }
+    let cache = crate::tension::AiTensionCache {
+        book_slug: book.slug.clone(),
+        content_hash: hash,
+        ratings,
+    };
+    cache.save(&layout.root).map_err(Error::Io)?;
+    println!(
+        "plan tension rate: rated {} chapter(s) → {}",
+        cache.ratings.len(),
+        book.title
+    );
+    eprintln!("  see it: `inkhaven plan check` (TENSION ai column) or the Ctrl+V Shift+K overlay");
     Ok(())
 }
 

@@ -4455,13 +4455,21 @@ impl super::super::App {
                     Style::default().fg(Color::DarkGray),
                 )));
             }
+            // The AI second opinion (1.3.5 P3), once `plan tension rate` ran.
+            if t.has_ai {
+                lines.push(Line::from(Span::styled(
+                    format!("{:<25}{}", "  ai", crate::planning::intensity_sparkline(&t.ai_series, bar_w)),
+                    Style::default().fg(Color::Magenta),
+                )));
+            }
             // The selected beat's tension numerals + flat flag.
             if let Some(p) = t.points.get(*cursor) {
                 if let Some(a) = p.actual {
                     let flat = p.gap.map(|g| p.expected >= 0.5 && g > 0.25).unwrap_or(false);
+                    let ai = p.ai.map(|v| format!(" · ai {:.0}%", v * 100.0)).unwrap_or_default();
                     lines.push(Line::from(Span::styled(
                         format!(
-                            "  ~ {}: actual {:.0}% vs expected {:.0}%{}",
+                            "  ~ {}: actual {:.0}% vs expected {:.0}%{ai}{}",
                             truncate_to(&p.beat, 20),
                             a * 100.0,
                             p.expected * 100.0,
