@@ -930,6 +930,18 @@ impl super::super::App {
             } else {
                 None
             };
+        // 1.3.9+ — anachronism overlay.  Self-gating: the detector is empty
+        // (and thus silent) until `anachronism.year` is set, so it needs no
+        // enable flag of its own beyond the master style toggle.
+        let anach_detector = if style_enabled {
+            Some(
+                super::super::super::style_warnings::AnachronismDetector::new(
+                    &style_cfg.anachronism,
+                ),
+            )
+        } else {
+            None
+        };
         // 1.2.20+ C.1.b — echo overlay.  Independent of the
         // Shift+F style toggle; driven by its own Shift+K
         // toggle + the `echo_overlay_stems` cache refreshed
@@ -968,6 +980,11 @@ impl super::super::App {
                         }
                     }
                     if let Some(d) = &sdt_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.detect(line));
+                        }
+                    }
+                    if let Some(d) = &anach_detector {
                         if !d.is_empty() {
                             hits.extend(d.detect(line));
                         }
@@ -1257,6 +1274,18 @@ impl super::super::App {
             } else {
                 None
             };
+        // 1.3.9+ — anachronism overlay.  Self-gating: the detector is empty
+        // (and thus silent) until `anachronism.year` is set, so it needs no
+        // enable flag of its own beyond the master style toggle.
+        let anach_detector = if style_enabled {
+            Some(
+                super::super::super::style_warnings::AnachronismDetector::new(
+                    &style_cfg.anachronism,
+                ),
+            )
+        } else {
+            None
+        };
         // 1.2.20+ C.1.b — echo overlay.  Independent of the
         // Shift+F style toggle; driven by its own Shift+K
         // toggle + the `echo_overlay_stems` cache refreshed
@@ -1295,6 +1324,11 @@ impl super::super::App {
                         }
                     }
                     if let Some(d) = &sdt_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.detect(line));
+                        }
+                    }
+                    if let Some(d) = &anach_detector {
                         if !d.is_empty() {
                             hits.extend(d.detect(line));
                         }
