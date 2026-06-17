@@ -21,43 +21,48 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.5 — Scene craft: scaffold, sequel, second opinion
+## Latest release · 1.3.6 — The Editorial Pass
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.5.md`](Documentation/RELEASE_NOTES/1.3.5.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.6.md`](Documentation/RELEASE_NOTES/1.3.6.md)
 
-The Planning Board gained a scene grain in 1.3.4; 1.3.5 deepens it. Pure-Rust,
-**no new dependencies**.
+Inkhaven has ~12 detectors — the problem was never detection, it was running
+each one separately and aggregating in your head. The Editorial Pass collapses
+all of it into **one ranked, walkable revision worklist**. Pure-Rust, **no new
+dependencies**.
 
-### Scene scaffold
+### `inkhaven edit`
 
-The prose already implies a scene's goal/conflict/disaster — so let the AI
-propose them. `inkhaven plan scene scaffold --chapter <slug>` (or `--all`)
-reads the chapter and writes the card; in the `Ctrl+V Shift+K` scene board,
-**`g`** regenerates the selected card (the proposal streams into the AI pane,
-**`L`** files it back).
+```sh
+inkhaven edit                       # the ranked worklist, errors first
+inkhaven edit --json | jq '.errors' # gate a CI build on zero errors
+```
 
-### Sequel cards
+One list unifies the editorial **`doctor`** classes (echo / pacing /
+continuity / naming / dropped-character / …), **`plan check`**'s structural
+findings (gaps / drift / flat tension / weak scenes), and the **Facts-scan**
+contradictions — each with a category, severity, location, and message. The
+default pass is **deterministic** (reads computed sidecars, no live AI), so it
+works offline and in CI. `edit` is *manuscript readiness*; `doctor` stays
+*project integrity*.
 
-Swain's structure alternates proactive **scenes** (goal → conflict →
-disaster) with reactive **sequels** (reaction → dilemma → decision).
-`inkhaven plan sequel add|list|set|remove` models the reactive half on one
-unified card type (old scene cards load unchanged). The weak-check flips by
-kind — a scene with no disaster doesn't *turn*; a sequel with no decision
-*stalls* — and two scenes back-to-back flag the first's unprocessed disaster.
+### The cockpit
 
-### Tension second opinion
+**`Ctrl+V Shift+R`** opens the worklist as a walkable modal: `↑↓` navigate,
+`[`/`]` filter by category, **`Enter` jumps to the finding's chapter/paragraph**
+in the editor. `s` skips for the session; `d` **defers** it — persisted and
+fingerprinted by its text, so it stays hidden until the prose changes; `D`
+clears all deferrals.
 
-`inkhaven plan tension rate` AI-rates each chapter's felt intensity 0–100,
-adding an **`ai`** column to `plan check` and a third sparkline to the overlay
-beside *expected* (framework) and *actual* (open obligations). When actual and
-ai both land low where the framework wants a peak, that's two independent
-signals agreeing the middle sags. Opt-in; the deterministic curve stays the
-default.
+### The deep tier
+
+`inkhaven edit --deep` re-runs the AI scans (Facts / tension / continuity) to
+refresh their sidecars, then aggregates — the semantic tier. A scan that can't
+run is skipped and the pass falls back to deterministic-only.
 
 ### Test stats
 
-Tests 1316 → 1321, **zero new dependencies**. One tutorial refreshed
-([67, the Planning Board](Documentation/Tutorials/67-planning-board.md)).
+Tests 1321 → 1326, **zero new dependencies**. One new tutorial
+([68, the Editorial Pass](Documentation/Tutorials/68-editorial-pass.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
