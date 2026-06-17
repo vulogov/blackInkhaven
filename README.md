@@ -21,44 +21,45 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.7 — Close the loop: AI rewrite-in-place
+## Latest release · 1.3.8 — World consistency
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.7.md`](Documentation/RELEASE_NOTES/1.3.7.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.8.md`](Documentation/RELEASE_NOTES/1.3.8.md)
 
-The Editorial Pass (1.3.6) *finds* every problem and jumps you to it; 1.3.7
-lets the AI *fix* the prose-level ones. Pure-Rust, **no new dependencies**.
+A long book builds a world — a climate, a geography, a cast with fixed
+attributes, a setting in time. 1.3.8 fills the four remaining gaps in keeping
+it consistent. Pure-Rust, **no new dependencies**.
 
-### `f` — rewrite-in-place
+### `facts check` — the world vs. itself
 
-In the **`Ctrl+V Shift+R`** Editorial Pass cockpit, a **`✎`** marks the
-rewritable findings — **echo** (vary the over-repeated word), **pacing**
-(tighten an overlong paragraph), **show-don't-tell** (rewrite telling to
-showing). Press **`f`** and it opens the finding's paragraph, streams a
-category-specific AI rewrite, and pops the **diff review** (the same one the
-sentence-rhythm rewrite uses): **`a`** snapshots the paragraph then replaces
-it, **`r`** discards. The rewrite prompt is yours to tune (3-tier
-`editorial-fix-<category>`). Judgment findings — structure, continuity, a fact
-contradiction, a weak scene — stay jump-only; there's no honest rewrite for
-"the midpoint sags."
+`inkhaven facts check` runs an AI pass over the *whole* Facts book for
+contradictions between the facts themselves — "winters are mild" ⟷ "the
+harbor freezes each January". Cached, `--json`-gateable, and also surfaced in
+`inkhaven edit` under category `world`.
 
-### Show-don't-tell joins the worklist
+### Anachronism detection
 
-The marquee rewritable category was only a live editor overlay; now the same
-regex runs over every paragraph in `inkhaven edit`, emitting a `show-tell`
-finding per telling phrase with a paragraph + char-range location — jumpable
-and `f`-rewritable. No new detection.
+Set `editor.style_warnings.anachronism.year` and terms that postdate it — a
+"wristwatch" before 1900, a "telephone" before 1876 — flag in `inkhaven edit`
+(category `anachronism`), jumpable to the exact word. A ~35-term built-in
+lexicon ships; your `terms` add to it. Off until you set a year.
 
-### The Editorial Pass (1.3.6)
+### The story bible — `Ctrl+V Shift+L`
 
-`inkhaven edit` is the underlying worklist — one ranked list unifying the
-editorial `doctor` classes, `plan check`'s structural findings, the Facts-scan
-contradictions, and now show-don't-tell. Deterministic and CI-able
-(`--json`); `inkhaven edit --deep` re-runs the AI scans first.
+One chord (**L** for **L**ore) opens a consolidated, navigable view of the
+world: every **Character** with the attributes `continuity extract` has
+tracked across chapters beneath it (`eye_color: brown (ch.3)`), plus the
+**Places**, **Artefacts**, and **Facts** books. `Enter` jumps to source.
+
+### Series-shared facts
+
+Point `facts.shared_path` at a directory of one-file-per-fact text files and a
+whole series shares one canon — `facts check` layers it under each book's
+local facts (local wins), and `inkhaven facts import` snapshots it in.
 
 ### Test stats
 
-Tests 1326 → 1328, **zero new dependencies**. Tutorial 68 refreshed
-([the Editorial Pass](Documentation/Tutorials/68-editorial-pass.md)).
+Tests 1328 → 1333, **zero new dependencies**. New tutorial 69
+([world consistency](Documentation/Tutorials/69-world-consistency.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
