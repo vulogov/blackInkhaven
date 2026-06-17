@@ -1063,7 +1063,8 @@ fn truncate_chars(s: &str, max: usize) -> String {
 }
 
 /// Create or overwrite a scene card titled `title` for `chapter` (slug).
-fn upsert_scene_card(
+/// `pub(crate)` so the TUI scene-scaffold lift can reuse it.
+pub(crate) fn upsert_scene_card(
     store: &Store,
     cfg: &Config,
     title: &str,
