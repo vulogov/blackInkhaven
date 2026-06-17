@@ -21,48 +21,44 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.6 — The Editorial Pass
+## Latest release · 1.3.7 — Close the loop: AI rewrite-in-place
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.6.md`](Documentation/RELEASE_NOTES/1.3.6.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.7.md`](Documentation/RELEASE_NOTES/1.3.7.md)
 
-Inkhaven has ~12 detectors — the problem was never detection, it was running
-each one separately and aggregating in your head. The Editorial Pass collapses
-all of it into **one ranked, walkable revision worklist**. Pure-Rust, **no new
-dependencies**.
+The Editorial Pass (1.3.6) *finds* every problem and jumps you to it; 1.3.7
+lets the AI *fix* the prose-level ones. Pure-Rust, **no new dependencies**.
 
-### `inkhaven edit`
+### `f` — rewrite-in-place
 
-```sh
-inkhaven edit                       # the ranked worklist, errors first
-inkhaven edit --json | jq '.errors' # gate a CI build on zero errors
-```
+In the **`Ctrl+V Shift+R`** Editorial Pass cockpit, a **`✎`** marks the
+rewritable findings — **echo** (vary the over-repeated word), **pacing**
+(tighten an overlong paragraph), **show-don't-tell** (rewrite telling to
+showing). Press **`f`** and it opens the finding's paragraph, streams a
+category-specific AI rewrite, and pops the **diff review** (the same one the
+sentence-rhythm rewrite uses): **`a`** snapshots the paragraph then replaces
+it, **`r`** discards. The rewrite prompt is yours to tune (3-tier
+`editorial-fix-<category>`). Judgment findings — structure, continuity, a fact
+contradiction, a weak scene — stay jump-only; there's no honest rewrite for
+"the midpoint sags."
 
-One list unifies the editorial **`doctor`** classes (echo / pacing /
-continuity / naming / dropped-character / …), **`plan check`**'s structural
-findings (gaps / drift / flat tension / weak scenes), and the **Facts-scan**
-contradictions — each with a category, severity, location, and message. The
-default pass is **deterministic** (reads computed sidecars, no live AI), so it
-works offline and in CI. `edit` is *manuscript readiness*; `doctor` stays
-*project integrity*.
+### Show-don't-tell joins the worklist
 
-### The cockpit
+The marquee rewritable category was only a live editor overlay; now the same
+regex runs over every paragraph in `inkhaven edit`, emitting a `show-tell`
+finding per telling phrase with a paragraph + char-range location — jumpable
+and `f`-rewritable. No new detection.
 
-**`Ctrl+V Shift+R`** opens the worklist as a walkable modal: `↑↓` navigate,
-`[`/`]` filter by category, **`Enter` jumps to the finding's chapter/paragraph**
-in the editor. `s` skips for the session; `d` **defers** it — persisted and
-fingerprinted by its text, so it stays hidden until the prose changes; `D`
-clears all deferrals.
+### The Editorial Pass (1.3.6)
 
-### The deep tier
-
-`inkhaven edit --deep` re-runs the AI scans (Facts / tension / continuity) to
-refresh their sidecars, then aggregates — the semantic tier. A scan that can't
-run is skipped and the pass falls back to deterministic-only.
+`inkhaven edit` is the underlying worklist — one ranked list unifying the
+editorial `doctor` classes, `plan check`'s structural findings, the Facts-scan
+contradictions, and now show-don't-tell. Deterministic and CI-able
+(`--json`); `inkhaven edit --deep` re-runs the AI scans first.
 
 ### Test stats
 
-Tests 1321 → 1326, **zero new dependencies**. One new tutorial
-([68, the Editorial Pass](Documentation/Tutorials/68-editorial-pass.md)).
+Tests 1326 → 1328, **zero new dependencies**. Tutorial 68 refreshed
+([the Editorial Pass](Documentation/Tutorials/68-editorial-pass.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
