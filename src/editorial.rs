@@ -267,6 +267,20 @@ pub fn from_fact_finding(f: &crate::facts_scan::FactFinding) -> EditorialFinding
     }
 }
 
+/// Map a Facts internal-consistency conflict (1.3.8) — two facts that
+/// contradict each other within the Facts book.
+pub fn from_fact_conflict(c: &crate::facts_scan::FactConflict) -> EditorialFinding {
+    EditorialFinding {
+        category: "world".into(),
+        severity: Severity::Warn,
+        location: Location::default(), // a pair of facts — book-level
+        message: format!("facts conflict: {} ⟷ {}", c.a, c.b),
+        hint: (!c.detail.trim().is_empty()).then(|| c.detail.clone()),
+        source: "facts",
+        autofixable: false,
+    }
+}
+
 /// Map a `plan check` warning string into a structure finding. The category
 /// is the warning's prefix before `:` (gap / drift / pacing / tension /
 /// scene / sequel / rhythm / thread); the whole string is the message.
