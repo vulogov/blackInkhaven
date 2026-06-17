@@ -98,7 +98,11 @@ fn prose_style_findings(
     let anach = crate::tui::style_warnings::AnachronismDetector::new(
         &cfg.editor.style_warnings.anachronism,
     );
-    if sdt.is_empty() && anach.is_empty() {
+    let filter = crate::tui::style_warnings::FilterWordsDetector::new(
+        &cfg.editor.style_warnings.filter_words,
+        &cfg.language,
+    );
+    if sdt.is_empty() && anach.is_empty() && filter.is_empty() {
         return Vec::new();
     }
     let mut out = Vec::new();
@@ -125,6 +129,9 @@ fn prose_style_findings(
                 }
                 if !anach.is_empty() {
                     out.extend(paragraph_anachronism_findings(&text, pid, &chap, &anach));
+                }
+                if !filter.is_empty() {
+                    out.extend(paragraph_filter_word_findings(&text, pid, &chap, &filter));
                 }
             }
         }
@@ -209,6 +216,45 @@ fn paragraph_show_tell_findings(
     out
 }
 
+/// Map a paragraph's filter words into `EditorialFinding`s — one per flagged
+/// word, with its paragraph-relative char range. Pure. Findings land at
+/// `Info` severity (they sort last, after errors/warnings) so surfacing the
+/// noisiest detector doesn't bury sharper findings. Span-rewritable via `f`.
+fn paragraph_filter_word_findings(
+    text: &str,
+    pid: uuid::Uuid,
+    chapter: &str,
+    det: &crate::tui::style_warnings::FilterWordsDetector,
+) -> Vec<EditorialFinding> {
+    let mut out = Vec::new();
+    let mut row_off = 0usize; // char offset of the line's start in the paragraph
+    for line in text.lines() {
+        for hit in det.detect(line) {
+            let word: String = line
+                .chars()
+                .skip(hit.col_start)
+                .take(hit.col_end.saturating_sub(hit.col_start))
+                .collect();
+            out.push(EditorialFinding {
+                category: "filter".into(),
+                severity: editorial::Severity::Info,
+                location: editorial::Location {
+                    chapter: Some(chapter.to_string()),
+                    paragraph: Some(pid),
+                    char_range: Some((row_off + hit.col_start, row_off + hit.col_end)),
+                    path: None,
+                },
+                message: format!("filter word: “{}” — consider cutting", word.trim()),
+                hint: None,
+                source: "style",
+                autofixable: false,
+            });
+        }
+        row_off += line.chars().count() + 1; // + the newline
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,6 +292,26 @@ mod tests {
         assert!(e.location.char_range.is_some(), "carries a char range");
         assert!(e.rewritable(), "show-tell + a paragraph → f-rewritable");
         assert!(e.message.contains("show it instead"));
+    }
+
+    #[test]
+    fn filter_word_mapping_is_info_and_span_rewritable() {
+        // default config → built-in english filter words (just/really/very/…)
+        let det = crate::tui::style_warnings::FilterWordsDetector::new(
+            &crate::config::FilterWordsConfig::default(),
+            "english",
+        );
+        assert!(!det.is_empty(), "built-in english list populates the detector");
+        let id = uuid::Uuid::now_v7();
+        let f = paragraph_filter_word_findings("It was very cold.", id, "ch-1", &det);
+        assert_eq!(f.len(), 1, "one filter word flagged");
+        let e = &f[0];
+        assert_eq!(e.category, "filter");
+        assert_eq!(e.severity, crate::editorial::Severity::Info, "filter words sort last");
+        assert_eq!(e.location.paragraph, Some(id));
+        assert!(e.location.char_range.is_some(), "carries a char range");
+        assert!(e.rewritable(), "filter + a paragraph → f-rewritable (span)");
+        assert!(e.message.contains("very") && e.message.contains("cutting"));
     }
 }
 
