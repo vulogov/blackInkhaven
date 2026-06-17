@@ -734,6 +734,42 @@ pub fn parse_scene_scaffold(raw: &str) -> (String, String, String) {
     (field("goal"), field("conflict"), field("disaster"))
 }
 
+// ── tension second opinion (P3 1.3.5, AI-rated intensity) ───────────
+
+/// The prompt-override slug for the per-chapter intensity rater.
+pub const TENSION_RATE_SLUG: &str = "plan-tension-rate";
+
+pub fn tension_rate_system_prompt() -> &'static str {
+    "You are a story editor rating dramatic intensity. Read ONE chapter and rate how much narrative \
+tension it carries on a 0–100 scale: 0 = calm setup or denouement, 50 = steady rising action, \
+100 = peak crisis / climax. Judge the felt pressure on the reader, not the word count. Reply with \
+ONLY the integer — nothing else."
+}
+
+pub fn tension_rate_user_prompt(chapter_title: &str, prose: &str) -> String {
+    format!("CHAPTER: {chapter_title}\n\n{prose}")
+}
+
+/// Parse the rater's reply into an intensity 0..1 — the first integer in
+/// 0..=100, clamped. None if there's no number. Pure.
+pub fn parse_intensity(raw: &str) -> Option<f32> {
+    let mut digits = String::new();
+    for ch in raw.chars() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+            if digits.len() == 3 {
+                break;
+            }
+        } else if !digits.is_empty() {
+            break;
+        }
+    }
+    digits
+        .parse::<u32>()
+        .ok()
+        .map(|n| (n.min(100) as f32) / 100.0)
+}
+
 // ── tension curve (P0 1.3.4, deterministic) ─────────────────────────
 
 /// A narrative obligation carrying `weight` tension while it is *open*
@@ -761,18 +797,28 @@ pub struct TensionPoint {
     pub actual: Option<f32>,
     /// `expected - actual` (positive = flat against the framework's shape).
     pub gap: Option<f32>,
+    /// AI-rated intensity at the beat's chapter (0..1), the 1.3.5 second
+    /// opinion. None until `plan tension rate` runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ai: Option<f32>,
 }
 
-/// Expected vs actual narrative intensity across the book.
+/// Expected vs actual (vs AI-rated) narrative intensity across the book.
 #[derive(Debug, Clone, Serialize)]
 pub struct TensionCurve {
     pub points: Vec<TensionPoint>,
     /// `(position, normalized actual)` sampled at each chapter start plus
     /// the book end — the overlay's actual line.
     pub series: Vec<(f32, f32)>,
+    /// `(position, ai-rated intensity)` per chapter — the second-opinion
+    /// line; empty until `plan tension rate` runs.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ai_series: Vec<(f32, f32)>,
     /// False when there were zero open obligations (no ledger, no linked
     /// threads): only `expected` is meaningful, render a hint not a curve.
     pub has_actual: bool,
+    /// True once AI ratings are present.
+    pub has_ai: bool,
     /// Beats flagged flat (high expected, low actual beyond the threshold).
     pub warnings: Vec<String>,
 }
@@ -809,6 +855,7 @@ pub fn tension_curve(
     beats: &[Beat],
     chapters: &[ChapterPos],
     spans: &[OpenSpan],
+    ai_ratings: &std::collections::BTreeMap<String, f32>,
     flat_threshold: f32,
 ) -> TensionCurve {
     use std::collections::HashMap;
@@ -828,6 +875,13 @@ pub fn tension_curve(
         .map(|(&p, &l)| (p, norm(l)))
         .collect();
 
+    // AI second opinion: one point per chapter that has a rating.
+    let has_ai = !ai_ratings.is_empty();
+    let ai_series: Vec<(f32, f32)> = chapters
+        .iter()
+        .filter_map(|c| ai_ratings.get(&c.slug).map(|&v| (c.start, v.clamp(0.0, 1.0))))
+        .collect();
+
     let mut points = Vec::with_capacity(beats.len());
     let mut warnings = Vec::new();
     for b in beats {
@@ -838,6 +892,10 @@ pub fn tension_curve(
         } else {
             None
         };
+        let ai = b
+            .mapped_chapter
+            .as_deref()
+            .and_then(|c| ai_ratings.get(c).map(|&v| v.clamp(0.0, 1.0)));
         let gap = actual.map(|a| expected - a);
         if let Some(g) = gap {
             if expected >= 0.5 && g > flat_threshold {
@@ -855,12 +913,15 @@ pub fn tension_curve(
             expected,
             actual,
             gap,
+            ai,
         });
     }
     TensionCurve {
         points,
         series,
+        ai_series,
         has_actual,
+        has_ai,
         warnings,
     }
 }
@@ -1261,8 +1322,9 @@ mod tests {
             OpenSpan { start: 0.85, end: 1.0, weight: 1.0 },
             OpenSpan { start: 0.85, end: 1.0, weight: 1.0 },
         ];
-        let curve = tension_curve(&beats, &chapters, &spans, 0.25);
+        let curve = tension_curve(&beats, &chapters, &spans, &std::collections::BTreeMap::new(), 0.25);
         assert!(curve.has_actual);
+        assert!(!curve.has_ai, "no AI ratings supplied");
         let mid = curve.points.iter().find(|p| p.beat == "Midpoint").unwrap();
         let climax = curve.points.iter().find(|p| p.beat == "Climax").unwrap();
         assert_eq!(mid.actual, Some(0.0), "no obligations open at the midpoint");
@@ -1385,10 +1447,36 @@ mod tests {
     fn tension_curve_no_data_is_expected_only() {
         let beats = vec![tbeat("Midpoint", 0.5, "mid")];
         let chapters = vec![ChapterPos { slug: "mid".into(), start: 0.5 }];
-        let curve = tension_curve(&beats, &chapters, &[], 0.25);
+        let curve = tension_curve(&beats, &chapters, &[], &std::collections::BTreeMap::new(), 0.25);
         assert!(!curve.has_actual, "no spans → no actual curve");
         assert_eq!(curve.points[0].actual, None);
         assert!(curve.points[0].expected > 0.6, "expected still resolves from the table");
         assert!(curve.warnings.is_empty(), "no flat flags without data");
+    }
+
+    #[test]
+    fn parse_intensity_reads_the_first_integer() {
+        assert_eq!(parse_intensity("72"), Some(0.72));
+        assert_eq!(parse_intensity("Intensity: 90/100"), Some(0.90));
+        assert_eq!(parse_intensity("0"), Some(0.0));
+        assert_eq!(parse_intensity("250"), Some(1.0), "clamped to 100");
+        assert_eq!(parse_intensity("no number here"), None);
+    }
+
+    #[test]
+    fn tension_curve_carries_the_ai_second_opinion() {
+        let beats = vec![tbeat("Midpoint", 0.5, "mid")];
+        let chapters = vec![
+            ChapterPos { slug: "mid".into(), start: 0.5 },
+            ChapterPos { slug: "end".into(), start: 0.9 },
+        ];
+        let mut ai = std::collections::BTreeMap::new();
+        ai.insert("mid".to_string(), 0.3f32);
+        ai.insert("end".to_string(), 0.95f32);
+        let curve = tension_curve(&beats, &chapters, &[], &ai, 0.25);
+        assert!(curve.has_ai);
+        assert_eq!(curve.ai_series.len(), 2, "one point per rated chapter");
+        let mid = &curve.points[0];
+        assert_eq!(mid.ai, Some(0.3), "the beat picks up its chapter's AI rating");
     }
 }

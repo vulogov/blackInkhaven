@@ -1273,6 +1273,29 @@ pub enum PlanCommand {
         #[command(subcommand)]
         cmd: PlanSequelCommand,
     },
+    /// Tension second opinion (1.3.5) — an AI intensity reading to compare
+    /// against the deterministic curve.
+    Tension {
+        #[command(subcommand)]
+        cmd: PlanTensionCommand,
+    },
+}
+
+/// `inkhaven plan tension …` — the AI intensity "second opinion".
+#[derive(Debug, Subcommand)]
+pub enum PlanTensionCommand {
+    /// Rate every chapter's dramatic intensity (0–100) with the LLM and
+    /// cache it. The `Ctrl+V Shift+K` outline + `plan check` then show it as
+    /// a third line beside expected (framework) and actual (obligations).
+    Rate {
+        #[arg(long)]
+        book_name: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+        /// Re-rate every chapter even if the cache is still current.
+        #[arg(long)]
+        refresh: bool,
+    },
 }
 
 /// `inkhaven plan sequel …` — manage the reactive (reaction/dilemma/
