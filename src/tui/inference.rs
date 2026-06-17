@@ -52,6 +52,10 @@ pub(super) struct LiftTarget {
     pub title: String,
     /// Short label of the artefact ("query letter", "structural analysis").
     pub what: String,
+    /// When set, the lift files a **scene card** instead of a system-book
+    /// paragraph: the response is parsed as goal/conflict/disaster and
+    /// upserted as the card titled `title` for this chapter slug. (1.3.5 P1)
+    pub scene_chapter: Option<String>,
     /// Identity of the inference this target belongs to.
     pub stamp: std::time::Instant,
 }

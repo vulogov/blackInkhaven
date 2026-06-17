@@ -15,7 +15,7 @@ use crate::store::hierarchy::Hierarchy;
 use crate::store::node::NodeKind;
 use crate::store::{InsertPosition, Store, SYSTEM_TAG_PLANNING};
 
-use super::{PlanCommand, PlanSceneCommand};
+use super::{PlanCommand, PlanSceneCommand, PlanSequelCommand, PlanTensionCommand};
 
 pub fn run(project: &Path, cmd: PlanCommand) -> Result<()> {
     match cmd {
@@ -67,6 +67,14 @@ pub fn run(project: &Path, cmd: PlanCommand) -> Result<()> {
             Ok(())
         }
         PlanCommand::Scene { cmd } => scene_cmd(project, cmd),
+        PlanCommand::Sequel { cmd } => sequel_cmd(project, cmd),
+        PlanCommand::Tension { cmd } => match cmd {
+            PlanTensionCommand::Rate {
+                book_name,
+                provider,
+                refresh,
+            } => tension_rate(project, book_name.as_deref(), provider.as_deref(), refresh),
+        },
     }
 }
 
@@ -397,7 +405,12 @@ fn build_tension_curve(
     // 2) Open threads.
     spans.extend(thread_spans(store, h, book, chapters));
 
-    crate::planning::tension_curve(beats, chapters, &spans, FLAT_THRESHOLD)
+    // 3) AI second opinion (1.3.5 P3), if `plan tension rate` has run.
+    let ai_ratings = crate::tension::AiTensionCache::load(&layout.root, &book.slug)
+        .map(|c| c.ratings)
+        .unwrap_or_default();
+
+    crate::planning::tension_curve(beats, chapters, &spans, &ai_ratings, FLAT_THRESHOLD)
 }
 
 /// A beat is flagged *flat* when its actual intensity falls this far below
@@ -571,7 +584,7 @@ fn render(
     // open-obligation density. Deterministic — the overlay (Ctrl+V Shift+K)
     // draws the same curve graphically.
     if let Some(t) = &report.tension {
-        println!("\nTENSION (expected vs actual intensity)");
+        println!("\nTENSION (expected vs actual{} intensity)", if t.has_ai { " vs ai" } else { "" });
         if !t.has_actual {
             println!(
                 "  (no tension data yet — run `inkhaven tension scan`, or link threads to\n   \
@@ -583,32 +596,51 @@ fn render(
                 Some(a) => format!("{:>3.0}%", a * 100.0),
                 None => "  —".to_string(),
             };
+            let ai = if t.has_ai {
+                match p.ai {
+                    Some(a) => format!("  ai {:>3.0}%", a * 100.0),
+                    None => "  ai   —".to_string(),
+                }
+            } else {
+                String::new()
+            };
             let flat = matches!((p.gap, p.actual), (Some(g), Some(_)) if p.expected >= 0.5 && g > FLAT_THRESHOLD)
                 .then_some(" ⚠ flat")
                 .unwrap_or("");
             println!(
-                "  {:<28} expected {:>3.0}%  actual {}{flat}",
+                "  {:<28} expected {:>3.0}%  actual {}{ai}{flat}",
                 p.beat,
                 p.expected * 100.0,
                 actual,
             );
         }
+        if t.has_ai {
+            eprintln!("  (ai = AI-rated intensity from `plan tension rate`)");
+        }
     }
 
-    // SCENES (1.3.4 P3): the goal/conflict/disaster spine per scene card,
-    // with the weak-scene (no-turn) flag.
+    // SCENES (1.3.4 P3, 1.3.5 P2): the three-slot spine per card, kind-
+    // tagged, with the weak flag (scene = no turn, sequel = no decision).
     if !report.scenes.is_empty() {
         let mark = |present: bool| if present { '●' } else { '○' };
-        println!("\nSCENES (goal · conflict · disaster)");
+        println!("\nSCENES / SEQUELS (scene: goal·conflict·disaster · sequel: reaction·dilemma·decision)");
         for s in &report.scenes {
+            let weak_note = if !s.weak {
+                ""
+            } else if s.kind == "sequel" {
+                "  no decision"
+            } else {
+                "  no turn"
+            };
             println!(
-                "  {} {:<26} G{} C{} D{}{}",
-                if s.no_turn { '⚠' } else { '·' },
+                "  {} [{:<6}] {:<26} {}{}{}{}",
+                if s.weak { '⚠' } else { '·' },
+                s.kind,
                 s.title,
-                mark(s.has_goal),
-                mark(s.has_conflict),
-                mark(s.has_disaster),
-                if s.no_turn { "  no turn" } else { "" },
+                mark(s.filled[0]),
+                mark(s.filled[1]),
+                mark(s.filled[2]),
+                weak_note,
             );
         }
     }
@@ -816,7 +848,7 @@ fn scene_cmd(project: &Path, cmd: PlanSceneCommand) -> Result<()> {
             conflict,
             disaster,
         } => scene_add(&store, &cfg, &h, &title, &chapter, goal, conflict, disaster),
-        PlanSceneCommand::List => scene_list(&store, &h),
+        PlanSceneCommand::List => list_cards(&store, &h, None),
         PlanSceneCommand::Set {
             title,
             chapter,
@@ -826,7 +858,126 @@ fn scene_cmd(project: &Path, cmd: PlanSceneCommand) -> Result<()> {
             status,
         } => scene_set(&store, &h, &title, chapter, goal, conflict, disaster, status),
         PlanSceneCommand::Remove { title } => scene_remove(&store, &h, &title),
+        PlanSceneCommand::Scaffold {
+            chapter,
+            all,
+            book_name,
+            provider,
+        } => scene_scaffold(
+            project,
+            chapter.as_deref(),
+            all,
+            book_name.as_deref(),
+            provider.as_deref(),
+        ),
     }
+}
+
+fn sequel_cmd(project: &Path, cmd: PlanSequelCommand) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    match cmd {
+        PlanSequelCommand::Add {
+            title,
+            chapter,
+            reaction,
+            dilemma,
+            decision,
+        } => sequel_add(&store, &cfg, &h, &title, &chapter, reaction, dilemma, decision),
+        PlanSequelCommand::List => list_cards(&store, &h, Some("sequel")),
+        PlanSequelCommand::Set {
+            title,
+            chapter,
+            reaction,
+            dilemma,
+            decision,
+            status,
+        } => sequel_set(&store, &h, &title, chapter, reaction, dilemma, decision, status),
+        PlanSequelCommand::Remove { title } => scene_remove(&store, &h, &title),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sequel_add(
+    store: &Store,
+    cfg: &Config,
+    h: &Hierarchy,
+    title: &str,
+    chapter: &str,
+    reaction: Option<String>,
+    dilemma: Option<String>,
+    decision: Option<String>,
+) -> Result<()> {
+    if find_scene(h, title).is_some() {
+        return Err(Error::Store(format!(
+            "plan sequel: `{title}` already exists — use `plan sequel set`"
+        )));
+    }
+    let parent = ensure_scenes_chapter(store, cfg, h)?;
+    let h = Hierarchy::load(store).map_err(|e| Error::Store(e.to_string()))?;
+    let parent = h.get(parent.id).cloned().unwrap_or(parent);
+    let mut node = store
+        .create_node(cfg, &h, NodeKind::Paragraph, title, Some(&parent), None, InsertPosition::End)
+        .map_err(|e| Error::Store(e.to_string()))?;
+    let sequel = crate::planning::Scene::new_sequel(
+        chapter,
+        title,
+        reaction.as_deref().unwrap_or_default(),
+        dilemma.as_deref().unwrap_or_default(),
+        decision.as_deref().unwrap_or_default(),
+    );
+    save_scene(store, &mut node, &sequel)?;
+    println!("plan sequel: added `{title}` under {chapter}");
+    if sequel.dilemma.trim().is_empty() || sequel.decision.trim().is_empty() {
+        eprintln!("  tip: fill --dilemma and --decision so the sequel resolves (`plan sequel set`)");
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sequel_set(
+    store: &Store,
+    h: &Hierarchy,
+    title: &str,
+    chapter: Option<String>,
+    reaction: Option<String>,
+    dilemma: Option<String>,
+    decision: Option<String>,
+    status: Option<String>,
+) -> Result<()> {
+    let Some(mut node) = find_scene(h, title) else {
+        return Err(Error::Store(format!(
+            "plan sequel: no card `{title}` (see `plan sequel list`)"
+        )));
+    };
+    let body = store
+        .get_content(node.id)
+        .map_err(|e| Error::Store(e.to_string()))?
+        .ok_or_else(|| Error::Store("plan sequel: empty".into()))?;
+    let mut card = crate::planning::parse_scene(&String::from_utf8_lossy(&body))
+        .ok_or_else(|| Error::Store("plan sequel: body is not valid HJSON".into()))?;
+    card.kind = "sequel".into(); // `plan sequel set` makes it a sequel
+    if let Some(c) = chapter {
+        card.chapter = c;
+    }
+    if let Some(r) = reaction {
+        card.reaction = r;
+    }
+    if let Some(d) = dilemma {
+        card.dilemma = d;
+    }
+    if let Some(d) = decision {
+        card.decision = d;
+    }
+    if let Some(s) = status {
+        card.status = s;
+    }
+    save_scene(store, &mut node, &card)?;
+    println!("plan sequel: updated `{title}`");
+    Ok(())
 }
 
 fn scenes_chapter_id(h: &Hierarchy) -> Option<uuid::Uuid> {
@@ -923,14 +1074,13 @@ fn scene_add(
     let mut node = store
         .create_node(cfg, &h, NodeKind::Paragraph, title, Some(&parent), None, InsertPosition::End)
         .map_err(|e| Error::Store(e.to_string()))?;
-    let scene = crate::planning::Scene {
-        chapter: chapter.to_string(),
-        title: title.to_string(),
-        goal: goal.unwrap_or_default(),
-        conflict: conflict.unwrap_or_default(),
-        disaster: disaster.unwrap_or_default(),
-        status: "planned".to_string(),
-    };
+    let scene = crate::planning::Scene::new_scene(
+        chapter,
+        title,
+        goal.as_deref().unwrap_or_default(),
+        conflict.as_deref().unwrap_or_default(),
+        disaster.as_deref().unwrap_or_default(),
+    );
     save_scene(store, &mut node, &scene)?;
     println!("plan scene: added `{title}` under {chapter}");
     if scene.goal.trim().is_empty() || scene.disaster.trim().is_empty() {
@@ -997,48 +1147,288 @@ fn scene_remove(store: &Store, h: &Hierarchy, title: &str) -> Result<()> {
     Ok(())
 }
 
-fn scene_list(store: &Store, h: &Hierarchy) -> Result<()> {
-    let scenes: Vec<crate::planning::Scene> =
+/// List cards grouped by chapter. `filter_kind` (`Some("sequel")`) narrows
+/// to one kind; `None` shows both, kind-tagged. The weak/alternation
+/// findings are computed over **all** cards (so the rhythm check sees the
+/// full sequence) but printed once.
+fn list_cards(store: &Store, h: &Hierarchy, filter_kind: Option<&str>) -> Result<()> {
+    let all: Vec<crate::planning::Scene> =
         load_scenes(store, h).into_iter().map(|(_, s)| s).collect();
-    if scenes.is_empty() {
+    let shown: Vec<&crate::planning::Scene> = all
+        .iter()
+        .filter(|s| filter_kind.is_none_or(|k| s.kind.eq_ignore_ascii_case(k)))
+        .collect();
+    if shown.is_empty() {
+        let what = filter_kind.unwrap_or("scene");
         println!(
-            "plan scene: no scene cards yet — add with \
-             `inkhaven plan scene add <title> --chapter <slug>`"
+            "plan: no {what} cards yet — add with `inkhaven plan {what} add <title> --chapter <slug>`"
         );
         return Ok(());
     }
-    let (statuses, warnings) = crate::planning::analyze_scenes(&scenes);
+    let (statuses, warnings) = crate::planning::analyze_scenes(&all);
     let mark = |present: bool| if present { '●' } else { '○' };
     use std::collections::BTreeMap;
     let mut by_chapter: BTreeMap<String, Vec<&crate::planning::Scene>> = BTreeMap::new();
-    for s in &scenes {
+    for s in &shown {
         by_chapter.entry(s.chapter.clone()).or_default().push(s);
     }
     for (ch, list) in &by_chapter {
         println!("{}", if ch.is_empty() { "(no chapter)" } else { ch });
         for s in list {
-            let no_turn = statuses
-                .iter()
-                .find(|x| x.title == s.title)
-                .map(|x| x.no_turn)
-                .unwrap_or(false);
+            let st = statuses.iter().find(|x| x.title == s.title);
+            let weak = st.map(|x| x.weak).unwrap_or(false);
+            let f = s.slots().map(|(_, v)| !v.trim().is_empty());
+            let note = if !weak {
+                ""
+            } else if s.is_sequel() {
+                "  no decision"
+            } else {
+                "  no turn"
+            };
             println!(
-                "  {} {:<28} G{} C{} D{}{}",
-                if no_turn { '⚠' } else { '·' },
+                "  {} [{:<6}] {:<26} {}{}{}{}",
+                if weak { '⚠' } else { '·' },
+                if s.is_sequel() { "sequel" } else { "scene" },
                 s.title,
-                mark(!s.goal.trim().is_empty()),
-                mark(!s.conflict.trim().is_empty()),
-                mark(!s.disaster.trim().is_empty()),
-                if no_turn { "  no turn" } else { "" },
+                mark(f[0]),
+                mark(f[1]),
+                mark(f[2]),
+                note,
             );
         }
     }
     if !warnings.is_empty() {
-        println!("\n{} weak scene(s):", warnings.len());
+        println!("\n{} finding(s):", warnings.len());
         for w in &warnings {
             println!("  ⚠ {w}");
         }
     }
+    Ok(())
+}
+
+/// First `max` chars (char-safe).
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    s.chars().take(max).collect()
+}
+
+/// Create or overwrite a scene card titled `title` for `chapter` (slug).
+/// `pub(crate)` so the TUI scene-scaffold lift can reuse it.
+pub(crate) fn upsert_scene_card(
+    store: &Store,
+    cfg: &Config,
+    title: &str,
+    chapter: &str,
+    goal: &str,
+    conflict: &str,
+    disaster: &str,
+) -> Result<()> {
+    let h = Hierarchy::load(store).map_err(|e| Error::Store(e.to_string()))?;
+    if let Some(mut node) = find_scene(&h, title) {
+        let body = store
+            .get_content(node.id)
+            .map_err(|e| Error::Store(e.to_string()))?
+            .unwrap_or_default();
+        let mut scene = crate::planning::parse_scene(&String::from_utf8_lossy(&body))
+            .unwrap_or_else(|| crate::planning::Scene::new_scene(chapter, title, "", "", ""));
+        // Scaffold writes a proactive scene; keep its kind, refresh the triple.
+        scene.kind = "scene".into();
+        scene.chapter = chapter.to_string();
+        scene.goal = goal.to_string();
+        scene.conflict = conflict.to_string();
+        scene.disaster = disaster.to_string();
+        return save_scene(store, &mut node, &scene);
+    }
+    let parent = ensure_scenes_chapter(store, cfg, &h)?;
+    let h = Hierarchy::load(store).map_err(|e| Error::Store(e.to_string()))?;
+    let parent = h.get(parent.id).cloned().unwrap_or(parent);
+    let mut node = store
+        .create_node(cfg, &h, NodeKind::Paragraph, title, Some(&parent), None, InsertPosition::End)
+        .map_err(|e| Error::Store(e.to_string()))?;
+    let scene = crate::planning::Scene::new_scene(chapter, title, goal, conflict, disaster);
+    save_scene(store, &mut node, &scene)
+}
+
+/// AI-scaffold a scene card (goal/conflict/disaster) from a chapter's prose.
+fn scene_scaffold(
+    project: &Path,
+    chapter: Option<&str>,
+    all: bool,
+    book_name: Option<&str>,
+    provider: Option<&str>,
+) -> Result<()> {
+    if chapter.is_none() && !all {
+        return Err(Error::Store(
+            "plan scene scaffold: pass --chapter <slug> or --all".into(),
+        ));
+    }
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    let book = super::resolve_user_book(&h, book_name, "plan scene scaffold")
+        .map_err(Error::Store)?
+        .clone();
+
+    // Chapters already carrying a card — skipped by `--all`.
+    let carded: std::collections::HashSet<String> = load_scenes(&store, &h)
+        .into_iter()
+        .map(|(_, s)| s.chapter)
+        .collect();
+    let targets: Vec<crate::store::node::Node> = h
+        .children_of(Some(book.id))
+        .into_iter()
+        .filter(|ch| ch.kind == NodeKind::Chapter)
+        .filter(|ch| match chapter {
+            Some(slug) => ch.slug.eq_ignore_ascii_case(slug),
+            None => all && !carded.contains(&ch.slug),
+        })
+        .cloned()
+        .collect();
+    if targets.is_empty() {
+        if let Some(slug) = chapter {
+            return Err(Error::Store(format!(
+                "plan scene scaffold: no chapter `{slug}` in `{}`",
+                book.title
+            )));
+        }
+        println!("plan scene scaffold: every chapter already has a card");
+        return Ok(());
+    }
+
+    let system = resolve_plan_prompt(
+        &store,
+        &h,
+        &layout,
+        crate::planning::SCENE_SCAFFOLD_SLUG,
+        crate::planning::scene_scaffold_system_prompt(),
+    );
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+
+    let mut done = 0usize;
+    for ch in &targets {
+        let prose: String = crate::cli::book_walk::chapter_paragraphs_raw(&layout, &h, ch.id)
+            .iter()
+            .map(|p| crate::audiobook::typst_to_plain(p))
+            .filter(|p| !crate::manuscript::is_scene_break(p))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        if prose.trim().is_empty() {
+            eprintln!("  skip `{}` — no prose yet", ch.slug);
+            continue;
+        }
+        let prompt = crate::planning::scene_scaffold_user_prompt(&ch.title, &truncate_chars(&prose, 6000));
+        eprintln!("inkhaven plan scene scaffold · {} · model: {model}", ch.slug);
+        let raw = run_blocking(&ai, model, &system, &prompt)?;
+        let (goal, conflict, disaster) = crate::planning::parse_scene_scaffold(&raw);
+        if goal.is_empty() && conflict.is_empty() && disaster.is_empty() {
+            eprintln!("  `{}`: nothing parseable in the reply — skipped", ch.slug);
+            continue;
+        }
+        upsert_scene_card(&store, &cfg, &ch.title, &ch.slug, &goal, &conflict, &disaster)?;
+        println!("plan scene scaffold: `{}` → {}", ch.title, ch.slug);
+        done += 1;
+    }
+    eprintln!("plan scene scaffold: {done} card(s) written");
+    Ok(())
+}
+
+/// AI-rate each chapter's dramatic intensity (0–100) and cache it (the
+/// 1.3.5 tension second opinion).
+fn tension_rate(
+    project: &Path,
+    book_name: Option<&str>,
+    provider: Option<&str>,
+    refresh: bool,
+) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    let book = super::resolve_user_book(&h, book_name, "plan tension rate")
+        .map_err(Error::Store)?
+        .clone();
+
+    let positions = chapter_positions(&layout, &h, &book);
+    if positions.is_empty() {
+        return Err(Error::Store(format!(
+            "plan tension rate: `{}` has no chapters",
+            book.title
+        )));
+    }
+    let hash_input: Vec<(String, f32)> =
+        positions.iter().map(|c| (c.slug.clone(), c.start)).collect();
+    let hash = crate::tension::AiTensionCache::compute_hash(&hash_input);
+    if !refresh {
+        if let Some(cache) = crate::tension::AiTensionCache::load(&layout.root, &book.slug) {
+            if cache.content_hash == hash && !cache.ratings.is_empty() {
+                println!(
+                    "plan tension rate: cache is current ({} chapter(s)) — pass --refresh to re-rate",
+                    cache.ratings.len()
+                );
+                return Ok(());
+            }
+        }
+    }
+
+    let system = resolve_plan_prompt(
+        &store,
+        &h,
+        &layout,
+        crate::planning::TENSION_RATE_SLUG,
+        crate::planning::tension_rate_system_prompt(),
+    );
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    eprintln!(
+        "inkhaven plan tension rate · model: {model} · {} chapter(s)",
+        positions.len()
+    );
+
+    let mut ratings: std::collections::BTreeMap<String, f32> = std::collections::BTreeMap::new();
+    for ch in h.children_of(Some(book.id)) {
+        if ch.kind != NodeKind::Chapter {
+            continue;
+        }
+        let prose: String = crate::cli::book_walk::chapter_paragraphs_raw(&layout, &h, ch.id)
+            .iter()
+            .map(|p| crate::audiobook::typst_to_plain(p))
+            .filter(|p| !crate::manuscript::is_scene_break(p))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        if prose.trim().is_empty() {
+            eprintln!("  skip `{}` — no prose", ch.slug);
+            continue;
+        }
+        let prompt =
+            crate::planning::tension_rate_user_prompt(&ch.title, &truncate_chars(&prose, 6000));
+        eprint!("  {} … ", ch.slug);
+        let raw = run_blocking(&ai, model, &system, &prompt)?;
+        match crate::planning::parse_intensity(&raw) {
+            Some(v) => {
+                eprintln!("{:.0}", v * 100.0);
+                ratings.insert(ch.slug.clone(), v);
+            }
+            None => eprintln!("(no number — skipped)"),
+        }
+    }
+    let cache = crate::tension::AiTensionCache {
+        book_slug: book.slug.clone(),
+        content_hash: hash,
+        ratings,
+    };
+    cache.save(&layout.root).map_err(Error::Io)?;
+    println!(
+        "plan tension rate: rated {} chapter(s) → {}",
+        cache.ratings.len(),
+        book.title
+    );
+    eprintln!("  see it: `inkhaven plan check` (TENSION ai column) or the Ctrl+V Shift+K overlay");
     Ok(())
 }
 

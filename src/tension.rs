@@ -110,6 +110,53 @@ impl TensionLedger {
     }
 }
 
+/// Per-chapter AI **intensity** ratings (0..1) — the 1.3.5 tension "second
+/// opinion": a prose-grounded reading to compare against the deterministic
+/// obligation-density curve. Cached in `.inkhaven/tension-ai-<slug>.json`
+/// so the rating pass isn't re-run on every `plan check`; content-hash
+/// invalidated when the chapter shape moves.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AiTensionCache {
+    #[serde(default)]
+    pub book_slug: String,
+    #[serde(default)]
+    pub content_hash: u64,
+    /// Chapter slug → intensity 0..1.
+    #[serde(default)]
+    pub ratings: std::collections::BTreeMap<String, f32>,
+}
+
+impl AiTensionCache {
+    pub fn sidecar_path(root: &Path, slug: &str) -> PathBuf {
+        root.join(".inkhaven").join(format!("tension-ai-{slug}.json"))
+    }
+    pub fn load(root: &Path, slug: &str) -> Option<Self> {
+        std::fs::read_to_string(Self::sidecar_path(root, slug))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+    }
+    pub fn save(&self, root: &Path) -> std::io::Result<()> {
+        let path = Self::sidecar_path(root, &self.book_slug);
+        if let Some(p) = path.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        let body = serde_json::to_vec_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        crate::io_atomic::write(&path, &body)
+    }
+    /// Hash chapter slugs + rounded positions — changes when a chapter is
+    /// added/removed/reordered or the prose distribution shifts.
+    pub fn compute_hash(chapters: &[(String, f32)]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for (slug, start) in chapters {
+            slug.hash(&mut h);
+            ((start * 1000.0) as i64).hash(&mut h);
+        }
+        h.finish()
+    }
+}
+
 /// A flagged unresolved tension.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unresolved {

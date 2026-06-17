@@ -1266,6 +1266,76 @@ pub enum PlanCommand {
         #[command(subcommand)]
         cmd: PlanSceneCommand,
     },
+    /// Sequel cards (1.3.5) — the reactive counterpart to the proactive
+    /// scene: reaction / dilemma / decision. A sequel that reaches a
+    /// dilemma but never decides stalls the story.
+    Sequel {
+        #[command(subcommand)]
+        cmd: PlanSequelCommand,
+    },
+    /// Tension second opinion (1.3.5) — an AI intensity reading to compare
+    /// against the deterministic curve.
+    Tension {
+        #[command(subcommand)]
+        cmd: PlanTensionCommand,
+    },
+}
+
+/// `inkhaven plan tension …` — the AI intensity "second opinion".
+#[derive(Debug, Subcommand)]
+pub enum PlanTensionCommand {
+    /// Rate every chapter's dramatic intensity (0–100) with the LLM and
+    /// cache it. The `Ctrl+V Shift+K` outline + `plan check` then show it as
+    /// a third line beside expected (framework) and actual (obligations).
+    Rate {
+        #[arg(long)]
+        book_name: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+        /// Re-rate every chapter even if the cache is still current.
+        #[arg(long)]
+        refresh: bool,
+    },
+}
+
+/// `inkhaven plan sequel …` — manage the reactive (reaction/dilemma/
+/// decision) cards. They share the Planning book's `Scenes` chapter with
+/// scene cards, tagged by kind.
+#[derive(Debug, Subcommand)]
+pub enum PlanSequelCommand {
+    /// Add a sequel card under a chapter.
+    Add {
+        title: String,
+        #[arg(long)]
+        chapter: String,
+        /// The POV character's emotional response to the prior disaster.
+        #[arg(long)]
+        reaction: Option<String>,
+        /// The bad-options bind it forces.
+        #[arg(long)]
+        dilemma: Option<String>,
+        /// The choice that launches the next goal.
+        #[arg(long)]
+        decision: Option<String>,
+    },
+    /// List sequel cards (grouped by chapter) with the no-decision flag.
+    List,
+    /// Update fields on an existing sequel (matched by title).
+    Set {
+        title: String,
+        #[arg(long)]
+        chapter: Option<String>,
+        #[arg(long)]
+        reaction: Option<String>,
+        #[arg(long)]
+        dilemma: Option<String>,
+        #[arg(long)]
+        decision: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Remove a sequel card (matched by title).
+    Remove { title: String },
 }
 
 /// `inkhaven plan scene …` — manage the Planning book's scene cards.
@@ -1306,6 +1376,20 @@ pub enum PlanSceneCommand {
     },
     /// Remove a scene card (matched by title).
     Remove { title: String },
+    /// AI-scaffold a scene card from a chapter's prose (goal / conflict /
+    /// disaster). Pass `--chapter <slug>` for one, or `--all` for every
+    /// chapter without a card yet.
+    Scaffold {
+        #[arg(long)]
+        chapter: Option<String>,
+        /// Scaffold every chapter that has no card yet.
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        book_name: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+    },
 }
 
 /// 1.3.1+ SUBMISSION-1 P3 — `inkhaven submission …` (singular): the AI

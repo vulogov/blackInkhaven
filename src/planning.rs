@@ -498,99 +498,276 @@ pub fn analyze(
 
 // ── scene cards (P3 1.3.4) ──────────────────────────────────────────
 
-/// A scene card — finer than a beat: the proactive scene's
-/// goal → conflict → disaster (Swain's scene model). Stored as an HJSON
-/// paragraph under the Planning book's `Scenes` chapter.
+fn default_kind() -> String {
+    "scene".to_string()
+}
+
+/// A planning card finer than a beat — one of two kinds (Swain):
+/// a **scene** is proactive (goal → conflict → disaster); a **sequel** is
+/// reactive (reaction → dilemma → decision). Both store as an HJSON
+/// paragraph under the Planning book's `Scenes` chapter; `kind` discriminates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scene {
-    /// Chapter slug this scene belongs to.
+    /// `scene` (proactive) | `sequel` (reactive).
+    #[serde(default = "default_kind")]
+    pub kind: String,
+    /// Chapter slug this card belongs to.
     #[serde(default)]
     pub chapter: String,
     pub title: String,
-    /// What the POV character wants in this scene.
+    // proactive (scene) triple
     #[serde(default)]
     pub goal: String,
-    /// What stands in the way.
     #[serde(default)]
     pub conflict: String,
-    /// The turn — how the scene ends worse / changed.
     #[serde(default)]
     pub disaster: String,
+    // reactive (sequel) triple
+    #[serde(default)]
+    pub reaction: String,
+    #[serde(default)]
+    pub dilemma: String,
+    #[serde(default)]
+    pub decision: String,
     #[serde(default = "default_status")]
     pub status: String,
 }
 
-/// Render a scene as its pure-HJSON paragraph body (content_type `hjson`).
-/// Round-trips through [`parse_scene`].
+impl Scene {
+    /// A proactive scene card (goal/conflict/disaster).
+    pub fn new_scene(chapter: &str, title: &str, goal: &str, conflict: &str, disaster: &str) -> Self {
+        Self {
+            kind: "scene".into(),
+            chapter: chapter.into(),
+            title: title.into(),
+            goal: goal.into(),
+            conflict: conflict.into(),
+            disaster: disaster.into(),
+            reaction: String::new(),
+            dilemma: String::new(),
+            decision: String::new(),
+            status: default_status(),
+        }
+    }
+    /// A reactive sequel card (reaction/dilemma/decision).
+    pub fn new_sequel(chapter: &str, title: &str, reaction: &str, dilemma: &str, decision: &str) -> Self {
+        Self {
+            kind: "sequel".into(),
+            chapter: chapter.into(),
+            title: title.into(),
+            goal: String::new(),
+            conflict: String::new(),
+            disaster: String::new(),
+            reaction: reaction.into(),
+            dilemma: dilemma.into(),
+            decision: decision.into(),
+            status: default_status(),
+        }
+    }
+    pub fn is_sequel(&self) -> bool {
+        self.kind.eq_ignore_ascii_case("sequel")
+    }
+    /// The three labelled slots for this card's kind: scene →
+    /// goal/conflict/disaster, sequel → reaction/dilemma/decision.
+    pub fn slots(&self) -> [(&'static str, &str); 3] {
+        if self.is_sequel() {
+            [
+                ("reaction", self.reaction.as_str()),
+                ("dilemma", self.dilemma.as_str()),
+                ("decision", self.decision.as_str()),
+            ]
+        } else {
+            [
+                ("goal", self.goal.as_str()),
+                ("conflict", self.conflict.as_str()),
+                ("disaster", self.disaster.as_str()),
+            ]
+        }
+    }
+}
+
+/// Render a card as its pure-HJSON paragraph body (content_type `hjson`),
+/// the triple chosen by `kind`. Round-trips through [`parse_scene`].
 pub fn scene_body(s: &Scene) -> String {
-    format!(
-        "// planning scene card — goal → conflict → disaster\n\
-{{\n  \
-  chapter:   \"{chapter}\"\n  \
-  title:     \"{title}\"\n  \
-  // What the POV character wants in this scene.\n  \
+    let kind = if s.is_sequel() { "sequel" } else { "scene" };
+    let triple = if s.is_sequel() {
+        format!(
+            "  // The POV character's emotional response to the prior disaster.\n  \
+  reaction:  \"{reaction}\"\n  \
+  // The bad-options bind it forces.\n  \
+  dilemma:   \"{dilemma}\"\n  \
+  // The choice that launches the next goal. A sequel that reaches a\n  \
+  // dilemma but never decides stalls the story.\n  \
+  decision:  \"{decision}\"\n",
+            reaction = esc(&s.reaction),
+            dilemma = esc(&s.dilemma),
+            decision = esc(&s.decision),
+        )
+    } else {
+        format!(
+            "  // What the POV character wants in this scene.\n  \
   goal:      \"{goal}\"\n  \
   // What stands in the way.\n  \
   conflict:  \"{conflict}\"\n  \
   // The turn — how the scene ends worse / changed. A scene with no\n  \
   // disaster doesn't turn.\n  \
-  disaster:  \"{disaster}\"\n  \
+  disaster:  \"{disaster}\"\n",
+            goal = esc(&s.goal),
+            conflict = esc(&s.conflict),
+            disaster = esc(&s.disaster),
+        )
+    };
+    format!(
+        "// planning {kind} card\n\
+{{\n  \
+  kind:      \"{kind}\"\n  \
+  chapter:   \"{chapter}\"\n  \
+  title:     \"{title}\"\n\
+{triple}  \
   // planned | drafted | done\n  \
   status:    \"{status}\"\n\
 }}\n",
         chapter = esc(&s.chapter),
         title = esc(&s.title),
-        goal = esc(&s.goal),
-        conflict = esc(&s.conflict),
-        disaster = esc(&s.disaster),
         status = esc(&s.status),
     )
 }
 
-/// Parse a Planning-book scene paragraph back into a [`Scene`].
+/// Parse a Planning-book card paragraph back into a [`Scene`].
 pub fn parse_scene(body: &str) -> Option<Scene> {
     serde_hjson::from_str(body).ok()
 }
 
-/// One scene's craft status: which of goal/conflict/disaster are present,
-/// plus the weak-scene flag.
+/// One card's craft status: its kind, which of the three slots are filled,
+/// and the weak flag (a scene with no disaster / a sequel with no decision).
 #[derive(Debug, Clone, Serialize)]
 pub struct SceneStatus {
     pub title: String,
     pub chapter: String,
-    pub has_goal: bool,
-    pub has_conflict: bool,
-    pub has_disaster: bool,
-    /// States a goal but never turns (no disaster) — the weak scene.
-    pub no_turn: bool,
+    pub kind: String,
+    /// The three slots present, in `slots()` order.
+    pub filled: [bool; 3],
+    pub weak: bool,
 }
 
-/// Deterministic weak-scene diagnosis: a scene that states a goal but has
-/// no disaster *doesn't turn*. Pure — returns per-scene status + warnings.
+/// Deterministic weak-card diagnosis. A **scene** is weak when it states a
+/// goal but never turns (no disaster); a **sequel** is weak when it reaches
+/// a dilemma but never decides (no decision). Once the author uses sequels,
+/// two scenes in a row (no sequel between) flags the first's unprocessed
+/// disaster. Pure — returns per-card status + warnings.
 pub fn analyze_scenes(scenes: &[Scene]) -> (Vec<SceneStatus>, Vec<String>) {
     let mut statuses = Vec::with_capacity(scenes.len());
     let mut warnings = Vec::new();
     for s in scenes {
-        let has_goal = !s.goal.trim().is_empty();
-        let has_conflict = !s.conflict.trim().is_empty();
-        let has_disaster = !s.disaster.trim().is_empty();
-        let no_turn = has_goal && !has_disaster;
-        if no_turn {
-            warnings.push(format!(
-                "scene: `{}` states a goal but never turns (no disaster)",
-                s.title
-            ));
+        let [(_, a), (_, b), (_, c)] = s.slots();
+        let filled = [!a.trim().is_empty(), !b.trim().is_empty(), !c.trim().is_empty()];
+        let weak = if s.is_sequel() {
+            filled[1] && !filled[2] // dilemma but no decision
+        } else {
+            filled[0] && !filled[2] // goal but no disaster
+        };
+        if weak {
+            warnings.push(if s.is_sequel() {
+                format!("sequel: `{}` reaches a dilemma but never decides (no decision)", s.title)
+            } else {
+                format!("scene: `{}` states a goal but never turns (no disaster)", s.title)
+            });
         }
         statuses.push(SceneStatus {
             title: s.title.clone(),
             chapter: s.chapter.clone(),
-            has_goal,
-            has_conflict,
-            has_disaster,
-            no_turn,
+            kind: if s.is_sequel() { "sequel".into() } else { "scene".into() },
+            filled,
+            weak,
         });
     }
+    // Alternation: only nag once sequels are in use, so scene-only projects
+    // aren't flagged. Two scenes back-to-back → the first's disaster goes
+    // unprocessed (a skipped sequel).
+    if scenes.iter().any(|s| s.is_sequel()) {
+        for w in scenes.windows(2) {
+            if !w[0].is_sequel() && !w[1].is_sequel() {
+                warnings.push(format!(
+                    "rhythm: `{}`'s disaster goes unprocessed — no sequel before `{}`",
+                    w[0].title, w[1].title
+                ));
+            }
+        }
+    }
     (statuses, warnings)
+}
+
+// ── scene scaffold (P0 1.3.5, AI card from the prose) ───────────────
+
+/// The prompt-override slug (Prompts book / `prompts.hjson`) for the
+/// scene-card scaffolder.
+pub const SCENE_SCAFFOLD_SLUG: &str = "plan-scene-scaffold";
+
+pub fn scene_scaffold_system_prompt() -> &'static str {
+    "You are a story editor. Read ONE chapter and identify its dominant scene as goal / conflict / \
+disaster (Swain's scene model): what the POV character actively wants in this chapter, what stands \
+in the way, and the disaster the scene turns on — how it ends worse or changed. Use ONLY the text; \
+never invent. Output EXACTLY three lines, one sentence each, concrete and specific:\n\
+goal: <…>\nconflict: <…>\ndisaster: <…>\nNo preamble, no extra lines."
+}
+
+/// Compose the scene-scaffold user prompt from the chapter title + prose.
+pub fn scene_scaffold_user_prompt(chapter_title: &str, prose: &str) -> String {
+    format!("CHAPTER: {chapter_title}\n\n{prose}")
+}
+
+/// Parse the scaffolder's reply into `(goal, conflict, disaster)`. Tolerant
+/// of list markers, bold, and case; missing fields come back empty. Pure.
+pub fn parse_scene_scaffold(raw: &str) -> (String, String, String) {
+    let field = |key: &str| -> String {
+        for line in raw.lines() {
+            let l = line.trim().trim_start_matches(['-', '*', '•', '#', ' ']).trim();
+            let l = l.trim_start_matches("**").trim();
+            if let Some((k, v)) = l.split_once(':') {
+                if k.trim().trim_matches('*').eq_ignore_ascii_case(key) {
+                    return v.trim().trim_matches('*').trim().to_string();
+                }
+            }
+        }
+        String::new()
+    };
+    (field("goal"), field("conflict"), field("disaster"))
+}
+
+// ── tension second opinion (P3 1.3.5, AI-rated intensity) ───────────
+
+/// The prompt-override slug for the per-chapter intensity rater.
+pub const TENSION_RATE_SLUG: &str = "plan-tension-rate";
+
+pub fn tension_rate_system_prompt() -> &'static str {
+    "You are a story editor rating dramatic intensity. Read ONE chapter and rate how much narrative \
+tension it carries on a 0–100 scale: 0 = calm setup or denouement, 50 = steady rising action, \
+100 = peak crisis / climax. Judge the felt pressure on the reader, not the word count. Reply with \
+ONLY the integer — nothing else."
+}
+
+pub fn tension_rate_user_prompt(chapter_title: &str, prose: &str) -> String {
+    format!("CHAPTER: {chapter_title}\n\n{prose}")
+}
+
+/// Parse the rater's reply into an intensity 0..1 — the first integer in
+/// 0..=100, clamped. None if there's no number. Pure.
+pub fn parse_intensity(raw: &str) -> Option<f32> {
+    let mut digits = String::new();
+    for ch in raw.chars() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+            if digits.len() == 3 {
+                break;
+            }
+        } else if !digits.is_empty() {
+            break;
+        }
+    }
+    digits
+        .parse::<u32>()
+        .ok()
+        .map(|n| (n.min(100) as f32) / 100.0)
 }
 
 // ── tension curve (P0 1.3.4, deterministic) ─────────────────────────
@@ -620,18 +797,28 @@ pub struct TensionPoint {
     pub actual: Option<f32>,
     /// `expected - actual` (positive = flat against the framework's shape).
     pub gap: Option<f32>,
+    /// AI-rated intensity at the beat's chapter (0..1), the 1.3.5 second
+    /// opinion. None until `plan tension rate` runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ai: Option<f32>,
 }
 
-/// Expected vs actual narrative intensity across the book.
+/// Expected vs actual (vs AI-rated) narrative intensity across the book.
 #[derive(Debug, Clone, Serialize)]
 pub struct TensionCurve {
     pub points: Vec<TensionPoint>,
     /// `(position, normalized actual)` sampled at each chapter start plus
     /// the book end — the overlay's actual line.
     pub series: Vec<(f32, f32)>,
+    /// `(position, ai-rated intensity)` per chapter — the second-opinion
+    /// line; empty until `plan tension rate` runs.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ai_series: Vec<(f32, f32)>,
     /// False when there were zero open obligations (no ledger, no linked
     /// threads): only `expected` is meaningful, render a hint not a curve.
     pub has_actual: bool,
+    /// True once AI ratings are present.
+    pub has_ai: bool,
     /// Beats flagged flat (high expected, low actual beyond the threshold).
     pub warnings: Vec<String>,
 }
@@ -668,6 +855,7 @@ pub fn tension_curve(
     beats: &[Beat],
     chapters: &[ChapterPos],
     spans: &[OpenSpan],
+    ai_ratings: &std::collections::BTreeMap<String, f32>,
     flat_threshold: f32,
 ) -> TensionCurve {
     use std::collections::HashMap;
@@ -687,6 +875,13 @@ pub fn tension_curve(
         .map(|(&p, &l)| (p, norm(l)))
         .collect();
 
+    // AI second opinion: one point per chapter that has a rating.
+    let has_ai = !ai_ratings.is_empty();
+    let ai_series: Vec<(f32, f32)> = chapters
+        .iter()
+        .filter_map(|c| ai_ratings.get(&c.slug).map(|&v| (c.start, v.clamp(0.0, 1.0))))
+        .collect();
+
     let mut points = Vec::with_capacity(beats.len());
     let mut warnings = Vec::new();
     for b in beats {
@@ -697,6 +892,10 @@ pub fn tension_curve(
         } else {
             None
         };
+        let ai = b
+            .mapped_chapter
+            .as_deref()
+            .and_then(|c| ai_ratings.get(c).map(|&v| v.clamp(0.0, 1.0)));
         let gap = actual.map(|a| expected - a);
         if let Some(g) = gap {
             if expected >= 0.5 && g > flat_threshold {
@@ -714,12 +913,15 @@ pub fn tension_curve(
             expected,
             actual,
             gap,
+            ai,
         });
     }
     TensionCurve {
         points,
         series,
+        ai_series,
         has_actual,
+        has_ai,
         warnings,
     }
 }
@@ -1032,14 +1234,13 @@ mod tests {
 
     #[test]
     fn analyze_prompt_includes_scene_cards() {
-        let scenes = vec![Scene {
-            chapter: "the-wharf".into(),
-            title: "Confrontation".into(),
-            goal: "get the manifest".into(),
-            conflict: "he stonewalls".into(),
-            disaster: "".into(),
-            status: "planned".into(),
-        }];
+        let scenes = vec![Scene::new_scene(
+            "the-wharf",
+            "Confrontation",
+            "get the manifest",
+            "he stonewalls",
+            "",
+        )];
         let p = analyze_user_prompt(Framework::ThreeAct, "TITLE: X", &scenes);
         assert!(p.contains("SCENE CARDS"));
         assert!(p.contains("Confrontation"));
@@ -1121,8 +1322,9 @@ mod tests {
             OpenSpan { start: 0.85, end: 1.0, weight: 1.0 },
             OpenSpan { start: 0.85, end: 1.0, weight: 1.0 },
         ];
-        let curve = tension_curve(&beats, &chapters, &spans, 0.25);
+        let curve = tension_curve(&beats, &chapters, &spans, &std::collections::BTreeMap::new(), 0.25);
         assert!(curve.has_actual);
+        assert!(!curve.has_ai, "no AI ratings supplied");
         let mid = curve.points.iter().find(|p| p.beat == "Midpoint").unwrap();
         let climax = curve.points.iter().find(|p| p.beat == "Climax").unwrap();
         assert_eq!(mid.actual, Some(0.0), "no obligations open at the midpoint");
@@ -1153,15 +1355,16 @@ mod tests {
 
     #[test]
     fn scene_body_round_trips() {
-        let s = Scene {
-            chapter: "the-wharf".into(),
-            title: "Mara confronts the harbourmaster".into(),
-            goal: "get the manifest".into(),
-            conflict: "he stonewalls".into(),
-            disaster: "he names her father as the debtor".into(),
-            status: "drafted".into(),
-        };
+        let mut s = Scene::new_scene(
+            "the-wharf",
+            "Mara confronts the harbourmaster",
+            "get the manifest",
+            "he stonewalls",
+            "he names her father as the debtor",
+        );
+        s.status = "drafted".into();
         let back = parse_scene(&scene_body(&s)).expect("parses");
+        assert_eq!(back.kind, "scene");
         assert_eq!(back.chapter, "the-wharf");
         assert_eq!(back.goal, "get the manifest");
         assert_eq!(back.disaster, "he names her father as the debtor");
@@ -1169,29 +1372,73 @@ mod tests {
     }
 
     #[test]
+    fn sequel_body_round_trips_and_weak_check_flips() {
+        let seq = Scene::new_sequel(
+            "the-wharf",
+            "Mara reels",
+            "she's gutted",
+            "pay the debt or expose her father",
+            "", // dilemma but no decision → stalls
+        );
+        let back = parse_scene(&scene_body(&seq)).expect("parses");
+        assert!(back.is_sequel());
+        assert_eq!(back.reaction, "she's gutted");
+        assert!(back.goal.is_empty(), "sequel body carries no goal");
+        let (st, warn) = analyze_scenes(&[seq]);
+        assert!(st[0].weak, "dilemma + no decision → weak");
+        assert!(warn.iter().any(|w| w.contains("never decides")));
+    }
+
+    #[test]
+    fn alternation_flags_back_to_back_scenes_once_sequels_exist() {
+        // scene, scene → the first's disaster is unprocessed, BUT only once a
+        // sequel is in use anywhere.
+        let scene_only = vec![
+            Scene::new_scene("c1", "A", "g", "c", "d"),
+            Scene::new_scene("c2", "B", "g", "c", "d"),
+        ];
+        let (_, w0) = analyze_scenes(&scene_only);
+        assert!(!w0.iter().any(|w| w.contains("rhythm")), "no nag without sequels");
+        let mixed = vec![
+            Scene::new_scene("c1", "A", "g", "c", "d"),
+            Scene::new_scene("c2", "B", "g", "c", "d"),
+            Scene::new_sequel("c2", "B-after", "r", "dl", "de"),
+        ];
+        let (_, w1) = analyze_scenes(&mixed);
+        assert!(w1.iter().any(|w| w.contains("rhythm") && w.contains("`A`")));
+    }
+
+    #[test]
+    fn parse_scene_scaffold_extracts_the_triple() {
+        let raw = "goal: reach the harbourmaster before dusk\n\
+                   conflict: the ledger is missing a page\n\
+                   disaster: the page names her father";
+        let (g, c, d) = parse_scene_scaffold(raw);
+        assert_eq!(g, "reach the harbourmaster before dusk");
+        assert_eq!(c, "the ledger is missing a page");
+        assert_eq!(d, "the page names her father");
+        // tolerant of list markers / bold / preamble / case
+        let messy = "Here is the scene:\n- **Goal:** find the will\n* Conflict: the room is locked\nDISASTER: it's already gone";
+        let (g2, c2, d2) = parse_scene_scaffold(messy);
+        assert_eq!(g2, "find the will");
+        assert_eq!(c2, "the room is locked");
+        assert_eq!(d2, "it's already gone");
+        // a missing field comes back empty
+        let (_, _, d3) = parse_scene_scaffold("goal: x\nconflict: y");
+        assert!(d3.is_empty());
+    }
+
+    #[test]
     fn analyze_scenes_flags_a_scene_that_doesnt_turn() {
         let scenes = vec![
-            Scene {
-                chapter: "c1".into(),
-                title: "Turns".into(),
-                goal: "find the letter".into(),
-                conflict: "the room is locked".into(),
-                disaster: "the letter is already gone".into(),
-                status: "planned".into(),
-            },
-            Scene {
-                chapter: "c2".into(),
-                title: "Flat".into(),
-                goal: "win the argument".into(),
-                conflict: "".into(),
-                disaster: "".into(), // goal but no disaster → no turn
-                status: "planned".into(),
-            },
+            Scene::new_scene("c1", "Turns", "find the letter", "the room is locked", "it's gone"),
+            // goal but no disaster → no turn
+            Scene::new_scene("c2", "Flat", "win the argument", "", ""),
         ];
         let (st, warn) = analyze_scenes(&scenes);
         assert_eq!(st.len(), 2);
-        assert!(!st[0].no_turn, "a scene with a disaster turns");
-        assert!(st[1].no_turn, "goal + no disaster → flat");
+        assert!(!st[0].weak, "a scene with a disaster turns");
+        assert!(st[1].weak, "goal + no disaster → flat");
         assert_eq!(warn.len(), 1);
         assert!(warn[0].contains("Flat") && warn[0].contains("never turns"));
     }
@@ -1200,10 +1447,36 @@ mod tests {
     fn tension_curve_no_data_is_expected_only() {
         let beats = vec![tbeat("Midpoint", 0.5, "mid")];
         let chapters = vec![ChapterPos { slug: "mid".into(), start: 0.5 }];
-        let curve = tension_curve(&beats, &chapters, &[], 0.25);
+        let curve = tension_curve(&beats, &chapters, &[], &std::collections::BTreeMap::new(), 0.25);
         assert!(!curve.has_actual, "no spans → no actual curve");
         assert_eq!(curve.points[0].actual, None);
         assert!(curve.points[0].expected > 0.6, "expected still resolves from the table");
         assert!(curve.warnings.is_empty(), "no flat flags without data");
+    }
+
+    #[test]
+    fn parse_intensity_reads_the_first_integer() {
+        assert_eq!(parse_intensity("72"), Some(0.72));
+        assert_eq!(parse_intensity("Intensity: 90/100"), Some(0.90));
+        assert_eq!(parse_intensity("0"), Some(0.0));
+        assert_eq!(parse_intensity("250"), Some(1.0), "clamped to 100");
+        assert_eq!(parse_intensity("no number here"), None);
+    }
+
+    #[test]
+    fn tension_curve_carries_the_ai_second_opinion() {
+        let beats = vec![tbeat("Midpoint", 0.5, "mid")];
+        let chapters = vec![
+            ChapterPos { slug: "mid".into(), start: 0.5 },
+            ChapterPos { slug: "end".into(), start: 0.9 },
+        ];
+        let mut ai = std::collections::BTreeMap::new();
+        ai.insert("mid".to_string(), 0.3f32);
+        ai.insert("end".to_string(), 0.95f32);
+        let curve = tension_curve(&beats, &chapters, &[], &ai, 0.25);
+        assert!(curve.has_ai);
+        assert_eq!(curve.ai_series.len(), 2, "one point per rated chapter");
+        let mid = &curve.points[0];
+        assert_eq!(mid.ai, Some(0.3), "the beat picks up its chapter's AI rating");
     }
 }
