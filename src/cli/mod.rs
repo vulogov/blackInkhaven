@@ -1260,6 +1260,52 @@ pub enum PlanCommand {
         #[arg(long)]
         provider: Option<String>,
     },
+    /// Scene cards (1.3.4) — a finer grain than beats: each scene's
+    /// goal / conflict / disaster, with a weak-scene (no-turn) check.
+    Scene {
+        #[command(subcommand)]
+        cmd: PlanSceneCommand,
+    },
+}
+
+/// `inkhaven plan scene …` — manage the Planning book's scene cards.
+#[derive(Debug, Subcommand)]
+pub enum PlanSceneCommand {
+    /// Add a scene card under a chapter.
+    Add {
+        /// Scene title (its identifier within the Planning book).
+        title: String,
+        /// Chapter slug the scene belongs to.
+        #[arg(long)]
+        chapter: String,
+        /// What the POV character wants.
+        #[arg(long)]
+        goal: Option<String>,
+        /// What stands in the way.
+        #[arg(long)]
+        conflict: Option<String>,
+        /// The turn — how the scene ends worse / changed.
+        #[arg(long)]
+        disaster: Option<String>,
+    },
+    /// List scene cards (grouped by chapter) with weak-scene flags.
+    List,
+    /// Update fields on an existing scene (matched by title).
+    Set {
+        title: String,
+        #[arg(long)]
+        chapter: Option<String>,
+        #[arg(long)]
+        goal: Option<String>,
+        #[arg(long)]
+        conflict: Option<String>,
+        #[arg(long)]
+        disaster: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Remove a scene card (matched by title).
+    Remove { title: String },
 }
 
 /// 1.3.1+ SUBMISSION-1 P3 — `inkhaven submission …` (singular): the AI
