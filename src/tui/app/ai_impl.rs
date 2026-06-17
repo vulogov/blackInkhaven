@@ -1473,6 +1473,7 @@ impl super::App {
         // the diff modal automatically. The annotation is the snapshot
         // label the apply step preserves the pre-rewrite state under.
         self.pending_rewrite_diff = Some("Sentence rhythm rewrite".into());
+        self.pending_rewrite_span = None; // whole-paragraph rewrite
         self.change_focus(Focus::Ai);
         self.status = format!(
             "rhythm rewrite ({language}): streaming from {provider} · diff review on completion…"
@@ -1483,7 +1484,13 @@ impl super::App {
     /// **open** paragraph (the cockpit's `f` opens the finding's paragraph
     /// first), routed through the same diff→snapshot review as the rhythm
     /// rewrite. `category` selects the recipe ([`crate::editorial::fix_spec`]).
-    pub(super) fn start_editorial_rewrite(&mut self, category: &str) {
+    ///
+    /// 1.3.9 EDITORIAL-3 P0 — `span` is the finding's paragraph-relative char
+    /// range. For a [`FixScope::Span`] category with a span, only that phrase
+    /// is rewritten (marked in context, the reply spliced back); otherwise the
+    /// whole paragraph is rewritten as before.
+    pub(super) fn start_editorial_rewrite(&mut self, category: &str, span: Option<(usize, usize)>) {
+        use crate::editorial::FixScope;
         let Some(spec) = crate::editorial::fix_spec(category) else {
             self.status = "editorial fix: this finding isn't AI-rewritable".into();
             return;
@@ -1503,8 +1510,27 @@ impl super::App {
             .resolve_prompt(spec.slug, &want_lang, || spec.builtin.to_string())
             .template;
         let rendered = self.render_template(&template);
-        let prompt_text =
-            format!("{rendered}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──");
+        // A span-scoped fix marks the flagged phrase in context with « » and
+        // asks for just its replacement; everything else stays a whole-
+        // paragraph rewrite.
+        let use_span = matches!(spec.scope, FixScope::Span) && span.is_some();
+        let prompt_text = if use_span {
+            let (a, b) = span.unwrap();
+            let chars: Vec<char> = body.chars().collect();
+            let n = chars.len();
+            let a = a.min(n);
+            let b = b.clamp(a, n);
+            let before: String = chars[..a].iter().collect();
+            let phrase: String = chars[a..b].iter().collect();
+            let after: String = chars[b..].iter().collect();
+            format!(
+                "{rendered}\n\nThe paragraph below has ONE phrase marked between « and ». \
+Rewrite ONLY that phrase. Output just the replacement text for it — no « » markers, none of the \
+surrounding paragraph, no preamble.\n\n── Paragraph: {title} (for context) ──\n{before}«{phrase}»{after}\n── end paragraph ──"
+            )
+        } else {
+            format!("{rendered}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──")
+        };
         let (model, _env) = match self.ai.resolve_provider(&self.cfg.llm, None) {
             Ok(pair) => pair,
             Err(e) => {
@@ -1525,9 +1551,11 @@ impl super::App {
         });
         self.pending_chat_user_msg = None;
         self.pending_rewrite_diff = Some(format!("Editorial: {}", spec.label));
+        self.pending_rewrite_span = if use_span { span } else { None };
         self.change_focus(Focus::Ai);
+        let scope_chip = if use_span { " · phrase" } else { "" };
         self.status = format!(
-            "editorial fix ({}): streaming from {provider} · diff review on completion…",
+            "editorial fix ({}{scope_chip}): streaming from {provider} · diff review on completion…",
             spec.label
         );
     }
