@@ -698,6 +698,9 @@ pub(super) enum Modal {
         /// `Some(chapter_cursor)` when picking a chapter to map the
         /// `cursor` beat to; `None` while browsing beats.
         picking: Option<usize>,
+        /// `Some(thread_cursor)` when picking threads to link to the
+        /// `cursor` beat (Space toggles); `None` otherwise. (1.3.4 P2)
+        thread_pick: Option<usize>,
     },
     SnapshotPicker {
         /// Kept for potential refresh ops after future snapshot mutations.

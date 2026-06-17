@@ -4146,6 +4146,7 @@ impl super::super::App {
             report,
             cursor,
             picking,
+            thread_pick,
             ..
         } = &self.modal
         else {
@@ -4215,6 +4216,46 @@ impl super::super::App {
             f.render_widget(
                 Paragraph::new(Line::from(Span::styled(
                     " ↑↓ pick · Enter map · Esc cancel ",
+                    Style::default().add_modifier(Modifier::DIM),
+                ))),
+                footer,
+            );
+            return;
+        }
+
+        // Thread-link sub-mode (after `t`): toggle the cursor beat's threads.
+        if let Some(tc) = thread_pick {
+            let beat = report.beats.get(*cursor);
+            let current: &[String] = beat.map(|b| b.threads.as_slice()).unwrap_or(&[]);
+            let name = beat.map(|b| b.beat.clone()).unwrap_or_default();
+            let mut lines: Vec<Line> = vec![
+                Line::from(Span::styled(
+                    format!("Link threads to “{name}”:"),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+            ];
+            for (i, t) in report.available_threads.iter().enumerate() {
+                let on = current.iter().any(|c| c == t);
+                let row = format!(
+                    "{} [{}] {}",
+                    if i == *tc { "▶" } else { " " },
+                    if on { "x" } else { " " },
+                    t
+                );
+                let line = Line::from(row);
+                lines.push(if i == *tc {
+                    line.style(Style::default().add_modifier(Modifier::REVERSED))
+                } else if on {
+                    line.style(Style::default().fg(Color::Green))
+                } else {
+                    line
+                });
+            }
+            f.render_widget(Paragraph::new(lines), body);
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    " ↑↓ pick · Space toggle · Enter/Esc done ",
                     Style::default().add_modifier(Modifier::DIM),
                 ))),
                 footer,
@@ -4368,7 +4409,7 @@ impl super::super::App {
         }
 
         f.render_widget(Paragraph::new(lines), body);
-        let keys = "↑↓ · m map · s status · a analyze · Esc";
+        let keys = "↑↓ · m map · t threads · s status · a analyze · ⏎ open · Esc";
         let summary = if report.warnings.is_empty() {
             format!(" ✓ no findings · {keys} ")
         } else {

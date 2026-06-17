@@ -9083,9 +9083,10 @@ impl App {
                     report,
                     cursor: 0,
                     picking: None,
+                    thread_pick: None,
                 };
                 self.status = format!(
-                    "Structure · {warn} finding(s) · ↑↓ · m map · s status · a analyze · Esc"
+                    "Structure · {warn} finding(s) · ↑↓ · m map · t threads · s status · a analyze · ⏎ open · Esc"
                 );
             }
             Err(e) => self.status = format!("plan: {e}"),
@@ -9095,11 +9096,12 @@ impl App {
     fn plan_outline_handle_key(&mut self, key: KeyEvent) -> bool {
         // Read state, then drop the modal borrow so the edit helpers can
         // touch the store.
-        let (n_beats, n_chaps, cursor, picking, book_slug, framework) = {
+        let (n_beats, n_chaps, n_threads, cursor, picking, thread_pick, book_slug, framework) = {
             let Modal::PlanOutline {
                 report,
                 cursor,
                 picking,
+                thread_pick,
                 book_slug,
                 framework,
                 ..
@@ -9110,12 +9112,30 @@ impl App {
             (
                 report.beats.len(),
                 report.chapters.len(),
+                report.available_threads.len(),
                 *cursor,
                 *picking,
+                *thread_pick,
                 book_slug.clone(),
                 framework.clone(),
             )
         };
+        // ── picking threads for the cursor beat (Space toggles) ──
+        if let Some(tp) = thread_pick {
+            match key.code {
+                // toggles persist immediately, so Enter/Esc just close.
+                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('t') => self.set_plan_thread_pick(None),
+                KeyCode::Up => self.set_plan_thread_pick(Some(tp.saturating_sub(1))),
+                KeyCode::Down => {
+                    if n_threads > 0 {
+                        self.set_plan_thread_pick(Some((tp + 1).min(n_threads - 1)));
+                    }
+                }
+                KeyCode::Char(' ') => self.toggle_plan_thread(cursor, tp),
+                _ => {}
+            }
+            return true;
+        }
         match (picking, key.code) {
             // ── picking a chapter for the cursor beat ──
             (Some(_), KeyCode::Esc) => self.set_plan_picking(None),
@@ -9148,6 +9168,15 @@ impl App {
             }
             (None, KeyCode::Char('s')) => self.cycle_plan_status(cursor),
             (None, KeyCode::Char('a')) => self.fire_plan_analysis(&book_slug, &framework),
+            (None, KeyCode::Char('t')) => {
+                if n_threads > 0 {
+                    self.set_plan_thread_pick(Some(0));
+                    self.status = "Link threads · ↑↓ · Space toggle · Esc".into();
+                } else {
+                    self.status = "plan: no threads yet — add with `inkhaven thread add`".into();
+                }
+            }
+            (None, KeyCode::Enter) => self.jump_to_beat_chapter(cursor),
             (None, _) => {}
         }
         true
@@ -9161,6 +9190,95 @@ impl App {
     fn set_plan_picking(&mut self, v: Option<usize>) {
         if let Modal::PlanOutline { picking, .. } = &mut self.modal {
             *picking = v;
+        }
+    }
+    fn set_plan_thread_pick(&mut self, v: Option<usize>) {
+        if let Modal::PlanOutline { thread_pick, .. } = &mut self.modal {
+            *thread_pick = v;
+        }
+    }
+
+    /// Toggle the `thread_idx`-th available thread on/off the `beat_idx`
+    /// beat (write-back + refresh) — the P2 thread-link primitive, reusing
+    /// the P0 `edit_beat`.
+    fn toggle_plan_thread(&mut self, beat_idx: usize, thread_idx: usize) {
+        let Some(slug) = (match &self.modal {
+            Modal::PlanOutline { report, .. } => report.available_threads.get(thread_idx).cloned(),
+            _ => None,
+        }) else {
+            return;
+        };
+        let pairs = crate::cli::plan::load_beats(&self.store, &self.hierarchy);
+        let Some((id, _)) = pairs.get(beat_idx) else { return };
+        let mut node = match self.hierarchy.get(*id) {
+            Some(n) => n.clone(),
+            None => return,
+        };
+        let mut added = false;
+        if let Err(e) = crate::cli::plan::edit_beat(&self.store, &mut node, |b| {
+            if let Some(pos) = b.threads.iter().position(|t| t == &slug) {
+                b.threads.remove(pos);
+            } else {
+                b.threads.push(slug.clone());
+                added = true;
+            }
+        }) {
+            self.status = format!("plan: {e}");
+            return;
+        }
+        self.rebuild_plan_outline();
+        self.status = format!("{} {slug}", if added { "linked" } else { "unlinked" });
+    }
+
+    /// `Enter` in the outline: open the cursor beat's mapped chapter (its
+    /// first paragraph) in the editor. A nudge if the beat is unmapped.
+    fn jump_to_beat_chapter(&mut self, beat_idx: usize) {
+        let (book_slug, slug) = match &self.modal {
+            Modal::PlanOutline {
+                book_slug, report, ..
+            } => (
+                book_slug.clone(),
+                report.beats.get(beat_idx).and_then(|b| b.mapped_chapter.clone()),
+            ),
+            _ => return,
+        };
+        let Some(slug) = slug else {
+            self.status = "plan: this beat isn't mapped to a chapter yet (press m)".into();
+            return;
+        };
+        // Scope the chapter lookup to this report's book (slugs aren't
+        // globally unique across books).
+        let chapter_id = self
+            .hierarchy
+            .iter()
+            .find(|n| n.kind == NodeKind::Book && n.slug == book_slug)
+            .map(|b| b.id)
+            .and_then(|bid| {
+                self.hierarchy.collect_subtree(bid).into_iter().find(|id| {
+                    self.hierarchy
+                        .get(*id)
+                        .map(|n| n.kind == NodeKind::Chapter && n.slug == slug)
+                        .unwrap_or(false)
+                })
+            });
+        let Some(chapter_id) = chapter_id else {
+            self.status = format!("plan: chapter `{slug}` not found");
+            return;
+        };
+        let first_para = self.hierarchy.collect_subtree(chapter_id).into_iter().find(|id| {
+            self.hierarchy
+                .get(*id)
+                .map(|n| n.kind == NodeKind::Paragraph)
+                .unwrap_or(false)
+        });
+        let Some(pid) = first_para else {
+            self.status = format!("plan: chapter `{slug}` has no paragraphs yet");
+            return;
+        };
+        self.modal = Modal::None;
+        match self.open_paragraph_by_uuid(pid) {
+            Ok(()) => self.status = format!("→ {slug}"),
+            Err(e) => self.status = format!("plan: {e}"),
         }
     }
 
