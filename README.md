@@ -21,44 +21,42 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.4 — The Planning Board: the shape of the rise and fall
+## Latest release · 1.3.5 — Scene craft: scaffold, sequel, second opinion
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.4.md`](Documentation/RELEASE_NOTES/1.3.4.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.5.md`](Documentation/RELEASE_NOTES/1.3.5.md)
 
-1.3.2 diagnosed where each beat **lands**; 1.3.3 made mapping **fluent**.
-1.3.4 adds the two things the Board still couldn't see — **intensity** (a
-tension curve) and **scene-level craft** (scene cards). Pure-Rust, **no new
-dependencies**.
+The Planning Board gained a scene grain in 1.3.4; 1.3.5 deepens it. Pure-Rust,
+**no new dependencies**.
 
-### The tension curve
+### Scene scaffold
 
-A midpoint can land at exactly 50% and still be flat. Every beat now carries
-an **expected** intensity (the framework's authored dramatic shape — calm
-open, peak in the back half) measured against an **actual** intensity
-derived deterministically from *open narrative-obligation density*: the
-`inkhaven tension scan` ledger (questions raised but unpaid) plus your open
-Threads. Where expected is high but actual is low, the beat is flagged
-**flat** — the objective version of "the middle sags." `plan check` prints a
-TENSION section; the **`Ctrl+V Shift+K`** outline draws expected/actual
-`▁`..`█` sparklines aligned under the position bars.
+The prose already implies a scene's goal/conflict/disaster — so let the AI
+propose them. `inkhaven plan scene scaffold --chapter <slug>` (or `--all`)
+reads the chapter and writes the card; in the `Ctrl+V Shift+K` scene board,
+**`g`** regenerates the selected card (the proposal streams into the AI pane,
+**`L`** files it back).
 
-### Scene cards
+### Sequel cards
 
-A finer grain than beats: each scene's **goal → conflict → disaster**
-(Swain). `inkhaven plan scene add|list|set|remove` manages the cards; the
-deterministic check is the **turn** — a scene that states a goal but has no
-disaster doesn't turn, flagged in `plan check`, the `v` scene board, and
-`plan analyze`.
+Swain's structure alternates proactive **scenes** (goal → conflict →
+disaster) with reactive **sequels** (reaction → dilemma → decision).
+`inkhaven plan sequel add|list|set|remove` models the reactive half on one
+unified card type (old scene cards load unchanged). The weak-check flips by
+kind — a scene with no disaster doesn't *turn*; a sequel with no decision
+*stalls* — and two scenes back-to-back flag the first's unprocessed disaster.
 
-### Interactive outline, finished
+### Tension second opinion
 
-The `Ctrl+V Shift+K` outline gains the deferred **`t`** (link threads),
-**`Enter`** (open the mapped chapter), and **`v`** (scene board) keys,
-joining `m` / `s` / `a` from 1.3.3.
+`inkhaven plan tension rate` AI-rates each chapter's felt intensity 0–100,
+adding an **`ai`** column to `plan check` and a third sparkline to the overlay
+beside *expected* (framework) and *actual* (open obligations). When actual and
+ai both land low where the framework wants a peak, that's two independent
+signals agreeing the middle sags. Opt-in; the deterministic curve stays the
+default.
 
 ### Test stats
 
-Tests 1307 → 1316, **zero new dependencies**. One tutorial refreshed
+Tests 1316 → 1321, **zero new dependencies**. One tutorial refreshed
 ([67, the Planning Board](Documentation/Tutorials/67-planning-board.md)).
 
 Every prior release lives under
