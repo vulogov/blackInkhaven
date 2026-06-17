@@ -162,6 +162,24 @@ pub(super) struct EventPickerEntry {
     pub is_orphan: bool,
 }
 
+/// 1.3.8 — one rendered line in the story-bible view.
+#[derive(Debug, Clone)]
+pub(super) struct BibleRow {
+    /// `Header` (a section label) | `Entry` (a named thing, jumpable) |
+    /// `Attr` (a continuity-bible attribute under an entry).
+    pub kind: BibleRowKind,
+    pub text: String,
+    /// The source paragraph to jump to on `Enter` (entries only).
+    pub jump: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BibleRowKind {
+    Header,
+    Entry,
+    Attr,
+}
+
 /// Filter helper: returns refs to the entries whose `track`
 /// equals `filter` (case-insensitive). `None` filter passes
 /// everything through.
@@ -720,6 +738,14 @@ pub(super) enum Modal {
         scroll: usize,
         /// Active category filter (`None` = all); cycled by `[` / `]`.
         filter: Option<String>,
+    },
+    /// 1.3.8 WORLD-1 — `Ctrl+V Shift+L` story bible: a consolidated,
+    /// navigable view of the world (characters + continuity-bible
+    /// attributes, places, artefacts, facts). `↑↓` navigate, `Enter` jumps
+    /// to the source, `Esc` closes.
+    StoryBible {
+        rows: Vec<BibleRow>,
+        cursor: usize,
     },
     SnapshotPicker {
         /// Kept for potential refresh ops after future snapshot mutations.

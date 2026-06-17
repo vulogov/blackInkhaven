@@ -124,6 +124,8 @@ pub enum Action {
     OpenPlanOutline,
     #[serde(rename = "view.open_editorial_pass")]
     OpenEditorialPass,
+    #[serde(rename = "view.open_story_bible")]
+    OpenStoryBible,
     #[serde(rename = "global.open_llm_picker")]
     OpenLlmPicker,
     #[serde(rename = "global.toggle_sound")]
@@ -834,6 +836,7 @@ impl Action {
             Action::OpenSubmissionGen => "submission gen".into(),
             Action::OpenPlanOutline => "structure".into(),
             Action::OpenEditorialPass => "editorial".into(),
+            Action::OpenStoryBible => "bible".into(),
             Action::OpenLlmPicker => "LLM".into(),
             Action::ToggleSound => "sound".into(),
             Action::ScheduleAssemble => "assemble".into(),
@@ -1007,6 +1010,8 @@ impl Action {
                 "Open the structure outline (the `inkhaven plan check` report) for the current book: each beat's target vs actual position + drift, act word-share pacing, and coverage gaps, as a position bar. Scaffold a framework first with `inkhaven plan init`; map a beat by setting `mapped_chapter` in its Planning-book paragraph. `↑↓` navigate, `Esc` closes. Mnemonic: K for sKeleton.".into(),
             Action::OpenEditorialPass =>
                 "Open the Editorial Pass (1.3.6) — one ranked revision worklist unifying every detector (the editorial `doctor` classes + `plan check`'s structural findings + the Facts-scan sidecar), errors first. `↑↓` navigate, `[` / `]` cycle the category filter, `Enter` jumps to the finding's location in the editor, `f` (1.3.7) streams an AI rewrite of a rewritable finding's paragraph (echo / pacing / show-don't-tell — marked `✎`) and pops the diff-review to accept (snapshot-first) or reject, `s` skips it for the session, `d` defers it (persisted — won't resurface until the prose changes), `D` clears all deferrals, `Esc` closes. Same as `inkhaven edit`; deterministic (reads computed sidecars, no live AI). Mnemonic: R for Revision pass.".into(),
+            Action::OpenStoryBible =>
+                "Open the story bible (1.3.8) — a consolidated, navigable view of the world you've built: every Character with the attributes the continuity bible has tracked across chapters (`eye_color: brown (ch.3)`), plus the Places, Artefacts, and Facts books. `↑↓` navigate, `Enter` jumps to the entry's source paragraph, `Esc` closes. Run `inkhaven continuity extract` to populate the character attributes. Mnemonic: L for Lore.".into(),
             Action::OpenLlmPicker =>
                 "Switch the active LLM provider — choice is persisted to inkhaven.hjson.".into(),
             Action::ToggleSound =>
@@ -1474,6 +1479,7 @@ impl KeyBindings {
                 // o/b/p taken). The `plan check` report as a position bar.
                 entry("Shift+k", Action::OpenPlanOutline, Scope::Any),
                 entry("Shift+r", Action::OpenEditorialPass, Scope::Any),
+                entry("Shift+l", Action::OpenStoryBible, Scope::Any),
                 // 1.2.8+ — hidden-character report on the open paragraph.
                 entry("h", Action::ViewHiddenCharsReport, Scope::Any),
                 // 1.2.8+ — show cursor breadcrumb on the status bar.
