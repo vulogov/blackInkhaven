@@ -14,6 +14,8 @@ pub struct Config {
     #[serde(default)]
     pub editor: EditorConfig,
     #[serde(default)]
+    pub facts: FactsConfig,
+    #[serde(default)]
     pub keys: KeyBindings,
     #[serde(default)]
     pub hierarchy: HierarchyConfig,
@@ -161,6 +163,7 @@ impl Default for Config {
             embeddings: EmbeddingsConfig::default(),
             llm: LlmConfig::default(),
             editor: EditorConfig::default(),
+            facts: FactsConfig::default(),
             keys: KeyBindings::default(),
             hierarchy: HierarchyConfig::default(),
             theme: ThemeConfig::default(),
@@ -1820,6 +1823,17 @@ pub struct StyleWarningsConfig {
     /// year is set.
     #[serde(default)]
     pub anachronism: AnachronismConfig,
+}
+
+/// 1.3.8 `facts:` block — series-shared canon. `shared_path` points at a
+/// directory of plain-text fact files (one fact per file: the file stem is
+/// the title, its contents the body), shared by every book of a series so
+/// the canon lives in one place. Layered into `facts check` (local wins on
+/// a title clash); copied in with `inkhaven facts import`.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct FactsConfig {
+    pub shared_path: Option<String>,
 }
 
 /// `editor.style_warnings.anachronism.*` — the setting year + any

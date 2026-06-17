@@ -141,6 +141,44 @@ impl FactCheckReport {
     }
 }
 
+/// 1.3.8 WORLD-1 — load series-shared canon from a directory: one fact per
+/// file (the file stem, de-slugified, is the title; the contents are the
+/// body). Plain `.txt` / `.md` / `.typ` files only; flat (non-recursive).
+/// Returns sorted `(title, body)` pairs.
+pub fn shared_facts(dir: &Path) -> Vec<(String, String)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let ext_ok = path
+            .extension()
+            .and_then(|x| x.to_str())
+            .map(|x| matches!(x.to_lowercase().as_str(), "txt" | "md" | "typ" | "text"))
+            .unwrap_or(false);
+        if !ext_ok {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Ok(body) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let body = body.trim();
+        if body.is_empty() {
+            continue;
+        }
+        out.push((stem.replace(['-', '_'], " "), body.to_string()));
+    }
+    out.sort();
+    out
+}
+
 /// Parse the internal-consistency reply — one conflict per line,
 /// `fact A | fact B | why`. Tolerant of list markers / a "none" sentinel /
 /// blank + malformed lines. Pure.
@@ -301,6 +339,20 @@ mod tests {
         assert_eq!(c[0].b, "the harbor freezes each January");
         assert!(c[0].detail.contains("freeze"));
         assert_eq!(c[1].a, "the capital is inland");
+    }
+
+    #[test]
+    fn shared_facts_reads_a_directory_of_fact_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("the-harbor.txt"), "freezes each January").unwrap();
+        std::fs::write(dir.path().join("the_capital.md"), "  200 miles inland  ").unwrap();
+        std::fs::write(dir.path().join("empty.txt"), "   ").unwrap(); // skipped (blank)
+        std::fs::write(dir.path().join("notes.json"), "{}").unwrap(); // skipped (ext)
+        let facts = shared_facts(dir.path());
+        assert_eq!(facts.len(), 2, "only the two non-empty text files");
+        // sorted; stems de-slugified to titles; bodies trimmed
+        assert_eq!(facts[0], ("the capital".into(), "200 miles inland".into()));
+        assert_eq!(facts[1], ("the harbor".into(), "freezes each January".into()));
     }
 
     #[test]

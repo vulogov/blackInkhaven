@@ -1189,6 +1189,17 @@ pub enum FactsCommand {
         #[arg(long)]
         json: bool,
     },
+    /// 1.3.8 — copy series-shared facts (a directory of plain-text fact
+    /// files) into this project's Facts book. A hard snapshot of the shared
+    /// canon, after which `scan` / fact-check see them as local facts.
+    Import {
+        /// The shared-facts directory (defaults to `facts.shared_path`).
+        #[arg(long)]
+        from: Option<String>,
+        /// Actually write (otherwise prints what it would add).
+        #[arg(long)]
+        yes: bool,
+    },
     /// Dump the last scan's findings (re-runs nothing).
     List {
         /// Emit the report as JSON.
