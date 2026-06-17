@@ -121,15 +121,31 @@ pub struct EditorialReport {
 /// to `doctor`, not the editorial pass.
 pub fn from_scan_finding(f: &ScanFinding) -> Option<EditorialFinding> {
     let category = f.class.editorial_category()?;
+    // Prefer the file path; else the chapter the detail embeds (the
+    // chapter-scale detectors say "… (chapter `Title`)") so the cockpit can
+    // still jump to the chapter.
+    let location = match &f.path {
+        Some(p) => Location::path(p.clone()),
+        None => chapter_from_detail(&f.detail).map(Location::chapter).unwrap_or_default(),
+    };
     Some(EditorialFinding {
         category: category.to_string(),
         severity: f.severity.into(),
-        location: f.path.clone().map(Location::path).unwrap_or_default(),
+        location,
         message: f.detail.clone(),
         hint: None,
         source: "doctor",
         autofixable: false,
     })
+}
+
+/// Pull the chapter title out of a doctor detail that embeds it as
+/// `chapter \`Title\``. Returns None when there's no such token.
+fn chapter_from_detail(detail: &str) -> Option<String> {
+    let i = detail.find("chapter `")? + "chapter `".len();
+    let rest = &detail[i..];
+    let j = rest.find('`')?;
+    Some(rest[..j].to_string())
 }
 
 /// Map a Facts-scan contradiction.
@@ -218,6 +234,21 @@ mod tests {
         let e = from_scan_finding(&scan(ScanClass::EchoRepetition, ScanSeverity::Info, "echo")).unwrap();
         assert_eq!(e.category, "echo");
         assert_eq!(e.source, "doctor");
+    }
+
+    #[test]
+    fn doctor_finding_picks_up_the_embedded_chapter() {
+        let f = scan(
+            ScanClass::EchoRepetition,
+            ScanSeverity::Info,
+            "echo: `about` appears 5× within ¶1–3 (chapter `Chapter 6: The Letter`)",
+        );
+        // the scan() helper sets a path, so path wins; clear it to test the
+        // chapter-extraction fallback
+        let mut f = f;
+        f.path = None;
+        let e = from_scan_finding(&f).unwrap();
+        assert_eq!(e.location.chapter.as_deref(), Some("Chapter 6: The Letter"));
     }
 
     #[test]
