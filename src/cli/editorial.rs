@@ -36,9 +36,13 @@ pub fn collect(
     scan.extend(doctor_scan::scan_project(project, Some(ScanClass::UnresolvedTension))?.findings);
     raw.extend(scan.iter().filter_map(editorial::from_scan_finding));
 
-    // 2) Facts-scan contradictions (sidecar; empty if never run).
+    // 2) Facts-scan contradictions + internal-consistency conflicts
+    //    (sidecars; empty if never run).
     if let Ok(facts) = crate::facts_scan::FactScanReport::load(&layout.root) {
         raw.extend(facts.findings.iter().map(editorial::from_fact_finding));
+    }
+    if let Ok(check) = crate::facts_scan::FactCheckReport::load(&layout.root) {
+        raw.extend(check.conflicts.iter().map(editorial::from_fact_conflict));
     }
 
     // 3) `plan check` structural findings (skipped when there's no plan).
@@ -87,11 +91,14 @@ fn prose_style_findings(
     store: &crate::store::Store,
     h: &Hierarchy,
 ) -> Vec<EditorialFinding> {
-    let det = crate::tui::style_warnings::ShowDontTellDetector::new(
+    let sdt = crate::tui::style_warnings::ShowDontTellDetector::new(
         &cfg.editor.style_warnings.show_dont_tell,
         &cfg.language,
     );
-    if det.is_empty() {
+    let anach = crate::tui::style_warnings::AnachronismDetector::new(
+        &cfg.editor.style_warnings.anachronism,
+    );
+    if sdt.is_empty() && anach.is_empty() {
         return Vec::new();
     }
     let mut out = Vec::new();
@@ -112,14 +119,54 @@ fn prose_style_findings(
                 let Some(body) = store.get_content(pid).ok().flatten() else {
                     continue;
                 };
-                out.extend(paragraph_show_tell_findings(
-                    &String::from_utf8_lossy(&body),
-                    pid,
-                    &chap,
-                    &det,
-                ));
+                let text = String::from_utf8_lossy(&body);
+                if !sdt.is_empty() {
+                    out.extend(paragraph_show_tell_findings(&text, pid, &chap, &sdt));
+                }
+                if !anach.is_empty() {
+                    out.extend(paragraph_anachronism_findings(&text, pid, &chap, &anach));
+                }
             }
         }
+    }
+    out
+}
+
+/// Map a paragraph's anachronistic terms into `EditorialFinding`s (one per
+/// flagged word, with its paragraph-relative char range). Pure.
+fn paragraph_anachronism_findings(
+    text: &str,
+    pid: uuid::Uuid,
+    chapter: &str,
+    det: &crate::tui::style_warnings::AnachronismDetector,
+) -> Vec<EditorialFinding> {
+    let mut out = Vec::new();
+    let mut row_off = 0usize;
+    for line in text.lines() {
+        for hit in det.detect(line) {
+            let term: String = line
+                .chars()
+                .skip(hit.col_start)
+                .take(hit.col_end.saturating_sub(hit.col_start))
+                .collect();
+            let earliest = det.earliest(&term);
+            let yr = earliest.map(|y| format!(" (not before {y})")).unwrap_or_default();
+            out.push(EditorialFinding {
+                category: "anachronism".into(),
+                severity: editorial::Severity::Warn,
+                location: editorial::Location {
+                    chapter: Some(chapter.to_string()),
+                    paragraph: Some(pid),
+                    char_range: Some((row_off + hit.col_start, row_off + hit.col_end)),
+                    path: None,
+                },
+                message: format!("anachronism: “{}” postdates the setting{yr}", term.trim()),
+                hint: None,
+                source: "style",
+                autofixable: false,
+            });
+        }
+        row_off += line.chars().count() + 1;
     }
     out
 }
@@ -165,6 +212,23 @@ fn paragraph_show_tell_findings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anachronism_mapping_names_the_term_and_earliest_year() {
+        let det = crate::tui::style_warnings::AnachronismDetector::new(
+            &crate::config::AnachronismConfig { year: Some(1840), terms: Vec::new() },
+        );
+        let id = uuid::Uuid::now_v7();
+        let f = paragraph_anachronism_findings("She glanced at her wristwatch.", id, "ch-1", &det);
+        assert_eq!(f.len(), 1);
+        let e = &f[0];
+        assert_eq!(e.category, "anachronism");
+        assert_eq!(e.severity, crate::editorial::Severity::Warn);
+        assert_eq!(e.location.paragraph, Some(id));
+        assert!(e.location.char_range.is_some());
+        assert!(e.message.contains("wristwatch") && e.message.contains("1900"));
+        assert!(!e.rewritable(), "anachronism is jump-only, not AI-rewritable");
+    }
 
     #[test]
     fn show_tell_mapping_locates_the_phrase_and_is_rewritable() {

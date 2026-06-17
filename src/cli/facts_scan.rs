@@ -58,6 +58,8 @@ nothing.";
 pub fn run(project: &Path, cmd: FactsCommand) -> Result<()> {
     match cmd {
         FactsCommand::Scan { provider, json } => scan(project, provider.as_deref(), json),
+        FactsCommand::Check { provider, json } => check(project, provider.as_deref(), json),
+        FactsCommand::Import { from, yes } => import(project, from.as_deref(), yes),
         FactsCommand::List { json } => list(project, json),
         FactsCommand::Extract {
             provider,
@@ -576,6 +578,217 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
             FactScanReport::sidecar_path(&layout.root).display(),
         );
     }
+    Ok(())
+}
+
+const CHECK_SYSTEM_PROMPT: &str = "You are a continuity editor. Below is a story world's \
+established facts. Find pairs of facts that CONTRADICT each other — two statements that cannot \
+both be true (a climate fact vs a geography fact, an age vs a timeline, a distance vs a travel \
+time, …). Output ONE contradiction per line as `fact A | fact B | why`, quoting each fact \
+briefly. If nothing contradicts, output nothing. No preamble, no header row.";
+
+/// 1.3.8 WORLD-1 P0 — internal-consistency check: flag fact pairs that
+/// contradict each other *within* the Facts book.
+fn check(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    let language = if cfg.language.trim().is_empty() {
+        "English".to_string()
+    } else {
+        cfg.language.clone()
+    };
+
+    let Some(facts_id) = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_FACTS)
+        })
+        .map(|n| n.id)
+    else {
+        return Err(Error::Store("facts check: this project has no Facts book".into()));
+    };
+    let facts_ids: HashSet<Uuid> = hierarchy.collect_subtree(facts_id).into_iter().collect();
+    let local_titles: HashSet<String> = facts_ids
+        .iter()
+        .filter_map(|id| hierarchy.get(*id))
+        .filter(|n| n.kind == NodeKind::Paragraph)
+        .map(|n| n.title.trim().to_lowercase())
+        .collect();
+    let mut facts = all_facts(&store, &hierarchy, &facts_ids);
+    // Layer series-shared canon (local wins on a title clash) so the check
+    // catches local-vs-shared and shared-vs-shared contradictions.
+    if let Some(dir) = cfg.facts.shared_path.as_deref() {
+        let added: Vec<String> = crate::facts_scan::shared_facts(std::path::Path::new(dir))
+            .into_iter()
+            .filter(|(t, _)| !local_titles.contains(&t.to_lowercase()))
+            .map(|(t, b)| format!("- {t} (shared): {b}"))
+            .collect();
+        if !added.is_empty() {
+            eprintln!("  + {} shared fact(s) from {dir}", added.len());
+            facts.extend(added);
+            facts.sort();
+        }
+    }
+    if facts.len() < 2 {
+        return Err(Error::Store(
+            "facts check: need at least two facts to compare — `inkhaven facts extract` first".into(),
+        ));
+    }
+
+    let ai = AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    eprintln!(
+        "inkhaven facts check · language: {language} · model: {model} · {} fact(s)",
+        facts.len()
+    );
+
+    let prompt = format!(
+        "Language: {language}.\n--- ESTABLISHED FACTS ---\n{}\n--- END ---",
+        facts.join("\n")
+    );
+    let raw = run_blocking(&ai, model, CHECK_SYSTEM_PROMPT, &prompt)?;
+    let report = crate::facts_scan::FactCheckReport {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        content_hash: crate::facts_scan::FactCheckReport::compute_hash(&facts),
+        conflicts: crate::facts_scan::parse_conflicts(&raw),
+    };
+    report
+        .save(&layout.root)
+        .map_err(|e| Error::Store(format!("facts_check save: {e}")))?;
+
+    if json {
+        let rendered = serde_json::to_string_pretty(&report)
+            .map_err(|e| Error::Store(format!("facts_check JSON: {e}")))?;
+        println!("{rendered}");
+    } else if report.conflicts.is_empty() {
+        println!(
+            "facts check: ✓ no internal contradictions across {} fact(s)",
+            facts.len()
+        );
+    } else {
+        println!(
+            "facts check: {} internal contradiction(s):",
+            report.conflicts.len()
+        );
+        for c in &report.conflicts {
+            println!("  ⚠ {}  ⟷  {}\n      ↳ {}", c.a, c.b, c.detail);
+        }
+        eprintln!("  (also surfaced in `inkhaven edit`)");
+    }
+    Ok(())
+}
+
+/// Every Facts-book entry as a `- title: body` line, sorted for a stable
+/// prompt + cache hash.
+fn all_facts(store: &Store, hierarchy: &Hierarchy, facts_ids: &HashSet<Uuid>) -> Vec<String> {
+    let mut out = Vec::new();
+    for id in facts_ids {
+        let Some(node) = hierarchy.get(*id) else {
+            continue;
+        };
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        if let Ok(Some(bytes)) = store.get_content(*id) {
+            let body = crate::audiobook::typst_to_plain(&String::from_utf8_lossy(&bytes));
+            let body = body.trim();
+            if !body.is_empty() {
+                out.push(format!("- {}: {}", node.title.trim(), body));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// 1.3.8 WORLD-1 P3 — copy series-shared facts (a directory of plain-text
+/// fact files) into this project's Facts book as paragraphs. A hard
+/// snapshot: after import, `scan` / fact-check see them as local facts.
+fn import(project: &Path, from: Option<&str>, yes: bool) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+
+    let dir = from
+        .map(String::from)
+        .or_else(|| cfg.facts.shared_path.clone())
+        .ok_or_else(|| {
+            Error::Store("facts import: pass --from <dir> or set `facts.shared_path`".into())
+        })?;
+    let shared = crate::facts_scan::shared_facts(std::path::Path::new(&dir));
+    if shared.is_empty() {
+        return Err(Error::Store(format!(
+            "facts import: no fact files (.txt / .md / .typ) in {dir}"
+        )));
+    }
+
+    let Some(facts_id) = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_FACTS)
+        })
+        .map(|n| n.id)
+    else {
+        return Err(Error::Store("facts import: this project has no Facts book".into()));
+    };
+    let existing: HashSet<String> = hierarchy
+        .collect_subtree(facts_id)
+        .into_iter()
+        .filter_map(|id| hierarchy.get(id))
+        .filter(|n| n.kind == NodeKind::Paragraph)
+        .map(|n| n.title.trim().to_lowercase())
+        .collect();
+    let to_add: Vec<(String, String)> = shared
+        .into_iter()
+        .filter(|(t, _)| !existing.contains(&t.to_lowercase()))
+        .collect();
+    if to_add.is_empty() {
+        println!("facts import: every shared fact is already in the Facts book");
+        return Ok(());
+    }
+    if !yes {
+        println!("facts import: would add {} fact(s) from {dir}:", to_add.len());
+        for (t, _) in &to_add {
+            println!("  + {t}");
+        }
+        eprintln!("  pass --yes to write them");
+        return Ok(());
+    }
+
+    for (title, body) in &to_add {
+        let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+        let facts_node = h
+            .iter()
+            .find(|n| n.id == facts_id)
+            .cloned()
+            .ok_or_else(|| Error::Store("facts import: Facts book vanished".into()))?;
+        let mut node = store.create_node(
+            &cfg,
+            &h,
+            NodeKind::Paragraph,
+            title,
+            Some(&facts_node),
+            None,
+            InsertPosition::End,
+        )?;
+        let para_body = format!("= {title}\n\n{}\n", body.trim());
+        if let Some(rel) = &node.file {
+            let abs = store.project_root().join(rel);
+            std::fs::write(&abs, para_body.as_bytes()).map_err(Error::Io)?;
+            store.update_paragraph_content(&mut node, para_body.as_bytes())?;
+        }
+    }
+    println!(
+        "facts import: added {} fact(s) from {dir} → the Facts book",
+        to_add.len()
+    );
     Ok(())
 }
 

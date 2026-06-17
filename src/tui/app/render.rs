@@ -212,6 +212,10 @@ impl super::App {
             self.draw_editorial_pass_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::StoryBible { .. }) {
+            self.draw_story_bible_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SentenceRhythm { .. }) {
             self.draw_sentence_rhythm_modal(f, area);
             return;

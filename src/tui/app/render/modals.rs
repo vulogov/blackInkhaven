@@ -4626,6 +4626,72 @@ impl super::super::App {
         );
     }
 
+    /// 1.3.8 WORLD-1 P2 — the story-bible view: the world consolidated
+    /// (characters + continuity attributes, places, artefacts, facts).
+    pub(in crate::tui::app) fn draw_story_bible_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        use crate::tui::modal::BibleRowKind;
+        use ratatui::style::Color;
+        let Modal::StoryBible { rows, cursor } = &self.modal else {
+            return;
+        };
+
+        let width = area.width.saturating_sub(6).clamp(48, 92);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Story bible ")
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let list_h = inner.height.saturating_sub(1).max(1) as usize;
+        let body_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: list_h as u16 };
+        let footer_rect = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+
+        let cur = (*cursor).min(rows.len().saturating_sub(1));
+        let start = if cur >= list_h { cur + 1 - list_h } else { 0 };
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, r) in rows.iter().enumerate().skip(start).take(list_h) {
+            let line = match r.kind {
+                BibleRowKind::Header => Line::from(Span::styled(
+                    r.text.clone(),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                )),
+                BibleRowKind::Entry => Line::from(Span::styled(
+                    format!("  {} {}", if r.jump.is_some() { '→' } else { ' ' }, truncate_to(&r.text, 70)),
+                    Style::default(),
+                )),
+                BibleRowKind::Attr => Line::from(Span::styled(
+                    format!("      {}", truncate_to(&r.text, 70)),
+                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                )),
+            };
+            lines.push(if i == cur {
+                line.style(Style::default().add_modifier(Modifier::REVERSED))
+            } else {
+                line
+            });
+        }
+        f.render_widget(Paragraph::new(lines), body_rect);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ · ⏎ jump to source · Esc ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     /// 1.2.22 R.3 — the project-replace review: matches grouped by
     /// paragraph, each with a `[x]`/`[ ]` keep/skip box and the matched
     /// span highlighted in its line.  Enter applies the kept ones.

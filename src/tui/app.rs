@@ -8364,6 +8364,7 @@ impl App {
             A::OpenSubmissionGen => self.open_submission_gen(),
             A::OpenPlanOutline => self.open_plan_outline(),
             A::OpenEditorialPass => self.open_editorial_pass(),
+            A::OpenStoryBible => self.open_story_bible(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
             A::ToggleMouseCapture => self.toggle_mouse_capture(),
@@ -9242,6 +9243,130 @@ impl App {
         }
         self.open_editorial_pass();
         self.status = "cleared all deferrals — re-scanned".into();
+    }
+
+    /// 1.3.8 WORLD-1 P2 — open the story-bible view: the world consolidated
+    /// (characters + continuity-bible attributes, places, artefacts, facts).
+    fn open_story_bible(&mut self) {
+        let rows = self.build_story_bible_rows();
+        if rows.is_empty() {
+            self.status =
+                "story bible: nothing yet — collect Characters / Places / Facts first".into();
+            return;
+        }
+        let cursor = rows
+            .iter()
+            .position(|r| r.kind != crate::tui::modal::BibleRowKind::Header)
+            .unwrap_or(0);
+        self.modal = Modal::StoryBible { rows, cursor };
+        self.status = "Story bible · ↑↓ · ⏎ jump to source · Esc".into();
+    }
+
+    fn build_story_bible_rows(&self) -> Vec<crate::tui::modal::BibleRow> {
+        use crate::store::{
+            SYSTEM_TAG_ARTEFACTS, SYSTEM_TAG_CHARACTERS, SYSTEM_TAG_FACTS, SYSTEM_TAG_PLACES,
+        };
+        let bible = crate::continuity_bible::ContinuityBible::load(&self.layout.root).unwrap_or_default();
+        let mut attrs: std::collections::BTreeMap<String, Vec<&crate::continuity_bible::CharacterFact>> =
+            std::collections::BTreeMap::new();
+        for f in &bible.facts {
+            attrs.entry(f.character.to_lowercase()).or_default().push(f);
+        }
+        let mut rows = Vec::new();
+        self.bible_section(&mut rows, SYSTEM_TAG_CHARACTERS, "CHARACTERS", Some(&attrs));
+        self.bible_section(&mut rows, SYSTEM_TAG_PLACES, "PLACES", None);
+        self.bible_section(&mut rows, SYSTEM_TAG_ARTEFACTS, "ARTEFACTS", None);
+        self.bible_section(&mut rows, SYSTEM_TAG_FACTS, "FACTS", None);
+        rows
+    }
+
+    fn bible_section(
+        &self,
+        rows: &mut Vec<crate::tui::modal::BibleRow>,
+        tag: &str,
+        title: &str,
+        attrs: Option<&std::collections::BTreeMap<String, Vec<&crate::continuity_bible::CharacterFact>>>,
+    ) {
+        use crate::tui::modal::{BibleRow, BibleRowKind};
+        let Some(book) = self
+            .hierarchy
+            .iter()
+            .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(tag))
+        else {
+            return;
+        };
+        let entries: Vec<&Node> = self
+            .hierarchy
+            .collect_subtree(book.id)
+            .into_iter()
+            .filter_map(|id| self.hierarchy.get(id))
+            .filter(|n| n.kind == NodeKind::Paragraph)
+            .collect();
+        if entries.is_empty() {
+            return;
+        }
+        rows.push(BibleRow {
+            kind: BibleRowKind::Header,
+            text: format!("{title} ({})", entries.len()),
+            jump: None,
+        });
+        for n in entries {
+            rows.push(BibleRow {
+                kind: BibleRowKind::Entry,
+                text: n.title.clone(),
+                jump: Some(n.id),
+            });
+            if let Some(map) = attrs {
+                if let Some(facts) = map.get(&n.title.to_lowercase()) {
+                    for f in facts {
+                        rows.push(BibleRow {
+                            kind: BibleRowKind::Attr,
+                            text: format!("{}: {} (ch {})", f.attribute, f.value, f.chapter),
+                            jump: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    fn story_bible_handle_key(&mut self, key: KeyEvent) -> bool {
+        let (n, cursor, jump) = {
+            let Modal::StoryBible { rows, cursor } = &self.modal else {
+                return false;
+            };
+            (rows.len(), *cursor, rows.get(*cursor).and_then(|r| r.jump))
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "story bible: closed".into();
+            }
+            KeyCode::Up => self.set_story_bible_cursor(cursor.saturating_sub(1)),
+            KeyCode::Down => {
+                if n > 0 {
+                    self.set_story_bible_cursor((cursor + 1).min(n - 1));
+                }
+            }
+            KeyCode::Enter => match jump {
+                Some(pid) => {
+                    self.modal = Modal::None;
+                    match self.open_paragraph_by_uuid(pid) {
+                        Ok(()) => self.status = "→ jumped".into(),
+                        Err(e) => self.status = format!("bible: {e}"),
+                    }
+                }
+                None => self.status = "story bible: that row has no source to jump to".into(),
+            },
+            _ => {}
+        }
+        true
+    }
+
+    fn set_story_bible_cursor(&mut self, v: usize) {
+        if let Modal::StoryBible { cursor, .. } = &mut self.modal {
+            *cursor = v;
+        }
     }
 
     fn set_editorial_cursor(&mut self, v: usize) {
@@ -16769,6 +16894,10 @@ impl App {
         }
         if matches!(self.modal, Modal::EditorialPass { .. }) {
             self.editorial_pass_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::StoryBible { .. }) {
+            self.story_bible_handle_key(key);
             return Ok(false);
         }
         if is_llm_picker {

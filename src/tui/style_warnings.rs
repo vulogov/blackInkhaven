@@ -37,7 +37,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::config::{
     built_in_cognition_verbs, built_in_emotion_adjectives,
     built_in_filter_words, built_in_linking_verbs, built_in_manner_adverbs,
-    built_in_stop_words, parse_stemmer_language, FilterWordsConfig,
+    built_in_stop_words, parse_stemmer_language, AnachronismConfig, FilterWordsConfig,
     RepeatedPhrasesConfig, ShowDontTellConfig,
 };
 
@@ -59,6 +59,9 @@ pub enum StyleWarningKind {
     /// paragraphs of the chapter, underlined in the open
     /// paragraph.  See `crate::tui::echo_overlay`.
     Echo,
+    /// 1.3.8 — a term that postdates the manuscript's setting year
+    /// (`editor.style_warnings.anachronism`).  See `AnachronismDetector`.
+    Anachronism,
 }
 
 /// One stylistic-warning hit on a row of editor text.
@@ -603,6 +606,114 @@ impl ShowDontTellDetector {
     }
 }
 
+/// 1.3.8 — a curated lexicon of period-bound terms with the earliest year
+/// each plausibly appears. English-first; projects extend it via
+/// `editor.style_warnings.anachronism.terms`. Single-word terms only (the
+/// detector matches per word).
+pub const BUILTIN_ANACHRONISMS: &[(&str, i32)] = &[
+    ("wristwatch", 1900),
+    ("telephone", 1876),
+    ("automobile", 1885),
+    ("airplane", 1903),
+    ("aeroplane", 1903),
+    ("helicopter", 1939),
+    ("television", 1927),
+    ("radio", 1906),
+    ("photograph", 1839),
+    ("photography", 1839),
+    ("camera", 1840),
+    ("typewriter", 1868),
+    ("phonograph", 1877),
+    ("gramophone", 1887),
+    ("bicycle", 1869),
+    ("motorcycle", 1894),
+    ("elevator", 1852),
+    ("escalator", 1900),
+    ("refrigerator", 1880),
+    ("flashlight", 1899),
+    ("thermos", 1904),
+    ("jeans", 1873),
+    ("zipper", 1893),
+    ("nylon", 1938),
+    ("penicillin", 1928),
+    ("antibiotic", 1941),
+    ("vaccine", 1800),
+    ("teenager", 1941),
+    ("scientist", 1834),
+    ("dinosaur", 1842),
+    ("okay", 1839),
+    ("computer", 1946),
+    ("internet", 1983),
+    ("email", 1971),
+    ("smartphone", 2007),
+];
+
+/// 1.3.8 — flags terms that postdate the manuscript's setting year. A
+/// `style_warnings` sibling: built from config, scans a line, returns
+/// char-indexed [`StyleHit`]s. Off when no setting year is configured.
+pub struct AnachronismDetector {
+    /// lowercased term → earliest plausible year (only terms later than the
+    /// setting are kept).
+    flagged: std::collections::HashMap<String, i32>,
+}
+
+impl AnachronismDetector {
+    pub fn new(cfg: &AnachronismConfig) -> Self {
+        let mut flagged = std::collections::HashMap::new();
+        if let Some(year) = cfg.year {
+            let builtin = BUILTIN_ANACHRONISMS.iter().map(|&(t, e)| (t.to_string(), e));
+            let custom = cfg.terms.iter().map(|t| (t.term.clone(), t.earliest));
+            for (term, earliest) in builtin.chain(custom) {
+                if earliest > year {
+                    flagged.insert(term.to_lowercase(), earliest);
+                }
+            }
+        }
+        Self { flagged }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.flagged.is_empty()
+    }
+
+    /// The earliest year of a flagged term (for the finding message).
+    pub fn earliest(&self, word: &str) -> Option<i32> {
+        self.flagged.get(&word.to_lowercase()).copied()
+    }
+
+    /// Every anachronistic word in `line`, at char columns.
+    pub fn detect(&self, line: &str) -> Vec<StyleHit> {
+        if self.flagged.is_empty() || line.is_empty() {
+            return Vec::new();
+        }
+        let mut byte_to_char: Vec<usize> = Vec::with_capacity(line.len() + 1);
+        let mut char_count = 0usize;
+        for (b, _) in line.char_indices() {
+            while byte_to_char.len() < b {
+                byte_to_char.push(char_count);
+            }
+            byte_to_char.push(char_count);
+            char_count += 1;
+        }
+        while byte_to_char.len() <= line.len() {
+            byte_to_char.push(char_count);
+        }
+        let mut out = Vec::new();
+        for (byte_start, word) in line.unicode_word_indices() {
+            if !self.flagged.contains_key(&word.to_lowercase()) {
+                continue;
+            }
+            let byte_end = byte_start + word.len();
+            out.push(StyleHit {
+                col_start: byte_to_char[byte_start],
+                col_end: byte_to_char.get(byte_end).copied().unwrap_or(char_count),
+                kind: StyleWarningKind::Anachronism,
+            });
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -613,6 +724,30 @@ mod tests {
 
     fn cols_of(hits: &[StyleHit]) -> Vec<(usize, usize)> {
         hits.iter().map(|h| (h.col_start, h.col_end)).collect()
+    }
+
+    #[test]
+    fn anachronism_off_without_a_year_else_flags_late_terms() {
+        // no setting year → detector disabled
+        let off = AnachronismDetector::new(&AnachronismConfig::default());
+        assert!(off.is_empty());
+        assert!(off.detect("she checked her wristwatch").is_empty());
+
+        // an 1840 setting flags the wristwatch (≥1900) but not the camera
+        // (1840 is not *after* 1840).
+        let cfg = AnachronismConfig { year: Some(1840), terms: Vec::new() };
+        let det = AnachronismDetector::new(&cfg);
+        assert!(!det.is_empty());
+        let hits = det.detect("She checked her wristwatch by the camera.");
+        assert_eq!(hits.len(), 1, "only the wristwatch is anachronistic");
+        assert_eq!(hits[0].kind, StyleWarningKind::Anachronism);
+        assert_eq!(det.earliest("wristwatch"), Some(1900));
+        // a project term override
+        let cfg2 = AnachronismConfig {
+            year: Some(1840),
+            terms: vec![crate::config::AnachronismTerm { term: "spyglass".into(), earliest: 1990 }],
+        };
+        assert!(!AnachronismDetector::new(&cfg2).detect("a spyglass").is_empty());
     }
 
     #[test]
