@@ -710,6 +710,17 @@ pub(super) enum Modal {
         /// Cursor within the scene list while in scene view.
         scene_cursor: usize,
     },
+    /// 1.3.6 EDITORIAL-1 — `Ctrl+V Shift+R` Editorial Pass: the ranked
+    /// revision worklist (every detector unified). `↑↓` navigate, `[`/`]`
+    /// cycle the category filter, `Enter` jumps to the location, `Esc`
+    /// closes.
+    EditorialPass {
+        findings: Vec<crate::editorial::EditorialFinding>,
+        cursor: usize,
+        scroll: usize,
+        /// Active category filter (`None` = all); cycled by `[` / `]`.
+        filter: Option<String>,
+    },
     SnapshotPicker {
         /// Kept for potential refresh ops after future snapshot mutations.
         #[allow(dead_code)]

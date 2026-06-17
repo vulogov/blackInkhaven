@@ -4508,6 +4508,117 @@ impl super::super::App {
         );
     }
 
+    /// 1.3.6 EDITORIAL-1 P1 — the Editorial Pass cockpit: the ranked
+    /// revision worklist (`inkhaven edit`), errors first, with a category
+    /// filter and jump-to-location.
+    pub(in crate::tui::app) fn draw_editorial_pass_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        use crate::editorial::Severity;
+        use ratatui::style::Color;
+        let Modal::EditorialPass { findings, cursor, filter, .. } = &self.modal else {
+            return;
+        };
+        let keep =
+            |fnd: &&crate::editorial::EditorialFinding| filter.as_deref().is_none_or(|c| fnd.category == c);
+        let shown: Vec<&crate::editorial::EditorialFinding> = findings.iter().filter(keep).collect();
+        let (mut ne, mut nw, mut ni) = (0usize, 0usize, 0usize);
+        for fnd in &shown {
+            match fnd.severity {
+                Severity::Error => ne += 1,
+                Severity::Warn => nw += 1,
+                Severity::Info => ni += 1,
+            }
+        }
+
+        let width = area.width.saturating_sub(6).clamp(60, 112);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let filt = filter.as_deref().map(|c| format!(" · {c}")).unwrap_or_default();
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(
+                " Editorial Pass · {} finding(s){filt} · {ne}✗ {nw}⚠ {ni}· ",
+                shown.len()
+            ))
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let list_h = inner.height.saturating_sub(2).max(1) as usize; // hint + footer
+        let hint_rect = Rect { x: inner.x, y: inner.y + inner.height - 2, width: inner.width, height: 1 };
+        let footer_rect = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        let body_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: list_h as u16 };
+
+        let cur = (*cursor).min(shown.len().saturating_sub(1));
+        // Bottom-anchored window that keeps the cursor visible.
+        let start = if cur >= list_h { cur + 1 - list_h } else { 0 };
+        let msg_w = inner.width.saturating_sub(30) as usize;
+        let mut lines: Vec<Line> = Vec::new();
+        if shown.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  ✓ no findings in this filter",
+                Style::default().fg(Color::Green),
+            )));
+        }
+        for (i, fnd) in shown.iter().enumerate().skip(start).take(list_h) {
+            let color = match fnd.severity {
+                Severity::Error => Color::Red,
+                Severity::Warn => Color::Yellow,
+                Severity::Info => Color::DarkGray,
+            };
+            let jump = if fnd.location.paragraph.is_some() { '→' } else { ' ' };
+            let row = format!(
+                "{} {} {:<10} {:<12} {}",
+                fnd.severity.icon(),
+                jump,
+                truncate_to(&fnd.category, 10),
+                truncate_to(&fnd.location.label(), 12),
+                truncate_to(&fnd.message, msg_w),
+            );
+            let line = Line::from(Span::styled(row, Style::default().fg(color)));
+            lines.push(if i == cur {
+                line.style(Style::default().fg(color).add_modifier(Modifier::REVERSED))
+            } else {
+                line
+            });
+        }
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        // The selected finding's full message + hint.
+        let hint = shown.get(cur).map(|fnd| {
+            let mut s = fnd.message.clone();
+            if let Some(h) = &fnd.hint {
+                s.push_str(" — ");
+                s.push_str(h);
+            }
+            s
+        });
+        if let Some(h) = hint {
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    format!("↳ {}", truncate_to(&h, inner.width.saturating_sub(2) as usize)),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
+                ))),
+                hint_rect,
+            );
+        }
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ · [ ] filter · ⏎ jump · s skip · d defer · D clear · Esc ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     /// 1.2.22 R.3 — the project-replace review: matches grouped by
     /// paragraph, each with a `[x]`/`[ ]` keep/skip box and the matched
     /// span highlighted in its line.  Enter applies the kept ones.

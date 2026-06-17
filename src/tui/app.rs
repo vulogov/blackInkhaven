@@ -8362,6 +8362,7 @@ impl App {
             A::OpenSubmissionsTracker => self.open_submissions_tracker(),
             A::OpenSubmissionGen => self.open_submission_gen(),
             A::OpenPlanOutline => self.open_plan_outline(),
+            A::OpenEditorialPass => self.open_editorial_pass(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
             A::ToggleMouseCapture => self.toggle_mouse_capture(),
@@ -9097,6 +9098,158 @@ impl App {
                 );
             }
             Err(e) => self.status = format!("plan: {e}"),
+        }
+    }
+
+    /// 1.3.6 EDITORIAL-1 P1 — open the Editorial Pass cockpit: the ranked
+    /// revision worklist (`inkhaven edit`), walkable + jump-to-location.
+    fn open_editorial_pass(&mut self) {
+        match crate::cli::editorial::collect(&self.layout.root, None, None, false) {
+            Ok(report) => {
+                let n = report.findings.len();
+                let deferred = report.deferred;
+                self.modal = Modal::EditorialPass {
+                    findings: report.findings,
+                    cursor: 0,
+                    scroll: 0,
+                    filter: None,
+                };
+                let note = if deferred > 0 {
+                    format!(" ({deferred} deferred)")
+                } else {
+                    String::new()
+                };
+                self.status = format!(
+                    "Editorial Pass · {n} finding(s){note} · ↑↓ · [ ] filter · ⏎ jump · s skip · d defer · Esc"
+                );
+            }
+            Err(e) => self.status = format!("edit: {e}"),
+        }
+    }
+
+    fn editorial_pass_handle_key(&mut self, key: KeyEvent) -> bool {
+        // Read everything into locals, then drop the borrow before calling
+        // self methods (the established modal pattern).
+        let (filtered_len, cursor, cats, target, has_jump, sel_fp) = {
+            let Modal::EditorialPass { findings, cursor, filter, .. } = &self.modal else {
+                return false;
+            };
+            let mut cats: Vec<String> = findings.iter().map(|f| f.category.clone()).collect();
+            cats.sort();
+            cats.dedup();
+            let keep = |f: &&crate::editorial::EditorialFinding| {
+                filter.as_deref().is_none_or(|c| f.category == c)
+            };
+            let filtered_len = findings.iter().filter(keep).count();
+            let sel = findings.iter().filter(keep).nth(*cursor);
+            (
+                filtered_len,
+                *cursor,
+                cats,
+                sel.and_then(|f| f.location.paragraph),
+                sel.map(|f| f.location.paragraph.is_some()).unwrap_or(false),
+                sel.map(|f| f.fingerprint()),
+            )
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "editorial: closed".into();
+            }
+            KeyCode::Up => self.set_editorial_cursor(cursor.saturating_sub(1)),
+            KeyCode::Down => {
+                if filtered_len > 0 {
+                    self.set_editorial_cursor((cursor + 1).min(filtered_len - 1));
+                }
+            }
+            KeyCode::Char('[') => self.cycle_editorial_filter(&cats, false),
+            KeyCode::Char(']') => self.cycle_editorial_filter(&cats, true),
+            // skip (session) / defer (persist) the selected finding.
+            KeyCode::Char('s') => {
+                if let Some(fp) = sel_fp {
+                    self.editorial_remove(&fp, false);
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(fp) = sel_fp {
+                    self.editorial_remove(&fp, true);
+                }
+            }
+            // clear all deferrals + reload.
+            KeyCode::Char('D') => self.editorial_clear_deferred(),
+            KeyCode::Enter => match (has_jump, target) {
+                (true, Some(pid)) => {
+                    self.modal = Modal::None;
+                    match self.open_paragraph_by_uuid(pid) {
+                        Ok(()) => self.status = "→ jumped to the finding".into(),
+                        Err(e) => self.status = format!("edit: {e}"),
+                    }
+                }
+                _ => self.status = "editorial: no jump target (book-level finding)".into(),
+            },
+            _ => {}
+        }
+        true
+    }
+
+    /// Remove the selected finding from the live worklist — `persist` also
+    /// adds it to the defer sidecar so it won't resurface until the prose
+    /// changes. (1.3.6 P2)
+    fn editorial_remove(&mut self, fingerprint: &str, persist: bool) {
+        if persist {
+            if let Err(e) = crate::editorial::Dismissed::defer(&self.layout.root, fingerprint) {
+                self.status = format!("edit: defer failed: {e}");
+                return;
+            }
+        }
+        if let Modal::EditorialPass { findings, cursor, filter, .. } = &mut self.modal {
+            findings.retain(|f| f.fingerprint() != fingerprint);
+            let flen = findings
+                .iter()
+                .filter(|f| filter.as_deref().is_none_or(|c| f.category == c))
+                .count();
+            *cursor = (*cursor).min(flen.saturating_sub(1));
+        }
+        self.status = if persist {
+            "deferred — won't resurface until the prose changes".into()
+        } else {
+            "skipped (this session)".into()
+        };
+    }
+
+    fn editorial_clear_deferred(&mut self) {
+        if let Err(e) = crate::editorial::Dismissed::clear(&self.layout.root) {
+            self.status = format!("edit: {e}");
+            return;
+        }
+        self.open_editorial_pass();
+        self.status = "cleared all deferrals — re-scanned".into();
+    }
+
+    fn set_editorial_cursor(&mut self, v: usize) {
+        if let Modal::EditorialPass { cursor, scroll, .. } = &mut self.modal {
+            *cursor = v;
+            // keep the cursor in a sensible scroll window
+            if v < *scroll {
+                *scroll = v;
+            }
+        }
+    }
+
+    /// Cycle the category filter `None → cat0 → … → None` (or backwards),
+    /// resetting the cursor.
+    fn cycle_editorial_filter(&mut self, cats: &[String], forward: bool) {
+        if let Modal::EditorialPass { filter, cursor, scroll, .. } = &mut self.modal {
+            // ring: None, then each category
+            let cur = filter
+                .as_deref()
+                .and_then(|c| cats.iter().position(|x| x == c).map(|i| i + 1))
+                .unwrap_or(0);
+            let n = cats.len() + 1;
+            let next = if forward { (cur + 1) % n } else { (cur + n - 1) % n };
+            *filter = if next == 0 { None } else { Some(cats[next - 1].clone()) };
+            *cursor = 0;
+            *scroll = 0;
         }
     }
 
@@ -16594,6 +16747,10 @@ impl App {
         }
         if matches!(self.modal, Modal::PlanOutline { .. }) {
             self.plan_outline_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::EditorialPass { .. }) {
+            self.editorial_pass_handle_key(key);
             return Ok(false);
         }
         if is_llm_picker {
