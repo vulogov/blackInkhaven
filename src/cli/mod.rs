@@ -1266,6 +1266,53 @@ pub enum PlanCommand {
         #[command(subcommand)]
         cmd: PlanSceneCommand,
     },
+    /// Sequel cards (1.3.5) — the reactive counterpart to the proactive
+    /// scene: reaction / dilemma / decision. A sequel that reaches a
+    /// dilemma but never decides stalls the story.
+    Sequel {
+        #[command(subcommand)]
+        cmd: PlanSequelCommand,
+    },
+}
+
+/// `inkhaven plan sequel …` — manage the reactive (reaction/dilemma/
+/// decision) cards. They share the Planning book's `Scenes` chapter with
+/// scene cards, tagged by kind.
+#[derive(Debug, Subcommand)]
+pub enum PlanSequelCommand {
+    /// Add a sequel card under a chapter.
+    Add {
+        title: String,
+        #[arg(long)]
+        chapter: String,
+        /// The POV character's emotional response to the prior disaster.
+        #[arg(long)]
+        reaction: Option<String>,
+        /// The bad-options bind it forces.
+        #[arg(long)]
+        dilemma: Option<String>,
+        /// The choice that launches the next goal.
+        #[arg(long)]
+        decision: Option<String>,
+    },
+    /// List sequel cards (grouped by chapter) with the no-decision flag.
+    List,
+    /// Update fields on an existing sequel (matched by title).
+    Set {
+        title: String,
+        #[arg(long)]
+        chapter: Option<String>,
+        #[arg(long)]
+        reaction: Option<String>,
+        #[arg(long)]
+        dilemma: Option<String>,
+        #[arg(long)]
+        decision: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Remove a sequel card (matched by title).
+    Remove { title: String },
 }
 
 /// `inkhaven plan scene …` — manage the Planning book's scene cards.
