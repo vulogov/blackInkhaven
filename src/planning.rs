@@ -498,97 +498,201 @@ pub fn analyze(
 
 // ── scene cards (P3 1.3.4) ──────────────────────────────────────────
 
-/// A scene card — finer than a beat: the proactive scene's
-/// goal → conflict → disaster (Swain's scene model). Stored as an HJSON
-/// paragraph under the Planning book's `Scenes` chapter.
+fn default_kind() -> String {
+    "scene".to_string()
+}
+
+/// A planning card finer than a beat — one of two kinds (Swain):
+/// a **scene** is proactive (goal → conflict → disaster); a **sequel** is
+/// reactive (reaction → dilemma → decision). Both store as an HJSON
+/// paragraph under the Planning book's `Scenes` chapter; `kind` discriminates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scene {
-    /// Chapter slug this scene belongs to.
+    /// `scene` (proactive) | `sequel` (reactive).
+    #[serde(default = "default_kind")]
+    pub kind: String,
+    /// Chapter slug this card belongs to.
     #[serde(default)]
     pub chapter: String,
     pub title: String,
-    /// What the POV character wants in this scene.
+    // proactive (scene) triple
     #[serde(default)]
     pub goal: String,
-    /// What stands in the way.
     #[serde(default)]
     pub conflict: String,
-    /// The turn — how the scene ends worse / changed.
     #[serde(default)]
     pub disaster: String,
+    // reactive (sequel) triple
+    #[serde(default)]
+    pub reaction: String,
+    #[serde(default)]
+    pub dilemma: String,
+    #[serde(default)]
+    pub decision: String,
     #[serde(default = "default_status")]
     pub status: String,
 }
 
-/// Render a scene as its pure-HJSON paragraph body (content_type `hjson`).
-/// Round-trips through [`parse_scene`].
+impl Scene {
+    /// A proactive scene card (goal/conflict/disaster).
+    pub fn new_scene(chapter: &str, title: &str, goal: &str, conflict: &str, disaster: &str) -> Self {
+        Self {
+            kind: "scene".into(),
+            chapter: chapter.into(),
+            title: title.into(),
+            goal: goal.into(),
+            conflict: conflict.into(),
+            disaster: disaster.into(),
+            reaction: String::new(),
+            dilemma: String::new(),
+            decision: String::new(),
+            status: default_status(),
+        }
+    }
+    /// A reactive sequel card (reaction/dilemma/decision).
+    pub fn new_sequel(chapter: &str, title: &str, reaction: &str, dilemma: &str, decision: &str) -> Self {
+        Self {
+            kind: "sequel".into(),
+            chapter: chapter.into(),
+            title: title.into(),
+            goal: String::new(),
+            conflict: String::new(),
+            disaster: String::new(),
+            reaction: reaction.into(),
+            dilemma: dilemma.into(),
+            decision: decision.into(),
+            status: default_status(),
+        }
+    }
+    pub fn is_sequel(&self) -> bool {
+        self.kind.eq_ignore_ascii_case("sequel")
+    }
+    /// The three labelled slots for this card's kind: scene →
+    /// goal/conflict/disaster, sequel → reaction/dilemma/decision.
+    pub fn slots(&self) -> [(&'static str, &str); 3] {
+        if self.is_sequel() {
+            [
+                ("reaction", self.reaction.as_str()),
+                ("dilemma", self.dilemma.as_str()),
+                ("decision", self.decision.as_str()),
+            ]
+        } else {
+            [
+                ("goal", self.goal.as_str()),
+                ("conflict", self.conflict.as_str()),
+                ("disaster", self.disaster.as_str()),
+            ]
+        }
+    }
+}
+
+/// Render a card as its pure-HJSON paragraph body (content_type `hjson`),
+/// the triple chosen by `kind`. Round-trips through [`parse_scene`].
 pub fn scene_body(s: &Scene) -> String {
-    format!(
-        "// planning scene card — goal → conflict → disaster\n\
-{{\n  \
-  chapter:   \"{chapter}\"\n  \
-  title:     \"{title}\"\n  \
-  // What the POV character wants in this scene.\n  \
+    let kind = if s.is_sequel() { "sequel" } else { "scene" };
+    let triple = if s.is_sequel() {
+        format!(
+            "  // The POV character's emotional response to the prior disaster.\n  \
+  reaction:  \"{reaction}\"\n  \
+  // The bad-options bind it forces.\n  \
+  dilemma:   \"{dilemma}\"\n  \
+  // The choice that launches the next goal. A sequel that reaches a\n  \
+  // dilemma but never decides stalls the story.\n  \
+  decision:  \"{decision}\"\n",
+            reaction = esc(&s.reaction),
+            dilemma = esc(&s.dilemma),
+            decision = esc(&s.decision),
+        )
+    } else {
+        format!(
+            "  // What the POV character wants in this scene.\n  \
   goal:      \"{goal}\"\n  \
   // What stands in the way.\n  \
   conflict:  \"{conflict}\"\n  \
   // The turn — how the scene ends worse / changed. A scene with no\n  \
   // disaster doesn't turn.\n  \
-  disaster:  \"{disaster}\"\n  \
+  disaster:  \"{disaster}\"\n",
+            goal = esc(&s.goal),
+            conflict = esc(&s.conflict),
+            disaster = esc(&s.disaster),
+        )
+    };
+    format!(
+        "// planning {kind} card\n\
+{{\n  \
+  kind:      \"{kind}\"\n  \
+  chapter:   \"{chapter}\"\n  \
+  title:     \"{title}\"\n\
+{triple}  \
   // planned | drafted | done\n  \
   status:    \"{status}\"\n\
 }}\n",
         chapter = esc(&s.chapter),
         title = esc(&s.title),
-        goal = esc(&s.goal),
-        conflict = esc(&s.conflict),
-        disaster = esc(&s.disaster),
         status = esc(&s.status),
     )
 }
 
-/// Parse a Planning-book scene paragraph back into a [`Scene`].
+/// Parse a Planning-book card paragraph back into a [`Scene`].
 pub fn parse_scene(body: &str) -> Option<Scene> {
     serde_hjson::from_str(body).ok()
 }
 
-/// One scene's craft status: which of goal/conflict/disaster are present,
-/// plus the weak-scene flag.
+/// One card's craft status: its kind, which of the three slots are filled,
+/// and the weak flag (a scene with no disaster / a sequel with no decision).
 #[derive(Debug, Clone, Serialize)]
 pub struct SceneStatus {
     pub title: String,
     pub chapter: String,
-    pub has_goal: bool,
-    pub has_conflict: bool,
-    pub has_disaster: bool,
-    /// States a goal but never turns (no disaster) — the weak scene.
-    pub no_turn: bool,
+    pub kind: String,
+    /// The three slots present, in `slots()` order.
+    pub filled: [bool; 3],
+    pub weak: bool,
 }
 
-/// Deterministic weak-scene diagnosis: a scene that states a goal but has
-/// no disaster *doesn't turn*. Pure — returns per-scene status + warnings.
+/// Deterministic weak-card diagnosis. A **scene** is weak when it states a
+/// goal but never turns (no disaster); a **sequel** is weak when it reaches
+/// a dilemma but never decides (no decision). Once the author uses sequels,
+/// two scenes in a row (no sequel between) flags the first's unprocessed
+/// disaster. Pure — returns per-card status + warnings.
 pub fn analyze_scenes(scenes: &[Scene]) -> (Vec<SceneStatus>, Vec<String>) {
     let mut statuses = Vec::with_capacity(scenes.len());
     let mut warnings = Vec::new();
     for s in scenes {
-        let has_goal = !s.goal.trim().is_empty();
-        let has_conflict = !s.conflict.trim().is_empty();
-        let has_disaster = !s.disaster.trim().is_empty();
-        let no_turn = has_goal && !has_disaster;
-        if no_turn {
-            warnings.push(format!(
-                "scene: `{}` states a goal but never turns (no disaster)",
-                s.title
-            ));
+        let [(_, a), (_, b), (_, c)] = s.slots();
+        let filled = [!a.trim().is_empty(), !b.trim().is_empty(), !c.trim().is_empty()];
+        let weak = if s.is_sequel() {
+            filled[1] && !filled[2] // dilemma but no decision
+        } else {
+            filled[0] && !filled[2] // goal but no disaster
+        };
+        if weak {
+            warnings.push(if s.is_sequel() {
+                format!("sequel: `{}` reaches a dilemma but never decides (no decision)", s.title)
+            } else {
+                format!("scene: `{}` states a goal but never turns (no disaster)", s.title)
+            });
         }
         statuses.push(SceneStatus {
             title: s.title.clone(),
             chapter: s.chapter.clone(),
-            has_goal,
-            has_conflict,
-            has_disaster,
-            no_turn,
+            kind: if s.is_sequel() { "sequel".into() } else { "scene".into() },
+            filled,
+            weak,
         });
+    }
+    // Alternation: only nag once sequels are in use, so scene-only projects
+    // aren't flagged. Two scenes back-to-back → the first's disaster goes
+    // unprocessed (a skipped sequel).
+    if scenes.iter().any(|s| s.is_sequel()) {
+        for w in scenes.windows(2) {
+            if !w[0].is_sequel() && !w[1].is_sequel() {
+                warnings.push(format!(
+                    "rhythm: `{}`'s disaster goes unprocessed — no sequel before `{}`",
+                    w[0].title, w[1].title
+                ));
+            }
+        }
     }
     (statuses, warnings)
 }
@@ -1069,14 +1173,13 @@ mod tests {
 
     #[test]
     fn analyze_prompt_includes_scene_cards() {
-        let scenes = vec![Scene {
-            chapter: "the-wharf".into(),
-            title: "Confrontation".into(),
-            goal: "get the manifest".into(),
-            conflict: "he stonewalls".into(),
-            disaster: "".into(),
-            status: "planned".into(),
-        }];
+        let scenes = vec![Scene::new_scene(
+            "the-wharf",
+            "Confrontation",
+            "get the manifest",
+            "he stonewalls",
+            "",
+        )];
         let p = analyze_user_prompt(Framework::ThreeAct, "TITLE: X", &scenes);
         assert!(p.contains("SCENE CARDS"));
         assert!(p.contains("Confrontation"));
@@ -1190,19 +1293,57 @@ mod tests {
 
     #[test]
     fn scene_body_round_trips() {
-        let s = Scene {
-            chapter: "the-wharf".into(),
-            title: "Mara confronts the harbourmaster".into(),
-            goal: "get the manifest".into(),
-            conflict: "he stonewalls".into(),
-            disaster: "he names her father as the debtor".into(),
-            status: "drafted".into(),
-        };
+        let mut s = Scene::new_scene(
+            "the-wharf",
+            "Mara confronts the harbourmaster",
+            "get the manifest",
+            "he stonewalls",
+            "he names her father as the debtor",
+        );
+        s.status = "drafted".into();
         let back = parse_scene(&scene_body(&s)).expect("parses");
+        assert_eq!(back.kind, "scene");
         assert_eq!(back.chapter, "the-wharf");
         assert_eq!(back.goal, "get the manifest");
         assert_eq!(back.disaster, "he names her father as the debtor");
         assert_eq!(back.status, "drafted");
+    }
+
+    #[test]
+    fn sequel_body_round_trips_and_weak_check_flips() {
+        let seq = Scene::new_sequel(
+            "the-wharf",
+            "Mara reels",
+            "she's gutted",
+            "pay the debt or expose her father",
+            "", // dilemma but no decision → stalls
+        );
+        let back = parse_scene(&scene_body(&seq)).expect("parses");
+        assert!(back.is_sequel());
+        assert_eq!(back.reaction, "she's gutted");
+        assert!(back.goal.is_empty(), "sequel body carries no goal");
+        let (st, warn) = analyze_scenes(&[seq]);
+        assert!(st[0].weak, "dilemma + no decision → weak");
+        assert!(warn.iter().any(|w| w.contains("never decides")));
+    }
+
+    #[test]
+    fn alternation_flags_back_to_back_scenes_once_sequels_exist() {
+        // scene, scene → the first's disaster is unprocessed, BUT only once a
+        // sequel is in use anywhere.
+        let scene_only = vec![
+            Scene::new_scene("c1", "A", "g", "c", "d"),
+            Scene::new_scene("c2", "B", "g", "c", "d"),
+        ];
+        let (_, w0) = analyze_scenes(&scene_only);
+        assert!(!w0.iter().any(|w| w.contains("rhythm")), "no nag without sequels");
+        let mixed = vec![
+            Scene::new_scene("c1", "A", "g", "c", "d"),
+            Scene::new_scene("c2", "B", "g", "c", "d"),
+            Scene::new_sequel("c2", "B-after", "r", "dl", "de"),
+        ];
+        let (_, w1) = analyze_scenes(&mixed);
+        assert!(w1.iter().any(|w| w.contains("rhythm") && w.contains("`A`")));
     }
 
     #[test]
@@ -1228,27 +1369,14 @@ mod tests {
     #[test]
     fn analyze_scenes_flags_a_scene_that_doesnt_turn() {
         let scenes = vec![
-            Scene {
-                chapter: "c1".into(),
-                title: "Turns".into(),
-                goal: "find the letter".into(),
-                conflict: "the room is locked".into(),
-                disaster: "the letter is already gone".into(),
-                status: "planned".into(),
-            },
-            Scene {
-                chapter: "c2".into(),
-                title: "Flat".into(),
-                goal: "win the argument".into(),
-                conflict: "".into(),
-                disaster: "".into(), // goal but no disaster → no turn
-                status: "planned".into(),
-            },
+            Scene::new_scene("c1", "Turns", "find the letter", "the room is locked", "it's gone"),
+            // goal but no disaster → no turn
+            Scene::new_scene("c2", "Flat", "win the argument", "", ""),
         ];
         let (st, warn) = analyze_scenes(&scenes);
         assert_eq!(st.len(), 2);
-        assert!(!st[0].no_turn, "a scene with a disaster turns");
-        assert!(st[1].no_turn, "goal + no disaster → flat");
+        assert!(!st[0].weak, "a scene with a disaster turns");
+        assert!(st[1].weak, "goal + no disaster → flat");
         assert_eq!(warn.len(), 1);
         assert!(warn[0].contains("Flat") && warn[0].contains("never turns"));
     }
