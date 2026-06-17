@@ -4190,12 +4190,11 @@ impl super::super::App {
             height: 1,
         };
 
-        // Scene board sub-mode (`v`): the Planning book's scene cards
-        // grouped by chapter, the selected one's goal/conflict/disaster
-        // spine expanded.
+        // Scene board sub-mode (`v`): the Planning book's scene + sequel
+        // cards grouped by chapter, the selected one's spine expanded.
         if *scene_view {
             let mut lines: Vec<Line> = vec![Line::from(Span::styled(
-                format!("SCENES ({} card{})", scenes.len(), if scenes.len() == 1 { "" } else { "s" }),
+                format!("SCENES / SEQUELS ({} card{})", scenes.len(), if scenes.len() == 1 { "" } else { "s" }),
                 Style::default().add_modifier(Modifier::DIM),
             ))];
             let mut last_ch = String::new();
@@ -4208,21 +4207,34 @@ impl super::super::App {
                         Style::default().fg(Color::DarkGray),
                     )));
                 }
-                let goal = !s.goal.trim().is_empty();
-                let conflict = !s.conflict.trim().is_empty();
-                let disaster = !s.disaster.trim().is_empty();
-                let no_turn = goal && !disaster;
+                let slots = s.slots();
+                let filled = [
+                    !slots[0].1.trim().is_empty(),
+                    !slots[1].1.trim().is_empty(),
+                    !slots[2].1.trim().is_empty(),
+                ];
+                // scene weak = goal but no disaster; sequel weak = dilemma but no decision.
+                let weak = if s.is_sequel() {
+                    filled[1] && !filled[2]
+                } else {
+                    filled[0] && !filled[2]
+                };
                 let sel = i == *scene_cursor;
                 let head = format!(
-                    "{} {:<26} G{} C{} D{}{}",
-                    if no_turn { '⚠' } else { '·' },
-                    truncate_to(&s.title, 26),
-                    mk(goal),
-                    mk(conflict),
-                    mk(disaster),
-                    if no_turn { "  no turn" } else { "" },
+                    "{} [{:<6}] {:<24} {}{}{}{}",
+                    if weak { '⚠' } else { '·' },
+                    if s.is_sequel() { "sequel" } else { "scene" },
+                    truncate_to(&s.title, 24),
+                    mk(filled[0]),
+                    mk(filled[1]),
+                    mk(filled[2]),
+                    if weak {
+                        if s.is_sequel() { "  no decision" } else { "  no turn" }
+                    } else {
+                        ""
+                    },
                 );
-                let color = if no_turn { Color::Yellow } else { Color::Green };
+                let color = if weak { Color::Yellow } else { Color::Green };
                 let line = Line::from(Span::styled(head, Style::default().fg(color)));
                 lines.push(if sel {
                     line.style(Style::default().fg(color).add_modifier(Modifier::REVERSED))
@@ -4230,9 +4242,7 @@ impl super::super::App {
                     line
                 });
                 if sel {
-                    for (label, text) in
-                        [("goal", &s.goal), ("conflict", &s.conflict), ("disaster", &s.disaster)]
-                    {
+                    for (label, text) in slots {
                         if !text.trim().is_empty() {
                             lines.push(Line::from(Span::styled(
                                 format!("     {label}: {}", text.trim()),
@@ -4245,7 +4255,7 @@ impl super::super::App {
             f.render_widget(Paragraph::new(lines), body);
             f.render_widget(
                 Paragraph::new(Line::from(Span::styled(
-                    " ↑↓ · v/Esc back to beats ",
+                    " ↑↓ · g regenerate · v/Esc back to beats ",
                     Style::default().add_modifier(Modifier::DIM),
                 ))),
                 footer,
@@ -4445,13 +4455,21 @@ impl super::super::App {
                     Style::default().fg(Color::DarkGray),
                 )));
             }
+            // The AI second opinion (1.3.5 P3), once `plan tension rate` ran.
+            if t.has_ai {
+                lines.push(Line::from(Span::styled(
+                    format!("{:<25}{}", "  ai", crate::planning::intensity_sparkline(&t.ai_series, bar_w)),
+                    Style::default().fg(Color::Magenta),
+                )));
+            }
             // The selected beat's tension numerals + flat flag.
             if let Some(p) = t.points.get(*cursor) {
                 if let Some(a) = p.actual {
                     let flat = p.gap.map(|g| p.expected >= 0.5 && g > 0.25).unwrap_or(false);
+                    let ai = p.ai.map(|v| format!(" · ai {:.0}%", v * 100.0)).unwrap_or_default();
                     lines.push(Line::from(Span::styled(
                         format!(
-                            "  ~ {}: actual {:.0}% vs expected {:.0}%{}",
+                            "  ~ {}: actual {:.0}% vs expected {:.0}%{ai}{}",
                             truncate_to(&p.beat, 20),
                             a * 100.0,
                             p.expected * 100.0,

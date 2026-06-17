@@ -189,6 +189,23 @@ scan`** (the 1.2.19 AI pass that tags each chapter's introduced/resolved
 tensions) and/or link your **Threads** so the Board can see which arcs are
 open where. Without either, you still get the expected shape, with a hint.
 
+**A second opinion.** The actual line is deterministic — it counts *open
+obligations*. For an independent reading, run **`inkhaven plan tension
+rate`**: an AI pass that rates each chapter's felt intensity 0–100 and
+caches it. `plan check` then adds an `ai` column and the overlay a third
+sparkline, so you compare three readings:
+
+```
+TENSION (expected vs actual vs ai intensity)
+  Midpoint            expected  65%  actual  33%  ai  35% ⚠ flat
+  Climax              expected 100%  actual 100%  ai  95%
+```
+
+When *both* actual and ai land low where the framework wants a peak — as at
+the Midpoint above — that's two independent signals agreeing the middle
+sags. The deterministic curve stays the default; the `ai` line is opt-in and
+absent until you rate.
+
 ## 5. Ask the AI
 
 For the qualitative read, over the book digest:
@@ -261,6 +278,39 @@ card grouped by chapter with its G/C/D marks and turn flag, the selected one
 expanding its full goal/conflict/disaster spine. And `plan analyze` reads
 the cards too — it'll name the scenes that don't turn and suggest the turn
 they're missing.
+
+**Don't type it from scratch.** The prose already implies the
+goal/conflict/disaster, so let the AI propose them:
+
+```sh
+inkhaven plan scene scaffold --chapter the-wharf   # one chapter
+inkhaven plan scene scaffold --all                 # every cardless chapter
+```
+
+In the scene board, **`g`** regenerates the selected card from its chapter's
+prose — the proposal streams into the AI pane, and **`L`** files it back
+into the card (the same lift you use for the structural analysis).
+
+### Sequels: the reactive half
+
+Swain's structure alternates **scenes** (proactive: goal → conflict →
+disaster) with **sequels** (reactive: **reaction → dilemma → decision**).
+The disaster lands; the character reels, weighs bad options, and *decides* —
+which sets the next scene's goal. Model the reactive beats too:
+
+```sh
+inkhaven plan sequel add "Mara reels" --chapter the-wharf \
+    --reaction "she's gutted" \
+    --dilemma "pay the debt or expose her father" \
+    --decision "pay it quietly and hunt the truth"
+
+inkhaven plan sequel list      # or `plan scene list` for both, kind-tagged
+```
+
+The weak-card check flips for sequels: one that reaches a **dilemma** but
+never **decides** stalls the story (`⚠ no decision`). And once you're using
+sequels, two scenes back-to-back flag the first's **unprocessed disaster** —
+a skipped sequel. The `v` board shows both kinds, tagged.
 
 ## Threads do narrative work
 
