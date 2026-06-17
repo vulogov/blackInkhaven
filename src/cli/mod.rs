@@ -40,6 +40,7 @@ pub mod docx;
 pub mod submissions;
 pub mod submission;
 pub mod plan;
+pub mod editorial;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -628,6 +629,24 @@ pub enum Command {
     /// beats; coverage/pacing + AI analyze follow.
     #[command(subcommand)]
     Plan(PlanCommand),
+
+    /// 1.3.6 EDITORIAL-1 — **The Editorial Pass**: one ranked revision
+    /// worklist unifying every detector (the editorial `doctor` classes +
+    /// `plan check`'s structural findings + the Facts-scan sidecar). Reads
+    /// what's already computed — no live AI.
+    Edit {
+        /// Machine-readable output for a CI gate.
+        #[arg(long)]
+        json: bool,
+        /// Restrict to these categories (comma-separated), e.g.
+        /// `echo,pacing,structure`.
+        #[arg(long, value_delimiter = ',')]
+        only: Option<Vec<String>>,
+        /// Which book's structure findings to include (defaults to the sole
+        /// user book).
+        #[arg(long)]
+        book_name: Option<String>,
+    },
 
     /// 1.2.18+ R.1 — export a user book to a
     /// standards-compliant EPUB 3 file.  Walks the
@@ -2583,6 +2602,9 @@ impl Cli {
             }
             Command::Plan(cmd) => {
                 plan::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Edit { json, only, book_name } => {
+                editorial::run(&project, json, only, book_name.as_deref()).map_err(Into::into)
             }
             Command::BenchLoad { query, iterations } => {
                 bench_load::run(&project, &query, iterations)
