@@ -604,6 +604,40 @@ pub fn tension_curve(
     }
 }
 
+/// Render sorted `(position, value)` control points (values 0..1) as a
+/// `width`-cell block-ramp sparkline (`▁`..`█`), linear-interpolating
+/// between points and clamping past the ends. The structure outline's
+/// tension overlay draws the expected + actual curves with this. Pure.
+pub fn intensity_sparkline(points: &[(f32, f32)], width: usize) -> String {
+    const RAMP: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let sample = |p: f32| -> f32 {
+        if points.is_empty() {
+            return 0.0;
+        }
+        if p <= points[0].0 {
+            return points[0].1;
+        }
+        let last = points[points.len() - 1];
+        if p >= last.0 {
+            return last.1;
+        }
+        for w in points.windows(2) {
+            let ((x0, y0), (x1, y1)) = (w[0], w[1]);
+            if p >= x0 && p <= x1 {
+                let f = if (x1 - x0).abs() < 1e-6 { 0.0 } else { (p - x0) / (x1 - x0) };
+                return y0 + (y1 - y0) * f;
+            }
+        }
+        last.1
+    };
+    (0..width)
+        .map(|i| {
+            let v = sample((i as f32 + 0.5) / width.max(1) as f32).clamp(0.0, 1.0);
+            RAMP[((v * 7.0).round() as usize).min(7)]
+        })
+        .collect()
+}
+
 // ── built-in framework tables (positions monotonic non-decreasing) ──
 
 const THREE_ACT: &[BeatSpec] = &[
@@ -958,6 +992,25 @@ mod tests {
         // midpoint expected 0.65, actual 0.0 → gap 0.65 > 0.25 → flat
         assert!(curve.warnings.iter().any(|w| w.contains("Midpoint") && w.contains("flat")));
         assert!(!curve.warnings.iter().any(|w| w.contains("Climax")), "climax isn't flat");
+    }
+
+    #[test]
+    fn intensity_sparkline_tracks_control_points() {
+        // rising 0→1 → cells climb left to right, ending full.
+        let rise = intensity_sparkline(&[(0.0, 0.0), (1.0, 1.0)], 8);
+        let r: Vec<char> = rise.chars().collect();
+        assert_eq!(r.len(), 8);
+        assert!(r[0] < r[7], "rises left→right");
+        assert_eq!(r[7], '█');
+        // flat-zero → all the lowest cell.
+        let flat = intensity_sparkline(&[(0.0, 0.0), (1.0, 0.0)], 5);
+        assert!(flat.chars().all(|c| c == '▁'), "flat low: {flat}");
+        // a peak in the middle reads as a peak.
+        let peak = intensity_sparkline(&[(0.0, 0.0), (0.5, 1.0), (1.0, 0.0)], 9);
+        let p: Vec<char> = peak.chars().collect();
+        assert!(p[4] > p[0] && p[4] > p[8], "peaks in the middle: {peak}");
+        // empty control points don't panic.
+        assert_eq!(intensity_sparkline(&[], 4).chars().count(), 4);
     }
 
     #[test]

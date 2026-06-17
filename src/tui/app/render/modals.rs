@@ -4153,7 +4153,9 @@ impl super::super::App {
         };
         let drift = 0.10_f32;
         let bar_w = 20usize;
-        let rows = report.beats.len() + report.acts.len() + 5;
+        // beats + pacing + the tension overlay (header + 2 sparklines +
+        // numerals) + chrome.
+        let rows = report.beats.len() + report.acts.len() + 10;
         let width = area.width.saturating_sub(6).clamp(54, 88);
         let height = (rows as u16 + 4).min(area.height.saturating_sub(2));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
@@ -4299,6 +4301,59 @@ impl super::super::App {
                 ),
                 Style::default().fg(color),
             )));
+        }
+
+        // TENSION overlay (1.3.4 P1): the framework's expected intensity vs
+        // the actual open-obligation density, as block-ramp sparklines
+        // aligned under the position bars above (so a beat's `●` sits over
+        // its actual-tension cell).
+        if let Some(t) = &report.tension {
+            // Expected control points: (target position, expected) per beat
+            // — the framework's intended shape, independent of mapping.
+            let mut exp_pts: Vec<(f32, f32)> = report
+                .beats
+                .iter()
+                .zip(&t.points)
+                .map(|(b, p)| (b.target_position, p.expected))
+                .collect();
+            exp_pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "TENSION (intensity · aligned to the bars above)",
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+            lines.push(Line::from(Span::styled(
+                format!("{:<25}{}", "  expected", crate::planning::intensity_sparkline(&exp_pts, bar_w)),
+                Style::default().fg(Color::Cyan),
+            )));
+            if t.has_actual {
+                lines.push(Line::from(Span::styled(
+                    format!("{:<25}{}", "  actual", crate::planning::intensity_sparkline(&t.series, bar_w)),
+                    Style::default().fg(Color::Green),
+                )));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    "  actual: run `inkhaven tension scan` (or link threads) to chart it".to_string(),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            // The selected beat's tension numerals + flat flag.
+            if let Some(p) = t.points.get(*cursor) {
+                if let Some(a) = p.actual {
+                    let flat = p.gap.map(|g| p.expected >= 0.5 && g > 0.25).unwrap_or(false);
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "  ~ {}: actual {:.0}% vs expected {:.0}%{}",
+                            truncate_to(&p.beat, 20),
+                            a * 100.0,
+                            p.expected * 100.0,
+                            if flat { "  ⚠ flat" } else { "" }
+                        ),
+                        Style::default().fg(if flat { Color::Yellow } else { Color::Green }),
+                    )));
+                }
+            }
         }
 
         // The selected beat's intention (filled by `plan scaffold`).
