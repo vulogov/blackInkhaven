@@ -333,6 +333,10 @@ pub struct PlanReport {
     /// caller attaches it (the CLI builds the open-obligation spans).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tension: Option<TensionCurve>,
+    /// Scene-card craft status (P3 1.3.4) — empty until the caller loads the
+    /// Planning book's scene cards.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scenes: Vec<SceneStatus>,
 }
 
 /// Diagnose a structure: coverage (gaps), per-beat position drift, and
@@ -470,7 +474,105 @@ pub fn analyze(
         chapters: chapter_refs,
         available_threads: known_threads.iter().cloned().collect(),
         tension: None,
+        scenes: Vec::new(),
     }
+}
+
+// ── scene cards (P3 1.3.4) ──────────────────────────────────────────
+
+/// A scene card — finer than a beat: the proactive scene's
+/// goal → conflict → disaster (Swain's scene model). Stored as an HJSON
+/// paragraph under the Planning book's `Scenes` chapter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Scene {
+    /// Chapter slug this scene belongs to.
+    #[serde(default)]
+    pub chapter: String,
+    pub title: String,
+    /// What the POV character wants in this scene.
+    #[serde(default)]
+    pub goal: String,
+    /// What stands in the way.
+    #[serde(default)]
+    pub conflict: String,
+    /// The turn — how the scene ends worse / changed.
+    #[serde(default)]
+    pub disaster: String,
+    #[serde(default = "default_status")]
+    pub status: String,
+}
+
+/// Render a scene as its pure-HJSON paragraph body (content_type `hjson`).
+/// Round-trips through [`parse_scene`].
+pub fn scene_body(s: &Scene) -> String {
+    format!(
+        "// planning scene card — goal → conflict → disaster\n\
+{{\n  \
+  chapter:   \"{chapter}\"\n  \
+  title:     \"{title}\"\n  \
+  // What the POV character wants in this scene.\n  \
+  goal:      \"{goal}\"\n  \
+  // What stands in the way.\n  \
+  conflict:  \"{conflict}\"\n  \
+  // The turn — how the scene ends worse / changed. A scene with no\n  \
+  // disaster doesn't turn.\n  \
+  disaster:  \"{disaster}\"\n  \
+  // planned | drafted | done\n  \
+  status:    \"{status}\"\n\
+}}\n",
+        chapter = esc(&s.chapter),
+        title = esc(&s.title),
+        goal = esc(&s.goal),
+        conflict = esc(&s.conflict),
+        disaster = esc(&s.disaster),
+        status = esc(&s.status),
+    )
+}
+
+/// Parse a Planning-book scene paragraph back into a [`Scene`].
+pub fn parse_scene(body: &str) -> Option<Scene> {
+    serde_hjson::from_str(body).ok()
+}
+
+/// One scene's craft status: which of goal/conflict/disaster are present,
+/// plus the weak-scene flag.
+#[derive(Debug, Clone, Serialize)]
+pub struct SceneStatus {
+    pub title: String,
+    pub chapter: String,
+    pub has_goal: bool,
+    pub has_conflict: bool,
+    pub has_disaster: bool,
+    /// States a goal but never turns (no disaster) — the weak scene.
+    pub no_turn: bool,
+}
+
+/// Deterministic weak-scene diagnosis: a scene that states a goal but has
+/// no disaster *doesn't turn*. Pure — returns per-scene status + warnings.
+pub fn analyze_scenes(scenes: &[Scene]) -> (Vec<SceneStatus>, Vec<String>) {
+    let mut statuses = Vec::with_capacity(scenes.len());
+    let mut warnings = Vec::new();
+    for s in scenes {
+        let has_goal = !s.goal.trim().is_empty();
+        let has_conflict = !s.conflict.trim().is_empty();
+        let has_disaster = !s.disaster.trim().is_empty();
+        let no_turn = has_goal && !has_disaster;
+        if no_turn {
+            warnings.push(format!(
+                "scene: `{}` states a goal but never turns (no disaster)",
+                s.title
+            ));
+        }
+        statuses.push(SceneStatus {
+            title: s.title.clone(),
+            chapter: s.chapter.clone(),
+            has_goal,
+            has_conflict,
+            has_disaster,
+            no_turn,
+        });
+    }
+    (statuses, warnings)
 }
 
 // ── tension curve (P0 1.3.4, deterministic) ─────────────────────────
@@ -1011,6 +1113,51 @@ mod tests {
         assert!(p[4] > p[0] && p[4] > p[8], "peaks in the middle: {peak}");
         // empty control points don't panic.
         assert_eq!(intensity_sparkline(&[], 4).chars().count(), 4);
+    }
+
+    #[test]
+    fn scene_body_round_trips() {
+        let s = Scene {
+            chapter: "the-wharf".into(),
+            title: "Mara confronts the harbourmaster".into(),
+            goal: "get the manifest".into(),
+            conflict: "he stonewalls".into(),
+            disaster: "he names her father as the debtor".into(),
+            status: "drafted".into(),
+        };
+        let back = parse_scene(&scene_body(&s)).expect("parses");
+        assert_eq!(back.chapter, "the-wharf");
+        assert_eq!(back.goal, "get the manifest");
+        assert_eq!(back.disaster, "he names her father as the debtor");
+        assert_eq!(back.status, "drafted");
+    }
+
+    #[test]
+    fn analyze_scenes_flags_a_scene_that_doesnt_turn() {
+        let scenes = vec![
+            Scene {
+                chapter: "c1".into(),
+                title: "Turns".into(),
+                goal: "find the letter".into(),
+                conflict: "the room is locked".into(),
+                disaster: "the letter is already gone".into(),
+                status: "planned".into(),
+            },
+            Scene {
+                chapter: "c2".into(),
+                title: "Flat".into(),
+                goal: "win the argument".into(),
+                conflict: "".into(),
+                disaster: "".into(), // goal but no disaster → no turn
+                status: "planned".into(),
+            },
+        ];
+        let (st, warn) = analyze_scenes(&scenes);
+        assert_eq!(st.len(), 2);
+        assert!(!st[0].no_turn, "a scene with a disaster turns");
+        assert!(st[1].no_turn, "goal + no disaster → flat");
+        assert_eq!(warn.len(), 1);
+        assert!(warn[0].contains("Flat") && warn[0].contains("never turns"));
     }
 
     #[test]
