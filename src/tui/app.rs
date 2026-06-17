@@ -9103,7 +9103,7 @@ impl App {
     fn plan_outline_handle_key(&mut self, key: KeyEvent) -> bool {
         // Read state, then drop the modal borrow so the edit helpers can
         // touch the store.
-        let (n_beats, n_chaps, n_threads, n_scenes, cursor, scene_cursor, picking, thread_pick, scene_view, book_slug, framework) = {
+        let (n_beats, n_chaps, n_threads, n_scenes, cursor, scene_cursor, scene_sel, picking, thread_pick, scene_view, book_slug, framework) = {
             let Modal::PlanOutline {
                 report,
                 cursor,
@@ -9126,6 +9126,7 @@ impl App {
                 scenes.len(),
                 *cursor,
                 *scene_cursor,
+                scenes.get(*scene_cursor).map(|s| (s.chapter.clone(), s.title.clone())),
                 *picking,
                 *thread_pick,
                 *scene_view,
@@ -9141,6 +9142,16 @@ impl App {
                 KeyCode::Down => {
                     if n_scenes > 0 {
                         self.set_plan_scene_cursor((scene_cursor + 1).min(n_scenes - 1));
+                    }
+                }
+                // `g` — regenerate the selected card from its chapter prose.
+                KeyCode::Char('g') => {
+                    if let Some((chapter, title)) = scene_sel {
+                        if chapter.trim().is_empty() {
+                            self.status = "plan: this card has no chapter to scaffold from".into();
+                        } else {
+                            self.fire_scene_scaffold(&chapter, &title);
+                        }
                     }
                 }
                 _ => {}
@@ -9471,12 +9482,90 @@ impl App {
             book_label: "Planning",
             title: "Structural Analysis".into(),
             what: "structural analysis".into(),
+            scene_chapter: None,
             stamp: started_at,
         });
         self.pending_chat_user_msg = Some(user_prompt);
         self.modal = Modal::None;
         self.change_focus(Focus::Ai);
         self.status = "Analyzing structure → AI pane (L files it into Planning)".into();
+    }
+
+    /// 1.3.5 PLANNING-4 P1 — stream a scene-card proposal (goal/conflict/
+    /// disaster) for `chapter_slug`'s prose into the AI pane; `L` parses it
+    /// and upserts the card titled `card_title`.
+    fn fire_scene_scaffold(&mut self, chapter_slug: &str, card_title: &str) {
+        let chapter = self
+            .current_book_node(&self.hierarchy)
+            .map(|b| b.id)
+            .and_then(|bid| {
+                self.hierarchy
+                    .collect_subtree(bid)
+                    .into_iter()
+                    .filter_map(|id| self.hierarchy.get(id))
+                    .find(|n| n.kind == NodeKind::Chapter && n.slug.eq_ignore_ascii_case(chapter_slug))
+                    .cloned()
+            });
+        let Some(chapter) = chapter else {
+            self.status = format!("plan: chapter `{chapter_slug}` not found");
+            return;
+        };
+        let prose: String =
+            crate::cli::book_walk::chapter_paragraphs_raw(&self.layout, &self.hierarchy, chapter.id)
+                .iter()
+                .map(|p| crate::audiobook::typst_to_plain(p))
+                .filter(|p| !crate::manuscript::is_scene_break(p))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+        if prose.trim().is_empty() {
+            self.status = format!("plan: `{chapter_slug}` has no prose to scaffold from");
+            return;
+        }
+        let prose: String = prose.chars().take(6000).collect();
+        let system = self.resolve_prompt_template(crate::planning::SCENE_SCAFFOLD_SLUG, || {
+            crate::planning::scene_scaffold_system_prompt().to_string()
+        });
+        let user_prompt = crate::planning::scene_scaffold_user_prompt(&chapter.title, &prose);
+        let (model, _env) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!("plan: can't reach LLM ({e})");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        self.chat_history.clear();
+        self.inference = None;
+        self.ai_mode = AiMode::None;
+        let rx = spawn_chat_stream(
+            self.ai.client.clone(),
+            model.clone(),
+            Some(system),
+            Vec::new(),
+            user_prompt.clone(),
+        );
+        let started_at = std::time::Instant::now();
+        self.inference = Some(Inference {
+            provider,
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at,
+        });
+        self.lift_target = Some(LiftTarget {
+            book_tag: crate::store::SYSTEM_TAG_PLANNING,
+            book_label: "Planning",
+            title: card_title.to_string(),
+            what: "scene card".into(),
+            scene_chapter: Some(chapter_slug.to_string()),
+            stamp: started_at,
+        });
+        self.pending_chat_user_msg = Some(user_prompt);
+        self.modal = Modal::None;
+        self.change_focus(Focus::Ai);
+        self.status = format!("Scaffolding scene → AI pane (L files the card `{card_title}`)");
     }
 
     fn submission_gen_handle_key(&mut self, key: KeyEvent) -> bool {
@@ -9544,6 +9633,7 @@ impl App {
             book_label: "Submissions",
             title: kind.title().to_string(),
             what: kind.title().to_lowercase(),
+            scene_chapter: None,
             stamp: started_at,
         });
         self.pending_chat_user_msg = Some(user_prompt);
@@ -9586,6 +9676,33 @@ impl App {
         };
         if text.is_empty() {
             self.status = "lift: nothing to file yet".into();
+            return;
+        }
+        // Scene-card lift (1.3.5 P1): parse the response into
+        // goal/conflict/disaster and upsert the card, rather than filing raw
+        // prose into a system book.
+        if let Some(chapter) = &target.scene_chapter {
+            let (goal, conflict, disaster) = crate::planning::parse_scene_scaffold(&text);
+            if goal.is_empty() && conflict.is_empty() && disaster.is_empty() {
+                self.status = "lift: no goal/conflict/disaster found in the reply".into();
+                return;
+            }
+            match crate::cli::plan::upsert_scene_card(
+                &self.store,
+                &self.cfg,
+                &target.title,
+                chapter,
+                &goal,
+                &conflict,
+                &disaster,
+            ) {
+                Ok(()) => {
+                    self.status = format!("Filed scene card → {}", target.title);
+                    self.lift_target = None;
+                    self.reload_hierarchy();
+                }
+                Err(e) => self.status = format!("lift failed: {e}"),
+            }
             return;
         }
         match self.upsert_system_draft(target.book_tag, &target.title, &text) {

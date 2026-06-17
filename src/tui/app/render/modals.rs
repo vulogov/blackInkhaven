@@ -4245,7 +4245,7 @@ impl super::super::App {
             f.render_widget(Paragraph::new(lines), body);
             f.render_widget(
                 Paragraph::new(Line::from(Span::styled(
-                    " ↑↓ · v/Esc back to beats ",
+                    " ↑↓ · g regenerate · v/Esc back to beats ",
                     Style::default().add_modifier(Modifier::DIM),
                 ))),
                 footer,
