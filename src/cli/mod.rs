@@ -1179,6 +1179,16 @@ pub enum FactsCommand {
         #[arg(long)]
         json: bool,
     },
+    /// 1.3.8 — internal-consistency check: flag fact pairs that
+    /// contradict each other *within* the Facts book (distinct from
+    /// `scan`, which checks prose against facts). Writes
+    /// `<project>/.inkhaven/facts_check.json`; surfaced in `inkhaven edit`.
+    Check {
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Dump the last scan's findings (re-runs nothing).
     List {
         /// Emit the report as JSON.

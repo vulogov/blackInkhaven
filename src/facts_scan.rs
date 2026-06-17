@@ -79,6 +79,94 @@ impl FactScanReport {
     }
 }
 
+/// 1.3.8 WORLD-1 — one pair of facts that contradict each other *within*
+/// the Facts book (internal consistency), distinct from `FactFinding`
+/// (prose-vs-fact).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FactConflict {
+    /// The first fact (briefly quoted).
+    pub a: String,
+    /// The second fact it contradicts.
+    pub b: String,
+    /// One-line explanation of the contradiction.
+    pub detail: String,
+}
+
+/// The internal-consistency report — every self-contradicting fact pair.
+/// Serialised to `<project>/.inkhaven/facts_check.json`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FactCheckReport {
+    #[serde(default)]
+    pub version: String,
+    /// Hash of the fact texts the check ran over — lets the Editorial Pass
+    /// note staleness when the Facts book has moved since.
+    #[serde(default)]
+    pub content_hash: u64,
+    pub conflicts: Vec<FactConflict>,
+}
+
+impl FactCheckReport {
+    pub fn sidecar_path(project_root: &Path) -> PathBuf {
+        project_root.join(".inkhaven").join("facts_check.json")
+    }
+    pub fn load(project_root: &Path) -> std::io::Result<Self> {
+        let path = Self::sidecar_path(project_root);
+        match std::fs::read_to_string(&path) {
+            Ok(s) => serde_json::from_str(&s)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(e),
+        }
+    }
+    pub fn save(&self, project_root: &Path) -> std::io::Result<()> {
+        let path = Self::sidecar_path(project_root);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let body = serde_json::to_vec_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        crate::io_atomic::write(&path, &body)
+    }
+    /// Hash the fact texts (order-independent) so a moved Facts book
+    /// invalidates the cache.
+    pub fn compute_hash(facts: &[String]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut sorted: Vec<&String> = facts.iter().collect();
+        sorted.sort();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for f in sorted {
+            f.hash(&mut h);
+        }
+        h.finish()
+    }
+}
+
+/// Parse the internal-consistency reply — one conflict per line,
+/// `fact A | fact B | why`. Tolerant of list markers / a "none" sentinel /
+/// blank + malformed lines. Pure.
+pub fn parse_conflicts(raw: &str) -> Vec<FactConflict> {
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim().trim_start_matches(['-', '*', '•', ' ']).trim();
+        if line.is_empty() || !line.contains('|') {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(3, '|').map(str::trim).collect();
+        if parts.len() == 3 && !parts[0].is_empty() && !parts[1].is_empty() {
+            // skip a header row
+            if parts[0].eq_ignore_ascii_case("fact a") || parts[0].eq_ignore_ascii_case("fact") {
+                continue;
+            }
+            out.push(FactConflict {
+                a: parts[0].to_string(),
+                b: parts[1].to_string(),
+                detail: parts[2].to_string(),
+            });
+        }
+    }
+    out
+}
+
 /// Parse the AI response — one contradiction per line in the
 /// pipe-delimited form `claim | fact | detail`.  Tolerant: blank +
 /// malformed lines, list markers, a header row, and a "none" sentinel
@@ -199,6 +287,29 @@ pub fn near_duplicate(a: &BTreeSet<String>, b: &BTreeSet<String>, threshold: f64
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_conflicts_reads_pairs_and_skips_noise() {
+        let raw = "Here are the contradictions:\n\
+                   fact A | fact B | why   (this header is skipped)\n\
+                   - winters are mild | the harbor freezes each January | a mild winter can't freeze a harbor\n\
+                   the capital is inland | the capital is a port | can't be both\n\
+                   none of the rest conflict";
+        let c = parse_conflicts(raw);
+        assert_eq!(c.len(), 2, "two real pairs; header + prose lines skipped");
+        assert_eq!(c[0].a, "winters are mild");
+        assert_eq!(c[0].b, "the harbor freezes each January");
+        assert!(c[0].detail.contains("freeze"));
+        assert_eq!(c[1].a, "the capital is inland");
+    }
+
+    #[test]
+    fn check_hash_is_order_independent() {
+        let a = FactCheckReport::compute_hash(&["x".into(), "y".into()]);
+        let b = FactCheckReport::compute_hash(&["y".into(), "x".into()]);
+        assert_eq!(a, b, "reordering facts doesn't change the hash");
+        assert_ne!(a, FactCheckReport::compute_hash(&["x".into(), "z".into()]));
+    }
 
     #[test]
     fn parses_pipe_delimited_findings() {

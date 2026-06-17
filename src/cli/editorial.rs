@@ -36,9 +36,13 @@ pub fn collect(
     scan.extend(doctor_scan::scan_project(project, Some(ScanClass::UnresolvedTension))?.findings);
     raw.extend(scan.iter().filter_map(editorial::from_scan_finding));
 
-    // 2) Facts-scan contradictions (sidecar; empty if never run).
+    // 2) Facts-scan contradictions + internal-consistency conflicts
+    //    (sidecars; empty if never run).
     if let Ok(facts) = crate::facts_scan::FactScanReport::load(&layout.root) {
         raw.extend(facts.findings.iter().map(editorial::from_fact_finding));
+    }
+    if let Ok(check) = crate::facts_scan::FactCheckReport::load(&layout.root) {
+        raw.extend(check.conflicts.iter().map(editorial::from_fact_conflict));
     }
 
     // 3) `plan check` structural findings (skipped when there's no plan).

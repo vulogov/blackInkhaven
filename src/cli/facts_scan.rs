@@ -58,6 +58,7 @@ nothing.";
 pub fn run(project: &Path, cmd: FactsCommand) -> Result<()> {
     match cmd {
         FactsCommand::Scan { provider, json } => scan(project, provider.as_deref(), json),
+        FactsCommand::Check { provider, json } => check(project, provider.as_deref(), json),
         FactsCommand::List { json } => list(project, json),
         FactsCommand::Extract {
             provider,
@@ -577,6 +578,110 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+const CHECK_SYSTEM_PROMPT: &str = "You are a continuity editor. Below is a story world's \
+established facts. Find pairs of facts that CONTRADICT each other — two statements that cannot \
+both be true (a climate fact vs a geography fact, an age vs a timeline, a distance vs a travel \
+time, …). Output ONE contradiction per line as `fact A | fact B | why`, quoting each fact \
+briefly. If nothing contradicts, output nothing. No preamble, no header row.";
+
+/// 1.3.8 WORLD-1 P0 — internal-consistency check: flag fact pairs that
+/// contradict each other *within* the Facts book.
+fn check(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    let language = if cfg.language.trim().is_empty() {
+        "English".to_string()
+    } else {
+        cfg.language.clone()
+    };
+
+    let Some(facts_id) = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_FACTS)
+        })
+        .map(|n| n.id)
+    else {
+        return Err(Error::Store("facts check: this project has no Facts book".into()));
+    };
+    let facts_ids: HashSet<Uuid> = hierarchy.collect_subtree(facts_id).into_iter().collect();
+    let facts = all_facts(&store, &hierarchy, &facts_ids);
+    if facts.len() < 2 {
+        return Err(Error::Store(
+            "facts check: need at least two facts to compare — `inkhaven facts extract` first".into(),
+        ));
+    }
+
+    let ai = AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    eprintln!(
+        "inkhaven facts check · language: {language} · model: {model} · {} fact(s)",
+        facts.len()
+    );
+
+    let prompt = format!(
+        "Language: {language}.\n--- ESTABLISHED FACTS ---\n{}\n--- END ---",
+        facts.join("\n")
+    );
+    let raw = run_blocking(&ai, model, CHECK_SYSTEM_PROMPT, &prompt)?;
+    let report = crate::facts_scan::FactCheckReport {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        content_hash: crate::facts_scan::FactCheckReport::compute_hash(&facts),
+        conflicts: crate::facts_scan::parse_conflicts(&raw),
+    };
+    report
+        .save(&layout.root)
+        .map_err(|e| Error::Store(format!("facts_check save: {e}")))?;
+
+    if json {
+        let rendered = serde_json::to_string_pretty(&report)
+            .map_err(|e| Error::Store(format!("facts_check JSON: {e}")))?;
+        println!("{rendered}");
+    } else if report.conflicts.is_empty() {
+        println!(
+            "facts check: ✓ no internal contradictions across {} fact(s)",
+            facts.len()
+        );
+    } else {
+        println!(
+            "facts check: {} internal contradiction(s):",
+            report.conflicts.len()
+        );
+        for c in &report.conflicts {
+            println!("  ⚠ {}  ⟷  {}\n      ↳ {}", c.a, c.b, c.detail);
+        }
+        eprintln!("  (also surfaced in `inkhaven edit`)");
+    }
+    Ok(())
+}
+
+/// Every Facts-book entry as a `- title: body` line, sorted for a stable
+/// prompt + cache hash.
+fn all_facts(store: &Store, hierarchy: &Hierarchy, facts_ids: &HashSet<Uuid>) -> Vec<String> {
+    let mut out = Vec::new();
+    for id in facts_ids {
+        let Some(node) = hierarchy.get(*id) else {
+            continue;
+        };
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        if let Ok(Some(bytes)) = store.get_content(*id) {
+            let body = crate::audiobook::typst_to_plain(&String::from_utf8_lossy(&bytes));
+            let body = body.trim();
+            if !body.is_empty() {
+                out.push(format!("- {}: {}", node.title.trim(), body));
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 /// Semantically retrieve the Facts-book entries relevant to `prose`, as
