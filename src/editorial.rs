@@ -6,7 +6,10 @@
 //! scans / reads the sidecars and feeds them here, and the TUI cockpit
 //! walks the result. No detection lives here — only normalization.
 
-use serde::Serialize;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::cli::doctor_scan::{ScanFinding, ScanSeverity};
@@ -104,6 +107,15 @@ pub struct EditorialFinding {
     pub autofixable: bool,
 }
 
+impl EditorialFinding {
+    /// A stable fingerprint for defer / skip — category + message. It moves
+    /// when the prose moves (the message changes), so a deferred finding
+    /// resurfaces only once it's genuinely renewed.
+    pub fn fingerprint(&self) -> String {
+        format!("{}\u{1}{}", self.category, self.message)
+    }
+}
+
 /// The ranked worklist + per-severity counts.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct EditorialReport {
@@ -111,6 +123,53 @@ pub struct EditorialReport {
     pub errors: usize,
     pub warnings: usize,
     pub infos: usize,
+    /// How many findings were hidden by the defer sidecar (0 when shown).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub deferred: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+/// The set of deferred (dismissed) finding fingerprints — sidecar
+/// `.inkhaven/editorial-dismissed.json`. A finding the author has judged
+/// (not-now or accepted) stays hidden until its prose changes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Dismissed {
+    #[serde(default)]
+    pub fingerprints: BTreeSet<String>,
+}
+
+impl Dismissed {
+    pub fn sidecar_path(root: &Path) -> PathBuf {
+        root.join(".inkhaven").join("editorial-dismissed.json")
+    }
+    pub fn load(root: &Path) -> Self {
+        std::fs::read_to_string(Self::sidecar_path(root))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+    pub fn save(&self, root: &Path) -> std::io::Result<()> {
+        let path = Self::sidecar_path(root);
+        if let Some(p) = path.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        let body = serde_json::to_vec_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        crate::io_atomic::write(&path, &body)
+    }
+    /// Add a fingerprint to the deferred set (load → insert → save).
+    pub fn defer(root: &Path, fingerprint: &str) -> std::io::Result<()> {
+        let mut d = Self::load(root);
+        d.fingerprints.insert(fingerprint.to_string());
+        d.save(root)
+    }
+    /// Forget every deferral.
+    pub fn clear(root: &Path) -> std::io::Result<()> {
+        Self::default().save(root)
+    }
 }
 
 // ── per-source mappers (pure) ───────────────────────────────────────
@@ -208,6 +267,7 @@ pub fn aggregate(mut findings: Vec<EditorialFinding>) -> EditorialReport {
         errors,
         warnings,
         infos,
+        deferred: 0,
     }
 }
 
@@ -257,6 +317,27 @@ mod tests {
         assert_eq!(from_plan_warning("tension: `Midpoint` is flat").category, "tension");
         assert_eq!(from_plan_warning("sequel: `X` never decides").category, "scene");
         assert_eq!(from_plan_warning("thread: `Y` references unknown").category, "thread");
+    }
+
+    #[test]
+    fn defer_sidecar_round_trips_and_fingerprint_is_stable() {
+        let f = EditorialFinding {
+            category: "echo".into(),
+            severity: Severity::Info,
+            location: Location::default(),
+            message: "echo: `about` ×5".into(),
+            hint: None,
+            source: "doctor",
+            autofixable: false,
+        };
+        let fp = f.fingerprint();
+        assert_eq!(fp, f.clone().fingerprint(), "fingerprint is stable");
+        let dir = tempfile::tempdir().unwrap();
+        Dismissed::defer(dir.path(), &fp).unwrap();
+        let d = Dismissed::load(dir.path());
+        assert!(d.fingerprints.contains(&fp));
+        Dismissed::clear(dir.path()).unwrap();
+        assert!(Dismissed::load(dir.path()).fingerprints.is_empty());
     }
 
     #[test]

@@ -646,6 +646,10 @@ pub enum Command {
         /// user book).
         #[arg(long)]
         book_name: Option<String>,
+        /// Include findings you've deferred in the cockpit (hidden by
+        /// default).
+        #[arg(long)]
+        show_deferred: bool,
     },
 
     /// 1.2.18+ R.1 — export a user book to a
@@ -2603,8 +2607,9 @@ impl Cli {
             Command::Plan(cmd) => {
                 plan::run(&project, cmd).map_err(Into::into)
             }
-            Command::Edit { json, only, book_name } => {
-                editorial::run(&project, json, only, book_name.as_deref()).map_err(Into::into)
+            Command::Edit { json, only, book_name, show_deferred } => {
+                editorial::run(&project, json, only, book_name.as_deref(), show_deferred)
+                    .map_err(Into::into)
             }
             Command::BenchLoad { query, iterations } => {
                 bench_load::run(&project, &query, iterations)

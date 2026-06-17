@@ -4612,7 +4612,7 @@ impl super::super::App {
         }
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ · [ ] filter · ⏎ jump (→ = jumpable) · Esc ",
+                " ↑↓ · [ ] filter · ⏎ jump · s skip · d defer · D clear · Esc ",
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,
