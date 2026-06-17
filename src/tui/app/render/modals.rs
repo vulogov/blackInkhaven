@@ -4574,11 +4574,18 @@ impl super::super::App {
                 Severity::Warn => Color::Yellow,
                 Severity::Info => Color::DarkGray,
             };
-            let jump = if fnd.location.paragraph.is_some() { '→' } else { ' ' };
+            // ✎ = AI-rewritable (press f); → = jumpable only.
+            let mark = if fnd.rewritable() {
+                '✎'
+            } else if fnd.location.paragraph.is_some() {
+                '→'
+            } else {
+                ' '
+            };
             let row = format!(
                 "{} {} {:<10} {:<12} {}",
                 fnd.severity.icon(),
-                jump,
+                mark,
                 truncate_to(&fnd.category, 10),
                 truncate_to(&fnd.location.label(), 12),
                 truncate_to(&fnd.message, msg_w),
@@ -4612,7 +4619,7 @@ impl super::super::App {
         }
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ · [ ] filter · ⏎ jump · s skip · d defer · D clear · Esc ",
+                " ↑↓ · [ ] filter · ⏎ jump · ✎ f fix · s skip · d defer · Esc ",
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,
