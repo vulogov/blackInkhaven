@@ -826,6 +826,18 @@ fn scene_cmd(project: &Path, cmd: PlanSceneCommand) -> Result<()> {
             status,
         } => scene_set(&store, &h, &title, chapter, goal, conflict, disaster, status),
         PlanSceneCommand::Remove { title } => scene_remove(&store, &h, &title),
+        PlanSceneCommand::Scaffold {
+            chapter,
+            all,
+            book_name,
+            provider,
+        } => scene_scaffold(
+            project,
+            chapter.as_deref(),
+            all,
+            book_name.as_deref(),
+            provider.as_deref(),
+        ),
     }
 }
 
@@ -1039,6 +1051,148 @@ fn scene_list(store: &Store, h: &Hierarchy) -> Result<()> {
             println!("  ⚠ {w}");
         }
     }
+    Ok(())
+}
+
+/// First `max` chars (char-safe).
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    s.chars().take(max).collect()
+}
+
+/// Create or overwrite a scene card titled `title` for `chapter` (slug).
+fn upsert_scene_card(
+    store: &Store,
+    cfg: &Config,
+    title: &str,
+    chapter: &str,
+    goal: &str,
+    conflict: &str,
+    disaster: &str,
+) -> Result<()> {
+    let h = Hierarchy::load(store).map_err(|e| Error::Store(e.to_string()))?;
+    if let Some(mut node) = find_scene(&h, title) {
+        let body = store
+            .get_content(node.id)
+            .map_err(|e| Error::Store(e.to_string()))?
+            .unwrap_or_default();
+        let mut scene = crate::planning::parse_scene(&String::from_utf8_lossy(&body))
+            .unwrap_or_else(|| crate::planning::Scene {
+                chapter: chapter.to_string(),
+                title: title.to_string(),
+                goal: String::new(),
+                conflict: String::new(),
+                disaster: String::new(),
+                status: "planned".to_string(),
+            });
+        scene.chapter = chapter.to_string();
+        scene.goal = goal.to_string();
+        scene.conflict = conflict.to_string();
+        scene.disaster = disaster.to_string();
+        return save_scene(store, &mut node, &scene);
+    }
+    let parent = ensure_scenes_chapter(store, cfg, &h)?;
+    let h = Hierarchy::load(store).map_err(|e| Error::Store(e.to_string()))?;
+    let parent = h.get(parent.id).cloned().unwrap_or(parent);
+    let mut node = store
+        .create_node(cfg, &h, NodeKind::Paragraph, title, Some(&parent), None, InsertPosition::End)
+        .map_err(|e| Error::Store(e.to_string()))?;
+    let scene = crate::planning::Scene {
+        chapter: chapter.to_string(),
+        title: title.to_string(),
+        goal: goal.to_string(),
+        conflict: conflict.to_string(),
+        disaster: disaster.to_string(),
+        status: "planned".to_string(),
+    };
+    save_scene(store, &mut node, &scene)
+}
+
+/// AI-scaffold a scene card (goal/conflict/disaster) from a chapter's prose.
+fn scene_scaffold(
+    project: &Path,
+    chapter: Option<&str>,
+    all: bool,
+    book_name: Option<&str>,
+    provider: Option<&str>,
+) -> Result<()> {
+    if chapter.is_none() && !all {
+        return Err(Error::Store(
+            "plan scene scaffold: pass --chapter <slug> or --all".into(),
+        ));
+    }
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    let book = super::resolve_user_book(&h, book_name, "plan scene scaffold")
+        .map_err(Error::Store)?
+        .clone();
+
+    // Chapters already carrying a card — skipped by `--all`.
+    let carded: std::collections::HashSet<String> = load_scenes(&store, &h)
+        .into_iter()
+        .map(|(_, s)| s.chapter)
+        .collect();
+    let targets: Vec<crate::store::node::Node> = h
+        .children_of(Some(book.id))
+        .into_iter()
+        .filter(|ch| ch.kind == NodeKind::Chapter)
+        .filter(|ch| match chapter {
+            Some(slug) => ch.slug.eq_ignore_ascii_case(slug),
+            None => all && !carded.contains(&ch.slug),
+        })
+        .cloned()
+        .collect();
+    if targets.is_empty() {
+        if let Some(slug) = chapter {
+            return Err(Error::Store(format!(
+                "plan scene scaffold: no chapter `{slug}` in `{}`",
+                book.title
+            )));
+        }
+        println!("plan scene scaffold: every chapter already has a card");
+        return Ok(());
+    }
+
+    let system = resolve_plan_prompt(
+        &store,
+        &h,
+        &layout,
+        crate::planning::SCENE_SCAFFOLD_SLUG,
+        crate::planning::scene_scaffold_system_prompt(),
+    );
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+
+    let mut done = 0usize;
+    for ch in &targets {
+        let prose: String = crate::cli::book_walk::chapter_paragraphs_raw(&layout, &h, ch.id)
+            .iter()
+            .map(|p| crate::audiobook::typst_to_plain(p))
+            .filter(|p| !crate::manuscript::is_scene_break(p))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        if prose.trim().is_empty() {
+            eprintln!("  skip `{}` — no prose yet", ch.slug);
+            continue;
+        }
+        let prompt = crate::planning::scene_scaffold_user_prompt(&ch.title, &truncate_chars(&prose, 6000));
+        eprintln!("inkhaven plan scene scaffold · {} · model: {model}", ch.slug);
+        let raw = run_blocking(&ai, model, &system, &prompt)?;
+        let (goal, conflict, disaster) = crate::planning::parse_scene_scaffold(&raw);
+        if goal.is_empty() && conflict.is_empty() && disaster.is_empty() {
+            eprintln!("  `{}`: nothing parseable in the reply — skipped", ch.slug);
+            continue;
+        }
+        upsert_scene_card(&store, &cfg, &ch.title, &ch.slug, &goal, &conflict, &disaster)?;
+        println!("plan scene scaffold: `{}` → {}", ch.title, ch.slug);
+        done += 1;
+    }
+    eprintln!("plan scene scaffold: {done} card(s) written");
     Ok(())
 }
 

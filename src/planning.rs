@@ -593,6 +593,43 @@ pub fn analyze_scenes(scenes: &[Scene]) -> (Vec<SceneStatus>, Vec<String>) {
     (statuses, warnings)
 }
 
+// ── scene scaffold (P0 1.3.5, AI card from the prose) ───────────────
+
+/// The prompt-override slug (Prompts book / `prompts.hjson`) for the
+/// scene-card scaffolder.
+pub const SCENE_SCAFFOLD_SLUG: &str = "plan-scene-scaffold";
+
+pub fn scene_scaffold_system_prompt() -> &'static str {
+    "You are a story editor. Read ONE chapter and identify its dominant scene as goal / conflict / \
+disaster (Swain's scene model): what the POV character actively wants in this chapter, what stands \
+in the way, and the disaster the scene turns on — how it ends worse or changed. Use ONLY the text; \
+never invent. Output EXACTLY three lines, one sentence each, concrete and specific:\n\
+goal: <…>\nconflict: <…>\ndisaster: <…>\nNo preamble, no extra lines."
+}
+
+/// Compose the scene-scaffold user prompt from the chapter title + prose.
+pub fn scene_scaffold_user_prompt(chapter_title: &str, prose: &str) -> String {
+    format!("CHAPTER: {chapter_title}\n\n{prose}")
+}
+
+/// Parse the scaffolder's reply into `(goal, conflict, disaster)`. Tolerant
+/// of list markers, bold, and case; missing fields come back empty. Pure.
+pub fn parse_scene_scaffold(raw: &str) -> (String, String, String) {
+    let field = |key: &str| -> String {
+        for line in raw.lines() {
+            let l = line.trim().trim_start_matches(['-', '*', '•', '#', ' ']).trim();
+            let l = l.trim_start_matches("**").trim();
+            if let Some((k, v)) = l.split_once(':') {
+                if k.trim().trim_matches('*').eq_ignore_ascii_case(key) {
+                    return v.trim().trim_matches('*').trim().to_string();
+                }
+            }
+        }
+        String::new()
+    };
+    (field("goal"), field("conflict"), field("disaster"))
+}
+
 // ── tension curve (P0 1.3.4, deterministic) ─────────────────────────
 
 /// A narrative obligation carrying `weight` tension while it is *open*
@@ -1166,6 +1203,26 @@ mod tests {
         assert_eq!(back.goal, "get the manifest");
         assert_eq!(back.disaster, "he names her father as the debtor");
         assert_eq!(back.status, "drafted");
+    }
+
+    #[test]
+    fn parse_scene_scaffold_extracts_the_triple() {
+        let raw = "goal: reach the harbourmaster before dusk\n\
+                   conflict: the ledger is missing a page\n\
+                   disaster: the page names her father";
+        let (g, c, d) = parse_scene_scaffold(raw);
+        assert_eq!(g, "reach the harbourmaster before dusk");
+        assert_eq!(c, "the ledger is missing a page");
+        assert_eq!(d, "the page names her father");
+        // tolerant of list markers / bold / preamble / case
+        let messy = "Here is the scene:\n- **Goal:** find the will\n* Conflict: the room is locked\nDISASTER: it's already gone";
+        let (g2, c2, d2) = parse_scene_scaffold(messy);
+        assert_eq!(g2, "find the will");
+        assert_eq!(c2, "the room is locked");
+        assert_eq!(d2, "it's already gone");
+        // a missing field comes back empty
+        let (_, _, d3) = parse_scene_scaffold("goal: x\nconflict: y");
+        assert!(d3.is_empty());
     }
 
     #[test]

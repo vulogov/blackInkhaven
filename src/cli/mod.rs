@@ -1306,6 +1306,20 @@ pub enum PlanSceneCommand {
     },
     /// Remove a scene card (matched by title).
     Remove { title: String },
+    /// AI-scaffold a scene card from a chapter's prose (goal / conflict /
+    /// disaster). Pass `--chapter <slug>` for one, or `--all` for every
+    /// chapter without a card yet.
+    Scaffold {
+        #[arg(long)]
+        chapter: Option<String>,
+        /// Scaffold every chapter that has no card yet.
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        book_name: Option<String>,
+        #[arg(long)]
+        provider: Option<String>,
+    },
 }
 
 /// 1.3.1+ SUBMISSION-1 P3 — `inkhaven submission …` (singular): the AI
