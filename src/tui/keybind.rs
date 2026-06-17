@@ -122,6 +122,8 @@ pub enum Action {
     OpenSubmissionGen,
     #[serde(rename = "view.open_plan_outline")]
     OpenPlanOutline,
+    #[serde(rename = "view.open_editorial_pass")]
+    OpenEditorialPass,
     #[serde(rename = "global.open_llm_picker")]
     OpenLlmPicker,
     #[serde(rename = "global.toggle_sound")]
@@ -831,6 +833,7 @@ impl Action {
             Action::OpenSubmissionsTracker => "submissions".into(),
             Action::OpenSubmissionGen => "submission gen".into(),
             Action::OpenPlanOutline => "structure".into(),
+            Action::OpenEditorialPass => "editorial".into(),
             Action::OpenLlmPicker => "LLM".into(),
             Action::ToggleSound => "sound".into(),
             Action::ScheduleAssemble => "assemble".into(),
@@ -1002,6 +1005,8 @@ impl Action {
                 "Pick a submission-package generator (query letter / synopsis / comps / logline) and stream it into the AI pane from the current book's cached digest. Build the digest first with `inkhaven submission digest`. Mnemonic: Q for Query.".into(),
             Action::OpenPlanOutline =>
                 "Open the structure outline (the `inkhaven plan check` report) for the current book: each beat's target vs actual position + drift, act word-share pacing, and coverage gaps, as a position bar. Scaffold a framework first with `inkhaven plan init`; map a beat by setting `mapped_chapter` in its Planning-book paragraph. `↑↓` navigate, `Esc` closes. Mnemonic: K for sKeleton.".into(),
+            Action::OpenEditorialPass =>
+                "Open the Editorial Pass (1.3.6) — one ranked revision worklist unifying every detector (the editorial `doctor` classes + `plan check`'s structural findings + the Facts-scan sidecar), errors first. `↑↓` navigate, `[` / `]` cycle the category filter, `Enter` jumps to the finding's location in the editor, `Esc` closes. Same as `inkhaven edit`; deterministic (reads computed sidecars, no live AI). Mnemonic: R for Revision pass.".into(),
             Action::OpenLlmPicker =>
                 "Switch the active LLM provider — choice is persisted to inkhaven.hjson.".into(),
             Action::ToggleSound =>
@@ -1468,6 +1473,7 @@ impl KeyBindings {
                 // 1.3.2 PLANNING-1 P2 — structure outline (K for sKeleton;
                 // o/b/p taken). The `plan check` report as a position bar.
                 entry("Shift+k", Action::OpenPlanOutline, Scope::Any),
+                entry("Shift+r", Action::OpenEditorialPass, Scope::Any),
                 // 1.2.8+ — hidden-character report on the open paragraph.
                 entry("h", Action::ViewHiddenCharsReport, Scope::Any),
                 // 1.2.8+ — show cursor breadcrumb on the status bar.

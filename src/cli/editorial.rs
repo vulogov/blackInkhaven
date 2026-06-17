@@ -13,13 +13,17 @@ use crate::cli::doctor_scan::{self, ScanClass};
 use crate::editorial::{self, EditorialFinding};
 use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
+use crate::store::hierarchy::Hierarchy;
+use crate::store::node::NodeKind;
 
-pub fn run(
+/// Run every editorial detector, read the sidecars, fold in `plan check`,
+/// resolve locations against the hierarchy, and aggregate — the shared
+/// entry point for the CLI and the TUI cockpit. `only` filters by category.
+pub fn collect(
     project: &Path,
-    json: bool,
-    only: Option<Vec<String>>,
     book_name: Option<&str>,
-) -> Result<()> {
+    only: Option<&[String]>,
+) -> Result<editorial::EditorialReport> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
 
@@ -40,11 +44,64 @@ pub fn run(
     raw.extend(plan_warnings(project, book_name).into_iter().map(|w| editorial::from_plan_warning(&w)));
 
     // --only category filter.
-    if let Some(cats) = &only {
+    if let Some(cats) = only {
         raw.retain(|f| cats.iter().any(|c| c.trim().eq_ignore_ascii_case(&f.category)));
     }
 
-    let report = editorial::aggregate(raw);
+    // Resolve each finding's location to a paragraph node id where it can,
+    // so the cockpit can jump (P1). Best-effort; needs the hierarchy.
+    if let Ok(cfg) = crate::config::Config::load_layered(&layout.config_path()) {
+        if let Ok(store) = crate::store::Store::open(layout.clone(), &cfg) {
+            if let Ok(h) = Hierarchy::load(&store) {
+                resolve_locations(&mut raw, &h, &layout);
+            }
+        }
+    }
+
+    Ok(editorial::aggregate(raw))
+}
+
+/// Fill `location.paragraph` (the jump target) from a `path` (file match) or
+/// a `chapter` title (→ chapter node → its first paragraph). Best-effort.
+fn resolve_locations(findings: &mut [EditorialFinding], h: &Hierarchy, layout: &ProjectLayout) {
+    for f in findings.iter_mut() {
+        if f.location.paragraph.is_some() {
+            continue;
+        }
+        // by file path → the owning paragraph
+        if let Some(p) = &f.location.path {
+            let rel = Path::new(p)
+                .strip_prefix(&layout.root)
+                .map(|r| r.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| p.clone());
+            if let Some(node) = h.iter().find(|n| n.file.as_deref() == Some(rel.as_str())) {
+                f.location.paragraph = Some(node.id);
+                continue;
+            }
+        }
+        // by chapter title/slug → the chapter's first paragraph
+        if let Some(ch) = &f.location.chapter {
+            if let Some(chapter) = h.iter().find(|n| {
+                n.kind == NodeKind::Chapter
+                    && (n.title.eq_ignore_ascii_case(ch) || n.slug.eq_ignore_ascii_case(ch))
+            }) {
+                if let Some(first) = h.collect_subtree(chapter.id).into_iter().find(|id| {
+                    h.get(*id).map(|n| n.kind == NodeKind::Paragraph).unwrap_or(false)
+                }) {
+                    f.location.paragraph = Some(first);
+                }
+            }
+        }
+    }
+}
+
+pub fn run(
+    project: &Path,
+    json: bool,
+    only: Option<Vec<String>>,
+    book_name: Option<&str>,
+) -> Result<()> {
+    let report = collect(project, book_name, only.as_deref())?;
 
     if json {
         let out = serde_json::to_string_pretty(&report)
