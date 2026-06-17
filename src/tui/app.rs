@@ -9104,17 +9104,24 @@ impl App {
     /// 1.3.6 EDITORIAL-1 P1 — open the Editorial Pass cockpit: the ranked
     /// revision worklist (`inkhaven edit`), walkable + jump-to-location.
     fn open_editorial_pass(&mut self) {
-        match crate::cli::editorial::collect(&self.layout.root, None, None) {
+        match crate::cli::editorial::collect(&self.layout.root, None, None, false) {
             Ok(report) => {
                 let n = report.findings.len();
+                let deferred = report.deferred;
                 self.modal = Modal::EditorialPass {
                     findings: report.findings,
                     cursor: 0,
                     scroll: 0,
                     filter: None,
                 };
-                self.status =
-                    format!("Editorial Pass · {n} finding(s) · ↑↓ · [ ] filter · ⏎ jump · Esc");
+                let note = if deferred > 0 {
+                    format!(" ({deferred} deferred)")
+                } else {
+                    String::new()
+                };
+                self.status = format!(
+                    "Editorial Pass · {n} finding(s){note} · ↑↓ · [ ] filter · ⏎ jump · s skip · d defer · Esc"
+                );
             }
             Err(e) => self.status = format!("edit: {e}"),
         }
@@ -9123,7 +9130,7 @@ impl App {
     fn editorial_pass_handle_key(&mut self, key: KeyEvent) -> bool {
         // Read everything into locals, then drop the borrow before calling
         // self methods (the established modal pattern).
-        let (filtered_len, cursor, cats, target, has_jump) = {
+        let (filtered_len, cursor, cats, target, has_jump, sel_fp) = {
             let Modal::EditorialPass { findings, cursor, filter, .. } = &self.modal else {
                 return false;
             };
@@ -9141,6 +9148,7 @@ impl App {
                 cats,
                 sel.and_then(|f| f.location.paragraph),
                 sel.map(|f| f.location.paragraph.is_some()).unwrap_or(false),
+                sel.map(|f| f.fingerprint()),
             )
         };
         match key.code {
@@ -9156,6 +9164,19 @@ impl App {
             }
             KeyCode::Char('[') => self.cycle_editorial_filter(&cats, false),
             KeyCode::Char(']') => self.cycle_editorial_filter(&cats, true),
+            // skip (session) / defer (persist) the selected finding.
+            KeyCode::Char('s') => {
+                if let Some(fp) = sel_fp {
+                    self.editorial_remove(&fp, false);
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(fp) = sel_fp {
+                    self.editorial_remove(&fp, true);
+                }
+            }
+            // clear all deferrals + reload.
+            KeyCode::Char('D') => self.editorial_clear_deferred(),
             KeyCode::Enter => match (has_jump, target) {
                 (true, Some(pid)) => {
                     self.modal = Modal::None;
@@ -9169,6 +9190,40 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// Remove the selected finding from the live worklist — `persist` also
+    /// adds it to the defer sidecar so it won't resurface until the prose
+    /// changes. (1.3.6 P2)
+    fn editorial_remove(&mut self, fingerprint: &str, persist: bool) {
+        if persist {
+            if let Err(e) = crate::editorial::Dismissed::defer(&self.layout.root, fingerprint) {
+                self.status = format!("edit: defer failed: {e}");
+                return;
+            }
+        }
+        if let Modal::EditorialPass { findings, cursor, filter, .. } = &mut self.modal {
+            findings.retain(|f| f.fingerprint() != fingerprint);
+            let flen = findings
+                .iter()
+                .filter(|f| filter.as_deref().is_none_or(|c| f.category == c))
+                .count();
+            *cursor = (*cursor).min(flen.saturating_sub(1));
+        }
+        self.status = if persist {
+            "deferred — won't resurface until the prose changes".into()
+        } else {
+            "skipped (this session)".into()
+        };
+    }
+
+    fn editorial_clear_deferred(&mut self) {
+        if let Err(e) = crate::editorial::Dismissed::clear(&self.layout.root) {
+            self.status = format!("edit: {e}");
+            return;
+        }
+        self.open_editorial_pass();
+        self.status = "cleared all deferrals — re-scanned".into();
     }
 
     fn set_editorial_cursor(&mut self, v: usize) {

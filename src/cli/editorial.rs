@@ -23,6 +23,7 @@ pub fn collect(
     project: &Path,
     book_name: Option<&str>,
     only: Option<&[String]>,
+    include_deferred: bool,
 ) -> Result<editorial::EditorialReport> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
@@ -58,7 +59,19 @@ pub fn collect(
         }
     }
 
-    Ok(editorial::aggregate(raw))
+    // Hide deferred findings (P2) unless explicitly included.
+    let before = raw.len();
+    if !include_deferred {
+        let dismissed = editorial::Dismissed::load(&layout.root);
+        if !dismissed.fingerprints.is_empty() {
+            raw.retain(|f| !dismissed.fingerprints.contains(&f.fingerprint()));
+        }
+    }
+    let deferred = before - raw.len();
+
+    let mut report = editorial::aggregate(raw);
+    report.deferred = deferred;
+    Ok(report)
 }
 
 /// Fill `location.paragraph` (the jump target) from a `path` (file match) or
@@ -100,8 +113,9 @@ pub fn run(
     json: bool,
     only: Option<Vec<String>>,
     book_name: Option<&str>,
+    show_deferred: bool,
 ) -> Result<()> {
-    let report = collect(project, book_name, only.as_deref())?;
+    let report = collect(project, book_name, only.as_deref(), show_deferred)?;
 
     if json {
         let out = serde_json::to_string_pretty(&report)
@@ -161,7 +175,13 @@ fn render(report: &editorial::EditorialReport) {
             println!("                                    ↳ {hint}");
         }
     }
-    println!("\n  jump to any of these in the cockpit: `Ctrl+V Shift+E` (1.3.6 P1)");
+    if report.deferred > 0 {
+        println!(
+            "\n  ({} deferred, hidden — `--show-deferred` to include, or clear in the cockpit)",
+            report.deferred
+        );
+    }
+    println!("\n  walk + jump + defer in the cockpit: `Ctrl+V Shift+R` (1.3.6)");
 }
 
 fn truncate(s: &str, max: usize) -> String {
