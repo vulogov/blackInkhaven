@@ -174,6 +174,15 @@ voice, the language, and any Typst markup verbatim.",
             label: "show-not-tell",
             scope: FixScope::Span,
         },
+        "filter" => FixSpec {
+            slug: "editorial-fix-filter",
+            builtin: "You remove filter words — intensifier crutches and hedges that weaken prose \
+(\"just\", \"really\", \"very\", \"seemed\", \"felt\"). If cutting the marked word leaves the \
+sentence intact, return the phrase without it; otherwise replace it with sharper wording — while \
+preserving the meaning, the author's voice, the language, and any Typst markup verbatim.",
+            label: "de-filter",
+            scope: FixScope::Span,
+        },
         _ => return None,
     })
 }
@@ -468,6 +477,7 @@ mod tests {
         assert_eq!(fix_spec("echo").unwrap().scope, FixScope::Paragraph);
         assert_eq!(fix_spec("pacing").unwrap().scope, FixScope::Paragraph);
         assert_eq!(fix_spec("show-tell").unwrap().scope, FixScope::Span);
+        assert_eq!(fix_spec("filter").unwrap().scope, FixScope::Span);
     }
 
     #[test]
