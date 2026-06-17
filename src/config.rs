@@ -14,6 +14,8 @@ pub struct Config {
     #[serde(default)]
     pub editor: EditorConfig,
     #[serde(default)]
+    pub facts: FactsConfig,
+    #[serde(default)]
     pub keys: KeyBindings,
     #[serde(default)]
     pub hierarchy: HierarchyConfig,
@@ -161,6 +163,7 @@ impl Default for Config {
             embeddings: EmbeddingsConfig::default(),
             llm: LlmConfig::default(),
             editor: EditorConfig::default(),
+            facts: FactsConfig::default(),
             keys: KeyBindings::default(),
             hierarchy: HierarchyConfig::default(),
             theme: ThemeConfig::default(),
@@ -1813,6 +1816,44 @@ pub struct StyleWarningsConfig {
     /// the master toggle.  See `ShowDontTellConfig`
     /// for per-language knobs.
     pub show_dont_tell: ShowDontTellConfig,
+    /// 1.3.8 — anachronism detector. Set `anachronism.year` to the
+    /// manuscript's setting; terms in the built-in lexicon (plus your
+    /// `terms` additions) whose earliest plausible year is *after* the
+    /// setting are flagged ("wristwatch" in an 1840 novel). Off until a
+    /// year is set.
+    #[serde(default)]
+    pub anachronism: AnachronismConfig,
+}
+
+/// 1.3.8 `facts:` block — series-shared canon. `shared_path` points at a
+/// directory of plain-text fact files (one fact per file: the file stem is
+/// the title, its contents the body), shared by every book of a series so
+/// the canon lives in one place. Layered into `facts check` (local wins on
+/// a title clash); copied in with `inkhaven facts import`.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct FactsConfig {
+    pub shared_path: Option<String>,
+}
+
+/// `editor.style_warnings.anachronism.*` — the setting year + any
+/// project-specific period-bound terms (each with its earliest plausible
+/// year). Empty / no year → the detector is off.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct AnachronismConfig {
+    /// The manuscript's setting year (e.g. `1840`). `None` disables the
+    /// detector.
+    pub year: Option<i32>,
+    /// Project additions / overrides to the built-in lexicon.
+    pub terms: Vec<AnachronismTerm>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AnachronismTerm {
+    pub term: String,
+    /// The earliest year the term/concept plausibly appears.
+    pub earliest: i32,
 }
 
 /// 1.2.9+ — `editor.style_warnings.show_dont_tell.*`
@@ -2377,6 +2418,7 @@ impl Default for StyleWarningsConfig {
             filter_words: FilterWordsConfig::default(),
             repeated_phrases: RepeatedPhrasesConfig::default(),
             show_dont_tell: ShowDontTellConfig::default(),
+            anachronism: AnachronismConfig::default(),
         }
     }
 }

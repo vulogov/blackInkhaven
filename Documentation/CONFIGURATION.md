@@ -244,6 +244,8 @@ editor: {
 | `style_warnings.show_dont_tell.enabled` | bool | `true` (if master is on) | 1.2.9+. Show-don't-tell detector — flags telling prose patterns: copula + emotion adjective (`was angry`), manner-of-emotion adverbs (`angrily`), and direct cognition verbs (`realised`, `knew`). Underline colour `style_warning_show_dont_tell_fg` (default `#94e2d5`). Pair with the AI-driven scan via `Ctrl+B Shift+T` for deeper analysis. |
 | `style_warnings.show_dont_tell.use_stemming` | bool | `true` | 1.2.9+. Stem entries with the project's Snowball algorithm so inflections collapse — `seemed`/`seems`/`seeming` all match a single `seem` linking-verb entry. Disable for exact-form matching. |
 | `style_warnings.show_dont_tell.<lang>_linking_verbs` / `*_emotion_adjectives` / `*_manner_adverbs` / `*_cognition_verbs` | array | `[]` | 1.2.9+. Per-language word lists across the four detector categories. Empty = use built-in default for that language; non-empty = REPLACE the default. **1.2.11+** — curated built-ins now ship for all five supported languages (English / Russian / French / German / Spanish), not just English. Per-genre tuning belongs in `inkhaven show-dont-tell bootstrap <lang>` which uses the configured LLM as a one-shot vocabulary curator. |
+| `style_warnings.anachronism.year` | int | _unset_ | 1.3.8+. The manuscript's setting year. **The anachronism detector is OFF until this is set** — a contemporary novel sees nothing. Once set, terms whose earliest plausible year postdates it are flagged (a "wristwatch" in an 1840 novel). Findings surface in `inkhaven edit` (category `anachronism`), jumpable to the exact word. |
+| `style_warnings.anachronism.terms` | array | `[]` | 1.3.8+. User additions to the ~35-term built-in lexicon — each `{ term: "spyglass-cam", earliest: 1990 }`. **Additive**, not a replacement: your terms extend the built-ins (telephone 1876, scientist 1834, okay 1839, …). Matched case-insensitively against whole words. |
 | `pov_chip_enabled` | bool | `true` | 1.2.9+. Status-bar POV / character chip. When on, the status bar shows the most-mentioned character in the currently-open paragraph (the heuristic POV character) plus up to three additional named characters present. Driven by the project's existing `characters` lexicon — no separate tagging required. `Ctrl+B Shift+P` toggles in-session without rewriting HJSON. Chip colours are themed via `theme.pov_chip_bg` / `theme.pov_chip_fg` (1.2.10+ — explicit RGB defaults `#8b1d88` background / `#ffffff` foreground; tune these if the contrast doesn't read in your terminal palette). |
 | `prompt_language_mode` | string | `"book_defined"` | 1.2.11+. Prompt-language resolver mode. `"book_defined"` uses the top-level `language` field for every AI prompt resolution; `"paragraph_detected"` runs `whatlang` on the live paragraph body and falls back to `book_defined` for paragraphs shorter than `prompt_language_detection_min_chars`. `Ctrl+B Shift+N` cycles a session-local override on top of this knob; the AI pane title bar's `lang=` chip reflects the active mode. See `Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md` for the resolver design. |
 | `prompt_language_detection_min_chars` | int | `50` | 1.2.11+. Minimum non-whitespace character count required before `prompt_language_mode = "paragraph_detected"` will attempt whatlang detection. Below this threshold, the resolver silently uses the book language — whatlang is unreliable on short text. Edit-time cache invalidation (on save, on AI-diff accept, on external file change) also uses this value as the length-delta threshold. |
@@ -1700,3 +1702,36 @@ output: {
   imposed_pdf_config: "default"
 }
 ```
+
+## 1.3.8 — world-consistency blocks
+
+### `facts` (1.3.8+) — series-shared canon
+
+A top-level `facts` block lets a multi-book series share one canon. Point
+`shared_path` at a directory of plain-text fact files — one file per fact,
+the filename (de-slugified) is the title and the contents are the body:
+
+```hjson
+facts: {
+  shared_path: "../series-bible/facts"
+}
+```
+
+- `inkhaven facts check` then layers the shared canon under each book's
+  local Facts book (**local wins** on a title clash) before running the
+  internal-consistency AI pass — so a contradiction between this book's
+  prose and the series bible is caught.
+- `inkhaven facts import` copies a snapshot of `shared_path` into *this*
+  book's Facts book as paragraphs (idempotent — skips ones already
+  present; dry-run by default, `--yes` to write, `--from <dir>` to override
+  the configured path).
+
+Unset = no series sharing; each book's Facts book stands alone.
+
+### `editor.style_warnings.anachronism` (1.3.8+) — era checking
+
+See the `style_warnings.anachronism.year` / `.terms` rows in the [`editor`
+table](#editor) above. Set the manuscript's setting `year` to arm the
+detector; terms postdating it (built-in ~35-term lexicon plus your
+additive `terms`) are flagged in `inkhaven edit` under category
+`anachronism`.
