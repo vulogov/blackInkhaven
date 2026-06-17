@@ -21,44 +21,45 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.3 — The Planning Board, fluent & complete
+## Latest release · 1.3.4 — The Planning Board: the shape of the rise and fall
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.3.md`](Documentation/RELEASE_NOTES/1.3.3.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.4.md`](Documentation/RELEASE_NOTES/1.3.4.md)
 
-1.3.2 opened the Planning Board to **diagnose** a draft's structure. 1.3.3
-makes it **fluent** (map beats without hand-editing HJSON) and **complete**
-(a from-nothing plan-first mode), then folds in four print-pipeline
-follow-ups. Pure-Rust, **no new dependencies**.
+1.3.2 diagnosed where each beat **lands**; 1.3.3 made mapping **fluent**.
+1.3.4 adds the two things the Board still couldn't see — **intensity** (a
+tension curve) and **scene-level craft** (scene cards). Pure-Rust, **no new
+dependencies**.
 
-### Fluent — map without leaving the view
+### The tension curve
 
-`inkhaven plan check` now prints the **chapter** and **thread** slugs to
-use, and `inkhaven plan map <beat> --chapter <slug> [--threads …]` writes
-the mapping in for you (no HJSON editing). The **`Ctrl+V Shift+K`** outline
-is interactive: `↑↓` browse, **`m`** maps a beat from a chapter picker,
-**`s`** cycles its status, **`a`** streams the AI analysis (then **`L`**
-files it into the Planning book). See the drift, map the beat, watch it snap
-to target — all in one view.
+A midpoint can land at exactly 50% and still be flat. Every beat now carries
+an **expected** intensity (the framework's authored dramatic shape — calm
+open, peak in the back half) measured against an **actual** intensity
+derived deterministically from *open narrative-obligation density*: the
+`inkhaven tension scan` ledger (questions raised but unpaid) plus your open
+Threads. Where expected is high but actual is low, the beat is flagged
+**flat** — the objective version of "the middle sags." `plan check` prints a
+TENSION section; the **`Ctrl+V Shift+K`** outline draws expected/actual
+`▁`..`█` sparklines aligned under the position bars.
 
-### Complete — start from nothing
+### Scene cards
 
-`inkhaven plan scaffold --premise "<logline>"` writes a concrete intention
-into every framework beat; `--chapters` materializes back-linked chapter
-shells (opt-in, guarded against clobbering a draft). Skeleton first, prose
-later.
+A finer grain than beats: each scene's **goal → conflict → disaster**
+(Swain). `inkhaven plan scene add|list|set|remove` manages the cards; the
+deterministic check is the **turn** — a scene that states a goal but has no
+disaster doesn't turn, flagged in `plan check`, the `v` scene board, and
+`plan analyze`.
 
-### PDF-1 follow-ups
+### Interactive outline, finished
 
-Three new imposition profiles (`us_perfect` / `us_chapbook` / `thick`),
-aspect-preserving cover art (`--fit cover|fit|stretch`) with spine-text
-auto-fit, grayscale for JPEG (DCTDecode) photos, and preflight
-press-hazard reporting — overprint, transparency, and spot colours.
+The `Ctrl+V Shift+K` outline gains the deferred **`t`** (link threads),
+**`Enter`** (open the mapped chapter), and **`v`** (scene board) keys,
+joining `m` / `s` / `a` from 1.3.3.
 
 ### Test stats
 
-Tests 1294 → 1307, **zero new dependencies**. Two tutorials refreshed
-([65, hand-binding](Documentation/Tutorials/65-hand-binding.md) and
-[67, the Planning Board](Documentation/Tutorials/67-planning-board.md)).
+Tests 1307 → 1316, **zero new dependencies**. One tutorial refreshed
+([67, the Planning Board](Documentation/Tutorials/67-planning-board.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

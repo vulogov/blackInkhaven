@@ -4146,6 +4146,10 @@ impl super::super::App {
             report,
             cursor,
             picking,
+            thread_pick,
+            scenes,
+            scene_view,
+            scene_cursor,
             ..
         } = &self.modal
         else {
@@ -4153,7 +4157,9 @@ impl super::super::App {
         };
         let drift = 0.10_f32;
         let bar_w = 20usize;
-        let rows = report.beats.len() + report.acts.len() + 5;
+        // beats + pacing + the tension overlay (header + 2 sparklines +
+        // numerals) + chrome.
+        let rows = report.beats.len() + report.acts.len() + 10;
         let width = area.width.saturating_sub(6).clamp(54, 88);
         let height = (rows as u16 + 4).min(area.height.saturating_sub(2));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
@@ -4184,6 +4190,69 @@ impl super::super::App {
             height: 1,
         };
 
+        // Scene board sub-mode (`v`): the Planning book's scene cards
+        // grouped by chapter, the selected one's goal/conflict/disaster
+        // spine expanded.
+        if *scene_view {
+            let mut lines: Vec<Line> = vec![Line::from(Span::styled(
+                format!("SCENES ({} card{})", scenes.len(), if scenes.len() == 1 { "" } else { "s" }),
+                Style::default().add_modifier(Modifier::DIM),
+            ))];
+            let mut last_ch = String::new();
+            let mk = |b: bool| if b { '●' } else { '○' };
+            for (i, s) in scenes.iter().enumerate() {
+                if s.chapter != last_ch {
+                    last_ch = s.chapter.clone();
+                    lines.push(Line::from(Span::styled(
+                        if s.chapter.is_empty() { "(no chapter)".to_string() } else { s.chapter.clone() },
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
+                let goal = !s.goal.trim().is_empty();
+                let conflict = !s.conflict.trim().is_empty();
+                let disaster = !s.disaster.trim().is_empty();
+                let no_turn = goal && !disaster;
+                let sel = i == *scene_cursor;
+                let head = format!(
+                    "{} {:<26} G{} C{} D{}{}",
+                    if no_turn { '⚠' } else { '·' },
+                    truncate_to(&s.title, 26),
+                    mk(goal),
+                    mk(conflict),
+                    mk(disaster),
+                    if no_turn { "  no turn" } else { "" },
+                );
+                let color = if no_turn { Color::Yellow } else { Color::Green };
+                let line = Line::from(Span::styled(head, Style::default().fg(color)));
+                lines.push(if sel {
+                    line.style(Style::default().fg(color).add_modifier(Modifier::REVERSED))
+                } else {
+                    line
+                });
+                if sel {
+                    for (label, text) in
+                        [("goal", &s.goal), ("conflict", &s.conflict), ("disaster", &s.disaster)]
+                    {
+                        if !text.trim().is_empty() {
+                            lines.push(Line::from(Span::styled(
+                                format!("     {label}: {}", text.trim()),
+                                Style::default().add_modifier(Modifier::ITALIC),
+                            )));
+                        }
+                    }
+                }
+            }
+            f.render_widget(Paragraph::new(lines), body);
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    " ↑↓ · v/Esc back to beats ",
+                    Style::default().add_modifier(Modifier::DIM),
+                ))),
+                footer,
+            );
+            return;
+        }
+
         // Chapter-picker sub-mode (after `m`): list the chapters to map the
         // selected beat to.
         if let Some(pc) = picking {
@@ -4213,6 +4282,46 @@ impl super::super::App {
             f.render_widget(
                 Paragraph::new(Line::from(Span::styled(
                     " ↑↓ pick · Enter map · Esc cancel ",
+                    Style::default().add_modifier(Modifier::DIM),
+                ))),
+                footer,
+            );
+            return;
+        }
+
+        // Thread-link sub-mode (after `t`): toggle the cursor beat's threads.
+        if let Some(tc) = thread_pick {
+            let beat = report.beats.get(*cursor);
+            let current: &[String] = beat.map(|b| b.threads.as_slice()).unwrap_or(&[]);
+            let name = beat.map(|b| b.beat.clone()).unwrap_or_default();
+            let mut lines: Vec<Line> = vec![
+                Line::from(Span::styled(
+                    format!("Link threads to “{name}”:"),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+            ];
+            for (i, t) in report.available_threads.iter().enumerate() {
+                let on = current.iter().any(|c| c == t);
+                let row = format!(
+                    "{} [{}] {}",
+                    if i == *tc { "▶" } else { " " },
+                    if on { "x" } else { " " },
+                    t
+                );
+                let line = Line::from(row);
+                lines.push(if i == *tc {
+                    line.style(Style::default().add_modifier(Modifier::REVERSED))
+                } else if on {
+                    line.style(Style::default().fg(Color::Green))
+                } else {
+                    line
+                });
+            }
+            f.render_widget(Paragraph::new(lines), body);
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    " ↑↓ pick · Space toggle · Enter/Esc done ",
                     Style::default().add_modifier(Modifier::DIM),
                 ))),
                 footer,
@@ -4301,6 +4410,59 @@ impl super::super::App {
             )));
         }
 
+        // TENSION overlay (1.3.4 P1): the framework's expected intensity vs
+        // the actual open-obligation density, as block-ramp sparklines
+        // aligned under the position bars above (so a beat's `●` sits over
+        // its actual-tension cell).
+        if let Some(t) = &report.tension {
+            // Expected control points: (target position, expected) per beat
+            // — the framework's intended shape, independent of mapping.
+            let mut exp_pts: Vec<(f32, f32)> = report
+                .beats
+                .iter()
+                .zip(&t.points)
+                .map(|(b, p)| (b.target_position, p.expected))
+                .collect();
+            exp_pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "TENSION (intensity · aligned to the bars above)",
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+            lines.push(Line::from(Span::styled(
+                format!("{:<25}{}", "  expected", crate::planning::intensity_sparkline(&exp_pts, bar_w)),
+                Style::default().fg(Color::Cyan),
+            )));
+            if t.has_actual {
+                lines.push(Line::from(Span::styled(
+                    format!("{:<25}{}", "  actual", crate::planning::intensity_sparkline(&t.series, bar_w)),
+                    Style::default().fg(Color::Green),
+                )));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    "  actual: run `inkhaven tension scan` (or link threads) to chart it".to_string(),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            // The selected beat's tension numerals + flat flag.
+            if let Some(p) = t.points.get(*cursor) {
+                if let Some(a) = p.actual {
+                    let flat = p.gap.map(|g| p.expected >= 0.5 && g > 0.25).unwrap_or(false);
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "  ~ {}: actual {:.0}% vs expected {:.0}%{}",
+                            truncate_to(&p.beat, 20),
+                            a * 100.0,
+                            p.expected * 100.0,
+                            if flat { "  ⚠ flat" } else { "" }
+                        ),
+                        Style::default().fg(if flat { Color::Yellow } else { Color::Green }),
+                    )));
+                }
+            }
+        }
+
         // The selected beat's intention (filled by `plan scaffold`).
         if let Some(b) = report.beats.get(*cursor) {
             if !b.notes.trim().is_empty() {
@@ -4313,7 +4475,7 @@ impl super::super::App {
         }
 
         f.render_widget(Paragraph::new(lines), body);
-        let keys = "↑↓ · m map · s status · a analyze · Esc";
+        let keys = "↑↓ · m map · t threads · s status · v scenes · a analyze · ⏎ open · Esc";
         let summary = if report.warnings.is_empty() {
             format!(" ✓ no findings · {keys} ")
         } else {

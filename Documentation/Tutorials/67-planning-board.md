@@ -154,11 +154,40 @@ The outline is **interactive** — you map without leaving it:
 - `↑↓` browse beats; the selected beat's intention shows under the bar.
 - **`m`** opens a chapter picker and maps the selected beat to your choice
   (the write-back from §2, no HJSON editing).
-- **`s`** cycles the beat's status (planned → drafted → revised → done).
+- **`t`** links threads to the beat (Space toggles each on/off).
+- **`s`** cycles the beat's status (planned → drafted → done).
+- **`Enter`** opens the beat's mapped chapter in the editor.
 - **`a`** streams the AI analysis into the AI pane (§5).
+- **`v`** flips to the scene board (§7).
 
 So the tighten-the-structure loop — *see the drift, map the beat, watch it
 snap to target* — never leaves this one view.
+
+### The tension curve
+
+Beneath the position bars the outline draws two block-ramp sparklines
+(`▁`..`█`), aligned to the same axis so a beat's `●` sits over its cell:
+
+- **expected** — the framework's intended *intensity* (calm open, peak in
+  the back half — the canonical rise and fall).
+- **actual** — how much narrative tension your draft actually carries at
+  each point, measured deterministically as **open-obligation density**:
+  every question you raise but haven't paid off keeps the line high.
+
+Where expected is high but actual is low, the beat is flagged **flat** — the
+objective version of "the midpoint sags." `plan check` prints the same
+read as a TENSION section:
+
+```
+TENSION (expected vs actual intensity)
+  Midpoint            expected  65%  actual  33% ⚠ flat
+  Climax              expected 100%  actual 100%
+```
+
+The actual line needs the open/resolved data: run **`inkhaven tension
+scan`** (the 1.2.19 AI pass that tags each chapter's introduced/resolved
+tensions) and/or link your **Threads** so the Board can see which arcs are
+open where. Without either, you still get the expected shape, with a hint.
 
 ## 5. Ask the AI
 
@@ -203,6 +232,35 @@ That's opt-in and guarded — it refuses to run once the book has chapters,
 so it can't clobber a draft. The result is a mapped beat sheet and a
 chapter scaffold you can start writing into, with `plan check` already
 green because every beat has a home.
+
+## 7. Scene cards (a finer grain than beats)
+
+Beats are chapter-scale. **Scene cards** work one level down — each scene's
+**goal → conflict → disaster** (Swain's model: the POV character wants
+something, something opposes it, and the scene *turns* on a disaster that
+ends it worse or changed):
+
+```sh
+inkhaven plan scene add "Mara confronts the harbourmaster" \
+    --chapter the-wharf \
+    --goal "get the manifest" \
+    --conflict "he stonewalls" \
+    --disaster "he names her father as the debtor"
+
+inkhaven plan scene list      # grouped by chapter, with G/C/D marks
+```
+
+The deterministic check is the **turn**: a scene that states a goal but has
+no disaster *doesn't turn* — it's flagged `⚠ no turn`, in `plan scene list`
+and folded into `plan check`. `plan scene set <title> --disaster "…"` fills
+it in; `plan scene remove <title>` drops the card. Cards live under a
+**Scenes** chapter in the Planning book.
+
+In the outline (`Ctrl+V Shift+K`), press **`v`** for the scene board: every
+card grouped by chapter with its G/C/D marks and turn flag, the selected one
+expanding its full goal/conflict/disaster spine. And `plan analyze` reads
+the cards too — it'll name the scenes that don't turn and suggest the turn
+they're missing.
 
 ## Threads do narrative work
 
