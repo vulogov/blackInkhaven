@@ -1470,11 +1470,65 @@ impl super::App {
         // Flag this inference as "auto-apply via
         // diff review" — pump_inference watches
         // for the transition to Done and opens
-        // the diff modal automatically.
-        self.pending_rhythm_rewrite = true;
+        // the diff modal automatically. The annotation is the snapshot
+        // label the apply step preserves the pre-rewrite state under.
+        self.pending_rewrite_diff = Some("Sentence rhythm rewrite".into());
         self.change_focus(Focus::Ai);
         self.status = format!(
             "rhythm rewrite ({language}): streaming from {provider} · diff review on completion…"
+        );
+    }
+
+    /// 1.3.7 EDITORIAL-2 P0 — stream a category-specific AI rewrite of the
+    /// **open** paragraph (the cockpit's `f` opens the finding's paragraph
+    /// first), routed through the same diff→snapshot review as the rhythm
+    /// rewrite. `category` selects the recipe ([`crate::editorial::fix_spec`]).
+    pub(super) fn start_editorial_rewrite(&mut self, category: &str) {
+        let Some(spec) = crate::editorial::fix_spec(category) else {
+            self.status = "editorial fix: this finding isn't AI-rewritable".into();
+            return;
+        };
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "editorial fix: no paragraph open".into();
+            return;
+        };
+        let body = doc.textarea.lines().join("\n");
+        if body.trim().is_empty() {
+            self.status = "editorial fix: paragraph is empty".into();
+            return;
+        }
+        let title = doc.title.clone();
+        let want_lang = self.active_prompt_language();
+        let template = self
+            .resolve_prompt(spec.slug, &want_lang, || spec.builtin.to_string())
+            .template;
+        let rendered = self.render_template(&template);
+        let prompt_text =
+            format!("{rendered}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──");
+        let (model, _env) = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                self.status = format!("editorial fix: {e}");
+                return;
+            }
+        };
+        let model = model.to_string();
+        let provider = self.ai.default_provider.clone();
+        let rx = spawn_chat_stream(self.ai.client.clone(), model.clone(), None, Vec::new(), prompt_text);
+        self.inference = Some(Inference {
+            provider: provider.clone(),
+            model,
+            response: String::new(),
+            status: InferenceStatus::Streaming,
+            rx,
+            started_at: std::time::Instant::now(),
+        });
+        self.pending_chat_user_msg = None;
+        self.pending_rewrite_diff = Some(format!("Editorial: {}", spec.label));
+        self.change_focus(Focus::Ai);
+        self.status = format!(
+            "editorial fix ({}): streaming from {provider} · diff review on completion…",
+            spec.label
         );
     }
 

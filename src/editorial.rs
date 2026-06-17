@@ -114,6 +114,53 @@ impl EditorialFinding {
     pub fn fingerprint(&self) -> String {
         format!("{}\u{1}{}", self.category, self.message)
     }
+
+    /// Whether the cockpit's `f` can stream an AI rewrite for this finding:
+    /// its category is paragraph-rewritable AND it resolved to a paragraph.
+    pub fn rewritable(&self) -> bool {
+        self.location.paragraph.is_some() && fix_spec(&self.category).is_some()
+    }
+}
+
+/// The AI-rewrite recipe for a rewritable editorial category — the
+/// prompt-override slug (Prompts book / `prompts.hjson`), the built-in
+/// instruction, and a short label for the snapshot annotation + status. The
+/// judgment categories (structure / continuity / fact / scene) return None:
+/// there's no honest single-paragraph rewrite for "the midpoint sags".
+#[derive(Debug, Clone, Copy)]
+pub struct FixSpec {
+    pub slug: &'static str,
+    pub builtin: &'static str,
+    pub label: &'static str,
+}
+
+pub fn fix_spec(category: &str) -> Option<FixSpec> {
+    Some(match category {
+        "echo" => FixSpec {
+            slug: "editorial-fix-echo",
+            builtin: "Rewrite the paragraph below to remove the distracting word repetition — vary \
+the over-used word with synonyms or restructuring — while preserving the meaning, the author's \
+voice, the paragraph's language, and any Typst markup verbatim. Output ONLY the rewritten \
+paragraph, no preamble.",
+            label: "de-echo",
+        },
+        "pacing" => FixSpec {
+            slug: "editorial-fix-pacing",
+            builtin: "Tighten the overlong paragraph below: cut padding, break or trim run-on \
+sentences, sharpen the prose — while preserving the meaning, the author's voice, the paragraph's \
+language, and any Typst markup verbatim. Output ONLY the rewritten paragraph, no preamble.",
+            label: "tighten",
+        },
+        "show-tell" => FixSpec {
+            slug: "editorial-fix-show-tell",
+            builtin: "Rewrite the paragraph below to SHOW rather than tell: replace the named \
+emotion / abstract summary with concrete action, sensation, and detail — while preserving the \
+meaning, the author's voice, the paragraph's language, and any Typst markup verbatim. Output ONLY \
+the rewritten paragraph, no preamble.",
+            label: "show-not-tell",
+        },
+        _ => return None,
+    })
 }
 
 /// The ranked worklist + per-severity counts.
@@ -338,6 +385,26 @@ mod tests {
         assert!(d.fingerprints.contains(&fp));
         Dismissed::clear(dir.path()).unwrap();
         assert!(Dismissed::load(dir.path()).fingerprints.is_empty());
+    }
+
+    #[test]
+    fn rewritable_needs_a_paragraph_and_a_fixable_category() {
+        let mk = |cat: &str, para: bool| EditorialFinding {
+            category: cat.into(),
+            severity: Severity::Info,
+            location: Location {
+                paragraph: para.then(uuid::Uuid::now_v7),
+                ..Default::default()
+            },
+            message: "m".into(),
+            hint: None,
+            source: "doctor",
+            autofixable: false,
+        };
+        assert!(mk("echo", true).rewritable(), "echo + a paragraph → rewritable");
+        assert!(!mk("echo", false).rewritable(), "no paragraph → not rewritable");
+        assert!(!mk("structure", true).rewritable(), "judgment category → not rewritable");
+        assert!(fix_spec("echo").is_some() && fix_spec("structure").is_none());
     }
 
     #[test]
