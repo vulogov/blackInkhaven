@@ -48,7 +48,7 @@ fn extract(project: &Path, provider: Option<&str>) -> Result<()> {
     let hierarchy =
         Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
     let never = std::sync::atomic::AtomicBool::new(false);
-    let bible = extract_with(&hierarchy, &cfg, &layout, provider, &never, &|s| eprintln!("{s}"))?;
+    let bible = extract_with(&store, &hierarchy, &cfg, &layout, provider, &never, &|s| eprintln!("{s}"))?;
     println!(
         "continuity: extracted {} fact(s) for {} character(s) → {}",
         bible.facts.len(),
@@ -65,6 +65,7 @@ fn extract(project: &Path, provider: Option<&str>) -> Result<()> {
 /// stays in the manuscript's language. Returns the bible it saved.
 #[allow(clippy::too_many_arguments)]
 pub fn extract_with(
+    store: &Store,
     hierarchy: &Hierarchy,
     cfg: &Config,
     layout: &ProjectLayout,
@@ -92,7 +93,8 @@ pub fn extract_with(
         "continuity extract · language: {language} · model: {model} · {} chapter(s)",
         chapters.len(),
     ));
-    let (system, fell_back) = super::world_prompts::world_system_prompt("continuity", &language);
+    let (system, fell_back) =
+        super::world_prompts::resolve(store, hierarchy, layout, "continuity", &language);
     if fell_back {
         progress(&format!("continuity extract: no {language} prompt — using English"));
     }
@@ -115,7 +117,7 @@ pub fn extract_with(
         }
         progress(&format!("continuity [{}/{}] {chapter_title}", idx + 1, chapters.len()));
         let prompt = build_extract_prompt(&language, chapter_title, &plain);
-        let raw = run_blocking(&ai, model, system, &prompt)?;
+        let raw = run_blocking(&ai, model, &system, &prompt)?;
         bible.facts.extend(parse_extraction(&raw, chapter_title));
     }
 

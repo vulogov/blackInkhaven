@@ -548,7 +548,8 @@ pub fn scan_with(
 
     let ai = AiClient::from_config(&cfg.llm)?;
     let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
-    let (system, fell_back) = super::world_prompts::world_system_prompt("facts-scan", &language);
+    let (system, fell_back) =
+        super::world_prompts::resolve(store, hierarchy, layout, "facts-scan", &language);
     if fell_back {
         progress(&format!("facts scan: no {language} prompt — using English"));
     }
@@ -579,7 +580,7 @@ pub fn scan_with(
             continue;
         }
         let prompt = build_check_prompt(&language, chapter_title, &plain, &facts_ctx);
-        let raw = run_blocking(&ai, model, system, &prompt)?;
+        let raw = run_blocking(&ai, model, &system, &prompt)?;
         let findings = parse_findings(&raw, chapter_title, idx);
         progress(&format!(
             "facts [{}/{}] {chapter_title} → {} contradiction(s)",
@@ -692,11 +693,12 @@ pub fn check_with(
 explanation in {language}.\n--- ESTABLISHED FACTS ---\n{}\n--- END ---",
         facts.join("\n")
     );
-    let (system, fell_back) = super::world_prompts::world_system_prompt("facts-check", &language);
+    let (system, fell_back) =
+        super::world_prompts::resolve(store, hierarchy, layout, "facts-check", &language);
     if fell_back {
         progress(&format!("facts check: no {language} prompt — using English"));
     }
-    let raw = run_blocking(&ai, model, system, &prompt)?;
+    let raw = run_blocking(&ai, model, &system, &prompt)?;
     let report = crate::facts_scan::FactCheckReport {
         version: env!("CARGO_PKG_VERSION").to_string(),
         content_hash: crate::facts_scan::FactCheckReport::compute_hash(&facts),
