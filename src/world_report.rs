@@ -13,9 +13,11 @@
 //! The impure assembly (reading the sidecars + walking the store) lives in
 //! `cli::world`; everything here is testable without I/O.
 
+use std::collections::HashSet;
+
 use serde::Serialize;
 
-use crate::drift::DriftConflict;
+use crate::drift::{DriftConflict, EntityKind};
 use crate::facts_scan::FactConflict;
 
 /// A consolidated world-consistency snapshot. The conflict lists carry detail
@@ -37,6 +39,23 @@ pub struct WorldReport {
     pub artefacts: usize,
     /// Deterministic anachronism flags (terms postdating the setting year).
     pub anachronisms: usize,
+    /// Entities defined in the books but never named in the prose — a dangling
+    /// cast member / place / artefact. Coverage, not counted as an issue.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub undescribed: Vec<String>,
+}
+
+/// Entities (name + kind) whose lowercased name never appears in `appeared`
+/// (the set of lowercased entity names found in the prose). Pure.
+pub fn undescribed_of(
+    lexicon: &[(String, EntityKind)],
+    appeared: &HashSet<String>,
+) -> Vec<(String, EntityKind)> {
+    lexicon
+        .iter()
+        .filter(|(name, _)| !appeared.contains(&name.to_lowercase()))
+        .cloned()
+        .collect()
 }
 
 impl WorldReport {
@@ -121,10 +140,25 @@ mod tests {
             places: 3,
             artefacts: 1,
             anachronisms: 1,
+            undescribed: vec!["Joss".into()], // coverage, not an issue
         };
         // 1 fact conflict + 2 prose + 2 drift + 1 anachronism = 6
         assert_eq!(r.issue_count(), 6);
         assert_eq!(r.entity_total(), 9);
+    }
+
+    #[test]
+    fn undescribed_of_returns_unnamed_entities() {
+        let lexicon = vec![
+            ("Mara".to_string(), EntityKind::Character),
+            ("Joss".to_string(), EntityKind::Character),
+            ("The Goose".to_string(), EntityKind::Place),
+        ];
+        // only "mara" and "the goose" appear in the prose
+        let appeared: HashSet<String> = ["mara", "the goose"].iter().map(|s| s.to_string()).collect();
+        let out = undescribed_of(&lexicon, &appeared);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "Joss", "Joss is defined but never named in prose");
     }
 
     #[test]

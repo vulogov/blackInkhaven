@@ -147,6 +147,13 @@ fn chapter_index(h: &Hierarchy) -> HashMap<Uuid, (usize, String)> {
 
 /// Every entity name + kind across the three entity books.
 fn entities(h: &Hierarchy) -> Vec<(String, EntityKind)> {
+    entities_with_nodes(h).into_iter().map(|(n, k, _)| (n, k)).collect()
+}
+
+/// As `entities`, but also the entity's own bible paragraph id (its
+/// definition) — the jump target for an undescribed-entity finding. Shared
+/// with the world report (undescribed-entity coverage).
+pub fn entities_with_nodes(h: &Hierarchy) -> Vec<(String, EntityKind, Uuid)> {
     let books = [
         (SYSTEM_TAG_CHARACTERS, EntityKind::Character),
         (SYSTEM_TAG_PLACES, EntityKind::Place),
@@ -163,7 +170,7 @@ fn entities(h: &Hierarchy) -> Vec<(String, EntityKind)> {
         for id in h.collect_subtree(book.id) {
             if let Some(n) = h.get(id) {
                 if n.kind == NodeKind::Paragraph && !n.title.trim().is_empty() {
-                    out.push((n.title.trim().to_string(), kind));
+                    out.push((n.title.trim().to_string(), kind, n.id));
                 }
             }
         }
