@@ -196,7 +196,7 @@ impl MetaOverview {
 /// with the close (must be just "```", not "```rust" — we
 /// don't want to grab the wrong fence in a body that opens
 /// multiple code blocks).
-fn extract_hjson_block(body: &str) -> Option<&str> {
+pub(crate) fn extract_hjson_block(body: &str) -> Option<&str> {
     // Index by byte offsets so we can return a `&str`
     // slice without re-allocating.
     let mut cursor = 0usize;
