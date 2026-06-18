@@ -680,6 +680,10 @@ pub enum Command {
         /// LLM provider override for `--deep`.
         #[arg(long)]
         provider: Option<String>,
+        /// Focus on one entity: its drift conflicts, description trail,
+        /// tracked attributes, and whether it's named in the prose.
+        #[arg(long)]
+        entity: Option<String>,
     },
 
     /// 1.2.18+ R.1 — export a user book to a
@@ -1279,6 +1283,9 @@ pub enum DriftCommand {
         /// Emit the descriptions as JSON.
         #[arg(long)]
         json: bool,
+        /// Scope to entities whose name contains this (case-insensitive).
+        #[arg(long)]
+        entity: Option<String>,
     },
     /// Run the AI drift pass: for each entity, judge whether its descriptions
     /// across the manuscript contradict each other, and write the
@@ -2627,8 +2634,9 @@ impl Cli {
                 facts_scan::run(&project, cmd).map_err(Into::into)
             }
             Command::Drift(cmd) => drift::run(&project, cmd).map_err(Into::into),
-            Command::World { json, deep, provider } => {
-                world::run(&project, json, deep, provider.as_deref()).map_err(Into::into)
+            Command::World { json, deep, provider, entity } => {
+                world::run(&project, json, deep, provider.as_deref(), entity.as_deref())
+                    .map_err(Into::into)
             }
             Command::Pdf(cmd) => pdf::run(cmd, &project).map_err(Into::into),
             Command::Replace {

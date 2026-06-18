@@ -41,7 +41,7 @@ are consistent, output nothing.";
 
 pub fn run(project: &Path, cmd: DriftCommand) -> Result<()> {
     match cmd {
-        DriftCommand::List { json } => list(project, json),
+        DriftCommand::List { json, entity } => list(project, json, entity.as_deref()),
         DriftCommand::Scan { provider, json } => scan(project, provider.as_deref(), json),
     }
 }
@@ -223,8 +223,12 @@ fn retrieve(
     assemble_descriptions(entity, &candidates, cfg.max_snippets, coref_ids)
 }
 
-fn list(project: &Path, json: bool) -> Result<()> {
-    let descs = collect_entity_descriptions(project)?;
+fn list(project: &Path, json: bool, entity: Option<&str>) -> Result<()> {
+    let mut descs = collect_entity_descriptions(project)?;
+    if let Some(name) = entity {
+        let needle = name.to_lowercase();
+        descs.retain(|d| d.entity.to_lowercase().contains(&needle));
+    }
     if json {
         let payload = serde_json::to_string_pretty(&descs)
             .map_err(|e| Error::Store(format!("serialize drift descriptions: {e}")))?;
