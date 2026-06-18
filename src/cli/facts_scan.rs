@@ -32,18 +32,9 @@ use crate::store::node::NodeKind;
 
 use super::FactsCommand;
 
-const SYSTEM_PROMPT: &str = "You are a fact-checker for a work of fiction. You receive a set \
-of ESTABLISHED facts about the story's world (climate, geography, seasons, distances, \
-chronology) and a chapter's prose. Flag any claim in the prose that CONTRADICTS an \
-established fact — snow in a region established as tropical, a three-day ride done overnight, \
-an event dated before something it must follow. Treat the established facts as ground truth; \
-do not flag things merely unmentioned by them. Output ONE contradiction per line in the exact \
-form:\n\
-  claim | fact | detail\n\
-where `claim` is the exact contradicting phrase from the prose, `fact` is the established \
-fact it violates, and `detail` is a one-line explanation. Output nothing else — no preamble, \
-no commentary, no markdown. If the chapter contradicts no facts, output nothing.";
-
+// The facts-scan + facts-check system prompts now live, localized, in
+// `cli::world_prompts` (1.3.13). `EXTRACT_SYSTEM_PROMPT` below is for the
+// interactive `facts extract` command, not a world-check scan.
 const EXTRACT_SYSTEM_PROMPT: &str = "You extract ESTABLISHED world facts — the invariants a \
 story relies on: climate, geography, seasons, distances / travel-times, chronology / dates, \
 and recurring rules (magic, technology, law, custom). You do NOT extract plot events, \
@@ -557,6 +548,10 @@ pub fn scan_with(
 
     let ai = AiClient::from_config(&cfg.llm)?;
     let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    let (system, fell_back) = super::world_prompts::world_system_prompt("facts-scan", &language);
+    if fell_back {
+        progress(&format!("facts scan: no {language} prompt — using English"));
+    }
     progress(&format!(
         "facts scan · language: {language} · model: {model} · {} chapter(s) · {total_facts} fact(s)",
         chapters.len(),
@@ -584,7 +579,7 @@ pub fn scan_with(
             continue;
         }
         let prompt = build_check_prompt(&language, chapter_title, &plain, &facts_ctx);
-        let raw = run_blocking(&ai, model, SYSTEM_PROMPT, &prompt)?;
+        let raw = run_blocking(&ai, model, system, &prompt)?;
         let findings = parse_findings(&raw, chapter_title, idx);
         progress(&format!(
             "facts [{}/{}] {chapter_title} → {} contradiction(s)",
@@ -600,21 +595,6 @@ pub fn scan_with(
         .map_err(|e| Error::Store(format!("facts_scan save: {e}")))?;
     Ok(report)
 }
-
-const CHECK_SYSTEM_PROMPT: &str = "You are a world-consistency editor for a work of fiction. \
-Below are a story world's established facts. Using your knowledge of planetary science, physics, \
-astronomy, geology, hydrology, climate, ecology, biology, and human culture / history, find pairs \
-of facts that CANNOT COEXIST — either they directly contradict, or one makes the other \
-physically or causally impossible given how worlds actually work. Reason beyond the wording: a \
-tidally-locked planet can't have an ordinary day–night cycle; a mild climate can't sit where the \
-geography forces extremes; a harbour that freezes each winter can't have warm currents; a city's \
-population can't exceed what its stated food / water supply sustains; a travel time can't fit the \
-stated distance and terrain. Treat any explicitly-stated speculative rule (magic, invented \
-physics, non-Earth biology) as AUTHORITATIVE — only flag what those rules don't already permit; \
-do not flag mere deviation from Earth where the story has set its own rule. Output ONE problem \
-per line as `fact A | fact B | why`, quoting each fact briefly; `why` names the domain reason \
-(e.g. \"tidal locking\", \"thermohaline circulation\", \"carrying capacity\"). If everything is \
-consistent, output nothing. No preamble, no header row.";
 
 /// 1.3.8 WORLD-1 P0 — internal-consistency check: flag fact pairs that
 /// contradict each other *within* the Facts book.
@@ -712,7 +692,11 @@ pub fn check_with(
 explanation in {language}.\n--- ESTABLISHED FACTS ---\n{}\n--- END ---",
         facts.join("\n")
     );
-    let raw = run_blocking(&ai, model, CHECK_SYSTEM_PROMPT, &prompt)?;
+    let (system, fell_back) = super::world_prompts::world_system_prompt("facts-check", &language);
+    if fell_back {
+        progress(&format!("facts check: no {language} prompt — using English"));
+    }
+    let raw = run_blocking(&ai, model, system, &prompt)?;
     let report = crate::facts_scan::FactCheckReport {
         version: env!("CARGO_PKG_VERSION").to_string(),
         content_hash: crate::facts_scan::FactCheckReport::compute_hash(&facts),

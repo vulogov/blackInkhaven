@@ -26,18 +26,8 @@ use crate::store::{Store, SYSTEM_TAG_ARTEFACTS, SYSTEM_TAG_CHARACTERS, SYSTEM_TA
 
 use super::DriftCommand;
 
-const DRIFT_SYSTEM_PROMPT: &str = "You are a continuity editor for a work of fiction. You receive \
-NUMBERED descriptions of a SINGLE entity (a character, place, or object), each drawn from a \
-different point in the manuscript, in chapter order. Flag pairs that CONTRADICT each other — the \
-same attribute described in incompatible ways (a place cramped vs spacious, smoky vs airy; a \
-character soft-spoken vs booming; an object pristine vs battered) with no in-story event that \
-would explain the change. Do NOT flag descriptions that merely add new detail, describe different \
-aspects, or reflect a change the story clearly dramatizes. Output ONE contradiction per line, in \
-the exact form:\n\
-  i | j | why\n\
-where `i` and `j` are the description NUMBERS and `why` is a one-line explanation of the \
-contradiction. Output nothing else — no preamble, no commentary, no markdown. If the descriptions \
-are consistent, output nothing.";
+// The drift judge's system prompt now lives, localized, in
+// `cli::world_prompts` (slug `drift`, 1.3.13).
 
 pub fn run(project: &Path, cmd: DriftCommand) -> Result<()> {
     match cmd {
@@ -328,6 +318,10 @@ pub fn scan_with(
     };
     let ai = AiClient::from_config(&cfg.llm)?;
     let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    let (system, fell_back) = super::world_prompts::world_system_prompt("drift", &language);
+    if fell_back {
+        progress(&format!("drift scan: no {language} prompt — using English"));
+    }
     progress(&format!(
         "drift scan · language: {language} · model: {model} · {} entit{} to check",
         comparable.len(),
@@ -341,7 +335,7 @@ pub fn scan_with(
         }
         progress(&format!("drift [{}/{}] {}", i + 1, comparable.len(), d.entity));
         let prompt = build_drift_prompt(&language, d);
-        let raw = run_blocking(&ai, model, DRIFT_SYSTEM_PROMPT, &prompt)?;
+        let raw = run_blocking(&ai, model, system, &prompt)?;
         let pairs = parse_drift_pairs(&raw, d.snippets.len());
         conflicts.extend(resolve_conflicts(&d.entity, d.kind, &d.snippets, &pairs));
     }

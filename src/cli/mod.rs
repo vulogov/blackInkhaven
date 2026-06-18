@@ -44,6 +44,7 @@ pub mod editorial;
 pub mod drift;
 pub mod world;
 pub mod lang;
+pub mod world_prompts;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;

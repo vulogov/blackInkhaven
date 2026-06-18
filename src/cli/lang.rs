@@ -61,9 +61,14 @@ fn status(project: &Path, language: Option<&str>) -> Result<()> {
     );
     row("embeddings", &format!("multilingual · {}", cfg.embeddings.model));
     row("AI world-check output", &format!("forced in {lang}"));
+    let (_, prompt_fb) = crate::cli::world_prompts::world_system_prompt("facts-check", &l);
     row(
         "AI world-check prompts",
-        "English built-ins (localized defaults land in `lang bootstrap` / P1b)",
+        if prompt_fb {
+            "English (no localized prompt — fallback with a warning)"
+        } else {
+            "✓ localized (facts check / scan · drift · continuity)"
+        },
     );
 
     if config::built_in_filter_words(&l).is_empty()
