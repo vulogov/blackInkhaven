@@ -225,6 +225,7 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
                 .into(),
         ));
     }
+    let n_entities = comparable.len();
 
     let language = if cfg.language.trim().is_empty() {
         "English".to_string()
@@ -252,6 +253,7 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
         version: env!("CARGO_PKG_VERSION").to_string(),
         content_hash: DriftReport::compute_hash(&descs),
         conflicts,
+        descriptions: descs,
     };
     report
         .save(&layout.root)
@@ -263,9 +265,8 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
         println!("{rendered}");
     } else if report.conflicts.is_empty() {
         println!(
-            "drift scan: ✓ no description contradictions across {} entit{}",
-            comparable.len(),
-            if comparable.len() == 1 { "y" } else { "ies" }
+            "drift scan: ✓ no description contradictions across {n_entities} entit{}",
+            if n_entities == 1 { "y" } else { "ies" }
         );
     } else {
         println!("drift scan: {} description contradiction(s):", report.conflicts.len());

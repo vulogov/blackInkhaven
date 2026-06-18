@@ -40,7 +40,7 @@ impl EntityKind {
 }
 
 /// One paragraph that describes an entity, with where it sits.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DescriptionSnippet {
     pub chapter: String,
     pub paragraph: Uuid,
@@ -48,7 +48,7 @@ pub struct DescriptionSnippet {
 }
 
 /// The description snippets retrieved for one entity, chapter-ordered.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityDescriptions {
     pub entity: String,
     pub kind: EntityKind,
@@ -131,6 +131,11 @@ pub struct DriftReport {
     #[serde(default)]
     pub content_hash: u64,
     pub conflicts: Vec<DriftConflict>,
+    /// 1.3.10 P3 — the description snippets the scan retrieved, persisted so
+    /// the story bible can render each flagged entity's trail without
+    /// recomputing (no embedding load in the TUI). Empty in older sidecars.
+    #[serde(default)]
+    pub descriptions: Vec<EntityDescriptions>,
 }
 
 impl DriftReport {
@@ -361,6 +366,7 @@ gibberish without a pipe\n";
                 paragraph_b: Some(Uuid::now_v7()),
                 detail: "voice flipped".into(),
             }],
+            descriptions: Vec::new(),
         };
         report.save(dir.path()).unwrap();
         let loaded = DriftReport::load(dir.path()).unwrap();

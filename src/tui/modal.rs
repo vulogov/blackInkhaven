@@ -178,6 +178,8 @@ pub(super) enum BibleRowKind {
     Header,
     Entry,
     Attr,
+    /// 1.3.10 — a semantic-drift contradiction flagged under an entity.
+    Drift,
 }
 
 /// Filter helper: returns refs to the entries whose `track`
