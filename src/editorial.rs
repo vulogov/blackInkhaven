@@ -187,6 +187,28 @@ preserving the meaning, the author's voice, the language, and any Typst markup v
     })
 }
 
+/// One AI-rewritable fix the batch walk applies: `(paragraph, category,
+/// char_range)`. The span is `None` for whole-paragraph categories.
+pub type BatchFix = (Uuid, String, Option<(usize, usize)>);
+
+/// The ordered list of AI-rewritable fixes the cockpit's `F` (batch fix-all)
+/// walks: every finding matching `filter` (`None` = all) that is
+/// [`EditorialFinding::rewritable`], in the findings' display order. Pure.
+pub fn batch_fix_queue(findings: &[EditorialFinding], filter: Option<&str>) -> Vec<BatchFix> {
+    findings
+        .iter()
+        .filter(|f| filter.is_none_or(|c| f.category == c))
+        .filter(|f| f.rewritable())
+        .map(|f| {
+            (
+                f.location.paragraph.expect("rewritable ⇒ has a paragraph"),
+                f.category.clone(),
+                f.location.char_range,
+            )
+        })
+        .collect()
+}
+
 /// Replace the half-open char range `[start, end)` of `original` with
 /// `replacement`, preserving everything outside it (including a trailing
 /// newline). Char-indexed (not byte); an out-of-range or inverted span is
@@ -478,6 +500,40 @@ mod tests {
         assert_eq!(fix_spec("pacing").unwrap().scope, FixScope::Paragraph);
         assert_eq!(fix_spec("show-tell").unwrap().scope, FixScope::Span);
         assert_eq!(fix_spec("filter").unwrap().scope, FixScope::Span);
+    }
+
+    #[test]
+    fn batch_fix_queue_keeps_only_filtered_rewritable_in_order() {
+        let mk = |cat: &str, para: bool, span: Option<(usize, usize)>| EditorialFinding {
+            category: cat.into(),
+            severity: Severity::Info,
+            location: Location {
+                paragraph: para.then(uuid::Uuid::now_v7),
+                char_range: span,
+                ..Default::default()
+            },
+            message: "m".into(),
+            hint: None,
+            source: "style",
+            autofixable: false,
+        };
+        let findings = vec![
+            mk("show-tell", true, Some((0, 3))), // rewritable (span)
+            mk("structure", true, None),         // judgment → not rewritable
+            mk("echo", false, None),             // no paragraph → not rewritable
+            mk("filter", true, Some((4, 8))),    // rewritable (span)
+        ];
+        // no filter → both rewritable ones, in order
+        let all = batch_fix_queue(&findings, None);
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].1, "show-tell");
+        assert_eq!(all[0].2, Some((0, 3)));
+        assert_eq!(all[1].1, "filter");
+        // category filter narrows
+        let only = batch_fix_queue(&findings, Some("filter"));
+        assert_eq!(only.len(), 1);
+        assert_eq!(only[0].1, "filter");
+        assert_eq!(only[0].2, Some((4, 8)));
     }
 
     #[test]

@@ -2216,11 +2216,25 @@ surrounding paragraph, no preamble.\n\n── Paragraph: {title} (for context) �
                     let after = after_lines.join("\n");
                     self.apply_ai_diff_accepted(action, after, true);
                 }
+                // 1.3.9 — advance an active batch fix-all to the next finding.
+                if self.editorial_batch.is_some() {
+                    if let Some(b) = self.editorial_batch.as_mut() {
+                        b.applied += 1;
+                    }
+                    self.advance_editorial_batch();
+                }
             }
             // Reject — close and leave the buffer alone.
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 self.modal = Modal::None;
-                self.status = "AI diff: rejected — buffer unchanged".into();
+                if self.editorial_batch.is_some() {
+                    if let Some(b) = self.editorial_batch.as_mut() {
+                        b.skipped += 1;
+                    }
+                    self.advance_editorial_batch();
+                } else {
+                    self.status = "AI diff: rejected — buffer unchanged".into();
+                }
             }
             _ => {}
         }
