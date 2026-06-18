@@ -58,9 +58,38 @@ yet **wrong** on the detectors. "Full multilingual" closes that.
   active language: stemming (Snowball ✓/✗), filter-words (built-in N / config /
   none), show-don't-tell, stop-words, drift pronouns, anachronism, embeddings.
   One honest answer to "what works in my language?".
+- **Force AI output into the manuscript's language.** Every AI scan already
+  *passes* `cfg.language`, but the system prompts are English and don't require
+  the *output* (the `why` / explanation text) to come back in that language —
+  so a Russian project can get English explanations. Each scan prompt (facts
+  check ✓ done, facts scan, drift, continuity) explicitly instructs the model
+  to write its explanations in `cfg.language`. (The fact's own text is quoted
+  verbatim, so it stays in-language regardless.)
 
 **Deliverable:** non-curated languages are *correct* (detectors off, not
-wrong), and `lang status` says exactly what's covered.
+wrong), AI findings come back in the manuscript's language, and `lang status`
+says exactly what's covered.
+
+---
+
+## P1b — Domain-aware, tunable fact-check prompt
+
+The `facts check` already (1.3.13) reasons with real-world domain knowledge
+(planetary science / physics / geology / hydrology / climate / ecology /
+culture) — flagging facts that *cannot coexist*, not just textual
+contradictions, while treating the author's invented rules as authoritative.
+This phase makes that prompt **3-tier tunable** (the `plan` / `submission`
+pattern: **Prompts book → `prompts.hjson` → built-in**), keyed by language:
+
+- a `facts-check` prompt slug resolves through the tiers in `check_with`,
+  falling back to the (domain-aware) built-in — so a hard-SF project can lean
+  on orbital mechanics, a fantasy one on its own cosmology, and a Russian
+  project can supply a Russian-language check prompt.
+- Because the resolver is language-aware, this also gives per-language fact-
+  check prompts for free (ties into P1's output-language work).
+
+**Deliverable:** the world-consistency check is tunable per project + per
+language, with the strong domain-reasoning default.
 
 ---
 
