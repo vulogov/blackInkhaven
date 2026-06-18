@@ -35,11 +35,12 @@ impl DocumentStorage {
     /// Inkhaven's call site (`Store::open`) always supplies an
     /// embedding engine; the bdslib-style no-embedding constructor
     /// is gone.
-    pub fn with_embedding(root: &str, engine: EmbeddingEngine) -> Result<Self> {
+    pub fn with_embedding(root: &str, engine: EmbeddingEngine, pool_size: usize) -> Result<Self> {
         let paths = Paths::from(root)?;
+        let pool = pool_size as u32;
         Ok(Self {
-            meta:    JsonStorage::new(&paths.metadata_db, 4, "doc")?,
-            blobs:   BlobStorage::new(&paths.blobs_db, 4)?,
+            meta:    JsonStorage::new(&paths.metadata_db, pool, "doc")?,
+            blobs:   BlobStorage::new(&paths.blobs_db, pool)?,
             vectors: VectorEngine::with_embedding(&paths.vec, engine)?,
         })
     }

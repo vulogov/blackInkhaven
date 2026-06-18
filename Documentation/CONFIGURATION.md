@@ -120,6 +120,7 @@ embeddings: {
   model: MultilingualE5Small
   chunk_size: 800
   chunk_overlap: 0.15
+  pool_size: 4
 }
 ```
 
@@ -128,6 +129,7 @@ embeddings: {
 | `model` | string | `MultilingualE5Small` | Which fastembed model to download / use. Pick a multilingual one (E5) if you write in any non-English language. |
 | `chunk_size` | int | `800` | Approximate characters per chunk fed to the embedder. Larger chunks → more context but coarser similarity. |
 | `chunk_overlap` | float | `0.15` | Overlap fraction between adjacent chunks. `0.15` = 15 % overlap, smoothing chunk boundaries. |
+| `pool_size` | int | `4` | 1.3.12+. r2d2 connection-pool size for each backing DuckDB file (metadata + content). **Clamped to a minimum of 2 at open time** so a background job (e.g. the deep AI refresh) can always check out a connection while the main thread holds another — a pool of 1 would deadlock. Raise it if you script heavy concurrent access; the default 4 is ample for the TUI + one background job. |
 
 Supported model names:
 
