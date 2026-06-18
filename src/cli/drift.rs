@@ -26,11 +26,6 @@ use crate::store::{Store, SYSTEM_TAG_ARTEFACTS, SYSTEM_TAG_CHARACTERS, SYSTEM_TA
 
 use super::DriftCommand;
 
-/// How many vector hits to pull per entity before name-filtering + capping.
-const TOP_K: usize = 24;
-/// Max description snippets kept per entity (bounds the judge prompt).
-const MAX_SNIPPETS: usize = 8;
-
 const DRIFT_SYSTEM_PROMPT: &str = "You are a continuity editor for a work of fiction. You receive \
 NUMBERED descriptions of a SINGLE entity (a character, place, or object), each drawn from a \
 different point in the manuscript, in chapter order. Flag pairs that CONTRADICT each other — the \
@@ -59,16 +54,20 @@ pub fn collect_entity_descriptions(project: &Path) -> Result<Vec<EntityDescripti
     let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
-    Ok(gather(&store, &hierarchy))
+    Ok(gather(&store, &hierarchy, &cfg.drift))
 }
 
 /// The store-backed retrieval, factored out so the project-open boilerplate
 /// stays in `collect_entity_descriptions`.
-fn gather(store: &Store, hierarchy: &Hierarchy) -> Vec<EntityDescriptions> {
+fn gather(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    cfg: &crate::config::DriftConfig,
+) -> Vec<EntityDescriptions> {
     let index = chapter_index(hierarchy);
     let mut out = Vec::new();
     for (entity, kind) in entities(hierarchy) {
-        let snippets = retrieve(store, &index, &entity);
+        let snippets = retrieve(store, &index, &entity, cfg);
         if !snippets.is_empty() {
             out.push(EntityDescriptions { entity, kind, snippets });
         }
@@ -136,9 +135,10 @@ fn retrieve(
     store: &Store,
     index: &HashMap<Uuid, (usize, String)>,
     entity: &str,
+    cfg: &crate::config::DriftConfig,
 ) -> Vec<DescriptionSnippet> {
     let query = format!("{entity} description appearance manner voice condition");
-    let raw = match store.search_text(&query, TOP_K) {
+    let raw = match store.search_text(&query, cfg.top_k) {
         Ok(r) => r,
         Err(_) => return Vec::new(),
     };
@@ -169,7 +169,7 @@ fn retrieve(
             });
         }
     }
-    assemble_descriptions(entity, &candidates, MAX_SNIPPETS)
+    assemble_descriptions(entity, &candidates, cfg.max_snippets)
 }
 
 fn list(project: &Path, json: bool) -> Result<()> {
@@ -215,7 +215,7 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
 
-    let descs = gather(&store, &hierarchy);
+    let descs = gather(&store, &hierarchy, &cfg.drift);
     let comparable: Vec<&EntityDescriptions> =
         descs.iter().filter(|d| d.snippets.len() >= 2).collect();
     if comparable.is_empty() {
