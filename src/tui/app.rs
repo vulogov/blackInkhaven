@@ -9412,6 +9412,19 @@ impl App {
         }
         let dv = DriftBibleView { conflicts: &drift_conflicts, descriptions: &drift_desc };
         let mut rows = Vec::new();
+        // 1.3.11 — world-health banner: the same consistency snapshot
+        // `inkhaven world` prints, from the already-open store (no reopen).
+        let world = crate::cli::world::report_from(
+            &self.store,
+            &self.hierarchy,
+            &self.cfg,
+            &self.layout.root,
+        );
+        rows.push(crate::tui::modal::BibleRow {
+            kind: crate::tui::modal::BibleRowKind::Header,
+            text: world.summary(),
+            jump: None,
+        });
         self.bible_section(&mut rows, SYSTEM_TAG_CHARACTERS, "CHARACTERS", Some(&attrs), Some(&dv));
         self.bible_section(&mut rows, SYSTEM_TAG_PLACES, "PLACES", None, Some(&dv));
         self.bible_section(&mut rows, SYSTEM_TAG_ARTEFACTS, "ARTEFACTS", None, Some(&dv));

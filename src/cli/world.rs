@@ -47,24 +47,29 @@ pub fn gather(project: &Path) -> Result<WorldReport> {
     let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    Ok(report_from(&store, &h, &cfg, &layout.root))
+}
 
-    let facts_check = crate::facts_scan::FactCheckReport::load(&layout.root).unwrap_or_default();
-    let facts_scan = crate::facts_scan::FactScanReport::load(&layout.root).unwrap_or_default();
-    let drift = crate::drift::DriftReport::load(&layout.root).unwrap_or_default();
-    let continuity =
-        crate::continuity_bible::ContinuityBible::load(&layout.root).unwrap_or_default();
+/// Build the snapshot from an already-open store / hierarchy / config — used
+/// by `gather` and by the TUI story bible (which already holds them, so it
+/// must not reopen the project). Infallible: missing sidecars count as zero.
+pub fn report_from(store: &Store, h: &Hierarchy, cfg: &Config, root: &Path) -> WorldReport {
+    let facts_check = crate::facts_scan::FactCheckReport::load(root).unwrap_or_default();
+    let facts_scan = crate::facts_scan::FactScanReport::load(root).unwrap_or_default();
+    let drift = crate::drift::DriftReport::load(root).unwrap_or_default();
+    let continuity = crate::continuity_bible::ContinuityBible::load(root).unwrap_or_default();
 
-    Ok(WorldReport {
-        facts_total: count_paragraphs(&h, Some(SYSTEM_TAG_FACTS)),
+    WorldReport {
+        facts_total: count_paragraphs(h, Some(SYSTEM_TAG_FACTS)),
         facts_conflicts: facts_check.conflicts,
         facts_prose_findings: facts_scan.findings.len(),
         drift_conflicts: drift.conflicts,
         continuity_attributes: continuity.facts.len(),
-        characters: count_paragraphs(&h, Some(SYSTEM_TAG_CHARACTERS)),
-        places: count_paragraphs(&h, Some(SYSTEM_TAG_PLACES)),
-        artefacts: count_paragraphs(&h, Some(SYSTEM_TAG_ARTEFACTS)),
-        anachronisms: count_anachronisms(&cfg, &store, &h),
-    })
+        characters: count_paragraphs(h, Some(SYSTEM_TAG_CHARACTERS)),
+        places: count_paragraphs(h, Some(SYSTEM_TAG_PLACES)),
+        artefacts: count_paragraphs(h, Some(SYSTEM_TAG_ARTEFACTS)),
+        anachronisms: count_anachronisms(cfg, store, h),
+    }
 }
 
 /// Count the paragraphs inside the system book carrying `tag`.
