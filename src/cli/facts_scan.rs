@@ -482,16 +482,43 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
     let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    let report = scan_with(&store, &hierarchy, &cfg, &layout, provider, &|s| eprintln!("{s}"))?;
 
+    if json {
+        let rendered = serde_json::to_string_pretty(&report)
+            .map_err(|e| Error::Store(format!("facts_scan JSON: {e}")))?;
+        println!("{rendered}");
+    } else {
+        println!(
+            "facts scan: {} contradiction(s) across {} chapter(s) → {}",
+            report.findings.len(),
+            hierarchy.user_book_chapters().len(),
+            FactScanReport::sidecar_path(&layout.root).display(),
+        );
+    }
+    Ok(())
+}
+
+/// 1.3.12 DEEP-1 — the prose-vs-fact scan against an **already-open** store,
+/// progress through `progress` (not stderr), returning the saved report. Reads
+/// `cfg.language` so the per-chapter prompt stays in the manuscript's language.
+/// Safe to call from the TUI background-refresh thread.
+pub fn scan_with(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    cfg: &Config,
+    layout: &ProjectLayout,
+    provider: Option<&str>,
+    progress: &dyn Fn(&str),
+) -> Result<FactScanReport> {
     let language = if cfg.language.trim().is_empty() {
         "English".to_string()
     } else {
         cfg.language.clone()
     };
 
-    // Cheap preconditions first (a Facts book + chapters), so a project
-    // with nothing to check fails clearly without needing an API key.
-    // Resolve the Facts book + its paragraph subtree.
+    // Cheap preconditions first (a Facts book + chapters), so a project with
+    // nothing to check fails clearly without needing an API key.
     let Some(facts_id) = hierarchy
         .iter()
         .find(|n| {
@@ -522,19 +549,15 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
 
     let chapters = hierarchy.user_book_chapters();
     if chapters.is_empty() {
-        return Err(Error::Store(
-            "facts scan: no user-book chapters found".into(),
-        ));
+        return Err(Error::Store("facts scan: no user-book chapters found".into()));
     }
 
-    // Preconditions met — now require the LLM.
     let ai = AiClient::from_config(&cfg.llm)?;
     let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
-
-    eprintln!(
-        "inkhaven facts scan · language: {language} · model: {model} · {} chapter(s) · {total_facts} fact(s)",
+    progress(&format!(
+        "facts scan · language: {language} · model: {model} · {} chapter(s) · {total_facts} fact(s)",
         chapters.len(),
-    );
+    ));
 
     let mut report = FactScanReport {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -543,42 +566,32 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
     };
 
     for (idx, (chapter_id, chapter_title)) in chapters.iter().enumerate() {
-        let prose = crate::cli::book_walk::chapter_raw_prose(&layout, &hierarchy, *chapter_id);
+        let prose = crate::cli::book_walk::chapter_raw_prose(layout, hierarchy, *chapter_id);
         let plain = crate::audiobook::typst_to_plain(&prose);
         if plain.trim().is_empty() {
             continue;
         }
-        eprint!("  [{}/{}] {chapter_title} ", idx + 1, chapters.len());
-
-        let facts_ctx = relevant_facts(&store, &hierarchy, &facts_ids, &plain, 12);
+        let facts_ctx = relevant_facts(store, hierarchy, &facts_ids, &plain, 12);
         if facts_ctx.is_empty() {
-            eprintln!("→ no relevant facts");
+            progress(&format!("facts [{}/{}] {chapter_title} → no relevant facts", idx + 1, chapters.len()));
             continue;
         }
         let prompt = build_check_prompt(&language, chapter_title, &plain, &facts_ctx);
         let raw = run_blocking(&ai, model, SYSTEM_PROMPT, &prompt)?;
         let findings = parse_findings(&raw, chapter_title, idx);
-        eprintln!("→ {} contradiction(s)", findings.len());
+        progress(&format!(
+            "facts [{}/{}] {chapter_title} → {} contradiction(s)",
+            idx + 1,
+            chapters.len(),
+            findings.len()
+        ));
         report.findings.extend(findings);
     }
 
     report
         .save(&layout.root)
         .map_err(|e| Error::Store(format!("facts_scan save: {e}")))?;
-
-    if json {
-        let rendered = serde_json::to_string_pretty(&report)
-            .map_err(|e| Error::Store(format!("facts_scan JSON: {e}")))?;
-        println!("{rendered}");
-    } else {
-        println!(
-            "facts scan: {} contradiction(s) across {} chapter(s) → {}",
-            report.findings.len(),
-            chapters.len(),
-            FactScanReport::sidecar_path(&layout.root).display(),
-        );
-    }
-    Ok(())
+    Ok(report)
 }
 
 const CHECK_SYSTEM_PROMPT: &str = "You are a continuity editor. Below is a story world's \
@@ -595,6 +608,39 @@ fn check(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
     let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    let report = check_with(&store, &hierarchy, &cfg, &layout, provider, &|s| eprintln!("{s}"))?;
+
+    if json {
+        let rendered = serde_json::to_string_pretty(&report)
+            .map_err(|e| Error::Store(format!("facts_check JSON: {e}")))?;
+        println!("{rendered}");
+    } else if report.conflicts.is_empty() {
+        println!("facts check: ✓ no internal contradictions");
+    } else {
+        println!(
+            "facts check: {} internal contradiction(s):",
+            report.conflicts.len()
+        );
+        for c in &report.conflicts {
+            println!("  ⚠ {}  ⟷  {}\n      ↳ {}", c.a, c.b, c.detail);
+        }
+        eprintln!("  (also surfaced in `inkhaven edit`)");
+    }
+    Ok(())
+}
+
+/// 1.3.12 DEEP-1 — the internal fact-consistency check against an
+/// **already-open** store, progress through `progress` (not stderr), returning
+/// the saved report. Reads `cfg.language` so the prompt stays in the
+/// manuscript's language. Safe to call from the TUI background-refresh thread.
+pub fn check_with(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    cfg: &Config,
+    layout: &ProjectLayout,
+    provider: Option<&str>,
+    progress: &dyn Fn(&str),
+) -> Result<crate::facts_scan::FactCheckReport> {
     let language = if cfg.language.trim().is_empty() {
         "English".to_string()
     } else {
@@ -618,9 +664,8 @@ fn check(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
         .filter(|n| n.kind == NodeKind::Paragraph)
         .map(|n| n.title.trim().to_lowercase())
         .collect();
-    let mut facts = all_facts(&store, &hierarchy, &facts_ids);
-    // Layer series-shared canon (local wins on a title clash) so the check
-    // catches local-vs-shared and shared-vs-shared contradictions.
+    let mut facts = all_facts(store, hierarchy, &facts_ids);
+    // Layer series-shared canon (local wins on a title clash).
     if let Some(dir) = cfg.facts.shared_path.as_deref() {
         let added: Vec<String> = crate::facts_scan::shared_facts(std::path::Path::new(dir))
             .into_iter()
@@ -628,7 +673,7 @@ fn check(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
             .map(|(t, b)| format!("- {t} (shared): {b}"))
             .collect();
         if !added.is_empty() {
-            eprintln!("  + {} shared fact(s) from {dir}", added.len());
+            progress(&format!("+ {} shared fact(s) from {dir}", added.len()));
             facts.extend(added);
             facts.sort();
         }
@@ -641,10 +686,10 @@ fn check(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
 
     let ai = AiClient::from_config(&cfg.llm)?;
     let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
-    eprintln!(
-        "inkhaven facts check · language: {language} · model: {model} · {} fact(s)",
+    progress(&format!(
+        "facts check · language: {language} · model: {model} · {} fact(s)",
         facts.len()
-    );
+    ));
 
     let prompt = format!(
         "Language: {language}.\n--- ESTABLISHED FACTS ---\n{}\n--- END ---",
@@ -659,27 +704,7 @@ fn check(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
     report
         .save(&layout.root)
         .map_err(|e| Error::Store(format!("facts_check save: {e}")))?;
-
-    if json {
-        let rendered = serde_json::to_string_pretty(&report)
-            .map_err(|e| Error::Store(format!("facts_check JSON: {e}")))?;
-        println!("{rendered}");
-    } else if report.conflicts.is_empty() {
-        println!(
-            "facts check: ✓ no internal contradictions across {} fact(s)",
-            facts.len()
-        );
-    } else {
-        println!(
-            "facts check: {} internal contradiction(s):",
-            report.conflicts.len()
-        );
-        for c in &report.conflicts {
-            println!("  ⚠ {}  ⟷  {}\n      ↳ {}", c.a, c.b, c.detail);
-        }
-        eprintln!("  (also surfaced in `inkhaven edit`)");
-    }
-    Ok(())
+    Ok(report)
 }
 
 /// Every Facts-book entry as a `- title: body` line, sorted for a stable
