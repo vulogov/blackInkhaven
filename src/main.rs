@@ -27,6 +27,7 @@ mod manuscript;
 mod planning;
 mod editorial;
 mod drift;
+mod world_report;
 mod progress;
 mod replace;
 mod submission_gen;

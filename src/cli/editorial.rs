@@ -59,6 +59,27 @@ pub fn collect(
         if let Ok(store) = crate::store::Store::open(layout.clone(), &cfg) {
             if let Ok(h) = Hierarchy::load(&store) {
                 raw.extend(prose_style_findings(&cfg, &store, &h));
+                // 1.3.11 — undescribed entities (defined in the books, never
+                // named in the prose): an Info coverage finding, jump to the
+                // bible definition.
+                for (name, kind, node) in super::world::undescribed_entities(&store, &h) {
+                    raw.push(EditorialFinding {
+                        category: "coverage".into(),
+                        severity: editorial::Severity::Info,
+                        location: editorial::Location {
+                            paragraph: Some(node),
+                            ..Default::default()
+                        },
+                        message: format!(
+                            "coverage: {} “{}” is defined but never named in the prose",
+                            kind.label(),
+                            name
+                        ),
+                        hint: None,
+                        source: "world",
+                        autofixable: false,
+                    });
+                }
                 resolve_locations(&mut raw, &h, &layout);
             }
         }

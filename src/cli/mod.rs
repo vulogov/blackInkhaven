@@ -42,6 +42,7 @@ pub mod submission;
 pub mod plan;
 pub mod editorial;
 pub mod drift;
+pub mod world;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -661,6 +662,30 @@ pub enum Command {
         provider: Option<String>,
     },
 
+    /// 1.3.11 WORLD-3 — `inkhaven world`: a consolidated world-consistency
+    /// snapshot — established facts + internal/prose contradictions + drift +
+    /// continuity coverage + anachronisms, with a health summary.  Reads the
+    /// computed sidecars (deterministic, `--json`-gateable); `--deep` refreshes
+    /// the AI scans first.  Complements `inkhaven edit`: `edit` is a walkable
+    /// worklist of everything; `world` is a consistency snapshot of the world
+    /// layer, grouped by entity / fact.
+    World {
+        /// Machine-readable output for a CI gate.
+        #[arg(long)]
+        json: bool,
+        /// Refresh the AI scans first (facts check / facts scan / drift /
+        /// continuity), then aggregate. Needs a provider; not with `--json`.
+        #[arg(long)]
+        deep: bool,
+        /// LLM provider override for `--deep`.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Focus on one entity: its drift conflicts, description trail,
+        /// tracked attributes, and whether it's named in the prose.
+        #[arg(long)]
+        entity: Option<String>,
+    },
+
     /// 1.2.18+ R.1 — export a user book to a
     /// standards-compliant EPUB 3 file.  Walks the
     /// book's chapters in order, converts the typst
@@ -1258,6 +1283,9 @@ pub enum DriftCommand {
         /// Emit the descriptions as JSON.
         #[arg(long)]
         json: bool,
+        /// Scope to entities whose name contains this (case-insensitive).
+        #[arg(long)]
+        entity: Option<String>,
     },
     /// Run the AI drift pass: for each entity, judge whether its descriptions
     /// across the manuscript contradict each other, and write the
@@ -2606,6 +2634,10 @@ impl Cli {
                 facts_scan::run(&project, cmd).map_err(Into::into)
             }
             Command::Drift(cmd) => drift::run(&project, cmd).map_err(Into::into),
+            Command::World { json, deep, provider, entity } => {
+                world::run(&project, json, deep, provider.as_deref(), entity.as_deref())
+                    .map_err(Into::into)
+            }
             Command::Pdf(cmd) => pdf::run(cmd, &project).map_err(Into::into),
             Command::Replace {
                 pattern,
