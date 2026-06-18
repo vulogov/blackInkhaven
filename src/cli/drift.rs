@@ -363,7 +363,8 @@ pub fn scan_with(
 /// chapter-ordered description snippets.
 fn build_drift_prompt(language: &str, d: &EntityDescriptions) -> String {
     let mut body = format!(
-        "Language: {language}.\nEntity: {} ({}).\nDescriptions, in chapter order:\n",
+        "Language of the manuscript: {language}. Write each `why` explanation in {language}.\n\
+         Entity: {} ({}).\nDescriptions, in chapter order:\n",
         d.entity,
         d.kind.label()
     );

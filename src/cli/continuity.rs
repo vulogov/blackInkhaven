@@ -137,7 +137,10 @@ fn build_extract_prompt(language: &str, chapter: &str, prose: &str) -> String {
         "Language of the manuscript: {language}.\n\
          Extract the established character facts from this chapter \
          (\"{chapter}\"). Remember: one fact per line, \
-         `Character | attribute_key | value`, no other output.\n\n\
+         `Character | attribute_key | value`, no other output. \
+         Keep `attribute_key` a short lowercase English identifier (eye_color, hometown) so it \
+         matches across chapters; write `Character` and `value` in {language} as they appear in \
+         the prose.\n\n\
          --- CHAPTER PROSE ---\n{prose}\n--- END ---",
     )
 }
