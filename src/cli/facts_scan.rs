@@ -708,7 +708,8 @@ pub fn check_with(
     ));
 
     let prompt = format!(
-        "Language: {language}.\n--- ESTABLISHED FACTS ---\n{}\n--- END ---",
+        "Language of the manuscript: {language}. Quote each fact verbatim, and write every `why` \
+explanation in {language}.\n--- ESTABLISHED FACTS ---\n{}\n--- END ---",
         facts.join("\n")
     );
     let raw = run_blocking(&ai, model, CHECK_SYSTEM_PROMPT, &prompt)?;
