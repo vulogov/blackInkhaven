@@ -41,6 +41,7 @@ pub mod submissions;
 pub mod submission;
 pub mod plan;
 pub mod editorial;
+pub mod drift;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -745,6 +746,14 @@ pub enum Command {
     #[command(subcommand)]
     Facts(FactsCommand),
 
+    /// 1.3.10 WORLD-2 — `inkhaven drift <subcommand>`.  Semantic drift:
+    /// descriptions of the same entity (character / place / artefact) that
+    /// diverge across the manuscript without a hard factual clash.  `list`
+    /// prints the description snippets the retriever found per entity
+    /// (deterministic, no AI).
+    #[command(subcommand)]
+    Drift(DriftCommand),
+
     /// 1.3.0 PDF-1 — `inkhaven pdf <subcommand>`.  Page operations
     /// (extract / split / merge / rotate / reorder / delete), metadata,
     /// and outline over an existing PDF.  Writes are atomic and never
@@ -1236,6 +1245,31 @@ pub enum FactsCommand {
         /// fantasy, scifi, mystery, historical.
         #[arg(long)]
         genre: Option<String>,
+    },
+}
+
+/// 1.3.10 WORLD-2 — `inkhaven drift …`: semantic drift across the manuscript.
+#[derive(clap::Subcommand, Debug)]
+pub enum DriftCommand {
+    /// Print the description snippets retrieved for each entity (Characters /
+    /// Places / Artefacts): which paragraphs describe it, in chapter order.
+    /// Deterministic — reuses the existing vector index, runs no AI.
+    List {
+        /// Emit the descriptions as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run the AI drift pass: for each entity, judge whether its descriptions
+    /// across the manuscript contradict each other, and write the
+    /// contradictions to `<project>/.inkhaven/drift.json`. Surfaced in
+    /// `inkhaven edit`.
+    Scan {
+        /// LLM provider override (defaults to `llm.default`).
+        #[arg(long)]
+        provider: Option<String>,
+        /// Emit the report as JSON (for CI gates).
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -2571,6 +2605,7 @@ impl Cli {
             Command::Facts(cmd) => {
                 facts_scan::run(&project, cmd).map_err(Into::into)
             }
+            Command::Drift(cmd) => drift::run(&project, cmd).map_err(Into::into),
             Command::Pdf(cmd) => pdf::run(cmd, &project).map_err(Into::into),
             Command::Replace {
                 pattern,

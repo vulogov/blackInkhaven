@@ -4675,6 +4675,10 @@ impl super::super::App {
                     format!("      {}", truncate_to(&r.text, 70)),
                     Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
                 )),
+                BibleRowKind::Drift => Line::from(Span::styled(
+                    format!("    {} {}", if r.jump.is_some() { '→' } else { ' ' }, truncate_to(&r.text, 72)),
+                    Style::default().fg(Color::Rgb(0xeb, 0xa6, 0x72)),
+                )),
             };
             lines.push(if i == cur {
                 line.style(Style::default().add_modifier(Modifier::REVERSED))

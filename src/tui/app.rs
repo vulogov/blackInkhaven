@@ -5398,6 +5398,14 @@ pub(super) struct EditorialBatch {
     pub skipped: usize,
 }
 
+/// 1.3.10 WORLD-2 P3 — the story bible's read-only view of the drift sidecar:
+/// per-entity (lowercased name) contradictions + the retrieved description
+/// trail. Borrows from a `DriftReport` held for the duration of the rows build.
+struct DriftBibleView<'a> {
+    conflicts: &'a std::collections::BTreeMap<String, Vec<&'a crate::drift::DriftConflict>>,
+    descriptions: &'a std::collections::BTreeMap<String, &'a crate::drift::EntityDescriptions>,
+}
+
 impl ResolvedPrompt {
     fn new(template: String, found_lang: &str, source: PromptResolveSource) -> Self {
         Self {
@@ -9388,11 +9396,26 @@ impl App {
         for f in &bible.facts {
             attrs.entry(f.character.to_lowercase()).or_default().push(f);
         }
+        // 1.3.10 — semantic-drift sidecar: per-entity conflicts + the retrieved
+        // description trail, both read straight from `.inkhaven/drift.json` (no
+        // recomputation / embedding load in the TUI).
+        let drift = crate::drift::DriftReport::load(&self.layout.root).unwrap_or_default();
+        let mut drift_conflicts: std::collections::BTreeMap<String, Vec<&crate::drift::DriftConflict>> =
+            std::collections::BTreeMap::new();
+        for c in &drift.conflicts {
+            drift_conflicts.entry(c.entity.to_lowercase()).or_default().push(c);
+        }
+        let mut drift_desc: std::collections::BTreeMap<String, &crate::drift::EntityDescriptions> =
+            std::collections::BTreeMap::new();
+        for d in &drift.descriptions {
+            drift_desc.insert(d.entity.to_lowercase(), d);
+        }
+        let dv = DriftBibleView { conflicts: &drift_conflicts, descriptions: &drift_desc };
         let mut rows = Vec::new();
-        self.bible_section(&mut rows, SYSTEM_TAG_CHARACTERS, "CHARACTERS", Some(&attrs));
-        self.bible_section(&mut rows, SYSTEM_TAG_PLACES, "PLACES", None);
-        self.bible_section(&mut rows, SYSTEM_TAG_ARTEFACTS, "ARTEFACTS", None);
-        self.bible_section(&mut rows, SYSTEM_TAG_FACTS, "FACTS", None);
+        self.bible_section(&mut rows, SYSTEM_TAG_CHARACTERS, "CHARACTERS", Some(&attrs), Some(&dv));
+        self.bible_section(&mut rows, SYSTEM_TAG_PLACES, "PLACES", None, Some(&dv));
+        self.bible_section(&mut rows, SYSTEM_TAG_ARTEFACTS, "ARTEFACTS", None, Some(&dv));
+        self.bible_section(&mut rows, SYSTEM_TAG_FACTS, "FACTS", None, None);
         rows
     }
 
@@ -9402,6 +9425,7 @@ impl App {
         tag: &str,
         title: &str,
         attrs: Option<&std::collections::BTreeMap<String, Vec<&crate::continuity_bible::CharacterFact>>>,
+        drift: Option<&DriftBibleView>,
     ) {
         use crate::tui::modal::{BibleRow, BibleRowKind};
         let Some(book) = self
@@ -9440,6 +9464,41 @@ impl App {
                             text: format!("{}: {} (ch {})", f.attribute, f.value, f.chapter),
                             jump: None,
                         });
+                    }
+                }
+            }
+            // 1.3.10 — drift: flag contradictory descriptions of this entity,
+            // then show its full description trail so the author sees the
+            // sequence that diverged (only for flagged entities, to keep the
+            // bible compact).
+            if let Some(dv) = drift {
+                let key = n.title.trim().to_lowercase();
+                if let Some(confs) = dv.conflicts.get(&key) {
+                    for c in confs {
+                        rows.push(BibleRow {
+                            kind: BibleRowKind::Drift,
+                            text: format!(
+                                "⚠ drift: “{}” (ch {}) ⟷ “{}” (ch {})",
+                                c.a, c.chapter_a, c.b, c.chapter_b
+                            ),
+                            jump: c.paragraph_b,
+                        });
+                        if !c.detail.trim().is_empty() {
+                            rows.push(BibleRow {
+                                kind: BibleRowKind::Attr,
+                                text: format!("↳ {}", c.detail),
+                                jump: None,
+                            });
+                        }
+                    }
+                    if let Some(desc) = dv.descriptions.get(&key) {
+                        for s in &desc.snippets {
+                            rows.push(BibleRow {
+                                kind: BibleRowKind::Attr,
+                                text: format!("· ch {}: {}", s.chapter, s.text),
+                                jump: Some(s.paragraph),
+                            });
+                        }
                     }
                 }
             }
