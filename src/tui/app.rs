@@ -11427,6 +11427,27 @@ impl App {
         ]
     }
 
+    /// 1.3.12 DEEP-1 — a spinner chip shown while a background job (the deep
+    /// AI refresh) runs. Driven purely by `bg_job` state, so the indicator
+    /// stays put no matter what else writes the status line.
+    pub(crate) fn bg_job_chip_spans(&self) -> Vec<ratatui::text::Span<'_>> {
+        use ratatui::style::{Color, Modifier, Style};
+        use ratatui::text::Span;
+        let Some(job) = self.bg_job.as_ref() else {
+            return Vec::new();
+        };
+        vec![
+            Span::styled(
+                format!(" ⟳ {} ", job.label),
+                Style::default()
+                    .bg(Color::Magenta)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+        ]
+    }
+
     /// in the open paragraph.  The render loop in
     /// `draw_status` splices the result into the
     /// status-bar span list after the focus chip.
