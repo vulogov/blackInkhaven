@@ -78,7 +78,7 @@ releases as they complete.
 | **P2** | Rich lexicon fields; semantic + full-text search; AI lexicon pipeline + proposal queue; undefined-word manuscript scan; Places ↔ Language, Characters ↔ proficiency; `Ctrl+B X` hub | none | overlay + dict exist |
 | **P3** | Morphology spec; paradigm generation; auto-gloss; grammar questionnaire; idioms / metaphors; derived-form proposals | none | net-new |
 | **P4** | Diachronics: rule parser + evaluator; daughter-language derivation; cognate sets; family-tree viz (reuses resvg); AI comparative reconstruction | none | net-new |
-| **P5** | Writing systems + **pure-Rust font compilation** + input methods + Artefact ↔ inscription | **fontc, norad, write-fonts, read-fonts, unicode-normalization** | net-new, dep-heavy |
+| **P5** | Writing systems + **config-driven pure-Rust font compilation** (+ AI text-to-SVG glyph draft) + input methods + Artefact ↔ inscription | **fontc, norad, write-fonts, read-fonts, unicode-normalization** | net-new, dep-heavy |
 | **P6** | Analysis suite; generators (name / ceremony / curse / poetry / sample-text); translation pane; AI grammar book; importers (PolyGlot / Lexique / CWS / Toolbox); exporters (TSV/CSV/JSON/XLIFF/Anki/linguex/IPA-chart/dictionary-PDF) | none | net-new |
 | **P7** | `language tutorial`; `Documentation/CONLANG.md` + tutorial; example language; perf pass (10k entries); **selectable output format** (see below) | none | — |
 
@@ -119,14 +119,72 @@ inkhaven owns the **binding, compilation, preview, and typing**:
 3. **Optional bootstrap** — for authors with no artwork, an optional generator
    emits **starter SVG glyphs** (simple procedural strokes, one per phoneme) to
    import and refine externally; the AI can also propose a glyph-style brief.
-   Never the default; always user-replaceable.
-4. **Compilation** — norad assembles a UFO in memory, fontc compiles it to
+   Never the default; always user-replaceable. (See *text-to-SVG* below.)
+4. **Compilation** — driven by a declarative **font-generation config** (next
+   section): norad assembles a UFO in memory, fontc compiles it to
    `assets/fonts/<lang>.ttf|otf` (`language font build`). Composite syllabaries
    get auto-generated GSUB jamo-composition lookups (experimental).
 5. **Typing** — input methods map key sequences → codepoints so the author can
    write the native script in the editor; the compiled font renders it in `.typ`
    output (and in previews where the terminal can load the PUA font). The TUI
    otherwise shows romanization with a `[native]` marker.
+
+### Font-generation pipeline + config (P5 — accepted refinement)
+
+The glyph **collection → font** step is **config-driven**, not flag-driven: a
+`font` block in the Writing-system chapter is the single declarative control
+surface (HJSON-everywhere, the same philosophy as `imposition` / `cover`). The
+pipeline is `glyphs (bound) + font config → UFO (norad) → TTF/OTF (fontc)`,
+re-runnable and deterministic.
+
+```hjson
+// Language/<name>/Writing system  →  `font` block
+font: {
+  family:        "Tengwar Eldar"
+  style:         "Regular"          // also drives ss-set naming for variants
+  format:        "otf"              // otf | ttf
+  units_per_em:  1000
+  metrics:       { ascent: 800, descent: -200, cap_height: 700, x_height: 500 }
+  pua_start:     "U+E000"           // auto-assign codepoints from here
+  advance:       "proportional"     // proportional | monospace(width)
+  fit_to_em:     true               // normalize imported SVG into the em box
+  slant_deg:     0                  // synthesize an oblique from the upright
+  features: {
+    ligatures:   [ { seq: ["t","h"], glyph: "th" } ]
+    kerning:     [ { left: "A", right: "V", value: -80 } ]
+    stylistic_sets: { ss01: "courtly", ss02: "lapidary" }  // calligraphic variants
+  }
+  notdef:        "box"              // glyph drawn for unmapped codepoints
+  out:           "assets/fonts/eldar.otf"
+  embed_in_book: true               // dictionary / grammar book uses it
+}
+```
+
+- The config is the *contract* the compiler reads; glyph artwork + bindings are
+  the inputs. Editing the config and re-running `language font build` rebuilds
+  deterministically — no hidden state.
+- Validation up front (every referenced glyph exists, codepoints don't collide,
+  metrics are sane) with actionable errors, before any fontc call.
+- Calligraphic **variants** are alternate SVGs per glyph surfaced as
+  `ss01..ss20`; `--variant courtly` on export swaps the whole run.
+- Bund: `ink.conlang.font.build` honours the same config; `ink.conlang.font.config`
+  reads/writes it.
+
+### Text-to-SVG: AI glyph draft (P5/P6 — nice-to-have)
+
+`inkhaven language font ai-glyph <lang> --char <c> --describe "a tall upright
+with a top hook and a single crossbar"` → the AI returns an **SVG path** scoped
+to the em box, staged as a *draft* glyph in the **proposal queue** (never
+auto-bound). The author previews, accepts/edits/rejects, and refines externally.
+
+- **Honest scope:** LLM vector art is uneven — raw path data is often malformed
+  or crude. So the output is validated through resvg (must parse + fit the
+  viewBox) and treated strictly as a **starting point**, the AI counterpart to
+  the procedural bootstrap (step 3), not a finished-typeface generator.
+- Advisory-consistent ([[feedback-ai-advisory]]): proposal-queued, user-gated,
+  prompt in the Prompts book (`conlang/glyph-from-description`), reproducible.
+- A whole-script mode (`--describe-script "angular runic, sharp serifs"`) can
+  draft the whole inventory in one pass for a consistent first cut to refine.
 
 **Callouts**
 
