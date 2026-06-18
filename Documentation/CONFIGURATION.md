@@ -1741,3 +1741,28 @@ table](#editor) above. Set the manuscript's setting `year` to arm the
 detector; terms postdating it (built-in ~35-term lexicon plus your
 additive `terms`) are flagged in `inkhaven edit` under category
 `anachronism`.
+
+## 1.3.10 — semantic-drift block
+
+### `drift` (1.3.10+) — divergent-description retrieval
+
+`inkhaven drift scan` finds descriptions of the same entity (character /
+place / artefact) that diverge across the manuscript without a hard fact
+clash. It **reuses the existing on-save vector index** to retrieve each
+entity's description paragraphs, then asks the LLM which contradict; the
+`drift` block tunes the retrieval that bounds the AI prompt:
+
+```hjson
+drift: {
+  top_k: 24          // vector hits pulled per entity before name-filtering
+  max_snippets: 8    // descriptions kept per entity (bounds the judge prompt)
+}
+```
+
+- `top_k` (default `24`) — how many semantic-search hits to pull per entity
+  before keeping only the paragraphs that actually name it. Raise it for a
+  long book where an entity is described many times; lower it to go faster.
+- `max_snippets` (default `8`) — the cap on descriptions sent to the judge
+  per entity. The larger it is, the more thorough (and more expensive) each
+  entity's check. Findings surface in `inkhaven edit` (category `drift`,
+  jump-only) and the `Ctrl+V Shift+L` story bible.
