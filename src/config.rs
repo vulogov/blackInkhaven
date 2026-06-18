@@ -16,6 +16,8 @@ pub struct Config {
     #[serde(default)]
     pub facts: FactsConfig,
     #[serde(default)]
+    pub drift: DriftConfig,
+    #[serde(default)]
     pub keys: KeyBindings,
     #[serde(default)]
     pub hierarchy: HierarchyConfig,
@@ -164,6 +166,7 @@ impl Default for Config {
             llm: LlmConfig::default(),
             editor: EditorConfig::default(),
             facts: FactsConfig::default(),
+            drift: DriftConfig::default(),
             keys: KeyBindings::default(),
             hierarchy: HierarchyConfig::default(),
             theme: ThemeConfig::default(),
@@ -1843,6 +1846,27 @@ pub struct StyleWarningsConfig {
 #[serde(default)]
 pub struct FactsConfig {
     pub shared_path: Option<String>,
+}
+
+/// 1.3.10 WORLD-2 — `drift` semantic-drift retrieval tuning. `top_k` vector
+/// hits are pulled per entity, then name-filtered + capped at `max_snippets`
+/// (which bounds the AI judge prompt).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct DriftConfig {
+    /// Vector hits pulled per entity before name-filtering + capping.
+    pub top_k: usize,
+    /// Max description snippets kept per entity (bounds the judge prompt).
+    pub max_snippets: usize,
+}
+
+impl Default for DriftConfig {
+    fn default() -> Self {
+        Self {
+            top_k: 24,
+            max_snippets: 8,
+        }
+    }
 }
 
 /// `editor.style_warnings.anachronism.*` — the setting year + any

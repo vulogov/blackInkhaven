@@ -354,6 +354,30 @@ pub fn from_fact_conflict(c: &crate::facts_scan::FactConflict) -> EditorialFindi
     }
 }
 
+/// Map a semantic-drift contradiction (1.3.10 WORLD-2) — two descriptions of
+/// the same entity that diverge across the manuscript. Jumps to the later,
+/// divergent passage (`paragraph_b`); jump-only (no honest single-paragraph
+/// auto-rewrite for "the tavern's atmosphere changed across 18 chapters").
+pub fn from_drift_conflict(c: &crate::drift::DriftConflict) -> EditorialFinding {
+    EditorialFinding {
+        category: "drift".into(),
+        severity: Severity::Warn,
+        location: Location {
+            chapter: Some(c.chapter_b.clone()),
+            paragraph: c.paragraph_b,
+            char_range: None,
+            path: None,
+        },
+        message: format!(
+            "drift: {} — “{}” ({}) ⟷ “{}” ({})",
+            c.entity, c.a, c.chapter_a, c.b, c.chapter_b
+        ),
+        hint: (!c.detail.trim().is_empty()).then(|| c.detail.clone()),
+        source: "drift",
+        autofixable: false,
+    }
+}
+
 /// Map a `plan check` warning string into a structure finding. The category
 /// is the warning's prefix before `:` (gap / drift / pacing / tension /
 /// scene / sequel / rhythm / thread); the whole string is the message.
@@ -443,6 +467,29 @@ mod tests {
         f.path = None;
         let e = from_scan_finding(&f).unwrap();
         assert_eq!(e.location.chapter.as_deref(), Some("Chapter 6: The Letter"));
+    }
+
+    #[test]
+    fn drift_conflict_maps_to_jump_only_drift_finding() {
+        let pid = uuid::Uuid::now_v7();
+        let c = crate::drift::DriftConflict {
+            entity: "The Drunken Goose".into(),
+            kind: crate::drift::EntityKind::Place,
+            a: "cramped and smoky".into(),
+            b: "airy and bright".into(),
+            chapter_a: "ch-2".into(),
+            chapter_b: "ch-20".into(),
+            paragraph_b: Some(pid),
+            detail: "a tavern can't be both".into(),
+        };
+        let f = from_drift_conflict(&c);
+        assert_eq!(f.category, "drift");
+        assert_eq!(f.severity, Severity::Warn);
+        assert_eq!(f.location.paragraph, Some(pid), "jumps to the later passage");
+        assert_eq!(f.location.chapter.as_deref(), Some("ch-20"));
+        assert!(f.message.contains("The Drunken Goose") && f.message.contains("airy"));
+        assert_eq!(f.hint.as_deref(), Some("a tavern can't be both"));
+        assert!(!f.rewritable(), "drift is jump-only");
     }
 
     #[test]

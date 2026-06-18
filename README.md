@@ -21,45 +21,46 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.9 — Finish the Editorial Pass
+## Latest release · 1.3.10 — Semantic drift
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.9.md`](Documentation/RELEASE_NOTES/1.3.9.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.10.md`](Documentation/RELEASE_NOTES/1.3.10.md)
 
-The Editorial Pass shipped its navigator (1.3.6) and its actor (1.3.7 — `f`
-streams an AI rewrite). 1.3.9 closes the four deferrals those cuts left,
-taking the cockpit to its final 1.3 form. Pure-Rust, **no new dependencies**.
+1.3.8 caught *hard* contradictions — a fact clashing with a fact. 1.3.10
+catches *soft* drift: two descriptions of the same entity that diverge across
+the manuscript without a clean factual clash. Pure-Rust, **no new
+dependencies** — and the bridge to the 1.4 Whole-Book AI Editor.
 
-### Span-scoped rewrite
+### Embeddings retrieve, the AI adjudicates
 
-`f` on a *localized* finding now rewrites **only the flagged phrase** and
-splices it back — the good prose around it is left alone (show-don't-tell /
-filter-word). Echo and pacing still rewrite the whole paragraph; the diff
-shows the full paragraph for context, with the same snapshot-gated `a` / `r`.
+Cosine similarity finds same-topic descriptions but can't tell contradiction
+from relatedness ("cramped and smoky" and "airy and bright" are highly similar
+yet opposite). So drift **reuses the vector index already built as you write**
+(every paragraph is embedded on save) to pull each entity's description
+paragraphs — keeping only the ones that actually *name* it — then asks the
+model which contradict. No new index.
 
-### Filter-words join the worklist
+### `inkhaven drift scan`
 
-The last live-overlay detector not yet in `inkhaven edit`. Filter words
-(`just`, `really`, `very`, `seemed`) surface as `filter` findings at **`info`**
-severity — they sort last, never burying sharper findings — jumpable and
-span-`f`-rewritable.
+```
+drift scan: 1 description contradiction(s):
+  ⚠ The Drunken Goose (place) — [ch.2] “cramped and smoky”  ⟷  [ch.20] “airy and bright”
+      ↳ the same tavern can't be both without a renovation the story never shows
+```
 
-### Anachronism underlines live
+Cached in `.inkhaven/drift.json` (`--json` for a CI gate); `drift list`
+previews the retrieval deterministically, no AI.
 
-The anachronism detector that fed `inkhaven edit` now underlines as you type,
-in its own warm amber-orange `theme.style_warning_anachronism_fg`. Self-gating:
-silent until you set `editor.style_warnings.anachronism.year`.
+### In the worklist and the bible
 
-### `F` — batch fix-all
-
-When a category is clean enough to trust the rewriter, **`F`** walks **every**
-rewritable finding in the current filter through the *same* per-item diff
-review — never blind-applied. `a` accepts and advances, `r` skips, `Esc`
-stops; the close reports `N applied, M skipped`.
+Drift surfaces in `inkhaven edit` and the `Ctrl+V Shift+R` cockpit as the
+`drift` category (Warn, **jump-only** to the divergent passage); `edit --deep`
+runs it. The **`Ctrl+V Shift+L`** story bible shows a ⚠ drift badge + the
+chapter-ordered description trail under each flagged entity.
 
 ### Test stats
 
-Tests 1333 → 1339, **zero new dependencies**. Tutorial 68 refreshed
-([the Editorial Pass](Documentation/Tutorials/68-editorial-pass.md)).
+Tests 1339 → 1346, **zero new dependencies**. New tutorial 70
+([semantic drift](Documentation/Tutorials/70-semantic-drift.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

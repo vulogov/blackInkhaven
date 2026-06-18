@@ -26,6 +26,7 @@ mod book_digest;
 mod manuscript;
 mod planning;
 mod editorial;
+mod drift;
 mod progress;
 mod replace;
 mod submission_gen;
