@@ -50,7 +50,7 @@
 
 A two-page reference. For workflows see
 `Documentation/Tutorials/` and the *Book of Inkhaven* at
-`Book/`. For the full chord list see
+`Book/1.2.6_MANUAL/`. For the full chord list see
 `Documentation/KEYBINDING.md`.
 
 #text(size: 7.5pt, style: "italic")[
@@ -504,6 +504,6 @@ timeline: {
   24 typst-in-process · *25 tag-workflows · 26 story-view ·
   27 diagnostics · 28 ai-critique-and-memory · 29 snapshot-annotations ·
   30 render-preview · 31 story-timeline*. The full author's guide
-  lives at `Book/BOOK_OF_INKHAVEN.typ` (compile → PDF) with a
-  markdown mirror at `Book/markdown/`.
+  lives at `Book/1.2.6_MANUAL/BOOK_OF_INKHAVEN.typ` (compile → PDF) with a
+  markdown mirror at `Book/1.2.6_MANUAL/markdown/`.
 ]

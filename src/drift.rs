@@ -146,15 +146,47 @@ fn pronouns(language: &str, kind: EntityKind) -> &'static [&'static str] {
             Place => &["ahí", "allí", "allá", "aquí", "acá"],
             Artefact => &["ello", "eso", "esto"],
         },
-        // english + fallback
-        _ => match kind {
+        "english" | "en" | "" => match kind {
             Character => &[
                 "he", "him", "his", "she", "her", "hers", "they", "them", "their", "theirs",
             ],
             Place => &["it", "its", "there", "here"],
             Artefact => &["it", "its"],
         },
+        // 1.3.13 — a non-curated language has no built-in pronoun set, so
+        // coref is simply off (never English pronouns on foreign prose).
+        _ => &[],
     }
+}
+
+/// Resolve the coref pronoun list for `(language, kind)`: a config
+/// (bootstrapped) language wins, else the built-in five. Lowercased. Pure.
+fn resolve_pronouns(
+    language: &str,
+    kind: EntityKind,
+    custom: &std::collections::BTreeMap<String, crate::config::PronounLangSet>,
+) -> Vec<String> {
+    let lang = language.trim().to_lowercase();
+    if let Some(set) = custom.get(&lang) {
+        let list = match kind {
+            EntityKind::Character => &set.character,
+            EntityKind::Place => &set.place,
+            EntityKind::Artefact => &set.artefact,
+        };
+        if !list.is_empty() {
+            return list.iter().map(|s| s.to_lowercase()).collect();
+        }
+    }
+    pronouns(&lang, kind).iter().map(|s| s.to_string()).collect()
+}
+
+/// Whether a coref pronoun set is available for `language` — a config
+/// (bootstrapped) one or the built-in five. Used by `inkhaven lang status`.
+pub fn has_pronouns(
+    language: &str,
+    custom: &std::collections::BTreeMap<String, crate::config::PronounLangSet>,
+) -> bool {
+    !resolve_pronouns(language, EntityKind::Character, custom).is_empty()
 }
 
 /// True when `name` appears in `haystack_lc` (already lowercased) as a whole
@@ -205,11 +237,17 @@ pub fn attribute_continuations(
     chapters: &[Vec<(Uuid, String)>],
     lexicon: &[(String, EntityKind)],
     language: &str,
+    custom_pronouns: &std::collections::BTreeMap<String, crate::config::PronounLangSet>,
 ) -> HashMap<Uuid, Vec<String>> {
     let lex_lc: Vec<(String, String, EntityKind)> = lexicon
         .iter()
         .map(|(n, k)| (n.clone(), n.to_lowercase(), *k))
         .collect();
+    // 1.3.13 — per-kind pronoun set: a config (bootstrapped) language wins,
+    // else the built-in five; resolved once (it's language-fixed).
+    let pron_char = resolve_pronouns(language, EntityKind::Character, custom_pronouns);
+    let pron_place = resolve_pronouns(language, EntityKind::Place, custom_pronouns);
+    let pron_art = resolve_pronouns(language, EntityKind::Artefact, custom_pronouns);
     let mut out: HashMap<Uuid, Vec<String>> = HashMap::new();
     for chapter in chapters {
         // The most recent single-named entity of each kind (the anchor).
@@ -228,7 +266,12 @@ pub fn attribute_continuations(
                 // appears (a continued description).
                 let words = word_set(&lc);
                 for (kind, anchor_name) in &anchor {
-                    if pronouns(language, *kind).iter().any(|p| words.contains(*p)) {
+                    let set = match kind {
+                        EntityKind::Character => &pron_char,
+                        EntityKind::Place => &pron_place,
+                        EntityKind::Artefact => &pron_art,
+                    };
+                    if set.iter().any(|p| words.contains(p.as_str())) {
                         out.entry(*pid).or_default().push(anchor_name.clone());
                     }
                 }
@@ -500,7 +543,7 @@ mod tests {
             (p_ambig, "Mara and Joss argued by the door.".to_string()),
             (p_after_ambig, "She would not look at him.".to_string()),
         ]];
-        let map = attribute_continuations(&chapters, &lexicon, "english");
+        let map = attribute_continuations(&chapters, &lexicon, "english", &std::collections::BTreeMap::new());
         assert_eq!(map.get(&p_pron).map(|v| v.as_slice()), Some(&["Mara".to_string()][..]));
         assert!(!map.contains_key(&p_after_ambig), "ambiguous anchor → no attribution");
         // the place pronoun "there"/"it" never appeared, so The Goose attributes nothing
@@ -516,7 +559,7 @@ mod tests {
             vec![(p_named, "Mara waited.".to_string())],
             vec![(p_next_chapter, "She sighed.".to_string())], // new chapter — no anchor
         ];
-        let map = attribute_continuations(&chapters, &lexicon, "english");
+        let map = attribute_continuations(&chapters, &lexicon, "english", &std::collections::BTreeMap::new());
         assert!(!map.contains_key(&p_next_chapter), "anchor resets per chapter");
     }
 
@@ -532,11 +575,11 @@ mod tests {
         ]];
         // English pronouns wouldn't match Russian text…
         assert!(
-            !attribute_continuations(&chapters, &lexicon, "english").contains_key(&p_pron),
+            !attribute_continuations(&chapters, &lexicon, "english", &std::collections::BTreeMap::new()).contains_key(&p_pron),
             "english pronoun set must not fire on Russian prose"
         );
         // …but the Russian set does.
-        let ru = attribute_continuations(&chapters, &lexicon, "russian");
+        let ru = attribute_continuations(&chapters, &lexicon, "russian", &std::collections::BTreeMap::new());
         assert_eq!(ru.get(&p_pron).map(|v| v.as_slice()), Some(&["Мара".to_string()][..]));
     }
 

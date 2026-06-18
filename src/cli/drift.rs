@@ -26,18 +26,8 @@ use crate::store::{Store, SYSTEM_TAG_ARTEFACTS, SYSTEM_TAG_CHARACTERS, SYSTEM_TA
 
 use super::DriftCommand;
 
-const DRIFT_SYSTEM_PROMPT: &str = "You are a continuity editor for a work of fiction. You receive \
-NUMBERED descriptions of a SINGLE entity (a character, place, or object), each drawn from a \
-different point in the manuscript, in chapter order. Flag pairs that CONTRADICT each other — the \
-same attribute described in incompatible ways (a place cramped vs spacious, smoky vs airy; a \
-character soft-spoken vs booming; an object pristine vs battered) with no in-story event that \
-would explain the change. Do NOT flag descriptions that merely add new detail, describe different \
-aspects, or reflect a change the story clearly dramatizes. Output ONE contradiction per line, in \
-the exact form:\n\
-  i | j | why\n\
-where `i` and `j` are the description NUMBERS and `why` is a one-line explanation of the \
-contradiction. Output nothing else — no preamble, no commentary, no markdown. If the descriptions \
-are consistent, output nothing.";
+// The drift judge's system prompt now lives, localized, in
+// `cli::world_prompts` (slug `drift`, 1.3.13).
 
 pub fn run(project: &Path, cmd: DriftCommand) -> Result<()> {
     match cmd {
@@ -71,7 +61,7 @@ fn gather(
     // last unambiguously-named entity (per-language pronouns), so they survive
     // the name filter.
     let chapters = chapter_paragraphs(store, hierarchy);
-    let coref = attribute_continuations(&chapters, &lexicon, language);
+    let coref = attribute_continuations(&chapters, &lexicon, language, &cfg.pronouns);
     let mut out = Vec::new();
     for (entity, kind) in lexicon.iter().cloned() {
         let coref_ids: HashSet<Uuid> = coref
@@ -269,7 +259,8 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
     let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
-    let report = scan_with(&store, &hierarchy, &cfg, &layout, provider, &|s| eprintln!("{s}"))?;
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let report = scan_with(&store, &hierarchy, &cfg, &layout, provider, &never, &|s| eprintln!("{s}"))?;
 
     if json {
         let rendered = serde_json::to_string_pretty(&report)
@@ -299,12 +290,14 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
 /// `cfg.language` so the judge prompt stays in the manuscript's language.
 /// Safe to call from the TUI background-refresh thread (shares the store's
 /// connection pool).
+#[allow(clippy::too_many_arguments)]
 pub fn scan_with(
     store: &Store,
     hierarchy: &Hierarchy,
     cfg: &Config,
     layout: &ProjectLayout,
     provider: Option<&str>,
+    cancel: &std::sync::atomic::AtomicBool,
     progress: &dyn Fn(&str),
 ) -> Result<DriftReport> {
     let descs = gather(store, hierarchy, &cfg.drift, &cfg.language);
@@ -325,6 +318,11 @@ pub fn scan_with(
     };
     let ai = AiClient::from_config(&cfg.llm)?;
     let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    let (system, fell_back) =
+        super::world_prompts::resolve(store, hierarchy, layout, "drift", &language);
+    if fell_back {
+        progress(&format!("drift scan: no {language} prompt — using English"));
+    }
     progress(&format!(
         "drift scan · language: {language} · model: {model} · {} entit{} to check",
         comparable.len(),
@@ -333,9 +331,12 @@ pub fn scan_with(
 
     let mut conflicts = Vec::new();
     for (i, d) in comparable.iter().enumerate() {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Error::Store("cancelled".into())); // partial report not saved
+        }
         progress(&format!("drift [{}/{}] {}", i + 1, comparable.len(), d.entity));
         let prompt = build_drift_prompt(&language, d);
-        let raw = run_blocking(&ai, model, DRIFT_SYSTEM_PROMPT, &prompt)?;
+        let raw = run_blocking(&ai, model, &system, &prompt)?;
         let pairs = parse_drift_pairs(&raw, d.snippets.len());
         conflicts.extend(resolve_conflicts(&d.entity, d.kind, &d.snippets, &pairs));
     }
@@ -357,7 +358,8 @@ pub fn scan_with(
 /// chapter-ordered description snippets.
 fn build_drift_prompt(language: &str, d: &EntityDescriptions) -> String {
     let mut body = format!(
-        "Language: {language}.\nEntity: {} ({}).\nDescriptions, in chapter order:\n",
+        "Language of the manuscript: {language}. Write each `why` explanation in {language}.\n\
+         Entity: {} ({}).\nDescriptions, in chapter order:\n",
         d.entity,
         d.kind.label()
     );

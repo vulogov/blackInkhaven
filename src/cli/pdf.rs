@@ -25,6 +25,14 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             out,
             dry_run,
         } => impose(&input, &config, project, out, dry_run),
+        PdfCommand::Booklet {
+            input,
+            out,
+            sheet,
+            creep,
+            no_marks,
+            dry_run,
+        } => booklet(&input, out, sheet.as_deref(), creep, no_marks, dry_run),
         PdfCommand::Extract { input, pages, out } => {
             let doc = load(&input)?;
             let spec = PageSpec::parse(&pages).map_err(pdferr)?;
@@ -452,6 +460,93 @@ fn impose(
     println!(
         "pdf impose: `{profile}` · {} signature(s), {} sheet(s) → {} ({} imposed page(s))",
         layout.signatures,
+        layout.sheets.len(),
+        path.display(),
+        out_doc.page_count(),
+    );
+    Ok(())
+}
+
+/// Quick saddle-stitch booklet (P4) — no profile, no config file.
+/// Builds [`ImpositionParams`] directly: the press sheet auto-fits to
+/// two source pages side-by-side (so any trim size works, not just the
+/// preset-bound `chapbook` profile), all pages nest into one folded
+/// signature, blanks balance around the centre fold. `--sheet` centres
+/// the spread on a named preset instead; `--creep` adds shingle
+/// compensation; `--no-marks` drops crop/fold marks.
+fn booklet(
+    input: &Path,
+    out: Option<PathBuf>,
+    sheet: Option<&str>,
+    creep: bool,
+    no_marks: bool,
+    dry_run: bool,
+) -> Result<()> {
+    use pdf::impose::{BindingStyle, BlankPolicy, CreepStrategy, ImpositionParams};
+
+    let src = load(input)?;
+    let page = src
+        .page_size(0)
+        .ok_or_else(|| Error::Store("pdf booklet: source has no pages".into()))?;
+
+    // Press sheet: a named preset (forced landscape — two columns across)
+    // or auto-fit to exactly two source pages side-by-side.
+    let sheet_size = match sheet {
+        Some(name) => pdf::geometry::page_size(name)
+            .ok_or_else(|| Error::Store(format!("pdf booklet: unknown sheet preset `{name}`")))?
+            .landscape(),
+        None => pdf::geometry::Size {
+            width: page.width() * 2.0,
+            height: page.height(),
+        },
+    };
+
+    let thickness = pdf::paper::paper_stock(pdf::paper::DEFAULT_INTERIOR)
+        .map(|s| s.thickness_mm)
+        .unwrap_or(0.1);
+
+    let params = ImpositionParams {
+        style: BindingStyle::SaddleStitch,
+        sheets_per_signature: 1, // saddle = one nested signature; ignored anyway
+        blank: BlankPolicy::Balance,
+        sheet_size,
+        creep: if creep { CreepStrategy::Shingle } else { CreepStrategy::None },
+        paper_thickness_mm: thickness,
+        marks: pdf::impose::marks::MarkConfig {
+            crop: !no_marks,
+            fold: !no_marks,
+            registration: false,
+            spine_marker: false,
+            signature_number: false,
+            color_bar: false,
+        },
+        crop_offset_mm: 5.0,
+        fold_mark_length_mm: 8.0,
+    };
+
+    if dry_run {
+        let preview = pdf::impose::preview::build("booklet", src.page_count(), &params);
+        for line in preview.lines() {
+            println!("{line}");
+        }
+        return Ok(());
+    }
+
+    let layout = pdf::impose::layout::plan(
+        params.style,
+        params.sheets_per_signature,
+        src.page_count(),
+        params.blank,
+    );
+    let mut out_doc = pdf::impose::impose(&src, &params).map_err(pdferr)?;
+    let path = out_or_default(input, out, "booklet");
+    write_pdf(&mut out_doc, &path)?;
+    let (sw, sh) = (
+        pdf::geometry::pt_to_mm(sheet_size.width),
+        pdf::geometry::pt_to_mm(sheet_size.height),
+    );
+    println!(
+        "pdf booklet: saddle-stitch · sheet {sw:.0}×{sh:.0} mm · {} sheet(s) → {} ({} imposed page(s))",
         layout.sheets.len(),
         path.display(),
         out_doc.page_count(),

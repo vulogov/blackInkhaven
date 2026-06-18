@@ -32,18 +32,9 @@ use crate::store::node::NodeKind;
 
 use super::FactsCommand;
 
-const SYSTEM_PROMPT: &str = "You are a fact-checker for a work of fiction. You receive a set \
-of ESTABLISHED facts about the story's world (climate, geography, seasons, distances, \
-chronology) and a chapter's prose. Flag any claim in the prose that CONTRADICTS an \
-established fact — snow in a region established as tropical, a three-day ride done overnight, \
-an event dated before something it must follow. Treat the established facts as ground truth; \
-do not flag things merely unmentioned by them. Output ONE contradiction per line in the exact \
-form:\n\
-  claim | fact | detail\n\
-where `claim` is the exact contradicting phrase from the prose, `fact` is the established \
-fact it violates, and `detail` is a one-line explanation. Output nothing else — no preamble, \
-no commentary, no markdown. If the chapter contradicts no facts, output nothing.";
-
+// The facts-scan + facts-check system prompts now live, localized, in
+// `cli::world_prompts` (1.3.13). `EXTRACT_SYSTEM_PROMPT` below is for the
+// interactive `facts extract` command, not a world-check scan.
 const EXTRACT_SYSTEM_PROMPT: &str = "You extract ESTABLISHED world facts — the invariants a \
 story relies on: climate, geography, seasons, distances / travel-times, chronology / dates, \
 and recurring rules (magic, technology, law, custom). You do NOT extract plot events, \
@@ -482,7 +473,8 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
     let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
-    let report = scan_with(&store, &hierarchy, &cfg, &layout, provider, &|s| eprintln!("{s}"))?;
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let report = scan_with(&store, &hierarchy, &cfg, &layout, provider, &never, &|s| eprintln!("{s}"))?;
 
     if json {
         let rendered = serde_json::to_string_pretty(&report)
@@ -503,12 +495,14 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
 /// progress through `progress` (not stderr), returning the saved report. Reads
 /// `cfg.language` so the per-chapter prompt stays in the manuscript's language.
 /// Safe to call from the TUI background-refresh thread.
+#[allow(clippy::too_many_arguments)]
 pub fn scan_with(
     store: &Store,
     hierarchy: &Hierarchy,
     cfg: &Config,
     layout: &ProjectLayout,
     provider: Option<&str>,
+    cancel: &std::sync::atomic::AtomicBool,
     progress: &dyn Fn(&str),
 ) -> Result<FactScanReport> {
     let language = if cfg.language.trim().is_empty() {
@@ -554,6 +548,11 @@ pub fn scan_with(
 
     let ai = AiClient::from_config(&cfg.llm)?;
     let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    let (system, fell_back) =
+        super::world_prompts::resolve(store, hierarchy, layout, "facts-scan", &language);
+    if fell_back {
+        progress(&format!("facts scan: no {language} prompt — using English"));
+    }
     progress(&format!(
         "facts scan · language: {language} · model: {model} · {} chapter(s) · {total_facts} fact(s)",
         chapters.len(),
@@ -567,6 +566,9 @@ pub fn scan_with(
     };
 
     for (idx, (chapter_id, chapter_title)) in chapters.iter().enumerate() {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Error::Store("cancelled".into())); // partial report not saved
+        }
         let prose = crate::cli::book_walk::chapter_raw_prose(layout, hierarchy, *chapter_id);
         let plain = crate::audiobook::typst_to_plain(&prose);
         if plain.trim().is_empty() {
@@ -578,7 +580,7 @@ pub fn scan_with(
             continue;
         }
         let prompt = build_check_prompt(&language, chapter_title, &plain, &facts_ctx);
-        let raw = run_blocking(&ai, model, SYSTEM_PROMPT, &prompt)?;
+        let raw = run_blocking(&ai, model, &system, &prompt)?;
         let findings = parse_findings(&raw, chapter_title, idx);
         progress(&format!(
             "facts [{}/{}] {chapter_title} → {} contradiction(s)",
@@ -594,12 +596,6 @@ pub fn scan_with(
         .map_err(|e| Error::Store(format!("facts_scan save: {e}")))?;
     Ok(report)
 }
-
-const CHECK_SYSTEM_PROMPT: &str = "You are a continuity editor. Below is a story world's \
-established facts. Find pairs of facts that CONTRADICT each other — two statements that cannot \
-both be true (a climate fact vs a geography fact, an age vs a timeline, a distance vs a travel \
-time, …). Output ONE contradiction per line as `fact A | fact B | why`, quoting each fact \
-briefly. If nothing contradicts, output nothing. No preamble, no header row.";
 
 /// 1.3.8 WORLD-1 P0 — internal-consistency check: flag fact pairs that
 /// contradict each other *within* the Facts book.
@@ -693,10 +689,16 @@ pub fn check_with(
     ));
 
     let prompt = format!(
-        "Language: {language}.\n--- ESTABLISHED FACTS ---\n{}\n--- END ---",
+        "Language of the manuscript: {language}. Quote each fact verbatim, and write every `why` \
+explanation in {language}.\n--- ESTABLISHED FACTS ---\n{}\n--- END ---",
         facts.join("\n")
     );
-    let raw = run_blocking(&ai, model, CHECK_SYSTEM_PROMPT, &prompt)?;
+    let (system, fell_back) =
+        super::world_prompts::resolve(store, hierarchy, layout, "facts-check", &language);
+    if fell_back {
+        progress(&format!("facts check: no {language} prompt — using English"));
+    }
+    let raw = run_blocking(&ai, model, &system, &prompt)?;
     let report = crate::facts_scan::FactCheckReport {
         version: env!("CARGO_PKG_VERSION").to_string(),
         content_hash: crate::facts_scan::FactCheckReport::compute_hash(&facts),
@@ -876,7 +878,8 @@ fn build_check_prompt(language: &str, chapter: &str, prose: &str, facts: &[Strin
     format!(
         "Language of the manuscript: {language}.\n\
          Fact-check this chapter (\"{chapter}\") against the established facts below. \
-         One contradiction per line, `claim | fact | detail`, no other output.\n\n\
+         One contradiction per line, `claim | fact | detail`, no other output. \
+         Quote `claim` and `fact` verbatim from the text; write each `detail` in {language}.\n\n\
          --- ESTABLISHED FACTS ---\n{}\n--- END ---\n\n\
          --- CHAPTER PROSE ---\n{prose}\n--- END ---",
         facts.join("\n"),

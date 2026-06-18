@@ -1617,11 +1617,20 @@ global `~/.config/inkhaven`, global wins). See
 ### `imposition` (1.3.0+) — folding-signature profiles
 
 Named profiles for `inkhaven pdf impose --config <name>`, the `Ctrl+B Q`
-preview, and the `imposed_pdf` book-take. Five are built in — `default`
+preview, and the `imposed_pdf` book-take. Six are built in — `default`
 and `chapbook` (A-series), `us_perfect` and `us_chapbook` (their Tabloid /
-US-Letter analogues), and `thick` (8-sheet push-out signatures for heavy
-books) — and you add your own keys to extend (a missing profile is an
-error listing the known names).
+US-Letter analogues), `thick` (8-sheet push-out signatures for heavy
+books), and `a5_book` (1.3.13 — a perfect-bound **A5 codex** folded from A4
+sheets: gathered 16-page signatures with shingle creep and a
+signature-number mark, the popular home-binding recipe) — and you add your
+own keys to extend (a missing profile is an error listing the known names).
+
+For a quick saddle-stitch booklet with **no profile at all**, use
+`inkhaven pdf booklet <input>` (1.3.13): it builds the parameters directly,
+auto-fitting the press sheet to two source pages side-by-side (so any trim
+size works), one nested signature, balanced blanks. `--sheet <preset>`
+centres the spread on a named sheet instead; `--creep` adds shingle
+compensation; `--no-marks` drops crop/fold marks; `--dry-run` previews.
 
 ```hjson
 imposition: {
@@ -1768,3 +1777,57 @@ drift: {
   per entity. The larger it is, the more thorough (and more expensive) each
   entity's check. Findings surface in `inkhaven edit` (category `drift`,
   jump-only) and the `Ctrl+V Shift+L` story bible.
+
+## 1.3.13 — per-language detector maps
+
+The style + drift detectors key off the top-level `language` field. Five
+languages ship fully curated (`english`, `russian`, `french`, `german`,
+`spanish`); 1.3.13 lets you curate **any** language through per-language
+**maps** (keyed by language name) instead of the old five fixed fields. An
+uncurated language gets **empty** built-ins (no false flags) — never the
+English lists. Check coverage with **`inkhaven lang status [--language <l>]`**,
+or have the LLM populate every map at once with **`inkhaven lang bootstrap
+<language> [--yes]`** (it writes exactly these paths, with a backup +
+comment-preserving in-place patch).
+
+```hjson
+editor: {
+  style_warnings: {
+    filter_words:     { languages: { polish: [ "tylko", "naprawdę", … ] } }
+    show_dont_tell:   { languages: { polish: {
+      linking_verbs:      [ … ]   // copula / quasi-copula asserting inner state
+      emotion_adjectives: [ … ]   // adjectives that name an emotion outright
+      manner_adverbs:     [ … ]   // emotion-labelling adverbs
+      cognition_verbs:    [ … ]   // verbs that narrate thought
+    } } }
+    repeated_phrases: { languages: { polish: [ "i", "w", "na", "że", … ] } }
+  }
+}
+drift: {
+  pronouns: {
+    polish: {
+      character: [ "on", "ona", "oni", … ]  // 3rd-person, standalone words only
+      place:     [ "tam", "tu", … ]
+      artefact:  [ "to", "ten", … ]
+    }
+  }
+}
+```
+
+- All words are **lemmas** — Snowball stemming (18 languages) catches the
+  inflections; set `use_stemming: false` to match exactly instead.
+- An entry under `languages.<lang>` is the curated list for that language; the
+  old five fixed fields still deserialize and remain valid.
+- Two complete worked examples ship in
+  [`custom_languages/`](../custom_languages/): **Arabic** (RTL, pro-drop) and
+  **Hungarian** (agglutinative, genderless 3rd person).
+
+### Localized world-check prompts
+
+The four AI world-consistency scans (`facts check` / `facts scan` / `drift` /
+`continuity`) run with prompts **localized** to the project language for the
+five curated languages and force their findings' explanations into that
+language. An uncurated language falls back to the English prompt **with a
+warning**. Each prompt is overridable through the 3-tier cascade — a `Prompts`
+book entry (`{slug}-{lang}` → `{slug}`) → `prompts.hjson` → the localized
+built-in (see [`PROMPTS.md`](PROMPTS.md)).
