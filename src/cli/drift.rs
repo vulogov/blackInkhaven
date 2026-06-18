@@ -12,8 +12,12 @@ use std::path::Path;
 
 use uuid::Uuid;
 
+use crate::ai::AiClient;
 use crate::config::Config;
-use crate::drift::{assemble_descriptions, Candidate, DescriptionSnippet, EntityDescriptions, EntityKind};
+use crate::drift::{
+    assemble_descriptions, parse_drift_pairs, resolve_conflicts, Candidate, DescriptionSnippet,
+    DriftReport, EntityDescriptions, EntityKind,
+};
 use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
@@ -24,12 +28,26 @@ use super::DriftCommand;
 
 /// How many vector hits to pull per entity before name-filtering + capping.
 const TOP_K: usize = 24;
-/// Max description snippets kept per entity (bounds the P1 judge prompt).
+/// Max description snippets kept per entity (bounds the judge prompt).
 const MAX_SNIPPETS: usize = 8;
+
+const DRIFT_SYSTEM_PROMPT: &str = "You are a continuity editor for a work of fiction. You receive \
+NUMBERED descriptions of a SINGLE entity (a character, place, or object), each drawn from a \
+different point in the manuscript, in chapter order. Flag pairs that CONTRADICT each other — the \
+same attribute described in incompatible ways (a place cramped vs spacious, smoky vs airy; a \
+character soft-spoken vs booming; an object pristine vs battered) with no in-story event that \
+would explain the change. Do NOT flag descriptions that merely add new detail, describe different \
+aspects, or reflect a change the story clearly dramatizes. Output ONE contradiction per line, in \
+the exact form:\n\
+  i | j | why\n\
+where `i` and `j` are the description NUMBERS and `why` is a one-line explanation of the \
+contradiction. Output nothing else — no preamble, no commentary, no markdown. If the descriptions \
+are consistent, output nothing.";
 
 pub fn run(project: &Path, cmd: DriftCommand) -> Result<()> {
     match cmd {
         DriftCommand::List { json } => list(project, json),
+        DriftCommand::Scan { provider, json } => scan(project, provider.as_deref(), json),
     }
 }
 
@@ -186,4 +204,102 @@ fn list(project: &Path, json: bool) -> Result<()> {
         println!();
     }
     Ok(())
+}
+
+/// The AI drift pass: for every entity with ≥2 retrieved descriptions, ask the
+/// model which pairs contradict; write `<project>/.inkhaven/drift.json`.
+fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+
+    let descs = gather(&store, &hierarchy);
+    let comparable: Vec<&EntityDescriptions> =
+        descs.iter().filter(|d| d.snippets.len() >= 2).collect();
+    if comparable.is_empty() {
+        return Err(Error::Store(
+            "drift scan: no entity has two or more retrievable descriptions to compare — \
+             populate the entity books and make sure the vector index is built"
+                .into(),
+        ));
+    }
+
+    let language = if cfg.language.trim().is_empty() {
+        "English".to_string()
+    } else {
+        cfg.language.clone()
+    };
+    let ai = AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    eprintln!(
+        "inkhaven drift scan · language: {language} · model: {model} · {} entit{} to check",
+        comparable.len(),
+        if comparable.len() == 1 { "y" } else { "ies" }
+    );
+
+    let mut conflicts = Vec::new();
+    for d in &comparable {
+        eprintln!("  · {} ({} description(s))", d.entity, d.snippets.len());
+        let prompt = build_drift_prompt(&language, d);
+        let raw = run_blocking(&ai, model, DRIFT_SYSTEM_PROMPT, &prompt)?;
+        let pairs = parse_drift_pairs(&raw, d.snippets.len());
+        conflicts.extend(resolve_conflicts(&d.entity, d.kind, &d.snippets, &pairs));
+    }
+
+    let report = DriftReport {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        content_hash: DriftReport::compute_hash(&descs),
+        conflicts,
+    };
+    report
+        .save(&layout.root)
+        .map_err(|e| Error::Store(format!("drift save: {e}")))?;
+
+    if json {
+        let rendered = serde_json::to_string_pretty(&report)
+            .map_err(|e| Error::Store(format!("drift JSON: {e}")))?;
+        println!("{rendered}");
+    } else if report.conflicts.is_empty() {
+        println!(
+            "drift scan: ✓ no description contradictions across {} entit{}",
+            comparable.len(),
+            if comparable.len() == 1 { "y" } else { "ies" }
+        );
+    } else {
+        println!("drift scan: {} description contradiction(s):", report.conflicts.len());
+        for c in &report.conflicts {
+            println!(
+                "  ⚠ {} ({}) — [{}] “{}”  ⟷  [{}] “{}”\n      ↳ {}",
+                c.entity, c.kind.label(), c.chapter_a, c.a, c.chapter_b, c.b, c.detail
+            );
+        }
+        eprintln!("  (also surfaced in `inkhaven edit`)");
+    }
+    Ok(())
+}
+
+/// Build the per-entity judge prompt: the entity name + its numbered,
+/// chapter-ordered description snippets.
+fn build_drift_prompt(language: &str, d: &EntityDescriptions) -> String {
+    let mut body = format!(
+        "Language: {language}.\nEntity: {} ({}).\nDescriptions, in chapter order:\n",
+        d.entity,
+        d.kind.label()
+    );
+    for (i, s) in d.snippets.iter().enumerate() {
+        body.push_str(&format!("[{}] (ch. {}) {}\n", i + 1, s.chapter, s.text));
+    }
+    body
+}
+
+fn run_blocking(ai: &AiClient, model: &str, system: &str, prompt: &str) -> Result<String> {
+    crate::ai::stream::collect_blocking(
+        ai.client.clone(),
+        model.to_string(),
+        Some(system.to_string()),
+        prompt.to_string(),
+    )
+    .map_err(|e| Error::Store(format!("inference error: {e}")))
 }
