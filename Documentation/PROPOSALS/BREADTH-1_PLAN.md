@@ -87,16 +87,22 @@ language-keyed:
 - one prompt slug per scan (`facts-check`, `facts-scan`, `drift-judge`,
   `continuity-extract`), each resolved through the tiers in its `*_with`,
   falling back to the strong built-in.
-- The resolver is **language-aware**, so a project supplies per-language
-  prompt overrides — a Russian project gets Russian-tuned world-checking
-  instructions, a hard-SF project leans on orbital mechanics, a fantasy one on
-  its own cosmology — while the built-ins already force in-language output.
+- **A full set of localized built-in defaults** — each world-check system
+  prompt ships **in every supported language** (en/ru/fr/de/es), so a Russian
+  project runs Russian *instructions*, not just Russian output. The selector is
+  `(slug, language) → prompt`.
+- **English fallback with a warning.** A language without a localized built-in
+  (e.g. Italian) falls back to the English prompt **and emits a warning**
+  (`facts check: no Italian prompt — using English`) so the author knows. (The
+  output is still forced in-language by P1.)
 - The same domain-reasoning quality (P1's fact-check default) is the floor for
-  every scan's built-in.
+  every scan's built-in, in every language.
+- `lang status` reports the prompt language per scan (localized / English-
+  fallback).
 
-**Deliverable:** every world-checking scan runs on a prompt tuned to the book's
-language and overridable per project + per language, with strong domain-aware
-defaults.
+**Deliverable:** every world-checking scan runs on a built-in prompt *in the
+book's language* for the supported set, English-with-warning beyond, and
+overridable per project + per language via the Prompts book / `prompts.hjson`.
 
 ---
 

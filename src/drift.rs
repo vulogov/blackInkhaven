@@ -146,15 +146,23 @@ fn pronouns(language: &str, kind: EntityKind) -> &'static [&'static str] {
             Place => &["ahí", "allí", "allá", "aquí", "acá"],
             Artefact => &["ello", "eso", "esto"],
         },
-        // english + fallback
-        _ => match kind {
+        "english" | "en" | "" => match kind {
             Character => &[
                 "he", "him", "his", "she", "her", "hers", "they", "them", "their", "theirs",
             ],
             Place => &["it", "its", "there", "here"],
             Artefact => &["it", "its"],
         },
+        // 1.3.13 — a non-curated language has no built-in pronoun set, so
+        // coref is simply off (never English pronouns on foreign prose).
+        _ => &[],
     }
+}
+
+/// Whether a built-in pronoun set ships for `language` (so coref-lite can run).
+/// Used by `inkhaven lang status`. Pure.
+pub fn has_builtin_pronouns(language: &str) -> bool {
+    !pronouns(language, EntityKind::Character).is_empty()
 }
 
 /// True when `name` appears in `haystack_lc` (already lowercased) as a whole
