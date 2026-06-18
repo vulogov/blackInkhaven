@@ -84,7 +84,121 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             rule_id,
             category,
         } => define_rule(project, &language, &rule_id, &category),
+        LanguageCommand::GenerateWord {
+            language,
+            role,
+            count,
+        } => generate_word(project, &language, &role, count),
     }
+}
+
+/// LANG-1 P1.1 — generate deterministic candidate words from a language's
+/// phonotactic templates.  Loads the typed phoneme block from the language's
+/// `Phonology` chapter (whichever paragraph holds the HJSON), samples
+/// `count` words for the requested role, and prints those that satisfy every
+/// declared constraint.  Empty / absent phonology is a clear, actionable
+/// error rather than a silent empty list.
+fn generate_word(project: &Path, language: &str, role: &str, count: usize) -> Result<()> {
+    let role = crate::conlang::TemplateRole::parse(role).ok_or_else(|| {
+        Error::Config(format!(
+            "unknown role `{role}` — use root | prefix | suffix | infix | circumfix | compound"
+        ))
+    })?;
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+
+    let lang_root = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
+        })
+        .ok_or_else(|| {
+            Error::Store("Language system book missing — re-open the project to seed it".into())
+        })?
+        .clone();
+    let lang_book = hierarchy
+        .children_of(Some(lang_root.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language))
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "language `{language}` not found — run `inkhaven language init {language}` first"
+            ))
+        })?;
+
+    let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no phoneme block yet — add `phonemes` / `classes` / \
+             `templates` HJSON under its `Phonology` chapter (see Documentation/PROPOSALS/LANG-1_PLAN.md)"
+        ))
+    })?;
+
+    if phonology.templates_for(role).is_empty() {
+        return Err(Error::Config(format!(
+            "language `{language}` declares no `{}` templates in its Phonology block",
+            role.as_str()
+        )));
+    }
+
+    let words = crate::conlang::generate::word::generate_words(&phonology, role, count);
+    if words.is_empty() {
+        eprintln!(
+            "no words satisfied the constraints in {} attempts — loosen the phonotactic constraints",
+            count
+        );
+        return Ok(());
+    }
+    for w in &words {
+        println!("{w}");
+    }
+    eprintln!(
+        "generated {} / {} requested `{}` word(s) for {}",
+        words.len(),
+        count,
+        role.as_str(),
+        lang_book.title
+    );
+    Ok(())
+}
+
+/// Find and parse the `Phonology`-chapter HJSON block for a language
+/// sub-book.  Scans every paragraph under the `Phonology` chapter and
+/// returns the first that parses as a phonology block (so the author can keep
+/// it in `overview`, a dedicated `inventory` paragraph, or wherever).
+fn load_phonology(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<Option<crate::conlang::Phonology>> {
+    let Some(chapter) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Phonology"))
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    for para in hierarchy.children_of(Some(chapter.id)) {
+        if para.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Some(bytes) = store.get_content(para.id)? else {
+            continue;
+        };
+        let body = String::from_utf8_lossy(&bytes);
+        match crate::conlang::Phonology::from_hjson(&body) {
+            Ok(Some(p)) if !p.phonemes.is_empty() => return Ok(Some(p)),
+            Ok(_) => continue,
+            // A malformed block under Phonology is worth surfacing.
+            Err(e) => return Err(Error::Config(e)),
+        }
+    }
+    Ok(None)
 }
 
 /// The five standard chapters every language book

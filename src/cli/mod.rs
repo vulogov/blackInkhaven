@@ -2195,6 +2195,25 @@ pub enum LanguageCommand {
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
     },
+
+    /// LANG-1 P1.1 — generate candidate words from a language's
+    /// phonotactic templates.  Reads the typed phoneme block in the
+    /// language's `Phonology` chapter (phonemes / classes / templates /
+    /// constraints), samples words deterministically, and prints the
+    /// ones that satisfy every declared phonotactic constraint.  Pure +
+    /// deterministic: the same language + `--count` always yields the
+    /// same list, so it's safe in scripts.
+    GenerateWord {
+        /// Target language name (case-insensitive match against the
+        /// per-language sub-book titles under the `Language` system book).
+        language: String,
+        /// Which template role to draw from.
+        #[arg(long, default_value = "root")]
+        role: String,
+        /// How many words to generate.
+        #[arg(long, default_value_t = 20)]
+        count: usize,
+    },
 }
 
 /// output format selector for
