@@ -1876,6 +1876,10 @@ pub(crate) struct App {
     /// of the diff review advances it. `None` = no batch (single `f` and the
     /// rhythm rewrite leave it untouched, so they never auto-advance).
     pub(super) editorial_batch: Option<EditorialBatch>,
+    /// 1.3.12 DEEP-1 — an in-flight background job (e.g. the deep AI refresh)
+    /// run off the main thread against a shared `Store` clone. `None` when
+    /// idle; the main loop drains its channel each tick. One at a time.
+    pub(super) bg_job: Option<BgJob>,
     /// 1.2.21+ FF.4d — a fact-check chord awaiting its stream's
     /// completion: `(target paragraph id, title)`.  Consumed in
     /// `pump_inference` to parse the verdict into `fact_check_nav`.
@@ -2227,6 +2231,7 @@ impl App {
             pending_rewrite_diff: None,
             pending_rewrite_span: None,
             editorial_batch: None,
+            bg_job: None,
             fact_check_pending: None,
             fact_check_nav: FactCheckNav::default(),
             pending_translation: false,
@@ -2440,6 +2445,7 @@ impl App {
     fn run<B: ratatui::backend::Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
         loop {
             self.pump_inference();
+            self.pump_bg_job();
             self.tick_autosave();
             self.tick_crash_mirror();
             self.tick_health_pump();
@@ -2725,6 +2731,118 @@ impl App {
             self.inference.as_ref().map(|i| &i.status),
             Some(InferenceStatus::Streaming)
         )
+    }
+
+    /// 1.3.12 DEEP-1 P0 — spawn a background job: refuses if one's already
+    /// running, else starts a thread running `work` (which sends progress /
+    /// done over the channel) and stows the receiver. Returns whether it
+    /// started. `work` must own everything it needs (e.g. a cloned `Store`).
+    pub(super) fn start_bg_job(
+        &mut self,
+        kind: BgJobKind,
+        label: impl Into<String>,
+        work: impl FnOnce(std::sync::mpsc::Sender<BgMsg>) + Send + 'static,
+    ) -> bool {
+        if self.bg_job.is_some() {
+            self.status = "a background job is already running — let it finish first".into();
+            return false;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let label = label.into();
+        std::thread::spawn(move || work(tx));
+        self.status = format!("⟳ {label}…");
+        self.bg_job = Some(BgJob { rx, label, kind });
+        true
+    }
+
+    /// Drain the running job's channel each tick: surface progress to the
+    /// status line, and on completion dispatch to the kind's handler. Never
+    /// blocks. (`drain_bg_messages` does the receiver work; this owns the
+    /// borrow dance + dispatch.)
+    fn pump_bg_job(&mut self) {
+        let Some(job) = self.bg_job.take() else {
+            return;
+        };
+        let (progress, done) = drain_bg_messages(&job.rx);
+        if let Some(p) = progress {
+            self.status = format!("⟳ {}: {p}", job.label);
+        }
+        match done {
+            Some(result) => {
+                let kind = job.kind;
+                drop(job);
+                self.on_bg_job_done(kind, result);
+            }
+            None => self.bg_job = Some(job),
+        }
+    }
+
+    /// Completion dispatch for a finished background job.
+    fn on_bg_job_done(&mut self, kind: BgJobKind, result: std::result::Result<String, String>) {
+        match kind {
+            BgJobKind::DeepRefresh => match result {
+                Ok(_) => {
+                    // The scans wrote fresh sidecars — refresh the open world
+                    // modal (bible / cockpit) and report the new health line.
+                    self.refresh_open_world_modal();
+                    let summary = crate::cli::world::report_from(
+                        &self.store,
+                        &self.hierarchy,
+                        &self.cfg,
+                        &self.layout.root,
+                    )
+                    .summary();
+                    self.status = format!("deep refresh done — {summary}");
+                }
+                Err(e) => self.status = format!("deep refresh failed: {e}"),
+            },
+        }
+    }
+
+    /// 1.3.12 DEEP-1 P2 — kick off the deep AI world refresh (`Ctrl+V Shift+F`)
+    /// on the background-job harness. Pre-flights an LLM provider, then moves a
+    /// **clone** of the Store (shares the pool — no DB reopen) + cfg + layout
+    /// into the worker, which runs `deep_refresh_shared` and forwards progress.
+    fn start_deep_refresh(&mut self) {
+        if self.bg_job.is_some() {
+            self.status = "a deep refresh is already running".into();
+            return;
+        }
+        if let Err(e) = self.ai.resolve_provider(&self.cfg.llm, None) {
+            self.status = format!("deep refresh: {e} — set an LLM provider first");
+            return;
+        }
+        let store = self.store.clone();
+        let cfg = self.cfg.clone();
+        let layout = self.layout.clone();
+        self.start_bg_job(BgJobKind::DeepRefresh, "deep refresh", move |tx| {
+            let result = {
+                let progress = |s: &str| {
+                    let _ = tx.send(BgMsg::Progress(s.to_string()));
+                };
+                crate::cli::world::deep_refresh_shared(&store, &cfg, &layout, None, &progress)
+            };
+            let _ = tx.send(BgMsg::Done(
+                result
+                    .map(|()| "world refresh complete".to_string())
+                    .map_err(|e| e.to_string()),
+            ));
+        });
+    }
+
+    /// Rebuild the open story bible / Editorial Pass from freshly-written
+    /// sidecars (after a deep refresh). No-op for any other modal.
+    fn refresh_open_world_modal(&mut self) {
+        if matches!(self.modal, Modal::StoryBible { .. }) {
+            let rows = self.build_story_bible_rows();
+            if let Modal::StoryBible { rows: r, cursor } = &mut self.modal {
+                *cursor = (*cursor).min(rows.len().saturating_sub(1));
+                *r = rows;
+            }
+        } else if matches!(self.modal, Modal::EditorialPass { .. }) {
+            // Re-collects from the fresh sidecars (resets cursor/filter).
+            self.open_editorial_pass();
+        }
     }
 
     fn pump_inference(&mut self) {
@@ -5404,6 +5522,52 @@ pub(super) struct EditorialBatch {
 struct DriftBibleView<'a> {
     conflicts: &'a std::collections::BTreeMap<String, Vec<&'a crate::drift::DriftConflict>>,
     descriptions: &'a std::collections::BTreeMap<String, &'a crate::drift::EntityDescriptions>,
+}
+
+/// 1.3.12 DEEP-1 P0 — a message from a background job thread to the UI.
+pub(super) enum BgMsg {
+    /// A human-readable progress line (replaces the previous one).
+    Progress(String),
+    /// The job finished — `Ok(summary)` or `Err(reason)`.
+    Done(std::result::Result<String, String>),
+}
+
+/// Which background job is running — the completion handler dispatches on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BgJobKind {
+    /// The deep AI refresh (facts check / facts scan / drift / continuity).
+    DeepRefresh,
+}
+
+/// An in-flight background job: its progress/result channel + a label + which
+/// kind it is (for the completion handler). One at a time.
+pub(super) struct BgJob {
+    pub rx: std::sync::mpsc::Receiver<BgMsg>,
+    pub label: String,
+    pub kind: BgJobKind,
+}
+
+/// Drain everything available on a background job's channel without blocking:
+/// the last progress line seen (if any) and the terminal outcome (if the job
+/// finished or its sender dropped). Pure over the receiver.
+fn drain_bg_messages(
+    rx: &std::sync::mpsc::Receiver<BgMsg>,
+) -> (Option<String>, Option<std::result::Result<String, String>>) {
+    use std::sync::mpsc::TryRecvError;
+    let mut last_progress = None;
+    loop {
+        match rx.try_recv() {
+            Ok(BgMsg::Progress(s)) => last_progress = Some(s),
+            Ok(BgMsg::Done(r)) => return (last_progress, Some(r)),
+            Err(TryRecvError::Empty) => return (last_progress, None),
+            Err(TryRecvError::Disconnected) => {
+                return (
+                    last_progress,
+                    Some(Err("background job ended unexpectedly".into())),
+                );
+            }
+        }
+    }
 }
 
 impl ResolvedPrompt {
@@ -8421,6 +8585,7 @@ impl App {
             A::OpenPlanOutline => self.open_plan_outline(),
             A::OpenEditorialPass => self.open_editorial_pass(),
             A::OpenStoryBible => self.open_story_bible(),
+            A::RunDeepRefresh => self.start_deep_refresh(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
             A::ToggleMouseCapture => self.toggle_mouse_capture(),
@@ -9166,17 +9331,21 @@ impl App {
             Ok(report) => {
                 let n = report.findings.len();
                 let deferred = report.deferred;
+                let stale = report.stale;
                 self.modal = Modal::EditorialPass {
                     findings: report.findings,
                     cursor: 0,
                     scroll: 0,
                     filter: None,
                 };
-                let note = if deferred > 0 {
+                let mut note = if deferred > 0 {
                     format!(" ({deferred} deferred)")
                 } else {
                     String::new()
                 };
+                if stale {
+                    note.push_str(" · ⚠ may be stale (Ctrl+V Shift+F)");
+                }
                 self.status = format!(
                     "Editorial Pass · {n} finding(s){note} · ↑↓ · ⏎ jump · ✎ f fix · F fix-all · s skip · d defer · Esc"
                 );
@@ -11257,6 +11426,27 @@ impl App {
                     .bg(Color::DarkGray)
                     .fg(Color::White)
                     .add_modifier(Modifier::DIM),
+            ),
+            Span::raw(" "),
+        ]
+    }
+
+    /// 1.3.12 DEEP-1 — a spinner chip shown while a background job (the deep
+    /// AI refresh) runs. Driven purely by `bg_job` state, so the indicator
+    /// stays put no matter what else writes the status line.
+    pub(crate) fn bg_job_chip_spans(&self) -> Vec<ratatui::text::Span<'_>> {
+        use ratatui::style::{Color, Modifier, Style};
+        use ratatui::text::Span;
+        let Some(job) = self.bg_job.as_ref() else {
+            return Vec::new();
+        };
+        vec![
+            Span::styled(
+                format!(" ⟳ {} ", job.label),
+                Style::default()
+                    .bg(Color::Magenta)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw(" "),
         ]
@@ -21553,6 +21743,38 @@ mod tests_truncate {
         let s = "a\nb".to_string();
         let out = truncate_to_lines(s, 0);
         assert!(out.contains("more lines truncated"));
+    }
+}
+
+#[cfg(test)]
+mod tests_bg_job {
+    use super::*;
+    use std::sync::mpsc::channel;
+
+    #[test]
+    fn drains_to_last_progress_then_done() {
+        let (tx, rx) = channel();
+        tx.send(BgMsg::Progress("a".into())).unwrap();
+        tx.send(BgMsg::Progress("b".into())).unwrap();
+        tx.send(BgMsg::Done(Ok("World: ✓".into()))).unwrap();
+        let (progress, done) = drain_bg_messages(&rx);
+        assert_eq!(progress.as_deref(), Some("b"), "last progress wins");
+        assert!(matches!(done, Some(Ok(s)) if s == "World: ✓"));
+    }
+
+    #[test]
+    fn no_messages_yet_is_pending() {
+        let (_tx, rx) = channel::<BgMsg>();
+        let (progress, done) = drain_bg_messages(&rx);
+        assert!(progress.is_none() && done.is_none(), "still running");
+    }
+
+    #[test]
+    fn dropped_sender_is_a_failure() {
+        let (tx, rx) = channel::<BgMsg>();
+        drop(tx); // thread panicked / ended without sending Done
+        let (_, done) = drain_bg_messages(&rx);
+        assert!(matches!(done, Some(Err(_))), "disconnect → failure outcome");
     }
 }
 

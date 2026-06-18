@@ -1379,6 +1379,11 @@ pub struct EmbeddingsConfig {
     pub model: String,
     pub chunk_size: usize,
     pub chunk_overlap: f32,
+    /// r2d2 connection-pool size for each backing DuckDB file (metadata +
+    /// content). Default 4. Clamped to a minimum of 2 at open time so a
+    /// background job (e.g. the 1.3.12 deep AI refresh) can always check out a
+    /// connection while the TUI holds another — a pool of 1 would deadlock.
+    pub pool_size: usize,
 }
 
 impl Default for EmbeddingsConfig {
@@ -1387,6 +1392,7 @@ impl Default for EmbeddingsConfig {
             model: "MultilingualE5Small".into(),
             chunk_size: 800,
             chunk_overlap: 0.15,
+            pool_size: 4,
         }
     }
 }

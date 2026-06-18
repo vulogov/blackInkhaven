@@ -175,7 +175,10 @@ impl Store {
         perf_mark(perf, "store.open.embedding_engine", t0.elapsed());
 
         let t1 = std::time::Instant::now();
-        let inner = DocumentStorage::with_embedding(root, engine).map_err(|e| {
+        // Clamp to ≥2 so a background job can always get a connection while the
+        // main thread holds one (1.3.12 DEEP-1 invariant).
+        let pool_size = cfg.embeddings.pool_size.max(2);
+        let inner = DocumentStorage::with_embedding(root, engine, pool_size).map_err(|e| {
             Error::Store(format!(
                 "couldn't open the document store at {} — {}.\n\
                  Another inkhaven process may be using the project, or the database \
