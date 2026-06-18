@@ -13,10 +13,6 @@
 //! The impure assembly (reading the sidecars + walking the store) lives in
 //! `cli::world`; everything here is testable without I/O.
 
-// The whole module is consumed by `cli::world` (P2 — the `inkhaven world`
-// command); the pure logic is already exercised by the tests below.
-#![allow(dead_code)]
-
 use serde::Serialize;
 
 use crate::drift::DriftConflict;
