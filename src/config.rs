@@ -2438,7 +2438,7 @@ pub fn built_in_stop_words(language: &str) -> &'static [&'static str] {
             "de", "del", "en", "a", "con", "por", "para",
             "que", "no", "es", "son", "se", "su", "lo",
         ],
-        _ => &[
+        "english" | "en" | "" => &[
             "the", "a", "an", "and", "or", "but", "of",
             "to", "in", "on", "at", "by", "for", "with",
             "as", "is", "was", "were", "are", "be",
@@ -2447,6 +2447,10 @@ pub fn built_in_stop_words(language: &str) -> &'static [&'static str] {
             "we", "you", "his", "her", "their", "its",
             "this", "that", "these", "those", "not", "no",
         ],
+        // 1.3.13 — non-curated language → no built-in stop-words (the
+        // repeated-phrase detector still runs, just without stop-word
+        // filtering), never English stop-words on foreign prose.
+        _ => &[],
     }
 }
 
@@ -2562,7 +2566,11 @@ pub fn built_in_filter_words(language: &str) -> &'static [&'static str] {
         "french" => BUILT_IN_FRENCH,
         "german" => BUILT_IN_GERMAN,
         "spanish" => BUILT_IN_SPANISH,
-        _ => BUILT_IN_ENGLISH,
+        "english" | "en" | "" => BUILT_IN_ENGLISH,
+        // 1.3.13 — a non-curated language gets an EMPTY list (the detector is
+        // off), never English words flagged in foreign prose. Bootstrap or
+        // configure a list to enable it.
+        _ => &[],
     }
 }
 

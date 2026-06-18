@@ -43,6 +43,7 @@ pub mod plan;
 pub mod editorial;
 pub mod drift;
 pub mod world;
+pub mod lang;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -771,6 +772,12 @@ pub enum Command {
     #[command(subcommand)]
     Facts(FactsCommand),
 
+    /// 1.3.13 BREADTH-1 — `inkhaven lang <subcommand>`.  Multilingual coverage:
+    /// `status` prints what works in the project (or `--language`) language —
+    /// stemming, detector word-lists, prompts, embeddings.
+    #[command(subcommand)]
+    Lang(LangCommand),
+
     /// 1.3.10 WORLD-2 — `inkhaven drift <subcommand>`.  Semantic drift:
     /// descriptions of the same entity (character / place / artefact) that
     /// diverge across the manuscript without a hard factual clash.  `list`
@@ -1274,6 +1281,17 @@ pub enum FactsCommand {
 }
 
 /// 1.3.10 WORLD-2 — `inkhaven drift …`: semantic drift across the manuscript.
+/// 1.3.13 BREADTH-1 — `inkhaven lang …`: multilingual coverage.
+#[derive(clap::Subcommand, Debug)]
+pub enum LangCommand {
+    /// Print the coverage matrix for the project (or `--language`) language.
+    Status {
+        /// Report for this language instead of the project's `language`.
+        #[arg(long)]
+        language: Option<String>,
+    },
+}
+
 #[derive(clap::Subcommand, Debug)]
 pub enum DriftCommand {
     /// Print the description snippets retrieved for each entity (Characters /
@@ -2634,6 +2652,7 @@ impl Cli {
                 facts_scan::run(&project, cmd).map_err(Into::into)
             }
             Command::Drift(cmd) => drift::run(&project, cmd).map_err(Into::into),
+            Command::Lang(cmd) => lang::run(&project, cmd).map_err(Into::into),
             Command::World { json, deep, provider, entity } => {
                 world::run(&project, json, deep, provider.as_deref(), entity.as_deref())
                     .map_err(Into::into)

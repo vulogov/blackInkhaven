@@ -851,9 +851,12 @@ mod tests {
     }
 
     #[test]
-    fn unknown_language_falls_back_to_english() {
+    fn unknown_language_is_empty_not_english() {
+        // 1.3.13 — a non-curated language gets an EMPTY built-in list (detector
+        // off), never English words flagged in foreign prose.
         let d = FilterWordsDetector::new(&cfg_default(), "klingon");
-        assert_eq!(d.detect("just a test").len(), 1);
+        assert!(d.is_empty(), "non-curated language → no built-in filter words");
+        assert_eq!(d.detect("just a test").len(), 0);
     }
 
     #[test]
