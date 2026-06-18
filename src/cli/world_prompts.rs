@@ -15,6 +15,51 @@ pub fn world_system_prompt(slug: &str, language: &str) -> (&'static str, bool) {
     }
 }
 
+/// 1.3.13 — the full 3-tier resolution for a world-check prompt:
+/// **Prompts book → `prompts.hjson` → localized built-in**, language-aware. A
+/// project override is tried both language-qualified (`facts-check-russian`,
+/// `facts-check-ru`) and bare (`facts-check`); when an override is found the
+/// `bool` is `false` (the author chose it). With no override, the localized
+/// built-in is used and the `bool` reports the English fallback.
+pub fn resolve(
+    store: &crate::store::Store,
+    h: &crate::store::hierarchy::Hierarchy,
+    layout: &crate::project::ProjectLayout,
+    slug: &str,
+    language: &str,
+) -> (String, bool) {
+    let lc = language.trim().to_lowercase();
+    let mut names: Vec<String> = vec![format!("{slug}-{lc}")];
+    if let Some(code) = canonical(&lc) {
+        if code != lc {
+            names.push(format!("{slug}-{code}"));
+        }
+    }
+    names.push(slug.to_string());
+
+    // Tier 1 — Prompts book.
+    for name in &names {
+        if let Some(p) = super::resolve_book_prompt(store, h, name) {
+            return (p, false);
+        }
+    }
+    // Tier 2 — prompts.hjson.
+    if let Ok(lib) = crate::ai::prompts::PromptLibrary::load(&layout.root.join("prompts.hjson")) {
+        for name in &names {
+            if let Some(t) = lib
+                .find(name)
+                .map(|p| p.template.clone())
+                .filter(|t| !t.trim().is_empty())
+            {
+                return (t, false);
+            }
+        }
+    }
+    // Tier 3 — localized built-in.
+    let (p, fell_back) = world_system_prompt(slug, language);
+    (p.to_string(), fell_back)
+}
+
 /// Map a project language to one of the five supported codes, or `None` for a
 /// language we don't ship a localized prompt for.
 fn canonical(language: &str) -> Option<&'static str> {

@@ -275,7 +275,7 @@ pub fn deep_refresh_shared(
     if cancel.load(Relaxed) {
         return Ok(());
     }
-    if let Err(e) = super::continuity::extract_with(&h, cfg, layout, provider, cancel, progress) {
+    if let Err(e) = super::continuity::extract_with(store, &h, cfg, layout, provider, cancel, progress) {
         if cancel.load(Relaxed) {
             return Ok(());
         }

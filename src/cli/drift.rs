@@ -318,7 +318,8 @@ pub fn scan_with(
     };
     let ai = AiClient::from_config(&cfg.llm)?;
     let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
-    let (system, fell_back) = super::world_prompts::world_system_prompt("drift", &language);
+    let (system, fell_back) =
+        super::world_prompts::resolve(store, hierarchy, layout, "drift", &language);
     if fell_back {
         progress(&format!("drift scan: no {language} prompt — using English"));
     }
@@ -335,7 +336,7 @@ pub fn scan_with(
         }
         progress(&format!("drift [{}/{}] {}", i + 1, comparable.len(), d.entity));
         let prompt = build_drift_prompt(&language, d);
-        let raw = run_blocking(&ai, model, system, &prompt)?;
+        let raw = run_blocking(&ai, model, &system, &prompt)?;
         let pairs = parse_drift_pairs(&raw, d.snippets.len());
         conflicts.extend(resolve_conflicts(&d.entity, d.kind, &d.snippets, &pairs));
     }
