@@ -41,7 +41,9 @@ a **location**, and the message. They come from four places, unified:
 - the Planning Board's **`plan check`** structural findings (gaps, drift,
   pacing, flat tension, weak scenes / sequels),
 - the **Facts-scan** sidecar (contradictions against your world facts),
-- the **show-don't-tell** detector (telling phrases, per paragraph).
+- the **prose-style** detectors, per paragraph — **show-don't-tell** (telling
+  phrases), **filter-word** (intensifier crutches + hedges, at `info`), and
+  **anachronism** (terms that postdate the setting `year`).
 
 The pass is **deterministic** — it reads what's already computed, runs no
 AI, and so works offline and in CI:
@@ -72,9 +74,15 @@ Most editorial findings are *author judgment* — there's no auto-rewrite for
 ### Let the AI fix it: `f`
 
 The prose-level findings *can* be fixed for you. A **`✎`** marks the
-rewritable ones — **echo** (vary the over-repeated word), **pacing** (tighten
-an overlong paragraph), and **show-don't-tell** (rewrite a telling passage to
-show). Press **`f`** on one:
+rewritable ones:
+
+- **echo** (vary the over-repeated word) and **pacing** (tighten an overlong
+  paragraph) rewrite the **whole paragraph**;
+- **show-don't-tell** (rewrite a telling passage to show) and **filter-word**
+  (cut the crutch) rewrite **only the flagged phrase** and splice it back —
+  *span-scoped* (1.3.9), so the good prose around it is left untouched.
+
+Press **`f`** on one:
 
 ```
 EDITORIAL · ch.2 · show-don't-tell
@@ -87,13 +95,25 @@ finding: "she was furious" — telling
   [a]ccept (snapshots first) · [r]eject
 ```
 
-`f` opens the finding's paragraph, streams a category-specific rewrite, and
-pops the **diff review** — the same one the sentence-rhythm rewrite uses.
+`f` opens the finding's paragraph, streams the rewrite, and pops the **diff
+review** — the same one the sentence-rhythm rewrite uses; the diff always
+shows the whole paragraph for context even when only a phrase changed.
 **`a`** snapshots the paragraph (so the original is one `F6` away) then
 replaces it; **`r`** discards. The prompt resolves through the usual three
 tiers (a `editorial-fix-<category>` entry in your Prompts book →
-`prompts.hjson` → built-in), so the rewriting voice is yours to tune. This is
-the loop: see it, `f`, accept — or jump and write it yourself.
+`prompts.hjson` → built-in), so the rewriting voice is yours to tune.
+
+### Fix the whole category: `F`
+
+When a category is clean enough to trust the rewriter, **`F`** (Shift+F)
+**batch fix-all**: it walks every rewritable finding in the current `[` `]`
+filter through that *same* per-item diff review — one at a time, never
+blind-applied. `a` accepts (and advances), `r` skips to the next, and **`Esc`
+stops** the run, leaving the rest untouched. The status line tracks progress
+(`editorial batch 3/7 …`) and the close reports `N applied, M skipped`. Filter
+to one category first (`]` until the header reads `show-tell`) to scope the
+sweep. This is the loop: see it, `f` (or `F` the lot), accept — or jump and
+write it yourself.
 
 ### Clearing the list: skip and defer
 
@@ -127,5 +147,9 @@ CI gate, run the scans separately and then `inkhaven edit --json`.
 
 - The structure findings come from [Tutorial 67](67-planning-board.md).
 - The Facts contradictions: `inkhaven facts scan` (Tutorial 63).
+- Anachronisms also underline **live** in the editor once you set a setting
+  `year` (theme key `style_warning_anachronism_fg`) —
+  [Tutorial 69](69-world-consistency.md).
 - Every chord: [`../KEYBINDING.md`](../KEYBINDING.md).
-- The design: [EDITORIAL-1 plan](../PROPOSALS/EDITORIAL-1_PLAN.md).
+- The design: [EDITORIAL-1 plan](../PROPOSALS/EDITORIAL-1_PLAN.md) ·
+  [EDITORIAL-3 plan](../PROPOSALS/EDITORIAL-3_PLAN.md).
