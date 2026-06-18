@@ -21,45 +21,45 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.8 — World consistency
+## Latest release · 1.3.9 — Finish the Editorial Pass
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.8.md`](Documentation/RELEASE_NOTES/1.3.8.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.9.md`](Documentation/RELEASE_NOTES/1.3.9.md)
 
-A long book builds a world — a climate, a geography, a cast with fixed
-attributes, a setting in time. 1.3.8 fills the four remaining gaps in keeping
-it consistent. Pure-Rust, **no new dependencies**.
+The Editorial Pass shipped its navigator (1.3.6) and its actor (1.3.7 — `f`
+streams an AI rewrite). 1.3.9 closes the four deferrals those cuts left,
+taking the cockpit to its final 1.3 form. Pure-Rust, **no new dependencies**.
 
-### `facts check` — the world vs. itself
+### Span-scoped rewrite
 
-`inkhaven facts check` runs an AI pass over the *whole* Facts book for
-contradictions between the facts themselves — "winters are mild" ⟷ "the
-harbor freezes each January". Cached, `--json`-gateable, and also surfaced in
-`inkhaven edit` under category `world`.
+`f` on a *localized* finding now rewrites **only the flagged phrase** and
+splices it back — the good prose around it is left alone (show-don't-tell /
+filter-word). Echo and pacing still rewrite the whole paragraph; the diff
+shows the full paragraph for context, with the same snapshot-gated `a` / `r`.
 
-### Anachronism detection
+### Filter-words join the worklist
 
-Set `editor.style_warnings.anachronism.year` and terms that postdate it — a
-"wristwatch" before 1900, a "telephone" before 1876 — flag in `inkhaven edit`
-(category `anachronism`), jumpable to the exact word. A ~35-term built-in
-lexicon ships; your `terms` add to it. Off until you set a year.
+The last live-overlay detector not yet in `inkhaven edit`. Filter words
+(`just`, `really`, `very`, `seemed`) surface as `filter` findings at **`info`**
+severity — they sort last, never burying sharper findings — jumpable and
+span-`f`-rewritable.
 
-### The story bible — `Ctrl+V Shift+L`
+### Anachronism underlines live
 
-One chord (**L** for **L**ore) opens a consolidated, navigable view of the
-world: every **Character** with the attributes `continuity extract` has
-tracked across chapters beneath it (`eye_color: brown (ch.3)`), plus the
-**Places**, **Artefacts**, and **Facts** books. `Enter` jumps to source.
+The anachronism detector that fed `inkhaven edit` now underlines as you type,
+in its own warm amber-orange `theme.style_warning_anachronism_fg`. Self-gating:
+silent until you set `editor.style_warnings.anachronism.year`.
 
-### Series-shared facts
+### `F` — batch fix-all
 
-Point `facts.shared_path` at a directory of one-file-per-fact text files and a
-whole series shares one canon — `facts check` layers it under each book's
-local facts (local wins), and `inkhaven facts import` snapshots it in.
+When a category is clean enough to trust the rewriter, **`F`** walks **every**
+rewritable finding in the current filter through the *same* per-item diff
+review — never blind-applied. `a` accepts and advances, `r` skips, `Esc`
+stops; the close reports `N applied, M skipped`.
 
 ### Test stats
 
-Tests 1328 → 1333, **zero new dependencies**. New tutorial 69
-([world consistency](Documentation/Tutorials/69-world-consistency.md)).
+Tests 1333 → 1339, **zero new dependencies**. Tutorial 68 refreshed
+([the Editorial Pass](Documentation/Tutorials/68-editorial-pass.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

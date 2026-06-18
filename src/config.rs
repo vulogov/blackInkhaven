@@ -1132,6 +1132,11 @@ pub struct ThemeConfig {
     /// 1.2.9+ — colour for show-don't-tell warnings.
     #[serde(default)]
     pub style_warning_show_dont_tell_fg: String,
+    /// 1.3.9+ — colour for live anachronism warnings (a term that postdates
+    /// the configured setting `year`).  Empty falls back to an amber that
+    /// reads as "wrong era" caution, distinct from the show-don't-tell teal.
+    #[serde(default)]
+    pub style_warning_anachronism_fg: String,
     /// 1.2.20+ — colour for the live echo overlay
     /// (`Ctrl+B Shift+K`).  Distinct from the
     /// repeated-phrase magenta so a within-paragraph
@@ -1263,6 +1268,10 @@ impl Default for ThemeConfig {
             style_warning_filter_word_fg: "#f9c44e".into(),
             style_warning_repeated_phrase_fg: "#eb6f92".into(),
             style_warning_show_dont_tell_fg: "#94e2d5".into(),
+            // 1.3.9+ — warm amber-orange "wrong era" caution,
+            // distinct from the filter-word gold and the
+            // show-don't-tell teal.
+            style_warning_anachronism_fg: "#eba672".into(),
             // 1.2.20+ — muted purple, distinct from the
             // repeated-phrase magenta so the two
             // repetition overlays don't read as one.

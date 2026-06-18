@@ -397,11 +397,11 @@ fn style_warning_style_at(
         StyleWarningKind::Echo => Style::default()
             .fg(theme.style_warning_echo_fg)
             .add_modifier(theme.style_warning_echo_modifier),
-        // 1.3.8 — anachronism. Surfaced in the Editorial Pass today; the
-        // live editor underline (its own theme colour + panes wiring) is a
-        // fast-follow, so it borrows the show-don't-tell colour for now.
+        // 1.3.9 — anachronism gets its own warm amber-orange "wrong era"
+        // hue (live editor underline + Editorial Pass), distinct from the
+        // show-don't-tell teal it borrowed in 1.3.8.
         StyleWarningKind::Anachronism => Style::default()
-            .fg(theme.style_warning_show_dont_tell_fg)
+            .fg(theme.style_warning_anachronism_fg)
             .add_modifier(theme.style_warning_show_dont_tell_modifier),
     })
 }

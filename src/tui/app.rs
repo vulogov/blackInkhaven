@@ -1864,6 +1864,18 @@ pub(crate) struct App {
     /// or a 1.3.7 editorial fix) streams — the annotation is the snapshot
     /// label the diff-apply uses; `None` when no rewrite is pending.
     pub(super) pending_rewrite_diff: Option<String>,
+    /// 1.3.9+ — when a span-scoped editorial fix (`f` on a localized finding)
+    /// is streaming, the paragraph-relative char range `[start, end)` whose
+    /// text the model's reply replaces. `Some` → splice the reply into that
+    /// range and diff the whole paragraph; `None` → whole-paragraph replace
+    /// (the pre-1.3.9 behaviour). Paired with `pending_rewrite_diff`; cleared
+    /// on the same auto-open / error paths.
+    pub(super) pending_rewrite_span: Option<(usize, usize)>,
+    /// 1.3.9+ — an active "fix all of category X" batch from the Editorial
+    /// Pass cockpit (`F`). `Some` while walking the queue; each accept/reject
+    /// of the diff review advances it. `None` = no batch (single `f` and the
+    /// rhythm rewrite leave it untouched, so they never auto-advance).
+    pub(super) editorial_batch: Option<EditorialBatch>,
     /// 1.2.21+ FF.4d — a fact-check chord awaiting its stream's
     /// completion: `(target paragraph id, title)`.  Consumed in
     /// `pump_inference` to parse the verdict into `fact_check_nav`.
@@ -2213,6 +2225,8 @@ impl App {
             pending_chat_user_msg: None,
             pending_paragraph_memory_target: None,
             pending_rewrite_diff: None,
+            pending_rewrite_span: None,
+            editorial_batch: None,
             fact_check_pending: None,
             fact_check_nav: FactCheckNav::default(),
             pending_translation: false,
@@ -2822,19 +2836,37 @@ impl App {
             // preserves the pre-rewrite state under
             // "Sentence rhythm rewrite".
             if let Some(annotation) = self.pending_rewrite_diff.take() {
+                let span = self.pending_rewrite_span.take();
                 let raw = self
                     .inference
                     .as_ref()
                     .map(|i| i.response.clone())
                     .unwrap_or_default();
-                if !raw.trim().is_empty() {
+                if raw.trim().is_empty() {
+                    self.status = "rewrite: model returned empty response".into();
+                } else if let Some(range) = span {
+                    // 1.3.9 span-scoped fix: the reply is just the replacement
+                    // phrase — splice it into the paragraph's char range, then
+                    // diff the whole paragraph for context.
+                    match self.opened.as_ref().map(|d| d.textarea.lines().join("\n")) {
+                        Some(original) => {
+                            let replacement = crate::editorial::extract_phrase(&raw);
+                            let spliced =
+                                crate::editorial::splice_span(&original, range, &replacement);
+                            self.open_ai_diff_review_final(
+                                InferenceAction::Replace,
+                                &spliced,
+                                &annotation,
+                            );
+                        }
+                        None => self.status = "rewrite: no paragraph open".into(),
+                    }
+                } else {
                     self.open_ai_diff_review_with_snapshot(
                         InferenceAction::Replace,
                         &raw,
                         &annotation,
                     );
-                } else {
-                    self.status = "rewrite: model returned empty response".into();
                 }
             }
         } else if matches!(
@@ -2842,9 +2874,10 @@ impl App {
             Some(InferenceStatus::Error(_))
         ) && self.pending_rewrite_diff.is_some()
         {
-            // Error path: clear the pending flag so a future rewrite
+            // Error path: clear the pending flags so a future rewrite
             // starts clean.
             self.pending_rewrite_diff = None;
+            self.pending_rewrite_span = None;
         }
     }
 
@@ -5348,6 +5381,21 @@ pub(super) struct ResolvedPrompt {
     /// has no language attached.
     pub found_lang: String,
     pub source: PromptResolveSource,
+}
+
+/// 1.3.9 EDITORIAL-3 P3 — an in-flight "fix all of category X" run started
+/// from the Editorial Pass cockpit (`F`). Each queued finding is walked
+/// through the SAME per-item diff review as a single `f` — never blind-
+/// applied — so the user accepts or rejects every rewrite. `Esc` in the diff
+/// abandons whatever's left.
+#[derive(Debug, Default)]
+pub(super) struct EditorialBatch {
+    /// Remaining fixes to walk, in order.
+    pub queue: std::collections::VecDeque<crate::editorial::BatchFix>,
+    /// How many were enqueued (for the `n/total` progress chip).
+    pub total: usize,
+    pub applied: usize,
+    pub skipped: usize,
 }
 
 impl ResolvedPrompt {
@@ -9122,7 +9170,7 @@ impl App {
                     String::new()
                 };
                 self.status = format!(
-                    "Editorial Pass · {n} finding(s){note} · ↑↓ · ⏎ jump · ✎ f fix · s skip · d defer · Esc"
+                    "Editorial Pass · {n} finding(s){note} · ↑↓ · ⏎ jump · ✎ f fix · F fix-all · s skip · d defer · Esc"
                 );
             }
             Err(e) => self.status = format!("edit: {e}"),
@@ -9132,7 +9180,7 @@ impl App {
     fn editorial_pass_handle_key(&mut self, key: KeyEvent) -> bool {
         // Read everything into locals, then drop the borrow before calling
         // self methods (the established modal pattern).
-        let (filtered_len, cursor, cats, target, has_jump, sel_fp, sel_rewrite) = {
+        let (filtered_len, cursor, cats, target, has_jump, sel_fp, sel_rewrite, batch) = {
             let Modal::EditorialPass { findings, cursor, filter, .. } = &self.modal else {
                 return false;
             };
@@ -9144,6 +9192,9 @@ impl App {
             };
             let filtered_len = findings.iter().filter(keep).count();
             let sel = findings.iter().filter(keep).nth(*cursor);
+            // every AI-rewritable finding in the current view, in display order —
+            // the queue `F` walks.
+            let batch = crate::editorial::batch_fix_queue(findings, filter.as_deref());
             (
                 filtered_len,
                 *cursor,
@@ -9151,9 +9202,10 @@ impl App {
                 sel.and_then(|f| f.location.paragraph),
                 sel.map(|f| f.location.paragraph.is_some()).unwrap_or(false),
                 sel.map(|f| f.fingerprint()),
-                // (category, paragraph) when the finding is AI-rewritable
+                // (category, paragraph, span) when the finding is AI-rewritable
                 sel.filter(|f| f.rewritable())
-                    .map(|f| (f.category.clone(), f.location.paragraph.unwrap())),
+                    .map(|f| (f.category.clone(), f.location.paragraph.unwrap(), f.location.char_range)),
+                batch,
             )
         };
         match key.code {
@@ -9184,10 +9236,10 @@ impl App {
             KeyCode::Char('D') => self.editorial_clear_deferred(),
             // AI rewrite-in-place: open the paragraph, stream a fix → diff.
             KeyCode::Char('f') => match sel_rewrite {
-                Some((category, pid)) => {
+                Some((category, pid, span)) => {
                     self.modal = Modal::None;
                     match self.open_paragraph_by_uuid(pid) {
-                        Ok(()) => self.start_editorial_rewrite(&category),
+                        Ok(()) => self.start_editorial_rewrite(&category, span),
                         Err(e) => self.status = format!("edit: {e}"),
                     }
                 }
@@ -9196,6 +9248,24 @@ impl App {
                         "editorial: this finding isn't AI-rewritable — jump (⏎) and edit it".into();
                 }
             },
+            // batch fix-all: walk every rewritable finding in the current
+            // view through the per-item diff review.
+            KeyCode::Char('F') => {
+                if batch.is_empty() {
+                    self.status =
+                        "editorial: no AI-rewritable findings in this view (filter to echo / pacing / show-tell / filter)".into();
+                } else {
+                    let total = batch.len();
+                    self.modal = Modal::None;
+                    self.editorial_batch = Some(EditorialBatch {
+                        queue: batch.into_iter().collect(),
+                        total,
+                        applied: 0,
+                        skipped: 0,
+                    });
+                    self.advance_editorial_batch();
+                }
+            }
             KeyCode::Enter => match (has_jump, target) {
                 (true, Some(pid)) => {
                     self.modal = Modal::None;
@@ -9209,6 +9279,52 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// 1.3.9 EDITORIAL-3 P3 — launch the next fix in an active batch: pop the
+    /// front of the queue, open its paragraph, and stream the (span-aware)
+    /// rewrite. `pump_inference` pops the diff review on completion; accepting
+    /// or rejecting it calls back here for the next. When the queue drains the
+    /// batch is cleared with a summary. A paragraph that won't open is counted
+    /// as skipped and the walk continues.
+    fn advance_editorial_batch(&mut self) {
+        let next = match self.editorial_batch.as_mut() {
+            Some(b) => b.queue.pop_front(),
+            None => return,
+        };
+        match next {
+            Some((pid, category, span)) => {
+                let (idx, total) = {
+                    let b = self.editorial_batch.as_ref().unwrap();
+                    (b.total - b.queue.len(), b.total)
+                };
+                match self.open_paragraph_by_uuid(pid) {
+                    Ok(()) => {
+                        self.start_editorial_rewrite(&category, span);
+                        self.status = format!(
+                            "editorial batch {idx}/{total} ({category}): streaming · a accept · r skip · Esc stop"
+                        );
+                    }
+                    Err(e) => {
+                        if let Some(b) = self.editorial_batch.as_mut() {
+                            b.skipped += 1;
+                        }
+                        self.status = format!("editorial batch: skipped one ({e})");
+                        self.advance_editorial_batch();
+                    }
+                }
+            }
+            None => {
+                let (applied, skipped) = self
+                    .editorial_batch
+                    .as_ref()
+                    .map(|b| (b.applied, b.skipped))
+                    .unwrap_or((0, 0));
+                self.editorial_batch = None;
+                self.status =
+                    format!("editorial batch: done — {applied} applied, {skipped} skipped");
+            }
+        }
     }
 
     /// Remove the selected finding from the live worklist — `persist` also
@@ -16771,6 +16887,20 @@ impl App {
                 self.status = "edit event: cancelled".into();
                 return Ok(false);
             }
+            // 1.3.9 — Esc during a batch editorial fix abandons the rest of
+            // the queue (the diff review it's showing is an AiDiffReview).
+            if matches!(self.modal, Modal::AiDiffReview { .. }) {
+                if let Some(b) = self.editorial_batch.take() {
+                    self.modal = Modal::None;
+                    self.status = format!(
+                        "editorial batch: stopped — {} applied, {} skipped, {} left",
+                        b.applied,
+                        b.skipped,
+                        b.queue.len()
+                    );
+                    return Ok(false);
+                }
+            }
             // 1.2.7+ — timeline view: snapshot the per-book
             // state (collapsed tracks, expanded track, zoom,
             // scroll, cursor) into the session cache so the
@@ -19150,6 +19280,39 @@ impl App {
         } else {
             "rhythm rewrite · a accept (snapshot + replace) · r reject · ↑↓ scroll".into()
         };
+    }
+
+    /// 1.3.9+ — open the diff review with an ALREADY-FINAL after-text (no
+    /// `select_apply_text` extraction). Used by the span-scoped editorial fix:
+    /// the reply phrase has already been cleaned + spliced into the full
+    /// paragraph, so the diff shows the whole paragraph and the apply lands it
+    /// verbatim under an F6-discoverable snapshot.
+    fn open_ai_diff_review_final(
+        &mut self,
+        action: InferenceAction,
+        after_text: &str,
+        annotation: &str,
+    ) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "no paragraph open — apply needs a focused paragraph".into();
+            return;
+        };
+        let before_lines: Vec<String> = doc.textarea.lines().to_vec();
+        let after_lines: Vec<String> = if after_text.is_empty() {
+            vec![String::new()]
+        } else {
+            after_text.split('\n').map(String::from).collect()
+        };
+        self.modal = Modal::AiDiffReview {
+            before_lines,
+            after_lines,
+            action,
+            scroll: 0,
+            post_accept_snapshot: Some(annotation.to_string()),
+            wrapped_total: 0,
+        };
+        self.status =
+            "editorial fix (phrase) · a accept (snapshot + replace) · r reject · ↑↓ scroll".into();
     }
 
     /// Commit step for `Modal::AiDiffReview`. `after_text` is
