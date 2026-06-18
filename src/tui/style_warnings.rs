@@ -861,6 +861,19 @@ mod tests {
     }
 
     #[test]
+    fn per_language_map_enables_a_non_builtin_language() {
+        // 1.3.13 — a language with no built-in list works once its `languages`
+        // map entry is populated (e.g. by `lang bootstrap`).
+        let mut cfg = cfg_default();
+        cfg.languages.insert("italian".into(), vec!["molto".into(), "solo".into()]);
+        let d = FilterWordsDetector::new(&cfg, "italian");
+        assert!(!d.is_empty(), "the map entry enables Italian");
+        assert_eq!(d.detect("era molto stanco").len(), 1);
+        // a different non-curated language stays empty (honest)
+        assert!(FilterWordsDetector::new(&cfg, "dutch").is_empty());
+    }
+
+    #[test]
     fn unknown_language_is_empty_not_english() {
         // 1.3.13 — a non-curated language gets an EMPTY built-in list (detector
         // off), never English words flagged in foreign prose.
