@@ -1253,10 +1253,21 @@ pub enum FactsCommand {
 pub enum DriftCommand {
     /// Print the description snippets retrieved for each entity (Characters /
     /// Places / Artefacts): which paragraphs describe it, in chapter order.
-    /// Deterministic — reuses the existing vector index, runs no AI. The AI
-    /// drift judge + sidecar land in a follow-up.
+    /// Deterministic — reuses the existing vector index, runs no AI.
     List {
         /// Emit the descriptions as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run the AI drift pass: for each entity, judge whether its descriptions
+    /// across the manuscript contradict each other, and write the
+    /// contradictions to `<project>/.inkhaven/drift.json`. Surfaced in
+    /// `inkhaven edit`.
+    Scan {
+        /// LLM provider override (defaults to `llm.default`).
+        #[arg(long)]
+        provider: Option<String>,
+        /// Emit the report as JSON (for CI gates).
         #[arg(long)]
         json: bool,
     },
