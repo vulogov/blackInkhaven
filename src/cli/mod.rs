@@ -43,6 +43,8 @@ pub mod plan;
 pub mod editorial;
 pub mod drift;
 pub mod world;
+pub mod lang;
+pub mod world_prompts;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
@@ -771,6 +773,12 @@ pub enum Command {
     #[command(subcommand)]
     Facts(FactsCommand),
 
+    /// 1.3.13 BREADTH-1 — `inkhaven lang <subcommand>`.  Multilingual coverage:
+    /// `status` prints what works in the project (or `--language`) language —
+    /// stemming, detector word-lists, prompts, embeddings.
+    #[command(subcommand)]
+    Lang(LangCommand),
+
     /// 1.3.10 WORLD-2 — `inkhaven drift <subcommand>`.  Semantic drift:
     /// descriptions of the same entity (character / place / artefact) that
     /// diverge across the manuscript without a hard factual clash.  `list`
@@ -1274,6 +1282,31 @@ pub enum FactsCommand {
 }
 
 /// 1.3.10 WORLD-2 — `inkhaven drift …`: semantic drift across the manuscript.
+/// 1.3.13 BREADTH-1 — `inkhaven lang …`: multilingual coverage.
+#[derive(clap::Subcommand, Debug)]
+pub enum LangCommand {
+    /// Print the coverage matrix for the project (or `--language`) language.
+    Status {
+        /// Report for this language instead of the project's `language`.
+        #[arg(long)]
+        language: Option<String>,
+    },
+    /// Generate the full per-language detector vocabulary (filter words,
+    /// show-don't-tell, stop-words, drift pronouns) for any language via one
+    /// LLM pass. Prints a paste-able HJSON snippet; `--yes` also patches
+    /// `inkhaven.hjson` in place (versioned backup + atomic).
+    Bootstrap {
+        /// The language to bootstrap (e.g. `italian`).
+        language: String,
+        /// LLM provider override (defaults to `llm.default`).
+        #[arg(long)]
+        provider: Option<String>,
+        /// Patch `inkhaven.hjson` in place (otherwise just prints the snippet).
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
 #[derive(clap::Subcommand, Debug)]
 pub enum DriftCommand {
     /// Print the description snippets retrieved for each entity (Characters /
@@ -1638,6 +1671,30 @@ pub enum PdfCommand {
         out: Option<std::path::PathBuf>,
         /// Preview the plan (signatures / sheets / creep / first-sheet
         /// schematic) without imposing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Quick saddle-stitch booklet — zero config.  Auto-fits the press
+    /// sheet to two source pages side-by-side (any page size works), in
+    /// one nested signature.  The shortcut for `impose --config chapbook`
+    /// when you just want a foldable booklet of whatever you have.
+    Booklet {
+        input: std::path::PathBuf,
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Center each spread on a named sheet preset (A4, A3, LETTER,
+        /// TABLOID, …) instead of auto-fitting to 2× the page size.
+        #[arg(long)]
+        sheet: Option<String>,
+        /// Add shingle creep compensation (recommended past ~40 pages so
+        /// the inner leaves don't bleed past the trim after folding).
+        #[arg(long)]
+        creep: bool,
+        /// Omit crop + fold marks for a clean already-trimmed proof.
+        #[arg(long)]
+        no_marks: bool,
+        /// Preview the plan (signatures / sheets / first-sheet schematic)
+        /// without imposing.
         #[arg(long)]
         dry_run: bool,
     },
@@ -2634,6 +2691,7 @@ impl Cli {
                 facts_scan::run(&project, cmd).map_err(Into::into)
             }
             Command::Drift(cmd) => drift::run(&project, cmd).map_err(Into::into),
+            Command::Lang(cmd) => lang::run(&project, cmd).map_err(Into::into),
             Command::World { json, deep, provider, entity } => {
                 world::run(&project, json, deep, provider.as_deref(), entity.as_deref())
                     .map_err(Into::into)

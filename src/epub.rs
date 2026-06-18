@@ -91,11 +91,43 @@ pub struct EpubCover {
 
 /// One chapter: a heading + pre-converted XHTML body
 /// (the inner content of `<body>`, already escaped +
-/// marked up).
+/// marked up), plus any inline images the body's `<img>`
+/// tags reference (written into `OEBPS/` + the manifest).
 #[derive(Debug, Clone)]
 pub struct EpubChapter {
     pub title: String,
     pub body_xhtml: String,
+    /// Inline figures referenced by `<img src="…">` in
+    /// `body_xhtml`. Empty for image-free chapters.
+    pub images: Vec<EpubImage>,
+}
+
+/// One inline image resource — raw bytes written verbatim
+/// into `OEBPS/<href>` (stored, not re-deflated) plus the
+/// metadata the OPF manifest needs. `id` is the manifest
+/// item id (a valid XML NCName); `href` is the in-archive
+/// filename `<img src>` points at.
+#[derive(Debug, Clone)]
+pub struct EpubImage {
+    pub id: String,
+    pub href: String,
+    pub media_type: String,
+    pub bytes: Vec<u8>,
+}
+
+/// Map an image file extension to its IANA media type for
+/// the OPF manifest. Mirrors `image_extension_for`'s
+/// accepted set; unknown extensions fall back to a generic
+/// binary type (still ships, just without a precise hint).
+pub fn image_media_type(ext: &str) -> &'static str {
+    match ext.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
 }
 
 /// Result summary for stdout reporting.
@@ -143,11 +175,18 @@ pub fn write_epub(
         zip.write_all(cover_xhtml(&cover.file_ext).as_bytes())?;
     }
 
-    // Chapter documents.
+    // Chapter documents + their inline images. Image
+    // bytes are `stored` (PNG/JPEG/WebP are already
+    // compressed); SVG would gain from deflate but the
+    // simpler single mode keeps the writer uniform.
     for (i, ch) in chapters.iter().enumerate() {
         let name = chapter_filename(i);
         zip.start_file(format!("OEBPS/{name}"), deflated)?;
         zip.write_all(chapter_xhtml(&ch.title, &ch.body_xhtml).as_bytes())?;
+        for img in &ch.images {
+            zip.start_file(format!("OEBPS/{}", img.href), stored)?;
+            zip.write_all(&img.bytes)?;
+        }
     }
 
     // Navigation + package + ncx.
@@ -204,6 +243,47 @@ pub fn typst_to_xhtml(body: &str) -> String {
                 .join(" ");
             out.push_str(&format!("<p>{}</p>\n", inline(&joined)));
         }
+    }
+    // 1.3.13 — promote inline footnote spans to EPUB 3 popup footnotes:
+    // numbered `noteref` links + a collected `<aside>` footnotes section
+    // (Apple Books & co. render these as tap-to-pop popups; other readers
+    // show the section at the chapter end).
+    footnotes_to_asides(&out)
+}
+
+/// Convert the `<span class="footnote">[…]</span>` placeholders that `inline`
+/// emits into EPUB 3 popup footnotes: each becomes a numbered `noteref`
+/// anchor, and the notes collect into a `<section epub:type="footnotes">` at
+/// the chapter's end. IDs are per-chapter (one XHTML file each). Pure.
+fn footnotes_to_asides(body: &str) -> String {
+    let open = "<span class=\"footnote\">[";
+    let close = "]</span>";
+    let mut out = String::new();
+    let mut notes = String::new();
+    let mut rest = body;
+    let mut n = 0usize;
+    while let Some(pos) = rest.find(open) {
+        out.push_str(&rest[..pos]);
+        let after = &rest[pos + open.len()..];
+        let Some(end) = after.find(close) else {
+            out.push_str(&rest[pos..]); // malformed — leave the tail verbatim
+            return out;
+        };
+        n += 1;
+        let inner = &after[..end];
+        out.push_str(&format!(
+            "<a epub:type=\"noteref\" role=\"doc-noteref\" id=\"fnref-{n}\" href=\"#fn-{n}\"><sup>{n}</sup></a>"
+        ));
+        notes.push_str(&format!(
+            "<aside epub:type=\"footnote\" role=\"doc-footnote\" id=\"fn-{n}\"><p><sup>{n}</sup> {inner} <a href=\"#fnref-{n}\" role=\"doc-backlink\">\u{21a9}</a></p></aside>\n"
+        ));
+        rest = &after[end + close.len()..];
+    }
+    out.push_str(rest);
+    if !notes.is_empty() {
+        out.push_str("<section epub:type=\"footnotes\" role=\"doc-endnotes\" class=\"footnotes\">\n");
+        out.push_str(&notes);
+        out.push_str("</section>\n");
     }
     out
 }
@@ -304,6 +384,10 @@ h1, h2, h3 { font-family: sans-serif; line-height: 1.2; }
 p { margin: 0 0 0.8em 0; text-indent: 1.5em; }
 p:first-of-type { text-indent: 0; }
 .footnote { font-size: 0.85em; color: #555; }
+a[role~="doc-noteref"] { text-decoration: none; }
+.footnotes { margin-top: 2em; border-top: 1px solid #ccc; padding-top: 0.5em; font-size: 0.85em; color: #444; }
+.footnotes aside { margin: 0.4em 0; }
+.footnotes p { text-indent: 0; }
 "#;
 
 fn chapter_xhtml(title: &str, body: &str) -> String {
@@ -434,13 +518,23 @@ fn content_opf(meta: &EpubMeta, chapters: &[EpubChapter]) -> String {
 
     let mut manifest = String::new();
     let mut spine = String::new();
-    for (i, _) in chapters.iter().enumerate() {
+    for (i, ch) in chapters.iter().enumerate() {
         let id = format!("ch{:03}", i + 1);
         manifest.push_str(&format!(
             "    <item id=\"{id}\" href=\"{file}\" media-type=\"application/xhtml+xml\"/>\n",
             id = id,
             file = chapter_filename(i),
         ));
+        // Inline-image resources (R-images): one manifest
+        // entry per `<img>` the chapter body references.
+        for img in &ch.images {
+            manifest.push_str(&format!(
+                "    <item id=\"{id}\" href=\"{href}\" media-type=\"{mt}\"/>\n",
+                id = escape_xml(&img.id),
+                href = escape_xml(&img.href),
+                mt = escape_xml(&img.media_type),
+            ));
+        }
         spine.push_str(&format!("    <itemref idref=\"{id}\"/>\n", id = id));
     }
     format!(
@@ -530,6 +624,24 @@ mod tests {
     }
 
     #[test]
+    fn footnotes_become_epub3_noterefs_and_asides() {
+        let body = "A claim.#footnote[the source] More.#footnote[second]";
+        let xhtml = typst_to_xhtml(body);
+        // two numbered noterefs in the flow
+        assert!(xhtml.contains("epub:type=\"noteref\""));
+        assert!(xhtml.contains("href=\"#fn-1\"") && xhtml.contains("href=\"#fn-2\""));
+        // a collected footnotes section with asides + backlinks
+        assert!(xhtml.contains("epub:type=\"footnotes\""));
+        assert!(xhtml.contains("epub:type=\"footnote\"") && xhtml.contains("id=\"fn-2\""));
+        assert!(xhtml.contains("the source") && xhtml.contains("href=\"#fnref-1\""));
+    }
+
+    #[test]
+    fn no_footnotes_means_no_footnotes_section() {
+        assert!(!typst_to_xhtml("plain prose").contains("footnotes"));
+    }
+
+    #[test]
     fn inline_unterminated_footnote_is_literal() {
         let got = inline("text#footnote[oops");
         assert!(got.contains("#footnote[oops"));
@@ -592,12 +704,50 @@ mod tests {
             EpubChapter {
                 title: "Arrivals".into(),
                 body_xhtml: "<p>Helena paused.</p>\n".into(),
+                images: Vec::new(),
             },
             EpubChapter {
                 title: "The Wharf".into(),
                 body_xhtml: "<p>Marcus waited.</p>\n".into(),
+                images: Vec::new(),
             },
         ]
+    }
+
+    #[test]
+    fn inline_images_are_written_and_manifested() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("book.epub");
+        let chapters = vec![EpubChapter {
+            title: "Plates".into(),
+            body_xhtml: "<figure><img src=\"img-x.png\" alt=\"a map\"/></figure>\n".into(),
+            images: vec![EpubImage {
+                id: "img-x".into(),
+                href: "img-x.png".into(),
+                media_type: "image/png".into(),
+                // minimal PNG signature — bytes are written verbatim.
+                bytes: vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a],
+            }],
+        }];
+        write_epub(&sample_meta(), &chapters, &dest).unwrap();
+
+        let file = std::fs::File::open(&dest).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let names: Vec<String> = archive.file_names().map(String::from).collect();
+        assert!(names.iter().any(|n| n == "OEBPS/img-x.png"), "image bytes not in archive");
+
+        // image is `stored` (already-compressed bytes).
+        let img = archive.by_name("OEBPS/img-x.png").unwrap();
+        assert_eq!(img.compression(), zip::CompressionMethod::Stored);
+        drop(img);
+
+        let mut opf = archive.by_name("OEBPS/content.opf").unwrap();
+        let mut s = String::new();
+        std::io::Read::read_to_string(&mut opf, &mut s).unwrap();
+        assert!(
+            s.contains("href=\"img-x.png\"") && s.contains("media-type=\"image/png\""),
+            "image not in OPF manifest:\n{s}",
+        );
     }
 
     #[test]

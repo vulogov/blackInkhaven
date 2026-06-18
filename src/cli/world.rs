@@ -221,7 +221,8 @@ fn deep_refresh(project: &Path, provider: Option<&str>) {
         layout.require_initialized()?;
         let cfg = Config::load_layered(&layout.config_path())?;
         let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
-        deep_refresh_shared(&store, &cfg, &layout, provider, &|s| eprintln!("  {s}"))
+        let never = std::sync::atomic::AtomicBool::new(false);
+        deep_refresh_shared(&store, &cfg, &layout, provider, &never, &|s| eprintln!("  {s}"))
     })();
     if let Err(e) = res {
         eprintln!("  world --deep: {e}");
@@ -234,24 +235,50 @@ fn deep_refresh(project: &Path, provider: Option<&str>) {
 /// `progress`, then continuing). Each scan reads `cfg.language`, so the deep
 /// refresh runs in the manuscript's language. Shared by `world --deep` and the
 /// TUI background-refresh chord (which passes a cloned `Store`).
+///
+/// 1.3.13 — `cancel` is polled between scans (and, for the loopy scans, within
+/// them); when set, it returns early so the chord can stop a runaway refresh.
 pub fn deep_refresh_shared(
     store: &Store,
     cfg: &Config,
     layout: &ProjectLayout,
     provider: Option<&str>,
+    cancel: &std::sync::atomic::AtomicBool,
     progress: &dyn Fn(&str),
 ) -> Result<()> {
+    use std::sync::atomic::Ordering::Relaxed;
     let h = Hierarchy::load(store).map_err(|e| Error::Store(e.to_string()))?;
+    if cancel.load(Relaxed) {
+        return Ok(());
+    }
     if let Err(e) = super::facts_scan::check_with(store, &h, cfg, layout, provider, progress) {
         progress(&format!("facts check skipped: {e}"));
     }
-    if let Err(e) = super::facts_scan::scan_with(store, &h, cfg, layout, provider, progress) {
+    if cancel.load(Relaxed) {
+        return Ok(());
+    }
+    if let Err(e) = super::facts_scan::scan_with(store, &h, cfg, layout, provider, cancel, progress) {
+        if cancel.load(Relaxed) {
+            return Ok(());
+        }
         progress(&format!("facts scan skipped: {e}"));
     }
-    if let Err(e) = super::drift::scan_with(store, &h, cfg, layout, provider, progress) {
+    if cancel.load(Relaxed) {
+        return Ok(());
+    }
+    if let Err(e) = super::drift::scan_with(store, &h, cfg, layout, provider, cancel, progress) {
+        if cancel.load(Relaxed) {
+            return Ok(());
+        }
         progress(&format!("drift scan skipped: {e}"));
     }
-    if let Err(e) = super::continuity::extract_with(&h, cfg, layout, provider, progress) {
+    if cancel.load(Relaxed) {
+        return Ok(());
+    }
+    if let Err(e) = super::continuity::extract_with(store, &h, cfg, layout, provider, cancel, progress) {
+        if cancel.load(Relaxed) {
+            return Ok(());
+        }
         progress(&format!("continuity extract skipped: {e}"));
     }
     Ok(())
