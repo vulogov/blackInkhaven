@@ -1864,6 +1864,20 @@ pub struct DriftConfig {
     pub top_k: usize,
     /// Max description snippets kept per entity (bounds the judge prompt).
     pub max_snippets: usize,
+    /// 1.3.13 — per-language coref pronoun sets for ANY language (keyed by
+    /// lowercased name). Written by `inkhaven lang bootstrap`; takes precedence
+    /// over the built-in five.
+    pub pronouns: std::collections::BTreeMap<String, PronounLangSet>,
+}
+
+/// 1.3.13 — the coref pronoun sets for one (bootstrapped) language, by entity
+/// kind (lowercased pronouns; matched as whole words).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct PronounLangSet {
+    pub character: Vec<String>,
+    pub place: Vec<String>,
+    pub artefact: Vec<String>,
 }
 
 impl Default for DriftConfig {
@@ -1871,6 +1885,7 @@ impl Default for DriftConfig {
         Self {
             top_k: 24,
             max_snippets: 8,
+            pronouns: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -1948,6 +1963,20 @@ pub struct ShowDontTellConfig {
     pub spanish_emotion_adjectives: Vec<String>,
     pub spanish_manner_adverbs: Vec<String>,
     pub spanish_cognition_verbs: Vec<String>,
+    /// 1.3.13 — per-language show-don't-tell lists for ANY language (keyed by
+    /// lowercased name). Written by `inkhaven lang bootstrap`; takes precedence.
+    #[serde(default)]
+    pub languages: std::collections::BTreeMap<String, SdtLangLists>,
+}
+
+/// 1.3.13 — the four show-don't-tell lists for one (bootstrapped) language.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SdtLangLists {
+    pub linking_verbs: Vec<String>,
+    pub emotion_adjectives: Vec<String>,
+    pub manner_adverbs: Vec<String>,
+    pub cognition_verbs: Vec<String>,
 }
 
 impl Default for ShowDontTellConfig {
@@ -1975,6 +2004,7 @@ impl Default for ShowDontTellConfig {
             spanish_emotion_adjectives: Vec::new(),
             spanish_manner_adverbs: Vec::new(),
             spanish_cognition_verbs: Vec::new(),
+            languages: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -2388,6 +2418,10 @@ pub struct RepeatedPhrasesConfig {
     pub french_stop_words: Vec<String>,
     pub german_stop_words: Vec<String>,
     pub spanish_stop_words: Vec<String>,
+    /// 1.3.13 — per-language stop-words for ANY language (keyed by lowercased
+    /// name). Written by `inkhaven lang bootstrap`; takes precedence.
+    #[serde(default)]
+    pub languages: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl Default for RepeatedPhrasesConfig {
@@ -2402,6 +2436,7 @@ impl Default for RepeatedPhrasesConfig {
             french_stop_words: Vec::new(),
             german_stop_words: Vec::new(),
             spanish_stop_words: Vec::new(),
+            languages: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -2500,6 +2535,12 @@ pub struct FilterWordsConfig {
     pub french: Vec<String>,
     pub german: Vec<String>,
     pub spanish: Vec<String>,
+    /// 1.3.13 — per-language lists for ANY language, keyed by lowercased name
+    /// (e.g. `italian`). Written by `inkhaven lang bootstrap`; takes precedence
+    /// over the fixed fields + built-ins. Lets a project enable a language
+    /// beyond the curated five.
+    #[serde(default)]
+    pub languages: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl Default for FilterWordsConfig {
@@ -2521,6 +2562,7 @@ impl Default for FilterWordsConfig {
             french: Vec::new(),
             german: Vec::new(),
             spanish: Vec::new(),
+            languages: std::collections::BTreeMap::new(),
         }
     }
 }

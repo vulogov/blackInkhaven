@@ -48,8 +48,8 @@ fn status(project: &Path, language: Option<&str>) -> Result<()> {
         &coverage(config::built_in_stop_words(&l).len()),
     );
 
-    let pron = if crate::drift::has_builtin_pronouns(&l) {
-        "✓ built-in".to_string()
+    let pron = if crate::drift::has_pronouns(&l, &cfg.drift.pronouns) {
+        "✓ available".to_string()
     } else {
         "none — coref off".to_string()
     };
@@ -72,7 +72,7 @@ fn status(project: &Path, language: Option<&str>) -> Result<()> {
     );
 
     if config::built_in_filter_words(&l).is_empty()
-        && !crate::drift::has_builtin_pronouns(&l)
+        && !crate::drift::has_pronouns(&l, &cfg.drift.pronouns)
     {
         println!(
             "\n  ▶ no curated detector lists for {l} — run `inkhaven lang bootstrap {l}` \

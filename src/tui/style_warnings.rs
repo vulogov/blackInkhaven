@@ -92,16 +92,18 @@ impl FilterWordsDetector {
     /// have a Snowball algorithm or `use_stemming` is
     /// off, falls back to exact-lowercased match.
     pub fn new(cfg: &FilterWordsConfig, language: &str) -> Self {
-        let configured: &Vec<String> = match language.to_lowercase().as_str() {
+        let lang = language.to_lowercase();
+        // 1.3.13 — resolution: per-language map (any language) → fixed field
+        // (the five) → built-in. Non-supported languages never fall back to
+        // English.
+        let fixed: &[String] = match lang.as_str() {
             "russian" => &cfg.russian,
             "french" => &cfg.french,
             "german" => &cfg.german,
             "spanish" => &cfg.spanish,
-            _ => &cfg.english,
+            "english" | "en" | "" => &cfg.english,
+            _ => &[],
         };
-        // Either the user's list (when non-empty) OR the
-        // built-in default — same precedence the
-        // `effective_filter_words` helper documents.
         let stemmer = if cfg.use_stemming {
             parse_stemmer_language(language).map(Stemmer::create)
         } else {
@@ -109,15 +111,20 @@ impl FilterWordsDetector {
         };
         let normalise = |w: &str| -> String { crate::text::normalize_stem(w.trim(), &stemmer) };
         let mut targets: HashSet<String> = HashSet::new();
-        if configured.is_empty() {
-            for w in built_in_filter_words(language) {
+        let add = |words: &[String], targets: &mut HashSet<String>| {
+            for w in words {
                 let key = normalise(w);
                 if !key.is_empty() {
                     targets.insert(key);
                 }
             }
+        };
+        if let Some(mapped) = cfg.languages.get(&lang).filter(|l| !l.is_empty()) {
+            add(mapped, &mut targets);
+        } else if !fixed.is_empty() {
+            add(fixed, &mut targets);
         } else {
-            for w in configured {
+            for w in built_in_filter_words(&lang) {
                 let key = normalise(w);
                 if !key.is_empty() {
                     targets.insert(key);
@@ -235,25 +242,27 @@ impl RepeatedPhraseDetector {
         } else {
             None
         };
-        // Stop-word set: configured list (when non-empty)
-        // OR the built-in default for that language.
-        // Stemmed to align with token stems.
-        let stop_configured = match language.to_lowercase().as_str() {
+        // Stop-word set — 1.3.13 resolution: per-language map (any language) →
+        // fixed field (the five) → built-in. Non-supported languages never
+        // fall back to English. Stemmed to align with token stems.
+        let lang = language.to_lowercase();
+        let fixed_stop: &[String] = match lang.as_str() {
             "russian" => &cfg.russian_stop_words,
             "french" => &cfg.french_stop_words,
             "german" => &cfg.german_stop_words,
             "spanish" => &cfg.spanish_stop_words,
-            _ => &cfg.english_stop_words,
+            "english" | "en" | "" => &cfg.english_stop_words,
+            _ => &[],
         };
         let normalise_stop = |w: &str| -> String { crate::text::normalize_stem(w.trim(), &stemmer) };
-        let stops: std::collections::HashSet<String> = if stop_configured.is_empty() {
-            built_in_stop_words(language)
-                .iter()
-                .map(|s| normalise_stop(s))
-                .collect()
-        } else {
-            stop_configured.iter().map(|s| normalise_stop(s)).collect()
-        };
+        let stops: std::collections::HashSet<String> =
+            if let Some(mapped) = cfg.languages.get(&lang).filter(|l| !l.is_empty()) {
+                mapped.iter().map(|s| normalise_stop(s)).collect()
+            } else if !fixed_stop.is_empty() {
+                fixed_stop.iter().map(|s| normalise_stop(s)).collect()
+            } else {
+                built_in_stop_words(&lang).iter().map(|s| normalise_stop(s)).collect()
+            };
 
         // 1) Tokenise every row into a flat word list,
         //    excluding stop-words.  Each token carries
@@ -432,51 +441,61 @@ impl ShowDontTellDetector {
             None
         };
         let normalise = |w: &str| -> String { crate::text::normalize_stem(w.trim(), &stemmer) };
-        // Pick configured-or-built-in per language +
-        // category.  Same precedence as filter_words:
-        // configured list wins when non-empty;
-        // built-in default otherwise.
-        let configured_lv: &Vec<String> = match language.to_lowercase().as_str() {
+        // 1.3.13 resolution per category: per-language map (any language) →
+        // fixed field (the five) → built-in. Non-supported languages never
+        // fall back to English.
+        let lang = language.to_lowercase();
+        let mapped = cfg.languages.get(&lang);
+        let fixed_lv: &[String] = match lang.as_str() {
             "russian" => &cfg.russian_linking_verbs,
             "french" => &cfg.french_linking_verbs,
             "german" => &cfg.german_linking_verbs,
             "spanish" => &cfg.spanish_linking_verbs,
-            _ => &cfg.english_linking_verbs,
+            "english" | "en" | "" => &cfg.english_linking_verbs,
+            _ => &[],
         };
-        let configured_ea: &Vec<String> = match language.to_lowercase().as_str() {
+        let fixed_ea: &[String] = match lang.as_str() {
             "russian" => &cfg.russian_emotion_adjectives,
             "french" => &cfg.french_emotion_adjectives,
             "german" => &cfg.german_emotion_adjectives,
             "spanish" => &cfg.spanish_emotion_adjectives,
-            _ => &cfg.english_emotion_adjectives,
+            "english" | "en" | "" => &cfg.english_emotion_adjectives,
+            _ => &[],
         };
-        let configured_ma: &Vec<String> = match language.to_lowercase().as_str() {
+        let fixed_ma: &[String] = match lang.as_str() {
             "russian" => &cfg.russian_manner_adverbs,
             "french" => &cfg.french_manner_adverbs,
             "german" => &cfg.german_manner_adverbs,
             "spanish" => &cfg.spanish_manner_adverbs,
-            _ => &cfg.english_manner_adverbs,
+            "english" | "en" | "" => &cfg.english_manner_adverbs,
+            _ => &[],
         };
-        let configured_cv: &Vec<String> = match language.to_lowercase().as_str() {
+        let fixed_cv: &[String] = match lang.as_str() {
             "russian" => &cfg.russian_cognition_verbs,
             "french" => &cfg.french_cognition_verbs,
             "german" => &cfg.german_cognition_verbs,
             "spanish" => &cfg.spanish_cognition_verbs,
-            _ => &cfg.english_cognition_verbs,
+            "english" | "en" | "" => &cfg.english_cognition_verbs,
+            _ => &[],
         };
-        let build = |configured: &Vec<String>,
-                     fallback: &[&str]|
+        let pick = |mapped_list: Option<&Vec<String>>,
+                    fixed: &[String],
+                    builtin: &[&str]|
          -> HashSet<String> {
             let mut s: HashSet<String> = HashSet::new();
-            if configured.is_empty() {
-                for w in fallback {
+            let chosen: &[String] = match mapped_list.filter(|l| !l.is_empty()) {
+                Some(l) => l.as_slice(),
+                None => fixed,
+            };
+            if !chosen.is_empty() {
+                for w in chosen {
                     let key = normalise(w);
                     if !key.is_empty() {
                         s.insert(key);
                     }
                 }
             } else {
-                for w in configured {
+                for w in builtin {
                     let key = normalise(w);
                     if !key.is_empty() {
                         s.insert(key);
@@ -486,19 +505,10 @@ impl ShowDontTellDetector {
             s
         };
         Self {
-            linking_verbs: build(configured_lv, built_in_linking_verbs(language)),
-            emotion_adjectives: build(
-                configured_ea,
-                built_in_emotion_adjectives(language),
-            ),
-            manner_adverbs: build(
-                configured_ma,
-                built_in_manner_adverbs(language),
-            ),
-            cognition_verbs: build(
-                configured_cv,
-                built_in_cognition_verbs(language),
-            ),
+            linking_verbs: pick(mapped.map(|m| &m.linking_verbs), fixed_lv, built_in_linking_verbs(&lang)),
+            emotion_adjectives: pick(mapped.map(|m| &m.emotion_adjectives), fixed_ea, built_in_emotion_adjectives(&lang)),
+            manner_adverbs: pick(mapped.map(|m| &m.manner_adverbs), fixed_ma, built_in_manner_adverbs(&lang)),
+            cognition_verbs: pick(mapped.map(|m| &m.cognition_verbs), fixed_cv, built_in_cognition_verbs(&lang)),
             stemmer,
         }
     }
