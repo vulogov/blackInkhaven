@@ -1972,6 +1972,9 @@ impl super::super::App {
         // 1.2.18+ R.3 — reading-time chip (book length
         // + time remaining at editor.reading_wpm).
         spans.extend(self.reading_time_chip_spans());
+        // 1.3.12 DEEP-1 — background-job spinner chip (persists regardless of
+        // what else writes the status line).
+        spans.extend(self.bg_job_chip_spans());
         spans.push(Span::raw("  "));
         spans.push(Span::raw(self.status.clone()));
 
