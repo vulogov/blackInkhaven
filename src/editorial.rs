@@ -122,16 +122,29 @@ impl EditorialFinding {
     }
 }
 
+/// Whether an AI fix rewrites the whole paragraph or only the flagged phrase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixScope {
+    /// Rewrite the entire paragraph (echo / pacing — there's no single phrase
+    /// to isolate).
+    Paragraph,
+    /// Rewrite only the finding's `char_range` and splice it back into the
+    /// paragraph (show-tell / anachronism / filter — a localized phrase).
+    Span,
+}
+
 /// The AI-rewrite recipe for a rewritable editorial category — the
 /// prompt-override slug (Prompts book / `prompts.hjson`), the built-in
-/// instruction, and a short label for the snapshot annotation + status. The
-/// judgment categories (structure / continuity / fact / scene) return None:
-/// there's no honest single-paragraph rewrite for "the midpoint sags".
+/// instruction, a short label for the snapshot annotation + status, and the
+/// rewrite scope. The judgment categories (structure / continuity / fact /
+/// scene) return None: there's no honest single-paragraph rewrite for "the
+/// midpoint sags".
 #[derive(Debug, Clone, Copy)]
 pub struct FixSpec {
     pub slug: &'static str,
     pub builtin: &'static str,
     pub label: &'static str,
+    pub scope: FixScope,
 }
 
 pub fn fix_spec(category: &str) -> Option<FixSpec> {
@@ -143,6 +156,7 @@ the over-used word with synonyms or restructuring — while preserving the meani
 voice, the paragraph's language, and any Typst markup verbatim. Output ONLY the rewritten \
 paragraph, no preamble.",
             label: "de-echo",
+            scope: FixScope::Paragraph,
         },
         "pacing" => FixSpec {
             slug: "editorial-fix-pacing",
@@ -150,17 +164,76 @@ paragraph, no preamble.",
 sentences, sharpen the prose — while preserving the meaning, the author's voice, the paragraph's \
 language, and any Typst markup verbatim. Output ONLY the rewritten paragraph, no preamble.",
             label: "tighten",
+            scope: FixScope::Paragraph,
         },
         "show-tell" => FixSpec {
             slug: "editorial-fix-show-tell",
-            builtin: "Rewrite the paragraph below to SHOW rather than tell: replace the named \
-emotion / abstract summary with concrete action, sensation, and detail — while preserving the \
-meaning, the author's voice, the paragraph's language, and any Typst markup verbatim. Output ONLY \
-the rewritten paragraph, no preamble.",
+            builtin: "You rewrite telling prose to SHOW it — replacing a named emotion or abstract \
+summary with concrete action, sensation, and detail — while preserving the meaning, the author's \
+voice, the language, and any Typst markup verbatim.",
             label: "show-not-tell",
+            scope: FixScope::Span,
+        },
+        "filter" => FixSpec {
+            slug: "editorial-fix-filter",
+            builtin: "You remove filter words — intensifier crutches and hedges that weaken prose \
+(\"just\", \"really\", \"very\", \"seemed\", \"felt\"). If cutting the marked word leaves the \
+sentence intact, return the phrase without it; otherwise replace it with sharper wording — while \
+preserving the meaning, the author's voice, the language, and any Typst markup verbatim.",
+            label: "de-filter",
+            scope: FixScope::Span,
         },
         _ => return None,
     })
+}
+
+/// One AI-rewritable fix the batch walk applies: `(paragraph, category,
+/// char_range)`. The span is `None` for whole-paragraph categories.
+pub type BatchFix = (Uuid, String, Option<(usize, usize)>);
+
+/// The ordered list of AI-rewritable fixes the cockpit's `F` (batch fix-all)
+/// walks: every finding matching `filter` (`None` = all) that is
+/// [`EditorialFinding::rewritable`], in the findings' display order. Pure.
+pub fn batch_fix_queue(findings: &[EditorialFinding], filter: Option<&str>) -> Vec<BatchFix> {
+    findings
+        .iter()
+        .filter(|f| filter.is_none_or(|c| f.category == c))
+        .filter(|f| f.rewritable())
+        .map(|f| {
+            (
+                f.location.paragraph.expect("rewritable ⇒ has a paragraph"),
+                f.category.clone(),
+                f.location.char_range,
+            )
+        })
+        .collect()
+}
+
+/// Replace the half-open char range `[start, end)` of `original` with
+/// `replacement`, preserving everything outside it (including a trailing
+/// newline). Char-indexed (not byte); an out-of-range or inverted span is
+/// clamped so this never panics. Pure.
+pub fn splice_span(original: &str, range: (usize, usize), replacement: &str) -> String {
+    let chars: Vec<char> = original.chars().collect();
+    let n = chars.len();
+    let start = range.0.min(n);
+    let end = range.1.clamp(start, n);
+    let mut out: String = chars[..start].iter().collect();
+    out.push_str(replacement);
+    out.extend(chars[end..].iter());
+    out
+}
+
+/// Clean a model's span-rewrite reply down to the bare replacement phrase:
+/// trims whitespace and strips any wrapping quotes / guillemets / backticks
+/// the model added despite instructions. Pure.
+pub fn extract_phrase(raw: &str) -> String {
+    raw.trim()
+        .trim_matches(|c: char| {
+            c.is_whitespace()
+                || matches!(c, '"' | '\'' | '`' | '«' | '»' | '\u{201c}' | '\u{201d}' | '\u{2018}' | '\u{2019}')
+        })
+        .to_string()
 }
 
 /// The ranked worklist + per-severity counts.
@@ -419,6 +492,70 @@ mod tests {
         assert!(!mk("echo", false).rewritable(), "no paragraph → not rewritable");
         assert!(!mk("structure", true).rewritable(), "judgment category → not rewritable");
         assert!(fix_spec("echo").is_some() && fix_spec("structure").is_none());
+    }
+
+    #[test]
+    fn fix_scope_paragraph_vs_span() {
+        assert_eq!(fix_spec("echo").unwrap().scope, FixScope::Paragraph);
+        assert_eq!(fix_spec("pacing").unwrap().scope, FixScope::Paragraph);
+        assert_eq!(fix_spec("show-tell").unwrap().scope, FixScope::Span);
+        assert_eq!(fix_spec("filter").unwrap().scope, FixScope::Span);
+    }
+
+    #[test]
+    fn batch_fix_queue_keeps_only_filtered_rewritable_in_order() {
+        let mk = |cat: &str, para: bool, span: Option<(usize, usize)>| EditorialFinding {
+            category: cat.into(),
+            severity: Severity::Info,
+            location: Location {
+                paragraph: para.then(uuid::Uuid::now_v7),
+                char_range: span,
+                ..Default::default()
+            },
+            message: "m".into(),
+            hint: None,
+            source: "style",
+            autofixable: false,
+        };
+        let findings = vec![
+            mk("show-tell", true, Some((0, 3))), // rewritable (span)
+            mk("structure", true, None),         // judgment → not rewritable
+            mk("echo", false, None),             // no paragraph → not rewritable
+            mk("filter", true, Some((4, 8))),    // rewritable (span)
+        ];
+        // no filter → both rewritable ones, in order
+        let all = batch_fix_queue(&findings, None);
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].1, "show-tell");
+        assert_eq!(all[0].2, Some((0, 3)));
+        assert_eq!(all[1].1, "filter");
+        // category filter narrows
+        let only = batch_fix_queue(&findings, Some("filter"));
+        assert_eq!(only.len(), 1);
+        assert_eq!(only[0].1, "filter");
+        assert_eq!(only[0].2, Some((4, 8)));
+    }
+
+    #[test]
+    fn splice_span_replaces_only_the_range() {
+        // "She was angry." — replace "was angry" (chars 4..13) with the showing
+        assert_eq!(
+            splice_span("She was angry.", (4, 13), "clenched her fists"),
+            "She clenched her fists."
+        );
+        // a trailing newline outside the range survives
+        assert_eq!(splice_span("foo bar\n", (0, 3), "baz"), "baz bar\n");
+        // an out-of-range span clamps instead of panicking
+        assert_eq!(splice_span("hi", (5, 9), "X"), "hiX");
+        // an inverted span clamps end up to start (insertion)
+        assert_eq!(splice_span("hello", (3, 1), "_"), "hel_lo");
+    }
+
+    #[test]
+    fn extract_phrase_strips_wrapping_quotes_and_space() {
+        assert_eq!(extract_phrase("  \"clenched her fists\" \n"), "clenched her fists");
+        assert_eq!(extract_phrase("«spyglass»"), "spyglass");
+        assert_eq!(extract_phrase("plain words"), "plain words");
     }
 
     #[test]

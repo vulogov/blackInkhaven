@@ -331,6 +331,12 @@ theme: {
   style_warning_filter_word_modifier:       ""
   style_warning_repeated_phrase_modifier:   ""
   style_warning_show_dont_tell_modifier:    ""
+  // 1.3.9+ — the live anachronism overlay.  A warm
+  // amber-orange "wrong era" caution (default
+  // "#eba672"), distinct from the show-don't-tell teal.
+  // Off until you set editor.style_warnings.anachronism
+  // .year; rides the master style-warnings toggle.
+  style_warning_anachronism_fg:             "#eba672"
   // 1.2.20+ — the live echo overlay (Ctrl+B Shift+K).
   // Its own colour (default a muted purple "#b48ead")
   // so a cross-paragraph echo doesn't read as a
