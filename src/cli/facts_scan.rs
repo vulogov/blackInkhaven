@@ -482,7 +482,8 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
     let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
-    let report = scan_with(&store, &hierarchy, &cfg, &layout, provider, &|s| eprintln!("{s}"))?;
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let report = scan_with(&store, &hierarchy, &cfg, &layout, provider, &never, &|s| eprintln!("{s}"))?;
 
     if json {
         let rendered = serde_json::to_string_pretty(&report)
@@ -503,12 +504,14 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
 /// progress through `progress` (not stderr), returning the saved report. Reads
 /// `cfg.language` so the per-chapter prompt stays in the manuscript's language.
 /// Safe to call from the TUI background-refresh thread.
+#[allow(clippy::too_many_arguments)]
 pub fn scan_with(
     store: &Store,
     hierarchy: &Hierarchy,
     cfg: &Config,
     layout: &ProjectLayout,
     provider: Option<&str>,
+    cancel: &std::sync::atomic::AtomicBool,
     progress: &dyn Fn(&str),
 ) -> Result<FactScanReport> {
     let language = if cfg.language.trim().is_empty() {
@@ -567,6 +570,9 @@ pub fn scan_with(
     };
 
     for (idx, (chapter_id, chapter_title)) in chapters.iter().enumerate() {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Error::Store("cancelled".into())); // partial report not saved
+        }
         let prose = crate::cli::book_walk::chapter_raw_prose(layout, hierarchy, *chapter_id);
         let plain = crate::audiobook::typst_to_plain(&prose);
         if plain.trim().is_empty() {

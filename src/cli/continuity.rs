@@ -55,7 +55,8 @@ fn extract(project: &Path, provider: Option<&str>) -> Result<()> {
         .map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy =
         Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
-    let bible = extract_with(&hierarchy, &cfg, &layout, provider, &|s| eprintln!("{s}"))?;
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let bible = extract_with(&hierarchy, &cfg, &layout, provider, &never, &|s| eprintln!("{s}"))?;
     println!(
         "continuity: extracted {} fact(s) for {} character(s) → {}",
         bible.facts.len(),
@@ -70,11 +71,13 @@ fn extract(project: &Path, provider: Option<&str>) -> Result<()> {
 /// through `progress` (not stderr — so it's safe to call from the TUI
 /// background-refresh thread). Reads `cfg.language` so the extraction prompt
 /// stays in the manuscript's language. Returns the bible it saved.
+#[allow(clippy::too_many_arguments)]
 pub fn extract_with(
     hierarchy: &Hierarchy,
     cfg: &Config,
     layout: &ProjectLayout,
     provider: Option<&str>,
+    cancel: &std::sync::atomic::AtomicBool,
     progress: &dyn Fn(&str),
 ) -> Result<ContinuityBible> {
     let ai = AiClient::from_config(&cfg.llm)?;
@@ -106,6 +109,9 @@ pub fn extract_with(
     };
 
     for (idx, (chapter_id, chapter_title)) in chapters.iter().enumerate() {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Error::Store("cancelled".into())); // partial bible not saved
+        }
         let prose = crate::cli::book_walk::chapter_raw_prose(layout, hierarchy, *chapter_id);
         let plain = crate::audiobook::typst_to_plain(&prose);
         if plain.trim().is_empty() {
