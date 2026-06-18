@@ -106,10 +106,12 @@ fn collect_chapters(
             continue;
         }
         let mut body = String::new();
-        append_branch_prose(store, h, chapter, &mut body, false)?;
+        let mut images = Vec::new();
+        append_branch_prose(store, h, chapter, &mut body, &mut images, false)?;
         chapters.push(EpubChapter {
             title: clean_title(&chapter.title),
             body_xhtml: body,
+            images,
         });
     }
     Ok(chapters)
@@ -128,6 +130,7 @@ fn append_branch_prose(
     h: &Hierarchy,
     branch: &Node,
     body: &mut String,
+    images: &mut Vec<epub::EpubImage>,
     is_sub: bool,
 ) -> Result<()> {
     if is_sub {
@@ -144,14 +147,68 @@ fn append_branch_prose(
                 body.push_str(&xhtml);
             }
             NodeKind::Subchapter => {
-                append_branch_prose(store, h, child, body, true)?;
+                append_branch_prose(store, h, child, body, images, true)?;
             }
-            // Inline Image nodes are still skipped — the
-            // R.1.b cover (see `detect_cover`) is in; inline
-            // figure embedding remains a follow-up.
+            // Inline figure (R-images) — embed the bytes as
+            // a `<figure>`. Mirrors the R.1.b cover path,
+            // but per-node and collected into the manifest.
+            NodeKind::Image => {
+                append_image(store, child, body, images)?;
+            }
             _ => {}
         }
     }
+    Ok(())
+}
+
+/// Embed one `NodeKind::Image` as an EPUB inline figure:
+/// read its bytes from bdslib, register an `EpubImage`
+/// resource keyed by the node id (unique → no cross-chapter
+/// filename collisions), and append a `<figure>` referencing
+/// it. A missing-bytes image logs a warning and is skipped
+/// rather than failing the whole export (matches the
+/// best-effort cover behaviour).
+fn append_image(
+    store: &Store,
+    node: &Node,
+    body: &mut String,
+    images: &mut Vec<epub::EpubImage>,
+) -> Result<()> {
+    let bytes = match store.image_bytes(node.id)? {
+        Some(b) => b,
+        None => {
+            eprintln!(
+                "epub: image `{}` has no bytes in bdslib — skipping",
+                node.title
+            );
+            return Ok(());
+        }
+    };
+    let ext = node.image_ext.as_deref().unwrap_or("png");
+    let href = format!("img-{}.{}", node.id, ext);
+    let alt = node
+        .image_alt
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(&node.title);
+    body.push_str(&format!(
+        "<figure><img src=\"{href}\" alt=\"{alt}\"/>",
+        href = epub::escape_xml(&href),
+        alt = epub::escape_xml(alt),
+    ));
+    if let Some(cap) = node.image_caption.as_deref().filter(|s| !s.trim().is_empty()) {
+        body.push_str(&format!(
+            "<figcaption>{}</figcaption>",
+            epub::escape_xml(cap),
+        ));
+    }
+    body.push_str("</figure>\n");
+    images.push(epub::EpubImage {
+        id: format!("img-{}", node.id),
+        href,
+        media_type: epub::image_media_type(ext).to_string(),
+        bytes,
+    });
     Ok(())
 }
 
