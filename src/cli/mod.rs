@@ -1291,6 +1291,20 @@ pub enum LangCommand {
         #[arg(long)]
         language: Option<String>,
     },
+    /// Generate the full per-language detector vocabulary (filter words,
+    /// show-don't-tell, stop-words, drift pronouns) for any language via one
+    /// LLM pass. Prints a paste-able HJSON snippet; `--yes` also patches
+    /// `inkhaven.hjson` in place (versioned backup + atomic).
+    Bootstrap {
+        /// The language to bootstrap (e.g. `italian`).
+        language: String,
+        /// LLM provider override (defaults to `llm.default`).
+        #[arg(long)]
+        provider: Option<String>,
+        /// Patch `inkhaven.hjson` in place (otherwise just prints the snippet).
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
