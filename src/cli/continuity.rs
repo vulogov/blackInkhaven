@@ -55,7 +55,28 @@ fn extract(project: &Path, provider: Option<&str>) -> Result<()> {
         .map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy =
         Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    let bible = extract_with(&hierarchy, &cfg, &layout, provider, &|s| eprintln!("{s}"))?;
+    println!(
+        "continuity: extracted {} fact(s) for {} character(s) → {}",
+        bible.facts.len(),
+        bible.characters().len(),
+        ContinuityBible::sidecar_path(&layout.root).display(),
+    );
+    Ok(())
+}
 
+/// 1.3.12 DEEP-1 — the continuity-extract body against an already-loaded
+/// `hierarchy` (the prose is read from disk, not the DB), with progress routed
+/// through `progress` (not stderr — so it's safe to call from the TUI
+/// background-refresh thread). Reads `cfg.language` so the extraction prompt
+/// stays in the manuscript's language. Returns the bible it saved.
+pub fn extract_with(
+    hierarchy: &Hierarchy,
+    cfg: &Config,
+    layout: &ProjectLayout,
+    provider: Option<&str>,
+    progress: &dyn Fn(&str),
+) -> Result<ContinuityBible> {
     let ai = AiClient::from_config(&cfg.llm)?;
     let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
 
@@ -72,10 +93,10 @@ fn extract(project: &Path, provider: Option<&str>) -> Result<()> {
         ));
     }
 
-    eprintln!(
-        "inkhaven continuity extract · language: {language} · model: {model} · {} chapter(s)",
+    progress(&format!(
+        "continuity extract · language: {language} · model: {model} · {} chapter(s)",
         chapters.len(),
-    );
+    ));
 
     let mut bible = ContinuityBible {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -84,30 +105,21 @@ fn extract(project: &Path, provider: Option<&str>) -> Result<()> {
     };
 
     for (idx, (chapter_id, chapter_title)) in chapters.iter().enumerate() {
-        let prose =
-            crate::cli::book_walk::chapter_raw_prose(&layout, &hierarchy, *chapter_id);
+        let prose = crate::cli::book_walk::chapter_raw_prose(layout, hierarchy, *chapter_id);
         let plain = crate::audiobook::typst_to_plain(&prose);
         if plain.trim().is_empty() {
             continue;
         }
-        eprint!("  [{}/{}] {chapter_title} ", idx + 1, chapters.len());
+        progress(&format!("continuity [{}/{}] {chapter_title}", idx + 1, chapters.len()));
         let prompt = build_extract_prompt(&language, chapter_title, &plain);
         let raw = run_blocking(&ai, model, &prompt)?;
-        let facts = parse_extraction(&raw, chapter_title);
-        eprintln!("→ {} fact(s)", facts.len());
-        bible.facts.extend(facts);
+        bible.facts.extend(parse_extraction(&raw, chapter_title));
     }
 
     bible
         .save(&layout.root)
         .map_err(|e| Error::Store(format!("continuity save: {e}")))?;
-    println!(
-        "continuity: extracted {} fact(s) for {} character(s) → {}",
-        bible.facts.len(),
-        bible.characters().len(),
-        ContinuityBible::sidecar_path(&layout.root).display(),
-    );
-    Ok(())
+    Ok(bible)
 }
 
 /// Compose the per-chapter extraction prompt.  Language is
