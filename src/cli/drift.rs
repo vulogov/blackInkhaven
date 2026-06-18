@@ -54,7 +54,7 @@ pub fn collect_entity_descriptions(project: &Path) -> Result<Vec<EntityDescripti
     let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
-    Ok(gather(&store, &hierarchy, &cfg.drift))
+    Ok(gather(&store, &hierarchy, &cfg.drift, &cfg.language))
 }
 
 /// The store-backed retrieval, factored out so the project-open boilerplate
@@ -63,13 +63,15 @@ fn gather(
     store: &Store,
     hierarchy: &Hierarchy,
     cfg: &crate::config::DriftConfig,
+    language: &str,
 ) -> Vec<EntityDescriptions> {
     let index = chapter_index(hierarchy);
     let lexicon = entities(hierarchy);
     // 1.3.11 — coreference-lite: attribute pronoun-only descriptions to the
-    // last unambiguously-named entity, so they survive the name filter.
+    // last unambiguously-named entity (per-language pronouns), so they survive
+    // the name filter.
     let chapters = chapter_paragraphs(store, hierarchy);
-    let coref = attribute_continuations(&chapters, &lexicon);
+    let coref = attribute_continuations(&chapters, &lexicon, language);
     let mut out = Vec::new();
     for (entity, kind) in lexicon.iter().cloned() {
         let coref_ids: HashSet<Uuid> = coref
@@ -257,7 +259,7 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
 
-    let descs = gather(&store, &hierarchy, &cfg.drift);
+    let descs = gather(&store, &hierarchy, &cfg.drift, &cfg.language);
     let comparable: Vec<&EntityDescriptions> =
         descs.iter().filter(|d| d.snippets.len() >= 2).collect();
     if comparable.is_empty() {

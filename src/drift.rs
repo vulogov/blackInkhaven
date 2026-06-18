@@ -107,37 +107,81 @@ pub fn assemble_descriptions(
         .collect()
 }
 
-/// The kind-matching pronouns whose presence (in a name-less paragraph) marks
-/// a continued description of the current anchor entity.
-fn pronouns(kind: EntityKind) -> &'static [&'static str] {
-    match kind {
-        EntityKind::Character => &[
-            "he", "him", "his", "she", "her", "hers", "they", "them", "their", "theirs",
-        ],
-        EntityKind::Place => &["it", "its", "there", "here"],
-        EntityKind::Artefact => &["it", "its"],
+/// The kind-matching pronouns (lowercased, a closed class) whose presence in a
+/// name-less paragraph marks a continued description of the current anchor
+/// entity — keyed by the manuscript `language`. Built-in for the five
+/// supported languages (English / Russian / French / German / Spanish);
+/// unknown languages fall back to English. Articles and other high-frequency
+/// homographs (French `le`/`la`, Spanish `la`/`lo`, German `das`) are
+/// deliberately excluded to keep attribution precise. Note: pro-drop
+/// languages (Spanish) omit subject pronouns, so recall there is naturally
+/// lower — possessives/objects carry most of the signal.
+fn pronouns(language: &str, kind: EntityKind) -> &'static [&'static str] {
+    use EntityKind::*;
+    match language.trim().to_lowercase().as_str() {
+        "russian" | "русский" => match kind {
+            Character => &[
+                "он", "его", "ему", "им", "нём", "нем", "она", "её", "ее", "ей", "ней", "они",
+                "их", "ими", "них",
+            ],
+            Place => &["оно", "там", "тут", "здесь", "туда", "сюда"],
+            Artefact => &["оно", "его", "ему", "им"],
+        },
+        "french" | "français" | "francais" => match kind {
+            Character => &["il", "elle", "ils", "elles", "lui", "eux", "leur", "leurs"],
+            Place => &["y", "là", "ici", "ça", "cela"],
+            Artefact => &["ça", "cela", "celui", "celle"],
+        },
+        "german" | "deutsch" => match kind {
+            Character => &[
+                "er", "ihn", "ihm", "sein", "seine", "sie", "ihr", "ihre", "ihnen",
+            ],
+            Place => &["es", "da", "dort", "dorthin", "hier", "dahin"],
+            Artefact => &["es", "dies", "dieses"],
+        },
+        "spanish" | "español" | "espanol" => match kind {
+            Character => &[
+                "él", "ella", "ellos", "ellas", "le", "les", "su", "sus", "suyo", "suya",
+            ],
+            Place => &["ahí", "allí", "allá", "aquí", "acá"],
+            Artefact => &["ello", "eso", "esto"],
+        },
+        // english + fallback
+        _ => match kind {
+            Character => &[
+                "he", "him", "his", "she", "her", "hers", "they", "them", "their", "theirs",
+            ],
+            Place => &["it", "its", "there", "here"],
+            Artefact => &["it", "its"],
+        },
     }
 }
 
-/// True when `name` appears in `haystack_lc` (already lowercased) as a
-/// whole word / phrase — bounded by non-alphanumeric on both sides — so
-/// "Sam" doesn't match "Samuel" or "same". Pure.
+/// True when `name` appears in `haystack_lc` (already lowercased) as a whole
+/// word / phrase — bounded by a non-alphanumeric **Unicode** char (or the
+/// string edge) on both sides — so "Sam" doesn't match "Samuel" and the
+/// boundary check works for Cyrillic / accented names. Pure.
 fn mentions(haystack_lc: &str, name_lc: &str) -> bool {
     if name_lc.is_empty() {
         return false;
     }
-    let bytes = haystack_lc.as_bytes();
-    let nb = name_lc.as_bytes();
     let mut from = 0;
-    while let Some(pos) = haystack_lc[from..].find(name_lc) {
-        let start = from + pos;
-        let end = start + nb.len();
-        let before_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
-        let after_ok = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
+    while let Some(rel) = haystack_lc[from..].find(name_lc) {
+        let start = from + rel;
+        let end = start + name_lc.len();
+        let before_ok = haystack_lc[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric());
+        let after_ok = haystack_lc[end..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric());
         if before_ok && after_ok {
             return true;
         }
-        from = start + 1;
+        // advance past this match's first char (a valid boundary)
+        from = start + name_lc.chars().next().map_or(1, char::len_utf8);
     }
     false
 }
@@ -160,6 +204,7 @@ fn word_set(text_lc: &str) -> HashSet<&str> {
 pub fn attribute_continuations(
     chapters: &[Vec<(Uuid, String)>],
     lexicon: &[(String, EntityKind)],
+    language: &str,
 ) -> HashMap<Uuid, Vec<String>> {
     let lex_lc: Vec<(String, String, EntityKind)> = lexicon
         .iter()
@@ -183,7 +228,7 @@ pub fn attribute_continuations(
                 // appears (a continued description).
                 let words = word_set(&lc);
                 for (kind, anchor_name) in &anchor {
-                    if pronouns(*kind).iter().any(|p| words.contains(*p)) {
+                    if pronouns(language, *kind).iter().any(|p| words.contains(*p)) {
                         out.entry(*pid).or_default().push(anchor_name.clone());
                     }
                 }
@@ -450,7 +495,7 @@ mod tests {
             (p_ambig, "Mara and Joss argued by the door.".to_string()),
             (p_after_ambig, "She would not look at him.".to_string()),
         ]];
-        let map = attribute_continuations(&chapters, &lexicon);
+        let map = attribute_continuations(&chapters, &lexicon, "english");
         assert_eq!(map.get(&p_pron).map(|v| v.as_slice()), Some(&["Mara".to_string()][..]));
         assert!(!map.contains_key(&p_after_ambig), "ambiguous anchor → no attribution");
         // the place pronoun "there"/"it" never appeared, so The Goose attributes nothing
@@ -466,15 +511,38 @@ mod tests {
             vec![(p_named, "Mara waited.".to_string())],
             vec![(p_next_chapter, "She sighed.".to_string())], // new chapter — no anchor
         ];
-        let map = attribute_continuations(&chapters, &lexicon);
+        let map = attribute_continuations(&chapters, &lexicon, "english");
         assert!(!map.contains_key(&p_next_chapter), "anchor resets per chapter");
     }
 
     #[test]
-    fn mentions_respects_word_boundaries() {
+    fn coref_is_multilingual_russian() {
+        let p_named = Uuid::now_v7();
+        let p_pron = Uuid::now_v7();
+        let lexicon = vec![("Мара".to_string(), EntityKind::Character)];
+        // "Mara crossed the yard. She was tall." in Russian — the pronoun is "она".
+        let chapters = vec![vec![
+            (p_named, "Мара пересекла двор.".to_string()),
+            (p_pron, "Она была выше, чем он помнил.".to_string()),
+        ]];
+        // English pronouns wouldn't match Russian text…
+        assert!(
+            !attribute_continuations(&chapters, &lexicon, "english").contains_key(&p_pron),
+            "english pronoun set must not fire on Russian prose"
+        );
+        // …but the Russian set does.
+        let ru = attribute_continuations(&chapters, &lexicon, "russian");
+        assert_eq!(ru.get(&p_pron).map(|v| v.as_slice()), Some(&["Мара".to_string()][..]));
+    }
+
+    #[test]
+    fn mentions_respects_word_boundaries_including_unicode() {
         assert!(mentions("mara crossed the yard", "mara"));
         assert!(!mentions("samuel spoke", "sam"), "no substring false-match");
         assert!(mentions("the drunken goose was loud", "drunken goose"));
+        // Unicode: "мара" must not match inside "марашка"; must match standalone.
+        assert!(mentions("мара пересекла двор", "мара"));
+        assert!(!mentions("марашка сидела тихо", "мара"), "no Cyrillic substring false-match");
     }
 
     #[test]
