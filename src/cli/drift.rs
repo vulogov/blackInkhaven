@@ -269,7 +269,8 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
     let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
-    let report = scan_with(&store, &hierarchy, &cfg, &layout, provider, &|s| eprintln!("{s}"))?;
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let report = scan_with(&store, &hierarchy, &cfg, &layout, provider, &never, &|s| eprintln!("{s}"))?;
 
     if json {
         let rendered = serde_json::to_string_pretty(&report)
@@ -299,12 +300,14 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
 /// `cfg.language` so the judge prompt stays in the manuscript's language.
 /// Safe to call from the TUI background-refresh thread (shares the store's
 /// connection pool).
+#[allow(clippy::too_many_arguments)]
 pub fn scan_with(
     store: &Store,
     hierarchy: &Hierarchy,
     cfg: &Config,
     layout: &ProjectLayout,
     provider: Option<&str>,
+    cancel: &std::sync::atomic::AtomicBool,
     progress: &dyn Fn(&str),
 ) -> Result<DriftReport> {
     let descs = gather(store, hierarchy, &cfg.drift, &cfg.language);
@@ -333,6 +336,9 @@ pub fn scan_with(
 
     let mut conflicts = Vec::new();
     for (i, d) in comparable.iter().enumerate() {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Error::Store("cancelled".into())); // partial report not saved
+        }
         progress(&format!("drift [{}/{}] {}", i + 1, comparable.len(), d.entity));
         let prompt = build_drift_prompt(&language, d);
         let raw = run_blocking(&ai, model, DRIFT_SYSTEM_PROMPT, &prompt)?;

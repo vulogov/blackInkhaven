@@ -2741,7 +2741,9 @@ impl App {
         &mut self,
         kind: BgJobKind,
         label: impl Into<String>,
-        work: impl FnOnce(std::sync::mpsc::Sender<BgMsg>) + Send + 'static,
+        work: impl FnOnce(std::sync::mpsc::Sender<BgMsg>, std::sync::Arc<std::sync::atomic::AtomicBool>)
+            + Send
+            + 'static,
     ) -> bool {
         if self.bg_job.is_some() {
             self.status = "a background job is already running — let it finish first".into();
@@ -2749,10 +2751,25 @@ impl App {
         }
         let (tx, rx) = std::sync::mpsc::channel();
         let label = label.into();
-        std::thread::spawn(move || work(tx));
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_cancel = cancel.clone();
+        std::thread::spawn(move || work(tx, worker_cancel));
         self.status = format!("⟳ {label}…");
-        self.bg_job = Some(BgJob { rx, label, kind });
+        self.bg_job = Some(BgJob { rx, label, kind, cancel });
         true
+    }
+
+    /// Request cancellation of the running background job (if any). The worker
+    /// polls the flag and stops promptly; `pump_bg_job` reports the outcome.
+    pub(super) fn cancel_bg_job(&mut self) -> bool {
+        match self.bg_job.as_ref() {
+            Some(job) => {
+                job.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                self.status = format!("⟳ {} · cancelling…", job.label);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Drain the running job's channel each tick: surface progress to the
@@ -2781,9 +2798,10 @@ impl App {
     fn on_bg_job_done(&mut self, kind: BgJobKind, result: std::result::Result<String, String>) {
         match kind {
             BgJobKind::DeepRefresh => match result {
-                Ok(_) => {
-                    // The scans wrote fresh sidecars — refresh the open world
-                    // modal (bible / cockpit) and report the new health line.
+                // The Ok payload is the outcome verb ("done" / "cancelled").
+                Ok(verb) => {
+                    // Whatever scans finished wrote fresh sidecars — refresh the
+                    // open world modal (bible / cockpit) and report the health.
                     self.refresh_open_world_modal();
                     let summary = crate::cli::world::report_from(
                         &self.store,
@@ -2792,7 +2810,7 @@ impl App {
                         &self.layout.root,
                     )
                     .summary();
-                    self.status = format!("deep refresh done — {summary}");
+                    self.status = format!("deep refresh {verb} — {summary}");
                 }
                 Err(e) => self.status = format!("deep refresh failed: {e}"),
             },
@@ -2803,9 +2821,11 @@ impl App {
     /// on the background-job harness. Pre-flights an LLM provider, then moves a
     /// **clone** of the Store (shares the pool — no DB reopen) + cfg + layout
     /// into the worker, which runs `deep_refresh_shared` and forwards progress.
+    ///
+    /// 1.3.13 — re-pressing the chord while a refresh runs **cancels** it.
     fn start_deep_refresh(&mut self) {
         if self.bg_job.is_some() {
-            self.status = "a deep refresh is already running".into();
+            self.cancel_bg_job();
             return;
         }
         if let Err(e) = self.ai.resolve_provider(&self.cfg.llm, None) {
@@ -2815,18 +2835,19 @@ impl App {
         let store = self.store.clone();
         let cfg = self.cfg.clone();
         let layout = self.layout.clone();
-        self.start_bg_job(BgJobKind::DeepRefresh, "deep refresh", move |tx| {
+        self.start_bg_job(BgJobKind::DeepRefresh, "deep refresh", move |tx, cancel| {
             let result = {
                 let progress = |s: &str| {
                     let _ = tx.send(BgMsg::Progress(s.to_string()));
                 };
-                crate::cli::world::deep_refresh_shared(&store, &cfg, &layout, None, &progress)
+                crate::cli::world::deep_refresh_shared(&store, &cfg, &layout, None, &cancel, &progress)
             };
-            let _ = tx.send(BgMsg::Done(
-                result
-                    .map(|()| "world refresh complete".to_string())
-                    .map_err(|e| e.to_string()),
-            ));
+            let verb = if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                "cancelled"
+            } else {
+                "done"
+            };
+            let _ = tx.send(BgMsg::Done(result.map(|()| verb.to_string()).map_err(|e| e.to_string())));
         });
     }
 
@@ -5540,11 +5561,15 @@ pub(super) enum BgJobKind {
 }
 
 /// An in-flight background job: its progress/result channel + a label + which
-/// kind it is (for the completion handler). One at a time.
+/// kind it is (for the completion handler) + a cancel flag the worker polls.
+/// One at a time.
 pub(super) struct BgJob {
     pub rx: std::sync::mpsc::Receiver<BgMsg>,
     pub label: String,
     pub kind: BgJobKind,
+    /// Set by the UI (re-pressing the launch chord) to request cancellation;
+    /// the worker checks it between/within scans and stops promptly.
+    pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Drain everything available on a background job's channel without blocking:
