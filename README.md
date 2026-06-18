@@ -21,46 +21,49 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.10 — Semantic drift
+## Latest release · 1.3.11 — Drift depth + the world report
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.10.md`](Documentation/RELEASE_NOTES/1.3.10.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.11.md`](Documentation/RELEASE_NOTES/1.3.11.md)
 
-1.3.8 caught *hard* contradictions — a fact clashing with a fact. 1.3.10
-catches *soft* drift: two descriptions of the same entity that diverge across
-the manuscript without a clean factual clash. Pure-Rust, **no new
-dependencies** — and the bridge to the 1.4 Whole-Book AI Editor.
+Rounds out world consistency (1.3.8 hard facts, 1.3.10 soft drift): a deeper
+drift retriever and one consolidated snapshot. Pure-Rust, **no new
+dependencies**.
 
-### Embeddings retrieve, the AI adjudicates
+### Drift reads pronouns now — in five languages
 
-Cosine similarity finds same-topic descriptions but can't tell contradiction
-from relatedness ("cramped and smoky" and "airy and bright" are highly similar
-yet opposite). So drift **reuses the vector index already built as you write**
-(every paragraph is embedded on save) to pull each entity's description
-paragraphs — keeping only the ones that actually *name* it — then asks the
-model which contradict. No new index.
+The 1.3.10 retriever kept only paragraphs that *named* the entity, missing
+"Mara crossed the yard. **She** was taller…". 1.3.11 adds **coreference-lite**:
+a precision-favouring recency anchor (single named entity per kind; ambiguity
+clears it; never crosses a chapter) attributes pronoun-only descriptions back
+to the entity. Built-in pronoun sets ship for English, Russian, French,
+German, and Spanish, keyed by your project `language`, with a Unicode-aware
+word boundary.
 
-### `inkhaven drift scan`
+### `inkhaven world` — the consistency snapshot
 
 ```
-drift scan: 1 description contradiction(s):
-  ⚠ The Drunken Goose (place) — [ch.2] “cramped and smoky”  ⟷  [ch.20] “airy and bright”
-      ↳ the same tavern can't be both without a renovation the story never shows
+World: 2 issue(s) — 1 fact conflict · 1 drift
+Facts        established: 41 · internal conflicts: 1 · prose-vs-fact: 0
+Drift        1 description contradiction(s)
+Coverage     9 character(s) · 4 place(s) · 2 artefact(s)  ·  1 never named: Joss
 ```
 
-Cached in `.inkhaven/drift.json` (`--json` for a CI gate); `drift list`
-previews the retrieval deterministically, no AI.
+`--json` gates CI, `--deep` refreshes the AI scans, `--entity <name>` zooms to
+one entity. It complements `inkhaven edit` (the walkable worklist) as a
+world-layer snapshot, and the same health line banners the `Ctrl+V Shift+L`
+story bible.
 
-### In the worklist and the bible
+### Coverage: the dangling cast
 
-Drift surfaces in `inkhaven edit` and the `Ctrl+V Shift+R` cockpit as the
-`drift` category (Warn, **jump-only** to the divergent passage); `edit --deep`
-runs it. The **`Ctrl+V Shift+L`** story bible shows a ⚠ drift badge + the
-chapter-ordered description trail under each flagged entity.
+`world` and `inkhaven edit` flag entities defined in the books but **never
+named in the prose** — a character you sketched but never wrote in. `world`
+also names each anachronism + its chapter; `drift list --entity` scopes the
+preview.
 
 ### Test stats
 
-Tests 1339 → 1346, **zero new dependencies**. New tutorial 70
-([semantic drift](Documentation/Tutorials/70-semantic-drift.md)).
+Tests 1346 → 1354, **zero new dependencies**. New tutorial 71
+([the world report](Documentation/Tutorials/71-world-report.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
