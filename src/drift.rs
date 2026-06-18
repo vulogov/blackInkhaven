@@ -281,6 +281,11 @@ pub struct DriftReport {
     /// recomputing (no embedding load in the TUI). Empty in older sidecars.
     #[serde(default)]
     pub descriptions: Vec<EntityDescriptions>,
+    /// 1.3.12 — manuscript fingerprint at scan time (see
+    /// `world_report::manuscript_fingerprint`); consumers flag the findings
+    /// stale when it no longer matches. 0 in older sidecars.
+    #[serde(default)]
+    pub manuscript_fingerprint: u64,
 }
 
 impl DriftReport {
@@ -602,6 +607,7 @@ gibberish without a pipe\n";
                 detail: "voice flipped".into(),
             }],
             descriptions: Vec::new(),
+            manuscript_fingerprint: 0,
         };
         report.save(dir.path()).unwrap();
         let loaded = DriftReport::load(dir.path()).unwrap();

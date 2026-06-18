@@ -9331,17 +9331,21 @@ impl App {
             Ok(report) => {
                 let n = report.findings.len();
                 let deferred = report.deferred;
+                let stale = report.stale;
                 self.modal = Modal::EditorialPass {
                     findings: report.findings,
                     cursor: 0,
                     scroll: 0,
                     filter: None,
                 };
-                let note = if deferred > 0 {
+                let mut note = if deferred > 0 {
                     format!(" ({deferred} deferred)")
                 } else {
                     String::new()
                 };
+                if stale {
+                    note.push_str(" · ⚠ may be stale (Ctrl+V Shift+F)");
+                }
                 self.status = format!(
                     "Editorial Pass · {n} finding(s){note} · ↑↓ · ⏎ jump · ✎ f fix · F fix-all · s skip · d defer · Esc"
                 );

@@ -345,6 +345,7 @@ pub fn scan_with(
         content_hash: DriftReport::compute_hash(&descs),
         conflicts,
         descriptions: descs,
+        manuscript_fingerprint: crate::world_report::manuscript_fingerprint(hierarchy),
     };
     report
         .save(&layout.root)

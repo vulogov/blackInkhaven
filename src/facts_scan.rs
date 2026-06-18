@@ -47,6 +47,10 @@ pub struct FactScanReport {
     #[serde(default)]
     pub language: String,
     pub findings: Vec<FactFinding>,
+    /// 1.3.12 — manuscript fingerprint at scan time; consumers flag the
+    /// findings stale when it no longer matches. 0 in older sidecars.
+    #[serde(default)]
+    pub manuscript_fingerprint: u64,
 }
 
 impl FactScanReport {
@@ -103,6 +107,10 @@ pub struct FactCheckReport {
     #[serde(default)]
     pub content_hash: u64,
     pub conflicts: Vec<FactConflict>,
+    /// 1.3.12 — manuscript fingerprint at scan time; consumers flag the
+    /// findings stale when it no longer matches. 0 in older sidecars.
+    #[serde(default)]
+    pub manuscript_fingerprint: u64,
 }
 
 impl FactCheckReport {
@@ -412,6 +420,7 @@ mod tests {
                 fact: "Climate: equatorial".into(),
                 detail: "no winter".into(),
             }],
+            manuscript_fingerprint: 0,
         };
         report.save(tmp.path()).unwrap();
         let loaded = FactScanReport::load(tmp.path()).unwrap();

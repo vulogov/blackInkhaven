@@ -19,6 +19,35 @@ use serde::Serialize;
 
 use crate::drift::{DriftConflict, EntityKind};
 use crate::facts_scan::FactConflict;
+use crate::store::hierarchy::Hierarchy;
+use crate::store::node::NodeKind;
+
+/// A cheap fingerprint of the whole manuscript — a hash of every paragraph's
+/// `(id, modified_at)`, no content reads or embeddings. A scan stamps this on
+/// its sidecar; readers recompute it and flag the findings **stale** when it
+/// differs (the prose moved since the scan). Order-independent. Pure.
+pub fn manuscript_fingerprint(h: &Hierarchy) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut rows: Vec<(u128, i64)> = h
+        .iter()
+        .filter(|n| n.kind == NodeKind::Paragraph)
+        .map(|n| (n.id.as_u128(), n.modified_at.timestamp_millis()))
+        .collect();
+    rows.sort_unstable();
+    let mut hh = std::collections::hash_map::DefaultHasher::new();
+    for (id, ts) in rows {
+        id.hash(&mut hh);
+        ts.hash(&mut hh);
+    }
+    hh.finish()
+}
+
+/// True when a sidecar's stamped fingerprint is present (non-zero — i.e. from
+/// 1.3.12+) and no longer matches the manuscript. A zero stamp (older sidecar)
+/// can't be judged, so it's treated as fresh rather than false-alarming.
+pub fn is_stale(stamped: u64, current: u64) -> bool {
+    stamped != 0 && stamped != current
+}
 
 /// A consolidated world-consistency snapshot. The conflict lists carry detail
 /// (so `inkhaven world` can name them); the rest are counts.
@@ -45,6 +74,10 @@ pub struct WorldReport {
     /// cast member / place / artefact. Coverage, not counted as an issue.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub undescribed: Vec<String>,
+    /// 1.3.12 — at least one sidecar predates the latest edits (its stamped
+    /// manuscript fingerprint no longer matches): the findings may be stale.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
 }
 
 /// One anachronistic term and where it appears.
@@ -86,10 +119,11 @@ impl WorldReport {
     /// bible — `"World: 3 issue(s) — 1 fact conflict · 2 drift"`, or a clean
     /// snapshot when there's nothing wrong.
     pub fn summary(&self) -> String {
+        let tail = if self.stale { " · ⚠ may be stale" } else { "" };
         let n = self.issue_count();
         if n == 0 {
             return format!(
-                "World: ✓ consistent — {} fact(s), {} entit{}",
+                "World: ✓ consistent — {} fact(s), {} entit{}{tail}",
                 self.facts_total,
                 self.entity_total(),
                 if self.entity_total() == 1 { "y" } else { "ies" }
@@ -108,7 +142,7 @@ impl WorldReport {
         if !self.anachronism_flags.is_empty() {
             parts.push(plural(self.anachronism_flags.len(), "anachronism", "anachronisms"));
         }
-        format!("World: {n} issue(s) — {}", parts.join(" · "))
+        format!("World: {n} issue(s) — {}{tail}", parts.join(" · "))
     }
 }
 
@@ -150,10 +184,26 @@ mod tests {
             artefacts: 1,
             anachronism_flags: vec![AnachronismFlag { term: "telephone".into(), chapter: "ch-1".into() }],
             undescribed: vec!["Joss".into()], // coverage, not an issue
+            stale: false,
         };
         // 1 fact conflict + 2 prose + 2 drift + 1 anachronism = 6
         assert_eq!(r.issue_count(), 6);
         assert_eq!(r.entity_total(), 9);
+    }
+
+    #[test]
+    fn is_stale_only_flags_a_changed_nonzero_stamp() {
+        assert!(!is_stale(0, 999), "zero stamp (old sidecar) → never stale");
+        assert!(!is_stale(42, 42), "matching stamp → fresh");
+        assert!(is_stale(42, 43), "changed stamp → stale");
+    }
+
+    #[test]
+    fn summary_appends_stale_warning() {
+        let mut r = WorldReport { facts_total: 40, characters: 9, ..Default::default() };
+        assert!(!r.summary().contains("stale"));
+        r.stale = true;
+        assert!(r.summary().contains("⚠ may be stale"), "got: {}", r.summary());
     }
 
     #[test]
