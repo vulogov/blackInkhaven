@@ -22,7 +22,13 @@ use crate::store::{
 };
 use crate::world_report::{undescribed_of, WorldReport};
 
-pub fn run(project: &Path, json: bool, deep: bool, provider: Option<&str>) -> Result<()> {
+pub fn run(
+    project: &Path,
+    json: bool,
+    deep: bool,
+    provider: Option<&str>,
+    entity: Option<&str>,
+) -> Result<()> {
     if deep {
         if json {
             return Err(Error::Store(
@@ -30,6 +36,9 @@ pub fn run(project: &Path, json: bool, deep: bool, provider: Option<&str>) -> Re
             ));
         }
         deep_refresh(project, provider);
+    }
+    if let Some(name) = entity {
+        return entity_report(project, name);
     }
     let report = gather(project)?;
     if json {
@@ -212,6 +221,70 @@ fn deep_refresh(project: &Path, provider: Option<&str>) {
         eprintln!("  continuity extract skipped: {e}");
     }
     eprintln!();
+}
+
+/// A focused per-entity view: drift conflicts + the description trail (both
+/// from the drift sidecar — run `drift scan` to populate), tracked continuity
+/// attributes, and whether the entity is named in the prose. Human-only.
+fn entity_report(project: &Path, name: &str) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    let needle = name.to_lowercase();
+
+    let drift = crate::drift::DriftReport::load(&layout.root).unwrap_or_default();
+    let continuity =
+        crate::continuity_bible::ContinuityBible::load(&layout.root).unwrap_or_default();
+
+    let matches = |s: &str| s.to_lowercase().contains(&needle);
+    let trails: Vec<_> = drift.descriptions.iter().filter(|d| matches(&d.entity)).collect();
+    let conflicts: Vec<_> = drift.conflicts.iter().filter(|c| matches(&c.entity)).collect();
+    let attrs: Vec<_> = continuity.facts.iter().filter(|f| matches(&f.character)).collect();
+    let unnamed: Vec<_> = undescribed_entities(&store, &h)
+        .into_iter()
+        .filter(|(n, _, _)| matches(n))
+        .collect();
+
+    println!("Entity report · “{name}”\n");
+    if trails.is_empty() && conflicts.is_empty() && attrs.is_empty() && unnamed.is_empty() {
+        println!(
+            "  nothing for “{name}” — no match, or the scans haven't run \
+             (try `inkhaven drift scan` / `inkhaven continuity extract`)."
+        );
+        return Ok(());
+    }
+
+    for d in &trails {
+        println!("{} ({}) — description trail:", d.entity, d.kind.label());
+        for s in &d.snippets {
+            let preview: String = s.text.chars().take(90).collect();
+            println!("  · [{}] {preview}", s.chapter);
+        }
+        println!();
+    }
+    if !conflicts.is_empty() {
+        println!("drift:");
+        for c in &conflicts {
+            println!(
+                "  ⚠ [{}] “{}”  ⟷  [{}] “{}”  — {}",
+                c.chapter_a, c.a, c.chapter_b, c.b, c.detail
+            );
+        }
+        println!();
+    }
+    if !attrs.is_empty() {
+        println!("tracked attributes:");
+        for f in &attrs {
+            println!("  · {}: {} (ch {})", f.attribute, f.value, f.chapter);
+        }
+        println!();
+    }
+    for (n, kind, _) in &unnamed {
+        println!("⚠ {} “{}” is defined but never named in the prose", kind.label(), n);
+    }
+    Ok(())
 }
 
 fn render(r: &WorldReport) {
