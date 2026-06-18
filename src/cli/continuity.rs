@@ -36,16 +36,8 @@ pub fn run(project: &Path, cmd: ContinuityCommand) -> Result<()> {
     }
 }
 
-const SYSTEM_PROMPT: &str = "You are a continuity editor for a novel. You extract \
-ESTABLISHED, FACTUAL attributes of characters from prose — appearance \
-(eye colour, hair, height, scars), origin (hometown), relationships, \
-possessions, occupation, age. You do NOT infer mood, intentions, or \
-one-off actions. Output ONE fact per line in the exact form:\n\
-  Character | attribute_key | value\n\
-Use a short snake_case attribute_key (eye_color, hometown, occupation, \
-weapon, relationship_to_X). Keep values to a few words. Output nothing \
-else — no preamble, no markdown, no commentary. If a chapter establishes \
-no durable facts, output nothing.";
+// The continuity-extract system prompt now lives, localized, in
+// `cli::world_prompts` (slug `continuity`, 1.3.13).
 
 fn extract(project: &Path, provider: Option<&str>) -> Result<()> {
     let layout = ProjectLayout::new(project);
@@ -100,6 +92,10 @@ pub fn extract_with(
         "continuity extract · language: {language} · model: {model} · {} chapter(s)",
         chapters.len(),
     ));
+    let (system, fell_back) = super::world_prompts::world_system_prompt("continuity", &language);
+    if fell_back {
+        progress(&format!("continuity extract: no {language} prompt — using English"));
+    }
 
     let mut bible = ContinuityBible {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -119,7 +115,7 @@ pub fn extract_with(
         }
         progress(&format!("continuity [{}/{}] {chapter_title}", idx + 1, chapters.len()));
         let prompt = build_extract_prompt(&language, chapter_title, &plain);
-        let raw = run_blocking(&ai, model, &prompt)?;
+        let raw = run_blocking(&ai, model, system, &prompt)?;
         bible.facts.extend(parse_extraction(&raw, chapter_title));
     }
 
@@ -145,11 +141,11 @@ fn build_extract_prompt(language: &str, chapter: &str, prose: &str) -> String {
     )
 }
 
-fn run_blocking(ai: &AiClient, model: &str, prompt: &str) -> Result<String> {
+fn run_blocking(ai: &AiClient, model: &str, system: &str, prompt: &str) -> Result<String> {
     crate::ai::stream::collect_blocking(
         ai.client.clone(),
         model.to_string(),
-        Some(SYSTEM_PROMPT.to_string()),
+        Some(system.to_string()),
         prompt.to_string(),
     )
     .map_err(|e| Error::Store(format!("inference error: {e}")))
