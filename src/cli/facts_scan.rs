@@ -601,11 +601,20 @@ pub fn scan_with(
     Ok(report)
 }
 
-const CHECK_SYSTEM_PROMPT: &str = "You are a continuity editor. Below is a story world's \
-established facts. Find pairs of facts that CONTRADICT each other — two statements that cannot \
-both be true (a climate fact vs a geography fact, an age vs a timeline, a distance vs a travel \
-time, …). Output ONE contradiction per line as `fact A | fact B | why`, quoting each fact \
-briefly. If nothing contradicts, output nothing. No preamble, no header row.";
+const CHECK_SYSTEM_PROMPT: &str = "You are a world-consistency editor for a work of fiction. \
+Below are a story world's established facts. Using your knowledge of planetary science, physics, \
+astronomy, geology, hydrology, climate, ecology, biology, and human culture / history, find pairs \
+of facts that CANNOT COEXIST — either they directly contradict, or one makes the other \
+physically or causally impossible given how worlds actually work. Reason beyond the wording: a \
+tidally-locked planet can't have an ordinary day–night cycle; a mild climate can't sit where the \
+geography forces extremes; a harbour that freezes each winter can't have warm currents; a city's \
+population can't exceed what its stated food / water supply sustains; a travel time can't fit the \
+stated distance and terrain. Treat any explicitly-stated speculative rule (magic, invented \
+physics, non-Earth biology) as AUTHORITATIVE — only flag what those rules don't already permit; \
+do not flag mere deviation from Earth where the story has set its own rule. Output ONE problem \
+per line as `fact A | fact B | why`, quoting each fact briefly; `why` names the domain reason \
+(e.g. \"tidal locking\", \"thermohaline circulation\", \"carrying capacity\"). If everything is \
+consistent, output nothing. No preamble, no header row.";
 
 /// 1.3.8 WORLD-1 P0 — internal-consistency check: flag fact pairs that
 /// contradict each other *within* the Facts book.
