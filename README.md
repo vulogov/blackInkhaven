@@ -21,46 +21,52 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.12 — The background deep refresh
+## Latest release · 1.3.13 — Breadth: every language, cancellable jobs, print & ebook polish
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.12.md`](Documentation/RELEASE_NOTES/1.3.12.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.13.md`](Documentation/RELEASE_NOTES/1.3.13.md)
 
-The world-consistency checks are multi-minute AI passes. 1.3.12 brings the
-whole batch inside the editor, on a background thread — you never leave your
-prose and never freeze the UI. Pure-Rust, **no new dependencies**.
+After a deep run on the world layer, 1.3.13 goes **wide**: the AI/NLP features
+work in **any** language, long background jobs **cancel** mid-flight, and the
+**print** and **ebook** export paths are finished. Pure-Rust, **no new
+dependencies**.
 
-### `Ctrl+V Shift+F` — refresh in the background
+### Full multilingual — your language, or an honest "not yet"
 
-One chord runs `facts check` + `facts scan` + `drift scan` + `continuity
-extract` (the `inkhaven world --deep` set, **in the manuscript's language**)
-on a background thread. A `⟳ deep refresh` chip tracks progress; keep writing.
-When it finishes, the open story bible / Editorial Pass rebuilds itself from
-the fresh findings.
+The style detectors, world-checks, and drift coreference key off the project
+`language`. Uncurated languages no longer masquerade as English — the word
+lists come back **empty** (no false flags) while stemming, embeddings, and the
+AI **output language** still work. **`inkhaven lang status`** prints an honest
+coverage matrix; **`inkhaven lang bootstrap <lang>`** has the LLM lexicographer
+produce the full detector vocabulary (lemma form) for **any** language and
+`--yes`-patches `inkhaven.hjson` safely. All four world-check prompts are
+**localized** (en/ru/fr/de/es, English-with-warning fallback, 3-tier override)
+and write findings in the project language. Worked Arabic + Hungarian configs
+ship in [`custom_languages/`](custom_languages/).
 
-### Advisory — it never edits your text
+### Cancel a deep refresh in flight
 
-The deep refresh **reads** your manuscript and **writes findings** to
-`.inkhaven/*.json` sidecars. It changes no prose. The only thing that rewrites
-text is the Editorial Pass `f`/`F` — always user-initiated, snapshotted, and
-diff-reviewed.
+Re-press **`Ctrl+V Shift+F`** while the background refresh runs and it
+**cancels** — each scan honours a shared cancel flag between chapters/entities
+and stops in seconds; whatever finished still wrote its sidecars.
 
-### Stale findings announce themselves
+### Print — one-command booklet + a real A5 codex
 
-Each scan stamps a cheap manuscript fingerprint; when the prose moves since,
-the world report, the bible banner, and `inkhaven edit` show `⚠ may be stale`
-with a nudge to re-run. It only *warns* — never hides a finding.
+**`inkhaven pdf booklet book.pdf`** is a zero-config saddle-stitch booklet that
+auto-fits the press sheet to two source pages side-by-side (any trim size). The
+new **`a5_book`** imposition profile folds a proper perfect-bound A5 codex from
+A4 sheets — gathered 16-page signatures with creep and signature-number marks
+for hand binding.
 
-### How it runs while you write
+### Ebook — inline images + popup footnotes
 
-DuckDB is single-writer, so the refresh runs in-process on a thread that
-**shares a clone of the editor's connection pool** — no second open, no lock.
-The pool is now tunable via `embeddings.pool_size`. Built on a reusable
-background-job harness the 1.4 AI Editor will reuse.
+The EPUB export now embeds chapter **`Image` nodes** as `<figure>` resources
+(written into `OEBPS/`, declared in the OPF manifest, with `alt` + caption) and
+turns footnotes into proper EPUB3 **noteref/aside popups**.
 
 ### Test stats
 
-Tests 1354 → 1359, **zero new dependencies**. New tutorial 72
-([the background deep refresh](Documentation/Tutorials/72-deep-refresh.md)).
+Tests 1359 → 1369, **zero new dependencies**. New tutorial 73
+([writing in any language](Documentation/Tutorials/73-multilingual.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
