@@ -2737,7 +2737,6 @@ impl App {
     /// running, else starts a thread running `work` (which sends progress /
     /// done over the channel) and stows the receiver. Returns whether it
     /// started. `work` must own everything it needs (e.g. a cloned `Store`).
-    #[allow(dead_code)] // wired to the deep-refresh chord in P2
     pub(super) fn start_bg_job(
         &mut self,
         kind: BgJobKind,
@@ -2778,17 +2777,71 @@ impl App {
         }
     }
 
-    /// Completion dispatch for a finished background job. Per-kind handlers
-    /// (reload sidecars, refresh the open modal) land with their feature.
+    /// Completion dispatch for a finished background job.
     fn on_bg_job_done(&mut self, kind: BgJobKind, result: std::result::Result<String, String>) {
         match kind {
-            BgJobKind::DeepRefresh => {
-                // P2 fills in the sidecar reload + open-modal refresh.
-                self.status = match result {
-                    Ok(summary) => summary,
-                    Err(e) => format!("deep refresh failed: {e}"),
+            BgJobKind::DeepRefresh => match result {
+                Ok(_) => {
+                    // The scans wrote fresh sidecars — refresh the open world
+                    // modal (bible / cockpit) and report the new health line.
+                    self.refresh_open_world_modal();
+                    let summary = crate::cli::world::report_from(
+                        &self.store,
+                        &self.hierarchy,
+                        &self.cfg,
+                        &self.layout.root,
+                    )
+                    .summary();
+                    self.status = format!("deep refresh done — {summary}");
+                }
+                Err(e) => self.status = format!("deep refresh failed: {e}"),
+            },
+        }
+    }
+
+    /// 1.3.12 DEEP-1 P2 — kick off the deep AI world refresh (`Ctrl+V Shift+F`)
+    /// on the background-job harness. Pre-flights an LLM provider, then moves a
+    /// **clone** of the Store (shares the pool — no DB reopen) + cfg + layout
+    /// into the worker, which runs `deep_refresh_shared` and forwards progress.
+    fn start_deep_refresh(&mut self) {
+        if self.bg_job.is_some() {
+            self.status = "a deep refresh is already running".into();
+            return;
+        }
+        if let Err(e) = self.ai.resolve_provider(&self.cfg.llm, None) {
+            self.status = format!("deep refresh: {e} — set an LLM provider first");
+            return;
+        }
+        let store = self.store.clone();
+        let cfg = self.cfg.clone();
+        let layout = self.layout.clone();
+        self.start_bg_job(BgJobKind::DeepRefresh, "deep refresh", move |tx| {
+            let result = {
+                let progress = |s: &str| {
+                    let _ = tx.send(BgMsg::Progress(s.to_string()));
                 };
+                crate::cli::world::deep_refresh_shared(&store, &cfg, &layout, None, &progress)
+            };
+            let _ = tx.send(BgMsg::Done(
+                result
+                    .map(|()| "world refresh complete".to_string())
+                    .map_err(|e| e.to_string()),
+            ));
+        });
+    }
+
+    /// Rebuild the open story bible / Editorial Pass from freshly-written
+    /// sidecars (after a deep refresh). No-op for any other modal.
+    fn refresh_open_world_modal(&mut self) {
+        if matches!(self.modal, Modal::StoryBible { .. }) {
+            let rows = self.build_story_bible_rows();
+            if let Modal::StoryBible { rows: r, cursor } = &mut self.modal {
+                *cursor = (*cursor).min(rows.len().saturating_sub(1));
+                *r = rows;
             }
+        } else if matches!(self.modal, Modal::EditorialPass { .. }) {
+            // Re-collects from the fresh sidecars (resets cursor/filter).
+            self.open_editorial_pass();
         }
     }
 
@@ -5472,8 +5525,6 @@ struct DriftBibleView<'a> {
 }
 
 /// 1.3.12 DEEP-1 P0 — a message from a background job thread to the UI.
-/// (Variants are constructed by the deep-refresh worker wired up in P2.)
-#[allow(dead_code)]
 pub(super) enum BgMsg {
     /// A human-readable progress line (replaces the previous one).
     Progress(String),
@@ -5482,9 +5533,7 @@ pub(super) enum BgMsg {
 }
 
 /// Which background job is running — the completion handler dispatches on it.
-/// (The `DeepRefresh` job is launched by the P2 chord.)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(super) enum BgJobKind {
     /// The deep AI refresh (facts check / facts scan / drift / continuity).
     DeepRefresh,
@@ -8536,6 +8585,7 @@ impl App {
             A::OpenPlanOutline => self.open_plan_outline(),
             A::OpenEditorialPass => self.open_editorial_pass(),
             A::OpenStoryBible => self.open_story_bible(),
+            A::RunDeepRefresh => self.start_deep_refresh(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
             A::ToggleMouseCapture => self.toggle_mouse_capture(),
