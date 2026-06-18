@@ -6,9 +6,13 @@
 //! Deterministic by default (reads computed sidecars, no AI); `--deep`
 //! refreshes the AI scans first.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use uuid::Uuid;
+
 use crate::config::Config;
+use crate::drift::EntityKind;
 use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
@@ -16,7 +20,7 @@ use crate::store::node::NodeKind;
 use crate::store::{
     Store, SYSTEM_TAG_ARTEFACTS, SYSTEM_TAG_CHARACTERS, SYSTEM_TAG_FACTS, SYSTEM_TAG_PLACES,
 };
-use crate::world_report::WorldReport;
+use crate::world_report::{undescribed_of, WorldReport};
 
 pub fn run(project: &Path, json: bool, deep: bool, provider: Option<&str>) -> Result<()> {
     if deep {
@@ -47,7 +51,57 @@ pub fn gather(project: &Path) -> Result<WorldReport> {
     let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
-    Ok(report_from(&store, &h, &cfg, &layout.root))
+    let mut report = report_from(&store, &h, &cfg, &layout.root);
+    // The undescribed-entity walk is the one prose-reading pass — kept out of
+    // `report_from` (the TUI banner) so opening the story bible stays light.
+    report.undescribed = undescribed_entities(&store, &h)
+        .into_iter()
+        .map(|(name, _, _)| name)
+        .collect();
+    Ok(report)
+}
+
+/// Entities defined in the books but **never named** anywhere in the prose —
+/// a dangling cast member / place / artefact — each with its bible-paragraph
+/// id (the jump target). Empty when there's no prose yet, so an unwritten
+/// draft doesn't flag the whole cast. Shared with `inkhaven edit`.
+pub fn undescribed_entities(store: &Store, h: &Hierarchy) -> Vec<(String, EntityKind, Uuid)> {
+    let lex = super::drift::entities_with_nodes(h);
+    if lex.is_empty() {
+        return Vec::new();
+    }
+    let mut appeared: HashSet<String> = HashSet::new();
+    let mut any_prose = false;
+    for book in h.iter().filter(|b| b.kind == NodeKind::Book && b.system_tag.is_none()) {
+        for pid in h.collect_subtree(book.id) {
+            if h.get(pid).map(|n| n.kind) != Some(NodeKind::Paragraph) {
+                continue;
+            }
+            if let Ok(Some(bytes)) = store.get_content(pid) {
+                any_prose = true;
+                let lc = String::from_utf8_lossy(&bytes).to_lowercase();
+                for (name, _, _) in &lex {
+                    let nlc = name.to_lowercase();
+                    if !appeared.contains(&nlc) && crate::drift::mentions(&lc, &nlc) {
+                        appeared.insert(nlc);
+                    }
+                }
+            }
+        }
+    }
+    if !any_prose {
+        return Vec::new();
+    }
+    let node_by_name: HashMap<String, Uuid> =
+        lex.iter().map(|(n, _, id)| (n.to_lowercase(), *id)).collect();
+    let lexicon: Vec<(String, EntityKind)> =
+        lex.iter().map(|(n, k, _)| (n.clone(), *k)).collect();
+    undescribed_of(&lexicon, &appeared)
+        .into_iter()
+        .filter_map(|(name, kind)| {
+            node_by_name.get(&name.to_lowercase()).map(|id| (name, kind, *id))
+        })
+        .collect()
 }
 
 /// Build the snapshot from an already-open store / hierarchy / config — used
@@ -69,6 +123,8 @@ pub fn report_from(store: &Store, h: &Hierarchy, cfg: &Config, root: &Path) -> W
         places: count_paragraphs(h, Some(SYSTEM_TAG_PLACES)),
         artefacts: count_paragraphs(h, Some(SYSTEM_TAG_ARTEFACTS)),
         anachronisms: count_anachronisms(cfg, store, h),
+        // Filled by `gather` (the prose walk); the TUI banner leaves it empty.
+        undescribed: Vec::new(),
     }
 }
 
@@ -171,6 +227,14 @@ fn render(r: &WorldReport) {
         "  {} character(s) · {} place(s) · {} artefact(s)",
         r.characters, r.places, r.artefacts
     );
+    if r.undescribed.is_empty() {
+        println!("  every defined entity is named in the prose");
+    } else {
+        println!("  {} defined but never named in the prose:", r.undescribed.len());
+        for name in &r.undescribed {
+            println!("    · {name}");
+        }
+    }
 
     if r.issue_count() > 0 {
         eprintln!("\n(also walkable in `inkhaven edit` — this is the world-layer snapshot)");

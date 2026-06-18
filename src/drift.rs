@@ -161,7 +161,7 @@ fn pronouns(language: &str, kind: EntityKind) -> &'static [&'static str] {
 /// word / phrase — bounded by a non-alphanumeric **Unicode** char (or the
 /// string edge) on both sides — so "Sam" doesn't match "Samuel" and the
 /// boundary check works for Cyrillic / accented names. Pure.
-fn mentions(haystack_lc: &str, name_lc: &str) -> bool {
+pub fn mentions(haystack_lc: &str, name_lc: &str) -> bool {
     if name_lc.is_empty() {
         return false;
     }
