@@ -80,7 +80,53 @@ releases as they complete.
 | **P4** | Diachronics: rule parser + evaluator; daughter-language derivation; cognate sets; family-tree viz (reuses resvg); AI comparative reconstruction | none | net-new |
 | **P5** | Writing systems + **pure-Rust font compilation** + input methods + Artefact ↔ inscription | **fontc, norad, write-fonts, read-fonts, unicode-normalization** | net-new, dep-heavy |
 | **P6** | Analysis suite; generators (name / ceremony / curse / poetry / sample-text); translation pane; AI grammar book; importers (PolyGlot / Lexique / CWS / Toolbox); exporters (TSV/CSV/JSON/XLIFF/Anki/linguex/IPA-chart/dictionary-PDF) | none | net-new |
-| **P7** | `language tutorial`; `Documentation/CONLANG.md` + tutorial; example language; perf pass (10k entries) | none | — |
+| **P7** | `language tutorial`; `Documentation/CONLANG.md` + tutorial; example language; perf pass (10k entries); **selectable output format** (see below) | none | — |
+
+### P6/P7 output: selectable `.md` / `.typ`, and the Typst path is a *real book*
+
+The generated **grammar book**, **dictionary**, and **tutorial** take an
+output-format selector (`--format md|typ`, default `typ`):
+
+- **`.md`** — plain Markdown, for quick reading / RAG ingest / diffs.
+- **`.typ`** — a polished, print-ready Typst book that uses the appropriate
+  **Typst Universe `@preview` packages** for the job: e.g. linguistics glossing
+  (`leip`/`glossy`-style interlinear), professional tables (`tablex`/`zebraw`),
+  IPA + phonology charts, multi-column dictionary layout with running heads and
+  thumb indices, a generated cover (per PDF-1), proper TOC, and the language's
+  compiled font (P5) for native-script samples. The goal is an artefact that
+  reads like a published reference grammar / dictionary, not a dump. Package
+  choices are pinned and fetched through the existing in-process Typst engine
+  (`typst_compile.engine = "inprocess"`, already supports `@preview` fetch).
+- The `.typ` dictionary / tutorial **embeds and uses the language's generated
+  font** (P5): headwords, examples, and inscriptions render in the native
+  script next to their romanization (`#text(font: …)` → `assets/fonts/<lang>.ttf`);
+  falls back to romanization-only when no font is built yet.
+
+### How glyphs / fonts get populated (answer of record)
+
+A terminal can't be a bezier canvas, so glyph **artwork** comes from outside;
+inkhaven owns the **binding, compilation, preview, and typing**:
+
+1. **Source SVG glyphs** — one SVG path per glyph, drawn in any vector tool
+   (Inkscape / Illustrator / …) or imported from another conlang tool. Brought
+   in with `inkhaven language font import-glyph <lang> --char <c> --svg <path>`
+   (or `ink.conlang.font.import_glyph`). resvg parses the path; the outline is
+   stored on the `Glyph` record in the Writing-system chapter.
+2. **Binding** — each glyph maps to what it represents (phoneme / syllable /
+   morpheme / PUA codepoint) in the Writing-system HJSON, managed from the
+   `Ctrl+B X` hub's font panel. *This* is the editor's role: association +
+   preview, not drawing.
+3. **Optional bootstrap** — for authors with no artwork, an optional generator
+   emits **starter SVG glyphs** (simple procedural strokes, one per phoneme) to
+   import and refine externally; the AI can also propose a glyph-style brief.
+   Never the default; always user-replaceable.
+4. **Compilation** — norad assembles a UFO in memory, fontc compiles it to
+   `assets/fonts/<lang>.ttf|otf` (`language font build`). Composite syllabaries
+   get auto-generated GSUB jamo-composition lookups (experimental).
+5. **Typing** — input methods map key sequences → codepoints so the author can
+   write the native script in the editor; the compiled font renders it in `.typ`
+   output (and in previews where the terminal can load the PUA font). The TUI
+   otherwise shows romanization with a `[native]` marker.
 
 **Callouts**
 
