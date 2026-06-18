@@ -1,0 +1,75 @@
+// Arabic (العربية) — custom language configuration for Inkhaven 1.3.13+
+//
+// Set your project language first:   language: arabic
+// Then merge the blocks below into inkhaven.hjson. Stemming (Snowball Arabic),
+// AI world-check prompts (English fallback with a warning until localized), and
+// the multilingual embedding model already work; these lists add the
+// style + drift detector vocabulary.  Verify with `inkhaven lang status`.
+//
+// Note: Arabic is RTL and pro-drop, and many pronouns attach as suffixes — the
+// standalone pronoun sets below give coref a partial but useful signal.
+
+editor: {
+  style_warnings: {
+    // intensifier crutches + hedges + sensory verbs
+    filter_words: {
+      languages: {
+        arabic: [
+          "جداً", "فقط", "حقاً", "ربما", "تقريباً", "بالفعل",
+          "ببساطة", "بالتأكيد", "تماماً", "قليلاً", "كثيراً",
+          "نوعاً", "بدا", "شعر", "بدأ", "حاول"
+        ]
+      }
+    }
+
+    // four "telling" categories
+    show_dont_tell: {
+      languages: {
+        arabic: {
+          // copula / quasi-copula asserting internal state
+          linking_verbs: [
+            "كان", "يكون", "بدا", "يبدو", "شعر", "أصبح",
+            "صار", "ظل", "بقي", "غدا"
+          ]
+          // adjectives that name an emotion outright
+          emotion_adjectives: [
+            "غاضب", "حزين", "خائف", "سعيد", "متعب", "متفاجئ",
+            "محرج", "فخور", "غيور", "وحيد", "ممل", "متحمس",
+            "يائس", "قلق", "خجول", "مرتبك"
+          ]
+          // emotion-labelling adverbs (بـ + noun)
+          manner_adverbs: [
+            "بغضب", "بحزن", "بعصبية", "بسعادة", "بخوف", "بفرح", "بقلق"
+          ]
+          // verbs that narrate thought instead of showing it
+          cognition_verbs: [
+            "أدرك", "عرف", "فهم", "تساءل", "قرر", "اعتقد",
+            "ظن", "تذكر", "لاحظ"
+          ]
+        }
+      }
+    }
+
+    // closed-class words excluded from repeated-phrase n-grams
+    repeated_phrases: {
+      languages: {
+        arabic: [
+          "في", "من", "على", "إلى", "عن", "مع", "و", "أو",
+          "لكن", "أن", "هذا", "هذه", "ذلك", "التي", "الذي",
+          "كان", "هو", "هي", "هم", "لا", "ما", "قد", "كل"
+        ]
+      }
+    }
+  }
+}
+
+// coref pronouns for drift's pronoun-only descriptions
+drift: {
+  pronouns: {
+    arabic: {
+      character: [ "هو", "هي", "هم", "هن", "هما" ]
+      place:     [ "هناك", "هنا", "حيث" ]
+      artefact:  [ "هو", "هي", "هذا", "هذه" ]
+    }
+  }
+}

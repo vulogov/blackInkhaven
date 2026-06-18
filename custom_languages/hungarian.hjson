@@ -1,0 +1,71 @@
+// Hungarian (magyar) — custom language configuration for Inkhaven 1.3.13+
+//
+// Set your project language first:   language: hungarian
+// Then merge the blocks below into inkhaven.hjson. Stemming (Snowball
+// Hungarian), AI world-check prompts (English fallback with a warning until
+// localized), and the multilingual embedding model already work; these lists
+// add the style + drift detector vocabulary.  Verify with `inkhaven lang
+// status`.  (Snowball stemming collapses Hungarian's rich inflection, so list
+// lemmas — a handful of forms covers the rest.)
+
+editor: {
+  style_warnings: {
+    filter_words: {
+      languages: {
+        hungarian: [
+          "nagyon", "csak", "tényleg", "talán", "majdnem",
+          "kissé", "valójában", "egyszerűen", "biztosan",
+          "teljesen", "kicsit", "tűnt", "érezte", "kezdett", "próbált"
+        ]
+      }
+    }
+
+    show_dont_tell: {
+      languages: {
+        hungarian: {
+          linking_verbs: [
+            "van", "volt", "lett", "tűnik", "tűnt", "érez",
+            "érzett", "látszik", "marad", "maradt"
+          ]
+          emotion_adjectives: [
+            "dühös", "szomorú", "ijedt", "boldog", "fáradt",
+            "meglepett", "zavart", "büszke", "féltékeny",
+            "magányos", "unott", "izgatott", "reménytelen",
+            "ideges", "szégyenlős"
+          ]
+          manner_adverbs: [
+            "dühösen", "szomorúan", "idegesen", "boldogan",
+            "félve", "örömmel", "aggódva"
+          ]
+          cognition_verbs: [
+            "rájött", "tudta", "megértette", "tűnődött",
+            "eldöntötte", "hitte", "gondolta", "emlékezett"
+          ]
+        }
+      }
+    }
+
+    repeated_phrases: {
+      languages: {
+        // articles "a"/"az" deliberately included — they're the commonest
+        // Hungarian function words and would otherwise dominate the n-grams.
+        hungarian: [
+          "a", "az", "egy", "és", "vagy", "de", "hogy", "ez",
+          "ami", "aki", "van", "volt", "ő", "ők", "nem", "is",
+          "meg", "csak", "már", "még"
+        ]
+      }
+    }
+  }
+}
+
+drift: {
+  pronouns: {
+    hungarian: {
+      // Hungarian has no gendered 3rd-person pronoun: ő / ők cover he/she/they.
+      character: [ "ő", "ők", "őt", "neki", "nekik", "övé", "övék" ]
+      place:     [ "ott", "itt", "ahol", "oda", "ide" ]
+      artefact:  [ "ez", "ezt", "azt", "ezek" ]
+    }
+  }
+}
