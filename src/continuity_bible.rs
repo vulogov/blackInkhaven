@@ -72,6 +72,10 @@ pub struct ContinuityBible {
     #[serde(default)]
     pub language: String,
     pub facts: Vec<CharacterFact>,
+    /// 1.3.12 — manuscript fingerprint at extraction time; consumers flag the
+    /// bible stale when it no longer matches. 0 in older sidecars.
+    #[serde(default)]
+    pub manuscript_fingerprint: u64,
 }
 
 impl ContinuityBible {
@@ -396,6 +400,7 @@ mod tests {
             version: "1.2.19".into(),
             language: "english".into(),
             facts: vec![fact("Helena", "eye_color", "green", "Ch1")],
+            manuscript_fingerprint: 0,
         };
         bible.save(tmp.path()).unwrap();
         let loaded = ContinuityBible::load(tmp.path()).unwrap();

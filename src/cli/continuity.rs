@@ -102,6 +102,7 @@ pub fn extract_with(
         version: env!("CARGO_PKG_VERSION").to_string(),
         language: language.clone(),
         facts: Vec::new(),
+        manuscript_fingerprint: crate::world_report::manuscript_fingerprint(hierarchy),
     };
 
     for (idx, (chapter_id, chapter_title)) in chapters.iter().enumerate() {

@@ -122,6 +122,14 @@ pub fn report_from(store: &Store, h: &Hierarchy, cfg: &Config, root: &Path) -> W
     let drift = crate::drift::DriftReport::load(root).unwrap_or_default();
     let continuity = crate::continuity_bible::ContinuityBible::load(root).unwrap_or_default();
 
+    // 1.3.12 — any sidecar whose stamped fingerprint no longer matches the
+    // manuscript is stale (its findings predate later edits).
+    let current = crate::world_report::manuscript_fingerprint(h);
+    let stale = crate::world_report::is_stale(facts_check.manuscript_fingerprint, current)
+        || crate::world_report::is_stale(facts_scan.manuscript_fingerprint, current)
+        || crate::world_report::is_stale(drift.manuscript_fingerprint, current)
+        || crate::world_report::is_stale(continuity.manuscript_fingerprint, current);
+
     WorldReport {
         facts_total: count_paragraphs(h, Some(SYSTEM_TAG_FACTS)),
         facts_conflicts: facts_check.conflicts,
@@ -134,6 +142,7 @@ pub fn report_from(store: &Store, h: &Hierarchy, cfg: &Config, root: &Path) -> W
         anachronism_flags: collect_anachronism_flags(cfg, store, h),
         // Filled by `gather` (the prose walk); the TUI banner leaves it empty.
         undescribed: Vec::new(),
+        stale,
     }
 }
 
@@ -314,6 +323,11 @@ fn entity_report(project: &Path, name: &str) -> Result<()> {
 
 fn render(r: &WorldReport) {
     println!("{}\n", r.summary());
+    if r.stale {
+        println!(
+            "⚠ some findings predate the latest edits — re-run `inkhaven world --deep` (or Ctrl+V Shift+F in the editor)\n"
+        );
+    }
 
     println!("Facts");
     println!("  established: {}", r.facts_total);
