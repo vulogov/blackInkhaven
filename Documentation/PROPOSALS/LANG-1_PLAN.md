@@ -186,6 +186,73 @@ auto-bound). The author previews, accepts/edits/rejects, and refines externally.
 - A whole-script mode (`--describe-script "angular runic, sharp serifs"`) can
   draft the whole inventory in one pass for a consistent first cut to refine.
 
+### Glyph suitability preflight (accepted refinement)
+
+Every glyph — **AI-drafted *and* hand-authored** — passes a deterministic
+**preflight** before it can be bound/built, run on import and again before
+`language font build`. This mirrors the existing **PDF preflight**
+(`src/pdf/preflight.rs`) for UX + code symmetry, and uses the in-tree
+**resvg / usvg** parser (no new dep) to normalize the SVG into absolute-coord
+paths, then checks suitability:
+
+| Check | Severity | Why |
+|---|---|---|
+| parses as SVG | error | unparseable → unusable |
+| has ≥1 fill contour (not stroke-only) | error | font outlines are filled, not stroked — stroke-only needs outlining |
+| all contours closed | error | open subpaths don't fill predictably |
+| monochrome (no gradient / image / filter / clip) | error | basic OTF/TTF outlines are single-colour |
+| geometry fits the em box after `fit_to_em` | warn | over/undersized glyph throws off rhythm |
+| contour winding consistent (holes opposite) | warn (auto-fixable) | counters fill solid otherwise |
+| no self-intersection / overlap | warn | renders wrong without boolean union |
+| contour / point count sane | warn | a traced photo bloats the font |
+
+Output is a per-glyph report (`ok` / `warn` / `error`), surfaced in the
+`Ctrl+B X` font panel and as **`inkhaven language font lint <lang>`**. Errors
+block the build (or substitute `notdef` + warn); warnings are advisory.
+Auto-fixable issues (winding) offer a one-key fix. The cheap checks
+(parse / fill-count / closed / bbox / colour) are hand-rolled on usvg output;
+robust self-intersection is a heuristic warning, with a precise geometry crate
+deferred to the P5 dep decision.
+
+### Multi-glyph (Hangul) & hieroglyphic composition (P5 plan)
+
+Two writing-system kinds need glyphs *combined*, not just placed in a row. They
+share **one spatial-composition engine** — a `SpatialTemplate` that arranges
+component glyph outlines into a 2-D layout — applied at two different times:
+
+**CompositeSyllabary (Hangul-style)** — jamo (initial 초성 / medial 중성 /
+optional final 종성) pack into one square syllable block. Two strategies:
+
+- **(a) Precomposed blocks — the default, ships first.** At *build time* the
+  composition engine arranges the bound jamo SVGs per the block-layout rules
+  (initial top-left; vertical vowel → right; horizontal vowel → bottom; final →
+  bottom) into **one fused outline per syllable**, assigned a PUA codepoint.
+  Deterministic, needs **no runtime shaper** — works with Typst's built-in
+  shaping. We precompose only the **phonotactically-valid** syllable set (not
+  all 11 172 Korean cells), and `log()` the count.
+- **(b) True OpenType GSUB/GPOS composition — advanced, `--experimental`.**
+  Emit `initial + medial (+ final) → block` substitution + jamo-positioning
+  lookups so the font composes at shaping time. This is the hard part of P5;
+  gated behind `writing.hangul_composition_experimental`.
+
+**Hieroglyphic** — two sub-kinds:
+
+- **HieroglyphicLinear** (Egyptian linear / Mayan reading order) is just an
+  alphabet/logography **+ directionality** — the normal font path handles it.
+- **HieroglyphicSpatial** (Egyptian **quadrats**, Mayan **glyph-blocks**) packs
+  signs 2-D within a block. Real font tech can't arbitrary-pack glyphs, so this
+  is **layout-time composition, not a font feature**: the manuscript marks a
+  cluster (`#cluster(main, [affixes…])`), and assembly expands it into Typst
+  `box` + `place` / `grid` primitives that arrange the component glyph boxes
+  (each rendered from the compiled font). The cluster syntax is documented and
+  offered by the `:lang:` picker when the system is HieroglyphicSpatial. Framed
+  honestly as layout-time (not native shaping), with an upgrade path if a
+  pure-Rust shaper lands.
+
+The win: the *same* `SpatialTemplate` engine drives Hangul precomposition
+(build-time, fuse to one outline) **and** hieroglyphic quadrats (layout-time,
+arrange in Typst) — one mechanism, two binding times.
+
 **Callouts**
 
 1. **P5 is the only dep-heavy phase** (5 new crates). The project's bar is
