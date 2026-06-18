@@ -563,6 +563,7 @@ pub fn scan_with(
         version: env!("CARGO_PKG_VERSION").to_string(),
         language: language.clone(),
         findings: Vec::new(),
+        manuscript_fingerprint: crate::world_report::manuscript_fingerprint(hierarchy),
     };
 
     for (idx, (chapter_id, chapter_title)) in chapters.iter().enumerate() {
@@ -700,6 +701,7 @@ pub fn check_with(
         version: env!("CARGO_PKG_VERSION").to_string(),
         content_hash: crate::facts_scan::FactCheckReport::compute_hash(&facts),
         conflicts: crate::facts_scan::parse_conflicts(&raw),
+        manuscript_fingerprint: crate::world_report::manuscript_fingerprint(hierarchy),
     };
     report
         .save(&layout.root)
