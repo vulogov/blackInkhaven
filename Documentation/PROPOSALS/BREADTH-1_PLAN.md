@@ -58,13 +58,13 @@ yet **wrong** on the detectors. "Full multilingual" closes that.
   active language: stemming (Snowball ✓/✗), filter-words (built-in N / config /
   none), show-don't-tell, stop-words, drift pronouns, anachronism, embeddings.
   One honest answer to "what works in my language?".
-- **Force AI output into the manuscript's language.** Every AI scan already
-  *passes* `cfg.language`, but the system prompts are English and don't require
-  the *output* (the `why` / explanation text) to come back in that language —
-  so a Russian project can get English explanations. Each scan prompt (facts
-  check ✓ done, facts scan, drift, continuity) explicitly instructs the model
-  to write its explanations in `cfg.language`. (The fact's own text is quoted
-  verbatim, so it stays in-language regardless.)
+- **Force AI output into the manuscript's language (all world-checks).** Every
+  AI scan already *passes* `cfg.language`, but the system prompts are English
+  and didn't require the *output* (the `why` / `detail` text) to come back in
+  that language — so a Russian project could get English explanations. **Done
+  in 1.3.13** for all four: facts check, facts scan (`detail`), drift (`why`),
+  and continuity (`value` in-language; `attribute_key` kept a stable English
+  identifier so it still matches across chapters). Quoted text stays verbatim.
 
 **Deliverable:** non-curated languages are *correct* (detectors off, not
 wrong), AI findings come back in the manuscript's language, and `lang status`
@@ -72,24 +72,31 @@ says exactly what's covered.
 
 ---
 
-## P1b — Domain-aware, tunable fact-check prompt
+## P1b — Language-tuned, tunable prompts for ALL world-checking
 
-The `facts check` already (1.3.13) reasons with real-world domain knowledge
+World-checking prompts must be tuned to the book's language and tunable per
+project — **uniformly across every scan**, not a fact-check special case. The
+`facts check` already (1.3.13) reasons with real-world domain knowledge
 (planetary science / physics / geology / hydrology / climate / ecology /
 culture) — flagging facts that *cannot coexist*, not just textual
 contradictions, while treating the author's invented rules as authoritative.
-This phase makes that prompt **3-tier tunable** (the `plan` / `submission`
-pattern: **Prompts book → `prompts.hjson` → built-in**), keyed by language:
+This phase makes **all four** world-check prompts **3-tier tunable** (the
+`plan` / `submission` pattern: **Prompts book → `prompts.hjson` → built-in**),
+language-keyed:
 
-- a `facts-check` prompt slug resolves through the tiers in `check_with`,
-  falling back to the (domain-aware) built-in — so a hard-SF project can lean
-  on orbital mechanics, a fantasy one on its own cosmology, and a Russian
-  project can supply a Russian-language check prompt.
-- Because the resolver is language-aware, this also gives per-language fact-
-  check prompts for free (ties into P1's output-language work).
+- one prompt slug per scan (`facts-check`, `facts-scan`, `drift-judge`,
+  `continuity-extract`), each resolved through the tiers in its `*_with`,
+  falling back to the strong built-in.
+- The resolver is **language-aware**, so a project supplies per-language
+  prompt overrides — a Russian project gets Russian-tuned world-checking
+  instructions, a hard-SF project leans on orbital mechanics, a fantasy one on
+  its own cosmology — while the built-ins already force in-language output.
+- The same domain-reasoning quality (P1's fact-check default) is the floor for
+  every scan's built-in.
 
-**Deliverable:** the world-consistency check is tunable per project + per
-language, with the strong domain-reasoning default.
+**Deliverable:** every world-checking scan runs on a prompt tuned to the book's
+language and overridable per project + per language, with strong domain-aware
+defaults.
 
 ---
 

@@ -892,7 +892,8 @@ fn build_check_prompt(language: &str, chapter: &str, prose: &str, facts: &[Strin
     format!(
         "Language of the manuscript: {language}.\n\
          Fact-check this chapter (\"{chapter}\") against the established facts below. \
-         One contradiction per line, `claim | fact | detail`, no other output.\n\n\
+         One contradiction per line, `claim | fact | detail`, no other output. \
+         Quote `claim` and `fact` verbatim from the text; write each `detail` in {language}.\n\n\
          --- ESTABLISHED FACTS ---\n{}\n--- END ---\n\n\
          --- CHAPTER PROSE ---\n{prose}\n--- END ---",
         facts.join("\n"),
