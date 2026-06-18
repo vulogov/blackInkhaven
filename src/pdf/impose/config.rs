@@ -39,6 +39,8 @@ fn default_profiles() -> BTreeMap<String, ImpositionProfile> {
     m.insert("us_perfect".into(), ImpositionProfile::us_perfect());
     m.insert("us_chapbook".into(), ImpositionProfile::us_chapbook());
     m.insert("thick".into(), ImpositionProfile::thick());
+    // Home-binding favourite: a proper A5 codex from A4 sheets.
+    m.insert("a5_book".into(), ImpositionProfile::a5_book());
     m
 }
 
@@ -122,6 +124,32 @@ impl ImpositionProfile {
         Self {
             target_sheet_size: SheetSize::Preset("TABLOID".into()),
             ..Self::chapbook()
+        }
+    }
+
+    /// The popular home-binding recipe: a proper **A5 codex** folded from
+    /// A4 sheets.  Perfect-bound (gathered + glued/sewn signatures) rather
+    /// than saddle-stitched, so it scales to a full-length book — the
+    /// `chapbook` / `pdf booklet` saddle path tops out around 40 pages.
+    /// Four A4 sheets per signature = 16 A5 pages, the standard home
+    /// section; shingle creep keeps the fold square, and the
+    /// signature-number mark lets you gather them in order by hand.
+    /// (Source pages should already be A5 trim — imposition centres, it
+    /// doesn't scale.)
+    fn a5_book() -> Self {
+        Self {
+            style: "perfect_bound".into(),
+            sheets_per_signature: 4,
+            target_sheet_size: SheetSize::Preset("A4".into()),
+            marks: MarksConfig {
+                crop: true,
+                fold: true,
+                signature_number: true,
+                registration: false,
+                spine_marker: false,
+                color_bar: false,
+            },
+            ..Self::default()
         }
     }
 
@@ -330,9 +358,21 @@ mod tests {
     #[test]
     fn profile_names_lists_all_builtins() {
         let names = ImpositionConfig::default().profile_names();
-        for n in ["default", "chapbook", "us_perfect", "us_chapbook", "thick"] {
+        for n in ["default", "chapbook", "us_perfect", "us_chapbook", "thick", "a5_book"] {
             assert!(names.contains(n), "`{n}` missing from {names}");
         }
+    }
+
+    #[test]
+    fn a5_book_is_perfect_bound_a4_with_gather_marks() {
+        let p = ImpositionConfig::default().resolve("a5_book").unwrap();
+        assert_eq!(p.style, BindingStyle::PerfectBound);
+        assert_eq!(p.sheets_per_signature, 4); // 16 A5 pages / signature
+        // A4 landscape (auto, 2-up): long edge across = 842 pt.
+        assert!((p.sheet_size.width - 842.0).abs() < 0.5, "A4 long edge across");
+        assert!(p.sheet_size.width > p.sheet_size.height);
+        assert!(p.marks.signature_number, "gather-in-order mark on");
+        assert!(!p.marks.registration && !p.marks.spine_marker);
     }
 
     #[test]
