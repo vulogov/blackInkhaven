@@ -137,9 +137,6 @@ impl DriftReport {
     pub fn sidecar_path(project_root: &Path) -> PathBuf {
         project_root.join(".inkhaven").join("drift.json")
     }
-    // Consumed by the Editorial Pass (P2) + story bible (P3); the writer
-    // (`save`) is exercised now via `drift scan`.
-    #[allow(dead_code)]
     pub fn load(project_root: &Path) -> std::io::Result<Self> {
         let path = Self::sidecar_path(project_root);
         match std::fs::read_to_string(&path) {

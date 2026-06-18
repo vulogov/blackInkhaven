@@ -44,6 +44,10 @@ pub fn collect(
     if let Ok(check) = crate::facts_scan::FactCheckReport::load(&layout.root) {
         raw.extend(check.conflicts.iter().map(editorial::from_fact_conflict));
     }
+    // 2b) semantic-drift contradictions (1.3.10 sidecar; empty if never run).
+    if let Ok(drift) = crate::drift::DriftReport::load(&layout.root) {
+        raw.extend(drift.conflicts.iter().map(editorial::from_drift_conflict));
+    }
 
     // 3) `plan check` structural findings (skipped when there's no plan).
     raw.extend(plan_warnings(project, book_name).into_iter().map(|w| editorial::from_plan_warning(&w)));
@@ -380,12 +384,12 @@ pub fn run(
 }
 
 /// `--deep` — run the AI scans that populate the editorial sidecars (Facts
-/// contradictions, the tension ledger, the continuity bible), each printing
-/// its own progress, so the next `collect` sees the fresh semantic
-/// findings. A scan that can't run (no provider) is skipped with a note —
-/// the pass degrades to deterministic-only rather than aborting.
+/// contradictions, the tension ledger, the continuity bible, semantic drift),
+/// each printing its own progress, so the next `collect` sees the fresh
+/// semantic findings. A scan that can't run (no provider) is skipped with a
+/// note — the pass degrades to deterministic-only rather than aborting.
 fn deep_refresh(project: &Path, provider: Option<&str>) {
-    eprintln!("edit --deep: refreshing AI sidecars (facts · tension · continuity)…");
+    eprintln!("edit --deep: refreshing AI sidecars (facts · tension · continuity · drift)…");
     let p = || provider.map(String::from);
     if let Err(e) = super::facts_scan::run(project, super::FactsCommand::Scan { provider: p(), json: false }) {
         eprintln!("  facts scan skipped: {e}");
@@ -395,6 +399,9 @@ fn deep_refresh(project: &Path, provider: Option<&str>) {
     }
     if let Err(e) = super::continuity::run(project, super::ContinuityCommand::Extract { provider: p() }) {
         eprintln!("  continuity extract skipped: {e}");
+    }
+    if let Err(e) = super::drift::run(project, super::DriftCommand::Scan { provider: p(), json: false }) {
+        eprintln!("  drift scan skipped: {e}");
     }
     eprintln!();
 }
