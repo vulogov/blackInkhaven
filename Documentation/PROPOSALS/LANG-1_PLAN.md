@@ -82,6 +82,75 @@ releases as they complete.
 | **P6** | Analysis suite; generators (name / ceremony / curse / poetry / sample-text); translation pane; AI grammar book; importers (PolyGlot / Lexique / CWS / Toolbox); exporters (TSV/CSV/JSON/XLIFF/Anki/linguex/IPA-chart/dictionary-PDF) | none | net-new |
 | **P7** | `language tutorial`; `Documentation/CONLANG.md` + tutorial; example language; perf pass (10k entries); **selectable output format** (see below) | none | — |
 
+### P2 — AI-assisted dictionary generation
+
+The lexicon-building loop. The non-negotiable invariant: **forms obey the
+language; meanings come from the AI; nothing duplicates; nothing
+auto-commits.** The deterministic P1.1 word generator supplies every candidate
+form (so no proposal can violate the phonotactics) — the AI only chooses among
+valid forms and assigns meaning. Everything lands in a proposal queue
+([[feedback-ai-advisory]]); every gloss is in the project working language
+([[feedback-multilingual]]).
+
+**Query → words, in two stages:**
+
+1. **Semantic frame.** From the request — `--topic`, `--count`, optional
+   `--era` / `--register` / `--culture` — plus the language `overview`
+   (environment, society), the AI proposes a ranked *concept list* (topic
+   "seafaring" → hull, tide, mast, to-navigate, harbor, …). Optionally seeded
+   from **Swadesh-100** core vocabulary (`scope_swadesh_100`). The list is
+   reviewable before any word is coined.
+2. **Form + sense per concept.** For each accepted concept the **deterministic
+   generator** emits N phonotactically-valid candidate forms (P1.1); each is
+   scored (phoneme-frequency fit, no working-language collision via whatlang,
+   sound-symbolism alignment); the AI picks the best and fills the
+   `DictionaryEntry` — gloss, senses, POS, semantic features, register, era, a
+   usage example, and a short etymological rationale.
+
+**Dedup & consistency gate (required — runs before anything is queued).**
+Generation must never produce a duplicate or an accidental synonym, and must
+never coin the same thing twice:
+
+- **No double-generated form** — each candidate is checked against the existing
+  lexicon's headwords *and* inflected `surface_forms()`, and against the other
+  candidates in the same batch. Collisions are regenerated (new seed) or
+  dropped, never silently emitted as a homophone.
+- **No same meaning** — each proposed concept/gloss is checked against existing
+  entries by (a) normalized gloss match and (b) **semantic similarity via
+  embeddings** (fastembed, in-tree — the same vector machinery drift/RAG use),
+  so "stone" vs "rock" is caught, not just exact strings. Above threshold → the
+  concept is dropped from the frame or flagged as a deliberate variant.
+- **No double-coined concept** — the semantic frame is deduped against itself
+  and against the lexicon before form generation, so a batch never coins two
+  words for the same concept.
+- **Consistency** — POS / semantic-feature sanity, and an *etymology* check:
+  if a concept is derivable from an existing root (P3 morphology), the pipeline
+  proposes a **derived form** rather than an unrelated coinage, and flags it.
+
+A wanted synonym (different register/dialect) stays possible — but only when
+**explicitly** requested, never as an accident. Any residual collision the
+author chose to keep surfaces in the queue as a **conflict badge**
+(homophone / synonym / derivable-from-root) for an explicit keep / merge /
+mark-variant / reject decision.
+
+**Output → proposal queue** (`conlang_proposals`, TTL-expiring). Accepted
+entries are written as `DictionaryEntry` HJSON paragraphs into the Dictionary
+chapter under their alphabet bucket (book stays system-of-record) and projected
+into the `conlang_lexicon` index; `source = AI_Proposal_Accepted`.
+
+**Roots vs derived words.** P2 generates flat words. With morphology (**P3**)
+the loop deepens — the AI generates **roots**, then the morphology engine
+derives the productive family (agent, nominalization, compounds), so "seafarer"
+is *derived from* the root for "sea" rather than coined independently and
+etymology stays coherent. The **semantic-gap finder** (P6) closes the loop:
+diff lexicon coverage vs a scope frame → ranked missing concepts → feed back
+into generation.
+
+**Surfaces.** CLI `inkhaven language generate-lexicon <lang> --topic … --count …
+[--era …] [--register …]` (or `--scope <hjson>` for the full frame); TUI from
+the `Ctrl+B X` hub → generator → proposal-queue review; Bund
+`ink.conlang.generate.lexicon` (`fs_write`).
+
 ### P6/P7 output: selectable `.md` / `.typ`, and the Typst path is a *real book*
 
 The generated **grammar book**, **dictionary**, and **tutorial** take an
