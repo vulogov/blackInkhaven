@@ -399,6 +399,7 @@ mod tests {
             french_stop_words: Vec::new(),
             german_stop_words: Vec::new(),
             spanish_stop_words: Vec::new(),
+            languages: std::collections::BTreeMap::new(),
         }
     }
 

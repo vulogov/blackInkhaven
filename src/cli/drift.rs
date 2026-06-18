@@ -61,7 +61,7 @@ fn gather(
     // last unambiguously-named entity (per-language pronouns), so they survive
     // the name filter.
     let chapters = chapter_paragraphs(store, hierarchy);
-    let coref = attribute_continuations(&chapters, &lexicon, language);
+    let coref = attribute_continuations(&chapters, &lexicon, language, &cfg.pronouns);
     let mut out = Vec::new();
     for (entity, kind) in lexicon.iter().cloned() {
         let coref_ids: HashSet<Uuid> = coref
