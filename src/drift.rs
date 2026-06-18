@@ -15,13 +15,14 @@
 //! assembly. The impure retrieval (vector search, content reads) and the AI
 //! judge live in `cli::drift`.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Which entity book a description belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EntityKind {
     Character,
@@ -66,26 +67,29 @@ pub struct Candidate {
 }
 
 /// From relevance-ranked retrieval `candidates`, keep the paragraphs that
-/// actually **mention** `entity` (the name anchor that kills topical
-/// false-positives the vector search drags in), dedup by paragraph, take the
-/// top `max_snippets` by relevance, then present them in **chapter order** so
-/// the judge reads the description as a timeline. Pure.
+/// describe `entity` — either they **mention** it by name (the anchor that
+/// kills topical false-positives the vector search drags in) **or** they were
+/// coreference-attributed to it (`coref`, a pronoun-only description adjacent
+/// to a named mention — 1.3.11). Dedup by paragraph, take the top
+/// `max_snippets` by relevance, present in **chapter order** so the judge
+/// reads the description as a timeline. Pure.
 pub fn assemble_descriptions(
     entity: &str,
     candidates: &[Candidate],
     max_snippets: usize,
+    coref: &HashSet<Uuid>,
 ) -> Vec<DescriptionSnippet> {
     let needle = entity.trim().to_lowercase();
     if needle.is_empty() || max_snippets == 0 {
         return Vec::new();
     }
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     let mut kept: Vec<&Candidate> = Vec::new();
     for c in candidates {
         if kept.len() >= max_snippets {
             break;
         }
-        if !c.text.to_lowercase().contains(&needle) {
+        if !c.text.to_lowercase().contains(&needle) && !coref.contains(&c.paragraph) {
             continue;
         }
         if !seen.insert(c.paragraph) {
@@ -101,6 +105,102 @@ pub fn assemble_descriptions(
             text: c.text.clone(),
         })
         .collect()
+}
+
+/// The kind-matching pronouns whose presence (in a name-less paragraph) marks
+/// a continued description of the current anchor entity.
+fn pronouns(kind: EntityKind) -> &'static [&'static str] {
+    match kind {
+        EntityKind::Character => &[
+            "he", "him", "his", "she", "her", "hers", "they", "them", "their", "theirs",
+        ],
+        EntityKind::Place => &["it", "its", "there", "here"],
+        EntityKind::Artefact => &["it", "its"],
+    }
+}
+
+/// True when `name` appears in `haystack_lc` (already lowercased) as a
+/// whole word / phrase — bounded by non-alphanumeric on both sides — so
+/// "Sam" doesn't match "Samuel" or "same". Pure.
+fn mentions(haystack_lc: &str, name_lc: &str) -> bool {
+    if name_lc.is_empty() {
+        return false;
+    }
+    let bytes = haystack_lc.as_bytes();
+    let nb = name_lc.as_bytes();
+    let mut from = 0;
+    while let Some(pos) = haystack_lc[from..].find(name_lc) {
+        let start = from + pos;
+        let end = start + nb.len();
+        let before_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+        let after_ok = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
+}
+
+/// Lowercased word tokens of `text` (split on non-alphanumeric).
+fn word_set(text_lc: &str) -> HashSet<&str> {
+    text_lc
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// 1.3.11 WORLD-3 — coreference-lite: attribute pronoun-only descriptive
+/// paragraphs to the most recently, *unambiguously* named entity of the
+/// matching kind. `chapters` are the user-book chapters (each a list of
+/// `(paragraph, text)` in order); `lexicon` is every entity's `(name, kind)`.
+/// Returns `paragraph → entity names` it was attributed to. Precision-
+/// favouring: a single named entity of a kind becomes that kind's anchor, two
+/// or more clear it, and attribution never crosses a chapter. Pure.
+pub fn attribute_continuations(
+    chapters: &[Vec<(Uuid, String)>],
+    lexicon: &[(String, EntityKind)],
+) -> HashMap<Uuid, Vec<String>> {
+    let lex_lc: Vec<(String, String, EntityKind)> = lexicon
+        .iter()
+        .map(|(n, k)| (n.clone(), n.to_lowercase(), *k))
+        .collect();
+    let mut out: HashMap<Uuid, Vec<String>> = HashMap::new();
+    for chapter in chapters {
+        // The most recent single-named entity of each kind (the anchor).
+        let mut anchor: HashMap<EntityKind, String> = HashMap::new();
+        for (pid, text) in chapter {
+            let lc = text.to_lowercase();
+            // Which entities (by kind) does this paragraph name?
+            let mut named_by_kind: HashMap<EntityKind, Vec<&str>> = HashMap::new();
+            for (name, name_lc, kind) in &lex_lc {
+                if mentions(&lc, name_lc) {
+                    named_by_kind.entry(*kind).or_default().push(name.as_str());
+                }
+            }
+            if named_by_kind.is_empty() {
+                // Name-less paragraph — attribute to any anchor whose pronoun
+                // appears (a continued description).
+                let words = word_set(&lc);
+                for (kind, anchor_name) in &anchor {
+                    if pronouns(*kind).iter().any(|p| words.contains(*p)) {
+                        out.entry(*pid).or_default().push(anchor_name.clone());
+                    }
+                }
+            } else {
+                // Update each named kind's anchor; a kind not named here keeps
+                // its anchor (so a later pronoun still attributes).
+                for (kind, names) in &named_by_kind {
+                    if names.len() == 1 {
+                        anchor.insert(*kind, names[0].to_string());
+                    } else {
+                        anchor.remove(kind);
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// One adjudicated drift: two descriptions of the same entity that contradict.
@@ -277,9 +377,27 @@ mod tests {
             cand(5, "ch-5", "The inn down the road smelled of woodsmoke."), // no name
             cand(8, "ch-8", "By winter the Drunken Goose felt airy and bright."),
         ];
-        let out = assemble_descriptions("The Drunken Goose", &cands, 8);
+        let out = assemble_descriptions("The Drunken Goose", &cands, 8, &HashSet::new());
         assert_eq!(out.len(), 2, "the un-named inn paragraph is filtered out");
         assert!(out[0].text.contains("cramped"));
+        assert!(out[1].text.contains("airy"));
+    }
+
+    #[test]
+    fn coref_attributed_paragraph_is_kept_despite_no_name() {
+        let pronoun_para = Uuid::now_v7();
+        let cands = vec![
+            cand(2, "ch-2", "The Drunken Goose was cramped and smoky."),
+            Candidate {
+                paragraph: pronoun_para,
+                chapter_order: 6,
+                chapter_title: "ch-6".into(),
+                text: "Inside, it felt airy and bright.".into(), // no name — coref rescue
+            },
+        ];
+        let coref: HashSet<Uuid> = [pronoun_para].into_iter().collect();
+        let out = assemble_descriptions("The Drunken Goose", &cands, 8, &coref);
+        assert_eq!(out.len(), 2, "the coref-attributed pronoun paragraph is kept");
         assert!(out[1].text.contains("airy"));
     }
 
@@ -297,7 +415,7 @@ mod tests {
             cand(1, "ch-1", "Mara, soft-spoken as ever."),
             cand(4, "ch-4", "Mara's voice boomed across the hall."),
         ];
-        let out = assemble_descriptions("Mara", &cands, 2);
+        let out = assemble_descriptions("Mara", &cands, 2, &HashSet::new());
         assert_eq!(out.len(), 2, "dup collapses, cap=2 honoured");
         assert_eq!(out[0].chapter, "ch-1", "presented in chapter order");
         assert_eq!(out[1].chapter, "ch-9");
@@ -306,8 +424,57 @@ mod tests {
     #[test]
     fn empty_entity_or_zero_cap_returns_nothing() {
         let cands = vec![cand(1, "ch-1", "anything")];
-        assert!(assemble_descriptions("", &cands, 8).is_empty());
-        assert!(assemble_descriptions("x", &cands, 0).is_empty());
+        assert!(assemble_descriptions("", &cands, 8, &HashSet::new()).is_empty());
+        assert!(assemble_descriptions("x", &cands, 0, &HashSet::new()).is_empty());
+    }
+
+    #[test]
+    fn attribute_continuations_recency_and_ambiguity() {
+        let p_named = Uuid::now_v7();
+        let p_pron = Uuid::now_v7();
+        let p_other = Uuid::now_v7();
+        let lexicon = vec![
+            ("Mara".to_string(), EntityKind::Character),
+            ("Joss".to_string(), EntityKind::Character),
+            ("The Goose".to_string(), EntityKind::Place),
+        ];
+        // ch-1: Mara named, then a pronoun-only descriptive para → attributes to Mara.
+        // a third para names BOTH Mara and Joss (ambiguous), then a pronoun para
+        // → no attribution (anchor cleared).
+        let p_ambig = Uuid::now_v7();
+        let p_after_ambig = Uuid::now_v7();
+        let chapters = vec![vec![
+            (p_named, "Mara crossed the yard.".to_string()),
+            (p_pron, "She was taller than he remembered, her hair gone grey.".to_string()),
+            (p_other, "The Goose stood at the corner.".to_string()),
+            (p_ambig, "Mara and Joss argued by the door.".to_string()),
+            (p_after_ambig, "She would not look at him.".to_string()),
+        ]];
+        let map = attribute_continuations(&chapters, &lexicon);
+        assert_eq!(map.get(&p_pron).map(|v| v.as_slice()), Some(&["Mara".to_string()][..]));
+        assert!(!map.contains_key(&p_after_ambig), "ambiguous anchor → no attribution");
+        // the place pronoun "there"/"it" never appeared, so The Goose attributes nothing
+        assert!(map.values().all(|v| !v.contains(&"The Goose".to_string())));
+    }
+
+    #[test]
+    fn attribute_continuations_does_not_cross_chapters() {
+        let p_named = Uuid::now_v7();
+        let p_next_chapter = Uuid::now_v7();
+        let lexicon = vec![("Mara".to_string(), EntityKind::Character)];
+        let chapters = vec![
+            vec![(p_named, "Mara waited.".to_string())],
+            vec![(p_next_chapter, "She sighed.".to_string())], // new chapter — no anchor
+        ];
+        let map = attribute_continuations(&chapters, &lexicon);
+        assert!(!map.contains_key(&p_next_chapter), "anchor resets per chapter");
+    }
+
+    #[test]
+    fn mentions_respects_word_boundaries() {
+        assert!(mentions("mara crossed the yard", "mara"));
+        assert!(!mentions("samuel spoke", "sam"), "no substring false-match");
+        assert!(mentions("the drunken goose was loud", "drunken goose"));
     }
 
     #[test]

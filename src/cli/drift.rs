@@ -7,7 +7,7 @@
 //! that actually name it. `inkhaven drift list` prints what the retriever
 //! found (deterministic, no AI); the AI adjudication + sidecar land in P1.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use uuid::Uuid;
@@ -15,8 +15,8 @@ use uuid::Uuid;
 use crate::ai::AiClient;
 use crate::config::Config;
 use crate::drift::{
-    assemble_descriptions, parse_drift_pairs, resolve_conflicts, Candidate, DescriptionSnippet,
-    DriftReport, EntityDescriptions, EntityKind,
+    assemble_descriptions, attribute_continuations, parse_drift_pairs, resolve_conflicts, Candidate,
+    DescriptionSnippet, DriftReport, EntityDescriptions, EntityKind,
 };
 use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
@@ -65,14 +65,55 @@ fn gather(
     cfg: &crate::config::DriftConfig,
 ) -> Vec<EntityDescriptions> {
     let index = chapter_index(hierarchy);
+    let lexicon = entities(hierarchy);
+    // 1.3.11 — coreference-lite: attribute pronoun-only descriptions to the
+    // last unambiguously-named entity, so they survive the name filter.
+    let chapters = chapter_paragraphs(store, hierarchy);
+    let coref = attribute_continuations(&chapters, &lexicon);
     let mut out = Vec::new();
-    for (entity, kind) in entities(hierarchy) {
-        let snippets = retrieve(store, &index, &entity, cfg);
+    for (entity, kind) in lexicon.iter().cloned() {
+        let coref_ids: HashSet<Uuid> = coref
+            .iter()
+            .filter(|(_, names)| names.iter().any(|n| n.eq_ignore_ascii_case(&entity)))
+            .map(|(p, _)| *p)
+            .collect();
+        let snippets = retrieve(store, &index, &entity, cfg, &coref_ids);
         if !snippets.is_empty() {
             out.push(EntityDescriptions { entity, kind, snippets });
         }
     }
     out
+}
+
+/// Every user-book chapter as an ordered list of `(paragraph, plain text)` —
+/// the sequence the coref pass walks. System books are excluded.
+fn chapter_paragraphs(store: &Store, h: &Hierarchy) -> Vec<Vec<(Uuid, String)>> {
+    let mut chapters = Vec::new();
+    for book in h.iter().filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none()) {
+        for chapter in h.children_of(Some(book.id)) {
+            if chapter.kind != NodeKind::Chapter {
+                continue;
+            }
+            let mut paras = Vec::new();
+            for pid in h.collect_subtree(chapter.id) {
+                if h.get(pid).map(|n| n.kind) != Some(NodeKind::Paragraph) {
+                    continue;
+                }
+                if let Ok(Some(bytes)) = store.get_content(pid) {
+                    let text = crate::audiobook::typst_to_plain(&String::from_utf8_lossy(&bytes))
+                        .trim()
+                        .to_string();
+                    if !text.is_empty() {
+                        paras.push((pid, text));
+                    }
+                }
+            }
+            if !paras.is_empty() {
+                chapters.push(paras);
+            }
+        }
+    }
+    chapters
 }
 
 /// Map every user-book paragraph to its `(chapter_order, chapter_title)`.
@@ -136,6 +177,7 @@ fn retrieve(
     index: &HashMap<Uuid, (usize, String)>,
     entity: &str,
     cfg: &crate::config::DriftConfig,
+    coref_ids: &HashSet<Uuid>,
 ) -> Vec<DescriptionSnippet> {
     let query = format!("{entity} description appearance manner voice condition");
     let raw = match store.search_text(&query, cfg.top_k) {
@@ -169,7 +211,7 @@ fn retrieve(
             });
         }
     }
-    assemble_descriptions(entity, &candidates, cfg.max_snippets)
+    assemble_descriptions(entity, &candidates, cfg.max_snippets, coref_ids)
 }
 
 fn list(project: &Path, json: bool) -> Result<()> {
