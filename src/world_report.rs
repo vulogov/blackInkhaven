@@ -37,12 +37,21 @@ pub struct WorldReport {
     pub characters: usize,
     pub places: usize,
     pub artefacts: usize,
-    /// Deterministic anachronism flags (terms postdating the setting year).
-    pub anachronisms: usize,
+    /// Deterministic anachronism flags (terms postdating the setting year),
+    /// each with the chapter it appears in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anachronism_flags: Vec<AnachronismFlag>,
     /// Entities defined in the books but never named in the prose — a dangling
     /// cast member / place / artefact. Coverage, not counted as an issue.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub undescribed: Vec<String>,
+}
+
+/// One anachronistic term and where it appears.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnachronismFlag {
+    pub term: String,
+    pub chapter: String,
 }
 
 /// Entities (name + kind) whose lowercased name never appears in `appeared`
@@ -70,7 +79,7 @@ impl WorldReport {
         self.facts_conflicts.len()
             + self.facts_prose_findings
             + self.drift_conflicts.len()
-            + self.anachronisms
+            + self.anachronism_flags.len()
     }
 
     /// The one-line health string rendered atop `inkhaven world` and the story
@@ -96,8 +105,8 @@ impl WorldReport {
         if !self.drift_conflicts.is_empty() {
             parts.push(format!("{} drift", self.drift_conflicts.len()));
         }
-        if self.anachronisms > 0 {
-            parts.push(plural(self.anachronisms, "anachronism", "anachronisms"));
+        if !self.anachronism_flags.is_empty() {
+            parts.push(plural(self.anachronism_flags.len(), "anachronism", "anachronisms"));
         }
         format!("World: {n} issue(s) — {}", parts.join(" · "))
     }
@@ -139,7 +148,7 @@ mod tests {
             characters: 5,
             places: 3,
             artefacts: 1,
-            anachronisms: 1,
+            anachronism_flags: vec![AnachronismFlag { term: "telephone".into(), chapter: "ch-1".into() }],
             undescribed: vec!["Joss".into()], // coverage, not an issue
         };
         // 1 fact conflict + 2 prose + 2 drift + 1 anachronism = 6

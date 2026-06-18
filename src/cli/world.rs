@@ -122,7 +122,7 @@ pub fn report_from(store: &Store, h: &Hierarchy, cfg: &Config, root: &Path) -> W
         characters: count_paragraphs(h, Some(SYSTEM_TAG_CHARACTERS)),
         places: count_paragraphs(h, Some(SYSTEM_TAG_PLACES)),
         artefacts: count_paragraphs(h, Some(SYSTEM_TAG_ARTEFACTS)),
-        anachronisms: count_anachronisms(cfg, store, h),
+        anachronism_flags: collect_anachronism_flags(cfg, store, h),
         // Filled by `gather` (the prose walk); the TUI banner leaves it empty.
         undescribed: Vec::new(),
     }
@@ -142,29 +142,55 @@ fn count_paragraphs(h: &Hierarchy, tag: Option<&str>) -> usize {
         .count()
 }
 
-/// Count anachronistic terms across the user books (the deterministic detector
-/// — off, and thus zero, until `anachronism.year` is set).
-fn count_anachronisms(cfg: &Config, store: &Store, h: &Hierarchy) -> usize {
+/// Collect anachronistic terms across the user books, each with the chapter it
+/// appears in (the deterministic detector — empty until `anachronism.year` is
+/// set).
+fn collect_anachronism_flags(
+    cfg: &Config,
+    store: &Store,
+    h: &Hierarchy,
+) -> Vec<crate::world_report::AnachronismFlag> {
+    use crate::world_report::AnachronismFlag;
     let det =
         crate::tui::style_warnings::AnachronismDetector::new(&cfg.editor.style_warnings.anachronism);
     if det.is_empty() {
-        return 0;
+        return Vec::new();
     }
-    let mut n = 0;
+    let mut out = Vec::new();
     for book in h.iter().filter(|b| b.kind == NodeKind::Book && b.system_tag.is_none()) {
-        for pid in h.collect_subtree(book.id) {
-            if h.get(pid).map(|nd| nd.kind) != Some(NodeKind::Paragraph) {
+        for chapter in h.children_of(Some(book.id)) {
+            if chapter.kind != NodeKind::Chapter {
                 continue;
             }
-            if let Ok(Some(bytes)) = store.get_content(pid) {
-                let text = String::from_utf8_lossy(&bytes);
-                for line in text.lines() {
-                    n += det.detect(line).len();
+            let chap = if chapter.title.trim().is_empty() {
+                chapter.slug.clone()
+            } else {
+                chapter.title.clone()
+            };
+            for pid in h.collect_subtree(chapter.id) {
+                if h.get(pid).map(|nd| nd.kind) != Some(NodeKind::Paragraph) {
+                    continue;
+                }
+                if let Ok(Some(bytes)) = store.get_content(pid) {
+                    let text = String::from_utf8_lossy(&bytes);
+                    for line in text.lines() {
+                        for hit in det.detect(line) {
+                            let term: String = line
+                                .chars()
+                                .skip(hit.col_start)
+                                .take(hit.col_end.saturating_sub(hit.col_start))
+                                .collect();
+                            out.push(AnachronismFlag {
+                                term: term.trim().to_string(),
+                                chapter: chap.clone(),
+                            });
+                        }
+                    }
                 }
             }
         }
     }
-    n
+    out
 }
 
 /// `--deep` — refresh the world-layer AI sidecars (facts check, facts scan,
@@ -220,7 +246,14 @@ fn render(r: &WorldReport) {
     println!("  {} tracked attribute(s)", r.continuity_attributes);
 
     println!("\nAnachronisms");
-    println!("  {} flagged term(s)", r.anachronisms);
+    if r.anachronism_flags.is_empty() {
+        println!("  0 flagged term(s)");
+    } else {
+        println!("  {} flagged term(s):", r.anachronism_flags.len());
+        for f in &r.anachronism_flags {
+            println!("    · “{}” ({})", f.term, f.chapter);
+        }
+    }
 
     println!("\nCoverage");
     println!(
