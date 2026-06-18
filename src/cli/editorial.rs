@@ -37,15 +37,20 @@ pub fn collect(
     raw.extend(scan.iter().filter_map(editorial::from_scan_finding));
 
     // 2) Facts-scan contradictions + internal-consistency conflicts
-    //    (sidecars; empty if never run).
+    //    (sidecars; empty if never run). Capture each sidecar's manuscript
+    //    fingerprint to flag staleness once the hierarchy is loaded.
+    let mut sidecar_fps: Vec<u64> = Vec::new();
     if let Ok(facts) = crate::facts_scan::FactScanReport::load(&layout.root) {
+        sidecar_fps.push(facts.manuscript_fingerprint);
         raw.extend(facts.findings.iter().map(editorial::from_fact_finding));
     }
     if let Ok(check) = crate::facts_scan::FactCheckReport::load(&layout.root) {
+        sidecar_fps.push(check.manuscript_fingerprint);
         raw.extend(check.conflicts.iter().map(editorial::from_fact_conflict));
     }
     // 2b) semantic-drift contradictions (1.3.10 sidecar; empty if never run).
     if let Ok(drift) = crate::drift::DriftReport::load(&layout.root) {
+        sidecar_fps.push(drift.manuscript_fingerprint);
         raw.extend(drift.conflicts.iter().map(editorial::from_drift_conflict));
     }
 
@@ -55,9 +60,15 @@ pub fn collect(
     // 4) deterministic prose-style detectors (show-don't-tell) over each
     //    paragraph + resolve every finding's location to a node id (so the
     //    cockpit can jump / rewrite). One store open.
+    let mut stale = false;
     if let Ok(cfg) = crate::config::Config::load_layered(&layout.config_path()) {
         if let Ok(store) = crate::store::Store::open(layout.clone(), &cfg) {
             if let Ok(h) = Hierarchy::load(&store) {
+                // 1.3.12 — a sidecar that predates the latest edits is stale.
+                let current = crate::world_report::manuscript_fingerprint(&h);
+                stale = sidecar_fps
+                    .iter()
+                    .any(|fp| crate::world_report::is_stale(*fp, current));
                 raw.extend(prose_style_findings(&cfg, &store, &h));
                 // 1.3.11 — undescribed entities (defined in the books, never
                 // named in the prose): an Info coverage finding, jump to the
@@ -102,6 +113,7 @@ pub fn collect(
 
     let mut report = editorial::aggregate(raw);
     report.deferred = deferred;
+    report.stale = stale;
     Ok(report)
 }
 
@@ -463,6 +475,9 @@ fn render(report: &editorial::EditorialReport) {
         report.warnings,
         report.infos,
     );
+    if report.stale {
+        println!("⚠ some AI findings (facts / drift) predate the latest edits — re-run `inkhaven edit --deep`\n");
+    }
     for f in &report.findings {
         println!(
             "  {} {:<10} {:<14} {}",

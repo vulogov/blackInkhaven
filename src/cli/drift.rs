@@ -269,59 +269,17 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
     let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
-
-    let descs = gather(&store, &hierarchy, &cfg.drift, &cfg.language);
-    let comparable: Vec<&EntityDescriptions> =
-        descs.iter().filter(|d| d.snippets.len() >= 2).collect();
-    if comparable.is_empty() {
-        return Err(Error::Store(
-            "drift scan: no entity has two or more retrievable descriptions to compare — \
-             populate the entity books and make sure the vector index is built"
-                .into(),
-        ));
-    }
-    let n_entities = comparable.len();
-
-    let language = if cfg.language.trim().is_empty() {
-        "English".to_string()
-    } else {
-        cfg.language.clone()
-    };
-    let ai = AiClient::from_config(&cfg.llm)?;
-    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
-    eprintln!(
-        "inkhaven drift scan · language: {language} · model: {model} · {} entit{} to check",
-        comparable.len(),
-        if comparable.len() == 1 { "y" } else { "ies" }
-    );
-
-    let mut conflicts = Vec::new();
-    for d in &comparable {
-        eprintln!("  · {} ({} description(s))", d.entity, d.snippets.len());
-        let prompt = build_drift_prompt(&language, d);
-        let raw = run_blocking(&ai, model, DRIFT_SYSTEM_PROMPT, &prompt)?;
-        let pairs = parse_drift_pairs(&raw, d.snippets.len());
-        conflicts.extend(resolve_conflicts(&d.entity, d.kind, &d.snippets, &pairs));
-    }
-
-    let report = DriftReport {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        content_hash: DriftReport::compute_hash(&descs),
-        conflicts,
-        descriptions: descs,
-    };
-    report
-        .save(&layout.root)
-        .map_err(|e| Error::Store(format!("drift save: {e}")))?;
+    let report = scan_with(&store, &hierarchy, &cfg, &layout, provider, &|s| eprintln!("{s}"))?;
 
     if json {
         let rendered = serde_json::to_string_pretty(&report)
             .map_err(|e| Error::Store(format!("drift JSON: {e}")))?;
         println!("{rendered}");
     } else if report.conflicts.is_empty() {
+        let n = report.descriptions.iter().filter(|d| d.snippets.len() >= 2).count();
         println!(
-            "drift scan: ✓ no description contradictions across {n_entities} entit{}",
-            if n_entities == 1 { "y" } else { "ies" }
+            "drift scan: ✓ no description contradictions across {n} entit{}",
+            if n == 1 { "y" } else { "ies" }
         );
     } else {
         println!("drift scan: {} description contradiction(s):", report.conflicts.len());
@@ -334,6 +292,65 @@ fn scan(project: &Path, provider: Option<&str>, json: bool) -> Result<()> {
         eprintln!("  (also surfaced in `inkhaven edit`)");
     }
     Ok(())
+}
+
+/// 1.3.12 DEEP-1 — the drift pass against an **already-open** store, progress
+/// routed through `progress` (not stderr), returning the saved report. Reads
+/// `cfg.language` so the judge prompt stays in the manuscript's language.
+/// Safe to call from the TUI background-refresh thread (shares the store's
+/// connection pool).
+pub fn scan_with(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    cfg: &Config,
+    layout: &ProjectLayout,
+    provider: Option<&str>,
+    progress: &dyn Fn(&str),
+) -> Result<DriftReport> {
+    let descs = gather(store, hierarchy, &cfg.drift, &cfg.language);
+    let comparable: Vec<&EntityDescriptions> =
+        descs.iter().filter(|d| d.snippets.len() >= 2).collect();
+    if comparable.is_empty() {
+        return Err(Error::Store(
+            "drift scan: no entity has two or more retrievable descriptions to compare — \
+             populate the entity books and make sure the vector index is built"
+                .into(),
+        ));
+    }
+
+    let language = if cfg.language.trim().is_empty() {
+        "English".to_string()
+    } else {
+        cfg.language.clone()
+    };
+    let ai = AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    progress(&format!(
+        "drift scan · language: {language} · model: {model} · {} entit{} to check",
+        comparable.len(),
+        if comparable.len() == 1 { "y" } else { "ies" }
+    ));
+
+    let mut conflicts = Vec::new();
+    for (i, d) in comparable.iter().enumerate() {
+        progress(&format!("drift [{}/{}] {}", i + 1, comparable.len(), d.entity));
+        let prompt = build_drift_prompt(&language, d);
+        let raw = run_blocking(&ai, model, DRIFT_SYSTEM_PROMPT, &prompt)?;
+        let pairs = parse_drift_pairs(&raw, d.snippets.len());
+        conflicts.extend(resolve_conflicts(&d.entity, d.kind, &d.snippets, &pairs));
+    }
+
+    let report = DriftReport {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        content_hash: DriftReport::compute_hash(&descs),
+        conflicts,
+        descriptions: descs,
+        manuscript_fingerprint: crate::world_report::manuscript_fingerprint(hierarchy),
+    };
+    report
+        .save(&layout.root)
+        .map_err(|e| Error::Store(format!("drift save: {e}")))?;
+    Ok(report)
 }
 
 /// Build the per-entity judge prompt: the entity name + its numbered,

@@ -122,6 +122,14 @@ pub fn report_from(store: &Store, h: &Hierarchy, cfg: &Config, root: &Path) -> W
     let drift = crate::drift::DriftReport::load(root).unwrap_or_default();
     let continuity = crate::continuity_bible::ContinuityBible::load(root).unwrap_or_default();
 
+    // 1.3.12 — any sidecar whose stamped fingerprint no longer matches the
+    // manuscript is stale (its findings predate later edits).
+    let current = crate::world_report::manuscript_fingerprint(h);
+    let stale = crate::world_report::is_stale(facts_check.manuscript_fingerprint, current)
+        || crate::world_report::is_stale(facts_scan.manuscript_fingerprint, current)
+        || crate::world_report::is_stale(drift.manuscript_fingerprint, current)
+        || crate::world_report::is_stale(continuity.manuscript_fingerprint, current);
+
     WorldReport {
         facts_total: count_paragraphs(h, Some(SYSTEM_TAG_FACTS)),
         facts_conflicts: facts_check.conflicts,
@@ -134,6 +142,7 @@ pub fn report_from(store: &Store, h: &Hierarchy, cfg: &Config, root: &Path) -> W
         anachronism_flags: collect_anachronism_flags(cfg, store, h),
         // Filled by `gather` (the prose walk); the TUI banner leaves it empty.
         undescribed: Vec::new(),
+        stale,
     }
 }
 
@@ -203,24 +212,49 @@ fn collect_anachronism_flags(
 }
 
 /// `--deep` — refresh the world-layer AI sidecars (facts check, facts scan,
-/// drift, continuity), each printing its own progress, so the snapshot reads
-/// fresh. A scan that can't run (no provider) is skipped with a note.
+/// drift, continuity), so the snapshot reads fresh. Opens the project once and
+/// runs all four against the shared store via `deep_refresh_shared`.
 fn deep_refresh(project: &Path, provider: Option<&str>) {
     eprintln!("world --deep: refreshing AI sidecars (facts check · facts scan · drift · continuity)…");
-    let p = || provider.map(String::from);
-    if let Err(e) = super::facts_scan::run(project, super::FactsCommand::Check { provider: p(), json: false }) {
-        eprintln!("  facts check skipped: {e}");
-    }
-    if let Err(e) = super::facts_scan::run(project, super::FactsCommand::Scan { provider: p(), json: false }) {
-        eprintln!("  facts scan skipped: {e}");
-    }
-    if let Err(e) = super::drift::run(project, super::DriftCommand::Scan { provider: p(), json: false }) {
-        eprintln!("  drift scan skipped: {e}");
-    }
-    if let Err(e) = super::continuity::run(project, super::ContinuityCommand::Extract { provider: p() }) {
-        eprintln!("  continuity extract skipped: {e}");
+    let layout = ProjectLayout::new(project);
+    let res = (|| -> Result<()> {
+        layout.require_initialized()?;
+        let cfg = Config::load_layered(&layout.config_path())?;
+        let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+        deep_refresh_shared(&store, &cfg, &layout, provider, &|s| eprintln!("  {s}"))
+    })();
+    if let Err(e) = res {
+        eprintln!("  world --deep: {e}");
     }
     eprintln!();
+}
+
+/// 1.3.12 DEEP-1 — run the four world-layer AI scans against an **already-open**
+/// store, in sequence, tolerating any single scan's failure (reported through
+/// `progress`, then continuing). Each scan reads `cfg.language`, so the deep
+/// refresh runs in the manuscript's language. Shared by `world --deep` and the
+/// TUI background-refresh chord (which passes a cloned `Store`).
+pub fn deep_refresh_shared(
+    store: &Store,
+    cfg: &Config,
+    layout: &ProjectLayout,
+    provider: Option<&str>,
+    progress: &dyn Fn(&str),
+) -> Result<()> {
+    let h = Hierarchy::load(store).map_err(|e| Error::Store(e.to_string()))?;
+    if let Err(e) = super::facts_scan::check_with(store, &h, cfg, layout, provider, progress) {
+        progress(&format!("facts check skipped: {e}"));
+    }
+    if let Err(e) = super::facts_scan::scan_with(store, &h, cfg, layout, provider, progress) {
+        progress(&format!("facts scan skipped: {e}"));
+    }
+    if let Err(e) = super::drift::scan_with(store, &h, cfg, layout, provider, progress) {
+        progress(&format!("drift scan skipped: {e}"));
+    }
+    if let Err(e) = super::continuity::extract_with(&h, cfg, layout, provider, progress) {
+        progress(&format!("continuity extract skipped: {e}"));
+    }
+    Ok(())
 }
 
 /// A focused per-entity view: drift conflicts + the description trail (both
@@ -289,6 +323,11 @@ fn entity_report(project: &Path, name: &str) -> Result<()> {
 
 fn render(r: &WorldReport) {
     println!("{}\n", r.summary());
+    if r.stale {
+        println!(
+            "⚠ some findings predate the latest edits — re-run `inkhaven world --deep` (or Ctrl+V Shift+F in the editor)\n"
+        );
+    }
 
     println!("Facts");
     println!("  established: {}", r.facts_total);

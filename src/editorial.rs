@@ -246,6 +246,10 @@ pub struct EditorialReport {
     /// How many findings were hidden by the defer sidecar (0 when shown).
     #[serde(skip_serializing_if = "is_zero")]
     pub deferred: usize,
+    /// 1.3.12 — at least one AI sidecar (facts / drift) predates the latest
+    /// edits, so some findings may be stale.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -426,6 +430,7 @@ pub fn aggregate(mut findings: Vec<EditorialFinding>) -> EditorialReport {
         warnings,
         infos,
         deferred: 0,
+        stale: false,
     }
 }
 

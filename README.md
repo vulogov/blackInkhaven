@@ -21,49 +21,46 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.11 — Drift depth + the world report
+## Latest release · 1.3.12 — The background deep refresh
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.11.md`](Documentation/RELEASE_NOTES/1.3.11.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.12.md`](Documentation/RELEASE_NOTES/1.3.12.md)
 
-Rounds out world consistency (1.3.8 hard facts, 1.3.10 soft drift): a deeper
-drift retriever and one consolidated snapshot. Pure-Rust, **no new
-dependencies**.
+The world-consistency checks are multi-minute AI passes. 1.3.12 brings the
+whole batch inside the editor, on a background thread — you never leave your
+prose and never freeze the UI. Pure-Rust, **no new dependencies**.
 
-### Drift reads pronouns now — in five languages
+### `Ctrl+V Shift+F` — refresh in the background
 
-The 1.3.10 retriever kept only paragraphs that *named* the entity, missing
-"Mara crossed the yard. **She** was taller…". 1.3.11 adds **coreference-lite**:
-a precision-favouring recency anchor (single named entity per kind; ambiguity
-clears it; never crosses a chapter) attributes pronoun-only descriptions back
-to the entity. Built-in pronoun sets ship for English, Russian, French,
-German, and Spanish, keyed by your project `language`, with a Unicode-aware
-word boundary.
+One chord runs `facts check` + `facts scan` + `drift scan` + `continuity
+extract` (the `inkhaven world --deep` set, **in the manuscript's language**)
+on a background thread. A `⟳ deep refresh` chip tracks progress; keep writing.
+When it finishes, the open story bible / Editorial Pass rebuilds itself from
+the fresh findings.
 
-### `inkhaven world` — the consistency snapshot
+### Advisory — it never edits your text
 
-```
-World: 2 issue(s) — 1 fact conflict · 1 drift
-Facts        established: 41 · internal conflicts: 1 · prose-vs-fact: 0
-Drift        1 description contradiction(s)
-Coverage     9 character(s) · 4 place(s) · 2 artefact(s)  ·  1 never named: Joss
-```
+The deep refresh **reads** your manuscript and **writes findings** to
+`.inkhaven/*.json` sidecars. It changes no prose. The only thing that rewrites
+text is the Editorial Pass `f`/`F` — always user-initiated, snapshotted, and
+diff-reviewed.
 
-`--json` gates CI, `--deep` refreshes the AI scans, `--entity <name>` zooms to
-one entity. It complements `inkhaven edit` (the walkable worklist) as a
-world-layer snapshot, and the same health line banners the `Ctrl+V Shift+L`
-story bible.
+### Stale findings announce themselves
 
-### Coverage: the dangling cast
+Each scan stamps a cheap manuscript fingerprint; when the prose moves since,
+the world report, the bible banner, and `inkhaven edit` show `⚠ may be stale`
+with a nudge to re-run. It only *warns* — never hides a finding.
 
-`world` and `inkhaven edit` flag entities defined in the books but **never
-named in the prose** — a character you sketched but never wrote in. `world`
-also names each anachronism + its chapter; `drift list --entity` scopes the
-preview.
+### How it runs while you write
+
+DuckDB is single-writer, so the refresh runs in-process on a thread that
+**shares a clone of the editor's connection pool** — no second open, no lock.
+The pool is now tunable via `embeddings.pool_size`. Built on a reusable
+background-job harness the 1.4 AI Editor will reuse.
 
 ### Test stats
 
-Tests 1346 → 1354, **zero new dependencies**. New tutorial 71
-([the world report](Documentation/Tutorials/71-world-report.md)).
+Tests 1354 → 1359, **zero new dependencies**. New tutorial 72
+([the background deep refresh](Documentation/Tutorials/72-deep-refresh.md)).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
