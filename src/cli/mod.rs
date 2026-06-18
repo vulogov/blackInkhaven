@@ -1674,6 +1674,30 @@ pub enum PdfCommand {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Quick saddle-stitch booklet — zero config.  Auto-fits the press
+    /// sheet to two source pages side-by-side (any page size works), in
+    /// one nested signature.  The shortcut for `impose --config chapbook`
+    /// when you just want a foldable booklet of whatever you have.
+    Booklet {
+        input: std::path::PathBuf,
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Center each spread on a named sheet preset (A4, A3, LETTER,
+        /// TABLOID, …) instead of auto-fitting to 2× the page size.
+        #[arg(long)]
+        sheet: Option<String>,
+        /// Add shingle creep compensation (recommended past ~40 pages so
+        /// the inner leaves don't bleed past the trim after folding).
+        #[arg(long)]
+        creep: bool,
+        /// Omit crop + fold marks for a clean already-trimmed proof.
+        #[arg(long)]
+        no_marks: bool,
+        /// Preview the plan (signatures / sheets / first-sheet schematic)
+        /// without imposing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Keep only the given pages (e.g. `--pages 2-4,7`).
     Extract {
         input: std::path::PathBuf,
