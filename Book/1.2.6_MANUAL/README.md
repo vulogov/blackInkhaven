@@ -15,10 +15,10 @@ Two artefacts share this directory:
 ## Building the PDF
 
 ```
-typst compile Book/BOOK_OF_INKHAVEN.typ
+typst compile Book/1.2.6_MANUAL/BOOK_OF_INKHAVEN.typ
 ```
 
-Output: `Book/BOOK_OF_INKHAVEN.pdf` (~30-40 pages without
+Output: `Book/1.2.6_MANUAL/BOOK_OF_INKHAVEN.pdf` (~30-40 pages without
 screenshots, more once the figures land).
 
 If the host doesn't have the bundled fonts (Linux Libertine
@@ -32,7 +32,7 @@ intended look.
 
 ```
 inkhaven import-help \
-  --documents-directory Book/markdown/
+  --documents-directory Book/1.2.6_MANUAL/markdown/
 ```
 
 F1 RAG against the Help book now answers questions from
@@ -42,7 +42,7 @@ this book. Run again after editing.
 
 Every `#figure_slot(id: "...")` placeholder in the typst
 chapters corresponds to one PNG that goes into
-`Book/images/<id>.png`. See `SCREENSHOTS.md` for the full
+`Book/1.2.6_MANUAL/images/<id>.png`. See `SCREENSHOTS.md` for the full
 catalog with capture instructions.
 
 The placeholders compile to grey rectangles labelled
@@ -54,7 +54,7 @@ on the next `typst compile`.
 ## Directory layout
 
 ```
-Book/
+Book/1.2.6_MANUAL/
 ├── BOOK_OF_INKHAVEN.typ       master typst doc; #include chapters
 ├── design.typ                  book-author design tokens + helpers
 ├── chapters/                   33 .typ files (00-prologue → appendix-c)
