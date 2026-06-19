@@ -319,9 +319,18 @@ releases as they complete.
 > book (family/upm from the config) through the P5.2/P5.3 pipeline. Non-printable
 > codepoints (PUA, marks) are stored as readable hex so the book never carries
 > an invisible character. Verified e2e: import (auto-codepoint + explicit PUA),
-> config-driven build → valid TTF (cmap resolves `U+0061`/`U+E000`). Next:
-> AI text-to-SVG glyph draft, Hangul precompose, hieroglyphic Typst-layout,
-> input methods.
+> config-driven build → valid TTF (cmap resolves `U+0061`/`U+E000`).
+>
+> **P5.5 (shipped)** — AI **text-to-SVG glyph draft**. `language glyph-draft
+> <lang> --describe "…" [--phoneme] [--codepoint] [--name] [--out] [--yes]` asks
+> the model (thin layer: `GLYPH_DRAFT_SYSTEM` constrains output to a filled,
+> monochrome, stroke/image/gradient-free SVG so it passes the P5.1 preflight)
+> for one glyph. The deterministic, tested half — `conlang::writing::draft::
+> extract_svg` — pulls the `<svg>…</svg>` out of a prose/fenced reply; the draft
+> is preflighted and previewed (printed or `--out`). Advisory per
+> [[feedback-ai-advisory]]: only `--yes` *and* a usable result binds it, reusing
+> P5.4's `bind_glyph_text`. Refactored `font-import-glyph` onto that shared
+> core. Next: Hangul precompose, hieroglyphic Typst-layout, input methods.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the

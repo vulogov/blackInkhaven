@@ -183,6 +183,26 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::FontConfig { language, json } => {
             font_config_show(project, &language, json)
         }
+        LanguageCommand::GlyphDraft {
+            language,
+            describe,
+            phoneme,
+            codepoint,
+            name,
+            provider,
+            out,
+            yes,
+        } => glyph_draft(
+            project,
+            &language,
+            &describe,
+            phoneme.as_deref(),
+            codepoint.as_deref(),
+            name.as_deref(),
+            provider.as_deref(),
+            out.as_deref(),
+            yes,
+        ),
         LanguageCommand::GlyphLint { svg } => glyph_lint(&svg),
         LanguageCommand::Reconstruct {
             forms,
@@ -708,16 +728,33 @@ fn font_import_glyph(
     codepoint: Option<&str>,
     name: Option<&str>,
 ) -> Result<()> {
+    let svg_text = std::fs::read_to_string(svg)
+        .map_err(|e| Error::Config(format!("reading {}: {e}", svg.display())))?;
+    let stem = svg.file_stem().and_then(|s| s.to_str());
+    bind_glyph_text(project, language, &svg_text, phoneme, codepoint, name, stem, &svg.display().to_string())
+}
+
+/// Preflight an SVG, copy it into the glyph store, and bind it in the language's
+/// `font` block. Shared by `font-import-glyph` (artwork from a file) and
+/// `glyph-draft --yes` (artwork from the AI). `fallback_name` is a last-resort
+/// glyph-name source (e.g. the SVG filename stem); `label` is used in errors.
+fn bind_glyph_text(
+    project: &Path,
+    language: &str,
+    svg_text: &str,
+    phoneme: Option<&str>,
+    codepoint: Option<&str>,
+    name: Option<&str>,
+    fallback_name: Option<&str>,
+    label: &str,
+) -> Result<()> {
     use crate::conlang::types::font::{self, FontGlyph};
     use crate::conlang::writing::preflight;
 
-    let svg_text = std::fs::read_to_string(svg)
-        .map_err(|e| Error::Config(format!("reading {}: {e}", svg.display())))?;
-    let report = preflight::lint_svg(&svg_text);
+    let report = preflight::lint_svg(svg_text);
     if !report.is_usable() {
         return Err(Error::Config(format!(
-            "{} is not suitable for a font glyph — {} (run `language glyph-lint` to inspect)",
-            svg.display(),
+            "{label} is not suitable for a font glyph — {} (run `language glyph-lint` to inspect)",
             report.errors.join("; ")
         )));
     }
@@ -731,15 +768,17 @@ fn font_import_glyph(
         None => None,
     };
     // Resolve the glyph name: explicit > uniXXXX (from the codepoint) > phoneme
-    // > the SVG filename stem.
+    // > the fallback (e.g. SVG filename stem).
     let glyph_name = match name {
         Some(n) => n.to_string(),
         None => match cp {
             Some(c) => format!("uni{:04X}", c as u32),
             None => phoneme
                 .map(str::to_string)
-                .or_else(|| svg.file_stem().and_then(|s| s.to_str()).map(str::to_string))
-                .ok_or_else(|| Error::Config("could not derive a glyph name".into()))?,
+                .or_else(|| fallback_name.map(str::to_string))
+                .ok_or_else(|| {
+                    Error::Config("could not derive a glyph name — pass --name".into())
+                })?,
         },
     };
     // A single-character name implies its own codepoint when none was given.
@@ -831,6 +870,77 @@ fn font_config_show(project: &Path, language: &str, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// LANG-1 P5.5 — AI text-to-SVG glyph draft. Advisory: previews the drafted
+/// glyph + its preflight verdict; only `--yes` (and only a usable result)
+/// binds it into the language's `font` block.
+#[allow(clippy::too_many_arguments)]
+fn glyph_draft(
+    project: &Path,
+    language: &str,
+    describe: &str,
+    phoneme: Option<&str>,
+    codepoint: Option<&str>,
+    name: Option<&str>,
+    provider: Option<&str>,
+    out: Option<&Path>,
+    yes: bool,
+) -> Result<()> {
+    use crate::conlang::writing::{draft, preflight};
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    eprintln!("inkhaven language glyph-draft · {language} · model: {model}");
+
+    let phon_clause = phoneme
+        .map(|p| format!(" It renders the phoneme /{p}/."))
+        .unwrap_or_default();
+    let prompt = format!(
+        "Draft a glyph for the constructed writing system of the language '{language}'.{phon_clause}\n\n\
+         Description: {describe}"
+    );
+    let raw = crate::ai::stream::collect_blocking(
+        ai.client.clone(),
+        model.to_string(),
+        Some(GLYPH_DRAFT_SYSTEM.to_string()),
+        prompt,
+    )
+    .map_err(|e| Error::Store(format!("inference error: {e}")))?;
+
+    let svg = draft::extract_svg(&raw)
+        .ok_or_else(|| Error::Store("the model did not return an SVG glyph".into()))?;
+    let report = preflight::lint_svg(&svg);
+
+    // Always make the draft inspectable.
+    if let Some(path) = out {
+        crate::io_atomic::write(path, svg.as_bytes()).map_err(Error::Io)?;
+        println!("draft SVG → {}", path.display());
+    } else {
+        println!("{svg}");
+    }
+
+    if report.is_usable() {
+        println!("preflight: ✓ usable{}", if report.warnings.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", report.warnings.join("; "))
+        });
+    } else {
+        eprintln!("preflight: ✗ not usable — {}", report.errors.join("; "));
+        eprintln!("(refine the description and re-run; not bound)");
+        return Ok(());
+    }
+
+    if yes {
+        bind_glyph_text(project, language, &svg, phoneme, codepoint, name, None, "the AI draft")?;
+    } else {
+        eprintln!("(advisory — re-run with --yes to bind it into {language}'s font)");
+    }
+    Ok(())
+}
+
 /// LANG-1 P5.1 — lint a glyph SVG file for font suitability.
 fn glyph_lint(svg: &Path) -> Result<()> {
     let body = std::fs::read_to_string(svg)
@@ -857,6 +967,14 @@ fn glyph_lint(svg: &Path) -> Result<()> {
     }
     Ok(())
 }
+
+const GLYPH_DRAFT_SYSTEM: &str = "You are a type designer drafting a single glyph for a constructed \
+writing system. Output ONE self-contained SVG and NOTHING else — no prose, no explanation, no \
+markdown fences. Hard requirements (the glyph is rejected otherwise): the root element is <svg> with \
+viewBox=\"0 0 1000 1000\"; the shape is one or more FILLED black <path> elements \
+(fill=\"black\" or fill=\"#000\"); outline every stroke into a filled shape — NO stroke-only paths, \
+NO stroke attribute; NO <image> or embedded raster data; NO gradients; NO <text>. Design the glyph \
+to read clearly at small sizes: bold, centered, with margins inside the viewBox.";
 
 const RECONSTRUCT_SYSTEM: &str = "You are a historical linguist applying the comparative method. \
 Given cognate forms from related daughter languages, propose the single most plausible proto-form. \

@@ -209,6 +209,8 @@ Glyph artwork lives in the project glyph store
 
 ```
 inkhaven language glyph-lint --svg ./a.svg                 # suitability preflight
+inkhaven language glyph-draft Eldar --describe "a vertical stroke \
+    with a hook" --phoneme p [--out p.svg] [--yes]         # AI text-to-SVG draft
 inkhaven language font-import-glyph Eldar --svg ./a.svg \
     --phoneme a [--codepoint U+E000] [--name a]            # bind + store + record
 inkhaven language font-config Eldar [--json]               # show the bindings
@@ -218,6 +220,10 @@ inkhaven language font-build --language Eldar \
 
 - **`glyph-lint`** reports whether an SVG is fit for a font outline (filled
   paths required; stroke-only / image / gradient glyphs are flagged).
+- **`glyph-draft`** asks the AI to draft an SVG glyph from a description, runs it
+  through the same preflight, and previews the result. Advisory: it prints the
+  SVG (or writes `--out`) and the verdict; only `--yes` (and only a *usable*
+  draft) binds it into the `font` block — the same path as `font-import-glyph`.
 - **`font-import-glyph`** preflights the SVG (refusing unusable artwork), copies
   it into the glyph store, and binds it — to a `--phoneme` and a Unicode
   `--codepoint` (a single character or hex; a single-character glyph name
