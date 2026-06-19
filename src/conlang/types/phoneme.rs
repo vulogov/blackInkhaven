@@ -48,6 +48,11 @@ pub struct Phoneme {
     #[serde(default)]
     pub romanize: Option<String>,
     pub kind: PhonemeKind,
+    /// Optional sonority-rank override (1 = least sonorous … 7 = vowel).
+    /// When absent, the rank is read from the IPA table, then a kind-based
+    /// fallback. See `phonology::ipa`. (P1.2)
+    #[serde(default)]
+    pub sonority: Option<u8>,
 }
 
 impl Phoneme {

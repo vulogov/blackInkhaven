@@ -87,4 +87,36 @@ impl Phonology {
             .map(Vec::as_slice)
             .unwrap_or(&[])
     }
+
+    /// Segment a written word into the inventory's phonemes (by IPA) using a
+    /// greedy longest-grapheme match — so a multi-char romanization (`sh` →
+    /// `ʃ`) is preferred over its single-char prefixes. A run that matches no
+    /// phoneme is emitted one character at a time, so the function is total.
+    /// This is the reverse of word rendering; full contextual deromanization
+    /// (digraph disambiguation) arrives with romanization schemes in P1.4.
+    pub fn segment(&self, word: &str) -> Vec<String> {
+        let mut graphs: Vec<(&str, &str)> = self
+            .phonemes
+            .iter()
+            .map(|p| (p.grapheme(), p.ipa.as_str()))
+            .filter(|(g, _)| !g.is_empty())
+            .collect();
+        graphs.sort_by(|a, b| b.0.chars().count().cmp(&a.0.chars().count()));
+
+        let mut out = Vec::new();
+        let mut rest = word;
+        'outer: while !rest.is_empty() {
+            for (g, ipa) in &graphs {
+                if rest.starts_with(g) {
+                    out.push((*ipa).to_string());
+                    rest = &rest[g.len()..];
+                    continue 'outer;
+                }
+            }
+            let ch = rest.chars().next().unwrap();
+            out.push(ch.to_string());
+            rest = &rest[ch.len_utf8()..];
+        }
+        out
+    }
 }

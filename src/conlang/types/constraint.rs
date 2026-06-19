@@ -16,6 +16,25 @@ pub enum PhonotacticConstraint {
     NoGeminate,
     /// Forbid phoneme `a` immediately followed by phoneme `b` (by IPA).
     ForbidBigram(String, String),
+    /// No syllable onset may contain a phoneme from any listed class. (P1.2)
+    ForbidInOnset(Vec<String>),
+    /// No syllable coda may contain a phoneme from any listed class. (P1.2)
+    ForbidInCoda(Vec<String>),
+    /// Enforce the Sonority Sequencing Principle: within each syllable,
+    /// onset sonority strictly rises to the nucleus and coda sonority
+    /// strictly falls away from it. (P1.2)
+    SonoritySequencing,
+}
+
+impl PhonotacticConstraint {
+    /// True when evaluating this constraint requires syllable structure (so
+    /// the validator only syllabifies when something actually needs it).
+    pub fn needs_syllables(&self) -> bool {
+        matches!(
+            self,
+            Self::ForbidInOnset(_) | Self::ForbidInCoda(_) | Self::SonoritySequencing
+        )
+    }
 }
 
 /// Wire form: `{ kind: "max_cluster_size", value: 2 }`,
@@ -29,6 +48,8 @@ struct RawConstraint {
     a: Option<String>,
     #[serde(default)]
     b: Option<String>,
+    #[serde(default)]
+    classes: Option<Vec<String>>,
 }
 
 impl TryFrom<RawConstraint> for PhonotacticConstraint {
@@ -46,6 +67,13 @@ impl TryFrom<RawConstraint> for PhonotacticConstraint {
                 let b = r.b.ok_or("forbid_bigram needs `b`")?;
                 Ok(Self::ForbidBigram(a, b))
             }
+            "forbid_in_onset" => {
+                Ok(Self::ForbidInOnset(r.classes.ok_or("forbid_in_onset needs `classes`")?))
+            }
+            "forbid_in_coda" => {
+                Ok(Self::ForbidInCoda(r.classes.ok_or("forbid_in_coda needs `classes`")?))
+            }
+            "sonority_sequencing" | "sonority" => Ok(Self::SonoritySequencing),
             other => Err(format!("unknown constraint kind `{other}`")),
         }
     }

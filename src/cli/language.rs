@@ -89,7 +89,60 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             role,
             count,
         } => generate_word(project, &language, &role, count),
+        LanguageCommand::Syllabify { language, word } => {
+            syllabify_word(project, &language, &word)
+        }
     }
+}
+
+/// LANG-1 P1.2 — syllabify a word against a language's phonology and print
+/// the `CV.CVC`-style breakdown. Loads the Phonology block, segments the
+/// word into phonemes (longest-grapheme match), and runs the sonority-aware
+/// syllabifier.
+fn syllabify_word(project: &Path, language: &str, word: &str) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+
+    let lang_root = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
+        })
+        .ok_or_else(|| {
+            Error::Store("Language system book missing — re-open the project to seed it".into())
+        })?
+        .clone();
+    let lang_book = hierarchy
+        .children_of(Some(lang_root.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language))
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "language `{language}` not found — run `inkhaven language init {language}` first"
+            ))
+        })?;
+
+    let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no phoneme block yet — add `phonemes` / `classes` HJSON \
+             under its `Phonology` chapter"
+        ))
+    })?;
+
+    let seq = phonology.segment(word);
+    let sylls = crate::conlang::phonology::syllable::syllabify(&phonology, &seq);
+    println!("{}", crate::conlang::phonology::syllable::render(&phonology, &sylls));
+    eprintln!(
+        "{} → {} syllable(s), {} phoneme(s)",
+        word,
+        sylls.len(),
+        seq.len()
+    );
+    Ok(())
 }
 
 /// LANG-1 P1.1 — generate deterministic candidate words from a language's

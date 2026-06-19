@@ -193,8 +193,8 @@ mod tests {
     fn romanization_is_used_when_present() {
         let p = Phonology {
             phonemes: vec![
-                Phoneme { ipa: "ʃ".into(), romanize: Some("sh".into()), kind: PhonemeKind::Consonant },
-                Phoneme { ipa: "a".into(), romanize: None, kind: PhonemeKind::Vowel },
+                Phoneme { ipa: "ʃ".into(), romanize: Some("sh".into()), kind: PhonemeKind::Consonant, sonority: None },
+                Phoneme { ipa: "a".into(), romanize: None, kind: PhonemeKind::Vowel, sonority: None },
             ],
             classes: [("C".to_string(), vec!["ʃ".to_string()]), ("V".to_string(), vec!["a".to_string()])]
                 .into_iter()
