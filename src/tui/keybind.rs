@@ -126,6 +126,9 @@ pub enum Action {
     OpenEditorialPass,
     #[serde(rename = "view.open_story_bible")]
     OpenStoryBible,
+    /// LANG-1 P2.7b — `Ctrl+B X`. Open the ConLang hub overview.
+    #[serde(rename = "view.open_conlang_hub")]
+    OpenConlangHub,
     #[serde(rename = "view.run_deep_refresh")]
     RunDeepRefresh,
     #[serde(rename = "global.open_llm_picker")]
@@ -839,6 +842,7 @@ impl Action {
             Action::OpenPlanOutline => "structure".into(),
             Action::OpenEditorialPass => "editorial".into(),
             Action::OpenStoryBible => "bible".into(),
+            Action::OpenConlangHub => "conlang".into(),
             Action::RunDeepRefresh => "deep refresh".into(),
             Action::OpenLlmPicker => "LLM".into(),
             Action::ToggleSound => "sound".into(),
@@ -1015,6 +1019,8 @@ impl Action {
                 "Open the Editorial Pass (1.3.6) — one ranked revision worklist unifying every detector (the editorial `doctor` classes + `plan check`'s structural findings + the Facts-scan sidecar + the prose-style detectors), errors first. `↑↓` navigate, `[` / `]` cycle the category filter, `Enter` jumps to the finding's location in the editor, `f` streams an AI rewrite of a rewritable finding marked `✎` — echo / pacing rewrite the whole paragraph; show-don't-tell / filter-word rewrite just the flagged phrase (1.3.9) — and pops the diff-review to accept (snapshot-first) or reject, `F` walks every rewritable finding in the current filter through that same review (batch fix-all; `Esc` in the diff stops it), `s` skips it for the session, `d` defers it (persisted — won't resurface until the prose changes), `D` clears all deferrals, `Esc` closes. Same as `inkhaven edit`; deterministic (reads computed sidecars, no live AI). Mnemonic: R for Revision pass.".into(),
             Action::OpenStoryBible =>
                 "Open the story bible (1.3.8) — a consolidated, navigable view of the world you've built: every Character with the attributes the continuity bible has tracked across chapters (`eye_color: brown (ch.3)`), plus the Places, Artefacts, and Facts books. 1.3.10 adds semantic drift: under any entity `inkhaven drift scan` flagged, a ⚠ drift badge names the contradicting descriptions and shows the entity's chapter-ordered description trail (each row jumps to its source). 1.3.11 banners the world-consistency health line (the `inkhaven world` summary) at the top. `↑↓` navigate, `Enter` jumps to the entry's source paragraph, `Esc` closes. Run `inkhaven continuity extract` to populate the character attributes. Mnemonic: L for Lore.".into(),
+            Action::OpenConlangHub =>
+                "Open the ConLang hub (LANG-1, Ctrl+B X) — a read-only overview of every constructed language under the Language system book: phoneme inventory (consonants / vowels), template + constraint + allophony counts, prosody (stress rule, tone), romanization schemes, lexicon size, and linked speakers (Places / Characters). `↑↓` scroll, `Esc` closes. The deep operations live on the CLI — `inkhaven language audit / generate-lexicon / query / scan-manuscript` — plus `Ctrl+B Q` to translate a paragraph into an invented language. Mnemonic: X for conlang.".into(),
             Action::RunDeepRefresh =>
                 "Run the deep AI world refresh (1.3.12) in the background — facts check, facts scan, semantic drift, and continuity extract, the same scans as `inkhaven world --deep`, in the manuscript's language. Runs off the main thread (a cloned, pool-shared store), so the editor stays fully responsive; a `⟳ deep refresh` status chip tracks progress. When it finishes, the open story bible / Editorial Pass rebuilds itself from the fresh sidecars and the status shows the new world-consistency summary. Needs an LLM provider; one job at a time. Mnemonic: F for reFresh.".into(),
             Action::OpenLlmPicker =>
@@ -1344,6 +1350,8 @@ impl KeyBindings {
                 entry("u", Action::UndoLastDelete, Scope::Any),
                 entry("w", Action::ToggleTypewriter, Scope::Any),
                 entry("k", Action::ToggleAiFullscreen, Scope::Any),
+                // LANG-1 P2.7b — Ctrl+B X opens the ConLang hub overview.
+                entry("x", Action::OpenConlangHub, Scope::Any),
                 entry("1", Action::StatusFilterReady, Scope::Any),
                 entry("2", Action::StatusFilterFinal, Scope::Any),
                 entry("3", Action::StatusFilterThird, Scope::Any),

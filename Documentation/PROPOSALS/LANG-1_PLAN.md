@@ -143,8 +143,24 @@ releases as they complete.
 > against the Places/Characters books (warns + records anyway if absent). Pure
 > `set_*` / `speakers_of` unit-tested; e2e verified incl. the JSON sidecar. The
 > AI-dialog integration (read a character's proficiency to adjust fluency) is a
-> later hook on the translation path. Remaining P2: manuscript undefined-word
-> scan + `Ctrl+B X` hub (which brings `:lang:` insertion → unlocks the scan).
+> later hook on the translation path. Remaining P2: the TUI finale (P2.7).
+>
+> **P2.7a (shipped)** — manuscript undefined-word scan. `language scan-manuscript
+> <lang> [--json]` (`conlang::lexicon::scan_undefined`) flags words that look
+> like the language (segment fully into its inventory + pass its phonotactics)
+> but aren't in the dictionary. Precision guard: only paragraphs that already
+> contain a known conlang word are scanned. Heuristic; the author reviews.
+>
+> **P2.7b (shipped)** — the `Ctrl+B X` ConLang hub. A read-only, scrollable
+> overview modal (`Modal::ConlangHub`, `src/tui/conlang_hub.rs`) of every
+> language: phoneme inventory (C/V), template/constraint/allophony counts,
+> prosody (stress + tone), romanization schemes, lexicon size, and linked
+> speakers. Bound on the free `Ctrl+B X` (plain `x`; `Shift+x` is fact-check);
+> mirrors the Story-Bible modal. Deep ops stay on the CLI + `Ctrl+B Q`.
+>
+> **Remaining P2: `:lang:` inline insertion** — typing `:<lang>:` in the editor
+> opens a lexicon picker that inserts the chosen word. The last sliver; the
+> trickiest (editor input interception + a picker modal).
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
