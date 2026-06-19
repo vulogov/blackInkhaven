@@ -2333,6 +2333,161 @@ pub enum LanguageCommand {
         language: String,
     },
 
+    /// LANG-1 P4.3 — AI comparative reconstruction: given cognate forms from
+    /// daughter languages, propose the most plausible proto-form (with sound
+    /// correspondences + reasoning).  Advisory — a proposal, nothing committed.
+    Reconstruct {
+        /// Cognate daughter forms (space-separated).
+        #[arg(long)]
+        forms: String,
+        /// The shared meaning (optional context for the model).
+        #[arg(long)]
+        gloss: Option<String>,
+        /// LLM provider override.
+        #[arg(long)]
+        provider: Option<String>,
+    },
+
+    /// LANG-1 P4.3 — AI genealogical-realism check: assess whether a language's
+    /// diachronic sound-change chain is typologically plausible (attested) or
+    /// unnatural, rule by rule.
+    RealismCheck {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// LLM provider override.
+        #[arg(long)]
+        provider: Option<String>,
+    },
+
+    /// LANG-1 P4.2 — print the language-family tree (each language under its
+    /// declared `proto`).
+    FamilyTree,
+
+    /// LANG-1 P4.2 — the cognate set of a proto-form: its reflex in every
+    /// daughter language (each daughter's sound-change chain applied to the
+    /// proto-form).
+    Cognates {
+        /// The proto-language name (case-insensitive).
+        proto: String,
+        /// The proto-form to trace.
+        #[arg(long)]
+        form: String,
+    },
+
+    /// LANG-1 P4.1 — apply a language's diachronic sound-change chain to a
+    /// proto-form and print the resulting daughter form.  Reads the
+    /// `{ diachronics: { proto, rules } }` block in the Phonology chapter.
+    SoundChange {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The proto-form to evolve (in the proto's romanization).
+        #[arg(long)]
+        form: String,
+    },
+
+    /// LANG-1 P4.1 — derive a daughter language's lexicon from its proto by
+    /// applying the daughter's diachronic sound-change chain to every proto
+    /// dictionary entry.  Advisory: nothing is added without `--yes`.
+    DeriveLexicon {
+        /// The daughter language (declares `proto` + `rules` in its Phonology
+        /// chapter's diachronics block).
+        language: String,
+        /// Add the derived forms to the daughter's Dictionary.
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// LANG-1 P3.5 — add an idiom (a phrase with a literal word-by-word gloss
+    /// and a separate idiomatic meaning).  Stored in the Grammar chapter; the
+    /// AI translation consults it to stay idiomatic.
+    IdiomAdd {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The phrase as a whole.
+        #[arg(long)]
+        form: String,
+        /// Word-by-word literal gloss.
+        #[arg(long)]
+        literal: Option<String>,
+        /// What it actually means.
+        #[arg(long)]
+        meaning: String,
+        /// Register tag (formal / vulgar / …).
+        #[arg(long)]
+        register: Option<String>,
+    },
+
+    /// LANG-1 P3.5 — declare a conceptual metaphor (a source→target domain
+    /// mapping, e.g. LIFE is a JOURNEY).
+    MetaphorAdd {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Source domain.
+        #[arg(long)]
+        source: String,
+        /// Target domain.
+        #[arg(long)]
+        target: String,
+        /// An example phrase exhibiting the metaphor.
+        #[arg(long)]
+        example: Option<String>,
+    },
+
+    /// LANG-1 P3.5 — list a language's idioms and declared metaphors.
+    Idioms {
+        /// Target language name (case-insensitive).
+        language: String,
+    },
+
+    /// LANG-1 P3.4 — the grammar questionnaire.  With no `--set`, lists the
+    /// typological-feature catalog (WALS-aligned: word order, alignment, case,
+    /// tense/aspect/mood, …) with the language's current answers + coverage.
+    /// `--set <feature>=<value>` records one answer (validated against the
+    /// catalog) into a `grammar` block in the Grammar chapter.
+    Grammar {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Record an answer: `word_order=sov`.
+        #[arg(long)]
+        set: Option<String>,
+        /// Emit the current answers as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// LANG-1 P3.3 — propose derived lexemes for a root: apply the language's
+    /// derivational rules (agent nouns, diminutives, …) to the root, with
+    /// allophony, and print the new word + sense + POS for each rule that
+    /// fires.  Advisory: nothing is added without `--yes`.
+    Derive {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The root word (in the language's romanization).
+        #[arg(long)]
+        root: String,
+        /// The root's gloss (defaults to the root).
+        #[arg(long)]
+        gloss: Option<String>,
+        /// The root's part of speech (gates which rules apply).
+        #[arg(long)]
+        pos: Option<String>,
+        /// Add the proposed derived forms to the Dictionary.
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// LANG-1 P3.2 — interlinear auto-gloss of conlang text.  Builds a reverse
+    /// index from the dictionary (each entry's bare form, plus the inflected
+    /// forms of entries that declare a `paradigm`, with allophony applied),
+    /// then prints a Leipzig-style two-line gloss for the given text.
+    Gloss {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The conlang text to gloss (whitespace-separated words).
+        #[arg(long)]
+        text: String,
+    },
+
     /// LANG-1 P3.1 — generate the full paradigm of a root: apply a paradigm
     /// template's morpheme sequence (from the `Morphology` chapter) to the
     /// root, run the language's allophony across the affix boundaries, and

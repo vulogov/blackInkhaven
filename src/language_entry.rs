@@ -70,6 +70,11 @@ pub struct DictionaryEntry {
     /// LANG-1 P2.4 — free-form author notes.
     #[serde(default)]
     pub notes: Option<String>,
+    /// LANG-1 P3.2 — name of the paradigm template this entry inflects by
+    /// (from the Morphology block). Lets the auto-glosser recognise the
+    /// entry's inflected forms; `None` → only the bare form is recognised.
+    #[serde(default)]
+    pub paradigm: Option<String>,
 }
 
 /// Accept either a single string (`"formal"`) or an array
