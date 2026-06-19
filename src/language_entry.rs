@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 /// Parsed view of a dictionary entry's HJSON frontmatter.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
 #[allow(dead_code)] // `example` is consumed by Phase C's translation prompt envelope
 pub struct DictionaryEntry {
     #[serde(default)]
@@ -52,6 +52,22 @@ pub struct DictionaryEntry {
     /// the lemma "aiya".
     #[serde(default)]
     pub inflection: BTreeMap<String, String>,
+    /// LANG-1 P2.4 — register tags (formal / vulgar / archaic / sacred …).
+    #[serde(default)]
+    pub registers: Vec<String>,
+    /// LANG-1 P2.4 — semantic-domain tags (weapon / kinship / weather …).
+    #[serde(default)]
+    pub domain: Vec<String>,
+    /// LANG-1 P2.4 — in-world era this word belongs to (time-layering).
+    #[serde(default)]
+    pub era: Option<String>,
+    /// LANG-1 P2.4 — free-form etymology note (structured cognates: P4).
+    /// Often already present in hand-authored entries; now parsed.
+    #[serde(default)]
+    pub etymology: Option<String>,
+    /// LANG-1 P2.4 — free-form author notes.
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 impl DictionaryEntry {

@@ -102,6 +102,24 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         } => romanize_text(project, &language, &text, scheme.as_deref(), reverse),
         LanguageCommand::Tone { language, tones } => tone_sandhi(project, &language, &tones),
         LanguageCommand::Audit { language, json } => audit(project, &language, json),
+        LanguageCommand::Query {
+            language,
+            register,
+            domain,
+            era,
+            pos,
+            text,
+            json,
+        } => query(
+            project,
+            &language,
+            register.as_deref(),
+            domain.as_deref(),
+            era.as_deref(),
+            pos.as_deref(),
+            text.as_deref(),
+            json,
+        ),
         LanguageCommand::GenerateLexicon {
             language,
             topic,
@@ -132,6 +150,56 @@ Reply with a SINGLE JSON object and nothing else — no prose, no preamble, no m
 Shape: {\"entries\":[{\"form\":\"…\",\"gloss\":\"…\",\"pos\":\"…\",\"example\":\"…\"}]}. Choose each \
 `form` ONLY from the provided candidate list (never invent a form). Never assign two entries the \
 same meaning. Keep `pos` a short lowercase tag (noun/verb/adjective/…).";
+
+/// LANG-1 P2.4 — query the dictionary by the rich entry fields.
+#[allow(clippy::too_many_arguments)]
+fn query(
+    project: &Path,
+    language: &str,
+    register: Option<&str>,
+    domain: Option<&str>,
+    era: Option<&str>,
+    pos: Option<&str>,
+    text: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let f = crate::conlang::lexicon::Filter { register, domain, era, pos, text };
+    let matches = crate::conlang::lexicon::filter(&entries, &f);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&matches)
+                .map_err(|e| Error::Store(format!("serializing query: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("{} / {} entr(y/ies) match", matches.len(), entries.len());
+    for e in &matches {
+        let mut tags = Vec::new();
+        if !e.registers.is_empty() {
+            tags.push(format!("[{}]", e.registers.join(",")));
+        }
+        if !e.domain.is_empty() {
+            tags.push(format!("{{{}}}", e.domain.join(",")));
+        }
+        if let Some(era) = &e.era {
+            tags.push(format!("<{era}>"));
+        }
+        let pos = if e.pos.trim().is_empty() { String::new() } else { format!(" ({})", e.pos) };
+        println!(
+            "  {:<16} {}{}{}",
+            e.word,
+            e.translation,
+            pos,
+            if tags.is_empty() { String::new() } else { format!("  {}", tags.join(" ")) }
+        );
+    }
+    Ok(())
+}
 
 /// LANG-1 P2.2 — AI-assisted dictionary generation behind the dedup gate.
 #[allow(clippy::too_many_arguments)]

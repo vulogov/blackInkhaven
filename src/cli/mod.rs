@@ -2301,6 +2301,32 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// LANG-1 P2.4 — query a language's dictionary by the rich entry fields:
+    /// register, semantic domain, in-world era, part of speech, and a free
+    /// substring over headword + gloss.  Filters combine (AND).
+    Query {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Register tag (formal / vulgar / archaic / sacred …).
+        #[arg(long)]
+        register: Option<String>,
+        /// Semantic-domain tag (weapon / kinship / weather …).
+        #[arg(long)]
+        domain: Option<String>,
+        /// In-world era tag.
+        #[arg(long)]
+        era: Option<String>,
+        /// Part of speech.
+        #[arg(long)]
+        pos: Option<String>,
+        /// Substring over headword + gloss (case-insensitive).
+        #[arg(long)]
+        text: Option<String>,
+        /// Emit matches as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// LANG-1 P2.2 — AI-assisted dictionary generation.  The deterministic
     /// generator builds a pool of phonotactically-valid forms; the AI assigns
     /// each a concept / gloss / part-of-speech for the requested topic; then

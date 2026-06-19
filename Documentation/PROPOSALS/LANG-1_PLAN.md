@@ -113,9 +113,18 @@ releases as they complete.
 > misses, vs both the existing lexicon *and* intra-batch. Reuses the store's
 > already-loaded embedding engine via a thin `Store::embed_batch` passthrough
 > (VectorEngine → DocumentStorage → Store — no second model load). Pure filter
-> unit-tested with synthetic vectors. Remaining P2: rich entry fields
-> (senses/registers/era/etymology), the `conlang_lexicon`/`cognates`/`usage`
-> tables, manuscript undefined-word scan, Places/Characters links, `Ctrl+B X` hub.
+> unit-tested with synthetic vectors.
+>
+> **P2.4 (shipped)** — rich entry fields + query. `DictionaryEntry` gained
+> additive (`#[serde(default)]`) `registers` / `domain` / `era` / `etymology` /
+> `notes` (the last two already appeared in hand-authored HJSON and are now
+> parsed; nothing else in the 1.2.13 model changes). `inkhaven language query
+> <lang> [--register] [--domain] [--era] [--pos] [--text] [--json]` filters by
+> any combination (AND) via the pure `lexicon::filter` / `Filter`. The
+> normalized `conlang_lexicon`/`cognates`/`usage` tables are **deferred** (per
+> "extend in place" — iterating the book is fine until a real 10k-entry perf
+> need appears). Remaining P2: generator-populated rich fields, manuscript
+> undefined-word scan, Places/Characters links, `Ctrl+B X` hub.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the

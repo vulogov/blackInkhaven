@@ -58,6 +58,39 @@ impl LexiconReport {
     }
 }
 
+/// Query criteria over the rich entry fields (LANG-1 P2.4). A `None` field is
+/// "don't care"; tag matches are case-insensitive membership; `text` is a
+/// case-insensitive substring over the headword + gloss.
+#[derive(Debug, Default)]
+pub struct Filter<'a> {
+    pub register: Option<&'a str>,
+    pub domain: Option<&'a str>,
+    pub era: Option<&'a str>,
+    pub pos: Option<&'a str>,
+    pub text: Option<&'a str>,
+}
+
+impl Filter<'_> {
+    fn matches(&self, e: &DictionaryEntry) -> bool {
+        let tag = |needle: Option<&str>, hay: &[String]| {
+            needle.is_none_or(|n| hay.iter().any(|x| x.eq_ignore_ascii_case(n)))
+        };
+        tag(self.register, &e.registers)
+            && tag(self.domain, &e.domain)
+            && self.era.is_none_or(|q| e.era.as_deref().is_some_and(|x| x.eq_ignore_ascii_case(q)))
+            && self.pos.is_none_or(|q| e.pos.eq_ignore_ascii_case(q))
+            && self.text.is_none_or(|q| {
+                let q = q.to_lowercase();
+                e.word.to_lowercase().contains(&q) || e.translation.to_lowercase().contains(&q)
+            })
+    }
+}
+
+/// Filter a dictionary by the rich fields, preserving order.
+pub fn filter<'a>(entries: &'a [DictionaryEntry], f: &Filter) -> Vec<&'a DictionaryEntry> {
+    entries.iter().filter(|e| f.matches(e)).collect()
+}
+
 /// Audit a dictionary against its phonology. Pure; the phonology may be empty
 /// (`Phonology::default()`), in which case the phonotactic check is skipped
 /// and homophones reduce to spelling collisions.
@@ -121,8 +154,7 @@ mod tests {
             word: word.into(),
             pos: "noun".into(),
             translation: gloss.into(),
-            example: String::new(),
-            inflection: Default::default(),
+            ..Default::default()
         }
     }
 
@@ -174,5 +206,41 @@ mod tests {
         let p = phon();
         let entries = vec![entry("kata", "stone"), entry("taka", "water")];
         assert_eq!(analyze(&p, &entries).issue_count(), 0);
+    }
+
+    fn rich(word: &str, gloss: &str, registers: &[&str], domain: &[&str], era: Option<&str>) -> DictionaryEntry {
+        DictionaryEntry {
+            word: word.into(),
+            pos: "noun".into(),
+            translation: gloss.into(),
+            registers: registers.iter().map(|s| s.to_string()).collect(),
+            domain: domain.iter().map(|s| s.to_string()).collect(),
+            era: era.map(String::from),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn filter_by_rich_fields() {
+        let entries = vec![
+            rich("makil", "sword", &["formal"], &["weapon"], Some("third_age")),
+            rich("nen", "water", &[], &["nature"], Some("first_age")),
+            rich("gurth", "death", &["sacred"], &["weapon"], Some("third_age")),
+        ];
+        let by_domain = filter(&entries, &Filter { domain: Some("weapon"), ..Default::default() });
+        assert_eq!(by_domain.len(), 2);
+        let by_reg = filter(&entries, &Filter { register: Some("Formal"), ..Default::default() });
+        assert_eq!(by_reg.len(), 1);
+        assert_eq!(by_reg[0].word, "makil");
+        let by_era_and_domain = filter(
+            &entries,
+            &Filter { era: Some("third_age"), domain: Some("weapon"), ..Default::default() },
+        );
+        assert_eq!(by_era_and_domain.len(), 2);
+        let by_text = filter(&entries, &Filter { text: Some("wat"), ..Default::default() });
+        assert_eq!(by_text.len(), 1);
+        assert_eq!(by_text[0].word, "nen");
+        // Empty filter returns everything.
+        assert_eq!(filter(&entries, &Filter::default()).len(), 3);
     }
 }
