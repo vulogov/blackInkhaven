@@ -166,6 +166,24 @@ releases as they complete.
 > unit-tested `conlang_hub::detect_trigger(line, col)`; the `:` hook sits next
 > to the snippet-expansion hook in the editor input path. **P2 is complete.**
 
+### P3 — morphology
+
+> **P3.1 (shipped)** — morpheme spec + paradigm generation. `conlang::types::
+> morphology` (Morphology / MorphemeSpec / AffixPosition / ParadigmTemplate /
+> ParadigmCell), parsed from a typed HJSON block in the language's **Grammar**
+> chapter (the 1.2.13 scaffold has no Morphology chapter, so the block lives in
+> Grammar — `load_morphology` scans Grammar *and* a hand-added Morphology
+> chapter). `conlang::morphology::paradigm::generate(phon, morph, template,
+> root, root_gloss)` assembles each cell's underlying form (prefixes + root +
+> suffixes), runs the **P1.3 allophony engine across the affix boundaries**,
+> and emits the surface form + a Leipzig-style gloss (`DEF-stone`,
+> `stone-DAT-PL`). `inkhaven language paradigm <lang> --root --template
+> [--gloss]`. P3.1 covers prefix + suffix; infix / circumfix / processes
+> (ablaut, reduplication), auto-gloss, the grammar questionnaire, idioms /
+> metaphors, and derived-form proposals are later P3 increments. Verified the
+> allophony interaction e2e (`kata`+DAT → `katat` by final devoicing; `kata`+
+> DAT+PL → `katadi`, the now-medial `d` correctly *not* devoiced).
+
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
 language; meanings come from the AI; nothing duplicates; nothing

@@ -117,6 +117,12 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::ScanManuscript { language, json } => {
             scan_manuscript(project, &language, json)
         }
+        LanguageCommand::Paradigm {
+            language,
+            root,
+            template,
+            gloss,
+        } => paradigm(project, &language, &root, &template, gloss.as_deref()),
         LanguageCommand::Query {
             language,
             register,
@@ -228,6 +234,87 @@ fn link_character(project: &Path, character: &str, language: &str, proficiency: 
     links.set_character_proficiency(&char_name, &lang_book.title, level);
     links.save(root).map_err(Error::Io)?;
     eprintln!("{char_name} → {} ({})", lang_book.title, level.as_str());
+    Ok(())
+}
+
+/// Find + parse the `Morphology`-chapter HJSON block for a language sub-book.
+fn load_morphology(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<Option<crate::conlang::types::morphology::Morphology>> {
+    // The 1.2.13 scaffold has no Morphology chapter, so the block lives in
+    // the Grammar chapter (or a hand-added Morphology chapter).
+    let chapters: Vec<_> = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .filter(|n| {
+            n.kind == NodeKind::Chapter
+                && (n.title.eq_ignore_ascii_case("Morphology")
+                    || n.title.eq_ignore_ascii_case("Grammar"))
+        })
+        .cloned()
+        .collect();
+    for chapter in chapters {
+        for para in hierarchy.children_of(Some(chapter.id)) {
+            if para.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let Some(bytes) = store.get_content(para.id)? else { continue };
+            let body = String::from_utf8_lossy(&bytes);
+            match crate::conlang::types::morphology::Morphology::from_hjson(&body) {
+                Ok(Some(m)) if !m.morphemes.is_empty() || !m.paradigms.is_empty() => {
+                    return Ok(Some(m));
+                }
+                // A Grammar paragraph that isn't a morphology block (a
+                // define-rule rule) just won't match the shape — skip it.
+                Ok(_) | Err(_) => continue,
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// LANG-1 P3.1 — generate + print a root's paradigm.
+fn paradigm(
+    project: &Path,
+    language: &str,
+    root: &str,
+    template: &str,
+    gloss: Option<&str>,
+) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no phoneme block"))
+    })?;
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no morphology yet — add a `morphemes` / `paradigms` HJSON \
+             paragraph under its `Grammar` chapter"
+        ))
+    })?;
+    let tmpl = morph.paradigm(template).ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no paradigm template `{template}` (have: {})",
+            morph.paradigms.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
+        ))
+    })?;
+
+    let root_gloss = gloss.unwrap_or(root);
+    let rows = crate::conlang::morphology::paradigm::generate(
+        &phonology, &morph, tmpl, root, root_gloss,
+    );
+
+    println!("paradigm `{}` of {root} ({root_gloss}) · {} cell(s)", tmpl.name, rows.len());
+    for r in &rows {
+        let feats = r
+            .features
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        println!("  {:<18} {:<24} {}", r.form, r.gloss, feats);
+    }
     Ok(())
 }
 
