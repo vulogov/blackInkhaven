@@ -162,6 +162,14 @@ pub(super) struct EventPickerEntry {
     pub is_orphan: bool,
 }
 
+/// LANG-1 P2.7b — one line in the ConLang hub overview (`Ctrl+B X`).
+/// `header` rows are section labels (a language name); the rest are stats.
+#[derive(Debug, Clone)]
+pub(super) struct ConlangHubRow {
+    pub text: String,
+    pub header: bool,
+}
+
 /// 1.3.8 — one rendered line in the story-bible view.
 #[derive(Debug, Clone)]
 pub(super) struct BibleRow {
@@ -748,6 +756,24 @@ pub(super) enum Modal {
     StoryBible {
         rows: Vec<BibleRow>,
         cursor: usize,
+    },
+    /// LANG-1 P2.7b — the ConLang hub overview (`Ctrl+B X`): a read-only,
+    /// scrollable summary of every language. `↑↓` scroll, `Esc` closes.
+    ConlangHub {
+        rows: Vec<ConlangHubRow>,
+        cursor: usize,
+    },
+    /// LANG-1 P2.7c — the `:lang:` inline-insertion picker. Typing `:<lang>:`
+    /// in the editor opens it; type to filter, `↑↓` move, `Enter` inserts the
+    /// word in place of the trigger, `Esc` leaves the literal text.
+    LangInsert {
+        language: String,
+        /// `(headword, gloss)` pairs.
+        entries: Vec<(String, String)>,
+        query: String,
+        cursor: usize,
+        /// The `:lang:` trigger span to replace: `(row, start_col, end_col)`.
+        trigger: (usize, usize, usize),
     },
     SnapshotPicker {
         /// Kept for potential refresh ops after future snapshot mutations.

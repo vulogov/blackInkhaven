@@ -4360,6 +4360,11 @@ impl App {
             if super::snippets::is_expansion_trigger_char(c) {
                 self.maybe_expand_snippet();
             }
+            // LANG-1 P2.7c — typing the closing `:` of a `:lang:` trigger
+            // opens the inline lexicon-insertion picker (no-op otherwise).
+            if c == ':' {
+                self.maybe_trigger_lang_insert();
+            }
         } else if matches!(
             key.code,
             crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Tab
@@ -8610,6 +8615,7 @@ impl App {
             A::OpenPlanOutline => self.open_plan_outline(),
             A::OpenEditorialPass => self.open_editorial_pass(),
             A::OpenStoryBible => self.open_story_bible(),
+            A::OpenConlangHub => self.open_conlang_hub(),
             A::RunDeepRefresh => self.start_deep_refresh(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
@@ -9749,6 +9755,157 @@ impl App {
         if let Modal::StoryBible { cursor, .. } = &mut self.modal {
             *cursor = v;
         }
+    }
+
+    /// LANG-1 P2.7b — open the `Ctrl+B X` ConLang hub overview.
+    fn open_conlang_hub(&mut self) {
+        let root = self.store.project_root().to_path_buf();
+        let rows = super::conlang_hub::build_rows(&self.store, &self.hierarchy, &root);
+        if rows.is_empty() {
+            self.status = "conlang: no Language book — re-open the project to seed it".into();
+            return;
+        }
+        self.modal = Modal::ConlangHub { rows, cursor: 0 };
+        self.status = "ConLang hub · ↑↓ scroll · Esc".into();
+    }
+
+    fn conlang_hub_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::ConlangHub { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "conlang hub: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::ConlangHub { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::ConlangHub { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// LANG-1 P2.7c — after the closing `:` of a `:<lang>:` is typed in the
+    /// editor, detect the trigger, resolve the language, and open the inline
+    /// lexicon-insertion picker. A no-op unless the cursor sits right after a
+    /// `:<ident>:` whose `<ident>` resolves to a language.
+    fn maybe_trigger_lang_insert(&mut self) {
+        let (row, col, line) = {
+            let Some(doc) = self.opened.as_ref() else { return };
+            let (r, c) = doc.textarea.cursor();
+            let line = doc.textarea.lines().get(r).cloned().unwrap_or_default();
+            (r, c, line)
+        };
+        let Some((ident, start)) = super::conlang_hub::detect_trigger(&line, col) else {
+            return;
+        };
+        let Some(lang_book) =
+            super::conlang_hub::resolve_language(&self.store, &self.hierarchy, &ident)
+        else {
+            return;
+        };
+        let entries = super::conlang_hub::load_entries(&self.store, &self.hierarchy, &lang_book);
+        self.status =
+            format!(":{ident}: · {} · type to filter · ⏎ insert · Esc", lang_book.title);
+        self.modal = Modal::LangInsert {
+            language: lang_book.title.clone(),
+            entries,
+            query: String::new(),
+            cursor: 0,
+            trigger: (row, start, col),
+        };
+    }
+
+    /// Indices of entries matching the current `LangInsert` query (substring
+    /// over headword + gloss).
+    fn lang_insert_filtered(&self) -> Vec<usize> {
+        let Modal::LangInsert { entries, query, .. } = &self.modal else {
+            return Vec::new();
+        };
+        if query.is_empty() {
+            return (0..entries.len()).collect();
+        }
+        let q = query.to_lowercase();
+        entries
+            .iter()
+            .enumerate()
+            .filter(|(_, (w, g))| w.to_lowercase().contains(&q) || g.to_lowercase().contains(&q))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn lang_insert_handle_key(&mut self, key: KeyEvent) -> bool {
+        let filtered = self.lang_insert_filtered();
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = ":lang: cancelled".into();
+            }
+            KeyCode::Up => {
+                if let Modal::LangInsert { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::LangInsert { cursor, .. } = &mut self.modal {
+                    if !filtered.is_empty() {
+                        *cursor = (*cursor + 1).min(filtered.len() - 1);
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                if let Modal::LangInsert { query, cursor, .. } = &mut self.modal {
+                    query.pop();
+                    *cursor = 0;
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Modal::LangInsert { query, cursor, .. } = &mut self.modal {
+                    query.push(c);
+                    *cursor = 0;
+                }
+            }
+            KeyCode::Enter => {
+                let (word, trigger) = {
+                    let Modal::LangInsert { entries, trigger, cursor, .. } = &self.modal else {
+                        return true;
+                    };
+                    match filtered.get(*cursor) {
+                        Some(&i) => (entries[i].0.clone(), *trigger),
+                        None => return true,
+                    }
+                };
+                self.modal = Modal::None;
+                self.lang_insert_replace(trigger, &word);
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Replace the `:lang:` trigger span with the chosen word (mirrors
+    /// `do_replace_current`).
+    fn lang_insert_replace(&mut self, trigger: (usize, usize, usize), word: &str) {
+        let (row, start, end) = trigger;
+        let Some(doc) = self.opened.as_mut() else { return };
+        doc.textarea.move_cursor(CursorMove::Jump(row as u16, start as u16));
+        doc.textarea.start_selection();
+        doc.textarea.move_cursor(CursorMove::Jump(row as u16, end as u16));
+        doc.textarea.cut();
+        doc.textarea.insert_str(word);
+        doc.dirty = true;
+        self.status = format!("inserted `{word}`");
     }
 
     fn set_editorial_cursor(&mut self, v: usize) {
@@ -17315,6 +17472,14 @@ impl App {
         }
         if matches!(self.modal, Modal::StoryBible { .. }) {
             self.story_bible_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::ConlangHub { .. }) {
+            self.conlang_hub_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::LangInsert { .. }) {
+            self.lang_insert_handle_key(key);
             return Ok(false);
         }
         if is_llm_picker {

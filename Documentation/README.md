@@ -33,6 +33,7 @@ return whenever you need to remember a specific knob.
 | [`INKHAVEN_CHEAT_SHEET.typ`](INKHAVEN_CHEAT_SHEET.typ) | Two-column A4 cheat sheet — print or pin it next to your terminal. Compile with `typst compile Documentation/INKHAVEN_CHEAT_SHEET.typ`. Companion to `KEYBINDING.md`. |
 | [`KEYS_REASSIGNMENT.md`](KEYS_REASSIGNMENT.md) | Rebind chords via `keys.bindings` in HJSON or via the `ink.key.*` Bund stdlib. Includes the full action table. |
 | [`MAINTENANCE.md`](MAINTENANCE.md)     | Backup, restore, auto-backup-on-exit, the `reindex` command, log files, recovering from drift, troubleshooting first-run model downloads. |
+| [`CONLANG.md`](CONLANG.md)             | The ConLang Suite (1.3.14+, RFC LANG-1) — build a constructed language inside the editor: phonology / lexicon / morphology HJSON blocks, the `inkhaven language` CLI surface, AI dictionary generation + dedup gate, `Ctrl+B X` hub, `:lang:` insertion. |
 | [`Bund/`](Bund/README.md)              | Bund — the embedded scripting language. Hook lambdas (`hook.on_save`, …), the `ink.*` stdlib, sandbox policy, `.bund` Script nodes. Start at [`Bund/BUND_TUTORIAL.md`](Bund/BUND_TUTORIAL.md). |
 
 ## Topic guides

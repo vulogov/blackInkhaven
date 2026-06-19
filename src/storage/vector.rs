@@ -147,6 +147,16 @@ impl VectorEngine {
         self.with_store(|s| Ok(s.count()))
     }
 
+    /// Embed arbitrary texts with the configured engine — for on-demand
+    /// semantic checks (e.g. conlang near-synonym detection) that aren't
+    /// backed by the stored vector index. Reuses the already-loaded model.
+    pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        let Some(engine) = &self.embedding else {
+            return Err(anyhow!("vector engine has no embedding model configured"));
+        };
+        engine.embed_batch(texts)
+    }
+
     pub fn sync(&self) -> Result<()> {
         if !self.dirty.load(Ordering::Acquire) {
             return Ok(());
