@@ -153,7 +153,8 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             glyphs,
             out,
             upm,
-        } => font_build(&family, &glyphs, out.as_deref(), upm),
+            format,
+        } => font_build(&family, &glyphs, out.as_deref(), upm, &format),
         LanguageCommand::GlyphLint { svg } => glyph_lint(&svg),
         LanguageCommand::Reconstruct {
             forms,
@@ -362,9 +363,27 @@ fn load_diachronics(
     Ok(None)
 }
 
-/// LANG-1 P5.2 — compile a directory of glyph SVGs into a UFO font source.
-fn font_build(family: &str, glyphs_dir: &Path, out: Option<&Path>, upm: f64) -> Result<()> {
-    use crate::conlang::writing::{font::GlyphSource, preflight};
+/// LANG-1 P5.2/P5.3 — compile a directory of glyph SVGs into a UFO source
+/// and/or an in-process TrueType binary.
+fn font_build(
+    family: &str,
+    glyphs_dir: &Path,
+    out: Option<&Path>,
+    upm: f64,
+    format: &str,
+) -> Result<()> {
+    use crate::conlang::writing::{compile, font::GlyphSource, preflight};
+
+    let (want_ufo, want_ttf) = match format.to_ascii_lowercase().as_str() {
+        "ufo" => (true, false),
+        "ttf" => (false, true),
+        "both" => (true, true),
+        other => {
+            return Err(Error::Config(format!(
+                "unknown --format `{other}` (expected ufo, ttf, or both)"
+            )))
+        }
+    };
 
     let mut svgs: Vec<std::path::PathBuf> = std::fs::read_dir(glyphs_dir)
         .map_err(|e| Error::Config(format!("reading {}: {e}", glyphs_dir.display())))?
@@ -411,19 +430,40 @@ fn font_build(family: &str, glyphs_dir: &Path, out: Option<&Path>, upm: f64) -> 
 
     let font = crate::conlang::writing::font::build_ufo(family, upm, &sources)
         .map_err(Error::Config)?;
-    let out_path = out
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from(format!("{family}.ufo")));
-    font.save(&out_path)
-        .map_err(|e| Error::Store(format!("saving UFO: {e}")))?;
 
+    // `--out` sets the stem; the extension follows the format. When both are
+    // requested, the UFO and TTF share that stem.
+    let stem = out
+        .map(|p| p.with_extension(""))
+        .unwrap_or_else(|| std::path::PathBuf::from(family));
+
+    let skipped_note = if skipped > 0 {
+        format!(", {skipped} skipped")
+    } else {
+        String::new()
+    };
     println!(
-        "font `{family}` · {} glyph(s){} → {} (UFO @ {upm:.0} upm)",
-        sources.len(),
-        if skipped > 0 { format!(", {skipped} skipped") } else { String::new() },
-        out_path.display()
+        "font `{family}` · {} glyph(s){skipped_note} @ {upm:.0} upm",
+        sources.len()
     );
-    eprintln!("(compile to TTF/OTF with fontc / fontmake, or open in FontForge / Glyphs)");
+
+    if want_ufo {
+        let ufo_path = stem.with_extension("ufo");
+        font.save(&ufo_path)
+            .map_err(|e| Error::Store(format!("saving UFO: {e}")))?;
+        println!("  UFO source → {}", ufo_path.display());
+        if !want_ttf {
+            eprintln!(
+                "  (compile to TTF/OTF with `--format ttf`, fontc / fontmake, or FontForge)"
+            );
+        }
+    }
+    if want_ttf {
+        let ttf = compile::compile_ttf(&font, upm).map_err(Error::Config)?;
+        let ttf_path = stem.with_extension("ttf");
+        crate::io_atomic::write(&ttf_path, &ttf).map_err(Error::Io)?;
+        println!("  TrueType font → {} ({} bytes)", ttf_path.display(), ttf.len());
+    }
     Ok(())
 }
 

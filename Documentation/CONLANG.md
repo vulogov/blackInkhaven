@@ -193,16 +193,20 @@ stem also becomes the glyph's Unicode codepoint):
 ```
 inkhaven language glyph-lint --svg ./glyphs/a.svg          # suitability preflight
 inkhaven language font-build Eldar --glyphs ./glyphs/ \
-    [--out Eldar.ufo] [--upm 1000]
+    [--out Eldar] [--upm 1000] [--format ufo|ttf|both]
 ```
 
 - **`glyph-lint`** reports whether an SVG is fit for a font outline (filled
   paths required; stroke-only / image / gradient glyphs are flagged).
 - **`font-build`** runs the preflight on every glyph (skipping unusable ones),
   converts each filled path to font contours (y-flipped + scaled into the em),
-  and writes a **UFO** — a standard font source you can compile with
-  `fontc` / `fontmake` or open in FontForge / Glyphs. In-process UFO → TTF/OTF
-  is coming in a later phase.
+  and emits — per `--format`:
+  - **`ufo`** (default): a **UFO** font source you can edit or compile with
+    `fontc` / `fontmake` / FontForge / Glyphs;
+  - **`ttf`**: a ready-to-use **TrueType** binary, compiled fully in-process
+    (cubics are quadified for the `glyf` table; a complete OpenType table set
+    is assembled — no external tool);
+  - **`both`**: the editable source *and* the binary, sharing one stem.
 
 ## In the editor
 
