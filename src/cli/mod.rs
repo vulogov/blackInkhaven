@@ -2333,6 +2333,24 @@ pub enum LanguageCommand {
         language: String,
     },
 
+    /// LANG-1 P3.1 — generate the full paradigm of a root: apply a paradigm
+    /// template's morpheme sequence (from the `Morphology` chapter) to the
+    /// root, run the language's allophony across the affix boundaries, and
+    /// print the surface form + Leipzig gloss for every cell.
+    Paradigm {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The root word (in the language's romanization).
+        #[arg(long)]
+        root: String,
+        /// Paradigm template name (from the Morphology chapter).
+        #[arg(long)]
+        template: String,
+        /// Gloss for the root (defaults to the root itself).
+        #[arg(long)]
+        gloss: Option<String>,
+    },
+
     /// LANG-1 P2.7 — scan the manuscript for candidate **undefined** conlang
     /// words: words that look like the language (segment fully into its
     /// inventory + pass its phonotactics) but aren't in the dictionary.  Only
