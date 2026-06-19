@@ -19,7 +19,8 @@ use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::{
-    InsertPosition, NodeKind, Store, SYSTEM_TAG_LANGUAGES,
+    InsertPosition, NodeKind, Store, SYSTEM_TAG_CHARACTERS, SYSTEM_TAG_LANGUAGES,
+    SYSTEM_TAG_PLACES,
 };
 
 use super::{LanguageCommand, LanguageExportFormat};
@@ -102,6 +103,17 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         } => romanize_text(project, &language, &text, scheme.as_deref(), reverse),
         LanguageCommand::Tone { language, tones } => tone_sandhi(project, &language, &tones),
         LanguageCommand::Audit { language, json } => audit(project, &language, json),
+        LanguageCommand::LinkPlace {
+            place,
+            language,
+            secondary,
+        } => link_place(project, &place, &language, secondary),
+        LanguageCommand::LinkCharacter {
+            character,
+            language,
+            proficiency,
+        } => link_character(project, &character, &language, &proficiency),
+        LanguageCommand::Speakers { language } => speakers(project, &language),
         LanguageCommand::Query {
             language,
             register,
@@ -152,6 +164,96 @@ Shape: {\"entries\":[{\"form\":\"…\",\"gloss\":\"…\",\"pos\":\"…\",\"examp
 form). Never assign two entries the same meaning. Keep `pos` a short lowercase tag \
 (noun/verb/adjective/…). `register` is one short tag (neutral/formal/vulgar/sacred/archaic); \
 `domain` is one or two short semantic-domain tags.";
+
+/// Resolve a name against a system book (Places / Characters), returning the
+/// canonical node title. `None` when no node matches — the caller warns but
+/// still records the link (the entry may be added later).
+fn resolve_system_node(hierarchy: &Hierarchy, system_tag: &str, name: &str) -> Option<String> {
+    let root = hierarchy
+        .iter()
+        .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(system_tag))?;
+    hierarchy
+        .collect_subtree(root.id)
+        .into_iter()
+        .filter_map(|id| hierarchy.get(id))
+        .find(|n| n.title.eq_ignore_ascii_case(name))
+        .map(|n| n.title.clone())
+}
+
+/// LANG-1 P2.6 — link a Place to a (primary or secondary) language.
+fn link_place(project: &Path, place: &str, language: &str, secondary: bool) -> Result<()> {
+    use crate::conlang::links::ConlangLinks;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let place_name = match resolve_system_node(&hierarchy, SYSTEM_TAG_PLACES, place) {
+        Some(canonical) => canonical,
+        None => {
+            eprintln!("note: no Place named `{place}` found — recording the link anyway");
+            place.to_string()
+        }
+    };
+    let root = store.project_root();
+    let mut links = ConlangLinks::load(root).map_err(Error::Io)?;
+    if secondary {
+        links.add_place_secondary(&place_name, &lang_book.title);
+        eprintln!("{place_name} → secondary language {}", lang_book.title);
+    } else {
+        links.set_place_primary(&place_name, &lang_book.title);
+        eprintln!("{place_name} → primary language {}", lang_book.title);
+    }
+    links.save(root).map_err(Error::Io)?;
+    Ok(())
+}
+
+/// LANG-1 P2.6 — declare a Character's proficiency in a language.
+fn link_character(project: &Path, character: &str, language: &str, proficiency: &str) -> Result<()> {
+    use crate::conlang::links::{ConlangLinks, Level};
+    let level = Level::parse(proficiency).ok_or_else(|| {
+        Error::Config(format!(
+            "unknown proficiency `{proficiency}` — use native | fluent | conversational | broken | reading_only"
+        ))
+    })?;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let char_name = match resolve_system_node(&hierarchy, SYSTEM_TAG_CHARACTERS, character) {
+        Some(canonical) => canonical,
+        None => {
+            eprintln!("note: no Character named `{character}` found — recording the link anyway");
+            character.to_string()
+        }
+    };
+    let root = store.project_root();
+    let mut links = ConlangLinks::load(root).map_err(Error::Io)?;
+    links.set_character_proficiency(&char_name, &lang_book.title, level);
+    links.save(root).map_err(Error::Io)?;
+    eprintln!("{char_name} → {} ({})", lang_book.title, level.as_str());
+    Ok(())
+}
+
+/// LANG-1 P2.6 — list Places + Characters linked to a language.
+fn speakers(project: &Path, language: &str) -> Result<()> {
+    use crate::conlang::links::ConlangLinks;
+    let (store, _hierarchy, lang_book) = open_lang_book(project, language)?;
+    let links = ConlangLinks::load(store.project_root()).map_err(Error::Io)?;
+    let (places, characters) = links.speakers_of(&lang_book.title);
+
+    println!("speakers of {}", lang_book.title);
+    if places.is_empty() && characters.is_empty() {
+        println!("  (none linked yet — see `inkhaven language link-place` / `link-character`)");
+        return Ok(());
+    }
+    if !places.is_empty() {
+        println!("\n  places ({}):", places.len());
+        for p in &places {
+            println!("    {p}");
+        }
+    }
+    if !characters.is_empty() {
+        println!("\n  characters ({}):", characters.len());
+        for (name, level) in &characters {
+            println!("    {name:<20} {level}");
+        }
+    }
+    Ok(())
+}
 
 /// LANG-1 P2.4 — query the dictionary by the rich entry fields.
 #[allow(clippy::too_many_arguments)]

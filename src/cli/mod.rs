@@ -2301,6 +2301,38 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// LANG-1 P2.6 — link a Place to a language it's spoken in.  Stored in a
+    /// `.inkhaven/conlang-links.json` sidecar (the Places book is prose and is
+    /// never modified).  Sets the primary language by default; `--secondary`
+    /// adds a secondary one.
+    LinkPlace {
+        /// Place name (matched case-insensitively against the Places book).
+        place: String,
+        /// Language name.
+        language: String,
+        /// Add as a secondary language instead of setting the primary.
+        #[arg(long)]
+        secondary: bool,
+    },
+
+    /// LANG-1 P2.6 — declare a Character's proficiency in a language (native /
+    /// fluent / conversational / broken / reading_only).  Stored in the
+    /// `.inkhaven/conlang-links.json` sidecar; feeds AI dialog generation.
+    LinkCharacter {
+        /// Character name (matched case-insensitively against the Characters book).
+        character: String,
+        /// Language name.
+        language: String,
+        /// Proficiency: native | fluent | conversational | broken | reading_only.
+        proficiency: String,
+    },
+
+    /// LANG-1 P2.6 — list the Places and Characters linked to a language.
+    Speakers {
+        /// Language name (case-insensitive).
+        language: String,
+    },
+
     /// LANG-1 P2.4 — query a language's dictionary by the rich entry fields:
     /// register, semantic domain, in-world era, part of speech, and a free
     /// substring over headword + gloss.  Filters combine (AND).

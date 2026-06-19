@@ -9,6 +9,7 @@
 
 pub mod generate;
 pub mod lexicon;
+pub mod links;
 pub mod phonology;
 pub mod types;
 
