@@ -219,7 +219,10 @@ inkhaven language font-build --language Eldar \
 ```
 
 - **`glyph-lint`** reports whether an SVG is fit for a font outline (filled
-  paths required; stroke-only / image / gradient glyphs are flagged).
+  paths required; stroke-only / image / gradient glyphs are flagged). It also
+  warns on non-black fills — a near-white fill among darker ones is almost
+  always a counter the author drew with white paint, which a monochrome font
+  won't honour (cut counters with a reverse-wound subpath instead).
 - **`glyph-draft`** asks the AI to draft an SVG glyph from a description, runs it
   through the same preflight, and previews the result. Advisory: it prints the
   SVG (or writes `--out`) and the verdict; only `--yes` (and only a *usable*
