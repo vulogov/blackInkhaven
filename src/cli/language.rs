@@ -109,6 +109,8 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             era,
             register,
             provider,
+            semantic,
+            semantic_threshold,
             yes,
         } => generate_lexicon(
             project,
@@ -118,6 +120,8 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             era.as_deref(),
             register.as_deref(),
             provider.as_deref(),
+            semantic,
+            semantic_threshold,
             yes,
         ),
     }
@@ -139,6 +143,8 @@ fn generate_lexicon(
     era: Option<&str>,
     register: Option<&str>,
     provider: Option<&str>,
+    semantic: bool,
+    semantic_threshold: f32,
     yes: bool,
 ) -> Result<()> {
     use crate::conlang::generate::lexicon as lexgen;
@@ -188,7 +194,29 @@ fn generate_lexicon(
             return Ok(());
         }
     };
-    let (kept, rejected) = lexgen::dedup(&phonology, &existing, proposals);
+    let (mut kept, rejected) = lexgen::dedup(&phonology, &existing, proposals);
+
+    // Semantic half of the dedup gate: reject near-synonyms by gloss
+    // embedding (catches "stone" vs "rock" the string check misses).
+    let mut near_synonyms: Vec<(lexgen::LexProposal, f32)> = Vec::new();
+    if semantic && !kept.is_empty() {
+        let existing_glosses: Vec<&str> = existing
+            .iter()
+            .map(|e| e.translation.trim())
+            .filter(|g| !g.is_empty())
+            .collect();
+        let kept_glosses: Vec<&str> = kept.iter().map(|p| p.gloss.trim()).collect();
+        let existing_vecs = if existing_glosses.is_empty() {
+            Vec::new()
+        } else {
+            store.embed_batch(&existing_glosses)?
+        };
+        let kept_vecs = store.embed_batch(&kept_glosses)?;
+        let (sem_kept, sem_rejected) =
+            lexgen::semantic_filter(kept, &existing_vecs, &kept_vecs, semantic_threshold);
+        kept = sem_kept;
+        near_synonyms = sem_rejected;
+    }
 
     println!(
         "proposed {} entr(y/ies) for {language}{} ({} rejected by the dedup gate):",
@@ -204,6 +232,12 @@ fn generate_lexicon(
         eprintln!("\nrejected:");
         for (p, reason) in &rejected {
             eprintln!("  {:<16} {} — {}", p.form, p.gloss, reason.as_str());
+        }
+    }
+    if !near_synonyms.is_empty() {
+        eprintln!("\nrejected (near-synonyms, cosine > {semantic_threshold:.2}):");
+        for (p, sim) in &near_synonyms {
+            eprintln!("  {:<16} {} — too close ({sim:.2})", p.form, p.gloss);
         }
     }
 

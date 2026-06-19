@@ -117,6 +117,12 @@ impl DocumentStorage {
         self.blobs.get_blob(id)
     }
 
+    /// Embed arbitrary texts on demand via the loaded engine (conlang
+    /// near-synonym detection); not backed by the stored index.
+    pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        self.vectors.embed_batch(texts)
+    }
+
     pub fn list_metadata(&self) -> Result<Vec<(Uuid, JsonValue)>> {
         self.meta.list_all()
     }
