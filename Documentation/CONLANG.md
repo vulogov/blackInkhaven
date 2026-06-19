@@ -184,6 +184,26 @@ inkhaven language link-character Erendil Quenya native   # native|fluent|convers
 inkhaven language speakers Quenya
 ```
 
+## Writing systems + fonts
+
+A constructed script can be compiled into a usable font from a directory of
+glyph SVGs (one per glyph; filename stem = glyph name, and a single-character
+stem also becomes the glyph's Unicode codepoint):
+
+```
+inkhaven language glyph-lint --svg ./glyphs/a.svg          # suitability preflight
+inkhaven language font-build Eldar --glyphs ./glyphs/ \
+    [--out Eldar.ufo] [--upm 1000]
+```
+
+- **`glyph-lint`** reports whether an SVG is fit for a font outline (filled
+  paths required; stroke-only / image / gradient glyphs are flagged).
+- **`font-build`** runs the preflight on every glyph (skipping unusable ones),
+  converts each filled path to font contours (y-flipped + scaled into the em),
+  and writes a **UFO** — a standard font source you can compile with
+  `fontc` / `fontmake` or open in FontForge / Glyphs. In-process UFO → TTF/OTF
+  is coming in a later phase.
+
 ## In the editor
 
 - **`Ctrl+B X`** — the ConLang hub: a read-only overview of every language

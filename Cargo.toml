@@ -316,6 +316,12 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # low-disk pre-flight warning.  Tiny (a thin statvfs / GetDiskFreeSpace
 # wrapper over libc/winapi); no system dependency.
 fs2 = "0.4"
+# LANG-1 P5.2 — UFO (Unified Font Object) reader/writer, pure Rust. The
+# ConLang suite's `language font-build` compiles a directory of glyph SVGs
+# (parsed by the in-tree usvg) into a UFO font source. First dependency added
+# for the writing-systems/fonts pillar (deps approved); fontc/write-fonts for
+# in-process TTF/OTF compilation follow in P5.3.
+norad = "0.18.4"
 
 [build-dependencies]
 # Compiles the in-tree Typst tree-sitter grammar (`src/grammar/`)
