@@ -2333,6 +2333,21 @@ pub enum LanguageCommand {
         language: String,
     },
 
+    /// LANG-1 P4.2 — print the language-family tree (each language under its
+    /// declared `proto`).
+    FamilyTree,
+
+    /// LANG-1 P4.2 — the cognate set of a proto-form: its reflex in every
+    /// daughter language (each daughter's sound-change chain applied to the
+    /// proto-form).
+    Cognates {
+        /// The proto-language name (case-insensitive).
+        proto: String,
+        /// The proto-form to trace.
+        #[arg(long)]
+        form: String,
+    },
+
     /// LANG-1 P4.1 — apply a language's diachronic sound-change chain to a
     /// proto-form and print the resulting daughter form.  Reads the
     /// `{ diachronics: { proto, rules } }` block in the Phonology chapter.

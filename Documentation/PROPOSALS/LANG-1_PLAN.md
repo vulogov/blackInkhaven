@@ -242,8 +242,18 @@ releases as they complete.
 > `etymology: "from <proto> <form> via sound change"`). The proto's phonology
 > drives segmentation + classes (the changes are defined on proto sounds).
 > Verified e2e (`aka > aha` intervocalic lenition; a 3-word proto lexicon
-> evolved + committed). Remaining P4: cognate sets, family-tree viz (resvg),
-> AI comparative reconstruction, genealogical-realism check.
+> evolved + committed).
+>
+> **P4.2 (shipped)** — cognate sets + family tree, both computed from the
+> existing `diachronics.proto` links (no new storage). `conlang::diachronic::
+> family::render_tree` draws the genealogical forest as an ASCII tree (pure,
+> sorted, unknown-proto → root); `inkhaven language family-tree`. `inkhaven
+> language cognates <proto> --form <word>` traces a proto-form's **reflex in
+> every daughter** (each daughter's chain applied to the proto-form) — e.g.
+> `*takap` → Eldar `takaf` (p>f) vs Sindarin `tahaf` (k>h + p>f). Verified e2e.
+> Remaining P4: AI comparative reconstruction (propose a proto-form from
+> daughter cognates) + genealogical-realism check (an SVG family tree via resvg
+> is a later refinement).
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
