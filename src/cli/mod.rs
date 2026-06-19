@@ -2338,23 +2338,59 @@ pub enum LanguageCommand {
     /// its Unicode codepoint); unsuitable glyphs (see `glyph-lint`) are
     /// skipped with a warning.  Emits a UFO source and/or a ready-to-use
     /// TrueType binary (`--format`); the TTF is compiled fully in-process
-    /// (no external tool).
+    /// (no external tool).  Source the glyphs either from a language's own
+    /// `font` block (`--language`) or a loose directory (`--glyphs`).
     FontBuild {
-        /// Font family name.
-        family: String,
-        /// Directory of glyph `.svg` files.
+        /// Font family name (optional with `--language`, which supplies it).
+        family: Option<String>,
+        /// Build from this language's `font` config block + glyph store.
         #[arg(long)]
-        glyphs: std::path::PathBuf,
+        language: Option<String>,
+        /// Directory of glyph `.svg` files (alternative to `--language`).
+        #[arg(long)]
+        glyphs: Option<std::path::PathBuf>,
         /// Output path (extension set by `--format`; defaults to `<family>.<ext>`).
         #[arg(long)]
         out: Option<std::path::PathBuf>,
-        /// Units per em (the design grid).
-        #[arg(long, default_value_t = 1000.0)]
-        upm: f64,
+        /// Units per em (the design grid; overrides the config value).
+        #[arg(long)]
+        upm: Option<f64>,
         /// Output format: `ufo` (editable source), `ttf` (binary font), or
         /// `both`.
         #[arg(long, default_value = "ufo")]
         format: String,
+    },
+
+    /// LANG-1 P5.4 — import a glyph SVG into a language's writing system:
+    /// preflight it, copy it into the project glyph store, and bind it to a
+    /// phoneme and/or Unicode codepoint in the language's `font` config block.
+    /// `font-build --language` then compiles the script straight from the book.
+    FontImportGlyph {
+        /// Language to bind the glyph to.
+        language: String,
+        /// Path to the glyph `.svg` file.
+        #[arg(long)]
+        svg: std::path::PathBuf,
+        /// Phoneme (or romanization grapheme) this glyph stands for.
+        #[arg(long)]
+        phoneme: Option<String>,
+        /// Unicode codepoint: a single character (`a`) or hex (`U+E000`).
+        #[arg(long)]
+        codepoint: Option<String>,
+        /// Glyph name (defaults: `uniXXXX` from the codepoint, else the
+        /// phoneme, else the SVG filename stem).
+        #[arg(long)]
+        name: Option<String>,
+    },
+
+    /// LANG-1 P5.4 — show a language's `font` config: family, units-per-em,
+    /// and every glyph binding with its codepoint, phoneme, and artwork status.
+    FontConfig {
+        /// Language to inspect.
+        language: String,
+        /// Emit JSON.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P5.1 — check whether a glyph SVG is suitable for font

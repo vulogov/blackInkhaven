@@ -305,9 +305,23 @@ releases as they complete.
 > `fontc` — far lighter, no `fontir`/`fontbe` tree, no duplicate `write-fonts`.
 > Validated: skrifa parse-round-trip + outline-draw in unit tests, and an e2e
 > font passes fontTools structural re-save (cmap resolves `a`/`o`, correct
-> bounds). Next: the config-driven `font` HJSON block + glyph→phoneme binding,
-> then Hangul precompose, hieroglyphic Typst-layout, input methods, AI
-> text-to-SVG.
+> bounds).
+>
+> **P5.4 (shipped)** — the writing system becomes part of the **language
+> definition**. `conlang::types::font::FontConfig` parses a `{ font: { family,
+> upm, glyphs:[{name, codepoint, phoneme}] } }` block from the Phonology chapter
+> (codepoint accepts a literal char or `U+XXXX`/`0xXXXX` hex). Glyph artwork
+> lives in the project glyph store (`.inkhaven/glyphs/<lang-slug>/<name>.svg`).
+> `language font-import-glyph <lang> --svg … [--phoneme] [--codepoint] [--name]`
+> preflights the SVG (refusing unusable artwork), copies it into the store, and
+> upserts the binding into the book; `font-config <lang>` lists the bindings +
+> artwork status; `font-build --language <lang>` compiles straight from the
+> book (family/upm from the config) through the P5.2/P5.3 pipeline. Non-printable
+> codepoints (PUA, marks) are stored as readable hex so the book never carries
+> an invisible character. Verified e2e: import (auto-codepoint + explicit PUA),
+> config-driven build → valid TTF (cmap resolves `U+0061`/`U+E000`). Next:
+> AI text-to-SVG glyph draft, Hangul precompose, hieroglyphic Typst-layout,
+> input methods.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the

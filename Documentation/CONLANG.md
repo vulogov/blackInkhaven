@@ -190,14 +190,40 @@ A constructed script can be compiled into a usable font from a directory of
 glyph SVGs (one per glyph; filename stem = glyph name, and a single-character
 stem also becomes the glyph's Unicode codepoint):
 
+A script can be part of the **language definition** — glyphs bound to phonemes
+and codepoints in a `font` block, stored in the Phonology chapter:
+
+```hjson
+font: {
+  family: "Eldar"
+  upm: 1000
+  glyphs: [
+    { name: "a", codepoint: "a", phoneme: "a" }       # printable ASCII → literal
+    { name: "o_glyph", codepoint: "U+E000", phoneme: "o" }   # else → hex
+  ]
+}
 ```
-inkhaven language glyph-lint --svg ./glyphs/a.svg          # suitability preflight
-inkhaven language font-build Eldar --glyphs ./glyphs/ \
-    [--out Eldar] [--upm 1000] [--format ufo|ttf|both]
+
+Glyph artwork lives in the project glyph store
+(`.inkhaven/glyphs/<language>/<name>.svg`). The workflow:
+
+```
+inkhaven language glyph-lint --svg ./a.svg                 # suitability preflight
+inkhaven language font-import-glyph Eldar --svg ./a.svg \
+    --phoneme a [--codepoint U+E000] [--name a]            # bind + store + record
+inkhaven language font-config Eldar [--json]               # show the bindings
+inkhaven language font-build --language Eldar \
+    [--format ufo|ttf|both] [--out Eldar] [--upm 1000]     # compile from the book
 ```
 
 - **`glyph-lint`** reports whether an SVG is fit for a font outline (filled
   paths required; stroke-only / image / gradient glyphs are flagged).
+- **`font-import-glyph`** preflights the SVG (refusing unusable artwork), copies
+  it into the glyph store, and binds it — to a `--phoneme` and a Unicode
+  `--codepoint` (a single character or hex; a single-character glyph name
+  implies its own codepoint) — recording it in the `font` block.
+- **`font-config`** lists every binding with its codepoint, phoneme, and
+  artwork status (✓ usable / ⚠ unusable / ✗ missing).
 - **`font-build`** runs the preflight on every glyph (skipping unusable ones),
   converts each filled path to font contours (y-flipped + scaled into the em),
   and emits — per `--format`:
@@ -207,6 +233,10 @@ inkhaven language font-build Eldar --glyphs ./glyphs/ \
     (cubics are quadified for the `glyf` table; a complete OpenType table set
     is assembled — no external tool);
   - **`both`**: the editable source *and* the binary, sharing one stem.
+
+  Source the glyphs from the language's own `font` block (`--language Eldar`,
+  family + units-per-em taken from the config) or from a loose directory
+  (`font-build Eldar --glyphs ./glyphs/`, filename stem → glyph name).
 
 ## In the editor
 
