@@ -102,7 +102,164 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         } => romanize_text(project, &language, &text, scheme.as_deref(), reverse),
         LanguageCommand::Tone { language, tones } => tone_sandhi(project, &language, &tones),
         LanguageCommand::Audit { language, json } => audit(project, &language, json),
+        LanguageCommand::GenerateLexicon {
+            language,
+            topic,
+            count,
+            era,
+            register,
+            provider,
+            yes,
+        } => generate_lexicon(
+            project,
+            &language,
+            topic.as_deref(),
+            count,
+            era.as_deref(),
+            register.as_deref(),
+            provider.as_deref(),
+            yes,
+        ),
     }
+}
+
+const LEXGEN_SYSTEM: &str = "You are a meticulous lexicographer for a constructed language. \
+Reply with a SINGLE JSON object and nothing else — no prose, no preamble, no markdown fences. \
+Shape: {\"entries\":[{\"form\":\"…\",\"gloss\":\"…\",\"pos\":\"…\",\"example\":\"…\"}]}. Choose each \
+`form` ONLY from the provided candidate list (never invent a form). Never assign two entries the \
+same meaning. Keep `pos` a short lowercase tag (noun/verb/adjective/…).";
+
+/// LANG-1 P2.2 — AI-assisted dictionary generation behind the dedup gate.
+#[allow(clippy::too_many_arguments)]
+fn generate_lexicon(
+    project: &Path,
+    language: &str,
+    topic: Option<&str>,
+    count: usize,
+    era: Option<&str>,
+    register: Option<&str>,
+    provider: Option<&str>,
+    yes: bool,
+) -> Result<()> {
+    use crate::conlang::generate::lexicon as lexgen;
+
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no phoneme block — add `phonemes` / `classes` / `templates` \
+             HJSON under its `Phonology` chapter first"
+        ))
+    })?;
+    if phonology.templates_for(crate::conlang::TemplateRole::Root).is_empty() {
+        return Err(Error::Config(format!(
+            "language `{language}` declares no `root` templates — needed to generate forms"
+        )));
+    }
+    let existing = load_dictionary(&store, &hierarchy, &lang_book)?;
+
+    let pool = lexgen::build_pool(&phonology, &existing, count);
+    if pool.is_empty() {
+        return Err(Error::Config(
+            "could not generate any valid candidate forms — loosen the phonotactic constraints".into(),
+        ));
+    }
+
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    let work_lang = if cfg.language.trim().is_empty() { "english" } else { cfg.language.trim() };
+    eprintln!(
+        "inkhaven language generate-lexicon · {language} · model: {model} · glosses in {work_lang}"
+    );
+
+    let prompt = build_lexgen_prompt(language, topic, count, era, register, work_lang, &pool);
+    let raw = crate::ai::stream::collect_blocking(
+        ai.client.clone(),
+        model.to_string(),
+        Some(LEXGEN_SYSTEM.to_string()),
+        prompt,
+    )
+    .map_err(|e| Error::Store(format!("inference error: {e}")))?;
+
+    let proposals = match lexgen::parse_proposals(&raw) {
+        Ok(p) => p,
+        Err(why) => {
+            eprintln!("could not parse model reply: {why}\n---- raw ----\n{raw}\n---- end ----");
+            return Ok(());
+        }
+    };
+    let (kept, rejected) = lexgen::dedup(&phonology, &existing, proposals);
+
+    println!(
+        "proposed {} entr(y/ies) for {language}{} ({} rejected by the dedup gate):",
+        kept.len(),
+        topic.map(|t| format!(" · topic: {t}")).unwrap_or_default(),
+        rejected.len()
+    );
+    for p in &kept {
+        let pos = if p.pos.trim().is_empty() { "?" } else { p.pos.trim() };
+        println!("  {:<16} {} ({})", p.form, p.gloss, pos);
+    }
+    if !rejected.is_empty() {
+        eprintln!("\nrejected:");
+        for (p, reason) in &rejected {
+            eprintln!("  {:<16} {} — {}", p.form, p.gloss, reason.as_str());
+        }
+    }
+
+    if yes {
+        let mut added = 0usize;
+        for p in &kept {
+            let pos = if p.pos.trim().is_empty() { "noun" } else { p.pos.trim() };
+            let example = Some(p.example.trim()).filter(|e| !e.is_empty());
+            match add_dictionary_entry_impl(&store, &cfg, &lang_book, &p.form, pos, &p.gloss, example)
+            {
+                Ok(_) => added += 1,
+                Err(e) => eprintln!("  skipped {}: {e}", p.form),
+            }
+        }
+        eprintln!("\nadded {added} entr(y/ies) to {language}'s Dictionary");
+    } else {
+        eprintln!(
+            "\n(dry run — re-run with --yes to add the {} kept entr(y/ies))",
+            kept.len()
+        );
+    }
+    Ok(())
+}
+
+fn build_lexgen_prompt(
+    language: &str,
+    topic: Option<&str>,
+    count: usize,
+    era: Option<&str>,
+    register: Option<&str>,
+    work_lang: &str,
+    pool: &[String],
+) -> String {
+    let domain = topic.unwrap_or("core everyday life");
+    let candidates = pool
+        .iter()
+        .map(|f| format!("\"{f}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut constraints = format!(
+        "Language: {language}. Produce {count} dictionary entries for the semantic domain: {domain}."
+    );
+    if let Some(e) = era {
+        constraints.push_str(&format!(" In-world era: {e}."));
+    }
+    if let Some(r) = register {
+        constraints.push_str(&format!(" Register: {r}."));
+    }
+    format!(
+        "{constraints}\n\n\
+         Pick a coherent set of {count} concepts a culture needs for this domain, then assign each \
+         a distinct `form` chosen ONLY from the candidate list below. Write every `gloss` and \
+         `example` in {work_lang}. Do not repeat a meaning. Keep `pos` a short lowercase tag.\n\n\
+         Candidate forms (choose from these): [{candidates}]\n\n\
+         Reply with the JSON object only."
+    )
 }
 
 /// LANG-1 P1.6 — apply tone sandhi to an explicit tone sequence.

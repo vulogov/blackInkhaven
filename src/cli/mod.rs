@@ -2300,6 +2300,37 @@ pub enum LanguageCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// LANG-1 P2.2 — AI-assisted dictionary generation.  The deterministic
+    /// generator builds a pool of phonotactically-valid forms; the AI assigns
+    /// each a concept / gloss / part-of-speech for the requested topic; then
+    /// every proposal passes the dedup gate (no illegal form, no homophone of
+    /// an existing word, no duplicate meaning) before it is offered.  Glosses
+    /// are written in the project's working language.  Advisory: nothing is
+    /// added without `--yes`.
+    GenerateLexicon {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Semantic domain to generate vocabulary for (e.g. "seafaring").
+        /// Omit for general everyday vocabulary.
+        #[arg(long)]
+        topic: Option<String>,
+        /// How many entries to propose.
+        #[arg(long, default_value_t = 20)]
+        count: usize,
+        /// Optional in-world era tag recorded on the prompt.
+        #[arg(long)]
+        era: Option<String>,
+        /// Optional register tag (formal / vulgar / sacred / …).
+        #[arg(long)]
+        register: Option<String>,
+        /// LLM provider override (defaults to the configured provider).
+        #[arg(long)]
+        provider: Option<String>,
+        /// Add the kept proposals to the Dictionary (default is a dry run).
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 /// output format selector for
