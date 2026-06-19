@@ -2327,6 +2327,14 @@ pub enum LanguageCommand {
         /// LLM provider override (defaults to the configured provider).
         #[arg(long)]
         provider: Option<String>,
+        /// Also reject near-synonyms (embedding cosine over glosses) — the
+        /// semantic half of the dedup gate.  Loads the embedding model.
+        #[arg(long)]
+        semantic: bool,
+        /// Cosine threshold above which two glosses count as near-synonyms
+        /// (with `--semantic`).
+        #[arg(long, default_value_t = 0.88)]
+        semantic_threshold: f32,
         /// Add the kept proposals to the Dictionary (default is a dry run).
         #[arg(long)]
         yes: bool,

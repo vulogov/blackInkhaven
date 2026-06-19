@@ -632,6 +632,14 @@ impl Store {
             .map_err(|e| Error::Store(format!("search_document_text: {e}")))
     }
 
+    /// Embed arbitrary texts via the store's loaded embedding engine — for
+    /// on-demand semantic comparison (e.g. conlang near-synonym detection).
+    pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        self.inner
+            .embed_batch(texts)
+            .map_err(|e| Error::Store(format!("embed_batch: {e}")))
+    }
+
     pub fn get_content(&self, id: Uuid) -> Result<Option<Vec<u8>>> {
         self.inner
             .get_content(id)

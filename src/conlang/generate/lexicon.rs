@@ -126,6 +126,45 @@ fn surface_key(phon: &Phonology, word: &str) -> String {
     allophony_eval::surface_form(phon, &phon.segment(word)).join("")
 }
 
+/// Cosine similarity of two equal-length vectors; 0 for a zero vector.
+pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let na = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let nb = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        dot / (na * nb)
+    }
+}
+
+/// The *semantic* half of the dedup gate: reject a proposal whose gloss is a
+/// near-synonym (cosine > `threshold`) of an existing or already-accepted
+/// gloss — catching "stone" vs "rock" that the string-level `dedup` misses.
+/// `existing_vecs` are the existing entries' gloss embeddings; `kept_vecs`
+/// aligns 1:1 with `kept`. Pure; the embedding itself is the caller's job.
+pub fn semantic_filter(
+    kept: Vec<LexProposal>,
+    existing_vecs: &[Vec<f32>],
+    kept_vecs: &[Vec<f32>],
+    threshold: f32,
+) -> (Vec<LexProposal>, Vec<(LexProposal, f32)>) {
+    let mut accepted_vecs: Vec<Vec<f32>> = existing_vecs.to_vec();
+    let mut accepted = Vec::new();
+    let mut rejected = Vec::new();
+    for (i, p) in kept.into_iter().enumerate() {
+        let v = &kept_vecs[i];
+        let max = accepted_vecs.iter().map(|e| cosine(v, e)).fold(0.0f32, f32::max);
+        if max > threshold {
+            rejected.push((p, max));
+        } else {
+            accepted_vecs.push(v.clone());
+            accepted.push(p);
+        }
+    }
+    (accepted, rejected)
+}
+
 /// Extract the AI's proposals from a (possibly fenced / prose-wrapped) JSON
 /// reply shaped `{ "entries": [ … ] }`.
 pub fn parse_proposals(raw: &str) -> Result<Vec<LexProposal>, String> {
@@ -221,6 +260,30 @@ mod tests {
             assert!(seen.insert(w.clone()), "pool has a duplicate: {w}");
             assert_ne!(w, "ka", "pool must exclude existing words");
         }
+    }
+
+    #[test]
+    fn semantic_filter_rejects_near_synonyms() {
+        // 3 proposals; the 2nd is a near-synonym of an existing gloss vector,
+        // the 3rd is a near-synonym of the 1st kept proposal (intra-batch).
+        let existing = vec![vec![1.0, 0.0, 0.0]]; // "rock"
+        let kept = vec![prop("a", "water"), prop("b", "stone"), prop("c", "aqua")];
+        let kept_vecs = vec![
+            vec![0.0, 1.0, 0.0],   // water — distinct
+            vec![0.99, 0.01, 0.0], // stone ≈ rock → reject vs existing
+            vec![0.0, 0.99, 0.01], // aqua ≈ water → reject vs kept "water"
+        ];
+        let (acc, rej) = semantic_filter(kept, &existing, &kept_vecs, 0.9);
+        assert_eq!(acc, vec![prop("a", "water")]);
+        assert_eq!(rej.len(), 2);
+        assert!(rej.iter().all(|(_, sim)| *sim > 0.9));
+    }
+
+    #[test]
+    fn cosine_basics() {
+        assert!((cosine(&[1.0, 0.0], &[1.0, 0.0]) - 1.0).abs() < 1e-6);
+        assert!(cosine(&[1.0, 0.0], &[0.0, 1.0]).abs() < 1e-6);
+        assert_eq!(cosine(&[0.0, 0.0], &[1.0, 1.0]), 0.0);
     }
 
     #[test]

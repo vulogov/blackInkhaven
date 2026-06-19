@@ -104,9 +104,18 @@ releases as they complete.
 > meaning — exactly the no-double-form / no-same-meaning / no-double-coined
 > invariant. Advisory: dry-run by default, `--yes` commits kept entries via
 > the existing `add_dictionary_entry_impl`. Pool / dedup / parse are pure +
-> unit-tested; the AI call is a thin layer (like `lang bootstrap`). Remaining
-> P2: rich entry fields, semantic (embedding) near-synonym rejection, the
-> `conlang_lexicon`/`cognates`/`usage` tables, the `Ctrl+B X` hub.
+> unit-tested; the AI call is a thin layer (like `lang bootstrap`).
+>
+> **P2.3 (shipped)** — the *semantic* half of the dedup gate. `--semantic`
+> (+ `--semantic-threshold`, default 0.88) on `generate-lexicon` embeds the
+> proposal + existing glosses and rejects **near-synonyms** by cosine
+> (`semantic_filter` / `cosine`) — catching "stone" vs "rock" the string check
+> misses, vs both the existing lexicon *and* intra-batch. Reuses the store's
+> already-loaded embedding engine via a thin `Store::embed_batch` passthrough
+> (VectorEngine → DocumentStorage → Store — no second model load). Pure filter
+> unit-tested with synthetic vectors. Remaining P2: rich entry fields
+> (senses/registers/era/etymology), the `conlang_lexicon`/`cognates`/`usage`
+> tables, manuscript undefined-word scan, Places/Characters links, `Ctrl+B X` hub.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
