@@ -3909,6 +3909,7 @@ dependencies = [
  "humantime",
  "humantime-serde",
  "image 0.25.10",
+ "kurbo 0.12.0",
  "lopdf",
  "norad",
  "nu-command",
@@ -3933,6 +3934,7 @@ dependencies = [
  "serde-hjson",
  "serde_json",
  "similar",
+ "skrifa",
  "slug",
  "syn 2.0.117",
  "tempfile",
@@ -3955,6 +3957,7 @@ dependencies = [
  "vecstore",
  "walkdir",
  "whatlang",
+ "write-fonts",
  "zip 2.4.2",
 ]
 

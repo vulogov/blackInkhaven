@@ -292,10 +292,22 @@ releases as they complete.
 > SVGs (filename stem → glyph name + codepoint), runs the preflight (skipping
 > unusable glyphs), and writes a **UFO** — a standard, externally-compilable
 > font source (fontc / fontmake / FontForge). Verified e2e: a square → 4 line
-> points, a cubic-`o`, both with correct codepoints + y-flip. Next P5.3:
-> in-process **UFO → TTF/OTF** (fontc / write-fonts), then the config-driven
-> `font` block, Hangul precompose, hieroglyphic Typst-layout, input methods,
-> AI text-to-SVG.
+> points, a cubic-`o`, both with correct codepoints + y-flip.
+>
+> **P5.3 (shipped)** — in-process **UFO → TrueType** (`conlang::writing::compile`),
+> no external tool. Each UFO contour → a `kurbo::BezPath` (cubics quadified via
+> `CubicBez::to_quads`), fed to `write-fonts`' `SimpleGlyph::from_bezpath`; the
+> full OpenType table set (`glyf`/`loca`/`head`/`hhea`/`maxp`/`hmtx`/`cmap`/
+> `name`/`post`/`OS/2`, with a `.notdef` at gid 0) is assembled directly and
+> `FontBuilder.build()` emits the `.ttf`. Pure + deterministic. `font-build`
+> gained `--format ufo|ttf|both`; the TTF is written atomically. Chose
+> `write-fonts` (ALREADY in the tree via typst-pdf→krilla→subsetter) over
+> `fontc` — far lighter, no `fontir`/`fontbe` tree, no duplicate `write-fonts`.
+> Validated: skrifa parse-round-trip + outline-draw in unit tests, and an e2e
+> font passes fontTools structural re-save (cmap resolves `a`/`o`, correct
+> bounds). Next: the config-driven `font` HJSON block + glyph→phoneme binding,
+> then Hangul precompose, hieroglyphic Typst-layout, input methods, AI
+> text-to-SVG.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
