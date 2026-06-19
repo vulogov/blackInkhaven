@@ -251,9 +251,18 @@ releases as they complete.
 > language cognates <proto> --form <word>` traces a proto-form's **reflex in
 > every daughter** (each daughter's chain applied to the proto-form) — e.g.
 > `*takap` → Eldar `takaf` (p>f) vs Sindarin `tahaf` (k>h + p>f). Verified e2e.
-> Remaining P4: AI comparative reconstruction (propose a proto-form from
-> daughter cognates) + genealogical-realism check (an SVG family tree via resvg
-> is a later refinement).
+>
+> **P4.3 (shipped)** — the two AI pieces (thin layers like `generate-lexicon`).
+> `inkhaven language reconstruct --forms "tava taba" [--gloss]` — AI comparative
+> reconstruction: proposes the proto-form (with sound correspondences +
+> reasoning) from cognate daughter forms. `inkhaven language realism-check
+> <lang>` — AI genealogical-realism check: assesses whether the language's
+> sound-change chain is typologically plausible, rule by rule. `AllophonyRule`
+> gained a `source` field (the original SPE string) so the chain renders for
+> the prompt. Advisory; verified to the AI boundary. **P4 (diachronics) is
+> complete** — sound-change engine, daughter derivation, cognates, family tree,
+> AI reconstruction + realism check (an SVG family tree via resvg stays a later
+> refinement).
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the

@@ -40,6 +40,8 @@ pub struct AllophonyRule {
     /// Optional rules describe a variant pronunciation; the canonical
     /// surface derivation skips them.
     pub optional: bool,
+    /// The original SPE rule string (`k > tʃ / _ i`), for display.
+    pub source: String,
 }
 
 /// Wire form: `{ name: "palatalization", rule: "k > tʃ / _ i", optional: false }`.
@@ -68,6 +70,7 @@ impl TryFrom<RawRule> for AllophonyRule {
             left,
             right,
             optional: r.optional,
+            source: r.rule.trim().to_string(),
         })
     }
 }
