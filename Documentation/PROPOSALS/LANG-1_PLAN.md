@@ -132,10 +132,19 @@ releases as they complete.
 > `DictionaryEntry.registers` now accepts the singular `register: "…"` (the
 > import/seed convention) *or* a `registers: […]` list (alias + string-or-vec);
 > `ImportEntry`/`build_imported_entry_body` gained `domain`. Verified the rich
-> write→store→query round-trip end-to-end. Remaining P2: manuscript
-> undefined-word scan (needs `:lang:` span tagging — bundles with the editor /
-> `Ctrl+B X` work), Places/Characters language links (the Places/Characters
-> books are *prose*, so this needs a link-storage convention), `Ctrl+B X` hub.
+> write→store→query round-trip end-to-end. >
+> **P2.6 (shipped)** — Places/Characters language links via sidecar. The
+> Places/Characters books are prose, so links live in a
+> `.inkhaven/conlang-links.json` **sidecar** (`src/conlang/links.rs`; atomic
+> writes, mirrors `DriftReport`) keyed by node name — neither book is touched.
+> `language link-place <place> <lang> [--secondary]`, `language link-character
+> <char> <lang> <proficiency>` (native/fluent/conversational/broken/reading_only),
+> `language speakers <lang>` (lists linked places + characters). Names resolve
+> against the Places/Characters books (warns + records anyway if absent). Pure
+> `set_*` / `speakers_of` unit-tested; e2e verified incl. the JSON sidecar. The
+> AI-dialog integration (read a character's proficiency to adjust fluency) is a
+> later hook on the translation path. Remaining P2: manuscript undefined-word
+> scan + `Ctrl+B X` hub (which brings `:lang:` insertion → unlocks the scan).
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
