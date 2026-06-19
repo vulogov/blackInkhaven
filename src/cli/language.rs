@@ -148,6 +148,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             example,
         } => metaphor_add(project, &language, &source, &target, example.as_deref()),
         LanguageCommand::Idioms { language } => idioms_list(project, &language),
+        LanguageCommand::GlyphLint { svg } => glyph_lint(&svg),
         LanguageCommand::Reconstruct {
             forms,
             gloss,
@@ -353,6 +354,33 @@ fn load_diachronics(
         }
     }
     Ok(None)
+}
+
+/// LANG-1 P5.1 — lint a glyph SVG file for font suitability.
+fn glyph_lint(svg: &Path) -> Result<()> {
+    let body = std::fs::read_to_string(svg)
+        .map_err(|e| Error::Config(format!("reading {}: {e}", svg.display())))?;
+    let report = crate::conlang::writing::preflight::lint_svg(&body);
+
+    println!("glyph lint · {}", svg.display());
+    for i in &report.info {
+        println!("  · {i}");
+    }
+    for w in &report.warnings {
+        println!("  ⚠ {w}");
+    }
+    for e in &report.errors {
+        println!("  ✗ {e}");
+    }
+    if report.is_usable() {
+        println!(
+            "\n  ✓ usable as a font glyph{}",
+            if report.warnings.is_empty() { "" } else { " (with the warnings above)" }
+        );
+    } else {
+        println!("\n  ✗ not usable as-is — fix the errors above");
+    }
+    Ok(())
 }
 
 const RECONSTRUCT_SYSTEM: &str = "You are a historical linguist applying the comparative method. \

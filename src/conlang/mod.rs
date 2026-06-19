@@ -15,5 +15,6 @@ pub mod links;
 pub mod morphology;
 pub mod phonology;
 pub mod types;
+pub mod writing;
 
 pub use types::{Phonology, TemplateRole};
