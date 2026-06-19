@@ -216,6 +216,10 @@ impl super::App {
             self.draw_story_bible_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::ConlangHub { .. }) {
+            self.draw_conlang_hub_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SentenceRhythm { .. }) {
             self.draw_sentence_rhythm_modal(f, area);
             return;

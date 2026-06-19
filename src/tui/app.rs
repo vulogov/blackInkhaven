@@ -8610,6 +8610,7 @@ impl App {
             A::OpenPlanOutline => self.open_plan_outline(),
             A::OpenEditorialPass => self.open_editorial_pass(),
             A::OpenStoryBible => self.open_story_bible(),
+            A::OpenConlangHub => self.open_conlang_hub(),
             A::RunDeepRefresh => self.start_deep_refresh(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
@@ -9749,6 +9750,45 @@ impl App {
         if let Modal::StoryBible { cursor, .. } = &mut self.modal {
             *cursor = v;
         }
+    }
+
+    /// LANG-1 P2.7b — open the `Ctrl+B X` ConLang hub overview.
+    fn open_conlang_hub(&mut self) {
+        let root = self.store.project_root().to_path_buf();
+        let rows = super::conlang_hub::build_rows(&self.store, &self.hierarchy, &root);
+        if rows.is_empty() {
+            self.status = "conlang: no Language book — re-open the project to seed it".into();
+            return;
+        }
+        self.modal = Modal::ConlangHub { rows, cursor: 0 };
+        self.status = "ConLang hub · ↑↓ scroll · Esc".into();
+    }
+
+    fn conlang_hub_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::ConlangHub { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "conlang hub: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::ConlangHub { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::ConlangHub { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
     }
 
     fn set_editorial_cursor(&mut self, v: usize) {
@@ -17315,6 +17355,10 @@ impl App {
         }
         if matches!(self.modal, Modal::StoryBible { .. }) {
             self.story_bible_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::ConlangHub { .. }) {
+            self.conlang_hub_handle_key(key);
             return Ok(false);
         }
         if is_llm_picker {
