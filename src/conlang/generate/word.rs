@@ -213,6 +213,7 @@ mod tests {
             .collect(),
             constraints: vec![PhonotacticConstraint::NoGeminate],
             allophony: Vec::new(),
+            stress: None,
             max_word_syllables: 4,
         };
         let w = generate_word(&p, TemplateRole::Root, 1).unwrap();

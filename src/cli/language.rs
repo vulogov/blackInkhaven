@@ -93,7 +93,48 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             syllabify_word(project, &language, &word)
         }
         LanguageCommand::Ipa { language, word } => ipa_surface(project, &language, &word),
+        LanguageCommand::Stress { language, word } => stress_word(project, &language, &word),
     }
+}
+
+/// LANG-1 P1.4 — place primary stress on a word per the language's stress
+/// rule and print the syllabification with `ˈ` before the stressed syllable.
+fn stress_word(project: &Path, language: &str, word: &str) -> Result<()> {
+    use crate::conlang::phonology::{stress_eval, syllable};
+
+    let (_store, phonology) = open_phonology(project, language)?;
+    let rule = phonology.stress.clone().ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` declares no `stress` rule in its Phonology block \
+             (e.g. `stress: \"penultimate\"`)"
+        ))
+    })?;
+
+    let seq = phonology.segment(word);
+    let sylls = syllable::syllabify(&phonology, &seq);
+    let stressed = stress_eval::primary_stress(&rule, &sylls);
+
+    let g = |ipa: &String| {
+        phonology
+            .phoneme(ipa)
+            .map(|p| p.grapheme().to_string())
+            .unwrap_or_else(|| ipa.clone())
+    };
+    let out = sylls
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let body: String = s.onset.iter().chain(&s.nucleus).chain(&s.coda).map(&g).collect();
+            if Some(i) == stressed {
+                format!("ˈ{body}")
+            } else {
+                body
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".");
+    println!("{out}");
+    Ok(())
 }
 
 /// LANG-1 P1.3 — derive and print a word's surface pronunciation by applying

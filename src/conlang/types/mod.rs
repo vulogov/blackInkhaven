@@ -8,11 +8,13 @@
 pub mod allophony;
 pub mod constraint;
 pub mod phoneme;
+pub mod stress;
 pub mod template;
 
 pub use allophony::{AllophonyRule, PatternAtom};
 pub use constraint::PhonotacticConstraint;
 pub use phoneme::{Phoneme, PhonemeKind};
+pub use stress::StressRule;
 pub use template::{SyllableTemplate, TemplateRole};
 
 use std::collections::BTreeMap;
@@ -41,6 +43,9 @@ pub struct Phonology {
     /// Ordered allophony rules — underlying → surface rewrites (P1.3).
     #[serde(default)]
     pub allophony: Vec<AllophonyRule>,
+    /// Primary-stress rule (P1.4). `None` = the language marks no stress.
+    #[serde(default)]
+    pub stress: Option<StressRule>,
     /// Upper bound on syllables per word. Parsed now; consumed by the
     /// multi-syllable compounder in a later P1 increment.
     #[serde(default = "default_max_syllables")]
