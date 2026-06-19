@@ -2333,6 +2333,32 @@ pub enum LanguageCommand {
         language: String,
     },
 
+    /// LANG-1 P4.3 — AI comparative reconstruction: given cognate forms from
+    /// daughter languages, propose the most plausible proto-form (with sound
+    /// correspondences + reasoning).  Advisory — a proposal, nothing committed.
+    Reconstruct {
+        /// Cognate daughter forms (space-separated).
+        #[arg(long)]
+        forms: String,
+        /// The shared meaning (optional context for the model).
+        #[arg(long)]
+        gloss: Option<String>,
+        /// LLM provider override.
+        #[arg(long)]
+        provider: Option<String>,
+    },
+
+    /// LANG-1 P4.3 — AI genealogical-realism check: assess whether a language's
+    /// diachronic sound-change chain is typologically plausible (attested) or
+    /// unnatural, rule by rule.
+    RealismCheck {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// LLM provider override.
+        #[arg(long)]
+        provider: Option<String>,
+    },
+
     /// LANG-1 P4.2 — print the language-family tree (each language under its
     /// declared `proto`).
     FamilyTree,

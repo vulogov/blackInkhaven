@@ -148,6 +148,14 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             example,
         } => metaphor_add(project, &language, &source, &target, example.as_deref()),
         LanguageCommand::Idioms { language } => idioms_list(project, &language),
+        LanguageCommand::Reconstruct {
+            forms,
+            gloss,
+            provider,
+        } => reconstruct(project, &forms, gloss.as_deref(), provider.as_deref()),
+        LanguageCommand::RealismCheck { language, provider } => {
+            realism_check(project, &language, provider.as_deref())
+        }
         LanguageCommand::FamilyTree => family_tree(project),
         LanguageCommand::Cognates { proto, form } => cognates(project, &proto, &form),
         LanguageCommand::SoundChange { language, form } => {
@@ -345,6 +353,81 @@ fn load_diachronics(
         }
     }
     Ok(None)
+}
+
+const RECONSTRUCT_SYSTEM: &str = "You are a historical linguist applying the comparative method. \
+Given cognate forms from related daughter languages, propose the single most plausible proto-form. \
+Mark the proto-form with a leading asterisk. Then list the key regular sound correspondences you \
+relied on, and justify the reconstruction in 2–3 sentences. Be concise; output plain text.";
+
+const REALISM_SYSTEM: &str = "You are a historical phonologist. Assess whether a chain of diachronic \
+sound changes is typologically plausible — i.e. whether each change is a naturally attested type \
+(lenition, assimilation, final devoicing, palatalization, epenthesis, …) and whether the ordering \
+is reasonable. Flag any rule that is unnatural or unattested, and give an overall verdict \
+(plausible / mixed / implausible). Be concise; output plain text.";
+
+/// LANG-1 P4.3 — AI comparative reconstruction of a proto-form from cognates.
+fn reconstruct(
+    project: &Path,
+    forms: &str,
+    gloss: Option<&str>,
+    provider: Option<&str>,
+) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    eprintln!("inkhaven language reconstruct · model: {model}");
+
+    let gloss_clause = gloss.map(|g| format!(" meaning '{g}'")).unwrap_or_default();
+    let prompt = format!(
+        "Cognate daughter forms{gloss_clause}: {forms}.\n\nReconstruct the proto-form."
+    );
+    let raw = crate::ai::stream::collect_blocking(
+        ai.client.clone(),
+        model.to_string(),
+        Some(RECONSTRUCT_SYSTEM.to_string()),
+        prompt,
+    )
+    .map_err(|e| Error::Store(format!("inference error: {e}")))?;
+    println!("{}", raw.trim());
+    Ok(())
+}
+
+/// LANG-1 P4.3 — AI genealogical-realism check of a language's sound-change chain.
+fn realism_check(project: &Path, language: &str, provider: Option<&str>) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let dia = load_diachronics(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no diachronics chain to check"))
+    })?;
+
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    eprintln!("inkhaven language realism-check · {language} · model: {model}");
+
+    let rules_text = dia
+        .rules
+        .iter()
+        .enumerate()
+        .map(|(i, r)| format!("{}. {}", i + 1, r.source))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let proto = dia.proto.as_deref().unwrap_or("the proto-language");
+    let prompt = format!(
+        "Sound-change chain deriving {language} from {proto} (applied in order):\n{rules_text}\n\n\
+         Assess the plausibility, rule by rule, then give an overall verdict."
+    );
+    let raw = crate::ai::stream::collect_blocking(
+        ai.client.clone(),
+        model.to_string(),
+        Some(REALISM_SYSTEM.to_string()),
+        prompt,
+    )
+    .map_err(|e| Error::Store(format!("inference error: {e}")))?;
+    println!("{}", raw.trim());
+    Ok(())
 }
 
 /// All per-language `Book` nodes under the `Language` system book.

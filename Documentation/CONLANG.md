@@ -140,6 +140,10 @@ defined on proto sounds).
 - `inkhaven language cognates ProtoEldarin --form takap` traces a proto-form's
   reflex in every daughter (each daughter's chain applied) — e.g. `Eldar takaf`
   vs `Sindarin tahaf`.
+- `inkhaven language reconstruct --forms "tava taba" [--gloss water]` — AI
+  comparative reconstruction: proposes the proto-form from cognate forms.
+- `inkhaven language realism-check Eldar` — AI assessment of whether the
+  language's sound-change chain is typologically plausible.
 
 ## Idioms + metaphors
 
