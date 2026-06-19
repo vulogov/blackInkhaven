@@ -2256,6 +2256,26 @@ pub enum LanguageCommand {
         #[arg(long)]
         word: String,
     },
+
+    /// LANG-1 P1.5 — convert between IPA and a named romanization scheme.
+    /// Forward (default): a space-separated IPA phoneme sequence → written
+    /// text.  `--reverse`: written text → IPA, using the scheme's contextual
+    /// rules to disambiguate shared graphemes.  `--scheme` selects a named
+    /// scheme (defaults to the language's default / first).
+    Romanize {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Forward: space-separated IPA phonemes (`k a ʃ i`).  Reverse:
+        /// the written word.
+        #[arg(long)]
+        text: String,
+        /// Named romanization scheme (defaults to the language's default).
+        #[arg(long)]
+        scheme: Option<String>,
+        /// Convert text → IPA instead of IPA → text.
+        #[arg(long)]
+        reverse: bool,
+    },
 }
 
 /// output format selector for
