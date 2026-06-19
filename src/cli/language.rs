@@ -94,7 +94,44 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         }
         LanguageCommand::Ipa { language, word } => ipa_surface(project, &language, &word),
         LanguageCommand::Stress { language, word } => stress_word(project, &language, &word),
+        LanguageCommand::Romanize {
+            language,
+            text,
+            scheme,
+            reverse,
+        } => romanize_text(project, &language, &text, scheme.as_deref(), reverse),
     }
+}
+
+/// LANG-1 P1.5 — convert between IPA and a named romanization scheme.
+fn romanize_text(
+    project: &Path,
+    language: &str,
+    text: &str,
+    scheme: Option<&str>,
+    reverse: bool,
+) -> Result<()> {
+    use crate::conlang::phonology::romanize;
+
+    let (_store, phonology) = open_phonology(project, language)?;
+    let scheme_ref = phonology.scheme(scheme).ok_or_else(|| {
+        Error::Config(match scheme {
+            Some(s) => format!("language `{language}` has no romanization scheme `{s}`"),
+            None => format!(
+                "language `{language}` declares no romanization schemes — add a `romanizations` \
+                 block to its Phonology, or rely on the per-phoneme `romanize` field"
+            ),
+        })
+    })?;
+
+    if reverse {
+        let seq = romanize::deromanize(scheme_ref, &phonology, text);
+        println!("/{}/", seq.join(""));
+    } else {
+        let seq: Vec<String> = text.split_whitespace().map(String::from).collect();
+        println!("{}", romanize::romanize(scheme_ref, &phonology, &seq));
+    }
+    Ok(())
 }
 
 /// LANG-1 P1.4 — place primary stress on a word per the language's stress

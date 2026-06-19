@@ -214,6 +214,8 @@ mod tests {
             constraints: vec![PhonotacticConstraint::NoGeminate],
             allophony: Vec::new(),
             stress: None,
+            romanizations: Vec::new(),
+            default_romanization: None,
             max_word_syllables: 4,
         };
         let w = generate_word(&p, TemplateRole::Root, 1).unwrap();

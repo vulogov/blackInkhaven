@@ -8,12 +8,14 @@
 pub mod allophony;
 pub mod constraint;
 pub mod phoneme;
+pub mod romanization;
 pub mod stress;
 pub mod template;
 
 pub use allophony::{AllophonyRule, PatternAtom};
 pub use constraint::PhonotacticConstraint;
 pub use phoneme::{Phoneme, PhonemeKind};
+pub use romanization::RomanizationScheme;
 pub use stress::StressRule;
 pub use template::{SyllableTemplate, TemplateRole};
 
@@ -46,6 +48,13 @@ pub struct Phonology {
     /// Primary-stress rule (P1.4). `None` = the language marks no stress.
     #[serde(default)]
     pub stress: Option<StressRule>,
+    /// Named romanization schemes (P1.5). Empty = the per-phoneme `romanize`
+    /// field is the only (implicit) scheme.
+    #[serde(default)]
+    pub romanizations: Vec<RomanizationScheme>,
+    /// Name of the default scheme; falls back to the first when unset.
+    #[serde(default)]
+    pub default_romanization: Option<String>,
     /// Upper bound on syllables per word. Parsed now; consumed by the
     /// multi-syllable compounder in a later P1 increment.
     #[serde(default = "default_max_syllables")]
@@ -96,6 +105,20 @@ impl Phonology {
             .get(role.as_str())
             .map(Vec::as_slice)
             .unwrap_or(&[])
+    }
+
+    /// Resolve a romanization scheme: a named one when `name` is given, else
+    /// the configured default, else the first declared scheme. `None` when no
+    /// scheme matches (callers fall back to the per-phoneme `romanize`).
+    pub fn scheme(&self, name: Option<&str>) -> Option<&RomanizationScheme> {
+        match name {
+            Some(n) => self.romanizations.iter().find(|s| s.name.eq_ignore_ascii_case(n)),
+            None => self
+                .default_romanization
+                .as_deref()
+                .and_then(|d| self.romanizations.iter().find(|s| s.name.eq_ignore_ascii_case(d)))
+                .or_else(|| self.romanizations.first()),
+        }
     }
 
     /// Segment a written word into the inventory's phonemes (by IPA) using a
