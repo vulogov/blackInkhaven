@@ -2,4 +2,5 @@
 //! phonotactic templates. AI-assisted lexicon / name / text generation
 //! arrive in P2 / P6.
 
+pub mod lexicon;
 pub mod word;

@@ -93,6 +93,20 @@ releases as they complete.
 > check misses), and **duplicate meanings** (accidental synonyms by gloss). The
 > AI generator (below) reuses `lexicon::analyze` to reject colliding proposals;
 > semantic near-synonymy via embeddings is the remaining AI-assisted half.
+>
+> **P2.2 (shipped)** — the AI dictionary generator: `inkhaven language
+> generate-lexicon <lang> --topic … --count … [--era] [--register] [--yes]`
+> (`src/conlang/generate/lexicon.rs`). The deterministic generator builds a
+> pool of phonotactically-valid forms (excluding existing surfaces); the AI
+> assigns each a concept/gloss/POS for the topic, glosses **in the working
+> language**; then the **dedup gate** (`dedup`) rejects any proposal that is
+> illegal, a surface-homophone of an existing/kept entry, or a duplicate
+> meaning — exactly the no-double-form / no-same-meaning / no-double-coined
+> invariant. Advisory: dry-run by default, `--yes` commits kept entries via
+> the existing `add_dictionary_entry_impl`. Pool / dedup / parse are pure +
+> unit-tested; the AI call is a thin layer (like `lang bootstrap`). Remaining
+> P2: rich entry fields, semantic (embedding) near-synonym rejection, the
+> `conlang_lexicon`/`cognates`/`usage` tables, the `Ctrl+B X` hub.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
