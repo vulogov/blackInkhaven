@@ -114,6 +114,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             proficiency,
         } => link_character(project, &character, &language, &proficiency),
         LanguageCommand::Speakers { language } => speakers(project, &language),
+        LanguageCommand::ScanManuscript { language, json } => {
+            scan_manuscript(project, &language, json)
+        }
         LanguageCommand::Query {
             language,
             register,
@@ -225,6 +228,81 @@ fn link_character(project: &Path, character: &str, language: &str, proficiency: 
     links.set_character_proficiency(&char_name, &lang_book.title, level);
     links.save(root).map_err(Error::Io)?;
     eprintln!("{char_name} → {} ({})", lang_book.title, level.as_str());
+    Ok(())
+}
+
+/// LANG-1 P2.7 — scan the manuscript for candidate undefined conlang words.
+fn scan_manuscript(project: &Path, language: &str, json: bool) -> Result<()> {
+    use std::collections::HashSet;
+    use unicode_segmentation::UnicodeSegmentation;
+
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no phoneme block — the scan needs the inventory to tell \
+             conlang words from prose"
+        ))
+    })?;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let known: HashSet<String> = entries
+        .iter()
+        .flat_map(|e| e.surface_forms().into_iter().map(|s| s.to_lowercase()))
+        .collect();
+    if known.is_empty() {
+        eprintln!("note: {language} has no dictionary entries yet — nothing anchors the scan");
+    }
+
+    // Every user-book paragraph as a word list (system books are reference
+    // material, not manuscript prose).
+    let mut paragraphs: Vec<Vec<String>> = Vec::new();
+    for node in hierarchy.iter() {
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let mut cursor = Some(node.id);
+        let mut is_system = false;
+        while let Some(id) = cursor {
+            match hierarchy.get(id) {
+                Some(n) if n.system_tag.is_some() => {
+                    is_system = true;
+                    break;
+                }
+                Some(n) => cursor = n.parent_id,
+                None => break,
+            }
+        }
+        if is_system {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
+        let Ok(body) = std::str::from_utf8(&bytes) else { continue };
+        paragraphs.push(body.unicode_words().map(String::from).collect());
+    }
+
+    let report = crate::conlang::lexicon::scan_undefined(&phonology, &known, &paragraphs);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing scan: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!(
+        "scan {language} · {} paragraph(s), {} in a conlang context",
+        report.paragraphs_scanned, report.conlang_paragraphs
+    );
+    if report.candidates.is_empty() {
+        println!("  ✓ no undefined conlang words found");
+        return Ok(());
+    }
+    println!("\n  candidate undefined words ({}):", report.candidates.len());
+    for c in &report.candidates {
+        println!("    {:<16} ×{}", c.word, c.count);
+    }
+    eprintln!("\n(heuristic — `add-word` the real ones, fix the typos)");
     Ok(())
 }
 
