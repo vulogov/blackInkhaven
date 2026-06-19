@@ -77,6 +77,12 @@ Inspectors: `generate-word`, `syllabify --word`, `ipa --word` (surface),
 applies each cell's morphemes to the root, runs allophony across the affix
 boundaries, and prints the form + Leipzig gloss. (P3.1 covers prefix + suffix.)
 
+**Auto-gloss.** A dictionary entry can declare the paradigm it inflects by
+(`paradigm: "noun"`); then `inkhaven language gloss <lang> --text "kata katai
+katat"` prints an aligned interlinear (the words over their Leipzig glosses).
+It recognises inflected *and* allophony-altered forms (`katat` → `stone-DAT`)
+by generating each entry's paradigm forward and matching.
+
 ## Lexicon
 
 Dictionary entries are HJSON paragraphs under **Dictionary** (created by

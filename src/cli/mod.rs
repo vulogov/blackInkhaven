@@ -2333,6 +2333,18 @@ pub enum LanguageCommand {
         language: String,
     },
 
+    /// LANG-1 P3.2 — interlinear auto-gloss of conlang text.  Builds a reverse
+    /// index from the dictionary (each entry's bare form, plus the inflected
+    /// forms of entries that declare a `paradigm`, with allophony applied),
+    /// then prints a Leipzig-style two-line gloss for the given text.
+    Gloss {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The conlang text to gloss (whitespace-separated words).
+        #[arg(long)]
+        text: String,
+    },
+
     /// LANG-1 P3.1 — generate the full paradigm of a root: apply a paradigm
     /// template's morpheme sequence (from the `Morphology` chapter) to the
     /// root, run the language's allophony across the affix boundaries, and

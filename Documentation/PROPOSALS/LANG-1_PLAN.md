@@ -183,6 +183,18 @@ releases as they complete.
 > metaphors, and derived-form proposals are later P3 increments. Verified the
 > allophony interaction e2e (`kata`+DAT → `katat` by final devoicing; `kata`+
 > DAT+PL → `katadi`, the now-medial `d` correctly *not* devoiced).
+>
+> **P3.2 (shipped)** — auto-gloss (interlinear). The inverse of paradigm
+> generation, done **generate-and-match** (forward-generate to dodge
+> reverse-parsing ambiguity + allophony): `conlang::morphology::gloss` builds a
+> reverse index (surface form → `(root, Leipzig gloss)`) by running each
+> dictionary entry's declared `paradigm` through `paradigm::generate` (allophony
+> already applied), then `gloss_text` looks each word up. Entries opt in with a
+> new additive `DictionaryEntry.paradigm` field (`None` → bare form only).
+> `inkhaven language gloss <lang> --text "…"` prints the aligned two-line
+> Leipzig interlinear. Verified e2e — `katat` glosses as `stone-DAT` *because*
+> the index was built from generated (devoiced) forms. Remaining P3:
+> derived-form proposals, grammar questionnaire, idioms / metaphors.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
