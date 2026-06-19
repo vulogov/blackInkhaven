@@ -2288,6 +2288,18 @@ pub enum LanguageCommand {
         #[arg(long)]
         tones: String,
     },
+
+    /// LANG-1 P2.1 — audit a language's dictionary for consistency: headwords
+    /// that break the phonotactics, homophones (entries sharing a surface
+    /// form), and duplicate meanings (accidental synonyms).  The deterministic
+    /// half of the dedup gate the AI lexicon generator reuses.
+    Audit {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Emit the report as JSON (for CI / scripting).
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// output format selector for
