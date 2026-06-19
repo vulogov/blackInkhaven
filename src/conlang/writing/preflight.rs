@@ -30,6 +30,18 @@ struct Counts {
     stroke_only: usize,
     images: usize,
     non_solid_paint: usize,
+    /// Solid fills that are near-white / very light — almost always a counter
+    /// (hole) the author drew with white paint, which a monochrome font will
+    /// NOT honour.
+    light_fills: usize,
+    /// Solid fills that are neither near-black nor near-white — a colour that
+    /// is discarded at render time (the glyph inherits the text colour).
+    colored_fills: usize,
+}
+
+/// Perceptual luminance of an sRGB colour (0 = black … 255 = white).
+fn luma(c: &usvg::Color) -> f32 {
+    0.299 * c.red as f32 + 0.587 * c.green as f32 + 0.114 * c.blue as f32
 }
 
 /// Lint a glyph SVG (as a string) for font suitability.
@@ -77,6 +89,25 @@ pub fn lint_svg(svg: &str) -> GlyphReport {
             c.non_solid_paint
         ));
     }
+    // A near-white fill almost always means "punch a hole here" — but a font is
+    // monochrome, so it becomes solid ink, not a counter. (The whole glyph being
+    // light is fine on its own; the mistake is a light fill *among* darker ones.)
+    if c.light_fills > 0 && c.fill_paths > c.light_fills {
+        r.warnings.push(format!(
+            "{} near-white fill(s) — a font glyph is monochrome, so a white fill does NOT cut a \
+             hole; draw counters as a reverse-wound subpath instead",
+            c.light_fills
+        ));
+    } else if c.light_fills > 0 {
+        r.warnings
+            .push(format!("{} near-white fill(s) — the fill colour is ignored at render time (the glyph inherits the text colour)", c.light_fills));
+    }
+    if c.colored_fills > 0 {
+        r.warnings.push(format!(
+            "{} non-black fill(s) — a font glyph is a single ink colour; the fill colour is ignored at render time",
+            c.colored_fills
+        ));
+    }
     r
 }
 
@@ -88,8 +119,16 @@ fn walk(group: &usvg::Group, c: &mut Counts) {
                 match p.fill() {
                     Some(fill) => {
                         c.fill_paths += 1;
-                        if !matches!(fill.paint(), usvg::Paint::Color(_)) {
-                            c.non_solid_paint += 1;
+                        match fill.paint() {
+                            usvg::Paint::Color(col) => {
+                                let l = luma(col);
+                                if l > 200.0 {
+                                    c.light_fills += 1;
+                                } else if l >= 40.0 {
+                                    c.colored_fills += 1;
+                                }
+                            }
+                            _ => c.non_solid_paint += 1,
                         }
                     }
                     None => {
@@ -138,6 +177,50 @@ mod tests {
         let r = lint_svg("not an svg at all");
         assert!(!r.is_usable());
         assert!(r.errors.iter().any(|e| e.contains("does not parse")));
+    }
+
+    #[test]
+    fn white_counter_among_dark_fills_warns() {
+        // The o-ring mistake: a black disc with a white inner circle meant as a
+        // hole. Usable (it has fills), but the white counter won't render.
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000">
+            <circle cx="500" cy="500" r="400" fill="black"/>
+            <circle cx="500" cy="500" r="80" fill="white"/></svg>"#;
+        let r = lint_svg(svg);
+        assert!(r.is_usable());
+        assert!(
+            r.warnings.iter().any(|w| w.contains("does NOT cut a hole")),
+            "warnings: {:?}",
+            r.warnings
+        );
+    }
+
+    #[test]
+    fn an_all_white_glyph_does_not_claim_a_counter() {
+        // A single light fill is not a counter mistake — just a colour note.
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+            <path d="M10 10 H 90 V 90 H 10 Z" fill="white"/></svg>"#;
+        let r = lint_svg(svg);
+        assert!(r.is_usable());
+        assert!(r.warnings.iter().any(|w| w.contains("ignored at render time")));
+        assert!(!r.warnings.iter().any(|w| w.contains("cut a hole")));
+    }
+
+    #[test]
+    fn colored_fill_warns_monochrome() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+            <path d="M10 10 H 90 V 90 H 10 Z" fill="#cc2200"/></svg>"##;
+        let r = lint_svg(svg);
+        assert!(r.is_usable());
+        assert!(r.warnings.iter().any(|w| w.contains("non-black fill")));
+    }
+
+    #[test]
+    fn pure_black_fill_has_no_colour_warning() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+            <path d="M10 10 H 90 V 90 H 10 Z" fill="#000"/></svg>"##;
+        let r = lint_svg(svg);
+        assert!(r.warnings.is_empty(), "warnings: {:?}", r.warnings);
     }
 
     #[test]
