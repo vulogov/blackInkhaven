@@ -973,8 +973,14 @@ writing system. Output ONE self-contained SVG and NOTHING else — no prose, no 
 markdown fences. Hard requirements (the glyph is rejected otherwise): the root element is <svg> with \
 viewBox=\"0 0 1000 1000\"; the shape is one or more FILLED black <path> elements \
 (fill=\"black\" or fill=\"#000\"); outline every stroke into a filled shape — NO stroke-only paths, \
-NO stroke attribute; NO <image> or embedded raster data; NO gradients; NO <text>. Design the glyph \
-to read clearly at small sizes: bold, centered, with margins inside the viewBox.";
+NO stroke attribute; NO <image> or embedded raster data; NO gradients; NO <text>. \
+A font is MONOCHROME: the fill colour is discarded and only the outline survives, so NEVER use a \
+white or light fill to carve out a hole/counter (the inside of an O, the eye of an e) — a white \
+shape just becomes solid ink. Instead cut counters the TrueType way: draw the inner contour as a \
+subpath wound in the OPPOSITE direction to the outer contour, both in the SAME black <path> (e.g. \
+outer ring clockwise, inner hole counter-clockwise); the opposing winding makes the hole. Use ONE \
+<path> with multiple subpaths so the windings combine. Design the glyph to read clearly at small \
+sizes: bold, centered, with margins inside the viewBox.";
 
 const RECONSTRUCT_SYSTEM: &str = "You are a historical linguist applying the comparative method. \
 Given cognate forms from related daughter languages, propose the single most plausible proto-form. \
