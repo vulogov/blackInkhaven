@@ -7,6 +7,7 @@
 
 pub mod allophony;
 pub mod constraint;
+pub mod grammar;
 pub mod morphology;
 pub mod phoneme;
 pub mod romanization;

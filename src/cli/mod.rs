@@ -2333,6 +2333,22 @@ pub enum LanguageCommand {
         language: String,
     },
 
+    /// LANG-1 P3.4 — the grammar questionnaire.  With no `--set`, lists the
+    /// typological-feature catalog (WALS-aligned: word order, alignment, case,
+    /// tense/aspect/mood, …) with the language's current answers + coverage.
+    /// `--set <feature>=<value>` records one answer (validated against the
+    /// catalog) into a `grammar` block in the Grammar chapter.
+    Grammar {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Record an answer: `word_order=sov`.
+        #[arg(long)]
+        set: Option<String>,
+        /// Emit the current answers as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// LANG-1 P3.3 — propose derived lexemes for a root: apply the language's
     /// derivational rules (agent nouns, diminutives, …) to the root, with
     /// allophony, and print the new word + sense + POS for each rule that

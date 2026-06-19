@@ -203,8 +203,20 @@ releases as they complete.
 > [--yes]` — advisory (dry-run default; `--yes` commits via the rich-import
 > path, recording `etymology: "derived from <root> via <rule>"`). Verified e2e
 > (`kata`/build → `kataron` "one who builds" / `katai` build.DIM).
-> `load_morphology` now also accepts a derivations-only block. Remaining P3:
-> grammar questionnaire, idioms / metaphors.
+> `load_morphology` now also accepts a derivations-only block.
+>
+> **P3.4 (shipped)** — grammar questionnaire (CLI). A bundled, WALS-aligned
+> **typological-feature catalog** (`conlang::grammar`, 16 features — word order,
+> alignment, case, gender, number, definiteness, tense/aspect/mood,
+> evidentiality, negation, question formation, relative clause, …; each with
+> options + one-line consequences). `GrammarSpec` (a feature→value map) lives in
+> a `{ grammar: { … } }` HJSON paragraph in the Grammar chapter.
+> `inkhaven language grammar <lang>` lists the catalog + current answers +
+> coverage; `--set word_order=sov` validates against the catalog and writes the
+> answer (creating a `typology` paragraph on first use). The AI grammar book
+> (P6) reads these tags. Verified e2e (set/validate/persist, invalid + unknown
+> rejected, coverage, `--json`). The guided TUI walk-through is later sugar.
+> Remaining P3: idioms / metaphors.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
