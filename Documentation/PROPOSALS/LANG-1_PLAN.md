@@ -123,8 +123,19 @@ releases as they complete.
 > any combination (AND) via the pure `lexicon::filter` / `Filter`. The
 > normalized `conlang_lexicon`/`cognates`/`usage` tables are **deferred** (per
 > "extend in place" — iterating the book is fine until a real 10k-entry perf
-> need appears). Remaining P2: generator-populated rich fields, manuscript
-> undefined-word scan, Places/Characters links, `Ctrl+B X` hub.
+> need appears).
+>
+> **P2.5 (shipped)** — generator-populated rich fields. `generate-lexicon`'s
+> AI now tags each entry with a `register` + `domain`, and `--yes` commits
+> through the existing rich-import path (`ImportEntry` → `build_imported_entry_body`)
+> so register / domain / `--era` land on the entry. Reconciled a schema gap:
+> `DictionaryEntry.registers` now accepts the singular `register: "…"` (the
+> import/seed convention) *or* a `registers: […]` list (alias + string-or-vec);
+> `ImportEntry`/`build_imported_entry_body` gained `domain`. Verified the rich
+> write→store→query round-trip end-to-end. Remaining P2: manuscript
+> undefined-word scan (needs `:lang:` span tagging — bundles with the editor /
+> `Ctrl+B X` work), Places/Characters language links (the Places/Characters
+> books are *prose*, so this needs a link-storage convention), `Ctrl+B X` hub.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the

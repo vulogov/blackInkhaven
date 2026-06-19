@@ -27,6 +27,12 @@ pub struct LexProposal {
     pub pos: String,
     #[serde(default)]
     pub example: String,
+    /// Register tag the AI assigned (P2.5; may be empty).
+    #[serde(default)]
+    pub register: String,
+    /// Semantic-domain tags the AI assigned (P2.5; may be empty).
+    #[serde(default)]
+    pub domain: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,7 +227,14 @@ mod tests {
     }
 
     fn prop(form: &str, gloss: &str) -> LexProposal {
-        LexProposal { form: form.into(), gloss: gloss.into(), pos: "noun".into(), example: String::new() }
+        LexProposal {
+            form: form.into(),
+            gloss: gloss.into(),
+            pos: "noun".into(),
+            example: String::new(),
+            register: String::new(),
+            domain: Vec::new(),
+        }
     }
 
     #[test]
