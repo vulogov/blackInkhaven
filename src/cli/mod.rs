@@ -2333,6 +2333,20 @@ pub enum LanguageCommand {
         language: String,
     },
 
+    /// LANG-1 P2.7 — scan the manuscript for candidate **undefined** conlang
+    /// words: words that look like the language (segment fully into its
+    /// inventory + pass its phonotactics) but aren't in the dictionary.  Only
+    /// paragraphs that already contain a known conlang word are scanned, so
+    /// working-language prose is skipped.  Heuristic — review the list, then
+    /// `add-word` the real ones or fix the typos.
+    ScanManuscript {
+        /// Language name (case-insensitive).
+        language: String,
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// LANG-1 P2.4 — query a language's dictionary by the rich entry fields:
     /// register, semantic domain, in-world era, part of speech, and a free
     /// substring over headword + gloss.  Filters combine (AND).

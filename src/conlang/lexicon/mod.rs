@@ -91,6 +91,77 @@ pub fn filter<'a>(entries: &'a [DictionaryEntry], f: &Filter) -> Vec<&'a Diction
     entries.iter().filter(|e| f.matches(e)).collect()
 }
 
+// ── Manuscript undefined-word scan (LANG-1 P2.7) ──────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct UndefinedReport {
+    pub candidates: Vec<UndefinedWord>,
+    pub paragraphs_scanned: usize,
+    /// Paragraphs that contained ≥1 known conlang word (the scanned context).
+    pub conlang_paragraphs: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UndefinedWord {
+    pub word: String,
+    pub count: usize,
+}
+
+/// True when `word_lc` (lowercased) reads entirely as this language's
+/// phonemes (no stray non-inventory characters) and satisfies its
+/// phonotactics — i.e. it *looks like* a valid word of the language.
+fn looks_conlang(phon: &Phonology, word_lc: &str) -> bool {
+    let seq = phon.segment(word_lc);
+    // ≥2 phonemes avoids flagging stray single letters ("a", "i") that
+    // happen to be in the inventory.
+    seq.len() >= 2
+        && seq.iter().all(|s| phon.phoneme(s).is_some())
+        && validator::is_legal(phon, &seq)
+}
+
+/// Scan manuscript paragraphs (each a list of words) for **candidate
+/// undefined conlang words**: words that look like the language (segment
+/// fully into its inventory + pass phonotactics) but aren't in the lexicon.
+///
+/// Precision guard: only paragraphs that already contain ≥1 *known* lexicon
+/// word are scanned, so prose written entirely in the working language is
+/// skipped — the candidates come from genuine conlang passages. `known` is
+/// the set of lowercased lexicon surface forms. Heuristic (best for a
+/// distinct inventory); the author reviews the list.
+pub fn scan_undefined(
+    phon: &Phonology,
+    known: &std::collections::HashSet<String>,
+    paragraphs: &[Vec<String>],
+) -> UndefinedReport {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut conlang_paragraphs = 0;
+
+    for words in paragraphs {
+        let in_context = words.iter().any(|w| known.contains(&w.to_lowercase()));
+        if !in_context {
+            continue;
+        }
+        conlang_paragraphs += 1;
+        for w in words {
+            let lc = w.to_lowercase();
+            if known.contains(&lc) || !looks_conlang(phon, &lc) {
+                continue;
+            }
+            *counts.entry(lc).or_default() += 1;
+        }
+    }
+
+    let mut candidates: Vec<UndefinedWord> =
+        counts.into_iter().map(|(word, count)| UndefinedWord { word, count }).collect();
+    candidates.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.word.cmp(&b.word)));
+
+    UndefinedReport {
+        candidates,
+        paragraphs_scanned: paragraphs.len(),
+        conlang_paragraphs,
+    }
+}
+
 /// Audit a dictionary against its phonology. Pure; the phonology may be empty
 /// (`Phonology::default()`), in which case the phonotactic check is skipped
 /// and homophones reduce to spelling collisions.
@@ -218,6 +289,27 @@ mod tests {
             era: era.map(String::from),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn scan_flags_undefined_only_in_conlang_context() {
+        let p = phon(); // inventory k/t/a, max cluster 1
+        let known: std::collections::HashSet<String> =
+            ["kata", "taka"].into_iter().map(String::from).collect();
+        let words = |s: &str| s.split_whitespace().map(String::from).collect::<Vec<_>>();
+        let paragraphs = vec![
+            // conlang context (has "kata"): "tata" looks conlang + unknown → flagged.
+            words("the hero said kata then tata"),
+            // working-language only (no known word): skipped entirely.
+            words("she walked into the room quietly"),
+            // conlang context again: "tata" repeats; "ktt" fails phonotactics → not flagged.
+            words("taka tata ktt"),
+        ];
+        let r = scan_undefined(&p, &known, &paragraphs);
+        assert_eq!(r.conlang_paragraphs, 2);
+        assert_eq!(r.candidates.len(), 1);
+        assert_eq!(r.candidates[0].word, "tata");
+        assert_eq!(r.candidates[0].count, 2);
     }
 
     #[test]
