@@ -21,52 +21,53 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.13 — Breadth: every language, cancellable jobs, print & ebook polish
+## Latest release · 1.3.14 — The ConLang Suite (Part 1: phonology, lexicon, morphology)
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.13.md`](Documentation/RELEASE_NOTES/1.3.13.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.14.md`](Documentation/RELEASE_NOTES/1.3.14.md)
+· Reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md)
 
-After a deep run on the world layer, 1.3.13 goes **wide**: the AI/NLP features
-work in **any** language, long background jobs **cancel** mid-flight, and the
-**print** and **ebook** export paths are finished. Pure-Rust, **no new
+Inkhaven becomes the first **constructed-language workbench that lives inside
+the writing tool**. Build a language — phonology, lexicon, morphology — and
+write prose in it, with the AI as an assistant and *you* in full deterministic
+control of the rules. The first checkpoint of a flagship that continues across
+1.3.x (RFC LANG-1). Layered on the existing `Language` book; **no new
 dependencies**.
 
-### Full multilingual — your language, or an honest "not yet"
+### A complete phonology engine
 
-The style detectors, world-checks, and drift coreference key off the project
-`language`. Uncurated languages no longer masquerade as English — the word
-lists come back **empty** (no false flags) while stemming, embeddings, and the
-AI **output language** still work. **`inkhaven lang status`** prints an honest
-coverage matrix; **`inkhaven lang bootstrap <lang>`** has the LLM lexicographer
-produce the full detector vocabulary (lemma form) for **any** language and
-`--yes`-patches `inkhaven.hjson` safely. All four world-check prompts are
-**localized** (en/ru/fr/de/es, English-with-warning fallback, 3-tier override)
-and write findings in the project language. Worked Arabic + Hungarian configs
-ship in [`custom_languages/`](custom_languages/).
+Inventory → templates → syllable-aware phonotactics → **allophony**
+(`k > tʃ / _ i`) → **stress** (fixed or weight-sensitive Latin) → **bidirectional
+romanization** (with contextual digraph disambiguation) → **tone sandhi**. Six
+CLI inspectors (`generate-word`, `syllabify`, `ipa`, `stress`, `romanize`,
+`tone`), all pure and deterministic.
 
-### Cancel a deep refresh in flight
+### AI dictionary generation — with a complete dedup gate
 
-Re-press **`Ctrl+V Shift+F`** while the background refresh runs and it
-**cancels** — each scan honours a shared cancel flag between chapters/entities
-and stops in seconds; whatever finished still wrote its sidecars.
+**`inkhaven language generate-lexicon --topic … --count …`**: the forms come
+from the deterministic generator (so they always obey the phonotactics), the AI
+assigns meanings in your working language, and the **dedup gate** rejects any
+proposal that's illegal, a homophone, a duplicate meaning, or — with
+`--semantic` — a near-synonym ("stone" vs "rock", by embedding). Plus `audit`,
+rich-field `query`, manuscript `scan-manuscript`, and Places/Characters
+language links.
 
-### Print — one-command booklet + a real A5 codex
+### Morphology
 
-**`inkhaven pdf booklet book.pdf`** is a zero-config saddle-stitch booklet that
-auto-fits the press sheet to two source pages side-by-side (any trim size). The
-new **`a5_book`** imposition profile folds a proper perfect-bound A5 codex from
-A4 sheets — gathered 16-page signatures with creep and signature-number marks
-for hand binding.
+**`inkhaven language paradigm --root … --template …`** applies a paradigm's
+morpheme sequence to a root and runs the allophony engine **across the affix
+boundaries** — so `kata`+DAT → `katat` (final devoicing) while `kata`+DAT+PL →
+`katadi` (the now-medial `d` correctly stays). Emits the surface form + a
+Leipzig gloss.
 
-### Ebook — inline images + popup footnotes
+### In the editor
 
-The EPUB export now embeds chapter **`Image` nodes** as `<figure>` resources
-(written into `OEBPS/`, declared in the OPF manifest, with `alt` + caption) and
-turns footnotes into proper EPUB3 **noteref/aside popups**.
+**`Ctrl+B X`** opens the ConLang hub (a read-only overview of every language),
+and typing **`:lang:`** opens a lexicon picker that inserts a word inline.
 
 ### Test stats
 
-Tests 1359 → 1369, **zero new dependencies**. New tutorial 73
-([writing in any language](Documentation/Tutorials/73-multilingual.md)).
+Tests 1359 → 1428 (across 1.3.13→1.3.14), **zero new dependencies**. Full
+reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
