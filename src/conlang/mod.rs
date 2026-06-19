@@ -8,6 +8,7 @@
 //! seeded word generator. Pure, deterministic, dependency-free.
 
 pub mod generate;
+pub mod grammar;
 pub mod lexicon;
 pub mod links;
 pub mod morphology;

@@ -124,6 +124,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             gloss,
         } => paradigm(project, &language, &root, &template, gloss.as_deref()),
         LanguageCommand::Gloss { language, text } => gloss_text(project, &language, &text),
+        LanguageCommand::Grammar { language, set, json } => {
+            grammar_questionnaire(project, &language, set.as_deref(), json)
+        }
         LanguageCommand::Derive {
             language,
             root,
@@ -285,6 +288,134 @@ fn load_morphology(
         }
     }
     Ok(None)
+}
+
+/// Load the `{ grammar: { … } }` typology block from the Grammar chapter,
+/// returning the spec + the paragraph node that holds it (for in-place edits).
+fn load_grammar_spec(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<(crate::conlang::types::grammar::GrammarSpec, Option<crate::store::node::Node>)> {
+    use crate::conlang::types::grammar::GrammarSpec;
+    let Some(chapter) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Grammar"))
+        .cloned()
+    else {
+        return Ok((GrammarSpec::default(), None));
+    };
+    for para in hierarchy.children_of(Some(chapter.id)) {
+        if para.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
+        if let Ok(Some(spec)) = GrammarSpec::from_hjson(&String::from_utf8_lossy(&bytes)) {
+            return Ok((spec, Some(para.clone())));
+        }
+    }
+    Ok((GrammarSpec::default(), None))
+}
+
+/// LANG-1 P3.4 — the grammar typological questionnaire.
+fn grammar_questionnaire(
+    project: &Path,
+    language: &str,
+    set: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    use crate::conlang::grammar;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let (mut spec, node) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+
+    if let Some(kv) = set {
+        let (feat, val) = kv
+            .split_once('=')
+            .ok_or_else(|| Error::Config("use --set <feature>=<value>".into()))?;
+        let f = grammar::feature(feat.trim()).ok_or_else(|| {
+            Error::Config(format!("unknown feature `{}` — run `language grammar` to list them", feat.trim()))
+        })?;
+        let val = val.trim();
+        if !f.is_valid(val) {
+            return Err(Error::Config(format!(
+                "`{val}` is not a valid value for `{}` — options: {}",
+                f.id,
+                f.values()
+            )));
+        }
+        spec.grammar.insert(f.id.to_string(), val.to_lowercase());
+        let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+        write_grammar_spec(&store, &cfg, &lang_book, node, &spec)?;
+        eprintln!("{language}: set {} = {}", f.id, val.to_lowercase());
+        return Ok(());
+    }
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&spec.grammar)
+                .map_err(|e| Error::Store(format!("serializing grammar: {e}")))?
+        );
+        return Ok(());
+    }
+
+    let total = grammar::catalog().len();
+    let answered = grammar::catalog().iter().filter(|f| spec.grammar.contains_key(f.id)).count();
+    println!("grammar · {language} · {answered}/{total} feature(s) set\n");
+    for f in grammar::catalog() {
+        match spec.grammar.get(f.id) {
+            Some(v) => println!("  ✓ {:<16} {}", f.id, v),
+            None => println!("  · {:<16} {}", f.id, f.question),
+        }
+    }
+    eprintln!("\nset an answer: inkhaven language grammar {language} --set <feature>=<value>");
+    eprintln!("(see the options for a feature in `Documentation/CONLANG.md` or `--help`)");
+    Ok(())
+}
+
+/// Write the grammar typology block to its paragraph (creating a `typology`
+/// paragraph under the Grammar chapter if none exists yet).
+fn write_grammar_spec(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    node: Option<crate::store::node::Node>,
+    spec: &crate::conlang::types::grammar::GrammarSpec,
+) -> Result<()> {
+    let body = serde_json::to_string_pretty(spec)
+        .map_err(|e| Error::Store(format!("serializing grammar: {e}")))?;
+    let mut target = match node {
+        Some(n) => n,
+        None => {
+            let hierarchy = Hierarchy::load(store)?;
+            let chapter = hierarchy
+                .children_of(Some(lang_book.id))
+                .into_iter()
+                .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Grammar"))
+                .cloned()
+                .ok_or_else(|| Error::Config("no Grammar chapter to store the answers in".into()))?;
+            store.create_node(
+                cfg,
+                &hierarchy,
+                NodeKind::Paragraph,
+                "typology",
+                Some(&chapter),
+                None,
+                InsertPosition::End,
+            )?
+        }
+    };
+    target.content_type = Some("hjson".to_string());
+    if let Some(rel) = &target.file {
+        let abs = store.project_root().join(rel);
+        std::fs::write(&abs, body.as_bytes())
+            .map_err(|e| Error::Store(format!("write grammar: {e}")))?;
+    }
+    store
+        .update_paragraph_content(&mut target, body.as_bytes())
+        .map_err(|e| Error::Store(format!("update grammar: {e}")))?;
+    Ok(())
 }
 
 /// LANG-1 P3.3 — propose (and optionally commit) derived lexemes for a root.

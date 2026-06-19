@@ -98,6 +98,21 @@ applies every rule whose `from_pos` matches, with allophony, and prints the
 proposed `form / gloss / pos`. Advisory — `--yes` adds them to the Dictionary
 (recording the etymology); dry-run otherwise.
 
+## Grammar (typology)
+
+`inkhaven language grammar <lang>` lists a WALS-aligned catalog of 16
+typological features (word order, alignment, case, gender, number,
+definiteness, tense/aspect/mood, evidentiality, negation, question formation,
+relative clause, …) with the language's current answers and coverage.
+
+```
+inkhaven language grammar Eldar --set word_order=sov
+inkhaven language grammar Eldar --set alignment=ergative_absolutive
+```
+
+Answers are validated against the catalog and stored as a `{ grammar: { … } }`
+block in the Grammar chapter; the AI grammar book reads them.
+
 ## Lexicon
 
 Dictionary entries are HJSON paragraphs under **Dictionary** (created by
