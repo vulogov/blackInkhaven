@@ -2243,6 +2243,19 @@ pub enum LanguageCommand {
         #[arg(long)]
         word: String,
     },
+
+    /// LANG-1 P1.4 — place primary stress on a word per the language's
+    /// stress rule.  Syllabifies the word, applies the rule (fixed initial /
+    /// final / penultimate / antepenultimate, or the weight-sensitive Latin
+    /// rule), and prints the syllabification with `ˈ` before the stressed
+    /// syllable.
+    Stress {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The word, in the language's romanization (or raw IPA).
+        #[arg(long)]
+        word: String,
+    },
 }
 
 /// output format selector for

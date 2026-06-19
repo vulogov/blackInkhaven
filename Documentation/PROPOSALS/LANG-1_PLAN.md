@@ -355,8 +355,13 @@ for allophony, which often references syllable position):
 Onset Principle) + the deferred onset/coda/sonority constraints +
 `language syllabify` inspector; **P1.3 (shipped)** allophony evaluator
 (SPE-style ordered rules `k > tʃ / _ i`, underlying→surface, applied to the
-generator's output + a `language ipa` inspector); **P1.4** stress/tone;
-**P1.5** romanization (bidirectional, multi-scheme).
+generator's output + a `language ipa` inspector); **P1.4 (shipped)** stress
+placement (fixed initial/final/penult/antepenult + weight-sensitive Latin rule;
+syllable weight; `language stress` inspector); **P1.5** romanization
+(bidirectional, multi-scheme); **P1.6** tone (register/contour + sandhi) —
+split out from stress because its real input is *lexical* per-syllable tone
+(the lexicon supplies it in P2) and tone sandhi will reuse a generalized
+ordered-rewrite engine rather than duplicate the allophony evaluator.
 
 ## 5. Testing strategy (per RFC §13, scoped to each phase)
 
