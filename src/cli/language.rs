@@ -123,6 +123,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             template,
             gloss,
         } => paradigm(project, &language, &root, &template, gloss.as_deref()),
+        LanguageCommand::Gloss { language, text } => gloss_text(project, &language, &text),
         LanguageCommand::Query {
             language,
             register,
@@ -273,6 +274,41 @@ fn load_morphology(
         }
     }
     Ok(None)
+}
+
+/// LANG-1 P3.2 — interlinear auto-gloss of conlang text.
+fn gloss_text(project: &Path, language: &str, text: &str) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    // Phonology + morphology are optional: without them only bare forms gloss.
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+
+    let index = crate::conlang::morphology::gloss::build_index(&phon, &morph, &entries);
+    let items = index.gloss_text(text);
+    if items.is_empty() {
+        return Ok(());
+    }
+
+    // Two aligned lines: the surface words over their glosses (Leipzig style).
+    let mut top = String::new();
+    let mut bot = String::new();
+    let mut matched = 0usize;
+    for item in &items {
+        let g = item.gloss.clone().unwrap_or_else(|| "?".to_string());
+        if item.gloss.is_some() {
+            matched += 1;
+        }
+        let w = item.surface.chars().count();
+        let gw = g.chars().count();
+        let width = w.max(gw) + 2;
+        top.push_str(&format!("{:<width$}", item.surface, width = width));
+        bot.push_str(&format!("{:<width$}", g, width = width));
+    }
+    println!("{}", top.trim_end());
+    println!("{}", bot.trim_end());
+    eprintln!("\n{matched} / {} word(s) glossed", items.len());
+    Ok(())
 }
 
 /// LANG-1 P3.1 — generate + print a root's paradigm.
