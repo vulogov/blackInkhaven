@@ -2333,6 +2333,27 @@ pub enum LanguageCommand {
         language: String,
     },
 
+    /// LANG-1 P3.3 — propose derived lexemes for a root: apply the language's
+    /// derivational rules (agent nouns, diminutives, …) to the root, with
+    /// allophony, and print the new word + sense + POS for each rule that
+    /// fires.  Advisory: nothing is added without `--yes`.
+    Derive {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The root word (in the language's romanization).
+        #[arg(long)]
+        root: String,
+        /// The root's gloss (defaults to the root).
+        #[arg(long)]
+        gloss: Option<String>,
+        /// The root's part of speech (gates which rules apply).
+        #[arg(long)]
+        pos: Option<String>,
+        /// Add the proposed derived forms to the Dictionary.
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// LANG-1 P3.2 — interlinear auto-gloss of conlang text.  Builds a reverse
     /// index from the dictionary (each entry's bare form, plus the inflected
     /// forms of entries that declare a `paradigm`, with allophony applied),

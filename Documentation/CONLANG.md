@@ -83,6 +83,21 @@ katat"` prints an aligned interlinear (the words over their Leipzig glosses).
 It recognises inflected *and* allophony-altered forms (`katat` → `stone-DAT`)
 by generating each entry's paradigm forward and matching.
 
+**Derived forms.** A `derivations` list in the Morphology block coins new
+lexemes (agent nouns, diminutives, …):
+
+```hjson
+derivations: [
+  { name: "agent", form: "ron", position: "suffix", from_pos: "verb",
+    to_pos: "noun", gloss_template: "one who {}s" }
+]
+```
+
+`inkhaven language derive <lang> --root kata --gloss build --pos verb [--yes]`
+applies every rule whose `from_pos` matches, with allophony, and prints the
+proposed `form / gloss / pos`. Advisory — `--yes` adds them to the Dictionary
+(recording the etymology); dry-run otherwise.
+
 ## Lexicon
 
 Dictionary entries are HJSON paragraphs under **Dictionary** (created by

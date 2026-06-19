@@ -124,6 +124,13 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             gloss,
         } => paradigm(project, &language, &root, &template, gloss.as_deref()),
         LanguageCommand::Gloss { language, text } => gloss_text(project, &language, &text),
+        LanguageCommand::Derive {
+            language,
+            root,
+            gloss,
+            pos,
+            yes,
+        } => derive(project, &language, &root, gloss.as_deref(), pos.as_deref(), yes),
         LanguageCommand::Query {
             language,
             register,
@@ -264,7 +271,11 @@ fn load_morphology(
             let Some(bytes) = store.get_content(para.id)? else { continue };
             let body = String::from_utf8_lossy(&bytes);
             match crate::conlang::types::morphology::Morphology::from_hjson(&body) {
-                Ok(Some(m)) if !m.morphemes.is_empty() || !m.paradigms.is_empty() => {
+                Ok(Some(m))
+                    if !m.morphemes.is_empty()
+                        || !m.paradigms.is_empty()
+                        || !m.derivations.is_empty() =>
+                {
                     return Ok(Some(m));
                 }
                 // A Grammar paragraph that isn't a morphology block (a
@@ -274,6 +285,69 @@ fn load_morphology(
         }
     }
     Ok(None)
+}
+
+/// LANG-1 P3.3 — propose (and optionally commit) derived lexemes for a root.
+fn derive(
+    project: &Path,
+    language: &str,
+    root: &str,
+    gloss: Option<&str>,
+    pos: Option<&str>,
+    yes: bool,
+) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no morphology — add `derivations` HJSON under its `Grammar` chapter"
+        ))
+    })?;
+    if morph.derivations.is_empty() {
+        return Err(Error::Config(format!(
+            "language `{language}` declares no derivation rules"
+        )));
+    }
+
+    let root_gloss = gloss.unwrap_or(root);
+    let root_pos = pos.unwrap_or("");
+    let derived =
+        crate::conlang::morphology::derive::generate(&phon, &morph, root, root_gloss, root_pos);
+    if derived.is_empty() {
+        eprintln!(
+            "no derivation rules apply to a `{}` root",
+            if root_pos.is_empty() { "(unspecified pos)" } else { root_pos }
+        );
+        return Ok(());
+    }
+
+    println!("derivations of {root} ({root_gloss}):");
+    for d in &derived {
+        let pos = if d.pos.is_empty() { String::new() } else { format!("  {}", d.pos) };
+        println!("  {:<18} {:<26} [{}]{}", d.form, d.gloss, d.rule, pos);
+    }
+
+    if yes {
+        let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+        let mut added = 0usize;
+        for d in &derived {
+            let entry = ImportEntry {
+                word: d.form.clone(),
+                pos: d.pos.clone(),
+                translation: d.gloss.clone(),
+                etymology: format!("derived from {root} via {}", d.rule),
+                ..Default::default()
+            };
+            match add_imported_dictionary_entry(&store, &cfg, &lang_book, &entry) {
+                Ok(_) => added += 1,
+                Err(e) => eprintln!("  skipped {}: {e}", d.form),
+            }
+        }
+        eprintln!("\nadded {added} derived entr(y/ies) to {language}'s Dictionary");
+    } else {
+        eprintln!("\n(dry run — re-run with --yes to add the {} derived form(s))", derived.len());
+    }
+    Ok(())
 }
 
 /// LANG-1 P3.2 — interlinear auto-gloss of conlang text.

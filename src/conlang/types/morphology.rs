@@ -85,6 +85,32 @@ pub struct ParadigmTemplate {
     pub cells: Vec<ParadigmCell>,
 }
 
+/// A *derivational* rule — applies an affix to a root to coin a new lexeme
+/// (an agent noun, a verbal noun, …), as opposed to an inflectional paradigm
+/// cell (a grammatical form of the same lexeme).
+#[derive(Debug, Clone, Deserialize)]
+pub struct DerivationRule {
+    pub name: String,
+    /// Gloss tag for the derived sense (`AGENT`, `DIM`), used when no
+    /// `gloss_template` is given.
+    #[serde(default)]
+    pub gloss: String,
+    /// The affix form.
+    #[serde(default)]
+    pub form: String,
+    pub position: AffixPosition,
+    /// Applies only to roots of this part of speech (`None` = any).
+    #[serde(default)]
+    pub from_pos: Option<String>,
+    /// Part of speech of the derived lexeme.
+    #[serde(default)]
+    pub to_pos: String,
+    /// Optional gloss template; `{}` is replaced by the root's gloss
+    /// (`"one who {}s"`, `"little {}"`).
+    #[serde(default)]
+    pub gloss_template: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Morphology {
     /// Typological type (`agglutinative` / `fusional` / …); informational.
@@ -95,6 +121,9 @@ pub struct Morphology {
     pub morphemes: Vec<MorphemeSpec>,
     #[serde(default)]
     pub paradigms: Vec<ParadigmTemplate>,
+    /// Derivational rules (P3.3).
+    #[serde(default)]
+    pub derivations: Vec<DerivationRule>,
 }
 
 impl Morphology {

@@ -193,8 +193,18 @@ releases as they complete.
 > new additive `DictionaryEntry.paradigm` field (`None` → bare form only).
 > `inkhaven language gloss <lang> --text "…"` prints the aligned two-line
 > Leipzig interlinear. Verified e2e — `katat` glosses as `stone-DAT` *because*
-> the index was built from generated (devoiced) forms. Remaining P3:
-> derived-form proposals, grammar questionnaire, idioms / metaphors.
+> the index was built from generated (devoiced) forms.
+>
+> **P3.3 (shipped)** — derived-form proposals. `DerivationRule` (affix +
+> `from_pos` → `to_pos` + gloss template) coins *new lexemes* (vs inflectional
+> paradigm cells). `conlang::morphology::derive::generate` applies every rule
+> whose `from_pos` matches the root, with allophony, yielding `(form, gloss,
+> pos)` proposals. `inkhaven language derive <lang> --root --gloss --pos
+> [--yes]` — advisory (dry-run default; `--yes` commits via the rich-import
+> path, recording `etymology: "derived from <root> via <rule>"`). Verified e2e
+> (`kata`/build → `kataron` "one who builds" / `katai` build.DIM).
+> `load_morphology` now also accepts a derivations-only block. Remaining P3:
+> grammar questionnaire, idioms / metaphors.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
