@@ -2214,6 +2214,22 @@ pub enum LanguageCommand {
         #[arg(long, default_value_t = 20)]
         count: usize,
     },
+
+    /// LANG-1 P1.2 — syllabify a word against a language's phonology.
+    /// Segments the word into the language's phonemes (longest-grapheme
+    /// match over the inventory), then breaks it into syllables using
+    /// sonority peaks + the Maximal Onset Principle, printing the
+    /// `CV.CVC`-style result.  An inspector for the phonotactics that the
+    /// onset / coda / sonority constraints + (later) stress placement rely
+    /// on.
+    Syllabify {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The word to syllabify, in the language's romanization (or raw
+        /// IPA).  Segmented greedily against the phoneme inventory.
+        #[arg(long)]
+        word: String,
+    },
 }
 
 /// output format selector for

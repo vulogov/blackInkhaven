@@ -349,8 +349,13 @@ engine behind it):
 - Unit + **property tests**: every generated word satisfies all declared
   constraints; identical output for a given seed.
 
-Subsequent P1 increments: IPA table + allophony eval (P1.2), stress/tone
-(P1.3), romanization (P1.4).
+Subsequent P1 increments (re-sequenced — syllabification is a prerequisite
+for allophony, which often references syllable position):
+**P1.2 (shipped)** IPA sonority table + sonority-aware syllabifier (Maximal
+Onset Principle) + the deferred onset/coda/sonority constraints +
+`language syllabify` inspector; **P1.3** allophony evaluator (SPE-style rules,
+underlying→surface); **P1.4** stress/tone; **P1.5** romanization
+(bidirectional, multi-scheme).
 
 ## 5. Testing strategy (per RFC §13, scoped to each phase)
 
