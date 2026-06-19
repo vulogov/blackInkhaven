@@ -217,7 +217,7 @@ mod tests {
     }
 
     fn entry(word: &str, gloss: &str) -> DictionaryEntry {
-        DictionaryEntry { word: word.into(), pos: "noun".into(), translation: gloss.into(), example: String::new(), inflection: Default::default() }
+        DictionaryEntry { word: word.into(), pos: "noun".into(), translation: gloss.into(), ..Default::default() }
     }
 
     fn prop(form: &str, gloss: &str) -> LexProposal {
