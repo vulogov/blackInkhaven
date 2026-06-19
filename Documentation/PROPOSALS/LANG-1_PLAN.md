@@ -216,7 +216,16 @@ releases as they complete.
 > answer (creating a `typology` paragraph on first use). The AI grammar book
 > (P6) reads these tags. Verified e2e (set/validate/persist, invalid + unknown
 > rejected, coverage, `--json`). The guided TUI walk-through is later sugar.
-> Remaining P3: idioms / metaphors.
+>
+> **P3.5 (shipped)** — idioms + metaphors. `conlang::types::expression`
+> (`Idiom { form, literal, meaning, register }`, `Metaphor { source, target,
+> examples }`, `Expressions`), stored as a `{ idioms, metaphors }` HJSON
+> paragraph in the Grammar chapter (the grammar-paragraph writer was
+> generalized to `upsert_grammar_paragraph`). `inkhaven language idiom-add` /
+> `metaphor-add` / `idioms` (list). The AI translation will consult these to
+> stay idiomatic. **P3 (morphology pillar) is complete** — paradigm generation,
+> auto-gloss, derived forms, the grammar questionnaire, and idioms/metaphors,
+> all on the shared affix+allophony core.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the

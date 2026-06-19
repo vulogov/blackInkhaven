@@ -127,6 +127,27 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
         }
+        LanguageCommand::IdiomAdd {
+            language,
+            form,
+            literal,
+            meaning,
+            register,
+        } => idiom_add(
+            project,
+            &language,
+            &form,
+            literal.as_deref(),
+            &meaning,
+            register.as_deref(),
+        ),
+        LanguageCommand::MetaphorAdd {
+            language,
+            source,
+            target,
+            example,
+        } => metaphor_add(project, &language, &source, &target, example.as_deref()),
+        LanguageCommand::Idioms { language } => idioms_list(project, &language),
         LanguageCommand::Derive {
             language,
             root,
@@ -290,6 +311,125 @@ fn load_morphology(
     Ok(None)
 }
 
+/// Load the `{ idioms: [...], metaphors: [...] }` block from the Grammar
+/// chapter + the paragraph node that holds it.
+fn load_expressions(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<(crate::conlang::types::expression::Expressions, Option<crate::store::node::Node>)> {
+    use crate::conlang::types::expression::Expressions;
+    let Some(chapter) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Grammar"))
+        .cloned()
+    else {
+        return Ok((Expressions::default(), None));
+    };
+    for para in hierarchy.children_of(Some(chapter.id)) {
+        if para.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
+        if let Ok(Some(e)) = Expressions::from_hjson(&String::from_utf8_lossy(&bytes)) {
+            return Ok((e, Some(para.clone())));
+        }
+    }
+    Ok((Expressions::default(), None))
+}
+
+fn save_expressions(
+    project: &Path,
+    store: &Store,
+    lang_book: &crate::store::node::Node,
+    node: Option<crate::store::node::Node>,
+    expr: &crate::conlang::types::expression::Expressions,
+) -> Result<()> {
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    let body = serde_json::to_string_pretty(expr)
+        .map_err(|e| Error::Store(format!("serializing expressions: {e}")))?;
+    upsert_grammar_paragraph(store, &cfg, lang_book, "expressions", node, &body)
+}
+
+/// LANG-1 P3.5 — add an idiom.
+fn idiom_add(
+    project: &Path,
+    language: &str,
+    form: &str,
+    literal: Option<&str>,
+    meaning: &str,
+    register: Option<&str>,
+) -> Result<()> {
+    use crate::conlang::types::expression::Idiom;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let (mut expr, node) = load_expressions(&store, &hierarchy, &lang_book)?;
+    expr.idioms.push(Idiom {
+        form: form.trim().to_string(),
+        literal: literal.unwrap_or("").trim().to_string(),
+        meaning: meaning.trim().to_string(),
+        register: register.map(|r| vec![r.trim().to_string()]).unwrap_or_default(),
+    });
+    save_expressions(project, &store, &lang_book, node, &expr)?;
+    eprintln!("{language}: added idiom `{}` ({} total)", form.trim(), expr.idioms.len());
+    Ok(())
+}
+
+/// LANG-1 P3.5 — declare a conceptual metaphor.
+fn metaphor_add(
+    project: &Path,
+    language: &str,
+    source: &str,
+    target: &str,
+    example: Option<&str>,
+) -> Result<()> {
+    use crate::conlang::types::expression::Metaphor;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let (mut expr, node) = load_expressions(&store, &hierarchy, &lang_book)?;
+    expr.metaphors.push(Metaphor {
+        source: source.trim().to_string(),
+        target: target.trim().to_string(),
+        examples: example.map(|e| vec![e.trim().to_string()]).unwrap_or_default(),
+        note: String::new(),
+    });
+    save_expressions(project, &store, &lang_book, node, &expr)?;
+    eprintln!(
+        "{language}: declared metaphor {} → {} ({} total)",
+        source.trim(),
+        target.trim(),
+        expr.metaphors.len()
+    );
+    Ok(())
+}
+
+/// LANG-1 P3.5 — list idioms + metaphors.
+fn idioms_list(project: &Path, language: &str) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let (expr, _) = load_expressions(&store, &hierarchy, &lang_book)?;
+    if expr.idioms.is_empty() && expr.metaphors.is_empty() {
+        println!("{language}: no idioms or metaphors yet");
+        return Ok(());
+    }
+    if !expr.idioms.is_empty() {
+        println!("idioms ({}):", expr.idioms.len());
+        for i in &expr.idioms {
+            let reg = if i.register.is_empty() { String::new() } else { format!("  [{}]", i.register.join(",")) };
+            println!("  {}  —  {}{}", i.form, i.meaning, reg);
+            if !i.literal.trim().is_empty() {
+                println!("      (lit. {})", i.literal);
+            }
+        }
+    }
+    if !expr.metaphors.is_empty() {
+        println!("\nmetaphors ({}):", expr.metaphors.len());
+        for m in &expr.metaphors {
+            let ex = if m.examples.is_empty() { String::new() } else { format!("  e.g. {}", m.examples.join("; ")) };
+            println!("  {} → {}{}", m.source, m.target, ex);
+        }
+    }
+    Ok(())
+}
+
 /// Load the `{ grammar: { … } }` typology block from the Grammar chapter,
 /// returning the spec + the paragraph node that holds it (for in-place edits).
 fn load_grammar_spec(
@@ -346,7 +486,9 @@ fn grammar_questionnaire(
         }
         spec.grammar.insert(f.id.to_string(), val.to_lowercase());
         let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
-        write_grammar_spec(&store, &cfg, &lang_book, node, &spec)?;
+        let body = serde_json::to_string_pretty(&spec)
+            .map_err(|e| Error::Store(format!("serializing grammar: {e}")))?;
+        upsert_grammar_paragraph(&store, &cfg, &lang_book, "typology", node, &body)?;
         eprintln!("{language}: set {} = {}", f.id, val.to_lowercase());
         return Ok(());
     }
@@ -374,17 +516,17 @@ fn grammar_questionnaire(
     Ok(())
 }
 
-/// Write the grammar typology block to its paragraph (creating a `typology`
-/// paragraph under the Grammar chapter if none exists yet).
-fn write_grammar_spec(
+/// Create-or-update a named pure-HJSON paragraph under the Grammar chapter
+/// (the home for the typology + expressions blocks). Reused by the grammar
+/// questionnaire and the idioms/metaphors commands.
+fn upsert_grammar_paragraph(
     store: &Store,
     cfg: &Config,
     lang_book: &crate::store::node::Node,
+    para_title: &str,
     node: Option<crate::store::node::Node>,
-    spec: &crate::conlang::types::grammar::GrammarSpec,
+    body: &str,
 ) -> Result<()> {
-    let body = serde_json::to_string_pretty(spec)
-        .map_err(|e| Error::Store(format!("serializing grammar: {e}")))?;
     let mut target = match node {
         Some(n) => n,
         None => {
@@ -394,12 +536,12 @@ fn write_grammar_spec(
                 .into_iter()
                 .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Grammar"))
                 .cloned()
-                .ok_or_else(|| Error::Config("no Grammar chapter to store the answers in".into()))?;
+                .ok_or_else(|| Error::Config("no Grammar chapter to store the block in".into()))?;
             store.create_node(
                 cfg,
                 &hierarchy,
                 NodeKind::Paragraph,
-                "typology",
+                para_title,
                 Some(&chapter),
                 None,
                 InsertPosition::End,
@@ -410,11 +552,11 @@ fn write_grammar_spec(
     if let Some(rel) = &target.file {
         let abs = store.project_root().join(rel);
         std::fs::write(&abs, body.as_bytes())
-            .map_err(|e| Error::Store(format!("write grammar: {e}")))?;
+            .map_err(|e| Error::Store(format!("write {para_title}: {e}")))?;
     }
     store
         .update_paragraph_content(&mut target, body.as_bytes())
-        .map_err(|e| Error::Store(format!("update grammar: {e}")))?;
+        .map_err(|e| Error::Store(format!("update {para_title}: {e}")))?;
     Ok(())
 }
 

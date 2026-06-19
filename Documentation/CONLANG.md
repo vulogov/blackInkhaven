@@ -113,6 +113,18 @@ inkhaven language grammar Eldar --set alignment=ergative_absolutive
 Answers are validated against the catalog and stored as a `{ grammar: { … } }`
 block in the Grammar chapter; the AI grammar book reads them.
 
+## Idioms + metaphors
+
+```
+inkhaven language idiom-add Eldar --form "kala men" --literal "cold heart" --meaning "unforgiving" [--register formal]
+inkhaven language metaphor-add Eldar --source JOURNEY --target LIFE [--example "…"]
+inkhaven language idioms Eldar
+```
+
+Idioms (a phrase with a literal word-by-word gloss + a separate idiomatic
+meaning) and declared conceptual metaphors are stored in the Grammar chapter;
+the AI translation consults them to stay idiomatic rather than literal.
+
 ## Lexicon
 
 Dictionary entries are HJSON paragraphs under **Dictionary** (created by
