@@ -24,8 +24,11 @@ pub fn generate_word(phon: &Phonology, role: TemplateRole, seed: u64) -> Option<
     for step in 0..RETRY_BUDGET {
         let mut rng = SplitMix::new(seed.wrapping_add(step.wrapping_mul(0x1000_0001)));
         if let Some(seq) = realize(phon, templates, &mut rng) {
+            // Phonotactics constrain the *underlying* form; allophony then
+            // derives the surface form the author actually sees.
             if validator::is_legal(phon, &seq) {
-                return Some(render(phon, &seq));
+                let surface = crate::conlang::phonology::allophony_eval::surface_form(phon, &seq);
+                return Some(render(phon, &surface));
             }
         }
     }
@@ -209,6 +212,7 @@ mod tests {
             .into_iter()
             .collect(),
             constraints: vec![PhonotacticConstraint::NoGeminate],
+            allophony: Vec::new(),
             max_word_syllables: 4,
         };
         let w = generate_word(&p, TemplateRole::Root, 1).unwrap();

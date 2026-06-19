@@ -92,7 +92,33 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Syllabify { language, word } => {
             syllabify_word(project, &language, &word)
         }
+        LanguageCommand::Ipa { language, word } => ipa_surface(project, &language, &word),
     }
+}
+
+/// LANG-1 P1.3 — derive and print a word's surface pronunciation by applying
+/// the language's allophony rules to its underlying form.
+fn ipa_surface(project: &Path, language: &str, word: &str) -> Result<()> {
+    let (_store, phonology) = open_phonology(project, language)?;
+    let underlying = phonology.segment(word);
+    let surface = crate::conlang::phonology::allophony_eval::surface_form(&phonology, &underlying);
+
+    let render_ipa = |seq: &[String]| seq.join("");
+    let render_roman = |seq: &[String]| -> String {
+        seq.iter()
+            .map(|ipa| {
+                phonology
+                    .phoneme(ipa)
+                    .map(|p| p.grapheme().to_string())
+                    .unwrap_or_else(|| ipa.clone())
+            })
+            .collect()
+    };
+
+    println!("underlying  /{}/", render_ipa(&underlying));
+    println!("surface     [{}]", render_ipa(&surface));
+    println!("romanized    {}", render_roman(&surface));
+    Ok(())
 }
 
 /// LANG-1 P1.2 — syllabify a word against a language's phonology and print
@@ -100,39 +126,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
 /// word into phonemes (longest-grapheme match), and runs the sonority-aware
 /// syllabifier.
 fn syllabify_word(project: &Path, language: &str, word: &str) -> Result<()> {
-    let layout = ProjectLayout::new(project);
-    layout.require_initialized()?;
-    let cfg = Config::load_layered(&layout.config_path())?;
-    let store = Store::open(layout, &cfg)?;
-    let hierarchy = Hierarchy::load(&store)?;
-
-    let lang_root = hierarchy
-        .iter()
-        .find(|n| {
-            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
-        })
-        .ok_or_else(|| {
-            Error::Store("Language system book missing — re-open the project to seed it".into())
-        })?
-        .clone();
-    let lang_book = hierarchy
-        .children_of(Some(lang_root.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language))
-        .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "language `{language}` not found — run `inkhaven language init {language}` first"
-            ))
-        })?;
-
-    let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
-        Error::Config(format!(
-            "language `{language}` has no phoneme block yet — add `phonemes` / `classes` HJSON \
-             under its `Phonology` chapter"
-        ))
-    })?;
-
+    let (_store, phonology) = open_phonology(project, language)?;
     let seq = phonology.segment(word);
     let sylls = crate::conlang::phonology::syllable::syllabify(&phonology, &seq);
     println!("{}", crate::conlang::phonology::syllable::render(&phonology, &sylls));
@@ -158,6 +152,40 @@ fn generate_word(project: &Path, language: &str, role: &str, count: usize) -> Re
         ))
     })?;
 
+    let (_store, phonology) = open_phonology(project, language)?;
+
+    if phonology.templates_for(role).is_empty() {
+        return Err(Error::Config(format!(
+            "language `{language}` declares no `{}` templates in its Phonology block",
+            role.as_str()
+        )));
+    }
+
+    let words = crate::conlang::generate::word::generate_words(&phonology, role, count);
+    if words.is_empty() {
+        eprintln!(
+            "no words satisfied the constraints in {} attempts — loosen the phonotactic constraints",
+            count
+        );
+        return Ok(());
+    }
+    for w in &words {
+        println!("{w}");
+    }
+    eprintln!(
+        "generated {} / {} requested `{}` word(s) for {}",
+        words.len(),
+        count,
+        role.as_str(),
+        language
+    );
+    Ok(())
+}
+
+/// Open a project and load a language's `Phonology` value — the shared
+/// front-half of every P1 phonology inspector / generator. Returns the open
+/// `Store` (kept alive for the DuckDB lock) alongside the parsed phonology.
+fn open_phonology(project: &Path, language: &str) -> Result<(Store, crate::conlang::Phonology)> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
@@ -190,33 +218,7 @@ fn generate_word(project: &Path, language: &str, role: &str, count: usize) -> Re
              `templates` HJSON under its `Phonology` chapter (see Documentation/PROPOSALS/LANG-1_PLAN.md)"
         ))
     })?;
-
-    if phonology.templates_for(role).is_empty() {
-        return Err(Error::Config(format!(
-            "language `{language}` declares no `{}` templates in its Phonology block",
-            role.as_str()
-        )));
-    }
-
-    let words = crate::conlang::generate::word::generate_words(&phonology, role, count);
-    if words.is_empty() {
-        eprintln!(
-            "no words satisfied the constraints in {} attempts — loosen the phonotactic constraints",
-            count
-        );
-        return Ok(());
-    }
-    for w in &words {
-        println!("{w}");
-    }
-    eprintln!(
-        "generated {} / {} requested `{}` word(s) for {}",
-        words.len(),
-        count,
-        role.as_str(),
-        lang_book.title
-    );
-    Ok(())
+    Ok((store, phonology))
 }
 
 /// Find and parse the `Phonology`-chapter HJSON block for a language
