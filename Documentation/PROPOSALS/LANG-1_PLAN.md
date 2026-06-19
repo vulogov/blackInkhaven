@@ -227,6 +227,24 @@ releases as they complete.
 > auto-gloss, derived forms, the grammar questionnaire, and idioms/metaphors,
 > all on the shared affix+allophony core.
 
+### P4 — diachronics
+
+> **P4.1 (shipped)** — sound-change engine + daughter-language derivation. A
+> sound change *is* an ordered context rewrite, so the engine **reuses
+> `phonology::rewrite`** (a `DiachronicRule` is an `AllophonyRule`).
+> `conlang::types::diachronic::Diachronics { proto, rules }` lives in a
+> `{ diachronics: { proto, rules } }` block in the Phonology chapter.
+> `conlang::diachronic::apply::derive_form` segments a proto-form with the
+> proto's inventory, runs the chain, renders; `derive_lexicon` applies it to
+> every proto entry. `inkhaven language sound-change <lang> --form` (inspector,
+> `tap > taf`) + `language derive-lexicon <daughter> [--yes]` (reads the
+> daughter's `proto` + rules, evolves the proto's whole dictionary, commits with
+> `etymology: "from <proto> <form> via sound change"`). The proto's phonology
+> drives segmentation + classes (the changes are defined on proto sounds).
+> Verified e2e (`aka > aha` intervocalic lenition; a 3-word proto lexicon
+> evolved + committed). Remaining P4: cognate sets, family-tree viz (resvg),
+> AI comparative reconstruction, genealogical-realism check.
+
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
 language; meanings come from the AI; nothing duplicates; nothing
