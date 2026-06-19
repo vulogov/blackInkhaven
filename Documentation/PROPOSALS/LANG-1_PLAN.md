@@ -361,16 +361,17 @@ syllable weight; `language stress` inspector); **P1.5 (shipped)** romanization �
 named multi-scheme, bidirectional (IPA→text + text→IPA), with single-segment
 contextual rules disambiguating shared graphemes (`c` → /s/ before a front
 vowel, else /k/); `language romanize [--scheme] [--reverse]` inspector;
-**P1.6** tone (register/contour + sandhi) — split out from stress because its
-real input is *lexical* per-syllable tone (the lexicon supplies it in P2) and
-tone sandhi will reuse a generalized ordered-rewrite engine rather than
-duplicate the allophony evaluator.
+**P1.6 (shipped)** tone — `ToneSystem` (register/contour/pitch-accent) +
+tone-sandhi evaluator over a tone sequence (Mandarin `3 > 2 / _ 3`); the
+allophony rewrite engine was **generalized** into `phonology/rewrite.rs`
+(generic ordered context-rewrite over `Vec<String>` + a class map) and both
+allophony and tone sandhi now delegate to it; `language tone --tones` inspector.
 
-**P1 phonology pillar is complete** (P1.1–P1.5): inventory → templates →
+**P1 phonology pillar is complete** (P1.1–P1.6): inventory → templates →
 syllable-aware phonotactic constraints → allophony (underlying→surface) →
-stress → multi-scheme bidirectional romanization, with five CLI inspectors
-(`generate-word` / `syllabify` / `ipa` / `stress` / `romanize`). Only the
-tone sub-system (P1.6) is deferred, pending lexical tone input from P2.
+stress → multi-scheme bidirectional romanization → tone sandhi, with six CLI
+inspectors (`generate-word` / `syllabify` / `ipa` / `stress` / `romanize` /
+`tone`). Lexical per-syllable tone wires in with the lexicon (P2).
 
 ## 5. Testing strategy (per RFC §13, scoped to each phase)
 
