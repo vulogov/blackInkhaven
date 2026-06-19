@@ -183,6 +183,86 @@ releases as they complete.
 > metaphors, and derived-form proposals are later P3 increments. Verified the
 > allophony interaction e2e (`kata`+DAT → `katat` by final devoicing; `kata`+
 > DAT+PL → `katadi`, the now-medial `d` correctly *not* devoiced).
+>
+> **P3.2 (shipped)** — auto-gloss (interlinear). The inverse of paradigm
+> generation, done **generate-and-match** (forward-generate to dodge
+> reverse-parsing ambiguity + allophony): `conlang::morphology::gloss` builds a
+> reverse index (surface form → `(root, Leipzig gloss)`) by running each
+> dictionary entry's declared `paradigm` through `paradigm::generate` (allophony
+> already applied), then `gloss_text` looks each word up. Entries opt in with a
+> new additive `DictionaryEntry.paradigm` field (`None` → bare form only).
+> `inkhaven language gloss <lang> --text "…"` prints the aligned two-line
+> Leipzig interlinear. Verified e2e — `katat` glosses as `stone-DAT` *because*
+> the index was built from generated (devoiced) forms.
+>
+> **P3.3 (shipped)** — derived-form proposals. `DerivationRule` (affix +
+> `from_pos` → `to_pos` + gloss template) coins *new lexemes* (vs inflectional
+> paradigm cells). `conlang::morphology::derive::generate` applies every rule
+> whose `from_pos` matches the root, with allophony, yielding `(form, gloss,
+> pos)` proposals. `inkhaven language derive <lang> --root --gloss --pos
+> [--yes]` — advisory (dry-run default; `--yes` commits via the rich-import
+> path, recording `etymology: "derived from <root> via <rule>"`). Verified e2e
+> (`kata`/build → `kataron` "one who builds" / `katai` build.DIM).
+> `load_morphology` now also accepts a derivations-only block.
+>
+> **P3.4 (shipped)** — grammar questionnaire (CLI). A bundled, WALS-aligned
+> **typological-feature catalog** (`conlang::grammar`, 16 features — word order,
+> alignment, case, gender, number, definiteness, tense/aspect/mood,
+> evidentiality, negation, question formation, relative clause, …; each with
+> options + one-line consequences). `GrammarSpec` (a feature→value map) lives in
+> a `{ grammar: { … } }` HJSON paragraph in the Grammar chapter.
+> `inkhaven language grammar <lang>` lists the catalog + current answers +
+> coverage; `--set word_order=sov` validates against the catalog and writes the
+> answer (creating a `typology` paragraph on first use). The AI grammar book
+> (P6) reads these tags. Verified e2e (set/validate/persist, invalid + unknown
+> rejected, coverage, `--json`). The guided TUI walk-through is later sugar.
+>
+> **P3.5 (shipped)** — idioms + metaphors. `conlang::types::expression`
+> (`Idiom { form, literal, meaning, register }`, `Metaphor { source, target,
+> examples }`, `Expressions`), stored as a `{ idioms, metaphors }` HJSON
+> paragraph in the Grammar chapter (the grammar-paragraph writer was
+> generalized to `upsert_grammar_paragraph`). `inkhaven language idiom-add` /
+> `metaphor-add` / `idioms` (list). The AI translation will consult these to
+> stay idiomatic. **P3 (morphology pillar) is complete** — paradigm generation,
+> auto-gloss, derived forms, the grammar questionnaire, and idioms/metaphors,
+> all on the shared affix+allophony core.
+
+### P4 — diachronics
+
+> **P4.1 (shipped)** — sound-change engine + daughter-language derivation. A
+> sound change *is* an ordered context rewrite, so the engine **reuses
+> `phonology::rewrite`** (a `DiachronicRule` is an `AllophonyRule`).
+> `conlang::types::diachronic::Diachronics { proto, rules }` lives in a
+> `{ diachronics: { proto, rules } }` block in the Phonology chapter.
+> `conlang::diachronic::apply::derive_form` segments a proto-form with the
+> proto's inventory, runs the chain, renders; `derive_lexicon` applies it to
+> every proto entry. `inkhaven language sound-change <lang> --form` (inspector,
+> `tap > taf`) + `language derive-lexicon <daughter> [--yes]` (reads the
+> daughter's `proto` + rules, evolves the proto's whole dictionary, commits with
+> `etymology: "from <proto> <form> via sound change"`). The proto's phonology
+> drives segmentation + classes (the changes are defined on proto sounds).
+> Verified e2e (`aka > aha` intervocalic lenition; a 3-word proto lexicon
+> evolved + committed).
+>
+> **P4.2 (shipped)** — cognate sets + family tree, both computed from the
+> existing `diachronics.proto` links (no new storage). `conlang::diachronic::
+> family::render_tree` draws the genealogical forest as an ASCII tree (pure,
+> sorted, unknown-proto → root); `inkhaven language family-tree`. `inkhaven
+> language cognates <proto> --form <word>` traces a proto-form's **reflex in
+> every daughter** (each daughter's chain applied to the proto-form) — e.g.
+> `*takap` → Eldar `takaf` (p>f) vs Sindarin `tahaf` (k>h + p>f). Verified e2e.
+>
+> **P4.3 (shipped)** — the two AI pieces (thin layers like `generate-lexicon`).
+> `inkhaven language reconstruct --forms "tava taba" [--gloss]` — AI comparative
+> reconstruction: proposes the proto-form (with sound correspondences +
+> reasoning) from cognate daughter forms. `inkhaven language realism-check
+> <lang>` — AI genealogical-realism check: assesses whether the language's
+> sound-change chain is typologically plausible, rule by rule. `AllophonyRule`
+> gained a `source` field (the original SPE string) so the chain renders for
+> the prompt. Advisory; verified to the AI boundary. **P4 (diachronics) is
+> complete** — sound-change engine, daughter derivation, cognates, family tree,
+> AI reconstruction + realism check (an SVG family tree via resvg stays a later
+> refinement).
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the

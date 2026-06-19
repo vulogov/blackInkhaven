@@ -77,6 +77,86 @@ Inspectors: `generate-word`, `syllabify --word`, `ipa --word` (surface),
 applies each cell's morphemes to the root, runs allophony across the affix
 boundaries, and prints the form + Leipzig gloss. (P3.1 covers prefix + suffix.)
 
+**Auto-gloss.** A dictionary entry can declare the paradigm it inflects by
+(`paradigm: "noun"`); then `inkhaven language gloss <lang> --text "kata katai
+katat"` prints an aligned interlinear (the words over their Leipzig glosses).
+It recognises inflected *and* allophony-altered forms (`katat` → `stone-DAT`)
+by generating each entry's paradigm forward and matching.
+
+**Derived forms.** A `derivations` list in the Morphology block coins new
+lexemes (agent nouns, diminutives, …):
+
+```hjson
+derivations: [
+  { name: "agent", form: "ron", position: "suffix", from_pos: "verb",
+    to_pos: "noun", gloss_template: "one who {}s" }
+]
+```
+
+`inkhaven language derive <lang> --root kata --gloss build --pos verb [--yes]`
+applies every rule whose `from_pos` matches, with allophony, and prints the
+proposed `form / gloss / pos`. Advisory — `--yes` adds them to the Dictionary
+(recording the etymology); dry-run otherwise.
+
+## Grammar (typology)
+
+`inkhaven language grammar <lang>` lists a WALS-aligned catalog of 16
+typological features (word order, alignment, case, gender, number,
+definiteness, tense/aspect/mood, evidentiality, negation, question formation,
+relative clause, …) with the language's current answers and coverage.
+
+```
+inkhaven language grammar Eldar --set word_order=sov
+inkhaven language grammar Eldar --set alignment=ergative_absolutive
+```
+
+Answers are validated against the catalog and stored as a `{ grammar: { … } }`
+block in the Grammar chapter; the AI grammar book reads them.
+
+## Diachronics (sound change)
+
+A language can derive from a proto by an ordered chain of sound changes (same
+SPE notation as allophony), declared in a `diachronics` block in the
+**Phonology** chapter:
+
+```hjson
+{ diachronics: {
+    proto: "ProtoEldarin"
+    rules: [ { rule: "p > f / _ #" }, { rule: "k > h / V _ V" } ]
+} }
+```
+
+- `inkhaven language sound-change Eldar --form tap` → `tap > taf` (evolve one
+  proto-form through the chain).
+- `inkhaven language derive-lexicon Eldar [--yes]` → applies the chain to every
+  entry of the proto's dictionary, proposing the daughter's lexicon (with the
+  gloss carried forward + an etymology); `--yes` commits.
+
+The proto's inventory drives segmentation and the rule classes (the changes are
+defined on proto sounds).
+
+- `inkhaven language family-tree` prints the genealogical tree (each language
+  under its declared `proto`).
+- `inkhaven language cognates ProtoEldarin --form takap` traces a proto-form's
+  reflex in every daughter (each daughter's chain applied) — e.g. `Eldar takaf`
+  vs `Sindarin tahaf`.
+- `inkhaven language reconstruct --forms "tava taba" [--gloss water]` — AI
+  comparative reconstruction: proposes the proto-form from cognate forms.
+- `inkhaven language realism-check Eldar` — AI assessment of whether the
+  language's sound-change chain is typologically plausible.
+
+## Idioms + metaphors
+
+```
+inkhaven language idiom-add Eldar --form "kala men" --literal "cold heart" --meaning "unforgiving" [--register formal]
+inkhaven language metaphor-add Eldar --source JOURNEY --target LIFE [--example "…"]
+inkhaven language idioms Eldar
+```
+
+Idioms (a phrase with a literal word-by-word gloss + a separate idiomatic
+meaning) and declared conceptual metaphors are stored in the Grammar chapter;
+the AI translation consults them to stay idiomatic rather than literal.
+
 ## Lexicon
 
 Dictionary entries are HJSON paragraphs under **Dictionary** (created by
