@@ -2333,6 +2333,48 @@ pub enum LanguageCommand {
         language: String,
     },
 
+    /// LANG-1 P3.5 — add an idiom (a phrase with a literal word-by-word gloss
+    /// and a separate idiomatic meaning).  Stored in the Grammar chapter; the
+    /// AI translation consults it to stay idiomatic.
+    IdiomAdd {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The phrase as a whole.
+        #[arg(long)]
+        form: String,
+        /// Word-by-word literal gloss.
+        #[arg(long)]
+        literal: Option<String>,
+        /// What it actually means.
+        #[arg(long)]
+        meaning: String,
+        /// Register tag (formal / vulgar / …).
+        #[arg(long)]
+        register: Option<String>,
+    },
+
+    /// LANG-1 P3.5 — declare a conceptual metaphor (a source→target domain
+    /// mapping, e.g. LIFE is a JOURNEY).
+    MetaphorAdd {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Source domain.
+        #[arg(long)]
+        source: String,
+        /// Target domain.
+        #[arg(long)]
+        target: String,
+        /// An example phrase exhibiting the metaphor.
+        #[arg(long)]
+        example: Option<String>,
+    },
+
+    /// LANG-1 P3.5 — list a language's idioms and declared metaphors.
+    Idioms {
+        /// Target language name (case-insensitive).
+        language: String,
+    },
+
     /// LANG-1 P3.4 — the grammar questionnaire.  With no `--set`, lists the
     /// typological-feature catalog (WALS-aligned: word order, alignment, case,
     /// tense/aspect/mood, …) with the language's current answers + coverage.
