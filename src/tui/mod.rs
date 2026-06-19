@@ -17,6 +17,7 @@ pub(crate) mod project_goal;
 // dashboard (Ctrl+V Shift+J).
 pub(crate) mod journal;
 pub(crate) mod concordance;
+mod conlang_hub;
 mod credits;
 mod diff_utils;
 // 1.2.11+ — exposed crate-wide so the config-TUI's

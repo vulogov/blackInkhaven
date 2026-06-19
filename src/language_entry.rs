@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 /// Parsed view of a dictionary entry's HJSON frontmatter.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
 #[allow(dead_code)] // `example` is consumed by Phase C's translation prompt envelope
 pub struct DictionaryEntry {
     #[serde(default)]
@@ -52,6 +52,43 @@ pub struct DictionaryEntry {
     /// the lemma "aiya".
     #[serde(default)]
     pub inflection: BTreeMap<String, String>,
+    /// LANG-1 P2.4 — register tags (formal / vulgar / archaic / sacred …).
+    /// Accepts the singular `register: "formal"` (the import / seed
+    /// convention) or a `registers: [...]` list.
+    #[serde(default, alias = "register", deserialize_with = "de_string_or_vec")]
+    pub registers: Vec<String>,
+    /// LANG-1 P2.4 — semantic-domain tags (weapon / kinship / weather …).
+    #[serde(default)]
+    pub domain: Vec<String>,
+    /// LANG-1 P2.4 — in-world era this word belongs to (time-layering).
+    #[serde(default)]
+    pub era: Option<String>,
+    /// LANG-1 P2.4 — free-form etymology note (structured cognates: P4).
+    /// Often already present in hand-authored entries; now parsed.
+    #[serde(default)]
+    pub etymology: Option<String>,
+    /// LANG-1 P2.4 — free-form author notes.
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+/// Accept either a single string (`"formal"`) or an array
+/// (`["formal", "archaic"]`); an empty string yields an empty list.
+fn de_string_or_vec<'de, D>(d: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrVec {
+        S(String),
+        V(Vec<String>),
+    }
+    Ok(match StringOrVec::deserialize(d)? {
+        StringOrVec::S(s) if s.trim().is_empty() => Vec::new(),
+        StringOrVec::S(s) => vec![s],
+        StringOrVec::V(v) => v,
+    })
 }
 
 impl DictionaryEntry {
@@ -196,7 +233,7 @@ impl MetaOverview {
 /// with the close (must be just "```", not "```rust" — we
 /// don't want to grab the wrong fence in a body that opens
 /// multiple code blocks).
-fn extract_hjson_block(body: &str) -> Option<&str> {
+pub(crate) fn extract_hjson_block(body: &str) -> Option<&str> {
     // Index by byte offsets so we can return a `&str`
     // slice without re-allocating.
     let mut cursor = 0usize;
@@ -285,6 +322,27 @@ Greeting used by elves of Aman.
         assert_eq!(entry.word, "aiya");
         assert_eq!(entry.pos, "interjection");
         assert_eq!(entry.translation, "hail");
+    }
+
+    #[test]
+    fn rich_fields_accept_singular_or_list_register() {
+        // P2.5: the singular `register:` (import/seed convention) and a
+        // `registers: [...]` list both fill `registers`; `domain` + `era`.
+        let singular = parse(r#"{ word: "makil" translation: "sword" register: "formal" era: "third_age" domain: ["weapon"] }"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(singular.registers, vec!["formal"]);
+        assert_eq!(singular.domain, vec!["weapon"]);
+        assert_eq!(singular.era.as_deref(), Some("third_age"));
+
+        let list = parse(r#"{ word: "gurth" translation: "death" registers: ["sacred", "archaic"] }"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(list.registers, vec!["sacred", "archaic"]);
+
+        // Empty singular register → empty list, not [""].
+        let empty = parse(r#"{ word: "nen" translation: "water" register: "" }"#).unwrap().unwrap();
+        assert!(empty.registers.is_empty());
     }
 
     #[test]

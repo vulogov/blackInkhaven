@@ -2195,6 +2195,240 @@ pub enum LanguageCommand {
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
     },
+
+    /// LANG-1 P1.1 — generate candidate words from a language's
+    /// phonotactic templates.  Reads the typed phoneme block in the
+    /// language's `Phonology` chapter (phonemes / classes / templates /
+    /// constraints), samples words deterministically, and prints the
+    /// ones that satisfy every declared phonotactic constraint.  Pure +
+    /// deterministic: the same language + `--count` always yields the
+    /// same list, so it's safe in scripts.
+    GenerateWord {
+        /// Target language name (case-insensitive match against the
+        /// per-language sub-book titles under the `Language` system book).
+        language: String,
+        /// Which template role to draw from.
+        #[arg(long, default_value = "root")]
+        role: String,
+        /// How many words to generate.
+        #[arg(long, default_value_t = 20)]
+        count: usize,
+    },
+
+    /// LANG-1 P1.2 — syllabify a word against a language's phonology.
+    /// Segments the word into the language's phonemes (longest-grapheme
+    /// match over the inventory), then breaks it into syllables using
+    /// sonority peaks + the Maximal Onset Principle, printing the
+    /// `CV.CVC`-style result.  An inspector for the phonotactics that the
+    /// onset / coda / sonority constraints + (later) stress placement rely
+    /// on.
+    Syllabify {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The word to syllabify, in the language's romanization (or raw
+        /// IPA).  Segmented greedily against the phoneme inventory.
+        #[arg(long)]
+        word: String,
+    },
+
+    /// LANG-1 P1.3 — derive the surface pronunciation of a word by applying
+    /// the language's allophony rules to its underlying form.  Segments the
+    /// word into phonemes, runs the ordered allophony rewrites
+    /// (underlying → surface), and prints both the surface IPA and its
+    /// romanized rendering.
+    Ipa {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The word, in the language's romanization (or raw IPA).
+        #[arg(long)]
+        word: String,
+    },
+
+    /// LANG-1 P1.4 — place primary stress on a word per the language's
+    /// stress rule.  Syllabifies the word, applies the rule (fixed initial /
+    /// final / penultimate / antepenultimate, or the weight-sensitive Latin
+    /// rule), and prints the syllabification with `ˈ` before the stressed
+    /// syllable.
+    Stress {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The word, in the language's romanization (or raw IPA).
+        #[arg(long)]
+        word: String,
+    },
+
+    /// LANG-1 P1.5 — convert between IPA and a named romanization scheme.
+    /// Forward (default): a space-separated IPA phoneme sequence → written
+    /// text.  `--reverse`: written text → IPA, using the scheme's contextual
+    /// rules to disambiguate shared graphemes.  `--scheme` selects a named
+    /// scheme (defaults to the language's default / first).
+    Romanize {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Forward: space-separated IPA phonemes (`k a ʃ i`).  Reverse:
+        /// the written word.
+        #[arg(long)]
+        text: String,
+        /// Named romanization scheme (defaults to the language's default).
+        #[arg(long)]
+        scheme: Option<String>,
+        /// Convert text → IPA instead of IPA → text.
+        #[arg(long)]
+        reverse: bool,
+    },
+
+    /// LANG-1 P1.6 — apply the language's tone-sandhi rules to a sequence of
+    /// per-syllable tones.  Takes the underlying tones (as the lexicon would
+    /// carry them), runs the ordered sandhi rewrites, and prints the surface
+    /// tones (e.g. Mandarin `3 3` → `2 3`).
+    Tone {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Space-separated underlying tone labels (`3 3 3`, `H L H`).
+        #[arg(long)]
+        tones: String,
+    },
+
+    /// LANG-1 P2.1 — audit a language's dictionary for consistency: headwords
+    /// that break the phonotactics, homophones (entries sharing a surface
+    /// form), and duplicate meanings (accidental synonyms).  The deterministic
+    /// half of the dedup gate the AI lexicon generator reuses.
+    Audit {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Emit the report as JSON (for CI / scripting).
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// LANG-1 P2.6 — link a Place to a language it's spoken in.  Stored in a
+    /// `.inkhaven/conlang-links.json` sidecar (the Places book is prose and is
+    /// never modified).  Sets the primary language by default; `--secondary`
+    /// adds a secondary one.
+    LinkPlace {
+        /// Place name (matched case-insensitively against the Places book).
+        place: String,
+        /// Language name.
+        language: String,
+        /// Add as a secondary language instead of setting the primary.
+        #[arg(long)]
+        secondary: bool,
+    },
+
+    /// LANG-1 P2.6 — declare a Character's proficiency in a language (native /
+    /// fluent / conversational / broken / reading_only).  Stored in the
+    /// `.inkhaven/conlang-links.json` sidecar; feeds AI dialog generation.
+    LinkCharacter {
+        /// Character name (matched case-insensitively against the Characters book).
+        character: String,
+        /// Language name.
+        language: String,
+        /// Proficiency: native | fluent | conversational | broken | reading_only.
+        proficiency: String,
+    },
+
+    /// LANG-1 P2.6 — list the Places and Characters linked to a language.
+    Speakers {
+        /// Language name (case-insensitive).
+        language: String,
+    },
+
+    /// LANG-1 P3.1 — generate the full paradigm of a root: apply a paradigm
+    /// template's morpheme sequence (from the `Morphology` chapter) to the
+    /// root, run the language's allophony across the affix boundaries, and
+    /// print the surface form + Leipzig gloss for every cell.
+    Paradigm {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The root word (in the language's romanization).
+        #[arg(long)]
+        root: String,
+        /// Paradigm template name (from the Morphology chapter).
+        #[arg(long)]
+        template: String,
+        /// Gloss for the root (defaults to the root itself).
+        #[arg(long)]
+        gloss: Option<String>,
+    },
+
+    /// LANG-1 P2.7 — scan the manuscript for candidate **undefined** conlang
+    /// words: words that look like the language (segment fully into its
+    /// inventory + pass its phonotactics) but aren't in the dictionary.  Only
+    /// paragraphs that already contain a known conlang word are scanned, so
+    /// working-language prose is skipped.  Heuristic — review the list, then
+    /// `add-word` the real ones or fix the typos.
+    ScanManuscript {
+        /// Language name (case-insensitive).
+        language: String,
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// LANG-1 P2.4 — query a language's dictionary by the rich entry fields:
+    /// register, semantic domain, in-world era, part of speech, and a free
+    /// substring over headword + gloss.  Filters combine (AND).
+    Query {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Register tag (formal / vulgar / archaic / sacred …).
+        #[arg(long)]
+        register: Option<String>,
+        /// Semantic-domain tag (weapon / kinship / weather …).
+        #[arg(long)]
+        domain: Option<String>,
+        /// In-world era tag.
+        #[arg(long)]
+        era: Option<String>,
+        /// Part of speech.
+        #[arg(long)]
+        pos: Option<String>,
+        /// Substring over headword + gloss (case-insensitive).
+        #[arg(long)]
+        text: Option<String>,
+        /// Emit matches as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// LANG-1 P2.2 — AI-assisted dictionary generation.  The deterministic
+    /// generator builds a pool of phonotactically-valid forms; the AI assigns
+    /// each a concept / gloss / part-of-speech for the requested topic; then
+    /// every proposal passes the dedup gate (no illegal form, no homophone of
+    /// an existing word, no duplicate meaning) before it is offered.  Glosses
+    /// are written in the project's working language.  Advisory: nothing is
+    /// added without `--yes`.
+    GenerateLexicon {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Semantic domain to generate vocabulary for (e.g. "seafaring").
+        /// Omit for general everyday vocabulary.
+        #[arg(long)]
+        topic: Option<String>,
+        /// How many entries to propose.
+        #[arg(long, default_value_t = 20)]
+        count: usize,
+        /// Optional in-world era tag recorded on the prompt.
+        #[arg(long)]
+        era: Option<String>,
+        /// Optional register tag (formal / vulgar / sacred / …).
+        #[arg(long)]
+        register: Option<String>,
+        /// LLM provider override (defaults to the configured provider).
+        #[arg(long)]
+        provider: Option<String>,
+        /// Also reject near-synonyms (embedding cosine over glosses) — the
+        /// semantic half of the dedup gate.  Loads the embedding model.
+        #[arg(long)]
+        semantic: bool,
+        /// Cosine threshold above which two glosses count as near-synonyms
+        /// (with `--semantic`).
+        #[arg(long, default_value_t = 0.88)]
+        semantic_threshold: f32,
+        /// Add the kept proposals to the Dictionary (default is a dry run).
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 /// output format selector for

@@ -19,7 +19,8 @@ use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::{
-    InsertPosition, NodeKind, Store, SYSTEM_TAG_LANGUAGES,
+    InsertPosition, NodeKind, Store, SYSTEM_TAG_CHARACTERS, SYSTEM_TAG_LANGUAGES,
+    SYSTEM_TAG_PLACES,
 };
 
 use super::{LanguageCommand, LanguageExportFormat};
@@ -84,7 +85,892 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             rule_id,
             category,
         } => define_rule(project, &language, &rule_id, &category),
+        LanguageCommand::GenerateWord {
+            language,
+            role,
+            count,
+        } => generate_word(project, &language, &role, count),
+        LanguageCommand::Syllabify { language, word } => {
+            syllabify_word(project, &language, &word)
+        }
+        LanguageCommand::Ipa { language, word } => ipa_surface(project, &language, &word),
+        LanguageCommand::Stress { language, word } => stress_word(project, &language, &word),
+        LanguageCommand::Romanize {
+            language,
+            text,
+            scheme,
+            reverse,
+        } => romanize_text(project, &language, &text, scheme.as_deref(), reverse),
+        LanguageCommand::Tone { language, tones } => tone_sandhi(project, &language, &tones),
+        LanguageCommand::Audit { language, json } => audit(project, &language, json),
+        LanguageCommand::LinkPlace {
+            place,
+            language,
+            secondary,
+        } => link_place(project, &place, &language, secondary),
+        LanguageCommand::LinkCharacter {
+            character,
+            language,
+            proficiency,
+        } => link_character(project, &character, &language, &proficiency),
+        LanguageCommand::Speakers { language } => speakers(project, &language),
+        LanguageCommand::ScanManuscript { language, json } => {
+            scan_manuscript(project, &language, json)
+        }
+        LanguageCommand::Paradigm {
+            language,
+            root,
+            template,
+            gloss,
+        } => paradigm(project, &language, &root, &template, gloss.as_deref()),
+        LanguageCommand::Query {
+            language,
+            register,
+            domain,
+            era,
+            pos,
+            text,
+            json,
+        } => query(
+            project,
+            &language,
+            register.as_deref(),
+            domain.as_deref(),
+            era.as_deref(),
+            pos.as_deref(),
+            text.as_deref(),
+            json,
+        ),
+        LanguageCommand::GenerateLexicon {
+            language,
+            topic,
+            count,
+            era,
+            register,
+            provider,
+            semantic,
+            semantic_threshold,
+            yes,
+        } => generate_lexicon(
+            project,
+            &language,
+            topic.as_deref(),
+            count,
+            era.as_deref(),
+            register.as_deref(),
+            provider.as_deref(),
+            semantic,
+            semantic_threshold,
+            yes,
+        ),
     }
+}
+
+const LEXGEN_SYSTEM: &str = "You are a meticulous lexicographer for a constructed language. \
+Reply with a SINGLE JSON object and nothing else — no prose, no preamble, no markdown fences. \
+Shape: {\"entries\":[{\"form\":\"…\",\"gloss\":\"…\",\"pos\":\"…\",\"example\":\"…\",\"register\":\"…\",\
+\"domain\":[\"…\"]}]}. Choose each `form` ONLY from the provided candidate list (never invent a \
+form). Never assign two entries the same meaning. Keep `pos` a short lowercase tag \
+(noun/verb/adjective/…). `register` is one short tag (neutral/formal/vulgar/sacred/archaic); \
+`domain` is one or two short semantic-domain tags.";
+
+/// Resolve a name against a system book (Places / Characters), returning the
+/// canonical node title. `None` when no node matches — the caller warns but
+/// still records the link (the entry may be added later).
+fn resolve_system_node(hierarchy: &Hierarchy, system_tag: &str, name: &str) -> Option<String> {
+    let root = hierarchy
+        .iter()
+        .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(system_tag))?;
+    hierarchy
+        .collect_subtree(root.id)
+        .into_iter()
+        .filter_map(|id| hierarchy.get(id))
+        .find(|n| n.title.eq_ignore_ascii_case(name))
+        .map(|n| n.title.clone())
+}
+
+/// LANG-1 P2.6 — link a Place to a (primary or secondary) language.
+fn link_place(project: &Path, place: &str, language: &str, secondary: bool) -> Result<()> {
+    use crate::conlang::links::ConlangLinks;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let place_name = match resolve_system_node(&hierarchy, SYSTEM_TAG_PLACES, place) {
+        Some(canonical) => canonical,
+        None => {
+            eprintln!("note: no Place named `{place}` found — recording the link anyway");
+            place.to_string()
+        }
+    };
+    let root = store.project_root();
+    let mut links = ConlangLinks::load(root).map_err(Error::Io)?;
+    if secondary {
+        links.add_place_secondary(&place_name, &lang_book.title);
+        eprintln!("{place_name} → secondary language {}", lang_book.title);
+    } else {
+        links.set_place_primary(&place_name, &lang_book.title);
+        eprintln!("{place_name} → primary language {}", lang_book.title);
+    }
+    links.save(root).map_err(Error::Io)?;
+    Ok(())
+}
+
+/// LANG-1 P2.6 — declare a Character's proficiency in a language.
+fn link_character(project: &Path, character: &str, language: &str, proficiency: &str) -> Result<()> {
+    use crate::conlang::links::{ConlangLinks, Level};
+    let level = Level::parse(proficiency).ok_or_else(|| {
+        Error::Config(format!(
+            "unknown proficiency `{proficiency}` — use native | fluent | conversational | broken | reading_only"
+        ))
+    })?;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let char_name = match resolve_system_node(&hierarchy, SYSTEM_TAG_CHARACTERS, character) {
+        Some(canonical) => canonical,
+        None => {
+            eprintln!("note: no Character named `{character}` found — recording the link anyway");
+            character.to_string()
+        }
+    };
+    let root = store.project_root();
+    let mut links = ConlangLinks::load(root).map_err(Error::Io)?;
+    links.set_character_proficiency(&char_name, &lang_book.title, level);
+    links.save(root).map_err(Error::Io)?;
+    eprintln!("{char_name} → {} ({})", lang_book.title, level.as_str());
+    Ok(())
+}
+
+/// Find + parse the `Morphology`-chapter HJSON block for a language sub-book.
+fn load_morphology(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<Option<crate::conlang::types::morphology::Morphology>> {
+    // The 1.2.13 scaffold has no Morphology chapter, so the block lives in
+    // the Grammar chapter (or a hand-added Morphology chapter).
+    let chapters: Vec<_> = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .filter(|n| {
+            n.kind == NodeKind::Chapter
+                && (n.title.eq_ignore_ascii_case("Morphology")
+                    || n.title.eq_ignore_ascii_case("Grammar"))
+        })
+        .cloned()
+        .collect();
+    for chapter in chapters {
+        for para in hierarchy.children_of(Some(chapter.id)) {
+            if para.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let Some(bytes) = store.get_content(para.id)? else { continue };
+            let body = String::from_utf8_lossy(&bytes);
+            match crate::conlang::types::morphology::Morphology::from_hjson(&body) {
+                Ok(Some(m)) if !m.morphemes.is_empty() || !m.paradigms.is_empty() => {
+                    return Ok(Some(m));
+                }
+                // A Grammar paragraph that isn't a morphology block (a
+                // define-rule rule) just won't match the shape — skip it.
+                Ok(_) | Err(_) => continue,
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// LANG-1 P3.1 — generate + print a root's paradigm.
+fn paradigm(
+    project: &Path,
+    language: &str,
+    root: &str,
+    template: &str,
+    gloss: Option<&str>,
+) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no phoneme block"))
+    })?;
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no morphology yet — add a `morphemes` / `paradigms` HJSON \
+             paragraph under its `Grammar` chapter"
+        ))
+    })?;
+    let tmpl = morph.paradigm(template).ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no paradigm template `{template}` (have: {})",
+            morph.paradigms.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
+        ))
+    })?;
+
+    let root_gloss = gloss.unwrap_or(root);
+    let rows = crate::conlang::morphology::paradigm::generate(
+        &phonology, &morph, tmpl, root, root_gloss,
+    );
+
+    println!("paradigm `{}` of {root} ({root_gloss}) · {} cell(s)", tmpl.name, rows.len());
+    for r in &rows {
+        let feats = r
+            .features
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        println!("  {:<18} {:<24} {}", r.form, r.gloss, feats);
+    }
+    Ok(())
+}
+
+/// LANG-1 P2.7 — scan the manuscript for candidate undefined conlang words.
+fn scan_manuscript(project: &Path, language: &str, json: bool) -> Result<()> {
+    use std::collections::HashSet;
+    use unicode_segmentation::UnicodeSegmentation;
+
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no phoneme block — the scan needs the inventory to tell \
+             conlang words from prose"
+        ))
+    })?;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let known: HashSet<String> = entries
+        .iter()
+        .flat_map(|e| e.surface_forms().into_iter().map(|s| s.to_lowercase()))
+        .collect();
+    if known.is_empty() {
+        eprintln!("note: {language} has no dictionary entries yet — nothing anchors the scan");
+    }
+
+    // Every user-book paragraph as a word list (system books are reference
+    // material, not manuscript prose).
+    let mut paragraphs: Vec<Vec<String>> = Vec::new();
+    for node in hierarchy.iter() {
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let mut cursor = Some(node.id);
+        let mut is_system = false;
+        while let Some(id) = cursor {
+            match hierarchy.get(id) {
+                Some(n) if n.system_tag.is_some() => {
+                    is_system = true;
+                    break;
+                }
+                Some(n) => cursor = n.parent_id,
+                None => break,
+            }
+        }
+        if is_system {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
+        let Ok(body) = std::str::from_utf8(&bytes) else { continue };
+        paragraphs.push(body.unicode_words().map(String::from).collect());
+    }
+
+    let report = crate::conlang::lexicon::scan_undefined(&phonology, &known, &paragraphs);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing scan: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!(
+        "scan {language} · {} paragraph(s), {} in a conlang context",
+        report.paragraphs_scanned, report.conlang_paragraphs
+    );
+    if report.candidates.is_empty() {
+        println!("  ✓ no undefined conlang words found");
+        return Ok(());
+    }
+    println!("\n  candidate undefined words ({}):", report.candidates.len());
+    for c in &report.candidates {
+        println!("    {:<16} ×{}", c.word, c.count);
+    }
+    eprintln!("\n(heuristic — `add-word` the real ones, fix the typos)");
+    Ok(())
+}
+
+/// LANG-1 P2.6 — list Places + Characters linked to a language.
+fn speakers(project: &Path, language: &str) -> Result<()> {
+    use crate::conlang::links::ConlangLinks;
+    let (store, _hierarchy, lang_book) = open_lang_book(project, language)?;
+    let links = ConlangLinks::load(store.project_root()).map_err(Error::Io)?;
+    let (places, characters) = links.speakers_of(&lang_book.title);
+
+    println!("speakers of {}", lang_book.title);
+    if places.is_empty() && characters.is_empty() {
+        println!("  (none linked yet — see `inkhaven language link-place` / `link-character`)");
+        return Ok(());
+    }
+    if !places.is_empty() {
+        println!("\n  places ({}):", places.len());
+        for p in &places {
+            println!("    {p}");
+        }
+    }
+    if !characters.is_empty() {
+        println!("\n  characters ({}):", characters.len());
+        for (name, level) in &characters {
+            println!("    {name:<20} {level}");
+        }
+    }
+    Ok(())
+}
+
+/// LANG-1 P2.4 — query the dictionary by the rich entry fields.
+#[allow(clippy::too_many_arguments)]
+fn query(
+    project: &Path,
+    language: &str,
+    register: Option<&str>,
+    domain: Option<&str>,
+    era: Option<&str>,
+    pos: Option<&str>,
+    text: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let f = crate::conlang::lexicon::Filter { register, domain, era, pos, text };
+    let matches = crate::conlang::lexicon::filter(&entries, &f);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&matches)
+                .map_err(|e| Error::Store(format!("serializing query: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("{} / {} entr(y/ies) match", matches.len(), entries.len());
+    for e in &matches {
+        let mut tags = Vec::new();
+        if !e.registers.is_empty() {
+            tags.push(format!("[{}]", e.registers.join(",")));
+        }
+        if !e.domain.is_empty() {
+            tags.push(format!("{{{}}}", e.domain.join(",")));
+        }
+        if let Some(era) = &e.era {
+            tags.push(format!("<{era}>"));
+        }
+        let pos = if e.pos.trim().is_empty() { String::new() } else { format!(" ({})", e.pos) };
+        println!(
+            "  {:<16} {}{}{}",
+            e.word,
+            e.translation,
+            pos,
+            if tags.is_empty() { String::new() } else { format!("  {}", tags.join(" ")) }
+        );
+    }
+    Ok(())
+}
+
+/// LANG-1 P2.2 — AI-assisted dictionary generation behind the dedup gate.
+#[allow(clippy::too_many_arguments)]
+fn generate_lexicon(
+    project: &Path,
+    language: &str,
+    topic: Option<&str>,
+    count: usize,
+    era: Option<&str>,
+    register: Option<&str>,
+    provider: Option<&str>,
+    semantic: bool,
+    semantic_threshold: f32,
+    yes: bool,
+) -> Result<()> {
+    use crate::conlang::generate::lexicon as lexgen;
+
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no phoneme block — add `phonemes` / `classes` / `templates` \
+             HJSON under its `Phonology` chapter first"
+        ))
+    })?;
+    if phonology.templates_for(crate::conlang::TemplateRole::Root).is_empty() {
+        return Err(Error::Config(format!(
+            "language `{language}` declares no `root` templates — needed to generate forms"
+        )));
+    }
+    let existing = load_dictionary(&store, &hierarchy, &lang_book)?;
+
+    let pool = lexgen::build_pool(&phonology, &existing, count);
+    if pool.is_empty() {
+        return Err(Error::Config(
+            "could not generate any valid candidate forms — loosen the phonotactic constraints".into(),
+        ));
+    }
+
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    let work_lang = if cfg.language.trim().is_empty() { "english" } else { cfg.language.trim() };
+    eprintln!(
+        "inkhaven language generate-lexicon · {language} · model: {model} · glosses in {work_lang}"
+    );
+
+    let prompt = build_lexgen_prompt(language, topic, count, era, register, work_lang, &pool);
+    let raw = crate::ai::stream::collect_blocking(
+        ai.client.clone(),
+        model.to_string(),
+        Some(LEXGEN_SYSTEM.to_string()),
+        prompt,
+    )
+    .map_err(|e| Error::Store(format!("inference error: {e}")))?;
+
+    let proposals = match lexgen::parse_proposals(&raw) {
+        Ok(p) => p,
+        Err(why) => {
+            eprintln!("could not parse model reply: {why}\n---- raw ----\n{raw}\n---- end ----");
+            return Ok(());
+        }
+    };
+    let (mut kept, rejected) = lexgen::dedup(&phonology, &existing, proposals);
+
+    // Semantic half of the dedup gate: reject near-synonyms by gloss
+    // embedding (catches "stone" vs "rock" the string check misses).
+    let mut near_synonyms: Vec<(lexgen::LexProposal, f32)> = Vec::new();
+    if semantic && !kept.is_empty() {
+        let existing_glosses: Vec<&str> = existing
+            .iter()
+            .map(|e| e.translation.trim())
+            .filter(|g| !g.is_empty())
+            .collect();
+        let kept_glosses: Vec<&str> = kept.iter().map(|p| p.gloss.trim()).collect();
+        let existing_vecs = if existing_glosses.is_empty() {
+            Vec::new()
+        } else {
+            store.embed_batch(&existing_glosses)?
+        };
+        let kept_vecs = store.embed_batch(&kept_glosses)?;
+        let (sem_kept, sem_rejected) =
+            lexgen::semantic_filter(kept, &existing_vecs, &kept_vecs, semantic_threshold);
+        kept = sem_kept;
+        near_synonyms = sem_rejected;
+    }
+
+    println!(
+        "proposed {} entr(y/ies) for {language}{} ({} rejected by the dedup gate):",
+        kept.len(),
+        topic.map(|t| format!(" · topic: {t}")).unwrap_or_default(),
+        rejected.len()
+    );
+    for p in &kept {
+        let pos = if p.pos.trim().is_empty() { "?" } else { p.pos.trim() };
+        println!("  {:<16} {} ({})", p.form, p.gloss, pos);
+    }
+    if !rejected.is_empty() {
+        eprintln!("\nrejected:");
+        for (p, reason) in &rejected {
+            eprintln!("  {:<16} {} — {}", p.form, p.gloss, reason.as_str());
+        }
+    }
+    if !near_synonyms.is_empty() {
+        eprintln!("\nrejected (near-synonyms, cosine > {semantic_threshold:.2}):");
+        for (p, sim) in &near_synonyms {
+            eprintln!("  {:<16} {} — too close ({sim:.2})", p.form, p.gloss);
+        }
+    }
+
+    if yes {
+        let mut added = 0usize;
+        for p in &kept {
+            // Commit through the rich-import path so the AI's register /
+            // domain tags + the batch era land on the entry (P2.5).
+            let entry = ImportEntry {
+                word: p.form.trim().to_string(),
+                pos: if p.pos.trim().is_empty() { "noun".into() } else { p.pos.trim().to_string() },
+                translation: p.gloss.trim().to_string(),
+                example: p.example.trim().to_string(),
+                register: p.register.trim().to_string(),
+                domain: p.domain.iter().map(|d| d.trim().to_string()).filter(|d| !d.is_empty()).collect(),
+                era: era.unwrap_or("").trim().to_string(),
+                ..Default::default()
+            };
+            match add_imported_dictionary_entry(&store, &cfg, &lang_book, &entry) {
+                Ok(_) => added += 1,
+                Err(e) => eprintln!("  skipped {}: {e}", p.form),
+            }
+        }
+        eprintln!("\nadded {added} entr(y/ies) to {language}'s Dictionary");
+    } else {
+        eprintln!(
+            "\n(dry run — re-run with --yes to add the {} kept entr(y/ies))",
+            kept.len()
+        );
+    }
+    Ok(())
+}
+
+fn build_lexgen_prompt(
+    language: &str,
+    topic: Option<&str>,
+    count: usize,
+    era: Option<&str>,
+    register: Option<&str>,
+    work_lang: &str,
+    pool: &[String],
+) -> String {
+    let domain = topic.unwrap_or("core everyday life");
+    let candidates = pool
+        .iter()
+        .map(|f| format!("\"{f}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut constraints = format!(
+        "Language: {language}. Produce {count} dictionary entries for the semantic domain: {domain}."
+    );
+    if let Some(e) = era {
+        constraints.push_str(&format!(" In-world era: {e}."));
+    }
+    if let Some(r) = register {
+        constraints.push_str(&format!(" Register: {r}."));
+    }
+    format!(
+        "{constraints}\n\n\
+         Pick a coherent set of {count} concepts a culture needs for this domain, then assign each \
+         a distinct `form` chosen ONLY from the candidate list below. Write every `gloss` and \
+         `example` in {work_lang}. Do not repeat a meaning. Keep `pos` a short lowercase tag. Tag \
+         each entry with a `register` and one or two `domain` tags appropriate to its concept.\n\n\
+         Candidate forms (choose from these): [{candidates}]\n\n\
+         Reply with the JSON object only."
+    )
+}
+
+/// LANG-1 P1.6 — apply tone sandhi to an explicit tone sequence.
+fn tone_sandhi(project: &Path, language: &str, tones: &str) -> Result<()> {
+    let (_store, phonology) = open_phonology(project, language)?;
+    let system = phonology.tone.as_ref().ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` declares no `tone` system in its Phonology block"
+        ))
+    })?;
+    let input: Vec<String> = tones.split_whitespace().map(String::from).collect();
+    let surface = crate::conlang::phonology::tone_eval::apply_sandhi(system, &input);
+    println!("{}", surface.join(" "));
+    Ok(())
+}
+
+/// LANG-1 P1.5 — convert between IPA and a named romanization scheme.
+fn romanize_text(
+    project: &Path,
+    language: &str,
+    text: &str,
+    scheme: Option<&str>,
+    reverse: bool,
+) -> Result<()> {
+    use crate::conlang::phonology::romanize;
+
+    let (_store, phonology) = open_phonology(project, language)?;
+    let scheme_ref = phonology.scheme(scheme).ok_or_else(|| {
+        Error::Config(match scheme {
+            Some(s) => format!("language `{language}` has no romanization scheme `{s}`"),
+            None => format!(
+                "language `{language}` declares no romanization schemes — add a `romanizations` \
+                 block to its Phonology, or rely on the per-phoneme `romanize` field"
+            ),
+        })
+    })?;
+
+    if reverse {
+        let seq = romanize::deromanize(scheme_ref, &phonology, text);
+        println!("/{}/", seq.join(""));
+    } else {
+        let seq: Vec<String> = text.split_whitespace().map(String::from).collect();
+        println!("{}", romanize::romanize(scheme_ref, &phonology, &seq));
+    }
+    Ok(())
+}
+
+/// LANG-1 P1.4 — place primary stress on a word per the language's stress
+/// rule and print the syllabification with `ˈ` before the stressed syllable.
+fn stress_word(project: &Path, language: &str, word: &str) -> Result<()> {
+    use crate::conlang::phonology::{stress_eval, syllable};
+
+    let (_store, phonology) = open_phonology(project, language)?;
+    let rule = phonology.stress.clone().ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` declares no `stress` rule in its Phonology block \
+             (e.g. `stress: \"penultimate\"`)"
+        ))
+    })?;
+
+    let seq = phonology.segment(word);
+    let sylls = syllable::syllabify(&phonology, &seq);
+    let stressed = stress_eval::primary_stress(&rule, &sylls);
+
+    let g = |ipa: &String| {
+        phonology
+            .phoneme(ipa)
+            .map(|p| p.grapheme().to_string())
+            .unwrap_or_else(|| ipa.clone())
+    };
+    let out = sylls
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let body: String = s.onset.iter().chain(&s.nucleus).chain(&s.coda).map(&g).collect();
+            if Some(i) == stressed {
+                format!("ˈ{body}")
+            } else {
+                body
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".");
+    println!("{out}");
+    Ok(())
+}
+
+/// LANG-1 P1.3 — derive and print a word's surface pronunciation by applying
+/// the language's allophony rules to its underlying form.
+fn ipa_surface(project: &Path, language: &str, word: &str) -> Result<()> {
+    let (_store, phonology) = open_phonology(project, language)?;
+    let underlying = phonology.segment(word);
+    let surface = crate::conlang::phonology::allophony_eval::surface_form(&phonology, &underlying);
+
+    let render_ipa = |seq: &[String]| seq.join("");
+    let render_roman = |seq: &[String]| -> String {
+        seq.iter()
+            .map(|ipa| {
+                phonology
+                    .phoneme(ipa)
+                    .map(|p| p.grapheme().to_string())
+                    .unwrap_or_else(|| ipa.clone())
+            })
+            .collect()
+    };
+
+    println!("underlying  /{}/", render_ipa(&underlying));
+    println!("surface     [{}]", render_ipa(&surface));
+    println!("romanized    {}", render_roman(&surface));
+    Ok(())
+}
+
+/// LANG-1 P1.2 — syllabify a word against a language's phonology and print
+/// the `CV.CVC`-style breakdown. Loads the Phonology block, segments the
+/// word into phonemes (longest-grapheme match), and runs the sonority-aware
+/// syllabifier.
+fn syllabify_word(project: &Path, language: &str, word: &str) -> Result<()> {
+    let (_store, phonology) = open_phonology(project, language)?;
+    let seq = phonology.segment(word);
+    let sylls = crate::conlang::phonology::syllable::syllabify(&phonology, &seq);
+    println!("{}", crate::conlang::phonology::syllable::render(&phonology, &sylls));
+    eprintln!(
+        "{} → {} syllable(s), {} phoneme(s)",
+        word,
+        sylls.len(),
+        seq.len()
+    );
+    Ok(())
+}
+
+/// LANG-1 P1.1 — generate deterministic candidate words from a language's
+/// phonotactic templates.  Loads the typed phoneme block from the language's
+/// `Phonology` chapter (whichever paragraph holds the HJSON), samples
+/// `count` words for the requested role, and prints those that satisfy every
+/// declared constraint.  Empty / absent phonology is a clear, actionable
+/// error rather than a silent empty list.
+fn generate_word(project: &Path, language: &str, role: &str, count: usize) -> Result<()> {
+    let role = crate::conlang::TemplateRole::parse(role).ok_or_else(|| {
+        Error::Config(format!(
+            "unknown role `{role}` — use root | prefix | suffix | infix | circumfix | compound"
+        ))
+    })?;
+
+    let (_store, phonology) = open_phonology(project, language)?;
+
+    if phonology.templates_for(role).is_empty() {
+        return Err(Error::Config(format!(
+            "language `{language}` declares no `{}` templates in its Phonology block",
+            role.as_str()
+        )));
+    }
+
+    let words = crate::conlang::generate::word::generate_words(&phonology, role, count);
+    if words.is_empty() {
+        eprintln!(
+            "no words satisfied the constraints in {} attempts — loosen the phonotactic constraints",
+            count
+        );
+        return Ok(());
+    }
+    for w in &words {
+        println!("{w}");
+    }
+    eprintln!(
+        "generated {} / {} requested `{}` word(s) for {}",
+        words.len(),
+        count,
+        role.as_str(),
+        language
+    );
+    Ok(())
+}
+
+/// Open a project and resolve a language sub-book under the `Language`
+/// system book. The shared front-half of every conlang command — returns the
+/// open `Store` (kept alive for the DuckDB lock), the loaded `Hierarchy`, and
+/// the language's `Book` node.
+fn open_lang_book(
+    project: &Path,
+    language: &str,
+) -> Result<(Store, Hierarchy, crate::store::node::Node)> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+
+    let lang_root = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
+        })
+        .ok_or_else(|| {
+            Error::Store("Language system book missing — re-open the project to seed it".into())
+        })?
+        .clone();
+    let lang_book = hierarchy
+        .children_of(Some(lang_root.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language))
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "language `{language}` not found — run `inkhaven language init {language}` first"
+            ))
+        })?;
+    Ok((store, hierarchy, lang_book))
+}
+
+/// Open a project and load a language's `Phonology` value — the shared
+/// front-half of every P1 phonology inspector / generator.
+fn open_phonology(project: &Path, language: &str) -> Result<(Store, crate::conlang::Phonology)> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no phoneme block yet — add `phonemes` / `classes` / \
+             `templates` HJSON under its `Phonology` chapter (see Documentation/PROPOSALS/LANG-1_PLAN.md)"
+        ))
+    })?;
+    Ok((store, phonology))
+}
+
+/// Load every parseable `DictionaryEntry` under a language's `Dictionary`
+/// chapter (across all alphabet subchapters).
+fn load_dictionary(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<Vec<crate::language_entry::DictionaryEntry>> {
+    let Some(chapter) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary"))
+        .cloned()
+    else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for id in hierarchy.collect_subtree(chapter.id) {
+        let Some(node) = hierarchy.get(id) else { continue };
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
+        let body = String::from_utf8_lossy(&bytes);
+        if let Ok(Some(entry)) = crate::language_entry::parse(&body) {
+            out.push(entry);
+        }
+    }
+    Ok(out)
+}
+
+/// LANG-1 P2.1 — deterministic lexicon audit: phonotactic violations,
+/// homophones (surface-form collisions), and duplicate meanings.
+fn audit(project: &Path, language: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    // Phonology is optional — a dictionary-only language still audits for
+    // homophones + duplicate meanings, just without the phonotactic check.
+    let phonology = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let report = crate::conlang::lexicon::analyze(&phonology, &entries);
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report).map_err(|e| {
+            Error::Store(format!("serializing lexicon report: {e}"))
+        })?);
+        return Ok(());
+    }
+
+    println!("lexicon audit · {language} · {} entr(y/ies)", report.total);
+    if report.issue_count() == 0 {
+        println!("  ✓ no issues");
+        return Ok(());
+    }
+    if !report.phonotactic_violations.is_empty() {
+        println!("\n  ⚠ phonotactic violations ({}):", report.phonotactic_violations.len());
+        for v in &report.phonotactic_violations {
+            println!("      {} (/{}/) breaks the language's constraints", v.headword, v.underlying);
+        }
+    }
+    if !report.homophones.is_empty() {
+        println!("\n  ⚠ homophones ({} group(s)):", report.homophones.len());
+        for c in &report.homophones {
+            let m = c.members.iter().map(|m| format!("{} ({})", m.headword, m.gloss)).collect::<Vec<_>>();
+            println!("      [{}] {}", c.key, m.join(", "));
+        }
+    }
+    if !report.duplicate_meanings.is_empty() {
+        println!("\n  ⚠ duplicate meanings ({} group(s)):", report.duplicate_meanings.len());
+        for c in &report.duplicate_meanings {
+            let m = c.members.iter().map(|m| m.headword.clone()).collect::<Vec<_>>();
+            println!("      \"{}\" — {}", c.key, m.join(", "));
+        }
+    }
+    Ok(())
+}
+
+/// Find and parse the `Phonology`-chapter HJSON block for a language
+/// sub-book.  Scans every paragraph under the `Phonology` chapter and
+/// returns the first that parses as a phonology block (so the author can keep
+/// it in `overview`, a dedicated `inventory` paragraph, or wherever).
+fn load_phonology(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<Option<crate::conlang::Phonology>> {
+    let Some(chapter) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Phonology"))
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    for para in hierarchy.children_of(Some(chapter.id)) {
+        if para.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Some(bytes) = store.get_content(para.id)? else {
+            continue;
+        };
+        let body = String::from_utf8_lossy(&bytes);
+        match crate::conlang::Phonology::from_hjson(&body) {
+            Ok(Some(p)) if !p.phonemes.is_empty() => return Ok(Some(p)),
+            Ok(_) => continue,
+            // A malformed block under Phonology is worth surfacing.
+            Err(e) => return Err(Error::Config(e)),
+        }
+    }
+    Ok(None)
 }
 
 /// The five standard chapters every language book
@@ -485,6 +1371,8 @@ pub(crate) struct ImportEntry {
     pub register: String,
     pub era: String,
     pub notes: String,
+    /// LANG-1 P2.4/P2.5 — semantic-domain tags.
+    pub domain: Vec<String>,
 }
 
 /// Add a fully-populated dictionary entry from an
@@ -659,6 +1547,15 @@ fn build_imported_entry_body(entry: &ImportEntry) -> String {
             "  notes:        \"{}\"\n",
             escape_hjson(&entry.notes)
         ));
+    }
+    if !entry.domain.is_empty() {
+        let items = entry
+            .domain
+            .iter()
+            .map(|d| format!("\"{}\"", escape_hjson(d)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!("  domain:       [{items}]\n"));
     }
     out.push_str("}\n");
     out
@@ -2499,6 +3396,7 @@ fn build_import_entry_from_row(
         register: opt(cols.register).trim().to_string(),
         era: opt(cols.era).trim().to_string(),
         notes: opt(cols.notes).trim().to_string(),
+        domain: Vec::new(),
     })
 }
 
