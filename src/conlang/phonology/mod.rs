@@ -2,6 +2,7 @@
 //! IPA sonority + sonority-aware syllabification (P1.2). Allophony / stress /
 //! tone evaluation join here in later P1 increments.
 
+pub mod allophony_eval;
 pub mod ipa;
 pub mod syllable;
 pub mod validator;

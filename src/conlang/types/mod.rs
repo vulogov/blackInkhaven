@@ -5,10 +5,12 @@
 //! P1.1 introduces the phonological substrate: the [`Phonology`] aggregate
 //! and its phoneme / template / constraint parts.
 
+pub mod allophony;
 pub mod constraint;
 pub mod phoneme;
 pub mod template;
 
+pub use allophony::{AllophonyRule, PatternAtom};
 pub use constraint::PhonotacticConstraint;
 pub use phoneme::{Phoneme, PhonemeKind};
 pub use template::{SyllableTemplate, TemplateRole};
@@ -36,8 +38,11 @@ pub struct Phonology {
     pub templates: BTreeMap<String, Vec<SyllableTemplate>>,
     #[serde(default)]
     pub constraints: Vec<PhonotacticConstraint>,
+    /// Ordered allophony rules — underlying → surface rewrites (P1.3).
+    #[serde(default)]
+    pub allophony: Vec<AllophonyRule>,
     /// Upper bound on syllables per word. Parsed now; consumed by the
-    /// multi-syllable compounder + syllabifier in P1.2.
+    /// multi-syllable compounder in a later P1 increment.
     #[serde(default = "default_max_syllables")]
     #[allow(dead_code)]
     pub max_word_syllables: usize,

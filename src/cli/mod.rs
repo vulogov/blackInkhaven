@@ -2230,6 +2230,19 @@ pub enum LanguageCommand {
         #[arg(long)]
         word: String,
     },
+
+    /// LANG-1 P1.3 — derive the surface pronunciation of a word by applying
+    /// the language's allophony rules to its underlying form.  Segments the
+    /// word into phonemes, runs the ordered allophony rewrites
+    /// (underlying → surface), and prints both the surface IPA and its
+    /// romanized rendering.
+    Ipa {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The word, in the language's romanization (or raw IPA).
+        #[arg(long)]
+        word: String,
+    },
 }
 
 /// output format selector for

@@ -353,9 +353,10 @@ Subsequent P1 increments (re-sequenced — syllabification is a prerequisite
 for allophony, which often references syllable position):
 **P1.2 (shipped)** IPA sonority table + sonority-aware syllabifier (Maximal
 Onset Principle) + the deferred onset/coda/sonority constraints +
-`language syllabify` inspector; **P1.3** allophony evaluator (SPE-style rules,
-underlying→surface); **P1.4** stress/tone; **P1.5** romanization
-(bidirectional, multi-scheme).
+`language syllabify` inspector; **P1.3 (shipped)** allophony evaluator
+(SPE-style ordered rules `k > tʃ / _ i`, underlying→surface, applied to the
+generator's output + a `language ipa` inspector); **P1.4** stress/tone;
+**P1.5** romanization (bidirectional, multi-scheme).
 
 ## 5. Testing strategy (per RFC §13, scoped to each phase)
 
