@@ -7,6 +7,7 @@
 
 pub mod allophony;
 pub mod constraint;
+pub mod diachronic;
 pub mod expression;
 pub mod grammar;
 pub mod morphology;

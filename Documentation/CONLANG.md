@@ -113,6 +113,28 @@ inkhaven language grammar Eldar --set alignment=ergative_absolutive
 Answers are validated against the catalog and stored as a `{ grammar: { … } }`
 block in the Grammar chapter; the AI grammar book reads them.
 
+## Diachronics (sound change)
+
+A language can derive from a proto by an ordered chain of sound changes (same
+SPE notation as allophony), declared in a `diachronics` block in the
+**Phonology** chapter:
+
+```hjson
+{ diachronics: {
+    proto: "ProtoEldarin"
+    rules: [ { rule: "p > f / _ #" }, { rule: "k > h / V _ V" } ]
+} }
+```
+
+- `inkhaven language sound-change Eldar --form tap` → `tap > taf` (evolve one
+  proto-form through the chain).
+- `inkhaven language derive-lexicon Eldar [--yes]` → applies the chain to every
+  entry of the proto's dictionary, proposing the daughter's lexicon (with the
+  gloss carried forward + an etymology); `--yes` commits.
+
+The proto's inventory drives segmentation and the rule classes (the changes are
+defined on proto sounds).
+
 ## Idioms + metaphors
 
 ```

@@ -148,6 +148,12 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             example,
         } => metaphor_add(project, &language, &source, &target, example.as_deref()),
         LanguageCommand::Idioms { language } => idioms_list(project, &language),
+        LanguageCommand::SoundChange { language, form } => {
+            sound_change(project, &language, &form)
+        }
+        LanguageCommand::DeriveLexicon { language, yes } => {
+            derive_lexicon_cmd(project, &language, yes)
+        }
         LanguageCommand::Derive {
             language,
             root,
@@ -309,6 +315,128 @@ fn load_morphology(
         }
     }
     Ok(None)
+}
+
+/// Load the `{ diachronics: { proto, rules } }` block from the Phonology
+/// chapter.
+fn load_diachronics(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<Option<crate::conlang::types::diachronic::Diachronics>> {
+    use crate::conlang::types::diachronic::Diachronics;
+    let Some(chapter) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Phonology"))
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    for para in hierarchy.children_of(Some(chapter.id)) {
+        if para.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
+        if let Ok(Some(d)) = Diachronics::from_hjson(&String::from_utf8_lossy(&bytes)) {
+            return Ok(Some(d));
+        }
+    }
+    Ok(None)
+}
+
+/// Resolve a daughter's proto-language: its `Book` node + phonology (the
+/// sound changes are defined on proto sounds, so segmentation + classes come
+/// from the proto's inventory).
+fn resolve_proto(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    dia: &crate::conlang::types::diachronic::Diachronics,
+    daughter: &str,
+) -> Result<(crate::store::node::Node, crate::conlang::Phonology, String)> {
+    let proto_name = dia.proto.clone().ok_or_else(|| {
+        Error::Config(format!(
+            "language `{daughter}`'s diachronics block has no `proto` — name the parent language"
+        ))
+    })?;
+    let lang_root = hierarchy
+        .iter()
+        .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES))
+        .ok_or_else(|| Error::Store("Language system book missing".into()))?;
+    let proto_book = hierarchy
+        .children_of(Some(lang_root.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(&proto_name))
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "proto-language `{proto_name}` not found — `inkhaven language init {proto_name}` first"
+            ))
+        })?;
+    let proto_phon = load_phonology(store, hierarchy, &proto_book)?.unwrap_or_default();
+    Ok((proto_book, proto_phon, proto_name))
+}
+
+/// LANG-1 P4.1 — evolve a single proto-form through a language's sound-change
+/// chain (segmented with the proto's inventory).
+fn sound_change(project: &Path, language: &str, form: &str) -> Result<()> {
+    let (store, hierarchy, daughter_book) = open_lang_book(project, language)?;
+    let dia = load_diachronics(&store, &hierarchy, &daughter_book)?.ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no diachronics — add a `{{ diachronics: {{ proto, rules }} }}` \
+             block to its Phonology chapter"
+        ))
+    })?;
+    let (_proto_book, proto_phon, proto_name) = resolve_proto(&store, &hierarchy, &dia, language)?;
+    let daughter = crate::conlang::diachronic::apply::derive_form(&proto_phon, &dia.rules, form);
+    println!("{form}  >  {daughter}   (from {proto_name}, {} rule(s))", dia.rules.len());
+    Ok(())
+}
+
+/// LANG-1 P4.1 — derive a daughter lexicon from its proto.
+fn derive_lexicon_cmd(project: &Path, language: &str, yes: bool) -> Result<()> {
+    let (store, hierarchy, daughter_book) = open_lang_book(project, language)?;
+    let dia = load_diachronics(&store, &hierarchy, &daughter_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no diachronics block"))
+    })?;
+    let (proto_book, proto_phon, proto_name) = resolve_proto(&store, &hierarchy, &dia, language)?;
+    let proto_entries = load_dictionary(&store, &hierarchy, &proto_book)?;
+    if proto_entries.is_empty() {
+        eprintln!("note: proto `{proto_name}` has no dictionary entries to derive from");
+    }
+    let derived =
+        crate::conlang::diachronic::apply::derive_lexicon(&proto_phon, &dia.rules, &proto_entries);
+
+    println!(
+        "derive {language} from {proto_name} · {} rule(s) · {} entr(y/ies):",
+        dia.rules.len(),
+        derived.len()
+    );
+    for d in &derived {
+        println!("  {:<14} > {:<14} {}", d.proto_form, d.form, d.gloss);
+    }
+
+    if yes {
+        let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+        let mut added = 0usize;
+        for d in &derived {
+            let entry = ImportEntry {
+                word: d.form.clone(),
+                pos: d.pos.clone(),
+                translation: d.gloss.clone(),
+                etymology: format!("from {proto_name} {} via sound change", d.proto_form),
+                ..Default::default()
+            };
+            match add_imported_dictionary_entry(&store, &cfg, &daughter_book, &entry) {
+                Ok(_) => added += 1,
+                Err(e) => eprintln!("  skipped {}: {e}", d.form),
+            }
+        }
+        eprintln!("\nadded {added} derived entr(y/ies) to {language}'s Dictionary");
+    } else {
+        eprintln!("\n(dry run — re-run with --yes to add the {} derived entr(y/ies))", derived.len());
+    }
+    Ok(())
 }
 
 /// Load the `{ idioms: [...], metaphors: [...] }` block from the Grammar

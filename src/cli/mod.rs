@@ -2333,6 +2333,29 @@ pub enum LanguageCommand {
         language: String,
     },
 
+    /// LANG-1 P4.1 — apply a language's diachronic sound-change chain to a
+    /// proto-form and print the resulting daughter form.  Reads the
+    /// `{ diachronics: { proto, rules } }` block in the Phonology chapter.
+    SoundChange {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The proto-form to evolve (in the proto's romanization).
+        #[arg(long)]
+        form: String,
+    },
+
+    /// LANG-1 P4.1 — derive a daughter language's lexicon from its proto by
+    /// applying the daughter's diachronic sound-change chain to every proto
+    /// dictionary entry.  Advisory: nothing is added without `--yes`.
+    DeriveLexicon {
+        /// The daughter language (declares `proto` + `rules` in its Phonology
+        /// chapter's diachronics block).
+        language: String,
+        /// Add the derived forms to the daughter's Dictionary.
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// LANG-1 P3.5 — add an idiom (a phrase with a literal word-by-word gloss
     /// and a separate idiomatic meaning).  Stored in the Grammar chapter; the
     /// AI translation consults it to stay idiomatic.
