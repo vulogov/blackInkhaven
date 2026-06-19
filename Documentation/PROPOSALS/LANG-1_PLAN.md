@@ -281,6 +281,21 @@ releases as they complete.
 > the config-driven `font` block → norad UFO → fontc TTF/OTF (adds the deps),
 > then Hangul precompose / hieroglyphic Typst-layout / input methods /
 > AI text-to-SVG.
+>
+> **P5.2 (shipped)** — font source compilation to UFO (adds **norad**, the first
+> P5 dep). `conlang::writing::font::svg_to_contours` parses a glyph SVG with the
+> in-tree `usvg`, transforms each filled path to absolute coords, flips the
+> y-down viewBox + scales it into the em, and converts segments to UFO contour
+> points (lines + cubic/quadratic off-curves). `build_ufo` assembles a
+> `norad::Font` (family, units-per-em, per-glyph codepoints). `inkhaven language
+> font-build <family> --glyphs <dir> [--out] [--upm]` reads a directory of glyph
+> SVGs (filename stem → glyph name + codepoint), runs the preflight (skipping
+> unusable glyphs), and writes a **UFO** — a standard, externally-compilable
+> font source (fontc / fontmake / FontForge). Verified e2e: a square → 4 line
+> points, a cubic-`o`, both with correct codepoints + y-flip. Next P5.3:
+> in-process **UFO → TTF/OTF** (fontc / write-fonts), then the config-driven
+> `font` block, Hangul precompose, hieroglyphic Typst-layout, input methods,
+> AI text-to-SVG.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the

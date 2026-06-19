@@ -148,6 +148,12 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             example,
         } => metaphor_add(project, &language, &source, &target, example.as_deref()),
         LanguageCommand::Idioms { language } => idioms_list(project, &language),
+        LanguageCommand::FontBuild {
+            family,
+            glyphs,
+            out,
+            upm,
+        } => font_build(&family, &glyphs, out.as_deref(), upm),
         LanguageCommand::GlyphLint { svg } => glyph_lint(&svg),
         LanguageCommand::Reconstruct {
             forms,
@@ -354,6 +360,71 @@ fn load_diachronics(
         }
     }
     Ok(None)
+}
+
+/// LANG-1 P5.2 — compile a directory of glyph SVGs into a UFO font source.
+fn font_build(family: &str, glyphs_dir: &Path, out: Option<&Path>, upm: f64) -> Result<()> {
+    use crate::conlang::writing::{font::GlyphSource, preflight};
+
+    let mut svgs: Vec<std::path::PathBuf> = std::fs::read_dir(glyphs_dir)
+        .map_err(|e| Error::Config(format!("reading {}: {e}", glyphs_dir.display())))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("svg")))
+        .collect();
+    svgs.sort();
+    if svgs.is_empty() {
+        return Err(Error::Config(format!("no .svg files in {}", glyphs_dir.display())));
+    }
+
+    let mut sources: Vec<GlyphSource> = Vec::new();
+    let mut skipped = 0usize;
+    for path in &svgs {
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        if stem.is_empty() {
+            continue;
+        }
+        let svg = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("  skip {}: {e}", path.display());
+                skipped += 1;
+                continue;
+            }
+        };
+        let report = preflight::lint_svg(&svg);
+        if !report.is_usable() {
+            eprintln!("  skip {} — {}", stem, report.errors.join("; "));
+            skipped += 1;
+            continue;
+        }
+        // A single-character stem also sets the glyph's Unicode codepoint.
+        let codepoint = (stem.chars().count() == 1).then(|| stem.chars().next().unwrap());
+        let name = codepoint
+            .map(|c| format!("uni{:04X}", c as u32))
+            .unwrap_or_else(|| stem.clone());
+        sources.push(GlyphSource { name, codepoint, svg });
+    }
+
+    if sources.is_empty() {
+        return Err(Error::Config("no usable glyphs to compile".into()));
+    }
+
+    let font = crate::conlang::writing::font::build_ufo(family, upm, &sources)
+        .map_err(Error::Config)?;
+    let out_path = out
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from(format!("{family}.ufo")));
+    font.save(&out_path)
+        .map_err(|e| Error::Store(format!("saving UFO: {e}")))?;
+
+    println!(
+        "font `{family}` · {} glyph(s){} → {} (UFO @ {upm:.0} upm)",
+        sources.len(),
+        if skipped > 0 { format!(", {skipped} skipped") } else { String::new() },
+        out_path.display()
+    );
+    eprintln!("(compile to TTF/OTF with fontc / fontmake, or open in FontForge / Glyphs)");
+    Ok(())
 }
 
 /// LANG-1 P5.1 — lint a glyph SVG file for font suitability.

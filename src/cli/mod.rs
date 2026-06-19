@@ -2333,6 +2333,26 @@ pub enum LanguageCommand {
         language: String,
     },
 
+    /// LANG-1 P5.2 — compile a directory of glyph SVGs into a UFO font source.
+    /// Each SVG's filename stem names the glyph (a single character also sets
+    /// its Unicode codepoint); unsuitable glyphs (see `glyph-lint`) are
+    /// skipped with a warning.  The UFO is a standard, externally-compilable
+    /// artifact (fontc / fontmake / FontForge); in-process TTF/OTF compilation
+    /// lands in a later increment.
+    FontBuild {
+        /// Font family name.
+        family: String,
+        /// Directory of glyph `.svg` files.
+        #[arg(long)]
+        glyphs: std::path::PathBuf,
+        /// Output `.ufo` path (defaults to `<family>.ufo`).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Units per em (the design grid).
+        #[arg(long, default_value_t = 1000.0)]
+        upm: f64,
+    },
+
     /// LANG-1 P5.1 — check whether a glyph SVG is suitable for font
     /// compilation: does it parse, does it have a fillable outline (not
     /// stroke-only / empty), is it free of raster images, is it monochrome.
