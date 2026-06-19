@@ -158,9 +158,13 @@ releases as they complete.
 > speakers. Bound on the free `Ctrl+B X` (plain `x`; `Shift+x` is fact-check);
 > mirrors the Story-Bible modal. Deep ops stay on the CLI + `Ctrl+B Q`.
 >
-> **Remaining P2: `:lang:` inline insertion** — typing `:<lang>:` in the editor
-> opens a lexicon picker that inserts the chosen word. The last sliver; the
-> trickiest (editor input interception + a picker modal).
+> **P2.7c (shipped)** — `:lang:` inline insertion. Typing the closing `:` of a
+> `:<lang>:` in the editor opens a filterable lexicon picker (`Modal::LangInsert`);
+> type to filter, `↑↓`, `Enter` splices the chosen word in place of the trigger
+> (mirrors `do_replace_current`), `Esc` leaves the literal text. `<lang>`
+> resolves by sub-book title or `iso_code`. The trigger detection is a pure,
+> unit-tested `conlang_hub::detect_trigger(line, col)`; the `:` hook sits next
+> to the snippet-expansion hook in the editor input path. **P2 is complete.**
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the

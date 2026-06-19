@@ -4753,6 +4753,87 @@ impl super::super::App {
         );
     }
 
+    /// LANG-1 P2.7c — the `:lang:` inline-insertion picker: a filterable list
+    /// of a language's dictionary words; `Enter` inserts the chosen word in
+    /// place of the `:lang:` trigger.
+    pub(in crate::tui::app) fn draw_lang_insert_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::LangInsert { language, entries, query, cursor, .. } = &self.modal else {
+            return;
+        };
+        let q = query.to_lowercase();
+        let filtered: Vec<usize> = if query.is_empty() {
+            (0..entries.len()).collect()
+        } else {
+            entries
+                .iter()
+                .enumerate()
+                .filter(|(_, (w, g))| w.to_lowercase().contains(&q) || g.to_lowercase().contains(&q))
+                .map(|(i, _)| i)
+                .collect()
+        };
+
+        let width = area.width.saturating_sub(6).clamp(40, 70);
+        let height = area.height.saturating_sub(4).clamp(8, 20);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" :{language}: insert "))
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let query_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("/{query}"),
+                Style::default().add_modifier(Modifier::BOLD),
+            ))),
+            query_rect,
+        );
+
+        let list_h = inner.height.saturating_sub(2).max(1) as usize;
+        let body_rect = Rect { x: inner.x, y: inner.y + 1, width: inner.width, height: list_h as u16 };
+        let footer_rect =
+            Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+
+        let cur = (*cursor).min(filtered.len().saturating_sub(1));
+        let start = if cur >= list_h { cur + 1 - list_h } else { 0 };
+        let cap = (inner.width as usize).saturating_sub(2);
+        let mut lines: Vec<Line> = Vec::new();
+        if filtered.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "(no matches)",
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        }
+        for (vis, &ei) in filtered.iter().enumerate().skip(start).take(list_h) {
+            let (w, g) = &entries[ei];
+            let text = if g.is_empty() { w.clone() } else { format!("{w:<16} {g}") };
+            let mut line = Line::from(Span::raw(truncate_to(&text, cap)));
+            if vis == cur {
+                line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+            }
+            lines.push(line);
+        }
+        f.render_widget(Paragraph::new(lines), body_rect);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " type filter · ↑↓ · ⏎ insert · Esc ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     /// 1.2.22 R.3 — the project-replace review: matches grouped by
     /// paragraph, each with a `[x]`/`[ ]` keep/skip box and the matched
     /// span highlighted in its line.  Enter applies the kept ones.

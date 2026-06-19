@@ -220,6 +220,10 @@ impl super::App {
             self.draw_conlang_hub_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::LangInsert { .. }) {
+            self.draw_lang_insert_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SentenceRhythm { .. }) {
             self.draw_sentence_rhythm_modal(f, area);
             return;
