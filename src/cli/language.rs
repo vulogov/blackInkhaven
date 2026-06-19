@@ -147,9 +147,11 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
 
 const LEXGEN_SYSTEM: &str = "You are a meticulous lexicographer for a constructed language. \
 Reply with a SINGLE JSON object and nothing else — no prose, no preamble, no markdown fences. \
-Shape: {\"entries\":[{\"form\":\"…\",\"gloss\":\"…\",\"pos\":\"…\",\"example\":\"…\"}]}. Choose each \
-`form` ONLY from the provided candidate list (never invent a form). Never assign two entries the \
-same meaning. Keep `pos` a short lowercase tag (noun/verb/adjective/…).";
+Shape: {\"entries\":[{\"form\":\"…\",\"gloss\":\"…\",\"pos\":\"…\",\"example\":\"…\",\"register\":\"…\",\
+\"domain\":[\"…\"]}]}. Choose each `form` ONLY from the provided candidate list (never invent a \
+form). Never assign two entries the same meaning. Keep `pos` a short lowercase tag \
+(noun/verb/adjective/…). `register` is one short tag (neutral/formal/vulgar/sacred/archaic); \
+`domain` is one or two short semantic-domain tags.";
 
 /// LANG-1 P2.4 — query the dictionary by the rich entry fields.
 #[allow(clippy::too_many_arguments)]
@@ -312,10 +314,19 @@ fn generate_lexicon(
     if yes {
         let mut added = 0usize;
         for p in &kept {
-            let pos = if p.pos.trim().is_empty() { "noun" } else { p.pos.trim() };
-            let example = Some(p.example.trim()).filter(|e| !e.is_empty());
-            match add_dictionary_entry_impl(&store, &cfg, &lang_book, &p.form, pos, &p.gloss, example)
-            {
+            // Commit through the rich-import path so the AI's register /
+            // domain tags + the batch era land on the entry (P2.5).
+            let entry = ImportEntry {
+                word: p.form.trim().to_string(),
+                pos: if p.pos.trim().is_empty() { "noun".into() } else { p.pos.trim().to_string() },
+                translation: p.gloss.trim().to_string(),
+                example: p.example.trim().to_string(),
+                register: p.register.trim().to_string(),
+                domain: p.domain.iter().map(|d| d.trim().to_string()).filter(|d| !d.is_empty()).collect(),
+                era: era.unwrap_or("").trim().to_string(),
+                ..Default::default()
+            };
+            match add_imported_dictionary_entry(&store, &cfg, &lang_book, &entry) {
                 Ok(_) => added += 1,
                 Err(e) => eprintln!("  skipped {}: {e}", p.form),
             }
@@ -358,7 +369,8 @@ fn build_lexgen_prompt(
         "{constraints}\n\n\
          Pick a coherent set of {count} concepts a culture needs for this domain, then assign each \
          a distinct `form` chosen ONLY from the candidate list below. Write every `gloss` and \
-         `example` in {work_lang}. Do not repeat a meaning. Keep `pos` a short lowercase tag.\n\n\
+         `example` in {work_lang}. Do not repeat a meaning. Keep `pos` a short lowercase tag. Tag \
+         each entry with a `register` and one or two `domain` tags appropriate to its concept.\n\n\
          Candidate forms (choose from these): [{candidates}]\n\n\
          Reply with the JSON object only."
     )
@@ -1092,6 +1104,8 @@ pub(crate) struct ImportEntry {
     pub register: String,
     pub era: String,
     pub notes: String,
+    /// LANG-1 P2.4/P2.5 — semantic-domain tags.
+    pub domain: Vec<String>,
 }
 
 /// Add a fully-populated dictionary entry from an
@@ -1266,6 +1280,15 @@ fn build_imported_entry_body(entry: &ImportEntry) -> String {
             "  notes:        \"{}\"\n",
             escape_hjson(&entry.notes)
         ));
+    }
+    if !entry.domain.is_empty() {
+        let items = entry
+            .domain
+            .iter()
+            .map(|d| format!("\"{}\"", escape_hjson(d)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!("  domain:       [{items}]\n"));
     }
     out.push_str("}\n");
     out
@@ -3106,6 +3129,7 @@ fn build_import_entry_from_row(
         register: opt(cols.register).trim().to_string(),
         era: opt(cols.era).trim().to_string(),
         notes: opt(cols.notes).trim().to_string(),
+        domain: Vec::new(),
     })
 }
 
