@@ -7,120 +7,20 @@
 //! output within one pass). Optional rules — variant pronunciations — are
 //! skipped in this canonical derivation. Pure and deterministic.
 
-use crate::conlang::types::{AllophonyRule, PatternAtom, Phonology};
+use crate::conlang::phonology::rewrite;
+use crate::conlang::types::Phonology;
 
 /// Derive the surface form of an underlying phoneme sequence (IPA) by
-/// applying every non-optional allophony rule in order.
+/// applying every non-optional allophony rule in order. Thin wrapper over
+/// the generic ordered-rewrite engine (shared with tone sandhi).
 pub fn surface_form(phon: &Phonology, underlying: &[String]) -> Vec<String> {
-    let mut seq = underlying.to_vec();
-    for rule in phon.allophony.iter().filter(|r| !r.optional) {
-        seq = apply_rule(phon, rule, &seq);
-    }
-    seq
-}
-
-/// Apply one rule across `seq` in a single left-to-right pass.
-fn apply_rule(phon: &Phonology, rule: &AllophonyRule, seq: &[String]) -> Vec<String> {
-    let focus_len = if rule.lhs.is_none() { 0 } else { 1 };
-    let mut out: Vec<String> = Vec::with_capacity(seq.len());
-    let mut i = 0usize;
-    // `i` walks 0..=len so insertion at the final boundary is reachable.
-    while i <= seq.len() {
-        let focus_fits = i + focus_len <= seq.len();
-        let matched = focus_fits
-            && focus_matches(phon, &rule.lhs, seq, i)
-            && left_matches(phon, &rule.left, &seq[..i])
-            && right_matches(phon, &rule.right, &seq[i + focus_len..]);
-
-        if matched {
-            if let Some(r) = &rule.rhs {
-                out.push(r.clone());
-            }
-            if focus_len == 0 {
-                // Insertion: emit the segment we sit before, then step past it
-                // so the rule can't re-fire at the same gap.
-                if i < seq.len() {
-                    out.push(seq[i].clone());
-                }
-                i += 1;
-            } else {
-                i += focus_len;
-            }
-        } else {
-            if i < seq.len() {
-                out.push(seq[i].clone());
-            }
-            i += 1;
-        }
-    }
-    out
-}
-
-fn focus_matches(phon: &Phonology, lhs: &Option<PatternAtom>, seq: &[String], i: usize) -> bool {
-    match lhs {
-        None => true, // ∅ — insertion site, always "matches" at a gap
-        Some(atom) => i < seq.len() && atom_matches(phon, atom, &seq[i]),
-    }
-}
-
-/// The left context must match the END of `left` (the segments immediately
-/// before the target), reading the pattern's rightmost atom as adjacent.
-fn left_matches(phon: &Phonology, atoms: &[PatternAtom], left: &[String]) -> bool {
-    let mut li = left.len();
-    for atom in atoms.iter().rev() {
-        match atom {
-            PatternAtom::Boundary => return li == 0,
-            _ => {
-                if li == 0 {
-                    return false;
-                }
-                li -= 1;
-                if !atom_matches(phon, atom, &left[li]) {
-                    return false;
-                }
-            }
-        }
-    }
-    true
-}
-
-/// The right context must match the START of `right` (the segments
-/// immediately after the target).
-fn right_matches(phon: &Phonology, atoms: &[PatternAtom], right: &[String]) -> bool {
-    let mut ri = 0;
-    for atom in atoms {
-        match atom {
-            PatternAtom::Boundary => return ri == right.len(),
-            _ => {
-                if ri >= right.len() || !atom_matches(phon, atom, &right[ri]) {
-                    return false;
-                }
-                ri += 1;
-            }
-        }
-    }
-    true
-}
-
-/// A `Symbol` matches a class member when the symbol names a declared class,
-/// otherwise it matches the literal phoneme.
-fn atom_matches(phon: &Phonology, atom: &PatternAtom, seg: &str) -> bool {
-    match atom {
-        PatternAtom::Boundary => false,
-        PatternAtom::Symbol(s) => {
-            if phon.classes.contains_key(s) {
-                phon.class_members(s).iter().any(|m| m == seg)
-            } else {
-                s == seg
-            }
-        }
-    }
+    rewrite::apply_ordered(underlying, &phon.allophony, &phon.classes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conlang::types::{Phoneme, PhonemeKind};
+    use crate::conlang::types::{AllophonyRule, Phoneme, PhonemeKind};
 
     fn ph(ipa: &str, kind: PhonemeKind) -> Phoneme {
         Phoneme { ipa: ipa.into(), romanize: None, kind, sonority: None }

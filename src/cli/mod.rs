@@ -2276,6 +2276,18 @@ pub enum LanguageCommand {
         #[arg(long)]
         reverse: bool,
     },
+
+    /// LANG-1 P1.6 — apply the language's tone-sandhi rules to a sequence of
+    /// per-syllable tones.  Takes the underlying tones (as the lexicon would
+    /// carry them), runs the ordered sandhi rewrites, and prints the surface
+    /// tones (e.g. Mandarin `3 3` → `2 3`).
+    Tone {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Space-separated underlying tone labels (`3 3 3`, `H L H`).
+        #[arg(long)]
+        tones: String,
+    },
 }
 
 /// output format selector for

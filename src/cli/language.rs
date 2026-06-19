@@ -100,7 +100,22 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             scheme,
             reverse,
         } => romanize_text(project, &language, &text, scheme.as_deref(), reverse),
+        LanguageCommand::Tone { language, tones } => tone_sandhi(project, &language, &tones),
     }
+}
+
+/// LANG-1 P1.6 — apply tone sandhi to an explicit tone sequence.
+fn tone_sandhi(project: &Path, language: &str, tones: &str) -> Result<()> {
+    let (_store, phonology) = open_phonology(project, language)?;
+    let system = phonology.tone.as_ref().ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` declares no `tone` system in its Phonology block"
+        ))
+    })?;
+    let input: Vec<String> = tones.split_whitespace().map(String::from).collect();
+    let surface = crate::conlang::phonology::tone_eval::apply_sandhi(system, &input);
+    println!("{}", surface.join(" "));
+    Ok(())
 }
 
 /// LANG-1 P1.5 — convert between IPA and a named romanization scheme.

@@ -11,6 +11,7 @@ pub mod phoneme;
 pub mod romanization;
 pub mod stress;
 pub mod template;
+pub mod tone;
 
 pub use allophony::{AllophonyRule, PatternAtom};
 pub use constraint::PhonotacticConstraint;
@@ -18,6 +19,7 @@ pub use phoneme::{Phoneme, PhonemeKind};
 pub use romanization::RomanizationScheme;
 pub use stress::StressRule;
 pub use template::{SyllableTemplate, TemplateRole};
+pub use tone::ToneSystem;
 
 use std::collections::BTreeMap;
 
@@ -55,6 +57,9 @@ pub struct Phonology {
     /// Name of the default scheme; falls back to the first when unset.
     #[serde(default)]
     pub default_romanization: Option<String>,
+    /// Tone system (P1.6). `None` = the language is non-tonal.
+    #[serde(default)]
+    pub tone: Option<ToneSystem>,
     /// Upper bound on syllables per word. Parsed now; consumed by the
     /// multi-syllable compounder in a later P1 increment.
     #[serde(default = "default_max_syllables")]

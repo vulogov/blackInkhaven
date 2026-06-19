@@ -4,7 +4,9 @@
 
 pub mod allophony_eval;
 pub mod ipa;
+pub mod rewrite;
 pub mod romanize;
 pub mod stress_eval;
 pub mod syllable;
+pub mod tone_eval;
 pub mod validator;
