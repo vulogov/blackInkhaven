@@ -15,6 +15,8 @@
 use std::path::Path;
 
 use crate::config::Config;
+use crate::conlang::types::font::DEFAULT_UPM;
+use crate::conlang::writing::font::GlyphSource;
 use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
@@ -150,11 +152,37 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Idioms { language } => idioms_list(project, &language),
         LanguageCommand::FontBuild {
             family,
+            language,
             glyphs,
             out,
             upm,
             format,
-        } => font_build(&family, &glyphs, out.as_deref(), upm, &format),
+        } => font_build(
+            project,
+            family.as_deref(),
+            language.as_deref(),
+            glyphs.as_deref(),
+            out.as_deref(),
+            upm,
+            &format,
+        ),
+        LanguageCommand::FontImportGlyph {
+            language,
+            svg,
+            phoneme,
+            codepoint,
+            name,
+        } => font_import_glyph(
+            project,
+            &language,
+            &svg,
+            phoneme.as_deref(),
+            codepoint.as_deref(),
+            name.as_deref(),
+        ),
+        LanguageCommand::FontConfig { language, json } => {
+            font_config_show(project, &language, json)
+        }
         LanguageCommand::GlyphLint { svg } => glyph_lint(&svg),
         LanguageCommand::Reconstruct {
             forms,
@@ -363,17 +391,18 @@ fn load_diachronics(
     Ok(None)
 }
 
-/// LANG-1 P5.2/P5.3 — compile a directory of glyph SVGs into a UFO source
-/// and/or an in-process TrueType binary.
+/// LANG-1 P5.2/P5.3/P5.4 — compile a font, either from a loose directory of
+/// glyph SVGs (`--glyphs`) or from a language's own `font` config block
+/// (`--language`).
 fn font_build(
-    family: &str,
-    glyphs_dir: &Path,
+    project: &Path,
+    family: Option<&str>,
+    language: Option<&str>,
+    glyphs_dir: Option<&Path>,
     out: Option<&Path>,
-    upm: f64,
+    upm: Option<f64>,
     format: &str,
 ) -> Result<()> {
-    use crate::conlang::writing::{compile, font::GlyphSource, preflight};
-
     let (want_ufo, want_ttf) = match format.to_ascii_lowercase().as_str() {
         "ufo" => (true, false),
         "ttf" => (false, true),
@@ -385,6 +414,30 @@ fn font_build(
         }
     };
 
+    let (resolved_family, resolved_upm, sources, skipped) = match (language, glyphs_dir) {
+        (Some(lang), _) => collect_glyphs_from_config(project, lang, family, upm)?,
+        (None, Some(dir)) => {
+            let f = family
+                .ok_or_else(|| Error::Config("a family name is required with --glyphs".into()))?;
+            let (sources, skipped) = collect_glyphs_from_dir(dir)?;
+            (f.to_string(), upm.unwrap_or(DEFAULT_UPM), sources, skipped)
+        }
+        (None, None) => {
+            return Err(Error::Config(
+                "specify either --language <lang> (config-driven) or a family + --glyphs <dir>"
+                    .into(),
+            ))
+        }
+    };
+
+    emit_font(&resolved_family, resolved_upm, &sources, skipped, out, want_ufo, want_ttf)
+}
+
+/// Build glyph sources from a directory of `.svg` files (filename stem → glyph
+/// name; a single-character stem also sets the Unicode codepoint).
+fn collect_glyphs_from_dir(glyphs_dir: &Path) -> Result<(Vec<GlyphSource>, usize)> {
+    use crate::conlang::writing::preflight;
+
     let mut svgs: Vec<std::path::PathBuf> = std::fs::read_dir(glyphs_dir)
         .map_err(|e| Error::Config(format!("reading {}: {e}", glyphs_dir.display())))?
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -395,7 +448,7 @@ fn font_build(
         return Err(Error::Config(format!("no .svg files in {}", glyphs_dir.display())));
     }
 
-    let mut sources: Vec<GlyphSource> = Vec::new();
+    let mut sources = Vec::new();
     let mut skipped = 0usize;
     for path in &svgs {
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
@@ -416,20 +469,85 @@ fn font_build(
             skipped += 1;
             continue;
         }
-        // A single-character stem also sets the glyph's Unicode codepoint.
         let codepoint = (stem.chars().count() == 1).then(|| stem.chars().next().unwrap());
         let name = codepoint
             .map(|c| format!("uni{:04X}", c as u32))
             .unwrap_or_else(|| stem.clone());
         sources.push(GlyphSource { name, codepoint, svg });
     }
+    Ok((sources, skipped))
+}
+
+/// Build glyph sources from a language's `font` config block + glyph store.
+/// Returns the resolved family (`--family` > config > language name) and upm
+/// (`--upm` > config).
+fn collect_glyphs_from_config(
+    project: &Path,
+    language: &str,
+    family_override: Option<&str>,
+    upm_override: Option<f64>,
+) -> Result<(String, f64, Vec<GlyphSource>, usize)> {
+    use crate::conlang::writing::preflight;
+
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let cfg = load_font_config(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no `font` block — add glyphs with \
+             `inkhaven language font-import-glyph {language} --svg …`"
+        ))
+    })?;
+    if cfg.glyphs.is_empty() {
+        return Err(Error::Config(format!(
+            "language `{language}` declares no glyphs in its `font` block"
+        )));
+    }
+
+    let family = family_override
+        .map(str::to_string)
+        .or_else(|| cfg.family.clone())
+        .unwrap_or_else(|| lang_book.title.clone());
+    let upm = upm_override.unwrap_or(cfg.upm);
+    let dir = glyph_store_dir(store.project_root(), language);
+
+    let mut sources = Vec::new();
+    let mut skipped = 0usize;
+    for g in &cfg.glyphs {
+        let path = dir.join(format!("{}.svg", g.name));
+        let svg = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => {
+                eprintln!("  skip {} — no artwork at {}", g.name, path.display());
+                skipped += 1;
+                continue;
+            }
+        };
+        let report = preflight::lint_svg(&svg);
+        if !report.is_usable() {
+            eprintln!("  skip {} — {}", g.name, report.errors.join("; "));
+            skipped += 1;
+            continue;
+        }
+        sources.push(GlyphSource { name: g.name.clone(), codepoint: g.codepoint, svg });
+    }
+    Ok((family, upm, sources, skipped))
+}
+
+/// Shared tail: build the UFO and emit UFO / TTF artifacts per the format.
+fn emit_font(
+    family: &str,
+    upm: f64,
+    sources: &[GlyphSource],
+    skipped: usize,
+    out: Option<&Path>,
+    want_ufo: bool,
+    want_ttf: bool,
+) -> Result<()> {
+    use crate::conlang::writing::compile;
 
     if sources.is_empty() {
         return Err(Error::Config("no usable glyphs to compile".into()));
     }
-
-    let font = crate::conlang::writing::font::build_ufo(family, upm, &sources)
-        .map_err(Error::Config)?;
+    let font = crate::conlang::writing::font::build_ufo(family, upm, sources).map_err(Error::Config)?;
 
     // `--out` sets the stem; the extension follows the format. When both are
     // requested, the UFO and TTF share that stem.
@@ -437,15 +555,8 @@ fn font_build(
         .map(|p| p.with_extension(""))
         .unwrap_or_else(|| std::path::PathBuf::from(family));
 
-    let skipped_note = if skipped > 0 {
-        format!(", {skipped} skipped")
-    } else {
-        String::new()
-    };
-    println!(
-        "font `{family}` · {} glyph(s){skipped_note} @ {upm:.0} upm",
-        sources.len()
-    );
+    let skipped_note = if skipped > 0 { format!(", {skipped} skipped") } else { String::new() };
+    println!("font `{family}` · {} glyph(s){skipped_note} @ {upm:.0} upm", sources.len());
 
     if want_ufo {
         let ufo_path = stem.with_extension("ufo");
@@ -453,9 +564,7 @@ fn font_build(
             .map_err(|e| Error::Store(format!("saving UFO: {e}")))?;
         println!("  UFO source → {}", ufo_path.display());
         if !want_ttf {
-            eprintln!(
-                "  (compile to TTF/OTF with `--format ttf`, fontc / fontmake, or FontForge)"
-            );
+            eprintln!("  (compile to TTF/OTF with `--format ttf`, fontc / fontmake, or FontForge)");
         }
     }
     if want_ttf {
@@ -463,6 +572,261 @@ fn font_build(
         let ttf_path = stem.with_extension("ttf");
         crate::io_atomic::write(&ttf_path, &ttf).map_err(Error::Io)?;
         println!("  TrueType font → {} ({} bytes)", ttf_path.display(), ttf.len());
+    }
+    Ok(())
+}
+
+/// A filesystem-safe slug for a language name.
+fn lang_slug(name: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for c in name.chars() {
+        if c.is_alphanumeric() {
+            out.extend(c.to_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    let s = out.trim_matches('-').to_string();
+    if s.is_empty() { "language".to_string() } else { s }
+}
+
+/// `<project>/.inkhaven/glyphs/<lang-slug>/` — the glyph artwork store.
+fn glyph_store_dir(project_root: &Path, language: &str) -> std::path::PathBuf {
+    project_root
+        .join(".inkhaven")
+        .join("glyphs")
+        .join(lang_slug(language))
+}
+
+/// Load a language's `font` config block from its Phonology chapter.
+fn load_font_config(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<Option<crate::conlang::types::font::FontConfig>> {
+    use crate::conlang::types::font::FontConfig;
+    let Some(chapter) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Phonology"))
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    for para in hierarchy.children_of(Some(chapter.id)) {
+        if para.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
+        if let Ok(Some(c)) = FontConfig::from_hjson(&String::from_utf8_lossy(&bytes)) {
+            return Ok(Some(c));
+        }
+    }
+    Ok(None)
+}
+
+/// Find the Phonology paragraph that holds the `font` block (for in-place
+/// replacement).
+fn find_font_paragraph(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Option<crate::store::node::Node> {
+    use crate::conlang::types::font::FontConfig;
+    let chapter = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Phonology"))?;
+    for para in hierarchy.children_of(Some(chapter.id)) {
+        if para.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
+        if matches!(FontConfig::from_hjson(&String::from_utf8_lossy(&bytes)), Ok(Some(_))) {
+            return Some(para.clone());
+        }
+    }
+    None
+}
+
+/// Serialize a `FontConfig` into the `{ font: { … } }` HJSON paragraph and
+/// upsert it into the Phonology chapter.
+fn write_font_config(
+    store: &Store,
+    cfg: &Config,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+    font: &crate::conlang::types::font::FontConfig,
+) -> Result<()> {
+    use serde_json::json;
+    let glyphs: Vec<serde_json::Value> = font
+        .glyphs
+        .iter()
+        .map(|g| {
+            let mut m = serde_json::Map::new();
+            m.insert("name".into(), json!(g.name));
+            if let Some(c) = g.codepoint {
+                // Printable ASCII stays a literal (`"a"`); everything else —
+                // PUA, combining marks, non-Latin — is written as readable hex
+                // so the book never carries an invisible/fragile character.
+                let cp = if c.is_ascii_graphic() {
+                    c.to_string()
+                } else {
+                    format!("U+{:04X}", c as u32)
+                };
+                m.insert("codepoint".into(), json!(cp));
+            }
+            if let Some(p) = &g.phoneme {
+                m.insert("phoneme".into(), json!(p));
+            }
+            serde_json::Value::Object(m)
+        })
+        .collect();
+    let mut font_obj = serde_json::Map::new();
+    if let Some(f) = &font.family {
+        font_obj.insert("family".into(), json!(f));
+    }
+    font_obj.insert("upm".into(), json!(font.upm));
+    font_obj.insert("glyphs".into(), json!(glyphs));
+    let body = serde_json::to_string_pretty(&json!({ "font": font_obj }))
+        .map_err(|e| Error::Store(format!("serializing font config: {e}")))?;
+
+    let existing = find_font_paragraph(store, hierarchy, lang_book);
+    upsert_chapter_paragraph(store, cfg, lang_book, "Phonology", "Writing system", existing, &body)
+}
+
+/// LANG-1 P5.4 — import a glyph SVG, binding it to a phoneme/codepoint and
+/// recording it in the language's `font` config block.
+fn font_import_glyph(
+    project: &Path,
+    language: &str,
+    svg: &Path,
+    phoneme: Option<&str>,
+    codepoint: Option<&str>,
+    name: Option<&str>,
+) -> Result<()> {
+    use crate::conlang::types::font::{self, FontGlyph};
+    use crate::conlang::writing::preflight;
+
+    let svg_text = std::fs::read_to_string(svg)
+        .map_err(|e| Error::Config(format!("reading {}: {e}", svg.display())))?;
+    let report = preflight::lint_svg(&svg_text);
+    if !report.is_usable() {
+        return Err(Error::Config(format!(
+            "{} is not suitable for a font glyph — {} (run `language glyph-lint` to inspect)",
+            svg.display(),
+            report.errors.join("; ")
+        )));
+    }
+    for w in &report.warnings {
+        eprintln!("note: {w}");
+    }
+
+    // Resolve the codepoint: explicit > a single-character glyph name.
+    let cp = match codepoint {
+        Some(c) => Some(font::parse_codepoint(c).map_err(Error::Config)?),
+        None => None,
+    };
+    // Resolve the glyph name: explicit > uniXXXX (from the codepoint) > phoneme
+    // > the SVG filename stem.
+    let glyph_name = match name {
+        Some(n) => n.to_string(),
+        None => match cp {
+            Some(c) => format!("uni{:04X}", c as u32),
+            None => phoneme
+                .map(str::to_string)
+                .or_else(|| svg.file_stem().and_then(|s| s.to_str()).map(str::to_string))
+                .ok_or_else(|| Error::Config("could not derive a glyph name".into()))?,
+        },
+    };
+    // A single-character name implies its own codepoint when none was given.
+    let cp = cp.or_else(|| {
+        (glyph_name.chars().count() == 1).then(|| glyph_name.chars().next().unwrap())
+    });
+
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let layered = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+
+    // Copy the artwork into the glyph store.
+    let dir = glyph_store_dir(store.project_root(), language);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| Error::Store(format!("creating {}: {e}", dir.display())))?;
+    let dest = dir.join(format!("{glyph_name}.svg"));
+    crate::io_atomic::write(&dest, svg_text.as_bytes()).map_err(Error::Io)?;
+
+    // Record the binding.
+    let mut font = load_font_config(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    if font.family.is_none() {
+        font.family = Some(lang_book.title.clone());
+    }
+    font.upsert(FontGlyph {
+        name: glyph_name.clone(),
+        codepoint: cp,
+        phoneme: phoneme.map(str::to_string),
+    });
+    let total = font.glyphs.len();
+    write_font_config(&store, &layered, &hierarchy, &lang_book, &font)?;
+
+    let cp_note = cp.map(|c| format!(" U+{:04X}", c as u32)).unwrap_or_default();
+    let ph_note = phoneme.map(|p| format!(" /{p}/")).unwrap_or_default();
+    println!("glyph `{glyph_name}`{cp_note}{ph_note} → {}", dest.display());
+    println!("{language} font now has {total} glyph(s)");
+    Ok(())
+}
+
+/// LANG-1 P5.4 — show a language's `font` config (bindings + artwork status).
+fn font_config_show(project: &Path, language: &str, json: bool) -> Result<()> {
+    use crate::conlang::writing::preflight;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let Some(font) = load_font_config(&store, &hierarchy, &lang_book)? else {
+        return Err(Error::Config(format!(
+            "language `{language}` has no `font` block yet"
+        )));
+    };
+
+    if json {
+        let glyphs: Vec<_> = font
+            .glyphs
+            .iter()
+            .map(|g| {
+                serde_json::json!({
+                    "name": g.name,
+                    "codepoint": g.codepoint.map(|c| format!("U+{:04X}", c as u32)),
+                    "phoneme": g.phoneme,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "family": font.family,
+                "upm": font.upm,
+                "glyphs": glyphs,
+            }))
+            .map_err(|e| Error::Store(format!("serializing: {e}")))?
+        );
+        return Ok(());
+    }
+
+    let dir = glyph_store_dir(store.project_root(), language);
+    println!(
+        "font · {} · {} upm · {} glyph(s)",
+        font.family.as_deref().unwrap_or(&lang_book.title),
+        font.upm,
+        font.glyphs.len()
+    );
+    for g in &font.glyphs {
+        let cp = g.codepoint.map(|c| format!("U+{:04X}", c as u32)).unwrap_or_else(|| "—".into());
+        let ph = g.phoneme.as_deref().map(|p| format!("/{p}/")).unwrap_or_default();
+        let status = match std::fs::read_to_string(dir.join(format!("{}.svg", g.name))) {
+            Ok(svg) if preflight::lint_svg(&svg).is_usable() => "✓",
+            Ok(_) => "⚠ unusable",
+            Err(_) => "✗ missing",
+        };
+        println!("  {:<14} {:<8} {:<6} {status}", g.name, cp, ph);
     }
     Ok(())
 }
@@ -947,6 +1311,20 @@ fn upsert_grammar_paragraph(
     node: Option<crate::store::node::Node>,
     body: &str,
 ) -> Result<()> {
+    upsert_chapter_paragraph(store, cfg, lang_book, "Grammar", para_title, node, body)
+}
+
+/// Create-or-update an HJSON paragraph in a named chapter of a language book.
+/// When `node` is `None`, a new paragraph is created at the end of `chapter`.
+fn upsert_chapter_paragraph(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    chapter: &str,
+    para_title: &str,
+    node: Option<crate::store::node::Node>,
+    body: &str,
+) -> Result<()> {
     let mut target = match node {
         Some(n) => n,
         None => {
@@ -954,9 +1332,11 @@ fn upsert_grammar_paragraph(
             let chapter = hierarchy
                 .children_of(Some(lang_book.id))
                 .into_iter()
-                .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Grammar"))
+                .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case(chapter))
                 .cloned()
-                .ok_or_else(|| Error::Config("no Grammar chapter to store the block in".into()))?;
+                .ok_or_else(|| {
+                    Error::Config(format!("no {chapter} chapter to store the block in"))
+                })?;
             store.create_node(
                 cfg,
                 &hierarchy,
