@@ -101,6 +101,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             reverse,
         } => romanize_text(project, &language, &text, scheme.as_deref(), reverse),
         LanguageCommand::Tone { language, tones } => tone_sandhi(project, &language, &tones),
+        LanguageCommand::Audit { language, json } => audit(project, &language, json),
     }
 }
 
@@ -275,10 +276,14 @@ fn generate_word(project: &Path, language: &str, role: &str, count: usize) -> Re
     Ok(())
 }
 
-/// Open a project and load a language's `Phonology` value — the shared
-/// front-half of every P1 phonology inspector / generator. Returns the open
-/// `Store` (kept alive for the DuckDB lock) alongside the parsed phonology.
-fn open_phonology(project: &Path, language: &str) -> Result<(Store, crate::conlang::Phonology)> {
+/// Open a project and resolve a language sub-book under the `Language`
+/// system book. The shared front-half of every conlang command — returns the
+/// open `Store` (kept alive for the DuckDB lock), the loaded `Hierarchy`, and
+/// the language's `Book` node.
+fn open_lang_book(
+    project: &Path,
+    language: &str,
+) -> Result<(Store, Hierarchy, crate::store::node::Node)> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
@@ -304,7 +309,13 @@ fn open_phonology(project: &Path, language: &str) -> Result<(Store, crate::conla
                 "language `{language}` not found — run `inkhaven language init {language}` first"
             ))
         })?;
+    Ok((store, hierarchy, lang_book))
+}
 
+/// Open a project and load a language's `Phonology` value — the shared
+/// front-half of every P1 phonology inspector / generator.
+fn open_phonology(project: &Path, language: &str) -> Result<(Store, crate::conlang::Phonology)> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
     let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
         Error::Config(format!(
             "language `{language}` has no phoneme block yet — add `phonemes` / `classes` / \
@@ -312,6 +323,81 @@ fn open_phonology(project: &Path, language: &str) -> Result<(Store, crate::conla
         ))
     })?;
     Ok((store, phonology))
+}
+
+/// Load every parseable `DictionaryEntry` under a language's `Dictionary`
+/// chapter (across all alphabet subchapters).
+fn load_dictionary(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<Vec<crate::language_entry::DictionaryEntry>> {
+    let Some(chapter) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary"))
+        .cloned()
+    else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for id in hierarchy.collect_subtree(chapter.id) {
+        let Some(node) = hierarchy.get(id) else { continue };
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
+        let body = String::from_utf8_lossy(&bytes);
+        if let Ok(Some(entry)) = crate::language_entry::parse(&body) {
+            out.push(entry);
+        }
+    }
+    Ok(out)
+}
+
+/// LANG-1 P2.1 — deterministic lexicon audit: phonotactic violations,
+/// homophones (surface-form collisions), and duplicate meanings.
+fn audit(project: &Path, language: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    // Phonology is optional — a dictionary-only language still audits for
+    // homophones + duplicate meanings, just without the phonotactic check.
+    let phonology = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let report = crate::conlang::lexicon::analyze(&phonology, &entries);
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report).map_err(|e| {
+            Error::Store(format!("serializing lexicon report: {e}"))
+        })?);
+        return Ok(());
+    }
+
+    println!("lexicon audit · {language} · {} entr(y/ies)", report.total);
+    if report.issue_count() == 0 {
+        println!("  ✓ no issues");
+        return Ok(());
+    }
+    if !report.phonotactic_violations.is_empty() {
+        println!("\n  ⚠ phonotactic violations ({}):", report.phonotactic_violations.len());
+        for v in &report.phonotactic_violations {
+            println!("      {} (/{}/) breaks the language's constraints", v.headword, v.underlying);
+        }
+    }
+    if !report.homophones.is_empty() {
+        println!("\n  ⚠ homophones ({} group(s)):", report.homophones.len());
+        for c in &report.homophones {
+            let m = c.members.iter().map(|m| format!("{} ({})", m.headword, m.gloss)).collect::<Vec<_>>();
+            println!("      [{}] {}", c.key, m.join(", "));
+        }
+    }
+    if !report.duplicate_meanings.is_empty() {
+        println!("\n  ⚠ duplicate meanings ({} group(s)):", report.duplicate_meanings.len());
+        for c in &report.duplicate_meanings {
+            let m = c.members.iter().map(|m| m.headword.clone()).collect::<Vec<_>>();
+            println!("      \"{}\" — {}", c.key, m.join(", "));
+        }
+    }
+    Ok(())
 }
 
 /// Find and parse the `Phonology`-chapter HJSON block for a language

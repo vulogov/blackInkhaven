@@ -84,6 +84,17 @@ releases as they complete.
 
 ### P2 — AI-assisted dictionary generation
 
+> **P2.1 (shipped)** — the *deterministic half* of the dedup/consistency gate
+> below, as a standalone audit: `inkhaven language audit <lang> [--json]`
+> (`src/conlang/lexicon`) bridges the P1 phonology engine to the existing
+> `DictionaryEntry` model and reports **phonotactic violations** (headwords
+> that break the language's own constraints), **homophones** (entries sharing a
+> *surface* form after allophony — catches collisions `add-word`'s spelling
+> check misses), and **duplicate meanings** (accidental synonyms by gloss). The
+> AI generator (below) reuses `lexicon::analyze` to reject colliding proposals;
+> semantic near-synonymy via embeddings is the remaining AI-assisted half.
+
+
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
 language; meanings come from the AI; nothing duplicates; nothing
 auto-commits.** The deterministic P1.1 word generator supplies every candidate
