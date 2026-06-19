@@ -135,6 +135,12 @@ SPE notation as allophony), declared in a `diachronics` block in the
 The proto's inventory drives segmentation and the rule classes (the changes are
 defined on proto sounds).
 
+- `inkhaven language family-tree` prints the genealogical tree (each language
+  under its declared `proto`).
+- `inkhaven language cognates ProtoEldarin --form takap` traces a proto-form's
+  reflex in every daughter (each daughter's chain applied) — e.g. `Eldar takaf`
+  vs `Sindarin tahaf`.
+
 ## Idioms + metaphors
 
 ```

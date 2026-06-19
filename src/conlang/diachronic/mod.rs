@@ -3,3 +3,4 @@
 //! reconstruction join in later P4 increments.
 
 pub mod apply;
+pub mod family;

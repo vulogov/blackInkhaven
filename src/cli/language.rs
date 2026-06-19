@@ -148,6 +148,8 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             example,
         } => metaphor_add(project, &language, &source, &target, example.as_deref()),
         LanguageCommand::Idioms { language } => idioms_list(project, &language),
+        LanguageCommand::FamilyTree => family_tree(project),
+        LanguageCommand::Cognates { proto, form } => cognates(project, &proto, &form),
         LanguageCommand::SoundChange { language, form } => {
             sound_change(project, &language, &form)
         }
@@ -343,6 +345,74 @@ fn load_diachronics(
         }
     }
     Ok(None)
+}
+
+/// All per-language `Book` nodes under the `Language` system book.
+fn all_language_books(hierarchy: &Hierarchy) -> Vec<crate::store::node::Node> {
+    let Some(lang_root) = hierarchy
+        .iter()
+        .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES))
+    else {
+        return Vec::new();
+    };
+    hierarchy
+        .children_of(Some(lang_root.id))
+        .into_iter()
+        .filter(|n| n.kind == NodeKind::Book)
+        .cloned()
+        .collect()
+}
+
+/// LANG-1 P4.2 — print the language-family tree.
+fn family_tree(project: &Path) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+
+    let langs = all_language_books(&hierarchy);
+    if langs.is_empty() {
+        println!("no languages yet — `inkhaven language init <name>`");
+        return Ok(());
+    }
+    let mut pairs: Vec<(String, Option<String>)> = Vec::new();
+    for l in &langs {
+        let proto = load_diachronics(&store, &hierarchy, l)?.and_then(|d| d.proto);
+        pairs.push((l.title.clone(), proto));
+    }
+    print!("{}", crate::conlang::diachronic::family::render_tree(&pairs));
+    Ok(())
+}
+
+/// LANG-1 P4.2 — the cognate set of a proto-form across its daughters.
+fn cognates(project: &Path, proto: &str, form: &str) -> Result<()> {
+    let (store, hierarchy, proto_book) = open_lang_book(project, proto)?;
+    let proto_phon = load_phonology(&store, &hierarchy, &proto_book)?.unwrap_or_default();
+
+    // Daughters: languages whose diachronics `proto` names this language.
+    let mut reflexes: Vec<(String, String)> = Vec::new();
+    for l in all_language_books(&hierarchy) {
+        if l.id == proto_book.id {
+            continue;
+        }
+        let Some(dia) = load_diachronics(&store, &hierarchy, &l)? else { continue };
+        if dia.proto.as_deref().is_some_and(|p| p.eq_ignore_ascii_case(&proto_book.title)) {
+            let reflex = crate::conlang::diachronic::apply::derive_form(&proto_phon, &dia.rules, form);
+            reflexes.push((l.title.clone(), reflex));
+        }
+    }
+    reflexes.sort();
+
+    println!("cognate set · *{form} ({})", proto_book.title);
+    if reflexes.is_empty() {
+        println!("  (no daughter languages declare {} as their proto)", proto_book.title);
+        return Ok(());
+    }
+    for (name, reflex) in &reflexes {
+        println!("  {:<16} {reflex}", name);
+    }
+    Ok(())
 }
 
 /// Resolve a daughter's proto-language: its `Book` node + phonology (the
