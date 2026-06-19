@@ -21,53 +21,44 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.14 — The ConLang Suite (Part 1: phonology, lexicon, morphology)
+## Latest release · 1.3.15 — The ConLang Suite (Part 2: morphology & diachronics)
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.14.md`](Documentation/RELEASE_NOTES/1.3.14.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.15.md`](Documentation/RELEASE_NOTES/1.3.15.md)
 · Reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md)
 
-Inkhaven becomes the first **constructed-language workbench that lives inside
-the writing tool**. Build a language — phonology, lexicon, morphology — and
-write prose in it, with the AI as an assistant and *you* in full deterministic
-control of the rules. The first checkpoint of a flagship that continues across
-1.3.x (RFC LANG-1). Layered on the existing `Language` book; **no new
-dependencies**.
+1.3.14 shipped the ConLang substrate (phonology + lexicon). 1.3.15 builds two
+whole pillars on it — the rest of **morphology** and all of **diachronics** —
+each reusing the engines already in place. RFC LANG-1; layered on the existing
+`Language` book; **no new dependencies**.
 
-### A complete phonology engine
+### Morphology, completed
 
-Inventory → templates → syllable-aware phonotactics → **allophony**
-(`k > tʃ / _ i`) → **stress** (fixed or weight-sensitive Latin) → **bidirectional
-romanization** (with contextual digraph disambiguation) → **tone sandhi**. Six
-CLI inspectors (`generate-word`, `syllabify`, `ipa`, `stress`, `romanize`,
-`tone`), all pure and deterministic.
+- **Auto-gloss** — `language gloss --text "kata katai katat"` prints an aligned
+  Leipzig interlinear, recognising inflected *and* allophony-altered forms
+  (`katat` → `stone-DAT`) by generating paradigms forward and matching.
+- **Derived forms** — `language derive --root kata --pos verb` coins new lexemes
+  (agent nouns, diminutives) with allophony; advisory.
+- **Grammar questionnaire** — `language grammar` walks a WALS-aligned catalog of
+  16 typological features; `--set word_order=sov` validates the answer.
+- **Idioms & metaphors** — `language idiom-add` / `metaphor-add` / `idioms`.
 
-### AI dictionary generation — with a complete dedup gate
+### Diachronics
 
-**`inkhaven language generate-lexicon --topic … --count …`**: the forms come
-from the deterministic generator (so they always obey the phonotactics), the AI
-assigns meanings in your working language, and the **dedup gate** rejects any
-proposal that's illegal, a homophone, a duplicate meaning, or — with
-`--semantic` — a near-synonym ("stone" vs "rock", by embedding). Plus `audit`,
-rich-field `query`, manuscript `scan-manuscript`, and Places/Characters
-language links.
+A sound change *is* an ordered context rewrite, so the engine reuses the
+allophony rewrite engine.
 
-### Morphology
-
-**`inkhaven language paradigm --root … --template …`** applies a paradigm's
-morpheme sequence to a root and runs the allophony engine **across the affix
-boundaries** — so `kata`+DAT → `katat` (final devoicing) while `kata`+DAT+PL →
-`katadi` (the now-medial `d` correctly stays). Emits the surface form + a
-Leipzig gloss.
-
-### In the editor
-
-**`Ctrl+B X`** opens the ConLang hub (a read-only overview of every language),
-and typing **`:lang:`** opens a lexicon picker that inserts a word inline.
+- **`language sound-change <lang> --form tap`** → `taf` (evolve a proto-form).
+- **`language derive-lexicon <daughter>`** evolves a proto's *whole dictionary*
+  through the daughter's sound-change chain.
+- **`language family-tree`** + **`language cognates ProtoEldarin --form takap`**
+  (reflex in every daughter: `Eldar takaf` vs `Sindarin tahaf`).
+- **`language reconstruct`** (AI proto-form from cognates) + **`realism-check`**
+  (AI plausibility of a sound-change chain).
 
 ### Test stats
 
-Tests 1359 → 1428 (across 1.3.13→1.3.14), **zero new dependencies**. Full
-reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md).
+Tests 1428 → 1439, **zero new dependencies**. Full reference:
+[`Documentation/CONLANG.md`](Documentation/CONLANG.md).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
