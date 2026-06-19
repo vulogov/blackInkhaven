@@ -264,6 +264,24 @@ releases as they complete.
 > AI reconstruction + realism check (an SVG family tree via resvg stays a later
 > refinement).
 
+### P5 — writing systems + fonts (deps approved)
+
+> Font-compilation dependencies (fontc / norad / write-fonts / read-fonts /
+> unicode-normalization) were **approved** — they land in P5.2 (the compiler),
+> where they're first used.
+>
+> **P5.1 (shipped)** — glyph suitability preflight, **dep-free** (in-tree
+> `usvg`). `conlang::writing::preflight::lint_svg` parses a glyph SVG and
+> reports what makes it a bad font glyph: doesn't parse · no fillable outline
+> (stroke-only / empty) · raster `<image>` content · non-monochrome
+> gradient/pattern fill. Mirrors `src/pdf/preflight.rs`. `inkhaven language
+> glyph-lint --svg <path>` lints AI-drafted or hand-drawn artwork before
+> binding. Geometry checks (closed contours, self-intersection) join with the
+> compiler in P5.2. Next P5.2: writing-system data model + glyph import +
+> the config-driven `font` block → norad UFO → fontc TTF/OTF (adds the deps),
+> then Hangul precompose / hieroglyphic Typst-layout / input methods /
+> AI text-to-SVG.
+
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
 language; meanings come from the AI; nothing duplicates; nothing

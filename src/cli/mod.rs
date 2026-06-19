@@ -2333,6 +2333,17 @@ pub enum LanguageCommand {
         language: String,
     },
 
+    /// LANG-1 P5.1 — check whether a glyph SVG is suitable for font
+    /// compilation: does it parse, does it have a fillable outline (not
+    /// stroke-only / empty), is it free of raster images, is it monochrome.
+    /// Run it on AI-drafted or hand-drawn artwork before binding it to a
+    /// phoneme.
+    GlyphLint {
+        /// Path to the SVG file.
+        #[arg(long)]
+        svg: std::path::PathBuf,
+    },
+
     /// LANG-1 P4.3 — AI comparative reconstruction: given cognate forms from
     /// daughter languages, propose the most plausible proto-form (with sound
     /// correspondences + reasoning).  Advisory — a proposal, nothing committed.
