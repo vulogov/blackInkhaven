@@ -4,8 +4,10 @@
 //! tool). P5.4: the `font` config block (`conlang::types::font`) binds glyph
 //! artwork to phonemes + codepoints in the language book — `language
 //! font-import-glyph` / `font-build --language` compile a script from its own
-//! definition.
+//! definition. P5.5: `draft` — AI text-to-SVG glyph drafting, extracted +
+//! preflighted before it can be bound (`language glyph-draft`).
 
 pub mod compile;
+pub mod draft;
 pub mod font;
 pub mod preflight;

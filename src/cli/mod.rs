@@ -2393,6 +2393,36 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// LANG-1 P5.5 — AI text-to-SVG glyph draft: describe a glyph and the model
+    /// drafts an SVG, which is run through the suitability preflight.  Advisory
+    /// — previews the SVG + verdict; `--yes` binds a usable draft into the
+    /// language's `font` block (the same path as `font-import-glyph`).
+    GlyphDraft {
+        /// Language the glyph is for.
+        language: String,
+        /// What the glyph should look like (e.g. "a vertical stroke with a hook").
+        #[arg(long)]
+        describe: String,
+        /// Phoneme (or grapheme) this glyph stands for.
+        #[arg(long)]
+        phoneme: Option<String>,
+        /// Unicode codepoint: a single character (`a`) or hex (`U+E000`).
+        #[arg(long)]
+        codepoint: Option<String>,
+        /// Glyph name (defaults like `font-import-glyph`).
+        #[arg(long)]
+        name: Option<String>,
+        /// Override the configured AI provider.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Write the drafted SVG here (otherwise it prints to stdout).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Bind the drafted glyph into the language's `font` block.
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// LANG-1 P5.1 — check whether a glyph SVG is suitable for font
     /// compilation: does it parse, does it have a fillable outline (not
     /// stroke-only / empty), is it free of raster images, is it monochrome.
