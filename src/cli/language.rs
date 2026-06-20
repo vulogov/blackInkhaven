@@ -106,6 +106,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Tone { language, tones } => tone_sandhi(project, &language, &tones),
         LanguageCommand::Audit { language, json } => audit(project, &language, json),
         LanguageCommand::Stats { language, json } => stats(project, &language, json),
+        LanguageCommand::Dictionary { language, format, out, font } => {
+            dictionary(project, &language, &format, out.as_deref(), font.as_deref())
+        }
         LanguageCommand::LinkPlace {
             place,
             language,
@@ -2520,6 +2523,111 @@ fn stats(project: &Path, language: &str, json: bool) -> Result<()> {
     }
     if !prof.pos_freq.is_empty() {
         println!("  parts of speech · {}", top(&prof.pos_freq, 8));
+    }
+    Ok(())
+}
+
+/// Syllabified surface pronunciation of a headword (e.g. `ka.ta`), or `None`
+/// when it doesn't read as the language's phonemes.
+fn pronounce(phon: &crate::conlang::Phonology, word: &str) -> Option<String> {
+    let seq = phon.segment(&word.to_lowercase());
+    if seq.is_empty() || !seq.iter().all(|s| phon.phoneme(s).is_some()) {
+        return None;
+    }
+    let surface = crate::conlang::phonology::allophony_eval::surface_form(phon, &seq);
+    let sylls = crate::conlang::phonology::syllable::syllabify(phon, &surface);
+    if sylls.is_empty() {
+        return None;
+    }
+    Some(
+        sylls
+            .iter()
+            .map(|s| format!("{}{}{}", s.onset.join(""), s.nucleus.join(""), s.coda.join("")))
+            .collect::<Vec<_>>()
+            .join("."),
+    )
+}
+
+/// LANG-1 P6.2 — render the dictionary as a Markdown or Typst document.
+fn dictionary(
+    project: &Path,
+    language: &str,
+    format: &str,
+    out: Option<&Path>,
+    font: Option<&str>,
+) -> Result<()> {
+    use crate::conlang::output::{self, DictMeta, RenderEntry};
+    use crate::conlang::{analysis, writing::input};
+
+    let typst = match format.to_ascii_lowercase().as_str() {
+        "md" | "markdown" => false,
+        "typ" | "typst" => true,
+        other => {
+            return Err(Error::Config(format!("unknown --format `{other}` (expected md or typ)")))
+        }
+    };
+
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let font_cfg = load_font_config(&store, &hierarchy, &lang_book)?;
+    let profile = analysis::profile(&phon, &entries);
+
+    // Font family: --font override > the `font` block's family. The conscript
+    // form needs glyph bindings to transliterate against.
+    let family = font
+        .map(str::to_string)
+        .or_else(|| font_cfg.as_ref().and_then(|c| c.family.clone()));
+    let can_transliterate = font_cfg.as_ref().is_some_and(|c| !c.glyphs.is_empty());
+
+    let rendered: Vec<RenderEntry> = entries
+        .iter()
+        .map(|e| {
+            let conscript = match (&font_cfg, can_transliterate) {
+                (Some(cfg), true) => {
+                    let out = input::to_script(cfg, &e.word);
+                    (out.mapped > 0).then_some(out.script)
+                }
+                _ => None,
+            };
+            RenderEntry {
+                headword: e.word.clone(),
+                conscript,
+                pronunciation: pronounce(&phon, &e.word),
+                pos: e.pos.clone(),
+                gloss: e.translation.clone(),
+                registers: e.registers.clone(),
+                domain: e.domain.clone(),
+                era: e.era.clone(),
+                etymology: e.etymology.clone(),
+                example: (!e.example.trim().is_empty()).then(|| e.example.clone()),
+            }
+        })
+        .collect();
+
+    let meta = DictMeta {
+        language: &lang_book.title,
+        font_family: if typst { family.as_deref() } else { None },
+        profile: Some(&profile),
+    };
+    let doc = if typst {
+        output::dictionary_typst(&meta, &rendered)
+    } else {
+        output::dictionary_markdown(&meta, &rendered)
+    };
+
+    if let Some(p) = out {
+        crate::io_atomic::write(p, doc.as_bytes()).map_err(Error::Io)?;
+        println!("{} dictionary ({}) → {}", lang_book.title, format, p.display());
+        if typst && meta.font_family.is_some() {
+            eprintln!(
+                "(build the font with `font-build --language {language} --format ttf` and compile \
+                 with `typst compile --font-path <dir> {}`)",
+                p.display()
+            );
+        }
+    } else {
+        print!("{doc}");
     }
     Ok(())
 }

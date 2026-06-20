@@ -383,9 +383,21 @@ releases as they complete.
 > P6.2 grammar book / dictionary output draws on. `language stats <lang>
 > [--json]` renders it (with a syllable-count bar chart). Verified e2e on a
 > 6-word language: 5 C / 3 V, avg 4.7 phonemes / 2.2 syllables, `a` the most
-> frequent phoneme, coda `n` from the closed syllables. Next P6.2: the
-> package-rich Typst grammar-book / dictionary output (selectable `.md`/`.typ`,
-> embedding the generated font).
+> frequent phoneme, coda `n` from the closed syllables.
+>
+> **P6.2 (shipped)** — dictionary output. `conlang::output` renders the lexicon
+> as a real document in Markdown or Typst (pure; the CLI prepares `RenderEntry`s
+> with pronunciation + transliterated conscript). Markdown is an alphabetized
+> listing; **Typst is the showpiece** — a paginated two-column A5 book with a
+> title page + overview table that, when the language has a `font` block, shows
+> each headword in the **native script** (transliterated by the P5.6c input
+> method, codepoints emitted as `\u{…}` escapes) beside its romanization,
+> pronunciation, POS, gloss, tags, and etymology. `language dictionary <lang>
+> --format md|typ [--out] [--font]`. Verified e2e: a 4-word language with a
+> per-phoneme font → a Typst dictionary compiled by Typst 0.14.2 into a 3-page
+> PDF that embeds the conscript font and renders both Latin text and native
+> glyphs (3246 dark px). Ties P5 (script) to P6 (output). Next P6.3: the grammar
+> book (phonology tables, morphology paradigms, typology, sample texts).
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
