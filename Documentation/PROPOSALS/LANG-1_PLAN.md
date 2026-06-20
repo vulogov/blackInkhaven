@@ -396,8 +396,51 @@ releases as they complete.
 > --format md|typ [--out] [--font]`. Verified e2e: a 4-word language with a
 > per-phoneme font → a Typst dictionary compiled by Typst 0.14.2 into a 3-page
 > PDF that embeds the conscript font and renders both Latin text and native
-> glyphs (3246 dark px). Ties P5 (script) to P6 (output). Next P6.3: the grammar
-> book (phonology tables, morphology paradigms, typology, sample texts).
+> glyphs (3246 dark px). Ties P5 (script) to P6 (output).
+>
+> **P6.3 (shipped)** — the grammar book, the companion volume to the dictionary.
+> `conlang::output::grammar_markdown` / `grammar_typst` over a `GrammarBook` that
+> the CLI assembles from the language's own data: phonology (consonant/vowel
+> inventory, syllable structure, phonotactics, allophony, stress, tone),
+> morphology (affixes, derivation), the typology answers (each with its WALS
+> consequence), idioms & metaphors, and the sample texts (loaded from the
+> `Sample texts` chapter). Descriptive helpers (`describe_constraint`,
+> `describe_stress`, `render_template`, `typology_lines`) turn the structured
+> data into prose. Markdown is a flat reference; the Typst path is a paginated
+> A5 book with `#outline()` + numbered sections (and the conscript font when
+> set). `language grammar-book <lang> --format md|typ [--out] [--font]`. Verified
+> e2e: a language with phonotactics/allophony/stress + affixes + typology +
+> idioms + a sample text → both formats, the Typst compiled by Typst 0.14.2 into
+> a 5-page PDF with a table of contents (and embedding the conscript font with
+> `--font`). **★ P6 OUTPUT COMPLETE ★** (P6.1 analysis → P6.2 dictionary → P6.3
+> grammar book).
+>
+> **P7 (shipped)** — polish: an **AI-written** learner tutorial + a complete
+> worked example. `language tutorial <lang> --format md|typ [--out] [--font]
+> [--provider]` is a thin AI layer: the CLI assembles a *facts-only* brief of the
+> language (inventory, stress, allophony SPE rules, the lexicon, affixes,
+> derivations, typology, idioms, sample texts + their glosses) and the model
+> (`TUTORIAL_SYSTEM`) authors a complete graded textbook from it — introduction,
+> pronunciation guide, lessons that explain the grammar with worked examples, a
+> reading, and per-lesson exercises — constrained to the language's actual data
+> (no invented vocabulary/grammar). The model always writes Markdown;
+> `output::markdown_to_typst` deterministically converts it (headings, emphasis
+> via matched-pair regex so stray `*` can't break the doc, lists, tables,
+> blockquotes → `#practice` boxes, code, links, prose escaping) and
+> `output::tutorial_typst_scaffold` prepends the page setup + conscript-font
+> embedding, so the Typst always compiles. Verified live (DeepSeek): a real
+> ~23–25-page textbook (intro + pronunciation guide + 6 lessons, each with
+> vocabulary / grammar / practice) compiled warning-free with the font embedded. The worked example
+> `examples/conlang/build-sample-language.sh <project>` runs the *entire*
+> pipeline end to end — phonology → lexicon → morphology → typology → an
+> **AI-drawn script** (one `glyph-draft` per phoneme) → an in-process TrueType
+> font → dictionary + grammar + tutorial as Typst books embedding the font →
+> PDFs. Validated live: the script ran in ~95 s, all 11 DeepSeek glyphs passed
+> preflight + bound, the font compiled (1876 B), and all three books compiled to
+> PDF (3 / 5 / 5 pages, font embedded). Tutorial 74 documents it.
+> **★★★ LANG-1 COMPLETE (P1 phonology → P2 lexicon → P3 morphology → P4
+> diachronics → P5 writing systems + fonts → P6 analysis + output → P7 polish)
+> ★★★.**
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
