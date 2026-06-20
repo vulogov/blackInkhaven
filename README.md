@@ -21,48 +21,44 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.16 — The ConLang Suite (Part 3: writing systems, fonts & output)
+## Latest release · 1.3.17 — The ConLang Suite (Part 4: the books) · LANG-1 complete
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.16.md`](Documentation/RELEASE_NOTES/1.3.16.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.17.md`](Documentation/RELEASE_NOTES/1.3.17.md)
 · Reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md)
 
-1.3.14–1.3.15 built the *spoken* language. 1.3.16 builds the **written** one: a
-constructed script goes from hand artwork or an AI description to a real
-TrueType font, a Typst layout, and a typed input method — fully in-process, no
-external tool — and the language starts becoming a **book**. RFC LANG-1.
+1.3.14–1.3.16 built the constructed language itself. 1.3.17 turns it into
+**books** — a dictionary, a reference grammar, and a learner's textbook, all as
+proper typeset documents — and with it **RFC LANG-1 is complete**: from an empty
+`Language` book to printed books with an AI-drawn font, entirely inside inkhaven.
 
-### Writing systems + fonts
+### The books
 
-- **Glyph preflight** — `language glyph-lint` checks an SVG is fit for a font
-  outline, and warns on the **counter mistake** (a near-white fill a monochrome
-  font won't honour as a hole).
-- **SVG → UFO → TrueType, in-process** — `language font-build --format
-  ufo|ttf|both` assembles a full OpenType table set with `write-fonts` (cubics
-  quadified); the result passes a fontTools round-trip.
-- **Config-driven font** — `language font-import-glyph` binds a glyph to a
-  phoneme + codepoint in the language; `font-build --language` compiles the
-  script straight from the book.
-- **AI text-to-SVG glyph draft** — `language glyph-draft --describe "…"`,
-  advisory, preflight-gated, prompts reverse-wound counters. *Validated live
-  against DeepSeek.*
-- **Spatial templates** — one engine, two binding times: `language font-compose`
-  bakes a precomposed block (Hangul square / quadrat); `language spatial-typst`
-  arranges components at layout time.
-- **Input method** — `language transliterate --text "katha"` types the script
-  (greedy longest-key romanized → glyph codepoints).
+- **Grammar book** — `language grammar-book --format md|typ` renders a reference
+  grammar from the language's data (phonology, morphology, typology, idioms,
+  sample texts); the companion to the dictionary.
+- **Learner's textbook** — `language tutorial --format md|typ --provider …` is
+  **AI-written**: a complete graded course (introduction, pronunciation guide,
+  lessons that *explain* the grammar with worked examples, a reading, exercises),
+  constrained to the language's actual data. The prose is generated, not hardcoded.
+- **Study guide** — `grammar-book --study` adds an AI-written companion that
+  defines and explains every linguistic term the grammar uses (case, allophony,
+  SOV, nominative–accusative alignment, …). The reference itself stays
+  deterministic.
 
-### Analysis & output
+### A book design + a worked example
 
-- **`language stats`** — a descriptive profile: inventory balance, phoneme
-  frequency, syllable distribution, onset/coda usage, POS spread.
-- **`language dictionary --format md|typ`** — render the lexicon as a document;
-  the Typst path is a paginated two-column A5 book that embeds the conscript
-  font and shows each headword in the **native script** beside its romanization.
+- The dictionary, grammar, and tutorial share a manual-style **B5 book** design
+  (title page, contents, callout boxes), embed the conscript font, and compile to
+  PDF.
+- **`examples/conlang/build-sample-language.sh <project>`** builds a whole
+  language end to end — with an **AI-drawn font** — into all three books; a
+  checked-in sample lives in `examples/conlang/sample-output/`. See also
+  [Tutorial 74](Documentation/Tutorials/74-conlang-end-to-end.md).
 
 ### Test stats
 
-Tests 1439 → 1479. **One new dependency** (`norad`, for the approved fonts
-pillar; `write-fonts`/`kurbo` reuse crates already in the tree). Full reference:
+Tests 1479 → 1490. **Zero new dependencies.** This completes RFC LANG-1
+(P1 phonology → P7 polish). Full reference:
 [`Documentation/CONLANG.md`](Documentation/CONLANG.md).
 
 Every prior release lives under
