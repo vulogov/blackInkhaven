@@ -11,6 +11,7 @@ pub mod analysis;
 pub mod diachronic;
 pub mod generate;
 pub mod grammar;
+pub mod interchange;
 pub mod lexicon;
 pub mod links;
 pub mod morphology;
