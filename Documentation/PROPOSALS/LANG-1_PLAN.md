@@ -264,6 +264,141 @@ releases as they complete.
 > AI reconstruction + realism check (an SVG family tree via resvg stays a later
 > refinement).
 
+### P5 — writing systems + fonts (deps approved)
+
+> Font-compilation dependencies (fontc / norad / write-fonts / read-fonts /
+> unicode-normalization) were **approved** — they land in P5.2 (the compiler),
+> where they're first used.
+>
+> **P5.1 (shipped)** — glyph suitability preflight, **dep-free** (in-tree
+> `usvg`). `conlang::writing::preflight::lint_svg` parses a glyph SVG and
+> reports what makes it a bad font glyph: doesn't parse · no fillable outline
+> (stroke-only / empty) · raster `<image>` content · non-monochrome
+> gradient/pattern fill. Mirrors `src/pdf/preflight.rs`. `inkhaven language
+> glyph-lint --svg <path>` lints AI-drafted or hand-drawn artwork before
+> binding. Geometry checks (closed contours, self-intersection) join with the
+> compiler in P5.2. Next P5.2: writing-system data model + glyph import +
+> the config-driven `font` block → norad UFO → fontc TTF/OTF (adds the deps),
+> then Hangul precompose / hieroglyphic Typst-layout / input methods /
+> AI text-to-SVG.
+>
+> **P5.2 (shipped)** — font source compilation to UFO (adds **norad**, the first
+> P5 dep). `conlang::writing::font::svg_to_contours` parses a glyph SVG with the
+> in-tree `usvg`, transforms each filled path to absolute coords, flips the
+> y-down viewBox + scales it into the em, and converts segments to UFO contour
+> points (lines + cubic/quadratic off-curves). `build_ufo` assembles a
+> `norad::Font` (family, units-per-em, per-glyph codepoints). `inkhaven language
+> font-build <family> --glyphs <dir> [--out] [--upm]` reads a directory of glyph
+> SVGs (filename stem → glyph name + codepoint), runs the preflight (skipping
+> unusable glyphs), and writes a **UFO** — a standard, externally-compilable
+> font source (fontc / fontmake / FontForge). Verified e2e: a square → 4 line
+> points, a cubic-`o`, both with correct codepoints + y-flip.
+>
+> **P5.3 (shipped)** — in-process **UFO → TrueType** (`conlang::writing::compile`),
+> no external tool. Each UFO contour → a `kurbo::BezPath` (cubics quadified via
+> `CubicBez::to_quads`), fed to `write-fonts`' `SimpleGlyph::from_bezpath`; the
+> full OpenType table set (`glyf`/`loca`/`head`/`hhea`/`maxp`/`hmtx`/`cmap`/
+> `name`/`post`/`OS/2`, with a `.notdef` at gid 0) is assembled directly and
+> `FontBuilder.build()` emits the `.ttf`. Pure + deterministic. `font-build`
+> gained `--format ufo|ttf|both`; the TTF is written atomically. Chose
+> `write-fonts` (ALREADY in the tree via typst-pdf→krilla→subsetter) over
+> `fontc` — far lighter, no `fontir`/`fontbe` tree, no duplicate `write-fonts`.
+> Validated: skrifa parse-round-trip + outline-draw in unit tests, and an e2e
+> font passes fontTools structural re-save (cmap resolves `a`/`o`, correct
+> bounds).
+>
+> **P5.4 (shipped)** — the writing system becomes part of the **language
+> definition**. `conlang::types::font::FontConfig` parses a `{ font: { family,
+> upm, glyphs:[{name, codepoint, phoneme}] } }` block from the Phonology chapter
+> (codepoint accepts a literal char or `U+XXXX`/`0xXXXX` hex). Glyph artwork
+> lives in the project glyph store (`.inkhaven/glyphs/<lang-slug>/<name>.svg`).
+> `language font-import-glyph <lang> --svg … [--phoneme] [--codepoint] [--name]`
+> preflights the SVG (refusing unusable artwork), copies it into the store, and
+> upserts the binding into the book; `font-config <lang>` lists the bindings +
+> artwork status; `font-build --language <lang>` compiles straight from the
+> book (family/upm from the config) through the P5.2/P5.3 pipeline. Non-printable
+> codepoints (PUA, marks) are stored as readable hex so the book never carries
+> an invisible character. Verified e2e: import (auto-codepoint + explicit PUA),
+> config-driven build → valid TTF (cmap resolves `U+0061`/`U+E000`).
+>
+> **P5.5 (shipped)** — AI **text-to-SVG glyph draft**. `language glyph-draft
+> <lang> --describe "…" [--phoneme] [--codepoint] [--name] [--out] [--yes]` asks
+> the model (thin layer: `GLYPH_DRAFT_SYSTEM` constrains output to a filled,
+> monochrome, stroke/image/gradient-free SVG so it passes the P5.1 preflight)
+> for one glyph. The deterministic, tested half — `conlang::writing::draft::
+> extract_svg` — pulls the `<svg>…</svg>` out of a prose/fenced reply; the draft
+> is preflighted and previewed (printed or `--out`). Advisory per
+> [[feedback-ai-advisory]]: only `--yes` *and* a usable result binds it, reusing
+> P5.4's `bind_glyph_text`. Refactored `font-import-glyph` onto that shared
+> core.
+>
+> **P5.6 (shipped)** — composed blocks (Hangul-style syllable squares,
+> quadrats), binding-time A: **font-build precompose**. The shared engine —
+> `conlang::types::spatial::SpatialTemplate` (named cells, each a normalized
+> rect in the em; built-ins `lr`/`tb`/`quad`/`stack3` + config `templates`) and
+> `conlang::writing::compose::compose_block` — places a component glyph into
+> each cell by wrapping it in a `<g transform>` that scales its viewBox into the
+> rect, emitting ONE composite SVG; `svg_to_contours` folds the group transforms
+> into each path's abs-transform, so a block flows through the existing preflight
+> → UFO → TTF pipeline as a glyph with more contours. `language font-templates`
+> lists templates; `font-compose <lang> --template <t> --name <n> [--codepoint]
+> [--phoneme] --slot SLOT=GLYPH… [--out] [--yes]` composes + (advisory) binds it
+> like `font-import-glyph`. Baked at compose time. Verified e2e: two component
+> bars → an `lr` block at U+AC00 compiling to a 2-contour glyph (left + right
+> halves), fontTools re-save passes.
+>
+> **P5.6b (shipped)** — binding-time B: **layout-time Typst quadrats**, the
+> hieroglyphic path (base signs combine contextually; precomposing every quadrat
+> is impractical). `compose::quadrat_typst` takes the SAME `SpatialTemplate` and
+> emits a Typst `#let <name> = box(…)[ … ]` that `place`s each component
+> (rendered as a character of the generated font, codepoint injected as a
+> `\u{…}` escape) into its cell — sized to the cell height, offset by the cell's
+> normalized position. `language spatial-typst <lang> --template <t> --name <n>
+> --slot SLOT=GLYPH… [--size 2em] [--out]` resolves each glyph to its codepoint
+> from the `font` block and emits the snippet (read-only — no store re-open).
+> Verified e2e: a `tb` quadrat (two PUA glyphs) compiled by Typst 0.14.2 against
+> the generated font into a PDF whose rasterization shows real ink (301 dark px,
+> not tofu) and which embeds the font. The shared engine now has both binding
+> times (bake-into-font + layout-time).
+>
+> **P5.6c (shipped)** — input method. `conlang::writing::input::to_script`
+> transliterates romanized/phonemic text into the script's codepoints using the
+> `font` block's glyph→phoneme bindings: greedy longest-key match at each
+> position (so a digraph key `th`/`ka` beats `t`+`h`); unmatched characters pass
+> through and are flagged. `language transliterate <lang> --text … [--json]`
+> prints the codepoint string (renders in the generated font) + the readable
+> codepoints. Verified e2e through the full loop: `katha` → `U+E000 E001 E003
+> E001` (the `th` digraph won) → compiled + rasterized by Typst against the
+> generated font into 4 visible glyphs (3977 dark px). The deterministic engine
+> a live editor input mode would drive. **★ P5 WRITING SYSTEMS + FONTS COMPLETE
+> ★** (P5.1 preflight → P5.2 SVG→UFO → P5.3 UFO→TTF → P5.4 config-driven binding
+> → P5.5 AI draft → P5.6 spatial templates / both binding times → input method).
+>
+> **P6.1 (shipped)** — the analysis suite. `conlang::analysis::profile(phon,
+> entries)` builds a deterministic descriptive `LanguageProfile`: inventory
+> balance (C/V), phoneme frequency across the lexicon, syllable-length
+> distribution, onset/coda usage, and POS spread — computed over the headwords
+> that segment cleanly into the inventory (reusing P1.2 `segment`/`syllabify`).
+> Distinct from the P2.1 audit (problems) — this is the descriptive snapshot the
+> P6.2 grammar book / dictionary output draws on. `language stats <lang>
+> [--json]` renders it (with a syllable-count bar chart). Verified e2e on a
+> 6-word language: 5 C / 3 V, avg 4.7 phonemes / 2.2 syllables, `a` the most
+> frequent phoneme, coda `n` from the closed syllables.
+>
+> **P6.2 (shipped)** — dictionary output. `conlang::output` renders the lexicon
+> as a real document in Markdown or Typst (pure; the CLI prepares `RenderEntry`s
+> with pronunciation + transliterated conscript). Markdown is an alphabetized
+> listing; **Typst is the showpiece** — a paginated two-column A5 book with a
+> title page + overview table that, when the language has a `font` block, shows
+> each headword in the **native script** (transliterated by the P5.6c input
+> method, codepoints emitted as `\u{…}` escapes) beside its romanization,
+> pronunciation, POS, gloss, tags, and etymology. `language dictionary <lang>
+> --format md|typ [--out] [--font]`. Verified e2e: a 4-word language with a
+> per-phoneme font → a Typst dictionary compiled by Typst 0.14.2 into a 3-page
+> PDF that embeds the conscript font and renders both Latin text and native
+> glyphs (3246 dark px). Ties P5 (script) to P6 (output). Next P6.3: the grammar
+> book (phonology tables, morphology paradigms, typology, sample texts).
+
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
 language; meanings come from the AI; nothing duplicates; nothing

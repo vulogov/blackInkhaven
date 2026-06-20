@@ -7,13 +7,16 @@
 //! classes, syllable templates, deterministic phonotactic constraints, and a
 //! seeded word generator. Pure, deterministic, dependency-free.
 
+pub mod analysis;
 pub mod diachronic;
 pub mod generate;
 pub mod grammar;
 pub mod lexicon;
 pub mod links;
 pub mod morphology;
+pub mod output;
 pub mod phonology;
 pub mod types;
+pub mod writing;
 
 pub use types::{Phonology, TemplateRole};
