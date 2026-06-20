@@ -201,6 +201,20 @@ nami patan` — *bird REL see stone-ACC*). Placement follows the `relative_claus
 typology: `prenominal` puts the clause before the head (Japanese, Chinese),
 otherwise after it (English, the default).
 
+**Coordination** joins noun phrases or whole clauses with a conjunction:
+
+```
+inkhaven language coordinate Eldar --np kira:bird --np pata:stone --conjunction na:and
+inkhaven language coordinate Eldar --conjunction na:and \
+    --clause "kira:bird nami:see pata:stone" --clause "muru:river tasa:fall"
+```
+
+Give two or more `--np` (each a single `root:gloss` noun) **or** two or more
+`--clause` (each space-separated `root:gloss` words — subject, verb, optional
+object). The conjunction sits between adjacent conjuncts, glossed by its own
+gloss; clause conjuncts are each assembled (so case marking still applies:
+`kira nami patan na muru tasa` — *bird see stone-ACC and river fall*).
+
 ## Creative text (compose)
 
 `inkhaven language compose <lang> --kind <kind>` generates creative text. The
