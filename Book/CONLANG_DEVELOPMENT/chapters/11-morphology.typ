@@ -150,13 +150,89 @@ it works out each entry's paradigm forward and matches what it finds.
   textbooks make a foreign sentence transparent.
 ]
 
+#section("Beyond prefixes and suffixes")
+
+Not every language marks grammar by gluing pieces to the ends of words. Inkhaven
+supports the other common strategies too; you choose them on a morpheme with
+`position` or `process`.
+
+#term("Infix")[
+  An affix inserted *inside* the root rather than at an edge. Tagalog forms an
+  actor from *sulat* ("write") as *s-um-ulat* — the *-um-* sits after the first
+  consonant. Declare `position: "infix"`; the `anchor` is `before_first_vowel`
+  (the default) or `after_first_vowel`.
+]
+
+#term("Circumfix")[
+  A single affix in two pieces that wrap around the root — German makes a past
+  participle with *ge-…-t* (*ge-sag-t*). Declare `position: "circumfix"` and
+  write the `form` with a `_` marking where the stem goes: `ge_t` → *ge* + stem
+  + *t*.
+]
+
+#term("Ablaut")[
+  Marking grammar by *changing a sound inside* the root instead of adding
+  anything — English *sing / sang / sung*. Declare `process: "ablaut"` and give
+  the change as an SPE `rules` list (Chapter 7), e.g. `i > a`. The vowel swaps in
+  place.
+]
+
+#term("Reduplication")[
+  Marking grammar by *repeating* part (or all) of the root — Malay *buku* "book"
+  → *buku-buku* "books". Declare `process: "reduplication"` with a `reduplicate`
+  mode: `full` (the whole stem doubled), `initial_cv` (the first consonant +
+  vowel copied to the front), `initial_syllable`, or `final_syllable`.
+]
+
+All four are written as ordinary morphemes and used in paradigm cells exactly
+like prefixes and suffixes — and allophony still applies across the new seams.
+For example, a morpheme `{ id: "ag", gloss: "AG", form: "um", position:
+"infix" }` turns the root *tanik* into *t-um-anik*.
+
+#section("Agreement")
+
+Often one word must echo the grammar of another: an adjective takes its noun's
+number and case, a verb takes its subject's person and number. This matching is
+called *agreement* (or *concord*), and it is what makes "these tall trees" work
+where "this tall tree" also does.
+
+#term("Agreement (concord)")[
+  The requirement that a *dependent* word copy certain grammatical features from
+  the *head* it modifies — an adjective agreeing with its noun, a verb with its
+  subject. The shared features (number, case, gender, person) must match.
+]
+
+You declare agreement as rules in the morphology block: which part of speech
+agrees with which, on which features, and through which paradigm:
+
+```hjson
+agreement: [
+  { dependent: "adjective", head: "noun", features: ["number", "case"], paradigm: "adj" }
+]
+```
+
+Then Inkhaven can inflect a dependent to agree with a given head. Suppose a noun
+is plural; to get the matching form of the adjective *mira* ("bright"):
+
+```sh
+inkhaven language agree Eldar --word mira --pos adjective \
+    --gloss bright --features "number=pl"
+```
+
+It finds the agreement rule for adjectives, picks the `adj` paradigm cell that
+matches `number=pl`, and prints the agreeing form — *mirai*, glossed
+`bright-PL`. The `--features` you pass are the head's; only the ones the rule
+lists as agreement features are copied.
+
 #recap((
   [*Morphology* is how words change shape; the pieces are *morphemes*, and
-   attached ones are *affixes* (prefixes / suffixes).],
-  [Declare affixes in a morphology block: each with `id`, `gloss`, `form`,
-   `position`.],
+   attached ones are *affixes* (prefix / suffix / *infix* / *circumfix*).],
+  [Beyond gluing affixes, a morpheme can be a *process*: *ablaut* (an internal
+   sound change) or *reduplication* (repeating part of the root).],
   [*Inflection* changes a word's form; the full set is a *paradigm*, described as
    `cells` of features + morphemes.],
-  [`paradigm` builds the forms (with allophony at the joins); `gloss` shows a
+  [`paradigm` builds the forms (allophony applies at every seam); `gloss` shows a
    sentence interlinear, word by word.],
+  [*Agreement* makes a dependent copy a head's features; `agree` inflects it to
+   match.],
 ))

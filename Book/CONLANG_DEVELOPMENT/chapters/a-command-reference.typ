@@ -32,6 +32,7 @@ language <action> <language> [options]`. Add `--help` to any for full details.
 #section("Grammar")
 
 / `paradigm <lang> --root R --template T --gloss G`: Generate a word's inflected forms.
+/ `agree <lang> --word W --pos P --features "number=pl,case=nom" [--gloss G]`: Inflect a dependent word to agree with its head's features.
 / `gloss <lang> --text "…"`: Interlinear (word-by-word) gloss of a sentence.
 / `derive <lang> --root R --gloss G --pos P [--yes]`: Coin derived words from a root.
 / `grammar <lang> [--set feature=value]`: View or set the typology questionnaire.
