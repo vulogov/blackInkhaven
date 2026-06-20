@@ -212,6 +212,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             size,
             out,
         } => spatial_typst(project, &language, &template, &name, &slots, &size, out.as_deref()),
+        LanguageCommand::Transliterate { language, text, json } => {
+            transliterate(project, &language, &text, json)
+        }
         LanguageCommand::GlyphDraft {
             language,
             describe,
@@ -1015,6 +1018,53 @@ fn font_compose(
         eprintln!("preflight: ✓ usable — re-run with --yes to bind it as `{name}`");
         Ok(())
     }
+}
+
+/// LANG-1 P5.6c — input method: transliterate romanized/phonemic text into the
+/// script's codepoints using the `font` block's glyph→phoneme bindings.
+fn transliterate(project: &Path, language: &str, text: &str, json: bool) -> Result<()> {
+    use crate::conlang::writing::input;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let font = load_font_config(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no `font` block to type with"))
+    })?;
+    let out = input::to_script(&font, text);
+
+    if json {
+        let codepoints: Vec<String> =
+            out.script.chars().map(|c| format!("U+{:04X}", c as u32)).collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "input": text,
+                "script": out.script,
+                "codepoints": codepoints,
+                "mapped": out.mapped,
+                "unmatched": out.unmatched.iter().collect::<String>(),
+            }))
+            .map_err(|e| Error::Store(format!("serializing: {e}")))?
+        );
+        return Ok(());
+    }
+
+    // The script chars are typically PUA (invisible in a terminal); print them
+    // on stdout (capturable / insertable) and the readable codepoints on stderr.
+    println!("{}", out.script);
+    let codepoints: Vec<String> = out
+        .script
+        .chars()
+        .map(|c| if c.is_whitespace() { "·".into() } else { format!("U+{:04X}", c as u32) })
+        .collect();
+    eprintln!("  {} glyph(s) mapped · {}", out.mapped, codepoints.join(" "));
+    if !out.unmatched.is_empty() {
+        let u: String = out.unmatched.iter().collect();
+        eprintln!("  ⚠ no glyph for: {u} (bind one with `font-import-glyph --phoneme`)");
+    }
+    eprintln!(
+        "(renders in the `{}` font)",
+        font.family.as_deref().unwrap_or(&lang_book.title)
+    );
+    Ok(())
 }
 
 /// LANG-1 P5.6 — binding-time B: emit a Typst quadrat that arranges component

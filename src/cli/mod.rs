@@ -2431,6 +2431,21 @@ pub enum LanguageCommand {
         yes: bool,
     },
 
+    /// LANG-1 P5.6 — input method: transliterate romanized/phonemic text into
+    /// the script's codepoints using the `font` block's glyph→phoneme bindings
+    /// (longest key wins, so digraph keys like `th`/`ka` beat their prefixes).
+    /// The result renders in the generated font.
+    Transliterate {
+        /// Language to type in.
+        language: String,
+        /// The romanized / phonemic text to convert.
+        #[arg(long)]
+        text: String,
+        /// Emit JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// LANG-1 P5.6 — binding-time B: emit a Typst quadrat that arranges
     /// component glyphs spatially at layout time (the hieroglyphic path — no
     /// precomposed font glyph).  Each component renders as a character of the
