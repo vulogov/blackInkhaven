@@ -183,6 +183,27 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::FontConfig { language, json } => {
             font_config_show(project, &language, json)
         }
+        LanguageCommand::FontTemplates { language } => font_templates(project, &language),
+        LanguageCommand::FontCompose {
+            language,
+            template,
+            name,
+            codepoint,
+            phoneme,
+            slots,
+            out,
+            yes,
+        } => font_compose(
+            project,
+            &language,
+            &template,
+            &name,
+            codepoint.as_deref(),
+            phoneme.as_deref(),
+            &slots,
+            out.as_deref(),
+            yes,
+        ),
         LanguageCommand::GlyphDraft {
             language,
             describe,
@@ -868,6 +889,116 @@ fn font_config_show(project: &Path, language: &str, json: bool) -> Result<()> {
         println!("  {:<14} {:<8} {:<6} {status}", g.name, cp, ph);
     }
     Ok(())
+}
+
+/// LANG-1 P5.6 — list the spatial templates available to a language (built-in
+/// plus any defined in its `font` block).
+fn font_templates(project: &Path, language: &str) -> Result<()> {
+    use crate::conlang::types::spatial::{builtin_template, BUILTIN_TEMPLATES};
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let font = load_font_config(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+
+    println!("spatial templates · {language}");
+    let mut shown = std::collections::BTreeSet::new();
+    for t in &font.templates {
+        shown.insert(t.name.clone());
+        println!("  {:<10} (config)   slots: {}", t.name, t.slots().join(", "));
+    }
+    for name in BUILTIN_TEMPLATES {
+        if shown.contains(*name) {
+            continue;
+        }
+        let t = builtin_template(name).unwrap();
+        println!("  {:<10} (built-in) slots: {}", t.name, t.slots().join(", "));
+    }
+    Ok(())
+}
+
+/// LANG-1 P5.6 — compose component glyphs into a precomposed block per a
+/// spatial template (Hangul-style syllable square, quadrat). Advisory: previews
+/// the composite + preflight; `--yes` binds it like `font-import-glyph`.
+#[allow(clippy::too_many_arguments)]
+fn font_compose(
+    project: &Path,
+    language: &str,
+    template_name: &str,
+    name: &str,
+    codepoint: Option<&str>,
+    phoneme: Option<&str>,
+    slots: &[String],
+    out: Option<&Path>,
+    yes: bool,
+) -> Result<()> {
+    use crate::conlang::types::spatial::{builtin_template, BUILTIN_TEMPLATES};
+    use crate::conlang::writing::{compose, preflight};
+    use std::collections::BTreeMap;
+
+    // Phase 1 — gather everything that needs the store, then drop it before
+    // `bind_glyph_text` re-opens (DuckDB is single-writer).
+    let (composed, report) = {
+        let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+        let font = load_font_config(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+        let template = font
+            .templates
+            .iter()
+            .find(|t| t.name == template_name)
+            .cloned()
+            .or_else(|| builtin_template(template_name))
+            .ok_or_else(|| {
+                Error::Config(format!(
+                    "unknown template `{template_name}` (built-ins: {})",
+                    BUILTIN_TEMPLATES.join(", ")
+                ))
+            })?;
+
+        // --slot SLOT=GLYPH, each glyph read from the store.
+        let dir = glyph_store_dir(store.project_root(), language);
+        let mut comps: BTreeMap<String, String> = BTreeMap::new();
+        for s in slots {
+            let (slot, glyph) = s.split_once('=').ok_or_else(|| {
+                Error::Config(format!("bad --slot `{s}` (expected SLOT=GLYPH)"))
+            })?;
+            let path = dir.join(format!("{glyph}.svg"));
+            let svg = std::fs::read_to_string(&path).map_err(|_| {
+                Error::Config(format!(
+                    "slot `{slot}`: no glyph `{glyph}` in {language}'s store ({})",
+                    path.display()
+                ))
+            })?;
+            comps.insert(slot.to_string(), svg);
+        }
+        let cells = template.slots();
+        for slot in comps.keys() {
+            if !cells.contains(&slot.as_str()) {
+                eprintln!("note: slot `{slot}` is not used by template `{template_name}`");
+            }
+        }
+
+        let composed = compose::compose_block(&template, &comps).map_err(Error::Config)?;
+        let report = preflight::lint_svg(&composed);
+        (composed, report)
+    };
+
+    // Phase 2 — preview + advisory bind.
+    if let Some(p) = out {
+        crate::io_atomic::write(p, composed.as_bytes()).map_err(Error::Io)?;
+        println!("composed block → {}", p.display());
+    } else {
+        println!("{composed}");
+    }
+    if !report.is_usable() {
+        eprintln!("preflight: ✗ {}", report.errors.join("; "));
+        return Ok(());
+    }
+    for w in &report.warnings {
+        eprintln!("note: {w}");
+    }
+    if yes {
+        bind_glyph_text(project, language, &composed, phoneme, codepoint, Some(name), None, "the composed block")
+    } else {
+        eprintln!("preflight: ✓ usable — re-run with --yes to bind it as `{name}`");
+        Ok(())
+    }
 }
 
 /// LANG-1 P5.5 — AI text-to-SVG glyph draft. Advisory: previews the drafted

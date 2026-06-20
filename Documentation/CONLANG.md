@@ -247,6 +247,28 @@ inkhaven language font-build --language Eldar \
   family + units-per-em taken from the config) or from a loose directory
   (`font-build Eldar --glyphs ./glyphs/`, filename stem → glyph name).
 
+### Composed blocks (Hangul-style syllables, quadrats)
+
+Some scripts build a unit from several component glyphs arranged in 2D — a
+Korean syllable square, an Egyptian quadrat. A **spatial template** names the
+cells (each a normalized rectangle in the em, `(0,0)` = top-left); a component
+glyph drops into each cell and the whole is baked into one precomposed glyph.
+
+```
+inkhaven language font-templates Eldar                     # list templates
+inkhaven language font-compose Eldar --template lr \
+    --name ka --codepoint U+AC00 --phoneme ka \
+    --slot left=lead --slot right=vowel [--out ka.svg] [--yes]
+```
+
+Built-in templates: `lr` (left/right), `tb` (top/bottom), `quad` (2×2),
+`stack3` (three rows); define your own under `templates` in the `font` block (a
+config template overrides a built-in of the same name). `font-compose` places
+each `--slot SLOT=GLYPH` component into its cell, runs the composite through the
+preflight, and — on `--yes` — binds it like any other glyph (the component
+glyphs and the composed block coexist in the font). The composition is baked at
+compose time; re-run it after editing a component.
+
 ## In the editor
 
 - **`Ctrl+B X`** — the ConLang hub: a read-only overview of every language

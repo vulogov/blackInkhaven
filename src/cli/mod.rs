@@ -2393,6 +2393,44 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// LANG-1 P5.6 — list the spatial templates available to a language:
+    /// built-in arrangements (`lr`/`tb`/`quad`/`stack3`) plus any custom
+    /// `templates` defined in its `font` block.
+    FontTemplates {
+        /// Language to inspect.
+        language: String,
+    },
+
+    /// LANG-1 P5.6 — compose component glyphs into a precomposed block (a
+    /// Hangul-style syllable square, an Egyptian quadrat) per a spatial
+    /// template, baking them into one glyph.  Advisory — previews the composite
+    /// + preflight; `--yes` binds it like `font-import-glyph`.
+    FontCompose {
+        /// Language the block is for.
+        language: String,
+        /// Spatial template name (see `font-templates`).
+        #[arg(long)]
+        template: String,
+        /// Name for the composed glyph.
+        #[arg(long)]
+        name: String,
+        /// Unicode codepoint: a single character (`가`) or hex (`U+AC00`).
+        #[arg(long)]
+        codepoint: Option<String>,
+        /// Phoneme/syllable this block stands for.
+        #[arg(long)]
+        phoneme: Option<String>,
+        /// A component binding `SLOT=GLYPH` (repeat for each cell).
+        #[arg(long = "slot", value_name = "SLOT=GLYPH")]
+        slots: Vec<String>,
+        /// Write the composed SVG here (otherwise it prints to stdout).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Bind the composed block into the language's `font` block.
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// LANG-1 P5.5 — AI text-to-SVG glyph draft: describe a glyph and the model
     /// drafts an SVG, which is run through the suitability preflight.  Advisory
     /// — previews the SVG + verdict; `--yes` binds a usable draft into the

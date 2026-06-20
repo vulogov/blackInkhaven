@@ -24,11 +24,16 @@ pub struct FontConfig {
     /// Glyph bindings.
     #[serde(default)]
     pub glyphs: Vec<FontGlyph>,
+    /// Custom spatial templates for composed blocks (P5.6). Built-in templates
+    /// (`lr`/`tb`/`quad`/`stack3`) are always available; a config template of
+    /// the same name overrides the built-in.
+    #[serde(default)]
+    pub templates: Vec<crate::conlang::types::spatial::SpatialTemplate>,
 }
 
 impl Default for FontConfig {
     fn default() -> Self {
-        FontConfig { family: None, upm: DEFAULT_UPM, glyphs: Vec::new() }
+        FontConfig { family: None, upm: DEFAULT_UPM, glyphs: Vec::new(), templates: Vec::new() }
     }
 }
 

@@ -5,9 +5,12 @@
 //! artwork to phonemes + codepoints in the language book — `language
 //! font-import-glyph` / `font-build --language` compile a script from its own
 //! definition. P5.5: `draft` — AI text-to-SVG glyph drafting, extracted +
-//! preflighted before it can be bound (`language glyph-draft`).
+//! preflighted before it can be bound (`language glyph-draft`). P5.6: `compose`
+//! — place component glyphs into a `types::spatial::SpatialTemplate`'s cells and
+//! bake one precomposed block glyph (`language font-compose`).
 
 pub mod compile;
+pub mod compose;
 pub mod draft;
 pub mod font;
 pub mod preflight;
