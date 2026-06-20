@@ -21,45 +21,44 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.17 — The ConLang Suite (Part 4: the books) · LANG-1 complete
+## Latest release · 1.3.18 — The ConLang Suite: morphology depth & a developer's guide
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.17.md`](Documentation/RELEASE_NOTES/1.3.17.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.18.md`](Documentation/RELEASE_NOTES/1.3.18.md)
 · Reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md)
 
-1.3.14–1.3.16 built the constructed language itself. 1.3.17 turns it into
-**books** — a dictionary, a reference grammar, and a learner's textbook, all as
-proper typeset documents — and with it **RFC LANG-1 is complete**: from an empty
-`Language` book to printed books with an AI-drawn font, entirely inside inkhaven.
+With RFC LANG-1 complete (1.3.17), this release deepens **morphology** — the one
+area that still had a clear ceiling — and ships a complete beginner's **book**
+about the whole suite. No new dependencies.
 
-### The books
+### Morphology depth
 
-- **Grammar book** — `language grammar-book --format md|typ` renders a reference
-  grammar from the language's data (phonology, morphology, typology, idioms,
-  sample texts); the companion to the dictionary.
-- **Learner's textbook** — `language tutorial --format md|typ --provider …` is
-  **AI-written**: a complete graded course (introduction, pronunciation guide,
-  lessons that *explain* the grammar with worked examples, a reading, exercises),
-  constrained to the language's actual data. The prose is generated, not hardcoded.
-- **Study guide** — `grammar-book --study` adds an AI-written companion that
-  defines and explains every linguistic term the grammar uses (case, allophony,
-  SOV, nominative–accusative alignment, …). The reference itself stays
-  deterministic.
+- **Non-concatenative morphology** — a morpheme can now be an **infix** (`sulat`
+  → `s-um-ulat`), a **circumfix** (`form: "ge_t"` → *ge* + stem + *t*), an
+  **ablaut** process (SPE `rules` swapping a sound inside the stem, *sing* →
+  *sang*), or **reduplication** (`full` / `initial_cv` / `initial_syllable` /
+  `final_syllable`, *kata* → *kakata*). All are used in paradigm cells like
+  affixes, with allophony at every seam.
+- **Affix precedence** — `precedence` orders stacked affixes by closeness to the
+  root, so the case suffix can always hug the root and the number suffix sit
+  outside it.
+- **Agreement (concord)** — `language agree --word mira --pos adjective
+  --features "number=pl"` inflects a dependent to match its head (`mira` →
+  `mirai`, *bright-PL*), driven by an `agreement` block.
 
-### A book design + a worked example
+### Better grammar output, and a guide
 
-- The dictionary, grammar, and tutorial share a manual-style **B5 book** design
-  (title page, contents, callout boxes), embed the conscript font, and compile to
-  PDF.
-- **`examples/conlang/build-sample-language.sh <project>`** builds a whole
-  language end to end — with an **AI-drawn font** — into all three books; a
-  checked-in sample lives in `examples/conlang/sample-output/`. See also
-  [Tutorial 74](Documentation/Tutorials/74-conlang-end-to-end.md).
+- The **grammar book** groups affixes by `category`/`value` and shows each one's
+  kind (prefix / suffix / infix / circumfix / ablaut / reduplication), with an
+  agreement section.
+- **`Book/CONLANG_DEVELOPMENT/`** — *Developing a Constructed Language with
+  Inkhaven*, a new ~120-page guide that teaches the whole suite from zero, for
+  readers new to linguistics **and** Inkhaven. Every term is defined; it walks
+  the full process and ends with a complete worked example.
 
 ### Test stats
 
-Tests 1479 → 1490. **Zero new dependencies.** This completes RFC LANG-1
-(P1 phonology → P7 polish). Full reference:
-[`Documentation/CONLANG.md`](Documentation/CONLANG.md).
+Tests 1490 → 1498. **Zero new dependencies.** Backward compatible. Full
+reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
