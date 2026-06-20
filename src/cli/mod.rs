@@ -2905,6 +2905,46 @@ pub enum LanguageCommand {
         q_particle: Option<String>,
     },
 
+    /// 1.3.19 LANG-1 P9 — build a noun phrase with a
+    /// **relative clause** ("the bird that sees the
+    /// stone"), obeying the `relative_clause` typology
+    /// (prenominal vs postnominal).  The head plays a
+    /// role inside the embedded clause (its subject or
+    /// object — the gap); the engine case-marks and
+    /// agrees the rest.  Prints surface + interlinear
+    /// gloss + literal.
+    Relative {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The head noun being modified (`kira` or
+        /// `kira:bird`).
+        #[arg(long)]
+        head: String,
+        /// The head's role in the embedded clause:
+        /// `subject` ("the bird that sees …") or
+        /// `object` ("the stone that … sees").
+        #[arg(long, default_value = "subject")]
+        role: String,
+        /// The embedded verb (`nami:see`).
+        #[arg(long)]
+        verb: String,
+        /// The other (non-head) argument of the
+        /// embedded clause, when transitive
+        /// (`pata:stone`).
+        #[arg(long)]
+        with: Option<String>,
+        /// The relativizer word (`ya:that`), when the
+        /// language uses one (glossed `REL`).
+        #[arg(long)]
+        relativizer: Option<String>,
+        /// Paradigm used to inflect nouns.
+        #[arg(long, default_value = "noun")]
+        noun_paradigm: String,
+        /// Paradigm used to inflect verbs.
+        #[arg(long, default_value = "verb")]
+        verb_paradigm: String,
+    },
+
     /// LANG-1 P3.x — apply **agreement** (concord): inflect a dependent word
     /// (an adjective, a verb) to agree with the grammatical features of its
     /// head (its noun, its subject).  Uses the `agreement` rules + paradigm in

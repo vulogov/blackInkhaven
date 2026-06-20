@@ -186,6 +186,21 @@ inkhaven language sentence Eldar --subject kira:bird --verb nami:see \
   particle (`--q-particle`, glossed `Q`); `word_order` fronts the verb
   (inversion); `morphology` tags the verb (`.Q`); all add a surface `?`.
 
+**Relative clauses** modify a noun — "the bird that sees the stone":
+
+```
+inkhaven language relative Eldar --head kira:bird --role subject \
+    --verb nami:see --with pata:stone --relativizer ya:that
+```
+
+The head plays a role inside the embedded clause — its `subject` ("the bird that
+sees …") or its `object` ("the stone that … sees"); that role is the *gap*, and
+`--with` supplies the other argument. The embedded clause is assembled by the
+same engine, so it case-marks and agrees correctly (the example yields `kira ya
+nami patan` — *bird REL see stone-ACC*). Placement follows the `relative_clause`
+typology: `prenominal` puts the clause before the head (Japanese, Chinese),
+otherwise after it (English, the default).
+
 ## Creative text (compose)
 
 `inkhaven language compose <lang> --kind <kind>` generates creative text. The

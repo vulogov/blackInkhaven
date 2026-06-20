@@ -196,6 +196,26 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             question,
             q_particle.as_deref(),
         ),
+        LanguageCommand::Relative {
+            language,
+            head,
+            role,
+            verb,
+            with,
+            relativizer,
+            noun_paradigm,
+            verb_paradigm,
+        } => relative(
+            project,
+            &language,
+            &head,
+            &role,
+            &verb,
+            with.as_deref(),
+            relativizer.as_deref(),
+            &noun_paradigm,
+            &verb_paradigm,
+        ),
         LanguageCommand::Agree {
             language,
             word,
@@ -2068,6 +2088,75 @@ fn sentence(
     println!("{line1}");
     println!("{line2}");
     println!("  '{}'", rendered.literal);
+    Ok(())
+}
+
+/// Print a rendered clause/phrase as a two-line interlinear gloss + literal.
+fn print_interlinear(rendered: &crate::conlang::syntax::RenderedClause) {
+    let widths: Vec<usize> = rendered
+        .words
+        .iter()
+        .map(|(w, g)| w.chars().count().max(g.chars().count()) + 2)
+        .collect();
+    let mut line1 = String::from("  ");
+    let mut line2 = String::from("  ");
+    for (i, (w, g)) in rendered.words.iter().enumerate() {
+        line1.push_str(&format!("{:<width$}", w, width = widths[i]));
+        line2.push_str(&format!("{:<width$}", g, width = widths[i]));
+    }
+    println!("{line1}");
+    println!("{line2}");
+    println!("  '{}'", rendered.literal);
+}
+
+/// 1.3.19 LANG-1 P9 — render a head noun modified by a relative clause.
+#[allow(clippy::too_many_arguments)]
+fn relative(
+    project: &Path,
+    language: &str,
+    head: &str,
+    role: &str,
+    verb: &str,
+    with: Option<&str>,
+    relativizer: Option<&str>,
+    noun_paradigm: &str,
+    verb_paradigm: &str,
+) -> Result<()> {
+    use crate::conlang::syntax::{self, RelativeClause};
+    let head_is_subject = match role.to_ascii_lowercase().as_str() {
+        "subject" | "subj" | "s" => true,
+        "object" | "obj" | "o" => false,
+        other => {
+            return Err(Error::Config(format!(
+                "unknown --role `{other}` (expected subject or object)"
+            )))
+        }
+    };
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no phoneme block"))
+    })?;
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+
+    let rc = RelativeClause {
+        head_is_subject,
+        verb: parse_word(verb),
+        other: with.map(parse_word),
+        relativizer: relativizer.map(parse_word),
+        noun_paradigm: noun_paradigm.to_string(),
+        verb_paradigm: verb_paradigm.to_string(),
+    };
+    let head_word = parse_word(head);
+    let rendered = syntax::relative_np(&phon, &morph, &grammar_spec.grammar, &head_word, &rc);
+
+    let strategy = grammar_spec
+        .grammar
+        .get("relative_clause")
+        .map(String::as_str)
+        .unwrap_or("postnominal");
+    println!("{} ({strategy})", rendered.surface);
+    print_interlinear(&rendered);
     Ok(())
 }
 

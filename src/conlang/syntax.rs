@@ -185,6 +185,99 @@ pub fn assemble(
     RenderedClause { words, surface, literal }
 }
 
+/// A relative clause modifying a head noun: "the bird **that sees the stone**".
+/// The head plays a role inside the embedded clause (its subject or its object);
+/// that role is the *gap*. The other argument (if any) is supplied, and an
+/// optional relativizer ("that"/"which") marks the join.
+#[derive(Debug, Clone)]
+pub struct RelativeClause {
+    /// `true` → the head is the embedded verb's subject ("the bird that sees …");
+    /// `false` → the head is its object ("the stone that the bird sees").
+    pub head_is_subject: bool,
+    /// The embedded verb.
+    pub verb: Word,
+    /// The non-head argument of the embedded clause, when transitive.
+    pub other: Option<Word>,
+    /// The relativizer word, when the language uses one (glossed `REL`).
+    pub relativizer: Option<Word>,
+    pub noun_paradigm: String,
+    pub verb_paradigm: String,
+}
+
+/// Render a head noun modified by a relative clause, obeying the
+/// `relative_clause` typology: `prenominal` puts the clause before the head
+/// (Japanese, Chinese), anything else after it (English, the default). The
+/// embedded clause is assembled by the same engine — with the head's role
+/// gapped — so it case-marks and agrees correctly ("the bird that sees the
+/// stone-ACC", "the stone that the bird-NOM sees").
+pub fn relative_np(
+    phon: &Phonology,
+    morph: &Morphology,
+    typology: &BTreeMap<String, String>,
+    head: &Word,
+    rc: &RelativeClause,
+) -> RenderedClause {
+    let other_np = rc.other.as_ref().map(|w| NounPhrase {
+        head: w.clone(),
+        number: "sg".into(),
+        adjective: None,
+    });
+    let clause = if rc.head_is_subject {
+        Clause {
+            subject: None, // gap
+            verb: Some(rc.verb.clone()),
+            verb_person: "3".into(),
+            object: other_np,
+            noun_paradigm: rc.noun_paradigm.clone(),
+            verb_paradigm: rc.verb_paradigm.clone(),
+            ..Default::default()
+        }
+    } else {
+        Clause {
+            subject: other_np,
+            verb: Some(rc.verb.clone()),
+            verb_person: "3".into(),
+            object: None, // gap
+            noun_paradigm: rc.noun_paradigm.clone(),
+            verb_paradigm: rc.verb_paradigm.clone(),
+            ..Default::default()
+        }
+    };
+    let embedded = assemble(phon, morph, typology, &clause);
+    let head_word = (head.root.clone(), head.gloss.clone());
+    let rel_word = rc
+        .relativizer
+        .as_ref()
+        .map(|w| (w.root.clone(), "REL".to_string()));
+
+    let prenominal = typology
+        .get("relative_clause")
+        .map(|s| s.eq_ignore_ascii_case("prenominal"))
+        .unwrap_or(false);
+
+    let mut words: Vec<(String, String)> = Vec::new();
+    if prenominal {
+        words.extend(embedded.words.iter().cloned());
+        if let Some(r) = &rel_word {
+            words.push(r.clone());
+        }
+        words.push(head_word);
+    } else {
+        words.push(head_word);
+        if let Some(r) = &rel_word {
+            words.push(r.clone());
+        }
+        words.extend(embedded.words.iter().cloned());
+    }
+    let surface = words.iter().map(|(w, _)| w.as_str()).collect::<Vec<_>>().join(" ");
+    let literal = format!("the {} that {}", head.gloss, embedded.literal);
+    RenderedClause {
+        words,
+        surface,
+        literal,
+    }
+}
+
 /// Attach negation to the rendered verb words. `particle`/`auxiliary` insert a
 /// separate negator word before the verb; `affix` fuses the negator onto the
 /// verb form. Without a negator form, only the gloss is marked (`NEG`/`.NEG`),
@@ -502,6 +595,53 @@ mod tests {
         let r = assemble(&phon(), &morph(), &t, &c);
         // Inversion: V fronted → "nami kira patan?".
         assert_eq!(r.surface, "nami kira patan?");
+    }
+
+    #[test]
+    fn relative_clause_subject_gap_postnominal() {
+        // "the bird that sees the stone" — head=bird is the embedded subject,
+        // so the embedded clause keeps its object (accusative). Postnominal.
+        let mut t = BTreeMap::new();
+        t.insert("word_order".to_string(), "svo".to_string());
+        t.insert("relative_clause".to_string(), "postnominal".to_string());
+        let rc = RelativeClause {
+            head_is_subject: true,
+            verb: Word { root: "nami".into(), gloss: "see".into() },
+            other: Some(Word { root: "pata".into(), gloss: "stone".into() }),
+            relativizer: Some(Word { root: "ya".into(), gloss: "that".into() }),
+            noun_paradigm: "noun".into(),
+            verb_paradigm: "verb".into(),
+        };
+        let head = Word { root: "kira".into(), gloss: "bird".into() };
+        let r = relative_np(&phon(), &morph(), &t, &head, &rc);
+        // head, relativizer, then the embedded V O (object accusative).
+        assert_eq!(r.surface, "kira ya nami patan");
+        assert!(r.words.iter().any(|(_, g)| g == "REL"));
+        assert!(r.words.iter().any(|(_, g)| g == "stone-ACC"));
+        assert_eq!(r.literal, "the bird that see stone");
+    }
+
+    #[test]
+    fn relative_clause_object_gap_prenominal() {
+        // "[the bird sees] that stone" — head=stone is the embedded object,
+        // so the embedded clause keeps its subject. Prenominal: clause first.
+        let mut t = BTreeMap::new();
+        t.insert("word_order".to_string(), "svo".to_string());
+        t.insert("relative_clause".to_string(), "prenominal".to_string());
+        let rc = RelativeClause {
+            head_is_subject: false,
+            verb: Word { root: "nami".into(), gloss: "see".into() },
+            other: Some(Word { root: "kira".into(), gloss: "bird".into() }),
+            relativizer: None,
+            noun_paradigm: "noun".into(),
+            verb_paradigm: "verb".into(),
+        };
+        let head = Word { root: "pata".into(), gloss: "stone".into() };
+        let r = relative_np(&phon(), &morph(), &t, &head, &rc);
+        // Prenominal, no relativizer: [bird see] then head stone.
+        assert_eq!(r.surface, "kira nami pata");
+        assert_eq!(r.words.last().unwrap().0, "pata"); // head last
+        assert_eq!(r.literal, "the stone that bird see");
     }
 
     #[test]
