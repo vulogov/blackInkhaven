@@ -232,6 +232,32 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             &noun_paradigm,
             &verb_paradigm,
         ),
+        LanguageCommand::Complement {
+            language,
+            subject,
+            subject_person,
+            subject_number,
+            verb,
+            complementizer,
+            comp_subject,
+            comp_verb,
+            comp_object,
+            noun_paradigm,
+            verb_paradigm,
+        } => complement(
+            project,
+            &language,
+            subject.as_deref(),
+            &subject_person,
+            &subject_number,
+            &verb,
+            complementizer.as_deref(),
+            comp_subject.as_deref(),
+            &comp_verb,
+            comp_object.as_deref(),
+            &noun_paradigm,
+            &verb_paradigm,
+        ),
         LanguageCommand::Agree {
             language,
             word,
@@ -2235,6 +2261,62 @@ fn coordinate(
     };
 
     println!("{}", rendered.surface);
+    print_interlinear(&rendered);
+    Ok(())
+}
+
+/// 1.3.19 LANG-1 P9 — assemble a sentence with a complement clause.
+#[allow(clippy::too_many_arguments)]
+fn complement(
+    project: &Path,
+    language: &str,
+    subject: Option<&str>,
+    subject_person: &str,
+    subject_number: &str,
+    verb: &str,
+    complementizer: Option<&str>,
+    comp_subject: Option<&str>,
+    comp_verb: &str,
+    comp_object: Option<&str>,
+    noun_paradigm: &str,
+    verb_paradigm: &str,
+) -> Result<()> {
+    use crate::conlang::syntax::{self, Clause, ComplementSentence, NounPhrase};
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no phoneme block"))
+    })?;
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+
+    let np = |w: &str| NounPhrase {
+        head: parse_word(w),
+        number: "sg".into(),
+        adjective: None,
+    };
+    let complement_clause = Clause {
+        subject: comp_subject.map(np),
+        verb: Some(parse_word(comp_verb)),
+        verb_person: "3".into(),
+        object: comp_object.map(np),
+        noun_paradigm: noun_paradigm.to_string(),
+        verb_paradigm: verb_paradigm.to_string(),
+        ..Default::default()
+    };
+    let cs = ComplementSentence {
+        matrix_subject: subject.map(parse_word),
+        matrix_verb: parse_word(verb),
+        matrix_person: subject_person.to_string(),
+        matrix_number: subject_number.to_string(),
+        complementizer: complementizer.map(parse_word),
+        complement: complement_clause,
+        noun_paradigm: noun_paradigm.to_string(),
+        verb_paradigm: verb_paradigm.to_string(),
+    };
+    let rendered = syntax::complement_sentence(&phon, &morph, &grammar_spec.grammar, &cs);
+
+    let order = grammar_spec.grammar.get("word_order").map(String::as_str).unwrap_or("svo");
+    println!("{} ({} order)", rendered.surface, order.to_uppercase());
     print_interlinear(&rendered);
     Ok(())
 }
