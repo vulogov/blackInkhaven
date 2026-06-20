@@ -319,6 +319,28 @@ inkhaven language export Avesha --format ipa-chart
 - **`ipa-chart`** — Markdown IPA inventory: consonants and vowels grouped, each
   with its romanization.
 
+## Interchange (import)
+
+Pull a lexicon in from another tool. `add-word --import <csv>` reads Inkhaven's
+own round-trippable CSV; `language import` reads foreign formats:
+
+```
+inkhaven language import Avesha --file lexicon.sfm --format toolbox        # preview
+inkhaven language import Avesha --file lexicon.sfm --format toolbox --yes  # write
+inkhaven language import Avesha --file MyLang.pgd  --format polyglot --yes
+```
+
+- **`toolbox`** — Toolbox / MDF **Standard Format** (`\lx … \ps … \ge …`), the
+  lingua franca of descriptive lexicography. The same SFM that **SIL Toolbox**,
+  **FieldWorks**, and **Lexique Pro** read and write, so all three import here.
+- **`polyglot`** — a **PolyGlot** dictionary: pass the native `.pgd` archive (its
+  `PGDictionary.xml` is unzipped for you) or a raw exported `.xml`. The
+  part-of-speech table is resolved so each word lands with its class.
+
+Import **previews by default** — it prints what it would add and changes nothing
+until you pass `--yes`. Duplicate headwords are skipped with a warning. (Tools
+that export CSV, such as ConWorkShop, can come in through `add-word --import`.)
+
 ## Worldbuilding links
 
 Stored in `.inkhaven/conlang-links.json` (the prose books are never modified):
