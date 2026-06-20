@@ -78,6 +78,11 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             format,
             r#yes,
         } => import_foreign(project, &language, &file, format, r#yes),
+        LanguageCommand::Gaps {
+            language,
+            scope,
+            json,
+        } => gaps(project, &language, &scope, json),
         LanguageCommand::Doctor { language, json } => doctor(project, &language, json),
         LanguageCommand::Export {
             language,
@@ -2666,6 +2671,84 @@ fn load_dictionary(
         }
     }
     Ok(out)
+}
+
+/// 1.3.19 LANG-1 P6 — semantic-gap finder. Diff the lexicon's glosses against a
+/// reference concept scope (built-in Swadesh-100, keyed to the project working
+/// language, or an HJSON file) and report the missing concepts, frequency-ranked.
+fn gaps(project: &Path, language: &str, scope: &str, json: bool) -> Result<()> {
+    use crate::conlang::gaps as gapmod;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let glosses: Vec<String> = entries
+        .iter()
+        .map(|e| e.translation.clone())
+        .filter(|g| !g.trim().is_empty())
+        .collect();
+
+    // Resolve the scope: a built-in name → bundled list in the working
+    // language; otherwise treat `scope` as a path to an HJSON concept list.
+    let (scope_name, concepts) = if gapmod::is_builtin(scope) {
+        (
+            format!("Swadesh-100 ({})", cfg.language),
+            gapmod::swadesh_100(&cfg.language),
+        )
+    } else {
+        let path = Path::new(scope);
+        let body = std::fs::read_to_string(path).map_err(|e| {
+            Error::Config(format!(
+                "scope `{scope}` is neither a built-in (swadesh_100) nor a readable file: {e}"
+            ))
+        })?;
+        let parsed = gapmod::ScopeFile::from_hjson(&body).map_err(Error::Config)?;
+        let name = parsed
+            .name
+            .clone()
+            .unwrap_or_else(|| path.display().to_string());
+        (name, parsed.into_concepts())
+    };
+
+    let report = gapmod::find_gaps(&scope_name, &concepts, &glosses);
+
+    if json {
+        let out = serde_json::json!({
+            "scope": report.scope_name,
+            "total": report.total,
+            "covered": report.covered,
+            "missing": report.missing,
+            "coverage_pct": report.coverage_pct(),
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out)
+                .map_err(|e| Error::Store(format!("serializing gap report: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{} — {}/{} concepts covered ({:.0}%)",
+        report.scope_name,
+        report.covered.len(),
+        report.total,
+        report.coverage_pct()
+    );
+    if report.missing.is_empty() {
+        println!("\n✓ full coverage — nothing missing in this scope.");
+        return Ok(());
+    }
+    println!("\nMissing ({}), most-core first:", report.missing.len());
+    for chunk in report.missing.chunks(6) {
+        println!("  {}", chunk.join(", "));
+    }
+    println!(
+        "\nFeed these to the generator, e.g.:\n  \
+         inkhaven language generate-lexicon {language} --topic \"{}\" --count {}",
+        report.missing.iter().take(3).cloned().collect::<Vec<_>>().join(", "),
+        report.missing.len().min(20),
+    );
+    Ok(())
 }
 
 /// LANG-1 P6.1 — descriptive language profile: inventory balance, phoneme

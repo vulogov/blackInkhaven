@@ -9,6 +9,7 @@
 
 pub mod analysis;
 pub mod diachronic;
+pub mod gaps;
 pub mod generate;
 pub mod grammar;
 pub mod interchange;
