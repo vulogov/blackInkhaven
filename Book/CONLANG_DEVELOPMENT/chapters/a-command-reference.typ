@@ -28,6 +28,9 @@ language <action> <language> [options]`. Add `--help` to any for full details.
 / `audit <lang> [--json]`: Report phonotactic violations, homophones, duplicate meanings.
 / `scan-manuscript <lang> [--json]`: Find language-like words in your prose that are not yet defined.
 / `stats <lang> [--json]`: A descriptive profile of the language's sounds and words.
+/ `gaps <lang> [--scope swadesh_100|file.hjson] [--json]`: Report which reference concepts the lexicon is still missing.
+/ `compose <lang> --kind names|prose|poem|blessing|curse|incantation [--count N] [--meter 5,7,5] [--seed N] [--provider P]`: Generate creative text grounded in your language.
+/ `import <lang> --file F --format toolbox|polyglot [--yes]`: Import a lexicon from another tool (previews without `--yes`).
 
 #section("Grammar")
 
@@ -36,7 +39,9 @@ language <action> <language> [options]`. Add `--help` to any for full details.
 / `gloss <lang> --text "…"`: Interlinear (word-by-word) gloss of a sentence.
 / `derive <lang> --root R --gloss G --pos P [--yes]`: Coin derived words from a root.
 / `grammar <lang> [--set feature=value]`: View or set the typology questionnaire.
-/ `sentence <lang> --subject W --verb W --object W [--*-adj W] [--*-number N]`: Assemble a clause — order, case, and agreement — with an interlinear gloss.
+/ `sentence <lang> --subject W --verb W --object W [--*-adj W] [--*-number N] [--negate --negator W] [--question --q-particle W]`: Assemble a clause — order, case, agreement, optional negation / yes-no question — with an interlinear gloss.
+/ `relative <lang> --head H --role subject|object --verb V [--with O] [--relativizer W]`: Build a noun phrase modified by a relative clause.
+/ `coordinate <lang> [--np W …] [--clause "subj verb obj" …] --conjunction W`: Join nouns or clauses with a conjunction.
 / `idiom-add <lang> --form F --literal L --meaning M [--register R]`: Record an idiom.
 / `metaphor-add <lang> --source S --target T [--example E]`: Record a conceptual metaphor.
 / `idioms <lang>`: List recorded idioms and metaphors.
