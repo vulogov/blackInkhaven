@@ -83,6 +83,22 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             scope,
             json,
         } => gaps(project, &language, &scope, json),
+        LanguageCommand::Compose {
+            language,
+            kind,
+            count,
+            seed,
+            meter,
+            provider,
+        } => compose(
+            project,
+            &language,
+            &kind,
+            count,
+            seed,
+            &meter,
+            provider.as_deref(),
+        ),
         LanguageCommand::Doctor { language, json } => doctor(project, &language, json),
         LanguageCommand::Export {
             language,
@@ -2749,6 +2765,188 @@ fn gaps(project: &Path, language: &str, scope: &str, json: bool) -> Result<()> {
         report.missing.len().min(20),
     );
     Ok(())
+}
+
+/// Format a rendered clause as `surface` + a two-line interlinear gloss + a
+/// literal rendering — the same shape the grammar book uses.
+fn format_clause(r: &crate::conlang::syntax::RenderedClause) -> String {
+    let widths: Vec<usize> = r
+        .words
+        .iter()
+        .map(|(w, g)| w.chars().count().max(g.chars().count()) + 2)
+        .collect();
+    let (mut l1, mut l2) = (String::new(), String::new());
+    for (i, (w, g)) in r.words.iter().enumerate() {
+        l1.push_str(&format!("{:<width$}", w, width = widths[i]));
+        l2.push_str(&format!("{:<width$}", g, width = widths[i]));
+    }
+    format!(
+        "{}\n  {}\n  {}\n  ‘{}’",
+        r.surface,
+        l1.trim_end(),
+        l2.trim_end(),
+        r.literal
+    )
+}
+
+/// 1.3.19 LANG-1 P6 — creative text generators. Deterministic names / prose /
+/// verse from the phonology + lexicon + syntax engine; AI-composed but
+/// lexicon-constrained blessing / curse / incantation. Prints only — never
+/// writes to the book.
+fn compose(
+    project: &Path,
+    language: &str,
+    kind: &str,
+    count: usize,
+    seed: u64,
+    meter: &str,
+    provider: Option<&str>,
+) -> Result<()> {
+    use crate::conlang::creative;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let typology = &grammar_spec.grammar;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+
+    match kind.to_ascii_lowercase().as_str() {
+        "names" | "name" => {
+            let names = creative::names(&phon, count, seed);
+            if names.is_empty() {
+                return Err(Error::Config(
+                    "no names could be generated — does the language declare a `root` template?"
+                        .into(),
+                ));
+            }
+            println!("{language} — {} names:\n", names.len());
+            for n in &names {
+                println!("  {n}");
+            }
+        }
+        "prose" | "sample" | "sample-text" => {
+            let lines = creative::prose(&phon, &morph, typology, &entries, count, seed);
+            if lines.is_empty() {
+                return Err(Error::Config(
+                    "need at least one noun and one verb in the lexicon to compose prose".into(),
+                ));
+            }
+            println!("{language} — sample sentences:\n");
+            for r in &lines {
+                println!("• {}\n", format_clause(r));
+            }
+        }
+        "poem" | "poetry" | "verse" => {
+            let meter: Vec<usize> = meter
+                .split(',')
+                .filter_map(|s| s.trim().parse::<usize>().ok())
+                .filter(|n| *n > 0)
+                .collect();
+            if meter.is_empty() {
+                return Err(Error::Config(
+                    "invalid --meter — give comma-separated syllable counts, e.g. 5,7,5".into(),
+                ));
+            }
+            let lines = creative::poem(&phon, &entries, &meter, seed);
+            if lines.is_empty() {
+                return Err(Error::Config("could not generate verse (empty inventory)".into()));
+            }
+            println!("{language} — verse ({}):\n", meter
+                .iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join("-"));
+            for l in &lines {
+                println!("  {:<32} ({}/{})", l.text, l.syllables, l.target);
+            }
+        }
+        "blessing" | "curse" | "incantation" | "ceremony" => {
+            if entries.is_empty() {
+                return Err(Error::Config(
+                    "the lexicon is empty — add some words before composing themed text".into(),
+                ));
+            }
+            let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+            let typ_summary = summarize_typology(typology);
+            let (system, user) = creative::themed_prompt(
+                &lang_book.title,
+                kind,
+                &cfg.language,
+                &typ_summary,
+                &entries,
+            );
+            let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+            let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+            eprintln!("inkhaven language compose · {kind} · {} · model: {model}", lang_book.title);
+            let raw = crate::ai::stream::collect_blocking(
+                ai.client.clone(),
+                model.to_string(),
+                Some(system),
+                user,
+            )
+            .map_err(|e| Error::Store(format!("inference error: {e}")))?;
+            let text = strip_code_fence(&raw);
+            println!("{}", text.trim());
+            // Advisory check: flag any native token not found in the lexicon's
+            // surface forms, so the author can see if the model drifted.
+            warn_unknown_tokens(&text, &entries);
+            eprintln!(
+                "\n(advisory — generated text, not saved; review before use)"
+            );
+        }
+        other => {
+            return Err(Error::Config(format!(
+                "unknown --kind `{other}` (expected names | prose | poem | blessing | curse | incantation)"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// A compact human summary of the typology answers for an AI prompt.
+fn summarize_typology(typology: &std::collections::BTreeMap<String, String>) -> String {
+    if typology.is_empty() {
+        return "word order: SVO; alignment: nominative–accusative (defaults)".into();
+    }
+    typology
+        .iter()
+        .map(|(k, v)| format!("{}: {}", k.replace('_', " "), v))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Print a warning listing any whitespace token on a `NATIVE:` line that is not
+/// a known lexicon surface form (bare headword or an inflected form). Purely
+/// advisory — the constraint is enforced by the prompt, this just surfaces drift.
+fn warn_unknown_tokens(text: &str, entries: &[crate::language_entry::DictionaryEntry]) {
+    let mut known: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for e in entries {
+        if !e.word.trim().is_empty() {
+            known.insert(e.word.to_lowercase());
+        }
+        for v in e.inflection.values() {
+            known.insert(v.to_lowercase());
+        }
+    }
+    let mut unknown: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let lower = line.trim_start().to_lowercase();
+        if let Some(rest) = lower.strip_prefix("native:") {
+            for tok in rest.split(|c: char| !c.is_alphanumeric()) {
+                let t = tok.trim();
+                if t.len() > 1 && !known.contains(t) && !unknown.contains(&t.to_string()) {
+                    unknown.push(t.to_string());
+                }
+            }
+        }
+    }
+    if !unknown.is_empty() {
+        eprintln!(
+            "\n⚠ {} token(s) not in the lexicon (model may have drifted): {}",
+            unknown.len(),
+            unknown.join(", ")
+        );
+    }
 }
 
 /// LANG-1 P6.1 — descriptive language profile: inventory balance, phoneme

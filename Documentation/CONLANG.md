@@ -168,6 +168,32 @@ follows the `adjective_order` typology feature. It degrades gracefully — a
 missing paradigm or case just leaves a word bare. The **grammar book** uses this
 to print a worked example sentence from the lexicon.
 
+## Creative text (compose)
+
+`inkhaven language compose <lang> --kind <kind>` generates creative text. The
+deterministic kinds are grounded in what you've built (seed with `--seed` for a
+different draw):
+
+```
+inkhaven language compose Avesha --kind names  --count 6 --seed 3
+inkhaven language compose Avesha --kind prose  --count 3
+inkhaven language compose Avesha --kind poem   --meter 5,7,5
+```
+
+- **`names`** — phonotactically-valid, capitalised names from the `root`
+  templates (the same generator that feeds the lexicon — every name is sayable).
+- **`prose`** — grammatical sample sentences assembled through the **syntax
+  engine** (word order, case, agreement), each with an interlinear gloss and a
+  literal — the language actually speaking.
+- **`poem`** — metered verse: one line per `--meter` syllable count (e.g.
+  `5,7,5`), each line drawing real words until it scans.
+
+The themed kinds **`blessing`**, **`curse`**, and **`incantation`** are AI-composed
+(need `--provider`) but **constrained to the existing lexicon** — the model
+arranges real words, never invents them, and emits the native text, an
+interlinear gloss, and a translation. Any token not found in the lexicon is
+flagged. `compose` only prints — nothing is written to the book.
+
 ## Diachronics (sound change)
 
 A language can derive from a proto by an ordered chain of sound changes (same

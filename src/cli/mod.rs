@@ -2180,6 +2180,39 @@ pub enum LanguageCommand {
         #[arg(long)]
         json: bool,
     },
+    /// 1.3.19 LANG-1 P6 — creative text generators.
+    /// Deterministic, grounded surfaces that show the
+    /// language alive: `names` (phonotactic),
+    /// `prose` (grammatical sentences via the syntax
+    /// engine), `poem` (metered verse).  The themed
+    /// modes `blessing` / `curse` / `incantation` are
+    /// AI-composed but constrained to the existing
+    /// lexicon (need `--provider`).  Prints only —
+    /// nothing is written to the book.
+    Compose {
+        /// Language to compose in.
+        language: String,
+        /// What to generate: `names` | `prose` |
+        /// `poem` | `blessing` | `curse` |
+        /// `incantation`.
+        #[arg(long, default_value = "prose")]
+        kind: String,
+        /// How many items (names / sentences).
+        #[arg(long, default_value_t = 5)]
+        count: usize,
+        /// Seed for the deterministic generators —
+        /// change it for a different draw.
+        #[arg(long, default_value_t = 0)]
+        seed: u64,
+        /// Verse meter for `poem`: comma-separated
+        /// syllable counts per line (e.g. `5,7,5`).
+        #[arg(long, default_value = "5,7,5")]
+        meter: String,
+        /// AI provider override for the themed modes
+        /// (else the configured default).
+        #[arg(long)]
+        provider: Option<String>,
+    },
     /// remove a dictionary entry
     /// from a language.  Mirror of `add-word`:
     /// resolves the language sub-book by case-
