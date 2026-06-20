@@ -65,7 +65,10 @@ The morphology block — affixes, paradigms, and derivations:
 ```hjson
 {
   morphemes: [
-    { id: "pl", gloss: "PL", form: "i", position: "suffix" }   // prefix | suffix
+    // position: prefix | suffix.  Optional precedence: 0 = any (keep declared
+    // order), 1 = next to the root, 2 = the next slot out, …
+    { id: "dat", gloss: "DAT", form: "ti", position: "suffix", precedence: 1 }
+    { id: "pl",  gloss: "PL",  form: "i",  position: "suffix", precedence: 2 }
   ]
   paradigms: [ { name: "noun", cells: [
     { features: { number: "sg", case: "nom" }, morphemes: [] }

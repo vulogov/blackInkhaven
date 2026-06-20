@@ -55,6 +55,27 @@ Here `pl` is a plural suffix *-i*, `dat` a dative suffix *-ti*, and `def` a
 definite prefix *na-*. The glosses `PL`, `DAT`, `DEF` are the standard linguistic
 abbreviations for "plural", "dative", and "definite".
 
+#subsection("Ordering stacked affixes")
+
+When two or more affixes pile onto the same side of a root, which comes first?
+In many languages the order is fixed — a case ending might always sit closer to
+the root than a number ending. You control this with an optional `precedence`
+number on each morpheme:
+
+```hjson
+{ id: "pl",  gloss: "PL",  form: "i",  position: "suffix", precedence: 2 }
+{ id: "dat", gloss: "DAT", form: "ti", position: "suffix", precedence: 1 }
+```
+
+#term("Affix ordering (precedence)")[
+  A number saying how close an affix sits to the root when several stack: `0`
+  (the default) means any position — the order you listed them in is kept; `1`
+  means immediately next to the root; `2` the next slot out; and so on. A lower
+  non-zero number is closer to the root. Above, the case suffix (precedence 1)
+  always hugs the root and the number suffix (precedence 2) sits outside it, no
+  matter which order a paradigm lists them.
+]
+
 #term("Gloss (grammatical)")[
   A short label for a grammatical piece, written in small capitals by convention:
   PL (plural), SG (singular), DAT (dative case), PST (past tense), and so on.
