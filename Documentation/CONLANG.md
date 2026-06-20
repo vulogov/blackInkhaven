@@ -285,6 +285,19 @@ the quadrat renders with the glyphs arranged spatially — no precomposed glyph
 required. (Each component must have a codepoint, since Typst renders by
 character.)
 
+### Typing the script (input method)
+
+```
+inkhaven language transliterate Eldar --text "katha" [--json]
+```
+
+Transliterates romanized/phonemic text into the script's codepoints using the
+`font` block's glyph→phoneme bindings: at each position the **longest** glyph
+key wins, so a digraph key like `th` or `ka` beats `t`+`h`. The result is a
+string of codepoints that renders in the generated font; unmatched characters
+pass through and are flagged (bind them with `font-import-glyph --phoneme`).
+This is the engine a live editor input mode would drive.
+
 ## In the editor
 
 - **`Ctrl+B X`** — the ConLang hub: a read-only overview of every language

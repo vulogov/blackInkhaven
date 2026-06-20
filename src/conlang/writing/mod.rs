@@ -10,9 +10,12 @@
 //! the engine for both binding times: bake one precomposed block glyph at
 //! font-build (`compose_block`, `language font-compose`), or arrange components
 //! at layout time in a Typst quadrat (`quadrat_typst`, `language spatial-typst`).
+//! P5.6c: `input` — type the script (transliterate romanized text → glyph
+//! codepoints via the font bindings, `language transliterate`).
 
 pub mod compile;
 pub mod compose;
 pub mod draft;
 pub mod font;
+pub mod input;
 pub mod preflight;

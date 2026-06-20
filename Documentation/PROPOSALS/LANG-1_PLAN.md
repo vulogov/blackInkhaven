@@ -359,7 +359,21 @@ releases as they complete.
 > Verified e2e: a `tb` quadrat (two PUA glyphs) compiled by Typst 0.14.2 against
 > the generated font into a PDF whose rasterization shows real ink (301 dark px,
 > not tofu) and which embeds the font. The shared engine now has both binding
-> times (bake-into-font + layout-time). Next: input methods, then P6.
+> times (bake-into-font + layout-time).
+>
+> **P5.6c (shipped)** — input method. `conlang::writing::input::to_script`
+> transliterates romanized/phonemic text into the script's codepoints using the
+> `font` block's glyph→phoneme bindings: greedy longest-key match at each
+> position (so a digraph key `th`/`ka` beats `t`+`h`); unmatched characters pass
+> through and are flagged. `language transliterate <lang> --text … [--json]`
+> prints the codepoint string (renders in the generated font) + the readable
+> codepoints. Verified e2e through the full loop: `katha` → `U+E000 E001 E003
+> E001` (the `th` digraph won) → compiled + rasterized by Typst against the
+> generated font into 4 visible glyphs (3977 dark px). The deterministic engine
+> a live editor input mode would drive. **★ P5 WRITING SYSTEMS + FONTS COMPLETE
+> ★** (P5.1 preflight → P5.2 SVG→UFO → P5.3 UFO→TTF → P5.4 config-driven binding
+> → P5.5 AI draft → P5.6 spatial templates / both binding times → input method).
+> Next: P6 analysis + package-rich Typst output.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
