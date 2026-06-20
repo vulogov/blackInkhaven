@@ -109,6 +109,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Dictionary { language, format, out, font } => {
             dictionary(project, &language, &format, out.as_deref(), font.as_deref())
         }
+        LanguageCommand::GrammarBook { language, format, out, font } => {
+            grammar_book(project, &language, &format, out.as_deref(), font.as_deref())
+        }
         LanguageCommand::LinkPlace {
             place,
             language,
@@ -2546,6 +2549,100 @@ fn pronounce(phon: &crate::conlang::Phonology, word: &str) -> Option<String> {
             .collect::<Vec<_>>()
             .join("."),
     )
+}
+
+/// Load `(title, body)` pairs from a language's `Sample texts` chapter.
+fn load_samples(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<Vec<(String, String)>> {
+    let Some(chapter) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Sample texts"))
+        .cloned()
+    else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for para in hierarchy.children_of(Some(chapter.id)) {
+        if para.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
+        let body = String::from_utf8_lossy(&bytes).trim().to_string();
+        if !body.is_empty() {
+            out.push((para.title.clone(), body));
+        }
+    }
+    Ok(out)
+}
+
+/// LANG-1 P6.3 — render the grammar as a Markdown or Typst document.
+fn grammar_book(
+    project: &Path,
+    language: &str,
+    format: &str,
+    out: Option<&Path>,
+    font: Option<&str>,
+) -> Result<()> {
+    use crate::conlang::output::{self, GrammarBook};
+    use crate::conlang::analysis;
+
+    let typst = match format.to_ascii_lowercase().as_str() {
+        "md" | "markdown" => false,
+        "typ" | "typst" => true,
+        other => {
+            return Err(Error::Config(format!("unknown --format `{other}` (expected md or typ)")))
+        }
+    };
+
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let morphology = load_morphology(&store, &hierarchy, &lang_book)?;
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let (expressions, _) = load_expressions(&store, &hierarchy, &lang_book)?;
+    let samples = load_samples(&store, &hierarchy, &lang_book)?;
+    let font_cfg = load_font_config(&store, &hierarchy, &lang_book)?;
+    let profile = analysis::profile(&phon, &entries);
+
+    let family = font
+        .map(str::to_string)
+        .or_else(|| font_cfg.as_ref().and_then(|c| c.family.clone()));
+    let has_expr = !expressions.idioms.is_empty() || !expressions.metaphors.is_empty();
+
+    let book = GrammarBook {
+        language: &lang_book.title,
+        font_family: if typst { family.as_deref() } else { None },
+        profile: &profile,
+        phonology: &phon,
+        morphology: morphology.as_ref(),
+        typology: &grammar_spec.grammar,
+        expressions: has_expr.then_some(&expressions),
+        samples: &samples,
+    };
+    let doc = if typst {
+        output::grammar_typst(&book)
+    } else {
+        output::grammar_markdown(&book)
+    };
+
+    if let Some(p) = out {
+        crate::io_atomic::write(p, doc.as_bytes()).map_err(Error::Io)?;
+        println!("{} grammar ({}) → {}", lang_book.title, format, p.display());
+        if typst && book.font_family.is_some() {
+            eprintln!(
+                "(build the font with `font-build --language {language} --format ttf` and compile \
+                 with `typst compile --font-path <dir> {}`)",
+                p.display()
+            );
+        }
+    } else {
+        print!("{doc}");
+    }
+    Ok(())
 }
 
 /// LANG-1 P6.2 — render the dictionary as a Markdown or Typst document.

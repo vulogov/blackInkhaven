@@ -202,6 +202,17 @@ beside its romanization. Build the font (`font-build --language … --format ttf
 and compile with `typst compile --font-path <dir> dict.typ` to get a PDF that
 embeds and renders the conscript.
 
+```
+inkhaven language grammar-book Avesha --format md|typ [--out g.typ] [--font Eldar]
+```
+
+The companion volume: a **reference grammar**, drawing every section from the
+language's own data — phonology (consonant/vowel inventory, syllable structure,
+phonotactics, allophony, stress, tone), morphology (affixes, derivation), the
+typology answers (with their consequences), idioms & metaphors, and the sample
+texts. Markdown is a flat reference; **Typst** is a paginated A5 book with a
+table of contents and numbered sections (and the conscript font when set).
+
 ## Worldbuilding links
 
 Stored in `.inkhaven/conlang-links.json` (the prose books are never modified):
