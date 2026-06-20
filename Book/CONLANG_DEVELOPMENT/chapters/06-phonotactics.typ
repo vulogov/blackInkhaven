@@ -64,7 +64,9 @@ class name. This is *syllable-aware* — Inkhaven works out the coda for you:
 ```
 
 (This assumes you have declared a class named `Stop`; you can name a class for
-any group of sounds you like, just as you named `C` and `V`.)
+any group of sounds you like, just as you named `C` and `V`.) With this rule a
+word like *tak* — which ends in the stop *k* — is rejected, while *tan*, ending
+in the nasal *n*, is allowed: the stop may open a syllable but never close one.
 
 #subsection("Follow the sonority rule")
 
@@ -75,6 +77,11 @@ feels natural and *lpa-* does not. Turn on this natural tendency with:
 ```hjson
 { kind: "sonority_sequencing" }
 ```
+
+With it on, an onset *pl-* passes — the stop *p* (low sonority) rises to the
+liquid *l* (higher) and on to the vowel — but *lp-* is rejected, because it would
+*fall* from *l* down to *p* before the vowel. The rule lets your generated words
+sound pronounceable without you listing every legal cluster by hand.
 
 #term("Sonority")[
   How open and resonant a sound is. Vowels are most sonorous; then glides (w, y),

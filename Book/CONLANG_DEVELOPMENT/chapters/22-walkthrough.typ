@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 21, title: "A complete walkthrough")
+#chapter(number: 22, title: "A complete walkthrough")
 
 This chapter builds a whole small language — *Avesha* — from nothing to finished
 books, in one unbroken sequence. Follow along command by command and you will

@@ -46,8 +46,11 @@
   part(number: "VII", title: "Producing the Books"),
   include "chapters/20-the-books.typ",
 
-  part(number: "VIII", title: "A Complete Walkthrough"),
-  include "chapters/21-walkthrough.typ",
+  part(number: "VIII", title: "Sharing Your Language"),
+  include "chapters/21-interchange.typ",
+
+  part(number: "IX", title: "A Complete Walkthrough"),
+  include "chapters/22-walkthrough.typ",
 
   include "chapters/a-command-reference.typ",
   include "chapters/b-hjson-reference.typ",
