@@ -2943,6 +2943,23 @@ pub enum LanguageExportFormat {
     /// the right.  Always needs `--output
     /// <path.typ>`.
     Phrasebook,
+    /// 1.3.19 LANG-1 P6 — XLIFF 1.2 translation
+    /// interchange.  Each entry becomes a
+    /// `trans-unit` (working-language source →
+    /// invented-word target), so the lexicon loads
+    /// into CAT tools (OmegaT, memoQ, Weblate) as a
+    /// translation memory.  Streams to stdout.
+    Xliff,
+    /// 1.3.19 LANG-1 P6 — LaTeX via the `linguex`
+    /// package: bold headword + POS + gloss, with
+    /// any example sentence as a numbered `\ex.`.
+    /// Paste-ready for a paper or grammar sketch.
+    /// Streams to stdout.
+    Linguex,
+    /// 1.3.19 LANG-1 P6 — Markdown IPA inventory
+    /// chart: consonants and vowels grouped, each
+    /// with its romanization.  Streams to stdout.
+    IpaChart,
 }
 
 /// output format selector for

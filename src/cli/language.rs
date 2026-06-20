@@ -4858,6 +4858,23 @@ fn export(
             &lang_book.title,
             &sample_bodies,
         ),
+        // 1.3.19 LANG-1 P6 — interchange formats (pure renderers in
+        // conlang::interchange). XLIFF keys its source language off the
+        // project working language; the IPA chart needs the phoneme model.
+        LanguageExportFormat::Xliff => crate::conlang::interchange::xliff(
+            &lang_book.title,
+            &cfg.language,
+            &entries,
+        )
+        .into_bytes(),
+        LanguageExportFormat::Linguex => {
+            crate::conlang::interchange::linguex(&lang_book.title, &entries).into_bytes()
+        }
+        LanguageExportFormat::IpaChart => {
+            let phon =
+                load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+            crate::conlang::interchange::ipa_chart(&lang_book.title, &phon).into_bytes()
+        }
     };
 
     match (output, format) {

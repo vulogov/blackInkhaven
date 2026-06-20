@@ -296,6 +296,29 @@ books — with an **AI-drawn font** — see
 [`examples/conlang/build-sample-language.sh`](../examples/conlang/build-sample-language.sh)
 and [Tutorial 74](Tutorials/74-conlang-end-to-end.md).
 
+## Interchange (export)
+
+`inkhaven language export <lang> --format <fmt> [--out F]` writes the lexicon to
+a portable artefact:
+
+```
+inkhaven language export Avesha --format xliff   > avesha.xlf
+inkhaven language export Avesha --format linguex > avesha.tex
+inkhaven language export Avesha --format ipa-chart
+```
+
+- `json` — full structured dump (dictionary, grammar, phonology, samples).
+- `anki` / `csv` — flashcard / round-trippable CSV (the `--import` path re-ingests `csv`).
+- `dictionary-twocol` / `grammar` / `phrasebook` — printable Typst (need `--out`).
+- **`xliff`** — XLIFF 1.2 translation memory: each entry is a `trans-unit`
+  (working-language *source* → invented-word *target*), loadable into CAT tools
+  (OmegaT, memoQ, Weblate). The source language code follows the project working
+  language; the conlang gets a BCP-47 `art-x-<slug>` tag.
+- **`linguex`** — LaTeX using the `linguex` package: bold headword + POS + gloss,
+  with any example as a numbered `\ex.` — paste-ready for a paper or grammar sketch.
+- **`ipa-chart`** — Markdown IPA inventory: consonants and vowels grouped, each
+  with its romanization.
+
 ## Worldbuilding links
 
 Stored in `.inkhaven/conlang-links.json` (the prose books are never modified):
