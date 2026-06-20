@@ -7,14 +7,17 @@ alphabetical order. Italicised words within a definition have their own entry.
 
 #set par(first-line-indent: 0em)
 
-/ Affix: A morpheme attached to a root — a *prefix* (front), *suffix* (end), or infix (middle).
+/ Ablaut: Marking grammar by changing a sound *inside* the root (*sing* / *sang*), rather than adding an affix.
+/ Affix: A morpheme attached to a root — a *prefix* (front), *suffix* (end), *infix* (middle), or *circumfix* (wrapping).
 / Agent noun: A noun naming the doer of an action, derived from a verb (*teach* → *teacher*).
+/ Agreement (concord): The requirement that a dependent word copy grammatical features (number, case, …) from the head it modifies — an adjective with its noun, a verb with its subject.
 / Allophone: One of the several ways a single *phoneme* is actually pronounced, chosen by context.
 / Allophony: The system of context-dependent pronunciation variants within a language.
 / Alignment: How a language marks the subject of a sentence — *nominative–accusative* or *ergative–absolutive*.
 / API key: A secret password that lets your copy of Inkhaven use an *AI provider*.
 / Cognate: A word descended from the same ancestral word as a word in a related language (*father* / Latin *pater*).
 / Codepoint: The unique number identifying a character in the Unicode standard (written like *U+0041*).
+/ Circumfix: A single affix in two pieces wrapping the root (German *ge-…-t*).
 / Conceptual metaphor: A systematic understanding of one domain in terms of another (LIFE IS A JOURNEY).
 / Conlang: Short for *constructed language* — a language built on purpose.
 / Consonant: A sound made by obstructing the airflow (p, t, k, s, m, …).
@@ -37,6 +40,7 @@ alphabetical order. Italicised words within a definition have their own entry.
 / Homophone: A word that sounds the same as another but means something different.
 / HJSON: A relaxed, human-readable data format used to define a language's blocks.
 / Idiom: A fixed phrase whose meaning is not the sum of its words.
+/ Infix: An affix inserted inside the root rather than at an edge (Tagalog *s-um-ulat*).
 / Inflection: Changing a word's form to express grammar, without making a new word (*cat* / *cats*).
 / Interlinear gloss: A word-by-word breakdown lined up under a sentence (Leipzig glossing).
 / IPA: The International Phonetic Alphabet — one symbol per speech sound.
@@ -58,6 +62,7 @@ alphabetical order. Italicised words within a definition have their own entry.
 / Private Use Area: A range of Unicode codepoints (from *U+E000*) reserved for invented characters.
 / Proto-language: An ancestral language that later languages descend from.
 / Reconstruction: Working out an unrecorded ancestral word from its surviving descendants.
+/ Reduplication: Marking grammar by repeating part or all of the root (*buku* → *buku-buku*).
 / Register: The level of formality a word belongs to (formal, neutral, vulgar, sacred, archaic).
 / Romanization: Writing a language's sounds with the Latin alphabet.
 / Script: A system of written symbols for a language.
