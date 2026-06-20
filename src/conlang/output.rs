@@ -14,7 +14,9 @@ use std::collections::BTreeMap;
 use crate::conlang::analysis::LanguageProfile;
 use crate::conlang::types::constraint::PhonotacticConstraint;
 use crate::conlang::types::expression::Expressions;
-use crate::conlang::types::morphology::Morphology;
+use crate::conlang::types::morphology::{
+    AffixPosition, AgreementRule, MorphProcess, MorphemeSpec, Morphology,
+};
 use crate::conlang::types::stress::{StressPlacement, StressRule};
 use crate::conlang::types::template::SyllableTemplate;
 use crate::conlang::Phonology;
@@ -266,6 +268,81 @@ fn describe_stress(s: &StressRule) -> &'static str {
     }
 }
 
+/// How a morpheme is realized, for display: `prefix`/`suffix`/`infix`/
+/// `circumfix`, or the non-concatenative `ablaut`/`reduplication`.
+pub fn morpheme_kind(mo: &MorphemeSpec) -> &'static str {
+    match mo.process {
+        Some(MorphProcess::Ablaut) => "ablaut",
+        Some(MorphProcess::Reduplication) => "reduplication",
+        None => match mo.position {
+            Some(AffixPosition::Prefix) => "prefix",
+            Some(AffixPosition::Suffix) => "suffix",
+            Some(AffixPosition::Infix) => "infix",
+            Some(AffixPosition::Circumfix) => "circumfix",
+            None => "morpheme",
+        },
+    }
+}
+
+/// The realized shape of a morpheme: its `form` (affix), the SPE rule(s)
+/// (ablaut), or the copy mode (reduplication).
+pub fn morpheme_realization(mo: &MorphemeSpec) -> String {
+    match mo.process {
+        Some(MorphProcess::Ablaut) => {
+            mo.rules.iter().map(|r| r.source.clone()).collect::<Vec<_>>().join(", ")
+        }
+        Some(MorphProcess::Reduplication) => mo.reduplicate.clone().unwrap_or_else(|| "full".into()),
+        None => mo.form.clone(),
+    }
+}
+
+/// Capitalise the first letter of each word.
+fn title_case(s: &str) -> String {
+    s.split(' ')
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Describe an agreement rule in prose: "An adjective agrees with its noun in
+/// number, case."
+fn describe_agreement(a: &AgreementRule) -> String {
+    let head = if a.head.trim().is_empty() { "head".to_string() } else { a.head.clone() };
+    let feats = if a.features.is_empty() {
+        "its grammatical features".to_string()
+    } else {
+        a.features.join(", ")
+    };
+    let article = if matches!(a.dependent.chars().next(), Some('a' | 'e' | 'i' | 'o' | 'u')) {
+        "An"
+    } else {
+        "A"
+    };
+    format!("{article} {} agrees with its {head} in {feats}.", a.dependent)
+}
+
+/// Group a morphology's affixes by their grammatical `category` (case, number,
+/// tense, …), category names sorted, uncategorised ones under "general". Returns
+/// `(category, [morphemes])` pairs.
+fn morphemes_by_category(m: &Morphology) -> Vec<(String, Vec<&MorphemeSpec>)> {
+    let mut groups: BTreeMap<String, Vec<&MorphemeSpec>> = BTreeMap::new();
+    for mo in &m.morphemes {
+        let cat = if mo.category.trim().is_empty() {
+            "general".to_string()
+        } else {
+            mo.category.trim().to_lowercase()
+        };
+        groups.entry(cat).or_default().push(mo);
+    }
+    groups.into_iter().collect()
+}
+
 /// Distinct syllable patterns across all template sets, in first-seen order.
 fn syllable_patterns(phon: &Phonology) -> Vec<String> {
     let mut seen = std::collections::BTreeSet::new();
@@ -367,20 +444,38 @@ pub fn grammar_markdown(book: &GrammarBook) -> String {
         if !m.morphemes.is_empty() || !m.derivations.is_empty() {
             s.push_str("## Morphology\n\n");
             if !m.morphemes.is_empty() {
-                s.push_str("**Affixes:**\n\n");
-                for mo in &m.morphemes {
-                    s.push_str(&format!(
-                        "- **{}** `{}` — {} ({:?})\n",
-                        mo.gloss, mo.form, mo.id, mo.position
-                    ));
+                s.push_str("Affixes and processes, grouped by grammatical category:\n\n");
+                for (cat, items) in morphemes_by_category(m) {
+                    s.push_str(&format!("**{}**\n\n", title_case(&cat)));
+                    for mo in items {
+                        let value = if mo.value.trim().is_empty() {
+                            String::new()
+                        } else {
+                            format!(" *{}*", mo.value)
+                        };
+                        let real = morpheme_realization(mo);
+                        let real = if real.is_empty() { String::new() } else { format!(" `{real}`") };
+                        s.push_str(&format!(
+                            "- **{}**{value} — {}{real}\n",
+                            mo.gloss,
+                            morpheme_kind(mo),
+                        ));
+                    }
+                    s.push('\n');
                 }
-                s.push('\n');
             }
             if !m.derivations.is_empty() {
                 s.push_str("**Derivation:**\n\n");
                 for d in &m.derivations {
                     let from = d.from_pos.as_deref().unwrap_or("any");
                     s.push_str(&format!("- **{}**: {} → {} via `{}`\n", d.name, from, d.to_pos, d.form));
+                }
+                s.push('\n');
+            }
+            if !m.agreement.is_empty() {
+                s.push_str("**Agreement:**\n\n");
+                for a in &m.agreement {
+                    s.push_str(&format!("- {}\n", describe_agreement(a)));
                 }
                 s.push('\n');
             }
@@ -483,16 +578,24 @@ pub fn grammar_typst(book: &GrammarBook) -> String {
         if !m.morphemes.is_empty() || !m.derivations.is_empty() {
             s.push_str("= Morphology\n");
             if !m.morphemes.is_empty() {
-                s.push_str("*Affixes.*\n");
-                for mo in &m.morphemes {
-                    s.push_str(&format!(
-                        "/ *{}*: `{}` #emph[{}]\n",
-                        typst_text(&mo.gloss),
-                        typst_text(&mo.form),
-                        typst_text(&format!("{:?}", mo.position))
-                    ));
+                for (cat, items) in morphemes_by_category(m) {
+                    s.push_str(&format!("== {}\n", typst_text(&title_case(&cat))));
+                    for mo in items {
+                        let value = if mo.value.trim().is_empty() {
+                            String::new()
+                        } else {
+                            format!(" #text(fill: luma(110))[{}]", typst_text(&mo.value))
+                        };
+                        let real = morpheme_realization(mo);
+                        let real = if real.is_empty() { String::new() } else { format!(" `{real}`") };
+                        s.push_str(&format!(
+                            "/ *{}*{value}: {}{real}\n",
+                            typst_text(&mo.gloss),
+                            morpheme_kind(mo),
+                        ));
+                    }
+                    s.push('\n');
                 }
-                s.push('\n');
             }
             if !m.derivations.is_empty() {
                 s.push_str("*Derivation.*\n");
@@ -505,6 +608,13 @@ pub fn grammar_typst(book: &GrammarBook) -> String {
                         typst_text(&d.to_pos),
                         typst_text(&d.form)
                     ));
+                }
+                s.push('\n');
+            }
+            if !m.agreement.is_empty() {
+                s.push_str("*Agreement.*\n");
+                for a in &m.agreement {
+                    s.push_str(&format!("- {}\n", typst_text(&describe_agreement(a))));
                 }
                 s.push('\n');
             }

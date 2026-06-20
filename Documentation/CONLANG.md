@@ -62,20 +62,54 @@ Inspectors: `generate-word`, `syllabify --word`, `ipa --word` (surface),
 {
   kind: "agglutinative"
   morphemes: [
-    { id: "pl",  gloss: "PL",  form: "i",  position: "suffix" }
-    { id: "dat", gloss: "DAT", form: "d",  position: "suffix" }
-    { id: "def", gloss: "DEF", form: "na", position: "prefix" }
+    { id: "pl",  gloss: "PL",  form: "i",  position: "suffix", precedence: 2, category: "number", value: "plural" }
+    { id: "dat", gloss: "DAT", form: "d",  position: "suffix", precedence: 1, category: "case",   value: "dative" }
+    { id: "def", gloss: "DEF", form: "na", position: "prefix", category: "definiteness" }
+    // non-concatenative: an infix, a circumfix, ablaut, and reduplication
+    { id: "ag",  gloss: "AG",   form: "um", position: "infix", anchor: "before_first_vowel" }
+    { id: "ptcp", gloss: "PTCP", form: "ge_t", position: "circumfix" }   // ge_ + stem + _t
+    { id: "pst", gloss: "PST", process: "ablaut", rules: [ { rule: "i > a" } ] }
+    { id: "rdp", gloss: "INTENS", process: "reduplication", reduplicate: "initial_cv" }
   ]
   paradigms: [ { name: "noun", cells: [
     { features: { number: "sg", case: "nom" }, morphemes: [] }
     { features: { number: "pl", case: "dat" }, morphemes: ["dat", "pl"] }
   ] } ]
+  agreement: [
+    { dependent: "adjective", head: "noun", features: ["number", "case"], paradigm: "adj" }
+  ]
 }
 ```
 
 `inkhaven language paradigm <lang> --root kata --template noun --gloss stone`
 applies each cell's morphemes to the root, runs allophony across the affix
-boundaries, and prints the form + Leipzig gloss. (P3.1 covers prefix + suffix.)
+boundaries, and prints the form + Leipzig gloss.
+
+**Affix types.** A morpheme is either a concatenative affix at a `position`
+(`prefix` | `suffix` | `infix` | `circumfix`) or a non-concatenative `process`:
+- **infix** — inserted inside the stem; `anchor` is `before_first_vowel` (the
+  default, i.e. after the first consonant — `sulat` → `s‑um‑ulat`) or
+  `after_first_vowel`.
+- **circumfix** — wraps the stem; `form` uses `_` for the stem slot (`ge_t` →
+  `ge` + stem + `t`).
+- **ablaut** — `process: "ablaut"` with SPE `rules` applied inside the stem
+  (`kit` + `i > a` → `kat`).
+- **reduplication** — `process: "reduplication"` with `reduplicate`: `full` |
+  `initial_cv` | `initial_syllable` | `final_syllable` (`kata` → `kakata`).
+
+**`precedence`** controls how close a stacked affix sits to the root: `0` (the
+default) = any position (declared order kept); `1` = next to the root; `2` = the
+next slot out; … — so `kata` + DAT(1) + PL(2) → `katadi`, `stone-DAT-PL`,
+regardless of cell order.
+
+**`category` / `value`** (`number` / `plural`, `case` / `dative`) tag a morpheme
+for the reference grammar, which groups affixes by category.
+
+**Agreement (concord).** `agreement` rules make a `dependent` part of speech
+copy `features` from its `head`, realised through a named `paradigm`:
+`inkhaven language agree <lang> --word mira --pos adjective --gloss bright
+--features "number=pl,case=nom"` inflects the adjective to agree (`mira` →
+`mirai`, `bright-PL`).
 
 **Auto-gloss.** A dictionary entry can declare the paradigm it inflects by
 (`paradigm: "noun"`); then `inkhaven language gloss <lang> --text "kata katai
