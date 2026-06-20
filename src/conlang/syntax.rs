@@ -31,7 +31,7 @@ pub struct NounPhrase {
 }
 
 /// A clause to assemble. The object is optional (intransitive when absent).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Clause {
     pub subject: Option<NounPhrase>,
     pub verb: Option<Word>,
@@ -41,6 +41,17 @@ pub struct Clause {
     /// Paradigm names for nouns and verbs (defaults `noun` / `verb`).
     pub noun_paradigm: String,
     pub verb_paradigm: String,
+    /// Negate the clause, realized per the `negation` typology strategy.
+    pub negated: bool,
+    /// The negative element when the language has one (glossed `NEG`): a
+    /// particle/auxiliary sits before the verb, an affix fuses onto it. `None`
+    /// → negation shows only in the gloss, never as an invented word.
+    pub negator: Option<Word>,
+    /// Make it a polar (yes/no) question, realized per the `question` typology
+    /// strategy (particle / inversion / intonation / morphology).
+    pub question: bool,
+    /// The question particle when the language uses one (glossed `Q`).
+    pub question_particle: Option<Word>,
 }
 
 /// The assembled clause.
@@ -113,24 +124,42 @@ pub fn assemble(
 
     let subject = clause.subject.as_ref().map(|np| render_np(np, subj_case.as_deref()));
     let object = clause.object.as_ref().map(|np| render_np(np, obj_case.as_deref()));
+    let neg_strategy = typology.get("negation").map(String::as_str).unwrap_or("particle");
+    let q_strategy = typology.get("question").map(String::as_str).unwrap_or("particle");
     let verb = clause.verb.as_ref().map(|v| {
         // The verb agrees with its subject in person + number, when a rule says so.
-        if let (Some(rule), Some(subj)) = (morph.agreement_for("verb"), &clause.subject) {
+        let mut vw = if let (Some(rule), Some(subj)) = (morph.agreement_for("verb"), &clause.subject)
+        {
             let mut head: BTreeMap<String, String> = BTreeMap::new();
             head.insert("person".into(), clause.verb_person.clone());
             head.insert("number".into(), subj.number.clone());
-            if let Some(a) = crate::conlang::morphology::agreement::agree(
-                phon, morph, rule, &v.root, &v.gloss, &head,
-            ) {
-                return vec![(a.form, a.gloss)];
+            crate::conlang::morphology::agreement::agree(phon, morph, rule, &v.root, &v.gloss, &head)
+                .map(|a| vec![(a.form, a.gloss)])
+                .unwrap_or_else(|| vec![inflect(phon, morph, &clause.verb_paradigm, v, &BTreeMap::new())])
+        } else {
+            vec![inflect(phon, morph, &clause.verb_paradigm, v, &BTreeMap::new())]
+        };
+        // Negation attaches to the verb: a particle/auxiliary as a separate word
+        // before it, an affix fused onto its form. With no negator form, mark
+        // only the gloss — never coin a word.
+        if clause.negated {
+            apply_negation(&mut vw, neg_strategy, clause.negator.as_ref());
+        }
+        // Morphological question marking tags the verb (an interrogative affix).
+        if clause.question && q_strategy == "morphology" {
+            if let Some(first) = vw.first_mut() {
+                first.1 = format!("{}.Q", first.1);
             }
         }
-        vec![inflect(phon, morph, &clause.verb_paradigm, v, &BTreeMap::new())]
+        vw
     });
 
-    // Order the constituents by the language's word order.
+    // Word order: a `word_order`-strategy question fronts the verb (inversion);
+    // otherwise the language's declared order.
+    let invert = clause.question && q_strategy == "word_order";
+    let order_roles = if invert { front_verb(order) } else { word_order(order) };
     let mut words: Vec<(String, String)> = Vec::new();
-    for role in word_order(order) {
+    for role in order_roles {
         let part = match role {
             Role::Subject => &subject,
             Role::Verb => &verb,
@@ -141,9 +170,58 @@ pub fn assemble(
         }
     }
 
-    let surface = words.iter().map(|(w, _)| w.as_str()).collect::<Vec<_>>().join(" ");
+    // A question particle sits at the clause edge.
+    if clause.question && q_strategy == "particle" {
+        if let Some(qp) = &clause.question_particle {
+            words.push((qp.root.clone(), "Q".into()));
+        }
+    }
+
+    let mut surface = words.iter().map(|(w, _)| w.as_str()).collect::<Vec<_>>().join(" ");
+    if clause.question {
+        surface.push('?');
+    }
     let literal = literal_english(clause);
     RenderedClause { words, surface, literal }
+}
+
+/// Attach negation to the rendered verb words. `particle`/`auxiliary` insert a
+/// separate negator word before the verb; `affix` fuses the negator onto the
+/// verb form. Without a negator form, only the gloss is marked (`NEG`/`.NEG`),
+/// so a language with no declared negator still reads as negated without an
+/// invented word.
+fn apply_negation(verb: &mut Vec<(String, String)>, strategy: &str, negator: Option<&Word>) {
+    match strategy {
+        "affix" => match (verb.first_mut(), negator) {
+            (Some(first), Some(neg)) => {
+                first.0 = format!("{}{}", neg.root, first.0);
+                first.1 = format!("NEG-{}", first.1);
+            }
+            (Some(first), None) => first.1 = format!("{}.NEG", first.1),
+            (None, _) => {}
+        },
+        // particle / auxiliary / anything else
+        _ => match negator {
+            Some(neg) => verb.insert(0, (neg.root.clone(), "NEG".into())),
+            None => {
+                if let Some(first) = verb.first_mut() {
+                    first.1 = format!("NEG {}", first.1);
+                }
+            }
+        },
+    }
+}
+
+/// Role order with the verb fronted (inversion), preserving the relative order
+/// of the remaining constituents.
+fn front_verb(code: &str) -> Vec<Role> {
+    let mut out = vec![Role::Verb];
+    for r in word_order(code) {
+        if r != Role::Verb {
+            out.push(r);
+        }
+    }
+    out
 }
 
 /// Inflect a word to the wanted features through a named paradigm. Falls back
@@ -266,12 +344,21 @@ fn literal_english(clause: &Clause) -> String {
         parts.push(np(s));
     }
     if let Some(v) = &clause.verb {
-        parts.push(v.gloss.clone());
+        // "does not <verb>" reads more naturally than a bare "not".
+        if clause.negated {
+            parts.push(format!("does not {}", v.gloss));
+        } else {
+            parts.push(v.gloss.clone());
+        }
     }
     if let Some(o) = &clause.object {
         parts.push(np(o));
     }
-    parts.join(" ")
+    let mut s = parts.join(" ");
+    if clause.question {
+        s.push('?');
+    }
+    s
 }
 
 #[cfg(test)]
@@ -315,6 +402,7 @@ mod tests {
             object: Some(NounPhrase { head: Word { root: "pata".into(), gloss: "stone".into() }, number: "sg".into(), adjective: None }),
             noun_paradigm: "noun".into(),
             verb_paradigm: "verb".into(),
+            ..Default::default()
         }
     }
 
@@ -347,6 +435,73 @@ mod tests {
         let r = assemble(&phon(), &morph(), &t, &c);
         // The object's adjective takes accusative too: "miran patan".
         assert!(r.surface.contains("miran patan"), "got: {}", r.surface);
+    }
+
+    #[test]
+    fn negation_particle_sits_before_the_verb() {
+        let mut c = clause();
+        c.negated = true;
+        c.negator = Some(Word { root: "na".into(), gloss: "not".into() });
+        let mut t = BTreeMap::new();
+        t.insert("word_order".to_string(), "svo".to_string());
+        t.insert("negation".to_string(), "particle".to_string());
+        let r = assemble(&phon(), &morph(), &t, &c);
+        // S, then the negator before V, then O: "kira na nami patan".
+        assert_eq!(r.surface, "kira na nami patan");
+        assert!(r.words.iter().any(|(_, g)| g == "NEG"));
+        assert!(r.literal.contains("does not see"));
+    }
+
+    #[test]
+    fn negation_affix_fuses_onto_the_verb() {
+        let mut c = clause();
+        c.negated = true;
+        c.negator = Some(Word { root: "na".into(), gloss: "not".into() });
+        let mut t = BTreeMap::new();
+        t.insert("word_order".to_string(), "svo".to_string());
+        t.insert("negation".to_string(), "affix".to_string());
+        let r = assemble(&phon(), &morph(), &t, &c);
+        // The negator prefixes the verb form: "nanami", glossed NEG-see.
+        assert_eq!(r.surface, "kira nanami patan");
+        assert!(r.words.iter().any(|(f, g)| f == "nanami" && g == "NEG-see"));
+    }
+
+    #[test]
+    fn negation_without_a_form_marks_only_the_gloss() {
+        let mut c = clause();
+        c.negated = true; // no negator supplied
+        let mut t = BTreeMap::new();
+        t.insert("word_order".to_string(), "svo".to_string());
+        let r = assemble(&phon(), &morph(), &t, &c);
+        // Surface unchanged; the verb gloss carries NEG, no invented word.
+        assert_eq!(r.surface, "kira nami patan");
+        assert!(r.words.iter().any(|(_, g)| g.contains("NEG")));
+    }
+
+    #[test]
+    fn question_particle_lands_at_the_clause_edge() {
+        let mut c = clause();
+        c.question = true;
+        c.question_particle = Some(Word { root: "ka".into(), gloss: "Q".into() });
+        let mut t = BTreeMap::new();
+        t.insert("word_order".to_string(), "sov".to_string());
+        t.insert("question".to_string(), "particle".to_string());
+        let r = assemble(&phon(), &morph(), &t, &c);
+        // SOV then the Q particle, and a surface "?".
+        assert_eq!(r.surface, "kira patan nami ka?");
+        assert_eq!(r.words.last().unwrap().1, "Q");
+    }
+
+    #[test]
+    fn question_word_order_fronts_the_verb() {
+        let mut c = clause();
+        c.question = true;
+        let mut t = BTreeMap::new();
+        t.insert("word_order".to_string(), "svo".to_string());
+        t.insert("question".to_string(), "word_order".to_string());
+        let r = assemble(&phon(), &morph(), &t, &c);
+        // Inversion: V fronted → "nami kira patan?".
+        assert_eq!(r.surface, "nami kira patan?");
     }
 
     #[test]

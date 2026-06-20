@@ -2883,6 +2883,26 @@ pub enum LanguageCommand {
         /// Paradigm used to inflect verbs.
         #[arg(long, default_value = "verb")]
         verb_paradigm: String,
+        /// 1.3.19 — negate the clause (realized per the
+        /// `negation` typology: particle / affix /
+        /// auxiliary).  Supply the negative word with
+        /// `--negator`, else only the gloss is marked.
+        #[arg(long)]
+        negate: bool,
+        /// The negative word/affix (`na` or `na:not`),
+        /// when the language has one.
+        #[arg(long)]
+        negator: Option<String>,
+        /// 1.3.19 — make it a polar (yes/no) question
+        /// (realized per the `question` typology:
+        /// particle / inversion / intonation /
+        /// morphology).
+        #[arg(long)]
+        question: bool,
+        /// The question particle (`ka` or `ka:Q`), when
+        /// the language uses one.
+        #[arg(long)]
+        q_particle: Option<String>,
     },
 
     /// LANG-1 P3.x — apply **agreement** (concord): inflect a dependent word

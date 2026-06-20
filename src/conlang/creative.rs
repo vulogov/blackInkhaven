@@ -123,6 +123,7 @@ pub fn prose(
             }),
             noun_paradigm: "noun".into(),
             verb_paradigm: "verb".into(),
+            ..Default::default()
         };
         let r = syntax::assemble(phon, morph, typology, &clause);
         if !r.words.is_empty() {

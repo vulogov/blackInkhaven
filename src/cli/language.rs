@@ -174,6 +174,10 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             object_adj,
             noun_paradigm,
             verb_paradigm,
+            negate,
+            negator,
+            question,
+            q_particle,
         } => sentence(
             project,
             &language,
@@ -187,6 +191,10 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             object_adj.as_deref(),
             &noun_paradigm,
             &verb_paradigm,
+            negate,
+            negator.as_deref(),
+            question,
+            q_particle.as_deref(),
         ),
         LanguageCommand::Agree {
             language,
@@ -2003,6 +2011,10 @@ fn sentence(
     object_adj: Option<&str>,
     noun_paradigm: &str,
     verb_paradigm: &str,
+    negate: bool,
+    negator: Option<&str>,
+    question: bool,
+    q_particle: Option<&str>,
 ) -> Result<()> {
     use crate::conlang::syntax::{self, Clause, NounPhrase};
 
@@ -2032,6 +2044,10 @@ fn sentence(
         object: np(object, object_number, object_adj),
         noun_paradigm: noun_paradigm.to_string(),
         verb_paradigm: verb_paradigm.to_string(),
+        negated: negate,
+        negator: negator.map(parse_word),
+        question,
+        question_particle: q_particle.map(parse_word),
     };
 
     let rendered = syntax::assemble(&phon, &morph, &grammar_spec.grammar, &clause);
@@ -3151,6 +3167,7 @@ fn build_example_sentence(
         object: nouns.get(1).map(|o| NounPhrase { head: w(o), number: "sg".into(), adjective: None }),
         noun_paradigm: "noun".into(),
         verb_paradigm: "verb".into(),
+        ..Default::default()
     };
     let r = syntax::assemble(phon, morph, typology, &clause);
     if r.words.is_empty() {
