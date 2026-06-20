@@ -34,30 +34,33 @@ pub fn generate(
         .cells
         .iter()
         .map(|cell| {
-            let mut prefix = String::new();
-            let mut suffix = String::new();
-            let mut pre_gloss: Vec<String> = Vec::new();
-            let mut suf_gloss: Vec<String> = Vec::new();
-
+            // Split the cell's affixes by side, then order each by `precedence`
+            // (closeness to the root). `0` ("any") sorts outermost, and the
+            // stable sort preserves the declared order among equals — so a
+            // paradigm that sets no precedence keeps its old order exactly.
+            let key = |p: u8| if p == 0 { u32::MAX } else { p as u32 };
+            let mut prefixes = Vec::new();
+            let mut suffixes = Vec::new();
             for mid in &cell.morphemes {
                 let Some(m) = morph.morpheme(mid) else { continue };
                 match m.position {
-                    AffixPosition::Prefix => {
-                        prefix.push_str(&m.form);
-                        if !m.gloss.is_empty() {
-                            pre_gloss.push(m.gloss.clone());
-                        }
-                    }
-                    AffixPosition::Suffix => {
-                        suffix.push_str(&m.form);
-                        if !m.gloss.is_empty() {
-                            suf_gloss.push(m.gloss.clone());
-                        }
-                    }
+                    AffixPosition::Prefix => prefixes.push(m),
+                    AffixPosition::Suffix => suffixes.push(m),
                     // Infix / circumfix land in a later P3 increment.
                     _ => {}
                 }
             }
+            // Suffixes: root-adjacent (lowest key) first, read left-to-right.
+            suffixes.sort_by_key(|m| key(m.precedence));
+            // Prefixes: outermost (highest key) first, read left-to-right.
+            prefixes.sort_by_key(|m| std::cmp::Reverse(key(m.precedence)));
+
+            let prefix: String = prefixes.iter().map(|m| m.form.as_str()).collect();
+            let suffix: String = suffixes.iter().map(|m| m.form.as_str()).collect();
+            let pre_gloss: Vec<String> =
+                prefixes.iter().filter(|m| !m.gloss.is_empty()).map(|m| m.gloss.clone()).collect();
+            let suf_gloss: Vec<String> =
+                suffixes.iter().filter(|m| !m.gloss.is_empty()).map(|m| m.gloss.clone()).collect();
 
             let underlying = format!("{prefix}{root}{suffix}");
             let surface = allophony_eval::surface_form(phon, &phon.segment(&underlying));
@@ -143,6 +146,45 @@ mod tests {
         let rows = generate(&p, &m, t, "kata", "stone");
         let dat = rows.iter().find(|r| r.gloss == "stone-DAT").unwrap();
         assert_eq!(dat.form, "katat");
+    }
+
+    #[test]
+    fn precedence_orders_stacked_suffixes() {
+        // Two suffixes stacked; precedence puts the case suffix (1) next to the
+        // root and the number suffix (2) outside it, regardless of cell order.
+        let p = phon();
+        let body = r#"{
+            morphemes: [
+                { id: "pl",  gloss: "PL",  form: "i", position: "suffix", precedence: 2 }
+                { id: "dat", gloss: "DAT", form: "n", position: "suffix", precedence: 1 }
+            ]
+            paradigms: [ { name: "noun", cells: [
+                { features: {}, morphemes: ["pl", "dat"] }
+            ] } ]
+        }"#;
+        let m = Morphology::from_hjson(body).unwrap().unwrap();
+        let rows = generate(&p, &m, m.paradigm("noun").unwrap(), "kata", "stone");
+        // DAT (prec 1) hugs the root, PL (prec 2) sits outside it.
+        assert_eq!(rows[0].form, "katani");
+        assert_eq!(rows[0].gloss, "stone-DAT-PL");
+    }
+
+    #[test]
+    fn no_precedence_keeps_declared_order() {
+        // Backward compatibility: without precedence, declared cell order wins.
+        let p = phon();
+        let m = morph();
+        let t = ParadigmTemplate {
+            name: "x".into(),
+            cells: vec![crate::conlang::types::morphology::ParadigmCell {
+                features: BTreeMap::new(),
+                morphemes: vec!["dat".into(), "pl".into()],
+            }],
+        };
+        let rows = generate(&p, &m, &t, "kata", "stone");
+        // declared dat, pl → "kata" + "d" + "i" = "katadi", gloss stone-DAT-PL.
+        assert_eq!(rows[0].gloss, "stone-DAT-PL");
+        assert_eq!(rows[0].form, "katadi");
     }
 
     #[test]
