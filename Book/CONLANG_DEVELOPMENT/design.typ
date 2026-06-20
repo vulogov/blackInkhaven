@@ -15,6 +15,8 @@
 #let ink_faint   = rgb("#9a9a9a")
 #let ink_rule    = rgb("#c6c0b5")
 #let ink_accent  = rgb("#7a4a2f")            // burnt sienna — chapter numbers
+#let ink_smoke   = rgb("#7d736a")            // muted brown — cover eyebrow
+#let ink_paper   = rgb("#fdfaf3")            // warm cream — cover ground
 #let ink_term    = rgb("#2f5d7a")            // slate blue — term definitions
 #let ink_code_bg = rgb("#f3eee4")
 #let ink_call_bg = rgb("#f6f1e6")
@@ -102,6 +104,7 @@
     inset: (left: 9pt, right: 9pt, top: 7pt, bottom: 7pt),
     width: 100%,
     radius: 1pt,
+    breakable: false,
     {
       text(font: body_family, size: 8pt, weight: "bold", fill: ink_term, tracking: 1pt, "TERM")
       h(6pt)
@@ -122,6 +125,7 @@
     inset: (left: 9pt, right: 9pt, top: 7pt, bottom: 7pt),
     width: 100%,
     radius: 1pt,
+    breakable: false,
     {
       text(font: body_family, size: 8pt, weight: "bold", fill: ink_accent, tracking: 1.5pt, upper(label))
       v(2mm)
@@ -140,6 +144,7 @@
     inset: (left: 9pt, right: 9pt, top: 8pt, bottom: 8pt),
     width: 100%,
     radius: 1pt,
+    breakable: false,
     {
       text(font: body_family, size: 9pt, weight: "bold", fill: ink_accent, tracking: 1.5pt, "WHAT YOU LEARNED")
       v(2mm)
@@ -162,25 +167,46 @@
     text(font: mono_family, size: 9.5pt, it),
   )
 
-  // Front matter — cover and contents — has no header or page number.
-  set page(paper: book_page.paper, margin: book_page.margin, numbering: none, header: none)
-
-  // Cover — kept comfortably shorter than the page so nothing spills.
-  v(1.8cm)
-  align(center)[
-    #image("logo_black.png", width: 40%)
-    #v(8mm)
-    #text(font: body_family, size: 25pt, weight: "bold", fill: ink_black, book_title)
-    #v(4mm)
-    #text(font: body_family, size: 13pt, style: "italic", fill: ink_gray, book_subtitle)
-    #v(10mm)
-    #text(font: body_family, size: 10.5pt, fill: ink_gray, "A complete guide to the Inkhaven ConLang Suite")
-    #v(2mm)
-    #text(font: body_family, size: 9pt, fill: ink_faint, book_author + " · " + book_year + " · examples assume Inkhaven 1.3.17+")
+  // ── Cover — typographic, in the manual's style (warm cream ground,
+  //    burnt-sienna double-rule frame, an ornament row, a heavy serif title).
+  //    Built with `place()` so nothing spills to a second page. ───────────
+  set page(paper: book_page.paper, margin: 0pt, numbering: none, header: none, fill: ink_paper)
+  block(width: 100%, height: 100%)[
+    // Two-rule inner border.
+    #place(top + left, dx: 12mm, dy: 12mm,
+      rect(width: 100% - 24mm, height: 100% - 24mm, stroke: 1pt + ink_accent))
+    #place(top + left, dx: 14mm, dy: 14mm,
+      rect(width: 100% - 28mm, height: 100% - 28mm, stroke: 0.4pt + ink_accent))
+    // Ornament row of inked dots.
+    #place(top + center, dy: 34mm, {
+      let dot(dx, r) = place(top + center, dx: dx, dy: 0pt, circle(radius: r, fill: ink_accent))
+      dot(-18mm, 1.6mm); dot(-9mm, 1.1mm); dot(0mm, 2.2mm); dot(9mm, 1.1mm); dot(18mm, 1.6mm)
+    })
+    // Title block — justify OFF (so the title isn't stretched into the frame)
+    // and a comfortable inset from the border rules.
+    #place(top + center, dy: 64mm, block(width: 70%)[
+      #set par(justify: false)
+      #align(center)[
+        #text(font: body_family, size: 12pt, tracking: 4pt, fill: ink_smoke, upper("Conlanging with Inkhaven"))
+        #v(11mm)
+        #text(font: body_family, size: 27pt, weight: "bold", fill: ink_black, book_title)
+        #v(6mm)
+        #line(length: 55%, stroke: 0.6pt + ink_accent)
+        #v(6mm)
+        #text(font: body_family, size: 13.5pt, style: "italic", fill: ink_smoke, book_subtitle)
+      ]
+    ])
+    // Foot — author, year, version.
+    #place(bottom + center, dy: -30mm, align(center)[
+      #text(font: body_family, size: 10pt, fill: ink_smoke, book_author)
+      #v(2mm)
+      #text(font: body_family, size: 9pt, fill: ink_smoke, book_year + " · examples assume Inkhaven 1.3.17 or newer")
+    ])
   ]
   pagebreak()
 
-  // Contents.
+  // Contents — back to plain paper.
+  set page(margin: book_page.margin, fill: white)
   text(font: body_family, size: 22pt, weight: "bold", fill: ink_black, "Contents")
   v(7mm)
   outline(title: none, indent: auto, depth: 2)
