@@ -41,11 +41,26 @@ if [[ ! -d "$PROJ/.inkhaven" ]]; then
 fi
 cd "$PROJ"
 mkdir -p "$ART"
-"$INK" language init "$LANG_NAME" >/dev/null 2>&1 || true
 
-phon_dir="books/language/$slug/04-phonology"
-gram_dir="books/language/$slug/03-grammar"
-samp_dir="books/language/$slug/05-sample-texts"
+# Scaffold the language book (idempotent: tolerate "already exists", but let any
+# other failure surface instead of masking it).
+if [[ ! -d "books/language/$slug" ]]; then
+  "$INK" language init "$LANG_NAME" >/dev/null
+fi
+
+# Discover the chapter directories by name rather than assuming a fixed numeric
+# prefix (the scaffold's numbering can vary between versions).
+find_chapter() { find "books/language/$slug" -maxdepth 1 -type d -iname "*$1*" 2>/dev/null | head -1; }
+phon_dir="$(find_chapter phonolog)"
+gram_dir="$(find_chapter grammar)"
+samp_dir="$(find_chapter sample)"
+if [[ -z "$phon_dir" || -z "$gram_dir" || -z "$samp_dir" ]]; then
+  echo "error: could not find the language chapters under books/language/$slug" >&2
+  echo "       found:" >&2
+  ls -1 "books/language/$slug" 2>/dev/null | sed 's/^/         /' >&2 || echo "         (nothing)" >&2
+  echo "       Make sure '$INK' is inkhaven 1.3.14+ and re-run 'inkhaven language init $LANG_NAME'." >&2
+  exit 1
+fi
 
 # ── 2. Phonology ─────────────────────────────────────────────────────────────
 # Inventory, syllable templates, phonotactics, allophony, stress.
