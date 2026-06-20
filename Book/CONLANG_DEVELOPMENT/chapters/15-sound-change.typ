@@ -29,7 +29,7 @@ becomes most rewarding.
 
 Here is a piece of good news: a historical sound change is written *exactly* like
 an allophony rule (Chapter 7). The same `target > result / left _ right` notation
-applies. The only difference is in the telling — allophony is variation happening
+— *SPE notation* — applies. The only difference is in the telling — allophony is variation happening
 *now*, within one language; a sound change is a shift that happened *over
 generations*, turning a parent language into a child.
 

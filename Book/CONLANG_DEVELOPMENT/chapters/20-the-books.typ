@@ -96,35 +96,14 @@ language, rather than look things up in it.
   on the shelf.
 ]
 
-#section("Sharing your lexicon with other tools")
+#section("Beyond the books")
 
-Your language need not live only inside Inkhaven. The `export` command writes the
-lexicon to portable formats:
-
-```sh
-inkhaven language export Eldar --format xliff     > eldar.xlf
-inkhaven language export Eldar --format linguex   > eldar.tex
-inkhaven language export Eldar --format ipa-chart
-```
-
-- *xliff* is a translation-memory file that loads into computer-assisted
-  translation tools (OmegaT, memoQ, Weblate), with each entry as a
-  working-language → invented-word pair.
-- *linguex* is LaTeX for the `linguex` package — bold headwords with glosses and
-  numbered examples, ready to drop into a paper or grammar sketch.
-- *ipa-chart* is a Markdown inventory of your sounds.
-
-(The older `json`, `anki`, and `csv` formats are still there for flashcards and
-spreadsheets.) Going the other way, `import` pulls a lexicon *in* from another
-tool — Toolbox / Lexique Pro Standard-Format databases, or a PolyGlot dictionary:
-
-```sh
-inkhaven language import Eldar --file lexicon.sfm --format toolbox        # preview
-inkhaven language import Eldar --file lexicon.sfm --format toolbox --yes  # write
-```
-
-Import previews what it would add and writes nothing until you pass `--yes`, so
-you always see the entries before they land in your Dictionary.
+The books are not the only thing your language data can become. It can also leave
+Inkhaven entirely — as a flashcard deck, a LaTeX paper, or a translation-memory
+file for other tools — and other people's lexicons can come *in*. That whole
+subject, and the formats linguists and conlangers use, has its own chapter next
+(#emph[Sharing your language]). What follows here is the one remaining thing the
+language data can produce on its own: creative text.
 
 #section("Creative text: names, verse, and ritual")
 
@@ -153,8 +132,8 @@ printed for you to keep or discard; nothing is written into your books.
   [`--font Eldar` embeds your script; dictionary and grammar are *deterministic*.],
   [`grammar-book --study` and `tutorial` are *AI-written* teaching materials (need
    a provider).],
-  [`export` writes your lexicon to *xliff*, *linguex*, *ipa-chart* (and json /
-   anki / csv); `import` reads Toolbox/Lexique and PolyGlot back in.],
   [`compose` generates names, prose, and verse — grounded, deterministic, with
    AI-composed blessings/curses constrained to your lexicon.],
+  [Moving the lexicon *out of* and *into* Inkhaven (export / import) has its own
+   chapter next.],
 ))

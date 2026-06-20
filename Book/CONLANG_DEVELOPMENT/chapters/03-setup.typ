@@ -23,8 +23,9 @@ page. To check it worked, run:
 inkhaven --version
 ```
 
-You should see a version number of `1.3.17` or newer (this book's examples assume
-that release). If the command is not found, make sure the install location is on
+You should see a version number of `1.3.19` or newer (this book's examples assume
+that release — the syntax, interchange, and `compose` features in later chapters
+arrived in it). If the command is not found, make sure the install location is on
 your system's `PATH`; the install step prints where it placed the program.
 
 #section("2. Create a project")
@@ -86,8 +87,9 @@ things in `[ … ]` are lists.
 ]
 
 On disk, each chapter of your language is a folder of small text files. To add a
-phonology block, for example, you create a text file in the Phonology chapter's
-folder and paste the block in. The chapters live under your project at:
+phonology block, for example, you create a text file — name it anything ending in
+`.typ`, say `inventory.typ` — in the Phonology chapter's folder and paste the
+block in. The chapters live under your project at:
 
 ```text
 books/language/<your-language>/04-phonology/
@@ -129,9 +131,12 @@ named value your terminal holds. For DeepSeek, for instance:
 export DEEPSEEK_API_KEY="your-secret-key-here"
 ```
 
-Then, on any command that uses AI, you select the provider with `--provider
-deepseek`. Other providers work the same way with their own key names. That is
-all the setup AI needs; we will use it sparingly and always say when.
+An `export` like this lasts only for the *current* terminal session — open a new
+window and you would set it again. To make it permanent, add the same line to
+your shell's start-up file (`~/.zshrc`, `~/.bashrc`, or the equivalent). Then, on
+any command that uses AI, you select the provider with `--provider deepseek`.
+Other providers work the same way with their own key names. That is all the setup
+AI needs; we will use it sparingly and always say when.
 
 #recap((
   [Install with `cargo install inkhaven`; check with `inkhaven --version`.],

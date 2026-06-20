@@ -45,10 +45,11 @@ begin with `--` are *options* that fine-tune what happens.
 #section("Where your language lives")
 
 Inside an Inkhaven project, your work is organised into *books* — not printed
-books, but containers for related material. There is a special built-in one
-called the *Language* book, and each language you create becomes a sub-book
-inside it. When you create a language, Inkhaven sets up five *chapters* inside
-its book, each holding one kind of information:
+books, but containers for related material. Books can nest, and a book inside
+another is a *sub-book*. There is a special built-in one called the *Language*
+book, and each language you create becomes a sub-book inside it. When you create a
+language, Inkhaven sets up five *chapters* inside its sub-book, each holding one
+kind of information:
 
 #term("The Language book")[
   Inkhaven's home for constructed languages. Creating a language with `inkhaven

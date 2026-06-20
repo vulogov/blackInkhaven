@@ -36,6 +36,10 @@ The built-in templates are `lr` (left/right), `tb` (top/bottom), `quad` (a 2×2
 grid), and `stack3` (three rows). This *bakes* the two components into a single
 new glyph — a precomposed block — that lives in the font alongside its parts.
 
+(The example binds the block to `U+AC00`, the real Hangul syllable *가*, because
+it is modelling a real script. For an invented script, give it a *Private Use
+Area* codepoint instead, exactly as in the previous chapter.)
+
 #section("Layout-time arrangement")
 
 Baking every possible block into the font works for a script with a fixed set of
