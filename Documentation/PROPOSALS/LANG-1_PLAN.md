@@ -330,7 +330,23 @@ releases as they complete.
 > is preflighted and previewed (printed or `--out`). Advisory per
 > [[feedback-ai-advisory]]: only `--yes` *and* a usable result binds it, reusing
 > P5.4's `bind_glyph_text`. Refactored `font-import-glyph` onto that shared
-> core. Next: Hangul precompose, hieroglyphic Typst-layout, input methods.
+> core.
+>
+> **P5.6 (shipped)** — composed blocks (Hangul-style syllable squares,
+> quadrats), binding-time A: **font-build precompose**. The shared engine —
+> `conlang::types::spatial::SpatialTemplate` (named cells, each a normalized
+> rect in the em; built-ins `lr`/`tb`/`quad`/`stack3` + config `templates`) and
+> `conlang::writing::compose::compose_block` — places a component glyph into
+> each cell by wrapping it in a `<g transform>` that scales its viewBox into the
+> rect, emitting ONE composite SVG; `svg_to_contours` folds the group transforms
+> into each path's abs-transform, so a block flows through the existing preflight
+> → UFO → TTF pipeline as a glyph with more contours. `language font-templates`
+> lists templates; `font-compose <lang> --template <t> --name <n> [--codepoint]
+> [--phoneme] --slot SLOT=GLYPH… [--out] [--yes]` composes + (advisory) binds it
+> like `font-import-glyph`. Baked at compose time. Verified e2e: two component
+> bars → an `lr` block at U+AC00 compiling to a 2-contour glyph (left + right
+> halves), fontTools re-save passes. The SAME `SpatialTemplate` will drive
+> binding-time B (layout-time Typst quadrats) next, with input methods.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the

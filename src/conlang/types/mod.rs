@@ -14,6 +14,7 @@ pub mod grammar;
 pub mod morphology;
 pub mod phoneme;
 pub mod romanization;
+pub mod spatial;
 pub mod stress;
 pub mod template;
 pub mod tone;
