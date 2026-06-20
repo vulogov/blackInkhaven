@@ -544,6 +544,167 @@ pub fn grammar_typst(book: &GrammarBook) -> String {
     s
 }
 
+// ─────────────────────────── tutorial ───────────────────────────
+
+/// A learner-facing graded walkthrough of a language.
+pub struct TutorialBook<'a> {
+    pub language: &'a str,
+    pub font_family: Option<&'a str>,
+    pub consonants: &'a [String],
+    pub vowels: &'a [String],
+    /// A handful of starter words.
+    pub first_words: &'a [RenderEntry],
+    pub word_order: Option<&'a str>,
+    /// A worked paradigm: the root and its inflected forms `(form, gloss)`.
+    pub paradigm: Option<(&'a str, &'a [(String, String)])>,
+    /// A sample sentence and its word-by-word gloss.
+    pub sample: Option<(&'a str, &'a str)>,
+}
+
+fn word_order_prose(code: &str) -> String {
+    let expand = |c: &str| match c.to_ascii_uppercase().as_str() {
+        "SOV" => "subject–object–verb",
+        "SVO" => "subject–verb–object",
+        "VSO" => "verb–subject–object",
+        "VOS" => "verb–object–subject",
+        "OSV" => "object–subject–verb",
+        "OVS" => "object–verb–subject",
+        _ => "",
+    };
+    let long = expand(code);
+    if long.is_empty() {
+        code.to_uppercase()
+    } else {
+        format!("{} ({long})", code.to_uppercase())
+    }
+}
+
+/// Render the tutorial as Markdown.
+pub fn tutorial_markdown(t: &TutorialBook) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("# Learn {}\n\n", t.language));
+    s.push_str(&format!(
+        "A first walk through {} — its sounds, a starter vocabulary, how words \
+         combine, and a sentence to read. Work top to bottom.\n\n",
+        t.language
+    ));
+
+    s.push_str("## 1. The sounds\n\n");
+    if !t.consonants.is_empty() {
+        s.push_str(&format!("**Consonants:** {}\n\n", t.consonants.join(" · ")));
+    }
+    if !t.vowels.is_empty() {
+        s.push_str(&format!("**Vowels:** {}\n\n", t.vowels.join(" · ")));
+    }
+
+    s.push_str("## 2. Your first words\n\n");
+    s.push_str("| Word | Pronunciation | Meaning |\n|---|---|---|\n");
+    for w in t.first_words {
+        let pron = w.pronunciation.as_deref().map(|p| format!("/{p}/")).unwrap_or_default();
+        s.push_str(&format!("| **{}** | {pron} | {} |\n", w.headword, w.gloss));
+    }
+    s.push('\n');
+
+    s.push_str("## 3. Putting words together\n\n");
+    if let Some(code) = t.word_order {
+        s.push_str(&format!(
+            "{} is a **{}** language — arrange a clause in that order.\n\n",
+            t.language,
+            word_order_prose(code)
+        ));
+    }
+    if let Some((root, forms)) = &t.paradigm {
+        s.push_str(&format!("Words inflect. Here is **{root}** in its forms:\n\n"));
+        for (form, gloss) in *forms {
+            s.push_str(&format!("- **{form}** — {gloss}\n"));
+        }
+        s.push('\n');
+    }
+
+    if let Some((text, gloss)) = t.sample {
+        s.push_str("## 4. A first text\n\n");
+        s.push_str(&format!("> {text}\n\n"));
+        if !gloss.trim().is_empty() {
+            s.push_str("Word by word:\n\n```\n");
+            s.push_str(gloss.trim());
+            s.push_str("\n```\n\n");
+        }
+    }
+    s.push_str(&format!(
+        "_Next: the full [dictionary] and [reference grammar] of {}._\n",
+        t.language
+    ));
+    s
+}
+
+/// Render the tutorial as a Typst document (embeds the conscript font when set).
+pub fn tutorial_typst(t: &TutorialBook) -> String {
+    let lang = typst_text(t.language);
+    let mut s = String::new();
+    s.push_str(&format!("#set document(title: \"Learn {lang}\")\n"));
+    s.push_str("#set page(paper: \"a5\", margin: 1.6cm, numbering: \"1\")\n");
+    s.push_str("#set text(size: 11pt)\n#set par(justify: true)\n");
+    s.push_str("#set heading(numbering: \"1.\")\n");
+    if let Some(f) = t.font_family {
+        s.push_str(&format!(
+            "#let native(cp) = text(font: \"{}\", size: 1.3em)[#cp]\n",
+            typst_text(f)
+        ));
+    }
+    s.push('\n');
+    s.push_str("#align(center)[\n");
+    s.push_str(&format!("  #text(size: 28pt, weight: \"bold\")[Learn {lang}]\n"));
+    s.push_str("]\n#v(1cm)\n\n");
+
+    s.push_str("= The sounds\n");
+    if !t.consonants.is_empty() {
+        s.push_str(&format!("*Consonants.* {}\n\n", typst_text(&t.consonants.join(" · "))));
+    }
+    if !t.vowels.is_empty() {
+        s.push_str(&format!("*Vowels.* {}\n\n", typst_text(&t.vowels.join(" · "))));
+    }
+
+    s.push_str("= Your first words\n");
+    s.push_str("#table(columns: 3, align: (left, left, left),\n");
+    s.push_str("  table.header([*Word*], [*Script*], [*Meaning*]),\n");
+    for w in t.first_words {
+        let native = match (&w.conscript, t.font_family) {
+            (Some(cp), Some(_)) if !cp.is_empty() => format!("#native({})", typst_escapes(cp)),
+            _ => "—".into(),
+        };
+        s.push_str(&format!(
+            "  [*{}*], [{native}], [{}],\n",
+            typst_text(&w.headword),
+            typst_text(&w.gloss)
+        ));
+    }
+    s.push_str(")\n\n");
+
+    s.push_str("= Putting words together\n");
+    if let Some(code) = t.word_order {
+        s.push_str(&format!(
+            "{lang} is a *{}* language.\n\n",
+            typst_text(&word_order_prose(code))
+        ));
+    }
+    if let Some((root, forms)) = &t.paradigm {
+        s.push_str(&format!("Words inflect — *{}* in its forms:\n", typst_text(root)));
+        for (form, gloss) in *forms {
+            s.push_str(&format!("/ *{}*: {}\n", typst_text(form), typst_text(gloss)));
+        }
+        s.push('\n');
+    }
+
+    if let Some((text, gloss)) = t.sample {
+        s.push_str("= A first text\n");
+        s.push_str(&format!("#quote(block: true)[{}]\n\n", typst_text(text)));
+        if !gloss.trim().is_empty() {
+            s.push_str(&format!("#raw(\"{}\")\n", gloss.trim().replace('"', "'")));
+        }
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -662,5 +823,40 @@ mod tests {
         assert!(typ.contains("= Phonology"));
         assert!(typ.contains("#table(columns: 2"));
         assert!(typ.contains("== Greeting"));
+    }
+
+    #[test]
+    fn tutorial_renders_graded_walkthrough() {
+        let words = vec![RenderEntry {
+            headword: "pata".into(),
+            conscript: Some("\u{E000}\u{E001}".into()),
+            pronunciation: Some("pa.ta".into()),
+            gloss: "stone".into(),
+            ..Default::default()
+        }];
+        let forms = vec![("pata".to_string(), "stone".to_string()), ("patati".to_string(), "stone-DAT".to_string())];
+        let t = TutorialBook {
+            language: "Avesha",
+            font_family: Some("Avesha"),
+            consonants: &["p".to_string(), "t".to_string()],
+            vowels: &["a".to_string()],
+            first_words: &words,
+            word_order: Some("sov"),
+            paradigm: Some(("pata", &forms)),
+            sample: Some(("kira nami", "bird see")),
+        };
+        let md = tutorial_markdown(&t);
+        assert!(md.contains("# Learn Avesha"));
+        assert!(md.contains("## 1. The sounds"));
+        assert!(md.contains("/pa.ta/"));
+        assert!(md.contains("subject–object–verb"));
+        assert!(md.contains("**patati** — stone-DAT"));
+        assert!(md.contains("kira nami"));
+
+        let typ = tutorial_typst(&t);
+        assert!(typ.contains("#set document(title: \"Learn Avesha\")"));
+        assert!(typ.contains("#native(\"\\u{E000}\\u{E001}\")"));
+        assert!(typ.contains("subject–object–verb"));
+        assert!(typ.contains("#quote(block: true)"));
     }
 }

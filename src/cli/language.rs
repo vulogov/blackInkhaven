@@ -112,6 +112,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::GrammarBook { language, format, out, font } => {
             grammar_book(project, &language, &format, out.as_deref(), font.as_deref())
         }
+        LanguageCommand::Tutorial { language, format, out, font } => {
+            tutorial(project, &language, &format, out.as_deref(), font.as_deref())
+        }
         LanguageCommand::LinkPlace {
             place,
             language,
@@ -2632,6 +2635,158 @@ fn grammar_book(
     if let Some(p) = out {
         crate::io_atomic::write(p, doc.as_bytes()).map_err(Error::Io)?;
         println!("{} grammar ({}) → {}", lang_book.title, format, p.display());
+        if typst && book.font_family.is_some() {
+            eprintln!(
+                "(build the font with `font-build --language {language} --format ttf` and compile \
+                 with `typst compile --font-path <dir> {}`)",
+                p.display()
+            );
+        }
+    } else {
+        print!("{doc}");
+    }
+    Ok(())
+}
+
+/// LANG-1 P7 — render a learner-facing tutorial (a graded walkthrough).
+fn tutorial(
+    project: &Path,
+    language: &str,
+    format: &str,
+    out: Option<&Path>,
+    font: Option<&str>,
+) -> Result<()> {
+    use crate::conlang::output::{self, RenderEntry, TutorialBook};
+    use crate::conlang::types::morphology::{ParadigmCell, ParadigmTemplate};
+    use crate::conlang::types::phoneme::PhonemeKind;
+    use crate::conlang::{morphology, writing::input};
+
+    let typst = match format.to_ascii_lowercase().as_str() {
+        "md" | "markdown" => false,
+        "typ" | "typst" => true,
+        other => {
+            return Err(Error::Config(format!("unknown --format `{other}` (expected md or typ)")))
+        }
+    };
+
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?;
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let samples = load_samples(&store, &hierarchy, &lang_book)?;
+    let font_cfg = load_font_config(&store, &hierarchy, &lang_book)?;
+
+    let family = font
+        .map(str::to_string)
+        .or_else(|| font_cfg.as_ref().and_then(|c| c.family.clone()));
+    let can_transliterate = font_cfg.as_ref().is_some_and(|c| !c.glyphs.is_empty());
+
+    let consonants: Vec<String> = phon
+        .phonemes
+        .iter()
+        .filter(|p| p.kind == PhonemeKind::Consonant)
+        .map(|p| p.ipa.clone())
+        .collect();
+    let vowels: Vec<String> = phon
+        .phonemes
+        .iter()
+        .filter(|p| p.kind == PhonemeKind::Vowel)
+        .map(|p| p.ipa.clone())
+        .collect();
+
+    // The first few dictionary words, with pronunciation + native script.
+    let first_words: Vec<RenderEntry> = entries
+        .iter()
+        .take(8)
+        .map(|e| {
+            let conscript = match (&font_cfg, can_transliterate) {
+                (Some(cfg), true) => {
+                    let o = input::to_script(cfg, &e.word);
+                    (o.mapped > 0).then_some(o.script)
+                }
+                _ => None,
+            };
+            RenderEntry {
+                headword: e.word.clone(),
+                conscript,
+                pronunciation: pronounce(&phon, &e.word),
+                gloss: e.translation.clone(),
+                ..Default::default()
+            }
+        })
+        .collect();
+
+    let word_order = grammar_spec.grammar.get("word_order").cloned();
+
+    // A worked paradigm: the first noun, declined through each declared suffix.
+    let mut paradigm_forms: Vec<(String, String)> = Vec::new();
+    let mut paradigm_root: Option<String> = None;
+    if let Some(m) = &morph {
+        if let Some(noun) = entries.iter().find(|e| e.pos.eq_ignore_ascii_case("noun")) {
+            let suffixes: Vec<&crate::conlang::types::morphology::MorphemeSpec> = m
+                .morphemes
+                .iter()
+                .filter(|mo| matches!(mo.position, crate::conlang::types::morphology::AffixPosition::Suffix))
+                .collect();
+            if !suffixes.is_empty() {
+                let mut cells = vec![ParadigmCell { features: Default::default(), morphemes: vec![] }];
+                for mo in &suffixes {
+                    cells.push(ParadigmCell {
+                        features: Default::default(),
+                        morphemes: vec![mo.id.clone()],
+                    });
+                }
+                let template = ParadigmTemplate { name: "tutorial".into(), cells };
+                let rows = morphology::paradigm::generate(&phon, m, &template, &noun.word, &noun.translation);
+                paradigm_forms = rows.into_iter().map(|r| (r.form, r.gloss)).collect();
+                paradigm_root = Some(noun.word.clone());
+            }
+        }
+    }
+
+    // The first sample, with a word-by-word gloss.
+    let mut sample_pair: Option<(String, String)> = None;
+    if let Some((_, body)) = samples.first() {
+        // Gloss word-by-word; strip sentence punctuation so a clause-final
+        // word (`nami.`) still matches its lexicon entry.
+        let glossable: String = body
+            .chars()
+            .map(|c| if matches!(c, '.' | ',' | '!' | '?' | ';' | ':') { ' ' } else { c })
+            .collect();
+        let gloss = morph.as_ref().map(|m| {
+            let index = morphology::gloss::build_index(&phon, m, &entries);
+            index
+                .gloss_text(&glossable)
+                .iter()
+                .map(|it| {
+                    let g = it.gloss.clone().unwrap_or_else(|| "?".into());
+                    format!("{:<10} {}", it.surface, g)
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+        sample_pair = Some((body.clone(), gloss.unwrap_or_default()));
+    }
+
+    let book = TutorialBook {
+        language: &lang_book.title,
+        font_family: if typst { family.as_deref() } else { None },
+        consonants: &consonants,
+        vowels: &vowels,
+        first_words: &first_words,
+        word_order: word_order.as_deref(),
+        paradigm: match (&paradigm_root, paradigm_forms.is_empty()) {
+            (Some(r), false) => Some((r.as_str(), paradigm_forms.as_slice())),
+            _ => None,
+        },
+        sample: sample_pair.as_ref().map(|(t, g)| (t.as_str(), g.as_str())),
+    };
+    let doc = if typst { output::tutorial_typst(&book) } else { output::tutorial_markdown(&book) };
+
+    if let Some(p) = out {
+        crate::io_atomic::write(p, doc.as_bytes()).map_err(Error::Io)?;
+        println!("{} tutorial ({}) → {}", lang_book.title, format, p.display());
         if typst && book.font_family.is_some() {
             eprintln!(
                 "(build the font with `font-build --language {language} --format ttf` and compile \

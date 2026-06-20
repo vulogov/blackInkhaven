@@ -413,7 +413,26 @@ releases as they complete.
 > idioms + a sample text → both formats, the Typst compiled by Typst 0.14.2 into
 > a 5-page PDF with a table of contents (and embedding the conscript font with
 > `--font`). **★ P6 OUTPUT COMPLETE ★** (P6.1 analysis → P6.2 dictionary → P6.3
-> grammar book). Next: P7 polish (tutorial, a complete worked example language).
+> grammar book).
+>
+> **P7 (shipped)** — polish: a learner tutorial + a complete worked example.
+> `conlang::output::tutorial_markdown` / `tutorial_typst` render a graded
+> walkthrough — the sounds, a starter vocabulary (with native script +
+> pronunciation), how words combine (word-order prose + a worked paradigm the
+> CLI builds by declining the first noun through every suffix via the P3.1
+> engine), and the sample text with a word-by-word gloss (P3.2 gloss engine,
+> punctuation stripped so clause-final words match). `language tutorial <lang>
+> --format md|typ [--out] [--font]`. The worked example
+> `examples/conlang/build-sample-language.sh <project>` runs the *entire*
+> pipeline end to end — phonology → lexicon → morphology → typology → an
+> **AI-drawn script** (one `glyph-draft` per phoneme) → an in-process TrueType
+> font → dictionary + grammar + tutorial as Typst books embedding the font →
+> PDFs. Validated live: the script ran in ~95 s, all 11 DeepSeek glyphs passed
+> preflight + bound, the font compiled (1876 B), and all three books compiled to
+> PDF (3 / 5 / 5 pages, font embedded). Tutorial 74 documents it.
+> **★★★ LANG-1 COMPLETE (P1 phonology → P2 lexicon → P3 morphology → P4
+> diachronics → P5 writing systems + fonts → P6 analysis + output → P7 polish)
+> ★★★.**
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the

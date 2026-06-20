@@ -2354,6 +2354,25 @@ pub enum LanguageCommand {
         font: Option<String>,
     },
 
+    /// LANG-1 P7 — render a learner-facing tutorial: a graded walkthrough of
+    /// the language (its sounds, a starter vocabulary with native script, how
+    /// words combine with a worked paradigm, and a sample text with a
+    /// word-by-word gloss).  Markdown (`md`) or Typst (`typ`).
+    Tutorial {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Output format: `md` or `typ`.
+        #[arg(long, default_value = "md")]
+        format: String,
+        /// Write the document here (otherwise it prints to stdout).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Conscript font family for the Typst path (defaults to the `font`
+        /// block's family).
+        #[arg(long)]
+        font: Option<String>,
+    },
+
     /// LANG-1 P2.6 — link a Place to a language it's spoken in.  Stored in a
     /// `.inkhaven/conlang-links.json` sidecar (the Places book is prose and is
     /// never modified).  Sets the primary language by default; `--secondary`
