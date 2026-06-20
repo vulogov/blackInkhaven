@@ -216,6 +216,22 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             &noun_paradigm,
             &verb_paradigm,
         ),
+        LanguageCommand::Coordinate {
+            language,
+            clauses,
+            nps,
+            conjunction,
+            noun_paradigm,
+            verb_paradigm,
+        } => coordinate(
+            project,
+            &language,
+            &clauses,
+            &nps,
+            conjunction.as_deref(),
+            &noun_paradigm,
+            &verb_paradigm,
+        ),
         LanguageCommand::Agree {
             language,
             word,
@@ -2156,6 +2172,69 @@ fn relative(
         .map(String::as_str)
         .unwrap_or("postnominal");
     println!("{} ({strategy})", rendered.surface);
+    print_interlinear(&rendered);
+    Ok(())
+}
+
+/// 1.3.19 LANG-1 P9 — coordinate noun phrases or clauses with a conjunction.
+fn coordinate(
+    project: &Path,
+    language: &str,
+    clauses: &[String],
+    nps: &[String],
+    conjunction: Option<&str>,
+    noun_paradigm: &str,
+    verb_paradigm: &str,
+) -> Result<()> {
+    use crate::conlang::syntax::{self, Clause, NounPhrase};
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no phoneme block"))
+    })?;
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let conj = conjunction.map(parse_word);
+
+    let rendered = if nps.len() >= 2 {
+        let parts: Vec<_> = nps
+            .iter()
+            .map(|n| syntax::bare_np(&parse_word(n)))
+            .collect();
+        syntax::coordinate(&parts, conj.as_ref())
+    } else if clauses.len() >= 2 {
+        // Each --clause is "subj verb [obj]", space-separated root:gloss words.
+        let mut parts = Vec::new();
+        for spec in clauses {
+            let toks: Vec<&str> = spec.split_whitespace().collect();
+            if toks.len() < 2 {
+                return Err(Error::Config(format!(
+                    "--clause `{spec}` needs at least a subject and a verb"
+                )));
+            }
+            let np = |t: &str| NounPhrase {
+                head: parse_word(t),
+                number: "sg".into(),
+                adjective: None,
+            };
+            let c = Clause {
+                subject: Some(np(toks[0])),
+                verb: Some(parse_word(toks[1])),
+                verb_person: "3".into(),
+                object: toks.get(2).map(|t| np(t)),
+                noun_paradigm: noun_paradigm.to_string(),
+                verb_paradigm: verb_paradigm.to_string(),
+                ..Default::default()
+            };
+            parts.push(syntax::assemble(&phon, &morph, &grammar_spec.grammar, &c));
+        }
+        syntax::coordinate(&parts, conj.as_ref())
+    } else {
+        return Err(Error::Config(
+            "give at least two --np nouns or two --clause clauses to coordinate".into(),
+        ));
+    };
+
+    println!("{}", rendered.surface);
     print_interlinear(&rendered);
     Ok(())
 }

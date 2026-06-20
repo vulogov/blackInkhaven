@@ -278,6 +278,51 @@ pub fn relative_np(
     }
 }
 
+/// Coordinate two or more rendered constituents (noun phrases or whole clauses)
+/// with a conjunction — "the bird **and** the stone", "the bird sees **and** the
+/// river falls". The conjunction sits medially between adjacent conjuncts
+/// (glossed by its own gloss, or `CONJ` when none is given); with no conjunction
+/// word the conjuncts are simply juxtaposed. The literal joins each conjunct's
+/// literal with the connector.
+pub fn coordinate(conjuncts: &[RenderedClause], conjunction: Option<&Word>) -> RenderedClause {
+    let conj_gloss = conjunction.map(|w| {
+        if w.gloss.trim().is_empty() {
+            "CONJ".to_string()
+        } else {
+            w.gloss.clone()
+        }
+    });
+    let mut words: Vec<(String, String)> = Vec::new();
+    let mut literals: Vec<String> = Vec::new();
+    for (i, c) in conjuncts.iter().enumerate() {
+        if i > 0 {
+            if let (Some(conj), Some(g)) = (conjunction, &conj_gloss) {
+                words.push((conj.root.clone(), g.clone()));
+            }
+        }
+        words.extend(c.words.iter().cloned());
+        literals.push(c.literal.clone());
+    }
+    let surface = words.iter().map(|(w, _)| w.as_str()).collect::<Vec<_>>().join(" ");
+    let connector = conj_gloss.as_deref().unwrap_or("and");
+    let literal = literals.join(&format!(" {connector} "));
+    RenderedClause {
+        words,
+        surface,
+        literal,
+    }
+}
+
+/// Render a bare noun phrase (root + gloss, no case) as a `RenderedClause`, so a
+/// noun can be a conjunct in [`coordinate`].
+pub fn bare_np(word: &Word) -> RenderedClause {
+    RenderedClause {
+        words: vec![(word.root.clone(), word.gloss.clone())],
+        surface: word.root.clone(),
+        literal: word.gloss.clone(),
+    }
+}
+
 /// Attach negation to the rendered verb words. `particle`/`auxiliary` insert a
 /// separate negator word before the verb; `affix` fuses the negator onto the
 /// verb form. Without a negator form, only the gloss is marked (`NEG`/`.NEG`),
@@ -642,6 +687,37 @@ mod tests {
         assert_eq!(r.surface, "kira nami pata");
         assert_eq!(r.words.last().unwrap().0, "pata"); // head last
         assert_eq!(r.literal, "the stone that bird see");
+    }
+
+    #[test]
+    fn coordinate_two_clauses_with_a_conjunction() {
+        let mut t = BTreeMap::new();
+        t.insert("word_order".to_string(), "svo".to_string());
+        let c1 = assemble(&phon(), &morph(), &t, &clause()); // kira nami patan
+        let mut c2c = clause();
+        c2c.subject = Some(NounPhrase {
+            head: Word { root: "muru".into(), gloss: "river".into() },
+            number: "sg".into(),
+            adjective: None,
+        });
+        c2c.object = None; // intransitive
+        c2c.verb = Some(Word { root: "tasa".into(), gloss: "fall".into() });
+        let c2 = assemble(&phon(), &morph(), &t, &c2c); // muru tasa
+        let conj = Word { root: "na".into(), gloss: "and".into() };
+        let r = coordinate(&[c1, c2], Some(&conj));
+        assert_eq!(r.surface, "kira nami patan na muru tasa");
+        assert!(r.words.iter().any(|(f, g)| f == "na" && g == "and"));
+        assert_eq!(r.literal, "bird see stone and river fall");
+    }
+
+    #[test]
+    fn coordinate_noun_phrases() {
+        let bird = bare_np(&Word { root: "kira".into(), gloss: "bird".into() });
+        let stone = bare_np(&Word { root: "pata".into(), gloss: "stone".into() });
+        let conj = Word { root: "na".into(), gloss: "and".into() };
+        let r = coordinate(&[bird, stone], Some(&conj));
+        assert_eq!(r.surface, "kira na pata");
+        assert_eq!(r.literal, "bird and stone");
     }
 
     #[test]

@@ -2945,6 +2945,39 @@ pub enum LanguageCommand {
         verb_paradigm: String,
     },
 
+    /// 1.3.19 LANG-1 P9 — **coordinate** noun phrases
+    /// or clauses with a conjunction ("the bird and
+    /// the stone", "the bird sees and the river
+    /// falls").  Give two or more `--np` (each a single
+    /// `root:gloss` noun) OR two or more `--clause`
+    /// (each `subj verb [obj]`, space-separated
+    /// `root:gloss` words); join them with
+    /// `--conjunction`.  Prints surface + interlinear +
+    /// literal.
+    Coordinate {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// A clause conjunct — space-separated
+        /// `root:gloss` words: subject, verb, and an
+        /// optional object.  Repeat for each clause.
+        #[arg(long = "clause")]
+        clauses: Vec<String>,
+        /// A noun-phrase conjunct — a single
+        /// `root:gloss` noun.  Repeat for each noun.
+        #[arg(long = "np")]
+        nps: Vec<String>,
+        /// The conjunction (`na:and`, `or:or`); glossed
+        /// by its own gloss, or `CONJ` if none given.
+        #[arg(long)]
+        conjunction: Option<String>,
+        /// Paradigm used to inflect nouns.
+        #[arg(long, default_value = "noun")]
+        noun_paradigm: String,
+        /// Paradigm used to inflect verbs.
+        #[arg(long, default_value = "verb")]
+        verb_paradigm: String,
+    },
+
     /// LANG-1 P3.x — apply **agreement** (concord): inflect a dependent word
     /// (an adjective, a verb) to agree with the grammatical features of its
     /// head (its noun, its subject).  Uses the `agreement` rules + paradigm in
