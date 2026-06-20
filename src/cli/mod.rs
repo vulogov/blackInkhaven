@@ -2105,6 +2105,31 @@ pub enum LanguageCommand {
         #[arg(long, requires = "import")]
         force: bool,
     },
+    /// 1.3.19 LANG-1 P6 — import a dictionary from
+    /// another conlang/linguistics tool.  Parses the
+    /// foreign format into entries and, by default,
+    /// previews them (count + a sample) without
+    /// touching the book; pass `--yes` to write them
+    /// into the Dictionary.  Duplicate headwords are
+    /// skipped with a warning.  Complements the
+    /// own-CSV path of `add-word --import`.
+    Import {
+        /// Language to import into (case-insensitive
+        /// match; must already exist).
+        language: String,
+        /// Path to the source file (`.txt`/`.db`/`.sfm`
+        /// for Toolbox; `.pgd`/`.xml` for PolyGlot).
+        #[arg(long, value_name = "PATH")]
+        file: PathBuf,
+        /// Source format.
+        #[arg(long, value_enum)]
+        format: LanguageImportFormat,
+        /// Write the parsed entries into the
+        /// Dictionary.  Without this, the command only
+        /// previews what it would import.
+        #[arg(long)]
+        r#yes: bool,
+    },
     /// health report for a language
     /// sub-book.  Counts dictionary entries, entries
     /// with examples, entries with inflection
@@ -2136,6 +2161,58 @@ pub enum LanguageCommand {
     /// doctor` for a quick at-a-glance overview of
     /// every language in the project.
     List,
+    /// 1.3.19 LANG-1 P6 — semantic-gap finder.
+    /// Diff the lexicon against a reference concept
+    /// scope and report which concepts are still
+    /// missing (frequency-ranked, most-core first) —
+    /// the exact list to feed `generate-lexicon`.
+    Gaps {
+        /// Language to analyse.
+        language: String,
+        /// Reference scope: the built-in
+        /// `swadesh_100` core vocabulary (default),
+        /// or a path to an HJSON concept list
+        /// (`{ name, concepts: [...] }`).
+        #[arg(long, default_value = "swadesh_100")]
+        scope: String,
+        /// Emit the report as JSON (covered / missing
+        /// arrays + coverage percentage) for piping.
+        #[arg(long)]
+        json: bool,
+    },
+    /// 1.3.19 LANG-1 P6 — creative text generators.
+    /// Deterministic, grounded surfaces that show the
+    /// language alive: `names` (phonotactic),
+    /// `prose` (grammatical sentences via the syntax
+    /// engine), `poem` (metered verse).  The themed
+    /// modes `blessing` / `curse` / `incantation` are
+    /// AI-composed but constrained to the existing
+    /// lexicon (need `--provider`).  Prints only —
+    /// nothing is written to the book.
+    Compose {
+        /// Language to compose in.
+        language: String,
+        /// What to generate: `names` | `prose` |
+        /// `poem` | `blessing` | `curse` |
+        /// `incantation`.
+        #[arg(long, default_value = "prose")]
+        kind: String,
+        /// How many items (names / sentences).
+        #[arg(long, default_value_t = 5)]
+        count: usize,
+        /// Seed for the deterministic generators —
+        /// change it for a different draw.
+        #[arg(long, default_value_t = 0)]
+        seed: u64,
+        /// Verse meter for `poem`: comma-separated
+        /// syllable counts per line (e.g. `5,7,5`).
+        #[arg(long, default_value = "5,7,5")]
+        meter: String,
+        /// AI provider override for the themed modes
+        /// (else the configured default).
+        #[arg(long)]
+        provider: Option<String>,
+    },
     /// remove a dictionary entry
     /// from a language.  Mirror of `add-word`:
     /// resolves the language sub-book by case-
@@ -2768,6 +2845,139 @@ pub enum LanguageCommand {
         gloss: Option<String>,
     },
 
+    /// LANG-1 syntax — assemble a **sentence** from a subject, verb, and object.
+    /// Orders the words by the language's `word_order`, case-marks the nouns by
+    /// its `alignment`, runs agreement (adjective↔noun, verb↔subject), and
+    /// prints the clause with an interlinear gloss.  Words are `root` or
+    /// `root:gloss`.
+    Sentence {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Subject noun (`kira` or `kira:bird`).
+        #[arg(long)]
+        subject: Option<String>,
+        /// Subject's grammatical number.
+        #[arg(long, default_value = "sg")]
+        subject_number: String,
+        /// Subject's person, for verb agreement (`1` / `2` / `3`).
+        #[arg(long, default_value = "3")]
+        subject_person: String,
+        /// An adjective modifying the subject (`mira:bright`).
+        #[arg(long)]
+        subject_adj: Option<String>,
+        /// The verb (`nami` or `nami:see`).
+        #[arg(long)]
+        verb: Option<String>,
+        /// Object noun (`pata:stone`); omit for an intransitive clause.
+        #[arg(long)]
+        object: Option<String>,
+        /// Object's grammatical number.
+        #[arg(long, default_value = "sg")]
+        object_number: String,
+        /// An adjective modifying the object.
+        #[arg(long)]
+        object_adj: Option<String>,
+        /// Paradigm used to inflect nouns (case marking).
+        #[arg(long, default_value = "noun")]
+        noun_paradigm: String,
+        /// Paradigm used to inflect verbs.
+        #[arg(long, default_value = "verb")]
+        verb_paradigm: String,
+        /// 1.3.19 — negate the clause (realized per the
+        /// `negation` typology: particle / affix /
+        /// auxiliary).  Supply the negative word with
+        /// `--negator`, else only the gloss is marked.
+        #[arg(long)]
+        negate: bool,
+        /// The negative word/affix (`na` or `na:not`),
+        /// when the language has one.
+        #[arg(long)]
+        negator: Option<String>,
+        /// 1.3.19 — make it a polar (yes/no) question
+        /// (realized per the `question` typology:
+        /// particle / inversion / intonation /
+        /// morphology).
+        #[arg(long)]
+        question: bool,
+        /// The question particle (`ka` or `ka:Q`), when
+        /// the language uses one.
+        #[arg(long)]
+        q_particle: Option<String>,
+    },
+
+    /// 1.3.19 LANG-1 P9 — build a noun phrase with a
+    /// **relative clause** ("the bird that sees the
+    /// stone"), obeying the `relative_clause` typology
+    /// (prenominal vs postnominal).  The head plays a
+    /// role inside the embedded clause (its subject or
+    /// object — the gap); the engine case-marks and
+    /// agrees the rest.  Prints surface + interlinear
+    /// gloss + literal.
+    Relative {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The head noun being modified (`kira` or
+        /// `kira:bird`).
+        #[arg(long)]
+        head: String,
+        /// The head's role in the embedded clause:
+        /// `subject` ("the bird that sees …") or
+        /// `object` ("the stone that … sees").
+        #[arg(long, default_value = "subject")]
+        role: String,
+        /// The embedded verb (`nami:see`).
+        #[arg(long)]
+        verb: String,
+        /// The other (non-head) argument of the
+        /// embedded clause, when transitive
+        /// (`pata:stone`).
+        #[arg(long)]
+        with: Option<String>,
+        /// The relativizer word (`ya:that`), when the
+        /// language uses one (glossed `REL`).
+        #[arg(long)]
+        relativizer: Option<String>,
+        /// Paradigm used to inflect nouns.
+        #[arg(long, default_value = "noun")]
+        noun_paradigm: String,
+        /// Paradigm used to inflect verbs.
+        #[arg(long, default_value = "verb")]
+        verb_paradigm: String,
+    },
+
+    /// 1.3.19 LANG-1 P9 — **coordinate** noun phrases
+    /// or clauses with a conjunction ("the bird and
+    /// the stone", "the bird sees and the river
+    /// falls").  Give two or more `--np` (each a single
+    /// `root:gloss` noun) OR two or more `--clause`
+    /// (each `subj verb [obj]`, space-separated
+    /// `root:gloss` words); join them with
+    /// `--conjunction`.  Prints surface + interlinear +
+    /// literal.
+    Coordinate {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// A clause conjunct — space-separated
+        /// `root:gloss` words: subject, verb, and an
+        /// optional object.  Repeat for each clause.
+        #[arg(long = "clause")]
+        clauses: Vec<String>,
+        /// A noun-phrase conjunct — a single
+        /// `root:gloss` noun.  Repeat for each noun.
+        #[arg(long = "np")]
+        nps: Vec<String>,
+        /// The conjunction (`na:and`, `or:or`); glossed
+        /// by its own gloss, or `CONJ` if none given.
+        #[arg(long)]
+        conjunction: Option<String>,
+        /// Paradigm used to inflect nouns.
+        #[arg(long, default_value = "noun")]
+        noun_paradigm: String,
+        /// Paradigm used to inflect verbs.
+        #[arg(long, default_value = "verb")]
+        verb_paradigm: String,
+    },
+
     /// LANG-1 P3.x — apply **agreement** (concord): inflect a dependent word
     /// (an adjective, a verb) to agree with the grammatical features of its
     /// head (its noun, its subject).  Uses the `agreement` rules + paradigm in
@@ -2903,6 +3113,40 @@ pub enum LanguageExportFormat {
     /// the right.  Always needs `--output
     /// <path.typ>`.
     Phrasebook,
+    /// 1.3.19 LANG-1 P6 — XLIFF 1.2 translation
+    /// interchange.  Each entry becomes a
+    /// `trans-unit` (working-language source →
+    /// invented-word target), so the lexicon loads
+    /// into CAT tools (OmegaT, memoQ, Weblate) as a
+    /// translation memory.  Streams to stdout.
+    Xliff,
+    /// 1.3.19 LANG-1 P6 — LaTeX via the `linguex`
+    /// package: bold headword + POS + gloss, with
+    /// any example sentence as a numbered `\ex.`.
+    /// Paste-ready for a paper or grammar sketch.
+    /// Streams to stdout.
+    Linguex,
+    /// 1.3.19 LANG-1 P6 — Markdown IPA inventory
+    /// chart: consonants and vowels grouped, each
+    /// with its romanization.  Streams to stdout.
+    IpaChart,
+}
+
+/// 1.3.19 LANG-1 P6 — foreign lexicon formats the
+/// `inkhaven language import` command can ingest
+/// (beyond the round-trippable own-CSV that
+/// `add-word --import` already reads).
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum LanguageImportFormat {
+    /// Toolbox / MDF Standard Format (SFM) — the
+    /// `\lx … \ps … \ge …` marker database used by
+    /// SIL Toolbox, FieldWorks, and **Lexique Pro**.
+    Toolbox,
+    /// PolyGlot dictionary.  Pass either the native
+    /// `.pgd` archive (the `PGDictionary.xml` is
+    /// unzipped automatically) or a raw exported
+    /// `.xml`.
+    Polyglot,
 }
 
 /// output format selector for

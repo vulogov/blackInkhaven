@@ -44,9 +44,9 @@ adds), and a `position` (`"prefix"` or `"suffix"`):
 ```hjson
 {
   morphemes: [
-    { id: "pl",  gloss: "PL",  form: "i",  position: "suffix" }
-    { id: "dat", gloss: "DAT", form: "ti", position: "suffix" }
-    { id: "def", gloss: "DEF", form: "na", position: "prefix" }
+    { id: "pl",  gloss: "PL",  form: "i",  position: "suffix", category: "number", value: "plural" }
+    { id: "dat", gloss: "DAT", form: "ti", position: "suffix", category: "case",   value: "dative" }
+    { id: "def", gloss: "DEF", form: "na", position: "prefix", category: "definiteness" }
   ]
 }
 ```
@@ -54,6 +54,15 @@ adds), and a `position` (`"prefix"` or `"suffix"`):
 Here `pl` is a plural suffix *-i*, `dat` a dative suffix *-ti*, and `def` a
 definite prefix *na-*. The glosses `PL`, `DAT`, `DEF` are the standard linguistic
 abbreviations for "plural", "dative", and "definite".
+
+#term("Category and value")[
+  Two optional tags that say what *kind* of grammar a morpheme expresses. The
+  *category* is the grammatical dimension — `number`, `case`, `tense`,
+  `gender` — and the *value* is the specific point on it — `plural`, `dative`,
+  `past`. They are not used to build words, but the reference grammar (Chapter
+  20) reads them to *organise* its affix list by category, which makes a grammar
+  far easier to read. Tag your affixes as you go.
+]
 
 #subsection("Ordering stacked affixes")
 

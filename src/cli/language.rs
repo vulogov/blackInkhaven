@@ -72,6 +72,33 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
                 )
             }
         }
+        LanguageCommand::Import {
+            language,
+            file,
+            format,
+            r#yes,
+        } => import_foreign(project, &language, &file, format, r#yes),
+        LanguageCommand::Gaps {
+            language,
+            scope,
+            json,
+        } => gaps(project, &language, &scope, json),
+        LanguageCommand::Compose {
+            language,
+            kind,
+            count,
+            seed,
+            meter,
+            provider,
+        } => compose(
+            project,
+            &language,
+            &kind,
+            count,
+            seed,
+            &meter,
+            provider.as_deref(),
+        ),
         LanguageCommand::Doctor { language, json } => doctor(project, &language, json),
         LanguageCommand::Export {
             language,
@@ -135,6 +162,76 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             template,
             gloss,
         } => paradigm(project, &language, &root, &template, gloss.as_deref()),
+        LanguageCommand::Sentence {
+            language,
+            subject,
+            subject_number,
+            subject_person,
+            subject_adj,
+            verb,
+            object,
+            object_number,
+            object_adj,
+            noun_paradigm,
+            verb_paradigm,
+            negate,
+            negator,
+            question,
+            q_particle,
+        } => sentence(
+            project,
+            &language,
+            subject.as_deref(),
+            &subject_number,
+            &subject_person,
+            subject_adj.as_deref(),
+            verb.as_deref(),
+            object.as_deref(),
+            &object_number,
+            object_adj.as_deref(),
+            &noun_paradigm,
+            &verb_paradigm,
+            negate,
+            negator.as_deref(),
+            question,
+            q_particle.as_deref(),
+        ),
+        LanguageCommand::Relative {
+            language,
+            head,
+            role,
+            verb,
+            with,
+            relativizer,
+            noun_paradigm,
+            verb_paradigm,
+        } => relative(
+            project,
+            &language,
+            &head,
+            &role,
+            &verb,
+            with.as_deref(),
+            relativizer.as_deref(),
+            &noun_paradigm,
+            &verb_paradigm,
+        ),
+        LanguageCommand::Coordinate {
+            language,
+            clauses,
+            nps,
+            conjunction,
+            noun_paradigm,
+            verb_paradigm,
+        } => coordinate(
+            project,
+            &language,
+            &clauses,
+            &nps,
+            conjunction.as_deref(),
+            &noun_paradigm,
+            &verb_paradigm,
+        ),
         LanguageCommand::Agree {
             language,
             word,
@@ -1926,6 +2023,222 @@ fn paradigm(
     Ok(())
 }
 
+/// Parse a `root` or `root:gloss` argument into a syntax word.
+fn parse_word(s: &str) -> crate::conlang::syntax::Word {
+    use crate::conlang::syntax::Word;
+    match s.split_once(':') {
+        Some((root, gloss)) => Word { root: root.trim().to_string(), gloss: gloss.trim().to_string() },
+        None => Word { root: s.trim().to_string(), gloss: s.trim().to_string() },
+    }
+}
+
+/// LANG-1 syntax — assemble a sentence from its parts and print the clause.
+#[allow(clippy::too_many_arguments)]
+fn sentence(
+    project: &Path,
+    language: &str,
+    subject: Option<&str>,
+    subject_number: &str,
+    subject_person: &str,
+    subject_adj: Option<&str>,
+    verb: Option<&str>,
+    object: Option<&str>,
+    object_number: &str,
+    object_adj: Option<&str>,
+    noun_paradigm: &str,
+    verb_paradigm: &str,
+    negate: bool,
+    negator: Option<&str>,
+    question: bool,
+    q_particle: Option<&str>,
+) -> Result<()> {
+    use crate::conlang::syntax::{self, Clause, NounPhrase};
+
+    if subject.is_none() && verb.is_none() && object.is_none() {
+        return Err(Error::Config("give at least a --subject and a --verb".into()));
+    }
+
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no phoneme block"))
+    })?;
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+
+    let np = |w: Option<&str>, number: &str, adj: Option<&str>| -> Option<NounPhrase> {
+        w.map(|w| NounPhrase {
+            head: parse_word(w),
+            number: number.to_string(),
+            adjective: adj.map(parse_word),
+        })
+    };
+
+    let clause = Clause {
+        subject: np(subject, subject_number, subject_adj),
+        verb: verb.map(parse_word),
+        verb_person: subject_person.to_string(),
+        object: np(object, object_number, object_adj),
+        noun_paradigm: noun_paradigm.to_string(),
+        verb_paradigm: verb_paradigm.to_string(),
+        negated: negate,
+        negator: negator.map(parse_word),
+        question,
+        question_particle: q_particle.map(parse_word),
+    };
+
+    let rendered = syntax::assemble(&phon, &morph, &grammar_spec.grammar, &clause);
+
+    let order = grammar_spec.grammar.get("word_order").map(String::as_str).unwrap_or("svo");
+    println!("{} ({} order)", rendered.surface, order.to_uppercase());
+    // Interlinear: surface words over their glosses.
+    let surf: Vec<&str> = rendered.words.iter().map(|(w, _)| w.as_str()).collect();
+    let gl: Vec<&str> = rendered.words.iter().map(|(_, g)| g.as_str()).collect();
+    let widths: Vec<usize> =
+        rendered.words.iter().map(|(w, g)| w.chars().count().max(g.chars().count()) + 2).collect();
+    let mut line1 = String::from("  ");
+    let mut line2 = String::from("  ");
+    for (i, w) in surf.iter().enumerate() {
+        line1.push_str(&format!("{:<width$}", w, width = widths[i]));
+        line2.push_str(&format!("{:<width$}", gl[i], width = widths[i]));
+    }
+    println!("{line1}");
+    println!("{line2}");
+    println!("  '{}'", rendered.literal);
+    Ok(())
+}
+
+/// Print a rendered clause/phrase as a two-line interlinear gloss + literal.
+fn print_interlinear(rendered: &crate::conlang::syntax::RenderedClause) {
+    let widths: Vec<usize> = rendered
+        .words
+        .iter()
+        .map(|(w, g)| w.chars().count().max(g.chars().count()) + 2)
+        .collect();
+    let mut line1 = String::from("  ");
+    let mut line2 = String::from("  ");
+    for (i, (w, g)) in rendered.words.iter().enumerate() {
+        line1.push_str(&format!("{:<width$}", w, width = widths[i]));
+        line2.push_str(&format!("{:<width$}", g, width = widths[i]));
+    }
+    println!("{line1}");
+    println!("{line2}");
+    println!("  '{}'", rendered.literal);
+}
+
+/// 1.3.19 LANG-1 P9 — render a head noun modified by a relative clause.
+#[allow(clippy::too_many_arguments)]
+fn relative(
+    project: &Path,
+    language: &str,
+    head: &str,
+    role: &str,
+    verb: &str,
+    with: Option<&str>,
+    relativizer: Option<&str>,
+    noun_paradigm: &str,
+    verb_paradigm: &str,
+) -> Result<()> {
+    use crate::conlang::syntax::{self, RelativeClause};
+    let head_is_subject = match role.to_ascii_lowercase().as_str() {
+        "subject" | "subj" | "s" => true,
+        "object" | "obj" | "o" => false,
+        other => {
+            return Err(Error::Config(format!(
+                "unknown --role `{other}` (expected subject or object)"
+            )))
+        }
+    };
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no phoneme block"))
+    })?;
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+
+    let rc = RelativeClause {
+        head_is_subject,
+        verb: parse_word(verb),
+        other: with.map(parse_word),
+        relativizer: relativizer.map(parse_word),
+        noun_paradigm: noun_paradigm.to_string(),
+        verb_paradigm: verb_paradigm.to_string(),
+    };
+    let head_word = parse_word(head);
+    let rendered = syntax::relative_np(&phon, &morph, &grammar_spec.grammar, &head_word, &rc);
+
+    let strategy = grammar_spec
+        .grammar
+        .get("relative_clause")
+        .map(String::as_str)
+        .unwrap_or("postnominal");
+    println!("{} ({strategy})", rendered.surface);
+    print_interlinear(&rendered);
+    Ok(())
+}
+
+/// 1.3.19 LANG-1 P9 — coordinate noun phrases or clauses with a conjunction.
+fn coordinate(
+    project: &Path,
+    language: &str,
+    clauses: &[String],
+    nps: &[String],
+    conjunction: Option<&str>,
+    noun_paradigm: &str,
+    verb_paradigm: &str,
+) -> Result<()> {
+    use crate::conlang::syntax::{self, Clause, NounPhrase};
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no phoneme block"))
+    })?;
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let conj = conjunction.map(parse_word);
+
+    let rendered = if nps.len() >= 2 {
+        let parts: Vec<_> = nps
+            .iter()
+            .map(|n| syntax::bare_np(&parse_word(n)))
+            .collect();
+        syntax::coordinate(&parts, conj.as_ref())
+    } else if clauses.len() >= 2 {
+        // Each --clause is "subj verb [obj]", space-separated root:gloss words.
+        let mut parts = Vec::new();
+        for spec in clauses {
+            let toks: Vec<&str> = spec.split_whitespace().collect();
+            if toks.len() < 2 {
+                return Err(Error::Config(format!(
+                    "--clause `{spec}` needs at least a subject and a verb"
+                )));
+            }
+            let np = |t: &str| NounPhrase {
+                head: parse_word(t),
+                number: "sg".into(),
+                adjective: None,
+            };
+            let c = Clause {
+                subject: Some(np(toks[0])),
+                verb: Some(parse_word(toks[1])),
+                verb_person: "3".into(),
+                object: toks.get(2).map(|t| np(t)),
+                noun_paradigm: noun_paradigm.to_string(),
+                verb_paradigm: verb_paradigm.to_string(),
+                ..Default::default()
+            };
+            parts.push(syntax::assemble(&phon, &morph, &grammar_spec.grammar, &c));
+        }
+        syntax::coordinate(&parts, conj.as_ref())
+    } else {
+        return Err(Error::Config(
+            "give at least two --np nouns or two --clause clauses to coordinate".into(),
+        ));
+    };
+
+    println!("{}", rendered.surface);
+    print_interlinear(&rendered);
+    Ok(())
+}
+
 /// LANG-1 P3.x — make a dependent word agree with its head's features.
 fn agree(
     project: &Path,
@@ -2560,6 +2873,266 @@ fn load_dictionary(
     Ok(out)
 }
 
+/// 1.3.19 LANG-1 P6 — semantic-gap finder. Diff the lexicon's glosses against a
+/// reference concept scope (built-in Swadesh-100, keyed to the project working
+/// language, or an HJSON file) and report the missing concepts, frequency-ranked.
+fn gaps(project: &Path, language: &str, scope: &str, json: bool) -> Result<()> {
+    use crate::conlang::gaps as gapmod;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let glosses: Vec<String> = entries
+        .iter()
+        .map(|e| e.translation.clone())
+        .filter(|g| !g.trim().is_empty())
+        .collect();
+
+    // Resolve the scope: a built-in name → bundled list in the working
+    // language; otherwise treat `scope` as a path to an HJSON concept list.
+    let (scope_name, concepts) = if gapmod::is_builtin(scope) {
+        (
+            format!("Swadesh-100 ({})", cfg.language),
+            gapmod::swadesh_100(&cfg.language),
+        )
+    } else {
+        let path = Path::new(scope);
+        let body = std::fs::read_to_string(path).map_err(|e| {
+            Error::Config(format!(
+                "scope `{scope}` is neither a built-in (swadesh_100) nor a readable file: {e}"
+            ))
+        })?;
+        let parsed = gapmod::ScopeFile::from_hjson(&body).map_err(Error::Config)?;
+        let name = parsed
+            .name
+            .clone()
+            .unwrap_or_else(|| path.display().to_string());
+        (name, parsed.into_concepts())
+    };
+
+    let report = gapmod::find_gaps(&scope_name, &concepts, &glosses);
+
+    if json {
+        let out = serde_json::json!({
+            "scope": report.scope_name,
+            "total": report.total,
+            "covered": report.covered,
+            "missing": report.missing,
+            "coverage_pct": report.coverage_pct(),
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out)
+                .map_err(|e| Error::Store(format!("serializing gap report: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{} — {}/{} concepts covered ({:.0}%)",
+        report.scope_name,
+        report.covered.len(),
+        report.total,
+        report.coverage_pct()
+    );
+    if report.missing.is_empty() {
+        println!("\n✓ full coverage — nothing missing in this scope.");
+        return Ok(());
+    }
+    println!("\nMissing ({}), most-core first:", report.missing.len());
+    for chunk in report.missing.chunks(6) {
+        println!("  {}", chunk.join(", "));
+    }
+    println!(
+        "\nFeed these to the generator, e.g.:\n  \
+         inkhaven language generate-lexicon {language} --topic \"{}\" --count {}",
+        report.missing.iter().take(3).cloned().collect::<Vec<_>>().join(", "),
+        report.missing.len().min(20),
+    );
+    Ok(())
+}
+
+/// Format a rendered clause as `surface` + a two-line interlinear gloss + a
+/// literal rendering — the same shape the grammar book uses.
+fn format_clause(r: &crate::conlang::syntax::RenderedClause) -> String {
+    let widths: Vec<usize> = r
+        .words
+        .iter()
+        .map(|(w, g)| w.chars().count().max(g.chars().count()) + 2)
+        .collect();
+    let (mut l1, mut l2) = (String::new(), String::new());
+    for (i, (w, g)) in r.words.iter().enumerate() {
+        l1.push_str(&format!("{:<width$}", w, width = widths[i]));
+        l2.push_str(&format!("{:<width$}", g, width = widths[i]));
+    }
+    format!(
+        "{}\n  {}\n  {}\n  ‘{}’",
+        r.surface,
+        l1.trim_end(),
+        l2.trim_end(),
+        r.literal
+    )
+}
+
+/// 1.3.19 LANG-1 P6 — creative text generators. Deterministic names / prose /
+/// verse from the phonology + lexicon + syntax engine; AI-composed but
+/// lexicon-constrained blessing / curse / incantation. Prints only — never
+/// writes to the book.
+fn compose(
+    project: &Path,
+    language: &str,
+    kind: &str,
+    count: usize,
+    seed: u64,
+    meter: &str,
+    provider: Option<&str>,
+) -> Result<()> {
+    use crate::conlang::creative;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let typology = &grammar_spec.grammar;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+
+    match kind.to_ascii_lowercase().as_str() {
+        "names" | "name" => {
+            let names = creative::names(&phon, count, seed);
+            if names.is_empty() {
+                return Err(Error::Config(
+                    "no names could be generated — does the language declare a `root` template?"
+                        .into(),
+                ));
+            }
+            println!("{language} — {} names:\n", names.len());
+            for n in &names {
+                println!("  {n}");
+            }
+        }
+        "prose" | "sample" | "sample-text" => {
+            let lines = creative::prose(&phon, &morph, typology, &entries, count, seed);
+            if lines.is_empty() {
+                return Err(Error::Config(
+                    "need at least one noun and one verb in the lexicon to compose prose".into(),
+                ));
+            }
+            println!("{language} — sample sentences:\n");
+            for r in &lines {
+                println!("• {}\n", format_clause(r));
+            }
+        }
+        "poem" | "poetry" | "verse" => {
+            let meter: Vec<usize> = meter
+                .split(',')
+                .filter_map(|s| s.trim().parse::<usize>().ok())
+                .filter(|n| *n > 0)
+                .collect();
+            if meter.is_empty() {
+                return Err(Error::Config(
+                    "invalid --meter — give comma-separated syllable counts, e.g. 5,7,5".into(),
+                ));
+            }
+            let lines = creative::poem(&phon, &entries, &meter, seed);
+            if lines.is_empty() {
+                return Err(Error::Config("could not generate verse (empty inventory)".into()));
+            }
+            println!("{language} — verse ({}):\n", meter
+                .iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join("-"));
+            for l in &lines {
+                println!("  {:<32} ({}/{})", l.text, l.syllables, l.target);
+            }
+        }
+        "blessing" | "curse" | "incantation" | "ceremony" => {
+            if entries.is_empty() {
+                return Err(Error::Config(
+                    "the lexicon is empty — add some words before composing themed text".into(),
+                ));
+            }
+            let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+            let typ_summary = summarize_typology(typology);
+            let (system, user) = creative::themed_prompt(
+                &lang_book.title,
+                kind,
+                &cfg.language,
+                &typ_summary,
+                &entries,
+            );
+            let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+            let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+            eprintln!("inkhaven language compose · {kind} · {} · model: {model}", lang_book.title);
+            let raw = crate::ai::stream::collect_blocking(
+                ai.client.clone(),
+                model.to_string(),
+                Some(system),
+                user,
+            )
+            .map_err(|e| Error::Store(format!("inference error: {e}")))?;
+            let text = strip_code_fence(&raw);
+            println!("{}", text.trim());
+            // Advisory check: flag any native token not found in the lexicon's
+            // surface forms, so the author can see if the model drifted.
+            warn_unknown_tokens(&text, &entries);
+            eprintln!(
+                "\n(advisory — generated text, not saved; review before use)"
+            );
+        }
+        other => {
+            return Err(Error::Config(format!(
+                "unknown --kind `{other}` (expected names | prose | poem | blessing | curse | incantation)"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// A compact human summary of the typology answers for an AI prompt.
+fn summarize_typology(typology: &std::collections::BTreeMap<String, String>) -> String {
+    if typology.is_empty() {
+        return "word order: SVO; alignment: nominative–accusative (defaults)".into();
+    }
+    typology
+        .iter()
+        .map(|(k, v)| format!("{}: {}", k.replace('_', " "), v))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Print a warning listing any whitespace token on a `NATIVE:` line that is not
+/// a known lexicon surface form (bare headword or an inflected form). Purely
+/// advisory — the constraint is enforced by the prompt, this just surfaces drift.
+fn warn_unknown_tokens(text: &str, entries: &[crate::language_entry::DictionaryEntry]) {
+    let mut known: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for e in entries {
+        if !e.word.trim().is_empty() {
+            known.insert(e.word.to_lowercase());
+        }
+        for v in e.inflection.values() {
+            known.insert(v.to_lowercase());
+        }
+    }
+    let mut unknown: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let lower = line.trim_start().to_lowercase();
+        if let Some(rest) = lower.strip_prefix("native:") {
+            for tok in rest.split(|c: char| !c.is_alphanumeric()) {
+                let t = tok.trim();
+                if t.len() > 1 && !known.contains(t) && !unknown.contains(&t.to_string()) {
+                    unknown.push(t.to_string());
+                }
+            }
+        }
+    }
+    if !unknown.is_empty() {
+        eprintln!(
+            "\n⚠ {} token(s) not in the lexicon (model may have drifted): {}",
+            unknown.len(),
+            unknown.join(", ")
+        );
+    }
+}
+
 /// LANG-1 P6.1 — descriptive language profile: inventory balance, phoneme
 /// frequency, syllable-length distribution, onset/coda usage, POS spread.
 fn stats(project: &Path, language: &str, json: bool) -> Result<()> {
@@ -2737,6 +3310,49 @@ fn grammar_study_brief(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Build an example clause from the lexicon (first noun = subject, first verb,
+/// second noun = object) via the syntax engine, returned as `(surface,
+/// interlinear, literal)`. `None` when there isn't at least a noun and a verb.
+fn build_example_sentence(
+    phon: &crate::conlang::Phonology,
+    morph: &crate::conlang::types::morphology::Morphology,
+    typology: &std::collections::BTreeMap<String, String>,
+    entries: &[crate::language_entry::DictionaryEntry],
+) -> Option<(String, String, String)> {
+    use crate::conlang::syntax::{self, Clause, NounPhrase, Word};
+    let nouns: Vec<&crate::language_entry::DictionaryEntry> =
+        entries.iter().filter(|e| e.pos.eq_ignore_ascii_case("noun")).collect();
+    let verb = entries.iter().find(|e| e.pos.eq_ignore_ascii_case("verb"))?;
+    let subject = nouns.first()?;
+    let w = |e: &crate::language_entry::DictionaryEntry| Word {
+        root: e.word.clone(),
+        gloss: e.translation.clone(),
+    };
+    let clause = Clause {
+        subject: Some(NounPhrase { head: w(subject), number: "sg".into(), adjective: None }),
+        verb: Some(w(verb)),
+        verb_person: "3".into(),
+        object: nouns.get(1).map(|o| NounPhrase { head: w(o), number: "sg".into(), adjective: None }),
+        noun_paradigm: "noun".into(),
+        verb_paradigm: "verb".into(),
+        ..Default::default()
+    };
+    let r = syntax::assemble(phon, morph, typology, &clause);
+    if r.words.is_empty() {
+        return None;
+    }
+    let widths: Vec<usize> =
+        r.words.iter().map(|(w, g)| w.chars().count().max(g.chars().count()) + 2).collect();
+    let mut l1 = String::new();
+    let mut l2 = String::new();
+    for (i, (w, g)) in r.words.iter().enumerate() {
+        l1.push_str(&format!("{:<width$}", w, width = widths[i]));
+        l2.push_str(&format!("{:<width$}", g, width = widths[i]));
+    }
+    let interlinear = format!("{}\n{}", l1.trim_end(), l2.trim_end());
+    Some((r.surface, interlinear, r.literal))
+}
+
 fn grammar_book(
     project: &Path,
     language: &str,
@@ -2803,6 +3419,12 @@ fn grammar_book(
         None
     };
 
+    // An example sentence, assembled from the lexicon by the syntax engine —
+    // a subject noun, a verb, and (if there is a second noun) an object.
+    let example_sentence = morphology
+        .as_ref()
+        .and_then(|m| build_example_sentence(&phon, m, &grammar_spec.grammar, &entries));
+
     let book = GrammarBook {
         language: &lang_book.title,
         font_family: if typst { family.as_deref() } else { None },
@@ -2813,6 +3435,7 @@ fn grammar_book(
         expressions: has_expr.then_some(&expressions),
         samples: &samples,
         study: study_doc.as_deref(),
+        example_sentence,
     };
     let doc = if typst {
         output::grammar_typst(&book)
@@ -4707,6 +5330,23 @@ fn export(
             &lang_book.title,
             &sample_bodies,
         ),
+        // 1.3.19 LANG-1 P6 — interchange formats (pure renderers in
+        // conlang::interchange). XLIFF keys its source language off the
+        // project working language; the IPA chart needs the phoneme model.
+        LanguageExportFormat::Xliff => crate::conlang::interchange::xliff(
+            &lang_book.title,
+            &cfg.language,
+            &entries,
+        )
+        .into_bytes(),
+        LanguageExportFormat::Linguex => {
+            crate::conlang::interchange::linguex(&lang_book.title, &entries).into_bytes()
+        }
+        LanguageExportFormat::IpaChart => {
+            let phon =
+                load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+            crate::conlang::interchange::ipa_chart(&lang_book.title, &phon).into_bytes()
+        }
     };
 
     match (output, format) {
@@ -5371,6 +6011,135 @@ fn open_in_editor(seed: &str, label: &str) -> Result<String> {
 ///     warning.
 ///   * Tally printed at end (imported / skipped /
 ///     failed counts).
+/// 1.3.19 LANG-1 P6 — import a dictionary from a foreign conlang/linguistics
+/// tool (Toolbox/MDF SFM, PolyGlot). Parses the file into neutral lexemes
+/// (`conlang::interchange`), previews them by default, and writes them into the
+/// Dictionary only with `--yes`. Deterministic format conversion — no AI — but
+/// non-committal by default so an author reviews before the book changes.
+fn import_foreign(
+    project: &Path,
+    language: &str,
+    file: &Path,
+    format: crate::cli::LanguageImportFormat,
+    commit: bool,
+) -> Result<()> {
+    use crate::cli::LanguageImportFormat;
+    use crate::conlang::interchange;
+
+    let (store, _hierarchy, lang_book) = open_lang_book(project, language)?;
+
+    let lexemes = match format {
+        LanguageImportFormat::Toolbox => {
+            let raw = std::fs::read_to_string(file).map_err(|e| {
+                Error::Config(format!("could not read {}: {e}", file.display()))
+            })?;
+            interchange::parse_toolbox(&raw)
+        }
+        LanguageImportFormat::Polyglot => {
+            let xml = read_polyglot_xml(file)?;
+            interchange::parse_polyglot(&xml).map_err(Error::Config)?
+        }
+    };
+
+    if lexemes.is_empty() {
+        eprintln!(
+            "no entries found in {} — is it a {} file?",
+            file.display(),
+            match format {
+                LanguageImportFormat::Toolbox => "Toolbox/SFM",
+                LanguageImportFormat::Polyglot => "PolyGlot",
+            }
+        );
+        return Ok(());
+    }
+
+    if !commit {
+        eprintln!(
+            "{} entr{} parsed from {} (preview — pass --yes to import):\n",
+            lexemes.len(),
+            if lexemes.len() == 1 { "y" } else { "ies" },
+            file.display()
+        );
+        for lx in lexemes.iter().take(20) {
+            let pos = if lx.pos.is_empty() {
+                String::new()
+            } else {
+                format!("  [{}]", lx.pos)
+            };
+            println!("  {:<20} {}{}", lx.word, lx.translation, pos);
+        }
+        if lexemes.len() > 20 {
+            println!("  … and {} more", lexemes.len() - 20);
+        }
+        return Ok(());
+    }
+
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    let (mut added, mut skipped) = (0usize, 0usize);
+    for lx in &lexemes {
+        let entry = ImportEntry {
+            word: lx.word.clone(),
+            pos: lx.pos.clone(),
+            translation: lx.translation.clone(),
+            example: lx.example.clone(),
+            pronunciation: lx.pronunciation.clone(),
+            etymology: lx.etymology.clone(),
+            notes: lx.notes.clone(),
+            ..Default::default()
+        };
+        match add_imported_dictionary_entry(&store, &cfg, &lang_book, &entry) {
+            Ok(_) => added += 1,
+            Err(e) => {
+                skipped += 1;
+                eprintln!("  skipped {}: {e}", lx.word);
+            }
+        }
+    }
+    eprintln!("\nimported {added} entr(y/ies) into {language}'s Dictionary ({skipped} skipped)");
+    Ok(())
+}
+
+/// Read PolyGlot dictionary XML from either the native `.pgd` ZIP archive
+/// (extracting `PGDictionary.xml`) or a raw `.xml` file. The archive member
+/// name has varied across PolyGlot versions, so fall back to the first
+/// `*.xml` entry when the canonical name is absent.
+fn read_polyglot_xml(file: &Path) -> Result<String> {
+    let bytes = std::fs::read(file)
+        .map_err(|e| Error::Config(format!("could not read {}: {e}", file.display())))?;
+    // ZIP archives start with the local-file-header magic `PK\x03\x04`.
+    let is_zip = bytes.starts_with(b"PK\x03\x04");
+    if !is_zip {
+        return String::from_utf8(bytes)
+            .map_err(|e| Error::Config(format!("{} is not valid UTF-8: {e}", file.display())));
+    }
+    let reader = std::io::Cursor::new(bytes);
+    let mut zip = zip::ZipArchive::new(reader)
+        .map_err(|e| Error::Config(format!("{} is not a valid .pgd archive: {e}", file.display())))?;
+    // Prefer the canonical member; else the first .xml in the archive.
+    let names: Vec<String> = (0..zip.len())
+        .filter_map(|i| zip.by_index(i).ok().map(|f| f.name().to_string()))
+        .collect();
+    let target = names
+        .iter()
+        .find(|n| n.eq_ignore_ascii_case("PGDictionary.xml"))
+        .or_else(|| names.iter().find(|n| n.to_ascii_lowercase().ends_with(".xml")))
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "no XML dictionary found inside {} (members: {})",
+                file.display(),
+                names.join(", ")
+            ))
+        })?;
+    let mut member = zip
+        .by_name(&target)
+        .map_err(|e| Error::Config(format!("could not read {target} from archive: {e}")))?;
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut member, &mut xml)
+        .map_err(|e| Error::Config(format!("could not decode {target}: {e}")))?;
+    Ok(xml)
+}
+
 fn import_dictionary_csv(
     project: &Path,
     language: &str,

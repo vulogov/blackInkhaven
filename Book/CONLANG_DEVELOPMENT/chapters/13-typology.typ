@@ -88,6 +88,114 @@ them, and the AI translator uses them to put words in the right order.
   but knowing them helps you break them on purpose.
 ]
 
+== Putting words into a sentence
+
+Word order, case, and agreement only come alive when you string words together.
+Inkhaven can do exactly that. Give it a subject, a verb, and an object — each a
+word from your lexicon, written `root` or `root:gloss` — and it builds the clause
+for you:
+
+```
+inkhaven language sentence Eldar --subject kira:bird --verb nami:see \
+    --object pata:stone --object-adj mira:bright
+```
+
+Behind that one command the engine does four things in sequence. It *orders* the
+three constituents by your `word_order` (so an SOV language prints subject, then
+object, then verb). It *assigns case* by your `alignment` (nominative–accusative
+makes the subject nominative and the object accusative). It *inflects* each noun
+through your `noun` paradigm to reach that case. And it *runs agreement*, so the
+adjective copies its noun's case and the verb agrees with its subject. The result
+is printed three ways — the surface clause, an interlinear gloss, and a literal
+back-translation:
+
+#term("Interlinear gloss")[
+  A word-by-word translation lined up *under* the original, the standard way
+  linguists display a sentence in an unfamiliar language. Each native word sits
+  above its meaning and grammatical tags (`stone-ACC`), so a reader can see
+  exactly how the grammar assembles meaning.
+]
+
+This is the same machinery the grammar book uses to print a worked example
+sentence from your own vocabulary — proof that your phonology, lexicon,
+paradigms, and typology have come together into something you can actually
+*say*.
+
+== Saying no, and asking: negation and questions
+
+A language needs more than plain statements. Two clause-level operations come
+straight from typology answers you already gave through the questionnaire above.
+To *negate* a clause, add `--negate` and, if your language has a negative word,
+name it with `--negator`:
+
+```
+inkhaven language sentence Eldar --subject kira:bird --verb nami:see \
+    --object pata:stone --negate --negator na:not
+```
+
+How the negation appears follows your `negation` feature: a *particle* or
+*auxiliary* puts the negator as its own word before the verb; an *affix* fuses it
+onto the verb form. If you have not coined a negator yet, Inkhaven marks only the
+gloss — it never invents a word for you.
+
+To make a *polar* (yes/no) question, add `--question` (and `--q-particle` if your
+language uses one):
+
+#term("Polar question")[
+  A yes/no question — "does the bird see the stone?" — as opposed to a *content*
+  question that asks who, what, or where. Languages mark them by a particle, by
+  inverting the word order, by special verb morphology, or by intonation alone.
+]
+
+Your `question` feature decides the realization: a *particle* is appended at the
+clause edge (glossed `Q`), *word_order* fronts the verb (English-style
+inversion), *morphology* tags the verb, and every strategy adds a surface "?".
+
+== Building bigger sentences: relative clauses and coordination
+
+Real sentences nest and join. A *relative clause* lets one clause modify a noun —
+"the bird #emph[that sees the stone]":
+
+#term("Relative clause")[
+  A clause that modifies a noun, the way "that sees the stone" narrows down
+  "the bird". The modified noun (the *head*) plays a role inside the embedded
+  clause — here it is the one doing the seeing (the subject); the empty slot it
+  leaves behind is called the *gap*.
+]
+
+```
+inkhaven language relative Eldar --head kira:bird --role subject \
+    --verb nami:see --with pata:stone --relativizer ya:that
+```
+
+You tell Inkhaven which role the head plays inside the clause — `subject` ("the
+bird that sees…") or `object` ("the stone that … sees") — and supply the other
+argument with `--with`. The embedded clause runs through the very same engine, so
+it still case-marks and agrees (the object stays accusative). Whether the clause
+sits *before* or *after* the head follows your `relative_clause` feature
+(prenominal, as in Japanese, versus postnominal, as in English).
+
+*Coordination* joins two things of the same kind with a conjunction — two nouns,
+or two whole clauses:
+
+```
+inkhaven language coordinate Eldar --np kira:bird --np pata:stone --conjunction na:and
+inkhaven language coordinate Eldar --conjunction na:and \
+    --clause "kira:bird nami:see pata:stone" --clause "muru:river tasa:fall"
+```
+
+Give two or more `--np` nouns, or two or more `--clause` clauses (each written as
+space-separated `root:gloss` words), and Inkhaven threads your conjunction
+between them — assembling each clause in full, so "bird sees stone and river
+falls" keeps its case marking throughout.
+
+#callout(label: "Grammar you can hear")[
+  Negation, questions, relative clauses, and coordination all read from the same
+  typology answers and the same paradigms as a plain sentence. Once your phonology,
+  lexicon, and grammar are in place, these richer sentences cost you nothing extra
+  — they fall out of choices you already made.
+]
+
 #recap((
   [*Typology* is the set of high-level structural choices a grammar makes;
    `grammar` lists sixteen, WALS-aligned.],
@@ -98,4 +206,10 @@ them, and the AI translator uses them to put words in the right order.
    genitive).],
   [`grammar --set feature=value` records an answer, validated against the
    catalogue.],
+  [`sentence` assembles a clause — ordering, case, and agreement together — with
+   an interlinear gloss.],
+  [`--negate` and `--question` add negation and yes/no questions, realized by
+   your `negation` and `question` features.],
+  [`relative` builds a noun modified by a *relative clause* (gap + relativizer,
+   pre- or postnominal); `coordinate` joins nouns or clauses with a conjunction.],
 ))

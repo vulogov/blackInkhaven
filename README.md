@@ -21,43 +21,52 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.18 — The ConLang Suite: morphology depth & a developer's guide
+## Latest release · 1.3.19 — The ConLang Suite: syntax, interchange & creative text
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.18.md`](Documentation/RELEASE_NOTES/1.3.18.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.19.md`](Documentation/RELEASE_NOTES/1.3.19.md)
 · Reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md)
 
-With RFC LANG-1 complete (1.3.17), this release deepens **morphology** — the one
-area that still had a clear ceiling — and ships a complete beginner's **book**
-about the whole suite. No new dependencies.
+With RFC LANG-1 complete and morphology deepened, this release makes a
+constructed language **speak** — a real syntax engine — and lets it **travel**:
+interchange with other tools, a coverage gauge, and creative-text generators. No
+new dependencies.
 
-### Morphology depth
+### Speaking the language: the syntax engine
 
-- **Non-concatenative morphology** — a morpheme can now be an **infix** (`sulat`
-  → `s-um-ulat`), a **circumfix** (`form: "ge_t"` → *ge* + stem + *t*), an
-  **ablaut** process (SPE `rules` swapping a sound inside the stem, *sing* →
-  *sang*), or **reduplication** (`full` / `initial_cv` / `initial_syllable` /
-  `final_syllable`, *kata* → *kakata*). All are used in paradigm cells like
-  affixes, with allophony at every seam.
-- **Affix precedence** — `precedence` orders stacked affixes by closeness to the
-  root, so the case suffix can always hug the root and the number suffix sit
-  outside it.
-- **Agreement (concord)** — `language agree --word mira --pos adjective
-  --features "number=pl"` inflects a dependent to match its head (`mira` →
-  `mirai`, *bright-PL*), driven by an `agreement` block.
+- **Sentences** — `language sentence` assembles a clause from a subject, verb,
+  and object: it orders by `word_order`, case-marks by `alignment`, inflects each
+  noun, and runs agreement, printing the surface clause, an interlinear gloss, and
+  a literal. The grammar book now prints a worked example from your own lexicon.
+- **Negation & polar questions** — `--negate` / `--question` realize negation and
+  yes/no questions per your `negation` and `question` typology (particle / affix;
+  particle / inversion / morphology), never inventing a word.
+- **Relative clauses** — `language relative` builds "the bird that sees the
+  stone"; the embedded clause case-marks and agrees, pre- or postnominal per
+  `relative_clause`.
+- **Coordination** — `language coordinate` joins nouns (`--np`) or clauses
+  (`--clause`) with a conjunction.
 
-### Better grammar output, and a guide
+### Letting the language travel: interchange
 
-- The **grammar book** groups affixes by `category`/`value` and shows each one's
-  kind (prefix / suffix / infix / circumfix / ablaut / reduplication), with an
-  agreement section.
-- **`Book/CONLANG_DEVELOPMENT/`** — *Developing a Constructed Language with
-  Inkhaven*, a new ~120-page guide that teaches the whole suite from zero, for
-  readers new to linguistics **and** Inkhaven. Every term is defined; it walks
-  the full process and ends with a complete worked example.
+- **Exporters** — `export --format` gains **xliff** (translation memory for
+  OmegaT / memoQ / Weblate), **linguex** (LaTeX glossed examples), and
+  **ipa-chart**, beside json / anki / csv.
+- **Importers** — `language import` reads **toolbox** (Toolbox / MDF / Lexique
+  Pro Standard Format) and **polyglot** (`.pgd` or `.xml`); it previews until
+  `--yes`.
+
+### Filling gaps, and having fun
+
+- **Semantic-gap finder** — `language gaps` diffs your lexicon against the bundled
+  **Swadesh-100** (in every working language) or your own concept list and reports
+  what's missing, ready for `generate-lexicon`.
+- **Creative text** — `language compose --kind` makes **names**, **prose**
+  (grammatical sentences), and **poem** (metered verse); the themed **blessing** /
+  **curse** / **incantation** are AI-composed but constrained to your lexicon.
 
 ### Test stats
 
-Tests 1490 → 1498. **Zero new dependencies.** Backward compatible. Full
+Tests 1490 → 1529. **Zero new dependencies.** Backward compatible. Full
 reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md).
 
 Every prior release lives under

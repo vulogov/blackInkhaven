@@ -95,6 +95,33 @@ inkhaven language scan-manuscript Eldar
 It lists candidate undefined words, so you can add the ones worth keeping. This
 closes the loop between writing and the lexicon.
 
+#section("What is your lexicon still missing?")
+
+A young lexicon always has holes. Inkhaven can tell you *which* basic concepts you
+have not coined yet, by comparing your dictionary against a reference list of
+concepts:
+
+```sh
+inkhaven language gaps Eldar
+```
+
+By default it checks against the *Swadesh-100* — the classic list of the hundred
+most fundamental words every language has (I, water, sun, eat, big…), here
+translated into your working language. It reports your coverage and lists what is
+missing, most-core words first:
+
+#term("Swadesh list")[
+  A short list of universal, culture-independent concepts (body parts, basic
+  verbs, natural features, pronouns) compiled by the linguist Morris Swadesh.
+  Because every language has words for them, it is the standard yardstick for
+  "have I covered the basics?" and for comparing related languages.
+]
+
+The missing list is shaped to hand straight back to the generator — coin exactly
+the gaps with `generate-lexicon`. You can also point `--scope` at your own concept
+list (an HJSON file of a topic like seafaring or cookery) to check coverage of any
+domain you care about.
+
 #recap((
   [`audit` reports phonotactic violations, *homophones*, and duplicate
    meanings — it only reports, never changes.],
@@ -105,4 +132,6 @@ closes the loop between writing and the lexicon.
   [Nothing is added without `--yes`; AI is optional.],
   [`scan-manuscript` finds language-like words in your prose that are not yet
    defined.],
+  [`gaps` compares your lexicon against the *Swadesh-100* (or your own concept
+   list) and reports what is still missing.],
 ))

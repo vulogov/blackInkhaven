@@ -147,6 +147,100 @@ inkhaven language grammar Eldar --set alignment=ergative_absolutive
 Answers are validated against the catalog and stored as a `{ grammar: { … } }`
 block in the Grammar chapter; the AI grammar book reads them.
 
+## Syntax (sentences)
+
+`inkhaven language sentence <lang>` assembles a clause from its parts and prints
+the surface form, an interlinear gloss, and a literal rendering — putting word
+order, case, and agreement together into something speakable:
+
+```
+inkhaven language sentence Eldar --subject kira:bird --verb nami:see \
+    --object pata:stone --object-adj mira:bright
+```
+
+The engine orders the words by the typology `word_order` (`sov`, `svo`, …),
+case-marks the nouns by `alignment` (nominative–accusative → subject nominative,
+object accusative; ergative–absolutive → subject ergative, object absolutive),
+inflects each noun through the `noun` paradigm to its case (and number), and runs
+agreement (an adjective takes its noun's case; a verb agrees with its subject via
+the `verb` agreement rule). Words are `root` or `root:gloss`; adjective placement
+follows the `adjective_order` typology feature. It degrades gracefully — a
+missing paradigm or case just leaves a word bare. The **grammar book** uses this
+to print a worked example sentence from the lexicon.
+
+**Negation and questions** layer on top, realized by the `negation` and
+`question` typology features:
+
+```
+inkhaven language sentence Eldar --subject kira:bird --verb nami:see \
+    --object pata:stone --negate --negator na:not
+inkhaven language sentence Eldar --subject kira:bird --verb nami:see \
+    --object pata:stone --question --q-particle ka:Q
+```
+
+- `--negate` follows the `negation` strategy: `particle`/`auxiliary` sets the
+  negator (`--negator`) as a separate word before the verb (glossed `NEG`);
+  `affix` fuses it onto the verb form (`NEG-…`). With no `--negator`, only the
+  gloss is marked — the engine never coins a word.
+- `--question` follows the `question` strategy: `particle` appends the question
+  particle (`--q-particle`, glossed `Q`); `word_order` fronts the verb
+  (inversion); `morphology` tags the verb (`.Q`); all add a surface `?`.
+
+**Relative clauses** modify a noun — "the bird that sees the stone":
+
+```
+inkhaven language relative Eldar --head kira:bird --role subject \
+    --verb nami:see --with pata:stone --relativizer ya:that
+```
+
+The head plays a role inside the embedded clause — its `subject` ("the bird that
+sees …") or its `object` ("the stone that … sees"); that role is the *gap*, and
+`--with` supplies the other argument. The embedded clause is assembled by the
+same engine, so it case-marks and agrees correctly (the example yields `kira ya
+nami patan` — *bird REL see stone-ACC*). Placement follows the `relative_clause`
+typology: `prenominal` puts the clause before the head (Japanese, Chinese),
+otherwise after it (English, the default).
+
+**Coordination** joins noun phrases or whole clauses with a conjunction:
+
+```
+inkhaven language coordinate Eldar --np kira:bird --np pata:stone --conjunction na:and
+inkhaven language coordinate Eldar --conjunction na:and \
+    --clause "kira:bird nami:see pata:stone" --clause "muru:river tasa:fall"
+```
+
+Give two or more `--np` (each a single `root:gloss` noun) **or** two or more
+`--clause` (each space-separated `root:gloss` words — subject, verb, optional
+object). The conjunction sits between adjacent conjuncts, glossed by its own
+gloss; clause conjuncts are each assembled (so case marking still applies:
+`kira nami patan na muru tasa` — *bird see stone-ACC and river fall*).
+
+## Creative text (compose)
+
+`inkhaven language compose <lang> --kind <kind>` generates creative text. The
+deterministic kinds are grounded in what you've built (seed with `--seed` for a
+different draw):
+
+```
+inkhaven language compose Avesha --kind names  --count 6 --seed 3
+inkhaven language compose Avesha --kind prose  --count 3
+inkhaven language compose Avesha --kind poem   --meter 5,7,5
+```
+
+- **`names`** — phonotactically-valid, capitalised names from the `root`
+  templates (the same generator that feeds the lexicon — every name is sayable).
+- **`prose`** — grammatical sample sentences assembled through the **syntax
+  engine** (word order, case, agreement), each with an interlinear gloss and a
+  literal — the language actually speaking.
+- **`poem`** — metered verse: one line per `--meter` syllable count (e.g.
+  `5,7,5`), each line drawing real words until it scans.
+
+The themed kinds **`blessing`**, **`curse`**, and **`incantation`** are AI-composed
+(need `--provider`) but **constrained to the existing lexicon** — the model
+arranges real words, never invents them, and emits the native text, an
+interlinear gloss, and a translation. Any token not found in the lexicon is
+flagged. `compose` only prints — nothing is written to the book.
+
 ## Diachronics (sound change)
 
 A language can derive from a proto by an ordered chain of sound changes (same
@@ -221,6 +315,25 @@ get used, and the part-of-speech spread. Computed over the headwords that
 segment cleanly into the inventory. This is the snapshot the grammar book and
 dictionary output draw on.
 
+### Semantic-gap finder
+
+```
+inkhaven language gaps Avesha [--scope swadesh_100 | scope.hjson] [--json]
+```
+
+Diffs the lexicon against a reference *concept scope* and reports which concepts
+are still missing, frequency-ranked (most-core first) — the exact list to coin
+next. The default scope is the **Swadesh-100** core vocabulary, bundled in every
+working language (en/ru/fr/de/es) and matched against your glosses
+Unicode-aware (articles and `to`-infinitives don't hide a match, so "the sun"
+covers *sun*). Point `--scope` at an HJSON file for a topic of your own:
+
+```hjson
+{ name: "Seafaring", concepts: ["hull", "tide", "mast", { label: "harbor", aliases: ["port"] }] }
+```
+
+The missing list is shaped to hand straight to `generate-lexicon --topic …`.
+
 ## Dictionary output
 
 ```
@@ -274,6 +387,51 @@ For a complete worked example that builds a language from nothing to all three
 books — with an **AI-drawn font** — see
 [`examples/conlang/build-sample-language.sh`](../examples/conlang/build-sample-language.sh)
 and [Tutorial 74](Tutorials/74-conlang-end-to-end.md).
+
+## Interchange (export)
+
+`inkhaven language export <lang> --format <fmt> [--out F]` writes the lexicon to
+a portable artefact:
+
+```
+inkhaven language export Avesha --format xliff   > avesha.xlf
+inkhaven language export Avesha --format linguex > avesha.tex
+inkhaven language export Avesha --format ipa-chart
+```
+
+- `json` — full structured dump (dictionary, grammar, phonology, samples).
+- `anki` / `csv` — flashcard / round-trippable CSV (the `--import` path re-ingests `csv`).
+- `dictionary-twocol` / `grammar` / `phrasebook` — printable Typst (need `--out`).
+- **`xliff`** — XLIFF 1.2 translation memory: each entry is a `trans-unit`
+  (working-language *source* → invented-word *target*), loadable into CAT tools
+  (OmegaT, memoQ, Weblate). The source language code follows the project working
+  language; the conlang gets a BCP-47 `art-x-<slug>` tag.
+- **`linguex`** — LaTeX using the `linguex` package: bold headword + POS + gloss,
+  with any example as a numbered `\ex.` — paste-ready for a paper or grammar sketch.
+- **`ipa-chart`** — Markdown IPA inventory: consonants and vowels grouped, each
+  with its romanization.
+
+## Interchange (import)
+
+Pull a lexicon in from another tool. `add-word --import <csv>` reads Inkhaven's
+own round-trippable CSV; `language import` reads foreign formats:
+
+```
+inkhaven language import Avesha --file lexicon.sfm --format toolbox        # preview
+inkhaven language import Avesha --file lexicon.sfm --format toolbox --yes  # write
+inkhaven language import Avesha --file MyLang.pgd  --format polyglot --yes
+```
+
+- **`toolbox`** — Toolbox / MDF **Standard Format** (`\lx … \ps … \ge …`), the
+  lingua franca of descriptive lexicography. The same SFM that **SIL Toolbox**,
+  **FieldWorks**, and **Lexique Pro** read and write, so all three import here.
+- **`polyglot`** — a **PolyGlot** dictionary: pass the native `.pgd` archive (its
+  `PGDictionary.xml` is unzipped for you) or a raw exported `.xml`. The
+  part-of-speech table is resolved so each word lands with its class.
+
+Import **previews by default** — it prints what it would add and changes nothing
+until you pass `--yes`. Duplicate headwords are skipped with a warning. (Tools
+that export CSV, such as ConWorkShop, can come in through `add-word --import`.)
 
 ## Worldbuilding links
 

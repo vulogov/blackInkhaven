@@ -47,6 +47,13 @@ stress, tone), the morphology (affixes and derivations), the typology answers,
 the idioms and metaphors, and the sample texts. It is a faithful, deterministic
 description of exactly what you built.
 
+In the morphology section, affixes are *grouped by category* — all the case
+endings together, all the number endings together — using the `category` and
+`value` tags you gave each morpheme (Chapter 11), with each one's kind (prefix,
+suffix, infix, circumfix, ablaut, reduplication) shown. Any agreement rules get
+their own short section. The more carefully you tag your morphemes, the clearer
+this grammar reads.
+
 #section("The study guide (AI)")
 
 A bare reference grammar can be daunting to a newcomer who does not know what
@@ -89,6 +96,55 @@ language, rather than look things up in it.
   on the shelf.
 ]
 
+#section("Sharing your lexicon with other tools")
+
+Your language need not live only inside Inkhaven. The `export` command writes the
+lexicon to portable formats:
+
+```sh
+inkhaven language export Eldar --format xliff     > eldar.xlf
+inkhaven language export Eldar --format linguex   > eldar.tex
+inkhaven language export Eldar --format ipa-chart
+```
+
+- *xliff* is a translation-memory file that loads into computer-assisted
+  translation tools (OmegaT, memoQ, Weblate), with each entry as a
+  working-language → invented-word pair.
+- *linguex* is LaTeX for the `linguex` package — bold headwords with glosses and
+  numbered examples, ready to drop into a paper or grammar sketch.
+- *ipa-chart* is a Markdown inventory of your sounds.
+
+(The older `json`, `anki`, and `csv` formats are still there for flashcards and
+spreadsheets.) Going the other way, `import` pulls a lexicon *in* from another
+tool — Toolbox / Lexique Pro Standard-Format databases, or a PolyGlot dictionary:
+
+```sh
+inkhaven language import Eldar --file lexicon.sfm --format toolbox        # preview
+inkhaven language import Eldar --file lexicon.sfm --format toolbox --yes  # write
+```
+
+Import previews what it would add and writes nothing until you pass `--yes`, so
+you always see the entries before they land in your Dictionary.
+
+#section("Creative text: names, verse, and ritual")
+
+For the fun of hearing the language speak, `compose` generates text grounded in
+what you have built:
+
+```sh
+inkhaven language compose Eldar --kind names --count 6
+inkhaven language compose Eldar --kind prose --count 3
+inkhaven language compose Eldar --kind poem  --meter 5,7,5
+```
+
+`names` draws phonotactic, capitalised names; `prose` assembles real grammatical
+sentences through the syntax engine (with glosses); `poem` writes metered verse
+that actually scans against your syllable counts. The themed kinds — `blessing`,
+`curse`, `incantation` — are AI-composed but *constrained to your existing
+lexicon*, so the model arranges real words rather than inventing them, and prints
+the native text with a gloss and a translation. Everything `compose` makes is
+printed for you to keep or discard; nothing is written into your books.
+
 #recap((
   [Four documents come from your language: *dictionary*, *grammar reference*,
    *study guide*, and *tutorial*.],
@@ -97,4 +153,8 @@ language, rather than look things up in it.
   [`--font Eldar` embeds your script; dictionary and grammar are *deterministic*.],
   [`grammar-book --study` and `tutorial` are *AI-written* teaching materials (need
    a provider).],
+  [`export` writes your lexicon to *xliff*, *linguex*, *ipa-chart* (and json /
+   anki / csv); `import` reads Toolbox/Lexique and PolyGlot back in.],
+  [`compose` generates names, prose, and verse — grounded, deterministic, with
+   AI-composed blessings/curses constrained to your lexicon.],
 ))
