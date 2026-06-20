@@ -2333,6 +2333,58 @@ pub enum LanguageCommand {
         font: Option<String>,
     },
 
+    /// LANG-1 P6.3 — render a reference grammar as a document.  Markdown (`md`)
+    /// or Typst (`typ`); the Typst path is a paginated A5 book with an outline
+    /// and numbered sections — phonology (inventory, phonotactics, allophony,
+    /// stress, tone), morphology (affixes, derivation), the typology answers,
+    /// idioms & metaphors, and the sample texts.  The companion volume to
+    /// `dictionary`.
+    GrammarBook {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Output format: `md` or `typ`.
+        #[arg(long, default_value = "md")]
+        format: String,
+        /// Write the document here (otherwise it prints to stdout).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Conscript font family for the Typst path (defaults to the `font`
+        /// block's family).
+        #[arg(long)]
+        font: Option<String>,
+        /// Prepend an AI-written study guide that explains the linguistic terms
+        /// the grammar uses (case, alignment, allophony, …) and how this
+        /// language applies them.  Needs an AI provider.
+        #[arg(long)]
+        study: bool,
+        /// Override the configured AI provider (for `--study`).
+        #[arg(long)]
+        provider: Option<String>,
+    },
+
+    /// LANG-1 P7 — generate a learner's textbook with the AI: a complete graded
+    /// course (pronunciation guide, vocabulary, grammar lessons with worked
+    /// examples, a reading, and exercises) authored by the model from the
+    /// language's own data.  Markdown (`md`) or Typst (`typ`); the Typst path
+    /// embeds the conscript font behind a deterministic page scaffold.
+    Tutorial {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Output format: `md` or `typ`.
+        #[arg(long, default_value = "md")]
+        format: String,
+        /// Write the document here (otherwise it prints to stdout).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Conscript font family for the Typst path (defaults to the `font`
+        /// block's family).
+        #[arg(long)]
+        font: Option<String>,
+        /// Override the configured AI provider.
+        #[arg(long)]
+        provider: Option<String>,
+    },
+
     /// LANG-1 P2.6 — link a Place to a language it's spoken in.  Stored in a
     /// `.inkhaven/conlang-links.json` sidecar (the Places book is prose and is
     /// never modified).  Sets the primary language by default; `--secondary`

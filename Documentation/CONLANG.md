@@ -195,12 +195,51 @@ inkhaven language dictionary Avesha --format md|typ [--out dict.typ] [--font Eld
 
 Renders the dictionary as a real document. **Markdown** (`md`) is a clean,
 alphabetized listing (headword, pronunciation, POS, gloss, tags, etymology).
-**Typst** (`typ`) is the showpiece: a paginated, two-column A5 book with a title
-page and an overview table, and — when the language has a `font` block — each
-headword shown in the **native script** (transliterated by the input method)
-beside its romanization. Build the font (`font-build --language … --format ttf`)
-and compile with `typst compile --font-path <dir> dict.typ` to get a PDF that
-embeds and renders the conscript.
+**Typst** (`typ`) is the showpiece: a manual-style **B5 book** — a title page, a
+table of contents, an overview, and a two-column lexicon where (when the
+language has a `font` block) each headword appears in the **native script**
+(transliterated by the input method) beside its romanization. Build the font
+(`font-build --language … --format ttf`) and compile with `typst compile
+--font-path <dir> dict.typ` to get a PDF that embeds and renders the conscript.
+
+```
+inkhaven language grammar-book Avesha --format md|typ [--out g.typ] [--font Eldar] \
+    [--study --provider …]
+```
+
+The companion volume: a **reference grammar**, drawing every section from the
+language's own data — phonology (consonant/vowel inventory, syllable structure,
+phonotactics, allophony, stress, tone), morphology (affixes, derivation), the
+typology answers (with their consequences), idioms & metaphors, and the sample
+texts. Markdown is a flat reference; **Typst** is the same manual-style B5 book
+(title page, contents, sections) as the dictionary, with the conscript font.
+
+With **`--study`** it also becomes **study material**: an AI-written study guide
+leads the book, defining and explaining every linguistic term the reference uses
+(phoneme, allophony, grammatical case, SOV word order, nominative–accusative
+alignment, agent nouns, …) and how this language applies them. The reference
+itself stays deterministic; only the study guide is AI-authored (needs a
+provider).
+
+```
+inkhaven language tutorial Avesha --format md|typ [--out learn.typ] [--font Eldar] [--provider …]
+```
+
+An **AI-written learner's textbook** — a complete graded course the model
+authors from the language's own data (the prose is generated, never hardcoded):
+a warm introduction, a pronunciation guide, graded lessons that *explain* the
+grammar (word order, the cases, word-building) with worked examples, a reading
+passage, and a practice exercise per lesson. The model is constrained to the
+language's actual sounds, words, and rules — it never invents vocabulary or
+grammar. Markdown comes straight from the model; the Typst path converts that to
+a paginated A5 book (embedding the conscript font) behind a deterministic page
+scaffold, so it always compiles. The gentle on-ramp the dictionary and grammar
+back up.
+
+For a complete worked example that builds a language from nothing to all three
+books — with an **AI-drawn font** — see
+[`examples/conlang/build-sample-language.sh`](../examples/conlang/build-sample-language.sh)
+and [Tutorial 74](Tutorials/74-conlang-end-to-end.md).
 
 ## Worldbuilding links
 
