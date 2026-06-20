@@ -66,6 +66,12 @@ pub struct MorphemeSpec {
     #[serde(default)]
     #[allow(dead_code)]
     pub value: String,
+    /// How close this affix sits to the root when several affixes of the same
+    /// side stack: `0` = any position (the declared order is kept), `1` =
+    /// immediately next to the root, `2` = the next slot out, and so on. A
+    /// lower non-zero value is closer to the root; `0` affixes drift outermost.
+    #[serde(default)]
+    pub precedence: u8,
 }
 
 /// One cell of a paradigm: a feature bundle + the morphemes (by id) it

@@ -62,8 +62,8 @@ Inspectors: `generate-word`, `syllabify --word`, `ipa --word` (surface),
 {
   kind: "agglutinative"
   morphemes: [
-    { id: "pl",  gloss: "PL",  form: "i",  position: "suffix" }
-    { id: "dat", gloss: "DAT", form: "d",  position: "suffix" }
+    { id: "pl",  gloss: "PL",  form: "i",  position: "suffix", precedence: 2 }
+    { id: "dat", gloss: "DAT", form: "d",  position: "suffix", precedence: 1 }
     { id: "def", gloss: "DEF", form: "na", position: "prefix" }
   ]
   paradigms: [ { name: "noun", cells: [
@@ -76,6 +76,13 @@ Inspectors: `generate-word`, `syllabify --word`, `ipa --word` (surface),
 `inkhaven language paradigm <lang> --root kata --template noun --gloss stone`
 applies each cell's morphemes to the root, runs allophony across the affix
 boundaries, and prints the form + Leipzig gloss. (P3.1 covers prefix + suffix.)
+
+Optional **`precedence`** on a morpheme controls how close it sits to the root
+when several affixes of the same side stack: `0` (the default) = any position,
+keeping the declared order; `1` = immediately next to the root; `2` = the next
+slot out; and so on. Above, the case suffix (`dat`, precedence 1) hugs the root
+and the number suffix (`pl`, precedence 2) sits outside it, regardless of the
+order the cell lists them — `kata` + DAT + PL → `katadi`, glossed `stone-DAT-PL`.
 
 **Auto-gloss.** A dictionary entry can declare the paradigm it inflects by
 (`paradigm: "noun"`); then `inkhaven language gloss <lang> --text "kata katai
