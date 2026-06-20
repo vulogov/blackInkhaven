@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000">
+  <path fill="black" d="
+    M 440 100 
+    L 440 900 
+    L 560 900 
+    L 560 100 
+    Z 
+    M 400 800 
+    L 400 950 
+    L 600 950 
+    L 600 800 
+    Z
+  "/>
+</svg>

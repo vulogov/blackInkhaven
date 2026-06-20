@@ -51,3 +51,8 @@ glyph-*.svg                      # the AI-drafted glyph artwork
 The AI output varies run to run; every glyph is preflight-gated, so an
 occasional unusable draft is skipped (and reported) rather than breaking the
 build.
+
+A checked-in result from one real run lives in
+[`sample-output/`](sample-output/) — the AI-drawn font, the glyph SVGs, and all
+three books (including the compiled PDFs) — so you can see what the script
+produces without running it.
