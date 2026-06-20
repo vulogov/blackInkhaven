@@ -47,6 +47,13 @@ stress, tone), the morphology (affixes and derivations), the typology answers,
 the idioms and metaphors, and the sample texts. It is a faithful, deterministic
 description of exactly what you built.
 
+In the morphology section, affixes are *grouped by category* — all the case
+endings together, all the number endings together — using the `category` and
+`value` tags you gave each morpheme (Chapter 11), with each one's kind (prefix,
+suffix, infix, circumfix, ablaut, reduplication) shown. Any agreement rules get
+their own short section. The more carefully you tag your morphemes, the clearer
+this grammar reads.
+
 #section("The study guide (AI)")
 
 A bare reference grammar can be daunting to a newcomer who does not know what
