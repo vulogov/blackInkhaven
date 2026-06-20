@@ -174,6 +174,34 @@ Dictionary entries are HJSON paragraphs under **Dictionary** (created by
 | `language query [--register] [--domain] [--era] [--pos] [--text]` | filter by the rich fields |
 | `language scan-manuscript [--json]` | candidate undefined conlang words in the prose |
 
+## Analysis
+
+```
+inkhaven language stats Avesha [--json]
+```
+
+A descriptive profile of the language (vs `audit`, which hunts for problems):
+inventory balance (consonants / vowels), phoneme frequency across the lexicon,
+the syllable-length distribution (with bars), which onsets and codas actually
+get used, and the part-of-speech spread. Computed over the headwords that
+segment cleanly into the inventory. This is the snapshot the grammar book and
+dictionary output draw on.
+
+## Dictionary output
+
+```
+inkhaven language dictionary Avesha --format md|typ [--out dict.typ] [--font Eldar]
+```
+
+Renders the dictionary as a real document. **Markdown** (`md`) is a clean,
+alphabetized listing (headword, pronunciation, POS, gloss, tags, etymology).
+**Typst** (`typ`) is the showpiece: a paginated, two-column A5 book with a title
+page and an overview table, and — when the language has a `font` block — each
+headword shown in the **native script** (transliterated by the input method)
+beside its romanization. Build the font (`font-build --language … --format ttf`)
+and compile with `typst compile --font-path <dir> dict.typ` to get a PDF that
+embeds and renders the conscript.
+
 ## Worldbuilding links
 
 Stored in `.inkhaven/conlang-links.json` (the prose books are never modified):
@@ -183,6 +211,120 @@ inkhaven language link-place Tirion Quenya [--secondary]
 inkhaven language link-character Erendil Quenya native   # native|fluent|conversational|broken|reading_only
 inkhaven language speakers Quenya
 ```
+
+## Writing systems + fonts
+
+A constructed script can be compiled into a usable font from a directory of
+glyph SVGs (one per glyph; filename stem = glyph name, and a single-character
+stem also becomes the glyph's Unicode codepoint):
+
+A script can be part of the **language definition** — glyphs bound to phonemes
+and codepoints in a `font` block, stored in the Phonology chapter:
+
+```hjson
+font: {
+  family: "Eldar"
+  upm: 1000
+  glyphs: [
+    { name: "a", codepoint: "a", phoneme: "a" }       # printable ASCII → literal
+    { name: "o_glyph", codepoint: "U+E000", phoneme: "o" }   # else → hex
+  ]
+}
+```
+
+Glyph artwork lives in the project glyph store
+(`.inkhaven/glyphs/<language>/<name>.svg`). The workflow:
+
+```
+inkhaven language glyph-lint --svg ./a.svg                 # suitability preflight
+inkhaven language glyph-draft Eldar --describe "a vertical stroke \
+    with a hook" --phoneme p [--out p.svg] [--yes]         # AI text-to-SVG draft
+inkhaven language font-import-glyph Eldar --svg ./a.svg \
+    --phoneme a [--codepoint U+E000] [--name a]            # bind + store + record
+inkhaven language font-config Eldar [--json]               # show the bindings
+inkhaven language font-build --language Eldar \
+    [--format ufo|ttf|both] [--out Eldar] [--upm 1000]     # compile from the book
+```
+
+- **`glyph-lint`** reports whether an SVG is fit for a font outline (filled
+  paths required; stroke-only / image / gradient glyphs are flagged). It also
+  warns on non-black fills — a near-white fill among darker ones is almost
+  always a counter the author drew with white paint, which a monochrome font
+  won't honour (cut counters with a reverse-wound subpath instead).
+- **`glyph-draft`** asks the AI to draft an SVG glyph from a description, runs it
+  through the same preflight, and previews the result. Advisory: it prints the
+  SVG (or writes `--out`) and the verdict; only `--yes` (and only a *usable*
+  draft) binds it into the `font` block — the same path as `font-import-glyph`.
+- **`font-import-glyph`** preflights the SVG (refusing unusable artwork), copies
+  it into the glyph store, and binds it — to a `--phoneme` and a Unicode
+  `--codepoint` (a single character or hex; a single-character glyph name
+  implies its own codepoint) — recording it in the `font` block.
+- **`font-config`** lists every binding with its codepoint, phoneme, and
+  artwork status (✓ usable / ⚠ unusable / ✗ missing).
+- **`font-build`** runs the preflight on every glyph (skipping unusable ones),
+  converts each filled path to font contours (y-flipped + scaled into the em),
+  and emits — per `--format`:
+  - **`ufo`** (default): a **UFO** font source you can edit or compile with
+    `fontc` / `fontmake` / FontForge / Glyphs;
+  - **`ttf`**: a ready-to-use **TrueType** binary, compiled fully in-process
+    (cubics are quadified for the `glyf` table; a complete OpenType table set
+    is assembled — no external tool);
+  - **`both`**: the editable source *and* the binary, sharing one stem.
+
+  Source the glyphs from the language's own `font` block (`--language Eldar`,
+  family + units-per-em taken from the config) or from a loose directory
+  (`font-build Eldar --glyphs ./glyphs/`, filename stem → glyph name).
+
+### Composed blocks (Hangul-style syllables, quadrats)
+
+Some scripts build a unit from several component glyphs arranged in 2D — a
+Korean syllable square, an Egyptian quadrat. A **spatial template** names the
+cells (each a normalized rectangle in the em, `(0,0)` = top-left); a component
+glyph drops into each cell and the whole is baked into one precomposed glyph.
+
+```
+inkhaven language font-templates Eldar                     # list templates
+inkhaven language font-compose Eldar --template lr \
+    --name ka --codepoint U+AC00 --phoneme ka \
+    --slot left=lead --slot right=vowel [--out ka.svg] [--yes]
+```
+
+Built-in templates: `lr` (left/right), `tb` (top/bottom), `quad` (2×2),
+`stack3` (three rows); define your own under `templates` in the `font` block (a
+config template overrides a built-in of the same name). `font-compose` places
+each `--slot SLOT=GLYPH` component into its cell, runs the composite through the
+preflight, and — on `--yes` — binds it like any other glyph (the component
+glyphs and the composed block coexist in the font). The composition is baked at
+compose time; re-run it after editing a component.
+
+The same template can instead arrange components at **layout time** — for a
+hieroglyphic script, where base signs combine contextually and precomposing
+every quadrat into the font is impractical:
+
+```
+inkhaven language spatial-typst Glyphic --template tb \
+    --name quadrat_sunbar --slot top=sun --slot bottom=bar [--size 2em] [--out q.typ]
+```
+
+This emits a Typst `#let <name> = box(...)[ … ]` that `place`s each component
+(rendered as a character of the generated font) into its cell. Build the font
+(`font-build --language … --format ttf`), embed it in your Typst document, and
+the quadrat renders with the glyphs arranged spatially — no precomposed glyph
+required. (Each component must have a codepoint, since Typst renders by
+character.)
+
+### Typing the script (input method)
+
+```
+inkhaven language transliterate Eldar --text "katha" [--json]
+```
+
+Transliterates romanized/phonemic text into the script's codepoints using the
+`font` block's glyph→phoneme bindings: at each position the **longest** glyph
+key wins, so a digraph key like `th` or `ka` beats `t`+`h`. The result is a
+string of codepoints that renders in the generated font; unmatched characters
+pass through and are flagged (bind them with `font-import-glyph --phoneme`).
+This is the engine a live editor input mode would drive.
 
 ## In the editor
 

@@ -2301,6 +2301,38 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// LANG-1 P6.1 — a descriptive profile of a language: inventory balance
+    /// (consonants / vowels), phoneme frequency across the lexicon, the
+    /// syllable-length distribution, which onsets/codas get used, and the
+    /// part-of-speech spread.  The snapshot the grammar book / dictionary draw
+    /// on (vs `audit`, which hunts for problems).
+    Stats {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Emit the profile as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// LANG-1 P6.2 — render the dictionary as a document.  Markdown (`md`) or
+    /// Typst (`typ`); the Typst path is a paginated, two-column book that embeds
+    /// the generated conscript font and shows each headword in the native script
+    /// (transliterated) beside its romanization, pronunciation, and gloss.
+    Dictionary {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Output format: `md` or `typ`.
+        #[arg(long, default_value = "md")]
+        format: String,
+        /// Write the document here (otherwise it prints to stdout).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Conscript font family for the Typst path (defaults to the `font`
+        /// block's family).
+        #[arg(long)]
+        font: Option<String>,
+    },
+
     /// LANG-1 P2.6 — link a Place to a language it's spoken in.  Stored in a
     /// `.inkhaven/conlang-links.json` sidecar (the Places book is prose and is
     /// never modified).  Sets the primary language by default; `--secondary`
@@ -2331,6 +2363,184 @@ pub enum LanguageCommand {
     Speakers {
         /// Language name (case-insensitive).
         language: String,
+    },
+
+    /// LANG-1 P5.2 — compile a directory of glyph SVGs into a UFO font source.
+    /// Each SVG's filename stem names the glyph (a single character also sets
+    /// its Unicode codepoint); unsuitable glyphs (see `glyph-lint`) are
+    /// skipped with a warning.  Emits a UFO source and/or a ready-to-use
+    /// TrueType binary (`--format`); the TTF is compiled fully in-process
+    /// (no external tool).  Source the glyphs either from a language's own
+    /// `font` block (`--language`) or a loose directory (`--glyphs`).
+    FontBuild {
+        /// Font family name (optional with `--language`, which supplies it).
+        family: Option<String>,
+        /// Build from this language's `font` config block + glyph store.
+        #[arg(long)]
+        language: Option<String>,
+        /// Directory of glyph `.svg` files (alternative to `--language`).
+        #[arg(long)]
+        glyphs: Option<std::path::PathBuf>,
+        /// Output path (extension set by `--format`; defaults to `<family>.<ext>`).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Units per em (the design grid; overrides the config value).
+        #[arg(long)]
+        upm: Option<f64>,
+        /// Output format: `ufo` (editable source), `ttf` (binary font), or
+        /// `both`.
+        #[arg(long, default_value = "ufo")]
+        format: String,
+    },
+
+    /// LANG-1 P5.4 — import a glyph SVG into a language's writing system:
+    /// preflight it, copy it into the project glyph store, and bind it to a
+    /// phoneme and/or Unicode codepoint in the language's `font` config block.
+    /// `font-build --language` then compiles the script straight from the book.
+    FontImportGlyph {
+        /// Language to bind the glyph to.
+        language: String,
+        /// Path to the glyph `.svg` file.
+        #[arg(long)]
+        svg: std::path::PathBuf,
+        /// Phoneme (or romanization grapheme) this glyph stands for.
+        #[arg(long)]
+        phoneme: Option<String>,
+        /// Unicode codepoint: a single character (`a`) or hex (`U+E000`).
+        #[arg(long)]
+        codepoint: Option<String>,
+        /// Glyph name (defaults: `uniXXXX` from the codepoint, else the
+        /// phoneme, else the SVG filename stem).
+        #[arg(long)]
+        name: Option<String>,
+    },
+
+    /// LANG-1 P5.4 — show a language's `font` config: family, units-per-em,
+    /// and every glyph binding with its codepoint, phoneme, and artwork status.
+    FontConfig {
+        /// Language to inspect.
+        language: String,
+        /// Emit JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// LANG-1 P5.6 — list the spatial templates available to a language:
+    /// built-in arrangements (`lr`/`tb`/`quad`/`stack3`) plus any custom
+    /// `templates` defined in its `font` block.
+    FontTemplates {
+        /// Language to inspect.
+        language: String,
+    },
+
+    /// LANG-1 P5.6 — compose component glyphs into a precomposed block (a
+    /// Hangul-style syllable square, an Egyptian quadrat) per a spatial
+    /// template, baking them into one glyph.  Advisory — previews the composite
+    /// + preflight; `--yes` binds it like `font-import-glyph`.
+    FontCompose {
+        /// Language the block is for.
+        language: String,
+        /// Spatial template name (see `font-templates`).
+        #[arg(long)]
+        template: String,
+        /// Name for the composed glyph.
+        #[arg(long)]
+        name: String,
+        /// Unicode codepoint: a single character (`가`) or hex (`U+AC00`).
+        #[arg(long)]
+        codepoint: Option<String>,
+        /// Phoneme/syllable this block stands for.
+        #[arg(long)]
+        phoneme: Option<String>,
+        /// A component binding `SLOT=GLYPH` (repeat for each cell).
+        #[arg(long = "slot", value_name = "SLOT=GLYPH")]
+        slots: Vec<String>,
+        /// Write the composed SVG here (otherwise it prints to stdout).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Bind the composed block into the language's `font` block.
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// LANG-1 P5.6 — input method: transliterate romanized/phonemic text into
+    /// the script's codepoints using the `font` block's glyph→phoneme bindings
+    /// (longest key wins, so digraph keys like `th`/`ka` beat their prefixes).
+    /// The result renders in the generated font.
+    Transliterate {
+        /// Language to type in.
+        language: String,
+        /// The romanized / phonemic text to convert.
+        #[arg(long)]
+        text: String,
+        /// Emit JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// LANG-1 P5.6 — binding-time B: emit a Typst quadrat that arranges
+    /// component glyphs spatially at layout time (the hieroglyphic path — no
+    /// precomposed font glyph).  Each component renders as a character of the
+    /// language's font, so it must have a codepoint.
+    SpatialTypst {
+        /// Language the quadrat is for.
+        language: String,
+        /// Spatial template name (see `font-templates`).
+        #[arg(long)]
+        template: String,
+        /// Name for the emitted Typst `#let` binding.
+        #[arg(long)]
+        name: String,
+        /// A component binding `SLOT=GLYPH` (repeat for each cell).
+        #[arg(long = "slot", value_name = "SLOT=GLYPH")]
+        slots: Vec<String>,
+        /// Quadrat side length (a Typst length).
+        #[arg(long, default_value = "2em")]
+        size: String,
+        /// Write the Typst snippet here (otherwise it prints to stdout).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
+
+    /// LANG-1 P5.5 — AI text-to-SVG glyph draft: describe a glyph and the model
+    /// drafts an SVG, which is run through the suitability preflight.  Advisory
+    /// — previews the SVG + verdict; `--yes` binds a usable draft into the
+    /// language's `font` block (the same path as `font-import-glyph`).
+    GlyphDraft {
+        /// Language the glyph is for.
+        language: String,
+        /// What the glyph should look like (e.g. "a vertical stroke with a hook").
+        #[arg(long)]
+        describe: String,
+        /// Phoneme (or grapheme) this glyph stands for.
+        #[arg(long)]
+        phoneme: Option<String>,
+        /// Unicode codepoint: a single character (`a`) or hex (`U+E000`).
+        #[arg(long)]
+        codepoint: Option<String>,
+        /// Glyph name (defaults like `font-import-glyph`).
+        #[arg(long)]
+        name: Option<String>,
+        /// Override the configured AI provider.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Write the drafted SVG here (otherwise it prints to stdout).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Bind the drafted glyph into the language's `font` block.
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// LANG-1 P5.1 — check whether a glyph SVG is suitable for font
+    /// compilation: does it parse, does it have a fillable outline (not
+    /// stroke-only / empty), is it free of raster images, is it monochrome.
+    /// Run it on AI-drafted or hand-drawn artwork before binding it to a
+    /// phoneme.
+    GlyphLint {
+        /// Path to the SVG file.
+        #[arg(long)]
+        svg: std::path::PathBuf,
     },
 
     /// LANG-1 P4.3 — AI comparative reconstruction: given cognate forms from
