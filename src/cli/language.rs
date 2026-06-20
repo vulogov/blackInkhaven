@@ -135,6 +135,32 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             template,
             gloss,
         } => paradigm(project, &language, &root, &template, gloss.as_deref()),
+        LanguageCommand::Sentence {
+            language,
+            subject,
+            subject_number,
+            subject_person,
+            subject_adj,
+            verb,
+            object,
+            object_number,
+            object_adj,
+            noun_paradigm,
+            verb_paradigm,
+        } => sentence(
+            project,
+            &language,
+            subject.as_deref(),
+            &subject_number,
+            &subject_person,
+            subject_adj.as_deref(),
+            verb.as_deref(),
+            object.as_deref(),
+            &object_number,
+            object_adj.as_deref(),
+            &noun_paradigm,
+            &verb_paradigm,
+        ),
         LanguageCommand::Agree {
             language,
             word,
@@ -1926,6 +1952,82 @@ fn paradigm(
     Ok(())
 }
 
+/// Parse a `root` or `root:gloss` argument into a syntax word.
+fn parse_word(s: &str) -> crate::conlang::syntax::Word {
+    use crate::conlang::syntax::Word;
+    match s.split_once(':') {
+        Some((root, gloss)) => Word { root: root.trim().to_string(), gloss: gloss.trim().to_string() },
+        None => Word { root: s.trim().to_string(), gloss: s.trim().to_string() },
+    }
+}
+
+/// LANG-1 syntax — assemble a sentence from its parts and print the clause.
+#[allow(clippy::too_many_arguments)]
+fn sentence(
+    project: &Path,
+    language: &str,
+    subject: Option<&str>,
+    subject_number: &str,
+    subject_person: &str,
+    subject_adj: Option<&str>,
+    verb: Option<&str>,
+    object: Option<&str>,
+    object_number: &str,
+    object_adj: Option<&str>,
+    noun_paradigm: &str,
+    verb_paradigm: &str,
+) -> Result<()> {
+    use crate::conlang::syntax::{self, Clause, NounPhrase};
+
+    if subject.is_none() && verb.is_none() && object.is_none() {
+        return Err(Error::Config("give at least a --subject and a --verb".into()));
+    }
+
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no phoneme block"))
+    })?;
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+
+    let np = |w: Option<&str>, number: &str, adj: Option<&str>| -> Option<NounPhrase> {
+        w.map(|w| NounPhrase {
+            head: parse_word(w),
+            number: number.to_string(),
+            adjective: adj.map(parse_word),
+        })
+    };
+
+    let clause = Clause {
+        subject: np(subject, subject_number, subject_adj),
+        verb: verb.map(parse_word),
+        verb_person: subject_person.to_string(),
+        object: np(object, object_number, object_adj),
+        noun_paradigm: noun_paradigm.to_string(),
+        verb_paradigm: verb_paradigm.to_string(),
+    };
+
+    let rendered = syntax::assemble(&phon, &morph, &grammar_spec.grammar, &clause);
+
+    let order = grammar_spec.grammar.get("word_order").map(String::as_str).unwrap_or("svo");
+    println!("{} ({} order)", rendered.surface, order.to_uppercase());
+    // Interlinear: surface words over their glosses.
+    let surf: Vec<&str> = rendered.words.iter().map(|(w, _)| w.as_str()).collect();
+    let gl: Vec<&str> = rendered.words.iter().map(|(_, g)| g.as_str()).collect();
+    let widths: Vec<usize> =
+        rendered.words.iter().map(|(w, g)| w.chars().count().max(g.chars().count()) + 2).collect();
+    let mut line1 = String::from("  ");
+    let mut line2 = String::from("  ");
+    for (i, w) in surf.iter().enumerate() {
+        line1.push_str(&format!("{:<width$}", w, width = widths[i]));
+        line2.push_str(&format!("{:<width$}", gl[i], width = widths[i]));
+    }
+    println!("{line1}");
+    println!("{line2}");
+    println!("  '{}'", rendered.literal);
+    Ok(())
+}
+
 /// LANG-1 P3.x — make a dependent word agree with its head's features.
 fn agree(
     project: &Path,
@@ -2737,6 +2839,48 @@ fn grammar_study_brief(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Build an example clause from the lexicon (first noun = subject, first verb,
+/// second noun = object) via the syntax engine, returned as `(surface,
+/// interlinear, literal)`. `None` when there isn't at least a noun and a verb.
+fn build_example_sentence(
+    phon: &crate::conlang::Phonology,
+    morph: &crate::conlang::types::morphology::Morphology,
+    typology: &std::collections::BTreeMap<String, String>,
+    entries: &[crate::language_entry::DictionaryEntry],
+) -> Option<(String, String, String)> {
+    use crate::conlang::syntax::{self, Clause, NounPhrase, Word};
+    let nouns: Vec<&crate::language_entry::DictionaryEntry> =
+        entries.iter().filter(|e| e.pos.eq_ignore_ascii_case("noun")).collect();
+    let verb = entries.iter().find(|e| e.pos.eq_ignore_ascii_case("verb"))?;
+    let subject = nouns.first()?;
+    let w = |e: &crate::language_entry::DictionaryEntry| Word {
+        root: e.word.clone(),
+        gloss: e.translation.clone(),
+    };
+    let clause = Clause {
+        subject: Some(NounPhrase { head: w(subject), number: "sg".into(), adjective: None }),
+        verb: Some(w(verb)),
+        verb_person: "3".into(),
+        object: nouns.get(1).map(|o| NounPhrase { head: w(o), number: "sg".into(), adjective: None }),
+        noun_paradigm: "noun".into(),
+        verb_paradigm: "verb".into(),
+    };
+    let r = syntax::assemble(phon, morph, typology, &clause);
+    if r.words.is_empty() {
+        return None;
+    }
+    let widths: Vec<usize> =
+        r.words.iter().map(|(w, g)| w.chars().count().max(g.chars().count()) + 2).collect();
+    let mut l1 = String::new();
+    let mut l2 = String::new();
+    for (i, (w, g)) in r.words.iter().enumerate() {
+        l1.push_str(&format!("{:<width$}", w, width = widths[i]));
+        l2.push_str(&format!("{:<width$}", g, width = widths[i]));
+    }
+    let interlinear = format!("{}\n{}", l1.trim_end(), l2.trim_end());
+    Some((r.surface, interlinear, r.literal))
+}
+
 fn grammar_book(
     project: &Path,
     language: &str,
@@ -2803,6 +2947,12 @@ fn grammar_book(
         None
     };
 
+    // An example sentence, assembled from the lexicon by the syntax engine —
+    // a subject noun, a verb, and (if there is a second noun) an object.
+    let example_sentence = morphology
+        .as_ref()
+        .and_then(|m| build_example_sentence(&phon, m, &grammar_spec.grammar, &entries));
+
     let book = GrammarBook {
         language: &lang_book.title,
         font_family: if typst { family.as_deref() } else { None },
@@ -2813,6 +2963,7 @@ fn grammar_book(
         expressions: has_expr.then_some(&expressions),
         samples: &samples,
         study: study_doc.as_deref(),
+        example_sentence,
     };
     let doc = if typst {
         output::grammar_typst(&book)

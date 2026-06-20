@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::conlang::morphology::paradigm::{self, ParadigmRow};
+use crate::conlang::morphology::paradigm;
 use crate::conlang::types::morphology::{AgreementRule, Morphology};
 use crate::conlang::types::Phonology;
 
@@ -44,15 +44,11 @@ pub fn agree(
         .filter_map(|f| head_features.get(f).map(|v| (f.clone(), v.clone())))
         .collect();
 
+    // Pick the dependent paradigm cell that matches every agreement feature.
     let template = morph.paradigm(&rule.paradigm)?;
-    let rows = paradigm::generate(phon, morph, template, dependent_root, dependent_gloss);
+    let row = paradigm::realize_features(phon, morph, template, dependent_root, dependent_gloss, &wanted)?;
 
-    // Pick the cell whose features match every wanted (agreement) feature.
-    let row: &ParadigmRow = rows
-        .iter()
-        .find(|r| wanted.iter().all(|(k, v)| r.features.get(k).is_some_and(|rv| rv.eq_ignore_ascii_case(v))))?;
-
-    Some(Agreement { form: row.form.clone(), gloss: row.gloss.clone(), matched: wanted })
+    Some(Agreement { form: row.form, gloss: row.gloss, matched: wanted })
 }
 
 #[cfg(test)]

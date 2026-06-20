@@ -88,6 +88,39 @@ them, and the AI translator uses them to put words in the right order.
   but knowing them helps you break them on purpose.
 ]
 
+== Putting words into a sentence
+
+Word order, case, and agreement only come alive when you string words together.
+Inkhaven can do exactly that. Give it a subject, a verb, and an object — each a
+word from your lexicon, written `root` or `root:gloss` — and it builds the clause
+for you:
+
+```
+inkhaven language sentence Eldar --subject kira:bird --verb nami:see \
+    --object pata:stone --object-adj mira:bright
+```
+
+Behind that one command the engine does four things in sequence. It *orders* the
+three constituents by your `word_order` (so an SOV language prints subject, then
+object, then verb). It *assigns case* by your `alignment` (nominative–accusative
+makes the subject nominative and the object accusative). It *inflects* each noun
+through your `noun` paradigm to reach that case. And it *runs agreement*, so the
+adjective copies its noun's case and the verb agrees with its subject. The result
+is printed three ways — the surface clause, an interlinear gloss, and a literal
+back-translation:
+
+#term("Interlinear gloss")[
+  A word-by-word translation lined up *under* the original, the standard way
+  linguists display a sentence in an unfamiliar language. Each native word sits
+  above its meaning and grammatical tags (`stone-ACC`), so a reader can see
+  exactly how the grammar assembles meaning.
+]
+
+This is the same machinery the grammar book uses to print a worked example
+sentence from your own vocabulary — proof that your phonology, lexicon,
+paradigms, and typology have come together into something you can actually
+*say*.
+
 #recap((
   [*Typology* is the set of high-level structural choices a grammar makes;
    `grammar` lists sixteen, WALS-aligned.],
@@ -98,4 +131,6 @@ them, and the AI translator uses them to put words in the right order.
    genitive).],
   [`grammar --set feature=value` records an answer, validated against the
    catalogue.],
+  [`sentence` assembles a clause — ordering, case, and agreement together — with
+   an interlinear gloss.],
 ))

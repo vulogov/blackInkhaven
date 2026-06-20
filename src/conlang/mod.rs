@@ -16,6 +16,7 @@ pub mod links;
 pub mod morphology;
 pub mod output;
 pub mod phonology;
+pub mod syntax;
 pub mod types;
 pub mod writing;
 

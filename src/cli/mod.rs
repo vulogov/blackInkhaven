@@ -2768,6 +2768,46 @@ pub enum LanguageCommand {
         gloss: Option<String>,
     },
 
+    /// LANG-1 syntax — assemble a **sentence** from a subject, verb, and object.
+    /// Orders the words by the language's `word_order`, case-marks the nouns by
+    /// its `alignment`, runs agreement (adjective↔noun, verb↔subject), and
+    /// prints the clause with an interlinear gloss.  Words are `root` or
+    /// `root:gloss`.
+    Sentence {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Subject noun (`kira` or `kira:bird`).
+        #[arg(long)]
+        subject: Option<String>,
+        /// Subject's grammatical number.
+        #[arg(long, default_value = "sg")]
+        subject_number: String,
+        /// Subject's person, for verb agreement (`1` / `2` / `3`).
+        #[arg(long, default_value = "3")]
+        subject_person: String,
+        /// An adjective modifying the subject (`mira:bright`).
+        #[arg(long)]
+        subject_adj: Option<String>,
+        /// The verb (`nami` or `nami:see`).
+        #[arg(long)]
+        verb: Option<String>,
+        /// Object noun (`pata:stone`); omit for an intransitive clause.
+        #[arg(long)]
+        object: Option<String>,
+        /// Object's grammatical number.
+        #[arg(long, default_value = "sg")]
+        object_number: String,
+        /// An adjective modifying the object.
+        #[arg(long)]
+        object_adj: Option<String>,
+        /// Paradigm used to inflect nouns (case marking).
+        #[arg(long, default_value = "noun")]
+        noun_paradigm: String,
+        /// Paradigm used to inflect verbs.
+        #[arg(long, default_value = "verb")]
+        verb_paradigm: String,
+    },
+
     /// LANG-1 P3.x — apply **agreement** (concord): inflect a dependent word
     /// (an adjective, a verb) to agree with the grammatical features of its
     /// head (its noun, its subject).  Uses the `agreement` rules + paradigm in

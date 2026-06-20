@@ -36,6 +36,7 @@ language <action> <language> [options]`. Add `--help` to any for full details.
 / `gloss <lang> --text "…"`: Interlinear (word-by-word) gloss of a sentence.
 / `derive <lang> --root R --gloss G --pos P [--yes]`: Coin derived words from a root.
 / `grammar <lang> [--set feature=value]`: View or set the typology questionnaire.
+/ `sentence <lang> --subject W --verb W --object W [--*-adj W] [--*-number N]`: Assemble a clause — order, case, and agreement — with an interlinear gloss.
 / `idiom-add <lang> --form F --literal L --meaning M [--register R]`: Record an idiom.
 / `metaphor-add <lang> --source S --target T [--example E]`: Record a conceptual metaphor.
 / `idioms <lang>`: List recorded idioms and metaphors.
