@@ -135,53 +135,50 @@ fn typst_text(s: &str) -> String {
 /// Render a paginated, two-column Typst dictionary. When `font_family` is set,
 /// each headword is also shown in the native script.
 pub fn dictionary_typst(meta: &DictMeta, entries: &[RenderEntry]) -> String {
-    let lang = typst_text(meta.language);
-    let mut s = String::new();
-    s.push_str(&format!("#set document(title: \"{lang} — Dictionary\")\n"));
-    s.push_str("#set page(paper: \"a5\", margin: 1.6cm, numbering: \"1\")\n");
-    s.push_str("#set text(size: 10pt)\n");
-    s.push_str("#set par(justify: true)\n");
+    // Cover line: the first headword in the native script, if a font exists.
+    let cover = entries
+        .iter()
+        .find_map(|e| e.conscript.as_ref().filter(|c| !c.is_empty()).cloned());
+    let mut s = book_scaffold(
+        &format!("{} — Dictionary", meta.language),
+        &format!("{} Dictionary", meta.language),
+        "A lexicon",
+        meta.font_family,
+        cover.as_deref(),
+    );
+    // The dictionary's conscript helper renders a touch larger than the body
+    // native() default.
     if let Some(f) = meta.font_family {
         s.push_str(&format!(
-            "#let conscript(cp) = text(font: \"{}\", size: 1.4em)[#cp]\n",
+            "#let conscript(cp) = text(font: \"{}\", size: 1.5em)[#cp]\n\n",
             typst_text(f)
         ));
     }
-    s.push('\n');
 
-    // Title block.
-    s.push_str("#align(center)[\n");
-    s.push_str(&format!("  #text(size: 26pt, weight: \"bold\")[{lang}] \\\n"));
-    s.push_str("  #text(size: 14pt, fill: gray)[Dictionary]\n");
-    s.push_str("]\n#v(1cm)\n\n");
-
-    // Overview table.
     if let Some(p) = meta.profile {
-        s.push_str("#heading(level: 1, numbering: none)[Overview]\n");
-        s.push_str("#table(columns: 2, stroke: none,\n");
+        s.push_str("= Overview\n");
+        s.push_str("#table(columns: 2, stroke: none, inset: (x: 0pt, y: 3pt),\n");
         s.push_str(&format!(
-            "  [Phonemes], [{} ({} C / {} V)],\n",
+            "  [Phonemes], [{} ({} consonants / {} vowels)],\n",
             p.phoneme_inventory, p.consonants, p.vowels
         ));
         s.push_str(&format!("  [Entries], [{}],\n", entries.len()));
         if p.analyzable_words > 0 {
             s.push_str(&format!(
-                "  [Word shape], [{:.1} phonemes, {:.1} syllables avg],\n",
+                "  [Average word], [{:.1} phonemes, {:.1} syllables],\n",
                 p.avg_phonemes, p.avg_syllables
             ));
         }
-        s.push_str(")\n#v(0.5cm)\n\n");
+        s.push_str(")\n#pagebreak()\n\n");
     }
 
-    s.push_str("#columns(2)[\n");
+    s.push_str("= The Lexicon\n");
+    s.push_str("#columns(2, gutter: 1.2em)[\n");
     let mut current = String::new();
     for e in sorted(entries) {
         let key = section_key(&e.headword);
         if key != current {
-            s.push_str(&format!(
-                "#heading(level: 2, numbering: none)[{}]\n",
-                typst_text(&key)
-            ));
+            s.push_str(&format!("== {}\n", typst_text(&key)));
             current = key;
         }
         // Headword (bold) + native script + pronunciation + POS.
@@ -192,19 +189,19 @@ pub fn dictionary_typst(meta: &DictMeta, entries: &[RenderEntry]) -> String {
             }
         }
         if let Some(pron) = &e.pronunciation {
-            s.push_str(&format!(" #text(fill: gray)[/{}/]", typst_text(pron)));
+            s.push_str(&format!(" #text(fill: luma(110))[/{}/]", typst_text(pron)));
         }
         if !e.pos.is_empty() {
-            s.push_str(&format!(" #emph[{}]", typst_text(&e.pos)));
+            s.push_str(&format!(" #text(style: \"italic\", fill: luma(110))[{}]", typst_text(&e.pos)));
         }
         // Definition body.
         s.push_str(&format!(": {}", typst_text(&e.gloss)));
         let tagstr = tags(e);
         if !tagstr.is_empty() {
-            s.push_str(&format!(" #text(size: 0.85em, fill: gray)[({})]", typst_text(&tagstr)));
+            s.push_str(&format!(" #text(size: 0.85em, fill: luma(120))[({})]", typst_text(&tagstr)));
         }
         if let Some(et) = &e.etymology {
-            s.push_str(&format!(" #text(size: 0.85em)[← {}]", typst_text(et)));
+            s.push_str(&format!(" #text(size: 0.85em, fill: luma(120))[← {}]", typst_text(et)));
         }
         s.push('\n');
     }
@@ -226,6 +223,10 @@ pub struct GrammarBook<'a> {
     pub expressions: Option<&'a Expressions>,
     /// Sample texts: `(title, body)`.
     pub samples: &'a [(String, String)],
+    /// Optional AI-authored study guide, ready to drop in — raw Markdown for the
+    /// Markdown renderer, converted Typst for the Typst renderer. When present,
+    /// it leads the book (as a study companion) ahead of the reference sections.
+    pub study: Option<&'a str>,
 }
 
 /// A syllable template's pattern, e.g. `CV(C)`.
@@ -321,6 +322,13 @@ pub fn grammar_markdown(book: &GrammarBook) -> String {
         p.phoneme_inventory, p.consonants, p.vowels, p.word_count
     ));
 
+    // AI-authored study guide leads, when present.
+    if let Some(study) = book.study {
+        s.push_str("## Study Guide\n\n");
+        s.push_str(study.trim());
+        s.push_str("\n\n---\n\n");
+    }
+
     s.push_str("## Phonology\n\n");
     let cons = inventory(book.phonology, PhonemeKind::Consonant);
     let vowels = inventory(book.phonology, PhonemeKind::Vowel);
@@ -414,24 +422,24 @@ pub fn grammar_markdown(book: &GrammarBook) -> String {
 /// Render the grammar as a Typst document (embeds the conscript font when set).
 pub fn grammar_typst(book: &GrammarBook) -> String {
     use crate::conlang::types::phoneme::PhonemeKind;
-    let lang = typst_text(book.language);
-    let mut s = String::new();
-    s.push_str(&format!("#set document(title: \"{lang} — A Grammar\")\n"));
-    s.push_str("#set page(paper: \"a5\", margin: 1.6cm, numbering: \"1\")\n");
-    s.push_str("#set text(size: 10pt)\n");
-    s.push_str("#set par(justify: true)\n");
-    s.push_str("#set heading(numbering: \"1.1\")\n");
-    if let Some(f) = book.font_family {
-        s.push_str(&format!(
-            "#let native(cp) = text(font: \"{}\", size: 1.3em)[#cp]\n",
-            typst_text(f)
-        ));
+    let cover = book
+        .samples
+        .first()
+        .and_then(|_| None::<String>); // grammar has no per-word conscript handy
+    let mut s = book_scaffold(
+        &format!("{} — A Grammar", book.language),
+        &format!("A Grammar of {}", book.language),
+        "Phonology · Morphology · Syntax",
+        book.font_family,
+        cover.as_deref(),
+    );
+
+    // AI-authored study guide leads, when present.
+    if let Some(study) = book.study {
+        s.push_str("= Study Guide\n");
+        s.push_str(study);
+        s.push_str("\n#pagebreak()\n\n");
     }
-    s.push('\n');
-    s.push_str("#align(center)[\n");
-    s.push_str(&format!("  #text(size: 26pt, weight: \"bold\")[{lang}] \\\n"));
-    s.push_str("  #text(size: 14pt, fill: gray)[A Grammar]\n");
-    s.push_str("]\n#v(0.8cm)\n#outline()\n#pagebreak()\n\n");
 
     let para = |s: &mut String, label: &str, body: &str| {
         s.push_str(&format!("*{label}.* {body}\n\n", label = typst_text(label)));
@@ -546,16 +554,20 @@ pub fn grammar_typst(book: &GrammarBook) -> String {
 
 // ─────────────────────────── tutorial ───────────────────────────
 
-/// The deterministic Typst scaffold for an AI-authored tutorial: document /
-/// page / type setup, the `#native` (conscript) and `#practice` (exercise)
-/// helpers, a title page, and a table of contents. The teaching content is
-/// generated by the AI and appended after this — so the formatting is reliable
-/// and the prose is not hardcoded. `escapes` is an optional cover line of the
-/// native script (a string of glyph codepoints).
-pub fn tutorial_typst_scaffold(language: &str, font_family: Option<&str>, cover: Option<&str>) -> String {
-    let lang = typst_text(language);
+/// The shared manual-style book chrome for every ConLang document: document /
+/// page / type setup (B5, serif body, weighted+ruled headings), the `#native`
+/// (conscript) and `#practice` / `#term` callout helpers, a title page with a
+/// `title` + `subtitle` and an optional native-script cover line, and a table
+/// of contents. The body — deterministic or AI-authored — is appended after.
+pub fn book_scaffold(
+    doc_title: &str,
+    title: &str,
+    subtitle: &str,
+    font_family: Option<&str>,
+    cover: Option<&str>,
+) -> String {
     let mut s = String::new();
-    s.push_str(&format!("#set document(title: \"Learn {lang}\")\n"));
+    s.push_str(&format!("#set document(title: \"{}\")\n", typst_text(doc_title)));
     s.push_str("#set page(paper: \"iso-b5\", margin: (x: 2.2cm, y: 2.4cm), numbering: \"1\")\n");
     // Fonts: rely on families Typst bundles ("Libertinus Serif", "New Computer
     // Modern") so the book compiles warning-free anywhere; headings get contrast
@@ -569,6 +581,9 @@ pub fn tutorial_typst_scaffold(language: &str, font_family: Option<&str>, cover:
     s.push_str("#show heading.where(level: 2): set text(size: 12pt, weight: \"bold\")\n");
     s.push_str("#let practice(body) = block(width: 100%, fill: luma(244), stroke: (left: 2pt + rgb(\"#7a4a2f\")), inset: 8pt, radius: 2pt)[\n");
     s.push_str("  #text(size: 8pt, weight: \"bold\", fill: rgb(\"#7a4a2f\"), tracking: 1pt)[PRACTICE] #parbreak() #body\n]\n");
+    // A definitional callout for explaining a linguistic term.
+    s.push_str("#let term(name, body) = block(width: 100%, fill: rgb(\"#f2f6f9\"), stroke: (left: 2pt + rgb(\"#2f5d7a\")), inset: 8pt, radius: 2pt)[\n");
+    s.push_str("  #text(weight: \"bold\", fill: rgb(\"#2f5d7a\"))[#name] #parbreak() #body\n]\n");
     match font_family {
         Some(f) => s.push_str(&format!(
             "#let native(cp) = text(font: \"{}\", size: 1.3em)[#cp]\n",
@@ -579,16 +594,32 @@ pub fn tutorial_typst_scaffold(language: &str, font_family: Option<&str>, cover:
     }
     s.push('\n');
     s.push_str("#align(center + horizon)[\n");
-    s.push_str(&format!("  #text(size: 34pt, weight: \"bold\")[Learn {lang}] \\\n"));
-    s.push_str("  #v(4mm) #text(size: 13pt, style: \"italic\", fill: luma(90))[A first course] \\\n");
+    s.push_str(&format!("  #text(size: 32pt, weight: \"bold\")[{}] \\\n", typst_text(title)));
+    if !subtitle.is_empty() {
+        s.push_str(&format!(
+            "  #v(4mm) #text(size: 13pt, style: \"italic\", fill: luma(90))[{}] \\\n",
+            typst_text(subtitle)
+        ));
+    }
     if let (Some(cp), Some(_)) = (cover, font_family) {
         if !cp.is_empty() {
             s.push_str(&format!("  #v(12mm) #native({})\n", typst_escapes(cp)));
         }
     }
     s.push_str("]\n#pagebreak()\n\n");
-    s.push_str("#outline(title: \"Contents\", depth: 1)\n#pagebreak()\n\n");
+    s.push_str("#outline(title: \"Contents\", depth: 2)\n#pagebreak()\n\n");
     s
+}
+
+/// The tutorial's book scaffold (a thin wrapper over [`book_scaffold`]).
+pub fn tutorial_typst_scaffold(language: &str, font_family: Option<&str>, cover: Option<&str>) -> String {
+    book_scaffold(
+        &format!("Learn {language}"),
+        &format!("Learn {language}"),
+        "A first course",
+        font_family,
+        cover,
+    )
 }
 
 
@@ -784,20 +815,24 @@ fn md_inline(s: &str) -> String {
             _ => esc.push(c),
         }
     }
-    // 4. Emphasis, matched pairs only — so an unbalanced `*` can never become
-    //    an unclosed Typst delimiter. `**x**` → `*x*` (bold), `*x*` → `_x_`
-    //    (italic); any leftover lone `*` is escaped to a literal.
+    // 4. Emphasis → Typst FUNCTION calls (`#strong[…]` / `#emph[…]`), matched
+    //    pairs only. Functions work regardless of surrounding characters, unlike
+    //    `*`/`_` markup which Typst only treats as emphasis at word boundaries —
+    //    Markdown allows intra-word emphasis (`*pa*ta`), which as `_pa_ta` would
+    //    be an unclosed Typst delimiter. Any leftover lone `*`/`_` is escaped.
     use std::sync::OnceLock;
     static BOLD: OnceLock<regex::Regex> = OnceLock::new();
-    static ITALIC: OnceLock<regex::Regex> = OnceLock::new();
+    static ITAL_STAR: OnceLock<regex::Regex> = OnceLock::new();
+    static ITAL_US: OnceLock<regex::Regex> = OnceLock::new();
     let bold = BOLD.get_or_init(|| regex::Regex::new(r"\*\*([^*]+)\*\*").unwrap());
-    let italic = ITALIC.get_or_init(|| regex::Regex::new(r"\*([^*]+)\*").unwrap());
-    // Bold first → placeholders, then italic, then escape any survivor.
-    let s1 = bold.replace_all(&esc, "\u{1}${1}\u{2}").into_owned();
-    let s2 = italic.replace_all(&s1, "_${1}_").into_owned();
-    let s3 = s2.replace('*', "\\*").replace('\u{1}', "*").replace('\u{2}', "*");
+    let ital_star = ITAL_STAR.get_or_init(|| regex::Regex::new(r"\*([^*]+)\*").unwrap());
+    let ital_us = ITAL_US.get_or_init(|| regex::Regex::new(r"_([^_]+)_").unwrap());
+    let s1 = bold.replace_all(&esc, "#strong[${1}]").into_owned();
+    let s2 = ital_star.replace_all(&s1, "#emph[${1}]").into_owned();
+    let s3 = ital_us.replace_all(&s2, "#emph[${1}]").into_owned();
+    let s4 = s3.replace('*', "\\*").replace('_', "\\_");
     // 5. Restore code spans.
-    let mut result = s3;
+    let mut result = s4;
     for (idx, code) in protected.iter().enumerate() {
         result = result.replace(&format!("\u{0}{idx}\u{0}"), code);
     }
@@ -876,8 +911,11 @@ mod tests {
         assert!(typ.contains("text(font: \"Eldar\""));
         // kata's conscript codepoints as Typst escapes.
         assert!(typ.contains("\\u{E000}\\u{E001}"));
-        assert!(typ.contains("#columns(2)"));
+        assert!(typ.contains("#columns(2"));
         assert!(typ.contains("/ *kata*"));
+        // Manual-style book chrome.
+        assert!(typ.contains("iso-b5"));
+        assert!(typ.contains("= The Lexicon"));
     }
 
     #[test]
@@ -930,6 +968,7 @@ mod tests {
             typology: &typology,
             expressions: None,
             samples: &samples,
+            study: None,
         };
 
         let md = grammar_markdown(&book);
@@ -942,10 +981,40 @@ mod tests {
 
         let typ = grammar_typst(&book);
         assert!(typ.contains("#set document(title: \"Avesha — A Grammar\")"));
-        assert!(typ.contains("#outline()"));
+        assert!(typ.contains("#outline(title: \"Contents\""));
         assert!(typ.contains("= Phonology"));
         assert!(typ.contains("#table(columns: 2"));
         assert!(typ.contains("== Greeting"));
+        // Manual-style book chrome from the shared scaffold.
+        assert!(typ.contains("iso-b5"));
+        assert!(typ.contains("#let term(name, body)"));
+    }
+
+    #[test]
+    fn grammar_study_guide_leads_when_present() {
+        let profile = LanguageProfile::default();
+        let phon = grammar_phon();
+        let typology = std::collections::BTreeMap::new();
+        let samples: Vec<(String, String)> = Vec::new();
+        let book = GrammarBook {
+            language: "Avesha",
+            font_family: None,
+            profile: &profile,
+            phonology: &phon,
+            morphology: None,
+            typology: &typology,
+            expressions: None,
+            samples: &samples,
+            study: Some("## What is a case?\n\nA grammatical case marks a noun's role."),
+        };
+        let md = grammar_markdown(&book);
+        let study_pos = md.find("## Study Guide").unwrap();
+        let phon_pos = md.find("## Phonology").unwrap();
+        assert!(study_pos < phon_pos, "study guide should lead");
+        assert!(md.contains("What is a case?"));
+
+        let typ = grammar_typst(&book);
+        assert!(typ.contains("= Study Guide"));
     }
 
     #[test]
@@ -974,10 +1043,22 @@ mod tests {
         // The first H1 (book title) is dropped (scaffold has a title page).
         assert!(!typ.contains("Learn It"));
         assert!(typ.contains("== Lesson 1"));
-        assert!(typ.contains("*bold*"));
-        assert!(typ.contains("_italic_"));
+        assert!(typ.contains("#strong[bold]"));
+        assert!(typ.contains("#emph[italic]"));
         // No markdown heading marks survive.
         assert!(!typ.contains("## "));
+    }
+
+    #[test]
+    fn markdown_to_typst_intraword_emphasis_is_safe() {
+        // Markdown allows `*pa*ta`; emitted as a function call it stays valid
+        // Typst (mid-word `_pa_ta` would be an unclosed delimiter).
+        let md = "- *pa*ta and ki*ra* here\n";
+        let typ = markdown_to_typst(md);
+        assert!(typ.contains("#emph[pa]ta"), "got: {typ}");
+        assert!(typ.contains("ki#emph[ra]"), "got: {typ}");
+        // No bare emphasis markup left to trip the boundary rule.
+        assert!(!typ.contains("_pa_"));
     }
 
     #[test]
@@ -1012,7 +1093,9 @@ mod tests {
     fn markdown_to_typst_list_item_emphasis() {
         let md = "- pa*ta* (stress on *PA*-ta.)\n";
         let typ = markdown_to_typst(md);
-        assert!(typ.contains("pa_ta_"), "got: {typ}");
+        assert!(typ.contains("pa#emph[ta]"), "got: {typ}");
+        assert!(typ.contains("#emph[PA]"), "got: {typ}");
+        // No bare `*` emphasis markup survives.
         assert!(!typ.contains('*'), "stray asterisk: {typ}");
     }
 

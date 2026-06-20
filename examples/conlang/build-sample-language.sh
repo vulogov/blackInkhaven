@@ -157,16 +157,18 @@ echo "    transliterate 'kira':"
   | grep -E '"codepoints"' -A6 | grep -oE 'U\+[0-9A-F]+' | paste -sd' ' - | sed 's/^/      /'
 
 # ── 6. The books: dictionary, grammar, and an AI-written tutorial ────────────
-# The dictionary and grammar are rendered deterministically from the language's
-# data; the tutorial is *written by the AI* (a graded learner's textbook) — so
-# it needs the same provider as the glyph drafting.
+# All three share a manual-style book design. The dictionary's word list is
+# rendered deterministically; the grammar is a deterministic reference led by an
+# AI-written *study guide* that explains its linguistic terms (`--study`); the
+# tutorial is an AI-written graded learner's textbook. The AI parts need the
+# same provider as the glyph drafting.
 echo "▸ Books"
 "$INK" language dictionary   "$LANG_NAME" --format typ --font "$LANG_NAME" --out "$ART/$slug-dictionary.typ" 2>/dev/null | sed 's/^/    /'
-"$INK" language grammar-book "$LANG_NAME" --format typ --font "$LANG_NAME" --out "$ART/$slug-grammar.typ"    2>/dev/null | sed 's/^/    /'
+"$INK" language grammar-book "$LANG_NAME" --format typ --font "$LANG_NAME" --study --provider "$PROVIDER" --out "$ART/$slug-grammar.typ" 2>/dev/null | sed 's/^/    /'
 "$INK" language tutorial     "$LANG_NAME" --format typ --font "$LANG_NAME" --provider "$PROVIDER" --out "$ART/$slug-tutorial.typ" 2>/dev/null | sed 's/^/    /'
 # Markdown editions too.
 "$INK" language dictionary   "$LANG_NAME" --format md > "$ART/$slug-dictionary.md"
-"$INK" language grammar-book "$LANG_NAME" --format md > "$ART/$slug-grammar.md"
+"$INK" language grammar-book "$LANG_NAME" --format md --study --provider "$PROVIDER" > "$ART/$slug-grammar.md"
 "$INK" language tutorial     "$LANG_NAME" --format md --provider "$PROVIDER" > "$ART/$slug-tutorial.md"
 
 # ── 7. Compile the Typst books to PDF, if Typst is available ─────────────────

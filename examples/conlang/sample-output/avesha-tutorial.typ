@@ -11,343 +11,359 @@
 #let practice(body) = block(width: 100%, fill: luma(244), stroke: (left: 2pt + rgb("#7a4a2f")), inset: 8pt, radius: 2pt)[
   #text(size: 8pt, weight: "bold", fill: rgb("#7a4a2f"), tracking: 1pt)[PRACTICE] #parbreak() #body
 ]
+#let term(name, body) = block(width: 100%, fill: rgb("#f2f6f9"), stroke: (left: 2pt + rgb("#2f5d7a")), inset: 8pt, radius: 2pt)[
+  #text(weight: "bold", fill: rgb("#2f5d7a"))[#name] #parbreak() #body
+]
 #let native(cp) = text(font: "Avesha", size: 1.3em)[#cp]
 
 #align(center + horizon)[
-  #text(size: 34pt, weight: "bold")[Learn Avesha] \
+  #text(size: 32pt, weight: "bold")[Learn Avesha] \
   #v(4mm) #text(size: 13pt, style: "italic", fill: luma(90))[A first course] \
   #v(12mm) #native("\u{E002}\u{E009}\u{E007}\u{E008}\u{20}\u{E003}\u{E00A}\u{E005}\u{E008}\u{20}\u{E005}\u{E008}\u{E004}\u{E009}\u{2E}\u{20}\u{E001}\u{E008}\u{E005}\u{E009}\u{20}\u{E000}\u{E008}\u{E006}\u{E00A}\u{2E}")
 ]
 #pagebreak()
 
-#outline(title: "Contents", depth: 1)
+#outline(title: "Contents", depth: 2)
 #pagebreak()
 
 
-Welcome, new learner! Avesha is a clear and logical language built from a small set of sounds and words. In this book, you'll learn to read and understand it step by step. Let's begin with the sounds, then move to words, sentences, and finally a real text.
+Welcome to Avesha! This is a language of stones, birds, suns, and rivers. You will learn it step by step, using only the sounds, words, and rules you are given. By the end of this book, you will be able to read the sample texts and build your own simple sentences.
 
 == Pronunciation Guide
 
 === Consonants
-Avesha uses these consonant sounds. They are pronounced like English, with a few special notes:
+Avesha has these consonant sounds: #strong[p, t, k, s, m, n, l, r].
 
-#table(columns: 4,
-  table.header([Letter], [Sound], [Example], [Notes]),
-  [p], [like 'p' in 'spit'], [*pata* (stone)], [Always unaspirated (no puff of air)], 
-  [t], [like 't' in 'stop'], [*talu* (river)], [Always unaspirated; changes before 'i' (see below)], 
-  [k], [like 'k' in 'sky'], [*kira* (bird)], [Always unaspirated], 
-  [s], [like 's' in 'sun'], [*suna* (sun)], [], 
-  [m], [like 'm' in 'man'], [*mira* (bright)], [], 
-  [n], [like 'n' in 'net'], [*nami* (see)], [Changes before 'p' (see below)], 
-  [l], [like 'l' in 'love'], [*lasu* (cold)], [], 
-  [r], [like 'r' in 'run' (rolled or tapped)], [*palu* (run)], [Trill or tap lightly], 
-)
-
+- #strong[p] as in English "spit" (not the strong puff of "pit")
+- #strong[t] as in "stop"
+- #strong[k] as in "sky"
+- #strong[s] as in "sun"
+- #strong[m] as in "moon"
+- #strong[n] as in "noon"
+- #strong[l] as in "lamp"
+- #strong[r] as in Spanish "pero" (a quick tap, like the "tt" in American English "butter")
 
 === Vowels
-There are only three vowels, and each is always pronounced the same, short and clear:
+Avesha has three vowels: #strong[a, i, u]. Each is pronounced clearly and purely.
 
-#table(columns: 4,
-  table.header([Letter], [Sound], [Example], [Notes]),
-  [a], [like 'a' in 'father' (short)], [*pata* (stone)], [], 
-  [i], [like 'i' in 'machine'], [*kira* (bird)], [], 
-  [u], [like 'u' in 'rule'], [*suna* (sun)], [], 
-)
-
+- #strong[a] as in "father" (short)
+- #strong[i] as in "machine"
+- #strong[u] as in "rude"
 
 === Stress
-Stress (which syllable is said more strongly) always falls on the *second-to-last syllable* (penultimate).
-- *pata*: PA-ta (stress on first syllable)
-- *talu*: TA-lu
-- *kanu*: KA-nu
-- *tani*: TA-ni
+Stress always falls on the #strong[second-to-last syllable] (penultimate). For example:
+- `pata` = PA.ta (stress on "pa")
+- `kiru` (not in your list, but an example) = KI.ru
 
 === Sound Changes
-Two changes happen when certain letters meet. They are automatic and happen when words are formed or combined:
+Two important changes happen when certain sounds meet. Learn them now, because they affect how words are pronounced in sentences.
 
-+ *t becomes s before an i*
-   Rule: `t > s / _ i` — If a 't' comes right before an 'i', it changes to 's'.
-   Example: The word *tani* "speak" — why is the first letter *t* and not *s*? Because the change only applies _when the *t* is directly before the *i*_. In *tani*, the 't' is before 'a', so no change. But if you attached a suffix starting with 'i', a 't' at the end of a word would change: e.g., if we had a word *pat* (not in our vocabulary) and added *-i*, it would become *pasi*.
++ #strong[t becomes s before i]:
+   If a word ending in `t` is followed by a word starting with `i`, the `t` changes to `s`.
+   Example: The verb `nami` (see) has no `t`, but `pata` (stone) + `i`? Not given. Instead, look at a word like `tani` (speak). The `t` in `tani` is before `i` always, so it sounds like `sani`. But note: this is a rule that applies #strong[across words] too. So if you say `pata` + `ira` (not a word yet), the `t` would change to `s` only if followed directly by `i`.
 
-+ *n becomes m before a p*
-   Rule: `n > m / _ p` — If an 'n' comes right before a 'p', it becomes 'm'.
-   Example: Imagine the word *kanu* "hand". If you added a suffix starting with 'p', the 'n' would become 'm' (though we don't have such a suffix yet; keep this in mind for later).
++ #strong[n becomes m before p]:
+   The sound `n` changes to `m` when it comes right before `p`.
+   Example: If you have the word `kanu` (hand) and a word starting with `p`, like `palu` (run), and you say `kanu palu`, the `n` of `kanu` is not directly before `p` because there is a `u` in between. But if combined into a compound or a connected speech sequence, the `n` would change. For now, remember this rule for when words meet: `n` before a `p` sounds like `m`.
 
-These changes feel natural once you practice. For now, just know they exist.
+=== Quick Check
+Say these aloud:
+- `palu` = PA.lu (run)
+- `suna` = SU.na (sun)
+- `nami` = NA.mi (see)
+- `tani` (remember, `t` before `i` becomes `s`) = SA.ni (speak)
 
 #line(length: 100%, stroke: 0.5pt + luma(200))
 
 
-== Lesson 1: Basic Nouns and Adjectives
+== Lesson 1: Basic Words and SOV Word Order
 
 === Vocabulary
-Learn these five words:
-
-#table(columns: 2,
-  table.header([Avesha], [English]),
-  [*pata*], [stone], 
-  [*talu*], [river], 
-  [*kira*], [bird], 
-  [*suna*], [sun], 
-  [*mira*], [bright], 
-  [*lasu*], [cold], 
+#table(columns: 4,
+  table.header([Avesha], [Part of Speech], [Meaning], [Pronunciation]),
+  [pata], [noun], [stone], [PA.ta], 
+  [kira], [noun], [bird], [KI.ra], 
+  [suna], [noun], [sun], [SU.na], 
+  [nami], [verb], [see], [NA.mi], 
 )
 
 
-*Pronunciation check*:
-- *pata* = PA-ta
-- *talu* = TA-lu
-- *kira* = KI-ra
-- *suna* = SU-na
-- *mira* = MI-ra
-- *lasu* = LA-su
+=== Grammar: Word Order
+Avesha is a #strong[Subject-Object-Verb (SOV)] language. This means that in a normal sentence, the #strong[subject] comes first, then the #strong[object], then the #strong[verb].
 
-=== Grammar: What are nouns and adjectives?
-A *noun* names a thing: _stone, river, bird, sun_.
-An *adjective* describes a noun: _bright, cold_. In Avesha, an adjective comes *after* the noun it describes.
+- English: "The bird sees the sun."
+- Avesha: `kira suna nami` = bird sun sees
 
-Examples:
-- *pata mira* = bright stone (stone bright)
-- *talu lasu* = cold river
-- *suna mira* = bright sun
+Notice: No words for "the" or "a" – Avesha does not use articles. The noun alone is enough.
 
-#practice[*Tip*: The word order for a simple phrase is *\[noun\] \[adjective\]*. No extra words needed.]
+=== Worked Examples
++ `kira pata nami` → "The bird sees the stone."
+   (subject = bird, object = stone, verb = sees)
 
++ `suna kira nami` → "The sun sees the bird."
+   (subject = sun, object = bird, verb = sees)
+
+Word order is strict: subject comes before object.
 
 === Practice Exercise
-Translate these into Avesha:
-+ cold bird
-+ bright river
-+ bright sun
-+ cold stone
+#practice[Translate these sentences into Avesha using the words you have learned: 1. The stone sees the bird. 2. The bird sees the sun. 3. The sun sees the stone.]
 
-_(Answers: 1. kira lasu, 2. talu mira, 3. suna mira, 4. pata lasu)_
+
+Check your answers: 1) `pata kira nami` 2) `kira suna nami` 3) `suna pata nami`.
 
 #line(length: 100%, stroke: 0.5pt + luma(200))
 
 
-== Lesson 2: Verbs and Simple Sentences
+== Lesson 2: More Nouns and Adjectives
 
 === Vocabulary
-Add these verbs:
+#table(columns: 4,
+  table.header([Avesha], [Part of Speech], [Meaning], [Pronunciation]),
+  [kanu], [noun], [hand], [KA.nu], 
+  [talu], [noun], [river], [TA.lu], 
+  [mira], [adjective], [bright], [MI.ra], 
+  [lasu], [adjective], [cold], [LA.su], 
+)
+
+
+=== Adjective Position
+Adjectives come #strong[before] the noun they describe. So "bright sun" is `mira suna`, and "cold river" is `lasu talu`.
+
+=== Building Simple Sentences with Adjectives
+You can now make longer subject phrases.
+- `mira kira talu nami` → "The bright bird sees the river."
+  (subject = bright bird, object = river, verb = sees)
+
+- `lasu talu pata nami` → "The cold river sees the stone."
+  (subject = cold river, object = stone, verb = sees)
+
+=== Worked Example
+`mira suna lasu talu nami` → "The bright sun sees the cold river."
+Breakdown: `mira` (bright) `suna` (sun) = subject, `lasu` (cold) `talu` (river) = object, `nami` (sees).
+
+=== Practice Exercise
+#practice[Translate these into Avesha: 1. The cold stone sees the bright bird. 2. The bright river sees the hand. 3. The sun sees the cold hand.]
+
+
+Answers: 1) `lasu pata mira kira nami` 2) `mira talu kanu nami` 3) `suna lasu kanu nami`.
+
+#line(length: 100%, stroke: 0.5pt + luma(200))
+
+
+== Lesson 3: Verbs and More Actions
+
+=== Vocabulary
+#table(columns: 4,
+  table.header([Avesha], [Part of Speech], [Meaning], [Pronunciation]),
+  [palu], [verb], [run], [PA.lu], 
+  [tani], [verb], [speak], [TA.ni], 
+)
+
+
+=== Sound Change Reminder
+Remember: `t` before `i` becomes `s`. So when you see `tani`, pronounce it as `sani`. This is part of the language's natural sound.
+
+=== Using Verbs in SOV
+You already know how to do this. Now add two new actions.
+
+- `kira palu` → "The bird runs."
+  (no object needed – some verbs can be intransitive)
+- `talu palu` → "The river runs." (like "flows")
+
+- `pata tani` → "The stone speaks."
+  (pronounce: `pata sani` because the `t` of `tani` becomes `s`)
+
+=== Verb with Object
+`kira pata nami` = bird stone sees.
+But what about "The bird sees the stone and runs"? Avesha can link actions simply: `kira pata nami palu` = "bird stone sees (and) runs". No "and" is needed – just put verbs in order.
+
+=== Worked Example
+`suna talu nami tani` → "The sun sees the river and speaks."
+Breakdown: `suna` (sun) `talu` (river) `nami` (sees) `tani` (speaks). Remember: `tani` is pronounced `sani`.
+
+=== Practice Exercise
+#practice[Translate these into Avesha: 1. The bird runs and sees the river. 2. The stone speaks and runs. 3. The bright sun sees the cold river and speaks.]
+
+
+Answers: 1) `kira talu nami palu` 2) `pata tani palu` (pronounce as `pata sani palu`) 3) `mira suna lasu talu nami tani` (pronounce last word as `sani`).
+
+#line(length: 100%, stroke: 0.5pt + luma(200))
+
+
+== Lesson 4: Plural and Dative Case
+
+=== Affixes
+#table(columns: 4,
+  table.header([Gloss], [Form], [Position], [Meaning]),
+  [PL], [u], [suffix], [plural (more than one)], 
+  [DAT], [ti], [suffix], [dative (to, for)], 
+)
+
+
+=== Plural
+Add #strong[-u] to a noun to make it plural.
+- `kira` (bird) → `kiru` (birds)
+- `pata` (stone) → `patu` (stones)
+- `suna` (sun) → no example given, but `sunau`? Actually, `suna + u = sunau` (suns). Be careful: if the noun ends in a vowel, just add `u`. So `suna` → `sunau`. But note: `talu` (river) → `taluu`? Wait, rule says suffix -u. `talu + u = taluu`. That's fine – say it as two syllables: `ta.lu.u`.
+
+=== Dative Case
+Add #strong[-ti] to a noun to mean "to" or "for" that noun.
+- `pata` (stone) → `patati` (to the stone)
+- `kira` (bird) → `kirati` (to the bird)
+
+The dative noun often goes before the verb, after the direct object (if any) in SOV order. Typically: Subject Object Dative Verb.
+
+=== Word Order with Dative
+`suna kira tani` = "The sun speaks to the bird."
+But with dative, it's clearer: `suna kirati tani` = "The sun to-the-bird speaks." Remember: pronounce `tani` as `sani`.
+
+- `kira patu nami` = "The bird sees stones."
+- `kira patu nami palu` = "The bird sees stones and runs."
+
+=== Worked Examples
++ `kiru suna tani` = "Birds see the sun (and) speak."
+   Wait, `sunati` needed for object? No, `suna` is object, `kiru` is subject. So: `kiru suna nami tani` = "Birds see the sun and speak."
+
++ `kanu patati nami` = "The hand sees the stone." No – `patati` is "to the stone", so `kanu patati nami` means "The hand sees to the stone"? Actually, `nami` takes a direct object. So `kanu pata nami` = "hand sees stone." Dative is for indirect objects:
+   `kira patu nami patati` = "The bird sees stones to the stone." (Weird but possible.)
+
+Better example: `suna kiru tani` = "The sun speaks birds" doesn't make sense. Use dative: `suna kiruti tani` = "The sun speaks to birds."
+
+=== Sound Change Reminder
+`n` before `p` changes to `m`. So if you say `kanu pata` (hand stone) in a sentence like `kanu pata nami` = "hand sees stone," the `n` of `kanu` is not directly before `p` because there's a `u`. But if you say `kan pata` without the final vowel? No – don't drop vowels. The rule only applies when they meet. In connected speech, `kanu pata` – the `n` is followed by `u`, no change.
+
+=== Practice Exercise
+#practice[Translate these into Avesha: 1. The stones see the birds. 2. The sun speaks to the cold river. 3. The bright birds run to the stone.]
+
+
+Answers: 1) `patu kiru nami` (but careful: `kiru` = birds, `patu` = stones – subject first = stones see birds? Yes, `patu kiru nami` = stones see birds) 2) `suna lasu taluti tani` (pronounce `taluti` = TA.lu.ti, `tani` = SA.ni) 3) `mira kiru patati palu`.
+
+#line(length: 100%, stroke: 0.5pt + luma(200))
+
+
+== Lesson 5: Word Building – Agent Nouns
+
+=== Rule
+#table(columns: 5,
+  table.header([Name], [From], [To], [Suffix], [Meaning]),
+  [agent], [verb], [noun], [-ar], [one who verbs], 
+)
+
+
+You can make a noun from a verb by adding #strong[-ar]. This means "one who does the action."
+
+- `nami` (see) → `namar` (seer, one who sees)
+- `palu` (run) → `palar` (runner)
+- `tani` (speak) → `tanir` (speaker) – but remember `t` before `i` becomes `s`, so pronounce as `sanir`.
+
+=== Using Agent Nouns
+Agent nouns are regular nouns. They can be subjects, objects, take plural and dative.
+
+- `palar talu nami` = "The runner sees the river."
+- `tanir suna palu` = "The speaker sees the sun (and) runs." – wait, no: `tanir suna nami palu` = "speaker sees sun and runs."
+
+=== Plural of Agent Nouns
+`palar` + `u` = `palaru` (runners)
+`tanir` + `u` = `taniru` (speakers)
+
+=== Worked Example
+`namaru lasu pata nami` = "Seers see the cold stone."
+Breakdown: `namaru` (seers, subject), `lasu pata` (cold stone, object), `nami` (see).
+
+=== Practice Exercise
+#practice[Translate these into Avesha: 1. The runner speaks to the birds. 2. The seers see the bright sun. 3. The cold river runs.]
+
+
+Answers: 1) `palar kiruti tani` (pronounce `tani` as `sani`) 2) `namaru mira suna nami` 3) `lasu talu palu`.
+
+#line(length: 100%, stroke: 0.5pt + luma(200))
+
+
+== Lesson 6: Reading and Translating Sample Text
+
+=== Sample Text
+Here is a sample text from the language brief:
+
+#practice[\[02\] kira suna nami. tani palu.]
+
+
+=== Word-by-Word Gloss
+#table(columns: 2,
+  table.header([Avesha], [Gloss]),
+  [kira], [bird], 
+  [suna], [sun], 
+  [nami], [see(s)], 
+  [tani], [speak(s)], 
+  [palu], [run(s)], 
+)
+
+
+=== Interlinear Translation
+Line by line:
+
+`kira suna nami` = "Bird sun sees."
+In natural English: "The bird sees the sun."
+
+`tani palu` = "Speaks runs."
+This could be parsed as a second sentence: "It speaks and runs." The subject from the first sentence (`kira`) carries over.
+
+=== Full Translation
+"The bird sees the sun. It speaks and runs."
+
+=== Your Turn
+Now translate this variation on the sample text:
+
+`mira kira lasu talu nami palu`
+Break it down: subject = `mira kira` (bright bird), object = `lasu talu` (cold river), verbs = `nami palu` (sees and runs).
+Translation: "The bright bird sees the cold river and runs."
+
+=== Practice Exercise
+#practice[Translate the following into English: `suna patu nami tani. kiru palu.` (Hint: `patu` = stones, `kiru` = birds)]
+
+
+Answer: "The sun sees the stones and speaks. The birds run."
+
+#line(length: 100%, stroke: 0.5pt + luma(200))
+
+
+== Lesson 7: Review and Extended Practice
+
+=== Vocabulary Review
+Here are all the words you have learned:
 
 #table(columns: 2,
-  table.header([Avesha], [English]),
-  [*palu*], [run], 
-  [*tani*], [speak], 
-  [*nami*], [see], 
-  [*kanu*], [hand (noun)], 
+  table.header([Avesha], [Meaning]),
+  [pata], [stone], 
+  [palu], [run], 
+  [kira], [bird], 
+  [kanu], [hand], 
+  [nami], [see], 
+  [tani], [speak], 
+  [talu], [river], 
+  [mira], [bright], 
+  [suna], [sun], 
+  [lasu], [cold], 
 )
 
 
-*Pronunciation*:
-- *palu* = PA-lu
-- *tani* = TA-ni
-- *nami* = NA-mi
-- *kanu* = KA-nu
-
-=== Grammar: Basic sentence structure
-Avesha has *Subject-Object-Verb (SOV)* word order. That means the subject comes first, then the object, then the verb at the end. For now, we'll make simple sentences with just a subject and a verb (no object yet). The pattern is:
-
-*\[Subject\] \[Verb\]*
-
-Examples:
-- *kira palu.* = The bird runs.
-- *suna nami.* = The sun sees. (Imagine the sun as an eye!)
-- *talu palu.* = The river runs. (Think of flowing water.)
-
-Notice: There is no word for "the" or "a" in Avesha. Context tells you if it's specific or general.
-
-Now add an object: *\[Subject\] \[Object\] \[Verb\]*
-
-Examples:
-- *kira suna nami.* = The bird sees the sun.
-- *pata talu nami.* = The stone sees the river.
-
-#practice[*Worked Example*: "The bird sees the cold river." Step 1: Subject = bird = *kira* Step 2: Object = cold river = *talu lasu* (noun then adjective) Step 3: Verb = sees = *nami* Sentence: *kira talu lasu nami.*]
-
+=== Grammar Review
+- Word order: Subject Object Verb (SOV)
+- Adjectives before nouns
+- Plural: add -u
+- Dative: add -ti (means "to" or "for")
+- Agent noun: add -ar to a verb
+- Sound changes: `t` becomes `s` before `i`; `n` becomes `m` before `p`
 
 === Practice Exercise
-Translate these into Avesha:
-+ The stone sees the bird.
-+ The river speaks.
-+ The bird sees the bright sun.
-+ The cold stone runs.
-
-_(Answers: 1. pata kira nami., 2. talu tani., 3. kira suna mira nami., 4. pata lasu palu.)_
-
-#line(length: 100%, stroke: 0.5pt + luma(200))
+#practice[Combine everything you know. Translate these sentences into Avesha: 1. The cold stones see the bright birds. 2. The runner speaks to the river. 3. The seers run and see the suns. 4. The hand sees the stone to the speaker.]
 
 
-== Lesson 3: Postpositions and Cases (Dative)
+Answers:
++ `lasu patu mira kiru nami`
++ `palar taluti tani` (pronounce `tani` as `sani`)
++ `namaru palu sunau nami`
++ `kanu pata nami tanirti` (here `tanirti` = to the speaker; subject = hand, object = stone, verb = sees, dative = to-speaker)
 
-=== Grammar: Postpositions
-Avesha uses *postpositions* — words that come after a noun, like English "in the house" becomes "house in". We'll learn one: the *dative* case suffix *-ti*, which means "to" or "for". It is a _suffix_, not a separate word.
-
-The dative suffix *-ti* attaches to the end of a noun.
-
-- *pata* + *-ti* = *patati* (to the stone)
-- *talu* + *-ti* = *taluti* (to the river)
-- *kira* + *-ti* = *kirati* (to the bird)
-- *suna* + *-ti* = *sunati* (to the sun)
-
-But remember the sound change! Look at *tani* (speak). If you add *-ti* to a word ending in 't', does anything happen? Let's check: *pata* ends in 'a', so no problem. But what about a word like *pat* (not in our vocabulary)? Not relevant now. For our words, no change occurs yet.
-
-=== Using the dative in sentences
-The dative phrase (noun + *-ti*) typically goes before the verb, after the subject and object.
-
-*\[Subject\] \[Object\] \[Dative Phrase\] \[Verb\]*
-
-Examples:
-- *kira pata nami.* = The bird sees the stone. (no dative)
-- *kira pata nami taluti.* would mean? We need a verb that fits:
-  *kira tani patati.* = The bird speaks to the stone.
-  *suna tani kirati.* = The sun speaks to the bird.
-
-#practice[*Worked Example*: "The cold river speaks to the bird." Subject = river = *talu lasu* Dative = to the bird = *kirati* Verb = speaks = *tani* Sentence: *talu lasu kirati tani.*]
-
-
-=== Practice Exercise
-Translate into Avesha:
-+ The bird runs to the river.
-+ The sun speaks to the bright stone.
-+ The stone sees the cold river.
-+ The bird speaks to the sun.
-
-_(Answers: 1. kira taluti palu., 2. suna pata mirati tani., 3. pata talu lasu nami., 4. kira sunati tani.)_
-
-#line(length: 100%, stroke: 0.5pt + luma(200))
-
-
-== Lesson 4: Plural Nouns
-
-=== Grammar: The plural suffix *-u*
-To make a noun plural, add the suffix *-u* to the end.
-
-- *pata* → *patau* (stones)
-- *talu* → *taluu* (rivers) — two 'u's, pronounced as a long 'u'
-- *kira* → *kirau* (birds)
-- *suna* → *suna u*? Wait, *suna* + *-u* = *sunau* (suns)
-- *kanu* → *kanuu* (hands)
-
-Note: Because *-u* starts with a vowel, no sound changes occur with 't' or 'n' before it.
-
-Now put plurals in sentences. The verb does not change form for plural subjects.
-
-Examples:
-- *kirau suna nami.* = The birds see the sun.
-- *patau talutu palu.* = The stones run to the river.
-- *sunau patau nami.* = The suns see the stones.
-
-#practice[*Worked Example*: "The bright birds speak to the rivers." Subject = bright birds = *kirau mira* (adjective after noun, plural on noun only) Dative = to the rivers = *taluti* (plural? Yes, *talu* + *-u* + *-ti* = *taluuti* — first plural, then case) Verb = speak = *tani* Sentence: *kirau mira taluuti tani.*]
-
-
-Notice: The plural suffix comes *before* the case suffix: *talu-u-ti*.
-
-=== Practice Exercise
-Translate into Avesha:
-+ The stones see the birds.
-+ The cold rivers run.
-+ The bird speaks to the bright suns.
-+ The hands see the stones.
-
-_(Answers: 1. patau kirau nami., 2. taluu lasu palu., 3. kira sunau mirati tani., 4. kanuu patau nami.)_
-
-#line(length: 100%, stroke: 0.5pt + luma(200))
-
-
-== Lesson 5: Word Building (Agent Nouns)
-
-=== Vocabulary and Rules
-Avesha lets you build new words from verbs. The suffix *-ar* turns a verb into a noun meaning "one who does that action" (an agent).
-
-#table(columns: 3,
-  table.header([Verb], [Agent Noun], [Meaning]),
-  [*palu* (run)], [*paluar*], [runner (one who runs)], 
-  [*tani* (speak)], [*taniar*], [speaker (one who speaks)], 
-  [*nami* (see)], [*namiar*], [one who sees, a seer], 
-)
-
-
-Pronunciation: Stress remains penultimate. *paluar* = pa-LU-ar (stress on 'lu').
-*taniar* = ta-NI-ar (stress on 'ni').
-
-Do any sound changes apply? Yes! Look at *taniar*: the verb *tani* ends in 'i'. The suffix *-ar* begins with 'a', so no 't' before 'i' issue. But consider if the verb ended in 'n' and the suffix started with 'p' — no, it's 'ar', so no change.
-
-Now use these new nouns in sentences:
-- *paluar suna nami.* = The runner sees the sun.
-- *taniar patau nami.* = The speaker sees the stones.
-- *namiar taluti palu.* = The seer runs to the river.
-
-#practice[*Worked Example*: "The bright runner speaks to the cold river." Subject = bright runner = *paluar mira* Dative = to the cold river = *talu lasuti* (adjective attaches to noun; then add -ti) Verb = speaks = *tani* Sentence: *paluar mira talu lasuti tani.*]
-
-
-=== Practice Exercise
-Translate into Avesha:
-+ The seer speaks to the birds.
-+ The cold speaker runs.
-+ The runner sees the bright sun.
-+ The speakers see the stones.
-
-_(Answers: 1. namiar kirauti tani., 2. taniar lasu palu., 3. paluar suna mira nami., 4. taniaru patau nami.)_
-
-#line(length: 100%, stroke: 0.5pt + luma(200))
-
-
-== Lesson 6: Idioms and Reading Practice
-
-=== Idiom
-Avesha has a colorful idiom:
-
-*pata nami* — literally "stone sees" — meaning "to be stubborn" (like a stone that sees nothing else).
-
-Use it like a regular verb phrase:
-- *kira pata nami.* = The bird is stubborn. (The bird stone-sees.)
-
-=== Reading Passage
-Now let's read the sample text. Here it is:
-
-#practice[*kira suna nami. tani palu.*]
-
-
-==== Word-by-word gloss
-#table(columns: 3,
-  table.header([Avesha], [Part], [Meaning]),
-  [kira], [noun], [bird], 
-  [suna], [noun], [sun], 
-  [nami], [verb], [sees], 
-  [tani], [verb], [speaks], 
-  [palu], [verb], [runs], 
-)
-
-
-==== Understanding the sentence
-The text is two separate sentences:
-+ *kira suna nami.* = The bird sees the sun. (Subject: bird, Object: sun, Verb: sees)
-+ *tani palu.* = \[Someone\] speaks and runs. OR It could be read as two verbs with an implied subject? But wait — *tani* is a verb meaning "speak", and *palu* is a verb meaning "run". Without a subject, it might be a command? But Avesha grammar doesn't show commands yet. The most natural reading from the vocabulary: the second sentence has no subject, so it likely describes an action by the bird or something else. Given the words, let's translate literally: "The bird sees the sun. (The bird) speaks (and) runs." Or perhaps "Speak! Run!" but that's not confirmed.
-
-Since this is a beginner text, we'll take it as: "The bird sees the sun. It speaks (and) runs." The subject from the first sentence carries over.
-
-==== Your Translation Task
-Translate this Avesha sentence into natural English:
-
-#practice[*kira suna nami. tani palu.*]
-
-
-_(Answer: The bird sees the sun. It speaks and runs.)_
-
-=== Practice Exercise (Final)
-Translate these sentences into Avesha:
-+ The stubborn bird speaks to the cold stone.
-+ The runners see the bright suns.
-+ The speaker runs to the river.
-+ The seer sees the stubborn runner.
-
-_(Answers: 1. kira pata nami patati lasuti tani. — careful: "stubborn bird" = *kira pata nami*? No, that's a whole sentence. Idiom: *pata nami* is a verb phrase. So "The bird is stubborn" = *kira pata nami.* But here we want "stubborn bird" as a noun phrase: Avesha doesn't have adjectives for "stubborn" — it's an idiom. Use the idiom as verb: _kira pata nami patati lasuti tani._ = The bird is-stubborn to the cold stone? That doesn't match. Better: Use the idiom as a fixed phrase: The stubborn bird = *kira pata nami*? That's a clause. For simplicity, assume the idiom can be used as a noun modifier: *kira pata nami* might mean "the stone-seeing bird" (i.e., stubborn). But that's not our brief. Let's stay safe: Translate "The bird stubbornly speaks to the cold stone." = *kira pata nami patati lasuti tani.* Actually, this is acceptable: _pata nami\* after the subject means "is stubborn". So full sentence: "The bird is stubborn (and) speaks to the cold stone." Yes: *kira pata nami talu lasuti tani.* But careful: The idiom is *pata nami* as a verb phrase. So: *kira pata nami talu lasuti tani.* = The bird stone-sees (is stubborn) and speaks to the cold river? Wait, the practice says "cold stone", not river. So: *kira pata nami pata lasuti tani.* But that repeats "pata". Let's accept: *kira pata nami patati lasuti tani.* = The bird is stubborn and speaks to the cold stone. That works.
-
-+ *paluaru sunau mirau nami.*
-+ *taniar taluti palu.*
-+ *namiar paluar pata nami nami.* — careful: "sees the stubborn runner" = subject sees object that is stubborn. Object: runner who is stubborn = *paluar pata nami*. But as a noun phrase, this would be *paluar pata nami*? That's a sentence. Instead, use the idiom in a relative clause? Not in our brief. Simpler: "The seer sees the stubborn runner." = *namiar paluar pata nami nami.* — but that means "The seer sees the runner is stubborn." Accept as a loose translation.)
-
-Great work! You have now learned to read basic Avesha sentences. Keep practicing by making your own sentences using the words you know. Happy learning!
+=== Final Note
+You now have the tools to read and write basic Avesha. Keep practicing with the words and rules you have, and you will become comfortable with this beautiful, simple language. Good luck, and remember: `mira suna lasu talu nami` – the bright sun sees the cold river.
 

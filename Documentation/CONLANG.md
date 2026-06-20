@@ -195,23 +195,31 @@ inkhaven language dictionary Avesha --format md|typ [--out dict.typ] [--font Eld
 
 Renders the dictionary as a real document. **Markdown** (`md`) is a clean,
 alphabetized listing (headword, pronunciation, POS, gloss, tags, etymology).
-**Typst** (`typ`) is the showpiece: a paginated, two-column A5 book with a title
-page and an overview table, and — when the language has a `font` block — each
-headword shown in the **native script** (transliterated by the input method)
-beside its romanization. Build the font (`font-build --language … --format ttf`)
-and compile with `typst compile --font-path <dir> dict.typ` to get a PDF that
-embeds and renders the conscript.
+**Typst** (`typ`) is the showpiece: a manual-style **B5 book** — a title page, a
+table of contents, an overview, and a two-column lexicon where (when the
+language has a `font` block) each headword appears in the **native script**
+(transliterated by the input method) beside its romanization. Build the font
+(`font-build --language … --format ttf`) and compile with `typst compile
+--font-path <dir> dict.typ` to get a PDF that embeds and renders the conscript.
 
 ```
-inkhaven language grammar-book Avesha --format md|typ [--out g.typ] [--font Eldar]
+inkhaven language grammar-book Avesha --format md|typ [--out g.typ] [--font Eldar] \
+    [--study --provider …]
 ```
 
 The companion volume: a **reference grammar**, drawing every section from the
 language's own data — phonology (consonant/vowel inventory, syllable structure,
 phonotactics, allophony, stress, tone), morphology (affixes, derivation), the
 typology answers (with their consequences), idioms & metaphors, and the sample
-texts. Markdown is a flat reference; **Typst** is a paginated A5 book with a
-table of contents and numbered sections (and the conscript font when set).
+texts. Markdown is a flat reference; **Typst** is the same manual-style B5 book
+(title page, contents, sections) as the dictionary, with the conscript font.
+
+With **`--study`** it also becomes **study material**: an AI-written study guide
+leads the book, defining and explaining every linguistic term the reference uses
+(phoneme, allophony, grammatical case, SOV word order, nominative–accusative
+alignment, agent nouns, …) and how this language applies them. The reference
+itself stays deterministic; only the study guide is AI-authored (needs a
+provider).
 
 ```
 inkhaven language tutorial Avesha --format md|typ [--out learn.typ] [--font Eldar] [--provider …]
