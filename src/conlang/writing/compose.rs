@@ -51,6 +51,45 @@ pub fn compose_block(
     ))
 }
 
+/// Binding-time B — emit a Typst quadrat that places component glyphs into the
+/// template's cells *at layout time* (rather than baking one font glyph). The
+/// components are rendered as characters of the generated `family` font, so a
+/// hieroglyphic-style script can arrange base signs spatially without a
+/// combinatorial explosion of precomposed glyphs. `chars` maps each slot to the
+/// codepoint to render; `size` is the quadrat's side (a Typst length, e.g.
+/// `"2em"`). Pure + deterministic.
+pub fn quadrat_typst(
+    name: &str,
+    template: &SpatialTemplate,
+    family: &str,
+    chars: &BTreeMap<String, char>,
+    size: &str,
+) -> Result<String, String> {
+    if template.cells.is_empty() {
+        return Err(format!("template `{}` has no cells", template.name));
+    }
+    let mut places = String::new();
+    for cell in &template.cells {
+        let ch = chars
+            .get(&cell.slot)
+            .ok_or_else(|| format!("no component for slot `{}`", cell.slot))?;
+        // dx/dy are percentages of the quadrat box; the glyph is sized to the
+        // cell height (a full-height cell renders one `size` tall). The
+        // codepoint is injected as a Unicode escape so any character — PUA
+        // included — is safe inside Typst markup.
+        let dx = (cell.x * 100.0).round();
+        let dy = (cell.y * 100.0).round();
+        places.push_str(&format!(
+            "  #place(dx: {dx}%, dy: {dy}%, text(font: \"{family}\", size: {h} * {size})[#\"\\u{{{cp:04X}}}\"])\n",
+            h = cell.h,
+            cp = *ch as u32,
+        ));
+    }
+    Ok(format!(
+        "#let {name} = box(width: {size}, height: {size})[\n{places}]\n"
+    ))
+}
+
 /// The markup between a single SVG document's root `<svg …>` and `</svg>`.
 fn inner_svg(svg: &str) -> Option<String> {
     let lower = svg.to_ascii_lowercase();
@@ -127,5 +166,31 @@ mod tests {
     fn inner_svg_strips_wrapper() {
         let s = "<svg viewBox=\"0 0 1 1\"><path d=\"M0 0\"/></svg>";
         assert_eq!(inner_svg(s).unwrap(), "<path d=\"M0 0\"/>");
+    }
+
+    #[test]
+    fn quadrat_typst_places_each_cell() {
+        let t = builtin_template("lr").unwrap();
+        let mut chars = BTreeMap::new();
+        chars.insert("left".to_string(), '\u{E000}');
+        chars.insert("right".to_string(), 'a');
+        let typ = quadrat_typst("ka", &t, "Eldar", &chars, "2em").unwrap();
+        // a binding, a box of the right size, two placements with the right
+        // offsets and unicode escapes, in the right font.
+        assert!(typ.contains("#let ka = box(width: 2em, height: 2em)"));
+        assert!(typ.contains("dx: 0%"));
+        assert!(typ.contains("dx: 50%"));
+        assert!(typ.contains("font: \"Eldar\""));
+        assert!(typ.contains("\\u{E000}"));
+        assert!(typ.contains("\\u{0061}")); // 'a'
+        assert_eq!(typ.matches("#place").count(), 2);
+    }
+
+    #[test]
+    fn quadrat_typst_missing_slot_errors() {
+        let t = builtin_template("lr").unwrap();
+        let mut chars = BTreeMap::new();
+        chars.insert("left".to_string(), 'a');
+        assert!(quadrat_typst("x", &t, "Eldar", &chars, "2em").unwrap_err().contains("right"));
     }
 }

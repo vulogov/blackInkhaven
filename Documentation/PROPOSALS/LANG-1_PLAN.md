@@ -345,8 +345,21 @@ releases as they complete.
 > [--phoneme] --slot SLOT=GLYPH… [--out] [--yes]` composes + (advisory) binds it
 > like `font-import-glyph`. Baked at compose time. Verified e2e: two component
 > bars → an `lr` block at U+AC00 compiling to a 2-contour glyph (left + right
-> halves), fontTools re-save passes. The SAME `SpatialTemplate` will drive
-> binding-time B (layout-time Typst quadrats) next, with input methods.
+> halves), fontTools re-save passes.
+>
+> **P5.6b (shipped)** — binding-time B: **layout-time Typst quadrats**, the
+> hieroglyphic path (base signs combine contextually; precomposing every quadrat
+> is impractical). `compose::quadrat_typst` takes the SAME `SpatialTemplate` and
+> emits a Typst `#let <name> = box(…)[ … ]` that `place`s each component
+> (rendered as a character of the generated font, codepoint injected as a
+> `\u{…}` escape) into its cell — sized to the cell height, offset by the cell's
+> normalized position. `language spatial-typst <lang> --template <t> --name <n>
+> --slot SLOT=GLYPH… [--size 2em] [--out]` resolves each glyph to its codepoint
+> from the `font` block and emits the snippet (read-only — no store re-open).
+> Verified e2e: a `tb` quadrat (two PUA glyphs) compiled by Typst 0.14.2 against
+> the generated font into a PDF whose rasterization shows real ink (301 dark px,
+> not tofu) and which embeds the font. The shared engine now has both binding
+> times (bake-into-font + layout-time). Next: input methods, then P6.
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the

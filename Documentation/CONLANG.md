@@ -269,6 +269,22 @@ preflight, and — on `--yes` — binds it like any other glyph (the component
 glyphs and the composed block coexist in the font). The composition is baked at
 compose time; re-run it after editing a component.
 
+The same template can instead arrange components at **layout time** — for a
+hieroglyphic script, where base signs combine contextually and precomposing
+every quadrat into the font is impractical:
+
+```
+inkhaven language spatial-typst Glyphic --template tb \
+    --name quadrat_sunbar --slot top=sun --slot bottom=bar [--size 2em] [--out q.typ]
+```
+
+This emits a Typst `#let <name> = box(...)[ … ]` that `place`s each component
+(rendered as a character of the generated font) into its cell. Build the font
+(`font-build --language … --format ttf`), embed it in your Typst document, and
+the quadrat renders with the glyphs arranged spatially — no precomposed glyph
+required. (Each component must have a codepoint, since Typst renders by
+character.)
+
 ## In the editor
 
 - **`Ctrl+B X`** — the ConLang hub: a read-only overview of every language
