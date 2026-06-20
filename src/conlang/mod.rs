@@ -8,6 +8,7 @@
 //! seeded word generator. Pure, deterministic, dependency-free.
 
 pub mod analysis;
+pub mod creative;
 pub mod diachronic;
 pub mod gaps;
 pub mod generate;
