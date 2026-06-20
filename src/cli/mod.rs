@@ -2978,6 +2978,50 @@ pub enum LanguageCommand {
         verb_paradigm: String,
     },
 
+    /// 1.3.19 LANG-1 P9 — build a sentence with a
+    /// **complement clause**: a whole clause serving as
+    /// the object of a matrix verb of speech or
+    /// cognition ("I know that the bird sees the
+    /// stone").  The matrix subject + verb wrap an
+    /// embedded clause (`--comp-*`) introduced by an
+    /// optional complementizer; the complement fills
+    /// the object slot, so word order positions it.
+    /// Prints surface + interlinear + literal.
+    Complement {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The matrix subject (`mi:I`).
+        #[arg(long)]
+        subject: Option<String>,
+        /// The matrix subject's person, for agreement.
+        #[arg(long, default_value = "1")]
+        subject_person: String,
+        /// The matrix subject's number.
+        #[arg(long, default_value = "sg")]
+        subject_number: String,
+        /// The matrix verb (`tira:know`).
+        #[arg(long)]
+        verb: String,
+        /// The complementizer (`ya:that`), glossed `COMP`.
+        #[arg(long)]
+        complementizer: Option<String>,
+        /// The embedded clause's subject (`kira:bird`).
+        #[arg(long)]
+        comp_subject: Option<String>,
+        /// The embedded clause's verb (`nami:see`).
+        #[arg(long)]
+        comp_verb: String,
+        /// The embedded clause's object (`pata:stone`).
+        #[arg(long)]
+        comp_object: Option<String>,
+        /// Paradigm used to inflect nouns.
+        #[arg(long, default_value = "noun")]
+        noun_paradigm: String,
+        /// Paradigm used to inflect verbs.
+        #[arg(long, default_value = "verb")]
+        verb_paradigm: String,
+    },
+
     /// LANG-1 P3.x — apply **agreement** (concord): inflect a dependent word
     /// (an adjective, a verb) to agree with the grammatical features of its
     /// head (its noun, its subject).  Uses the `agreement` rules + paradigm in

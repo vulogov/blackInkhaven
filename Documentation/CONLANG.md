@@ -215,6 +215,23 @@ object). The conjunction sits between adjacent conjuncts, glossed by its own
 gloss; clause conjuncts are each assembled (so case marking still applies:
 `kira nami patan na muru tasa` — *bird see stone-ACC and river fall*).
 
+**Complement clauses** let a whole clause be the object of a verb of speech or
+cognition — "I know *that the bird sees the stone*":
+
+```
+inkhaven language complement Eldar --subject mi:I --verb tira:know \
+    --complementizer ya:that \
+    --comp-subject kira:bird --comp-verb nami:see --comp-object pata:stone
+```
+
+The matrix subject and verb (`--subject`/`--verb`) wrap an embedded clause
+(`--comp-subject`/`--comp-verb`/`--comp-object`) introduced by an optional
+complementizer (glossed `COMP`). The embedded clause runs through the same engine
+(its object stays accusative), and because the complement fills the matrix
+**object** slot, word order positions it correctly: an SVO language prints it
+after the matrix verb (`mi tira ya kira nami patan`), a verb-final language before
+it (`mi ya kira patan nami tira`).
+
 ## Creative text (compose)
 
 `inkhaven language compose <lang> --kind <kind>` generates creative text. The
