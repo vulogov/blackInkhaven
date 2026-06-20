@@ -109,17 +109,20 @@ components at layout time) — one `SpatialTemplate` engine, two binding times.
 ```sh
 inkhaven language dictionary   Avesha --format typ --font Avesha --out dict.typ
 inkhaven language grammar-book Avesha --format typ --font Avesha --out grammar.typ
-inkhaven language tutorial     Avesha --format typ --font Avesha --out learn.typ
+inkhaven language tutorial     Avesha --format typ --font Avesha --provider deepseek --out learn.typ
 ```
 
 Each renders in Markdown or Typst. The **dictionary** is a paginated two-column
 A5 book whose headwords appear in the native script beside their romanization.
 The **grammar** is a reference volume with a table of contents — phonology,
-morphology, typology, expressions, sample texts. The **tutorial** is a graded
-learner walkthrough — the sounds, a starter vocabulary, a worked paradigm, and a
-glossed sample sentence. Build the font and compile any of them with `typst
-compile --font-path <dir> dict.typ` to get a PDF that embeds and renders the
-conscript.
+morphology, typology, expressions, sample texts. Both are rendered
+deterministically from the language's data. The **tutorial** is different: it is
+an **AI-written learner's textbook** — the model authors a complete graded
+course (introduction, pronunciation guide, lessons that explain the grammar with
+worked examples, a reading, exercises) from the language's facts, constrained to
+its actual sounds, words, and rules. It needs an AI provider (`--provider`).
+Build the font and compile any of them with `typst compile --font-path <dir>
+dict.typ` to get a PDF that embeds and renders the conscript.
 
 ## Where to go next
 

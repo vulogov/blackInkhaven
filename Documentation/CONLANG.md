@@ -214,14 +214,19 @@ texts. Markdown is a flat reference; **Typst** is a paginated A5 book with a
 table of contents and numbered sections (and the conscript font when set).
 
 ```
-inkhaven language tutorial Avesha --format md|typ [--out learn.typ] [--font Eldar]
+inkhaven language tutorial Avesha --format md|typ [--out learn.typ] [--font Eldar] [--provider …]
 ```
 
-A **learner-facing** graded walkthrough: the sounds (consonants & vowels), a
-starter vocabulary (with native script + pronunciation), how words combine (word
-order in prose + a worked paradigm declined through the suffixes), and a sample
-text with a word-by-word gloss. The gentle on-ramp that the dictionary and
-grammar back up.
+An **AI-written learner's textbook** — a complete graded course the model
+authors from the language's own data (the prose is generated, never hardcoded):
+a warm introduction, a pronunciation guide, graded lessons that *explain* the
+grammar (word order, the cases, word-building) with worked examples, a reading
+passage, and a practice exercise per lesson. The model is constrained to the
+language's actual sounds, words, and rules — it never invents vocabulary or
+grammar. Markdown comes straight from the model; the Typst path converts that to
+a paginated A5 book (embedding the conscript font) behind a deterministic page
+scaffold, so it always compiles. The gentle on-ramp the dictionary and grammar
+back up.
 
 For a complete worked example that builds a language from nothing to all three
 books — with an **AI-drawn font** — see
