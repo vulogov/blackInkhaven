@@ -242,6 +242,25 @@ get used, and the part-of-speech spread. Computed over the headwords that
 segment cleanly into the inventory. This is the snapshot the grammar book and
 dictionary output draw on.
 
+### Semantic-gap finder
+
+```
+inkhaven language gaps Avesha [--scope swadesh_100 | scope.hjson] [--json]
+```
+
+Diffs the lexicon against a reference *concept scope* and reports which concepts
+are still missing, frequency-ranked (most-core first) — the exact list to coin
+next. The default scope is the **Swadesh-100** core vocabulary, bundled in every
+working language (en/ru/fr/de/es) and matched against your glosses
+Unicode-aware (articles and `to`-infinitives don't hide a match, so "the sun"
+covers *sun*). Point `--scope` at an HJSON file for a topic of your own:
+
+```hjson
+{ name: "Seafaring", concepts: ["hull", "tide", "mast", { label: "harbor", aliases: ["port"] }] }
+```
+
+The missing list is shaped to hand straight to `generate-lexicon --topic …`.
+
 ## Dictionary output
 
 ```

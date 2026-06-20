@@ -2161,6 +2161,25 @@ pub enum LanguageCommand {
     /// doctor` for a quick at-a-glance overview of
     /// every language in the project.
     List,
+    /// 1.3.19 LANG-1 P6 — semantic-gap finder.
+    /// Diff the lexicon against a reference concept
+    /// scope and report which concepts are still
+    /// missing (frequency-ranked, most-core first) —
+    /// the exact list to feed `generate-lexicon`.
+    Gaps {
+        /// Language to analyse.
+        language: String,
+        /// Reference scope: the built-in
+        /// `swadesh_100` core vocabulary (default),
+        /// or a path to an HJSON concept list
+        /// (`{ name, concepts: [...] }`).
+        #[arg(long, default_value = "swadesh_100")]
+        scope: String,
+        /// Emit the report as JSON (covered / missing
+        /// arrays + coverage percentage) for piping.
+        #[arg(long)]
+        json: bool,
+    },
     /// remove a dictionary entry
     /// from a language.  Mirror of `add-word`:
     /// resolves the language sub-book by case-
