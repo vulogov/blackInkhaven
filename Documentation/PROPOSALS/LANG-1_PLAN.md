@@ -415,14 +415,22 @@ releases as they complete.
 > `--font`). **★ P6 OUTPUT COMPLETE ★** (P6.1 analysis → P6.2 dictionary → P6.3
 > grammar book).
 >
-> **P7 (shipped)** — polish: a learner tutorial + a complete worked example.
-> `conlang::output::tutorial_markdown` / `tutorial_typst` render a graded
-> walkthrough — the sounds, a starter vocabulary (with native script +
-> pronunciation), how words combine (word-order prose + a worked paradigm the
-> CLI builds by declining the first noun through every suffix via the P3.1
-> engine), and the sample text with a word-by-word gloss (P3.2 gloss engine,
-> punctuation stripped so clause-final words match). `language tutorial <lang>
-> --format md|typ [--out] [--font]`. The worked example
+> **P7 (shipped)** — polish: an **AI-written** learner tutorial + a complete
+> worked example. `language tutorial <lang> --format md|typ [--out] [--font]
+> [--provider]` is a thin AI layer: the CLI assembles a *facts-only* brief of the
+> language (inventory, stress, allophony SPE rules, the lexicon, affixes,
+> derivations, typology, idioms, sample texts + their glosses) and the model
+> (`TUTORIAL_SYSTEM`) authors a complete graded textbook from it — introduction,
+> pronunciation guide, lessons that explain the grammar with worked examples, a
+> reading, and per-lesson exercises — constrained to the language's actual data
+> (no invented vocabulary/grammar). The model always writes Markdown;
+> `output::markdown_to_typst` deterministically converts it (headings, emphasis
+> via matched-pair regex so stray `*` can't break the doc, lists, tables,
+> blockquotes → `#practice` boxes, code, links, prose escaping) and
+> `output::tutorial_typst_scaffold` prepends the page setup + conscript-font
+> embedding, so the Typst always compiles. Verified live (DeepSeek): a real
+> ~23–25-page textbook (intro + pronunciation guide + 6 lessons, each with
+> vocabulary / grammar / practice) compiled warning-free with the font embedded. The worked example
 > `examples/conlang/build-sample-language.sh <project>` runs the *entire*
 > pipeline end to end — phonology → lexicon → morphology → typology → an
 > **AI-drawn script** (one `glyph-draft` per phoneme) → an in-process TrueType

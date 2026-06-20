@@ -2354,10 +2354,11 @@ pub enum LanguageCommand {
         font: Option<String>,
     },
 
-    /// LANG-1 P7 — render a learner-facing tutorial: a graded walkthrough of
-    /// the language (its sounds, a starter vocabulary with native script, how
-    /// words combine with a worked paradigm, and a sample text with a
-    /// word-by-word gloss).  Markdown (`md`) or Typst (`typ`).
+    /// LANG-1 P7 — generate a learner's textbook with the AI: a complete graded
+    /// course (pronunciation guide, vocabulary, grammar lessons with worked
+    /// examples, a reading, and exercises) authored by the model from the
+    /// language's own data.  Markdown (`md`) or Typst (`typ`); the Typst path
+    /// embeds the conscript font behind a deterministic page scaffold.
     Tutorial {
         /// Target language name (case-insensitive).
         language: String,
@@ -2371,6 +2372,9 @@ pub enum LanguageCommand {
         /// block's family).
         #[arg(long)]
         font: Option<String>,
+        /// Override the configured AI provider.
+        #[arg(long)]
+        provider: Option<String>,
     },
 
     /// LANG-1 P2.6 — link a Place to a language it's spoken in.  Stored in a
