@@ -213,6 +213,21 @@ typology answers (with their consequences), idioms & metaphors, and the sample
 texts. Markdown is a flat reference; **Typst** is a paginated A5 book with a
 table of contents and numbered sections (and the conscript font when set).
 
+```
+inkhaven language tutorial Avesha --format md|typ [--out learn.typ] [--font Eldar]
+```
+
+A **learner-facing** graded walkthrough: the sounds (consonants & vowels), a
+starter vocabulary (with native script + pronunciation), how words combine (word
+order in prose + a worked paradigm declined through the suffixes), and a sample
+text with a word-by-word gloss. The gentle on-ramp that the dictionary and
+grammar back up.
+
+For a complete worked example that builds a language from nothing to all three
+books — with an **AI-drawn font** — see
+[`examples/conlang/build-sample-language.sh`](../examples/conlang/build-sample-language.sh)
+and [Tutorial 74](Tutorials/74-conlang-end-to-end.md).
+
 ## Worldbuilding links
 
 Stored in `.inkhaven/conlang-links.json` (the prose books are never modified):
