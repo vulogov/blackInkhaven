@@ -2105,6 +2105,31 @@ pub enum LanguageCommand {
         #[arg(long, requires = "import")]
         force: bool,
     },
+    /// 1.3.19 LANG-1 P6 — import a dictionary from
+    /// another conlang/linguistics tool.  Parses the
+    /// foreign format into entries and, by default,
+    /// previews them (count + a sample) without
+    /// touching the book; pass `--yes` to write them
+    /// into the Dictionary.  Duplicate headwords are
+    /// skipped with a warning.  Complements the
+    /// own-CSV path of `add-word --import`.
+    Import {
+        /// Language to import into (case-insensitive
+        /// match; must already exist).
+        language: String,
+        /// Path to the source file (`.txt`/`.db`/`.sfm`
+        /// for Toolbox; `.pgd`/`.xml` for PolyGlot).
+        #[arg(long, value_name = "PATH")]
+        file: PathBuf,
+        /// Source format.
+        #[arg(long, value_enum)]
+        format: LanguageImportFormat,
+        /// Write the parsed entries into the
+        /// Dictionary.  Without this, the command only
+        /// previews what it would import.
+        #[arg(long)]
+        r#yes: bool,
+    },
     /// health report for a language
     /// sub-book.  Counts dictionary entries, entries
     /// with examples, entries with inflection
@@ -2960,6 +2985,23 @@ pub enum LanguageExportFormat {
     /// chart: consonants and vowels grouped, each
     /// with its romanization.  Streams to stdout.
     IpaChart,
+}
+
+/// 1.3.19 LANG-1 P6 — foreign lexicon formats the
+/// `inkhaven language import` command can ingest
+/// (beyond the round-trippable own-CSV that
+/// `add-word --import` already reads).
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum LanguageImportFormat {
+    /// Toolbox / MDF Standard Format (SFM) — the
+    /// `\lx … \ps … \ge …` marker database used by
+    /// SIL Toolbox, FieldWorks, and **Lexique Pro**.
+    Toolbox,
+    /// PolyGlot dictionary.  Pass either the native
+    /// `.pgd` archive (the `PGDictionary.xml` is
+    /// unzipped automatically) or a raw exported
+    /// `.xml`.
+    Polyglot,
 }
 
 /// output format selector for

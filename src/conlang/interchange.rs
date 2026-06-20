@@ -242,6 +242,255 @@ pub fn ipa_chart(language: &str, phon: &Phonology) -> String {
     out
 }
 
+// ── Importers ─────────────────────────────────────────────────────────────
+//
+// Parse foreign lexicon formats into a neutral lexeme the CLI maps onto its
+// `ImportEntry` (and thence the proposal-gated dictionary writer). Parsers are
+// tolerant: an unrecognised field is skipped, never fatal, so a real-world
+// export with extra markers still imports its core data.
+
+/// A single imported headword, format-agnostic. Only the fields Inkhaven's
+/// dictionary models are pulled; everything else in the source is ignored.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ImportedLexeme {
+    pub word: String,
+    pub pos: String,
+    pub translation: String,
+    pub example: String,
+    pub pronunciation: String,
+    pub etymology: String,
+    pub notes: String,
+}
+
+impl ImportedLexeme {
+    fn is_empty(&self) -> bool {
+        self.word.trim().is_empty()
+    }
+}
+
+/// Parse a Toolbox / MDF **Standard Format** (SFM) database — the lingua franca
+/// of descriptive lexicography (SIL Toolbox, FieldWorks, and **Lexique Pro** all
+/// read and write it). Records open at a `\lx` marker and run to the next one;
+/// `\mkr value` lines map by marker, and unmarked continuation lines fold into
+/// the preceding marker. The standard MDF marker set is recognised:
+///
+/// - `\lx` headword · `\ph` pronunciation · `\ps` part of speech
+/// - `\ge`/`\gn`/`\gloss` gloss → translation (first non-empty wins)
+/// - `\de` definition (fallback translation) · `\xv` example · `\et` etymology
+/// - `\nt`/`\cf` notes / cross-references
+pub fn parse_toolbox(src: &str) -> Vec<ImportedLexeme> {
+    // Fold continuation lines: a line that does not start with `\` belongs to
+    // the previous marker. Produces a flat list of (marker, value).
+    let mut fields: Vec<(String, String)> = Vec::new();
+    for raw in src.lines() {
+        let line = raw.trim_end();
+        if line.trim_start().starts_with('\\') {
+            let body = line.trim_start().trim_start_matches('\\');
+            let (mkr, val) = match body.split_once(char::is_whitespace) {
+                Some((m, v)) => (m.to_string(), v.trim().to_string()),
+                None => (body.to_string(), String::new()),
+            };
+            fields.push((mkr.to_ascii_lowercase(), val));
+        } else if let Some(last) = fields.last_mut() {
+            let extra = line.trim();
+            if !extra.is_empty() {
+                if !last.1.is_empty() {
+                    last.1.push(' ');
+                }
+                last.1.push_str(extra);
+            }
+        }
+    }
+
+    let mut out: Vec<ImportedLexeme> = Vec::new();
+    let mut cur = ImportedLexeme::default();
+    let flush = |cur: &mut ImportedLexeme, out: &mut Vec<ImportedLexeme>| {
+        if !cur.is_empty() {
+            out.push(std::mem::take(cur));
+        } else {
+            *cur = ImportedLexeme::default();
+        }
+    };
+    for (mkr, val) in fields {
+        match mkr.as_str() {
+            "lx" => {
+                flush(&mut cur, &mut out);
+                cur.word = val;
+            }
+            "ph" => cur.pronunciation = val,
+            "ps" => cur.pos = val,
+            // Glosses: prefer the first declared; `\de` is a definition we fall
+            // back to only when no gloss was given.
+            "ge" | "gn" | "gloss" | "g" => {
+                if cur.translation.is_empty() {
+                    cur.translation = val;
+                }
+            }
+            "de" => {
+                if cur.translation.is_empty() {
+                    cur.translation = val;
+                }
+            }
+            "xv" => {
+                if cur.example.is_empty() {
+                    cur.example = val;
+                }
+            }
+            "et" => cur.etymology = val,
+            "nt" | "cf" => {
+                if !val.is_empty() {
+                    if !cur.notes.is_empty() {
+                        cur.notes.push_str("; ");
+                    }
+                    cur.notes.push_str(&val);
+                }
+            }
+            _ => {}
+        }
+    }
+    flush(&mut cur, &mut out);
+    out
+}
+
+/// Parse a **PolyGlot** dictionary. PolyGlot's native `.pgd` is a ZIP whose
+/// `PGDictionary.xml` holds the lexicon; pass that XML here (the CLI unzips).
+/// Words live in `<word>` elements with `<conWord>` (the invented form),
+/// `<localWord>` (the natural-language equivalent), `<definition>`,
+/// `<pronunciation>`, and a `<wordTypeId>` resolved against the part-of-speech
+/// table (`<wordGrammarClass>`/`<wordTypeNode>` → id + name). Tolerant of the
+/// schema drift across PolyGlot versions: unknown tags are skipped.
+pub fn parse_polyglot(xml: &str) -> Result<Vec<ImportedLexeme>, String> {
+    use quick_xml::events::Event;
+    use quick_xml::Reader;
+    use std::collections::BTreeMap;
+
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+
+    // First pass: collect the part-of-speech id → name table so words can
+    // resolve their `wordTypeId` to a readable POS.
+    let mut pos_table: BTreeMap<String, String> = BTreeMap::new();
+    let mut words: Vec<ImportedLexeme> = Vec::new();
+
+    // Streaming state.
+    let mut path: Vec<String> = Vec::new();
+    let mut text = String::new();
+    let mut cur_word: Option<ImportedLexeme> = None;
+    let mut cur_word_type_id = String::new();
+    let mut cur_pos: Option<(String, String)> = None; // (id, name)
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Err(e) => {
+                return Err(format!(
+                    "PolyGlot XML parse error at {}: {e}",
+                    reader.buffer_position()
+                ))
+            }
+            Ok(Event::Eof) => break,
+            Ok(Event::Start(e)) => {
+                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let lname = name.to_ascii_lowercase();
+                match lname.as_str() {
+                    "word" => {
+                        cur_word = Some(ImportedLexeme::default());
+                        cur_word_type_id.clear();
+                    }
+                    // The POS-table node name varies by version; match the
+                    // common ones. It carries an id + a class name.
+                    "wordtypenode" | "wordgrammarclass" | "partofspeech"
+                    | "posnode" => {
+                        cur_pos = Some((String::new(), String::new()));
+                    }
+                    _ => {}
+                }
+                path.push(lname);
+                text.clear();
+            }
+            Ok(Event::Text(t)) => {
+                text.push_str(&t.unescape().unwrap_or_default());
+            }
+            Ok(Event::End(_)) => {
+                let lname = path.pop().unwrap_or_default();
+                let val = text.trim().to_string();
+                if let Some(w) = cur_word.as_mut() {
+                    match lname.as_str() {
+                        "conword" => w.word = val.clone(),
+                        "localword" => {
+                            if w.translation.is_empty() {
+                                w.translation = val.clone();
+                            }
+                        }
+                        "definition" => {
+                            // Definitions can carry HTML; strip tags crudely so
+                            // the gloss reads cleanly, and only use it when no
+                            // localWord supplied a translation.
+                            let stripped = strip_html(&val);
+                            if w.translation.is_empty() {
+                                w.translation = stripped.clone();
+                            } else if w.notes.is_empty() && !stripped.is_empty() {
+                                w.notes = stripped;
+                            }
+                        }
+                        "pronunciation" => w.pronunciation = val.clone(),
+                        "wordtypeid" | "wordclassid" | "pos" => {
+                            cur_word_type_id = val.clone()
+                        }
+                        "wordetymologynotes" | "etymology" => w.etymology = val.clone(),
+                        "word" => {
+                            // Closing the word: resolve POS then commit.
+                            let mut w = cur_word.take().unwrap();
+                            if let Some(name) = pos_table.get(&cur_word_type_id) {
+                                w.pos = name.clone();
+                            }
+                            if !w.is_empty() {
+                                words.push(w);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some((id, pname)) = cur_pos.as_mut() {
+                    match lname.as_str() {
+                        "id" | "wordtypeid" | "classid" => *id = val.clone(),
+                        "value" | "name" | "wordtypename" | "classname" => {
+                            *pname = val.clone()
+                        }
+                        "wordtypenode" | "wordgrammarclass" | "partofspeech"
+                        | "posnode" => {
+                            if !id.is_empty() {
+                                pos_table.insert(id.clone(), pname.clone());
+                            }
+                            cur_pos = None;
+                        }
+                        _ => {}
+                    }
+                }
+                text.clear();
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(words)
+}
+
+/// Crude HTML-tag stripper for PolyGlot definitions, which may be rich text.
+/// Drops `<...>` spans and collapses whitespace — enough to recover the gloss.
+fn strip_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,6 +553,69 @@ mod tests {
         let out = linguex("Test", &entries);
         assert!(out.contains("ka\\_n"));
         assert!(out.contains("100\\% sure"));
+    }
+
+    #[test]
+    fn toolbox_parses_records_and_markers() {
+        let src = "\\lx kira\n\\ph ˈki.ɾa\n\\ps n\n\\ge bird\n\\de a small flying creature\n\\xv kira nami\n\\et from proto *kir\n\\nt totem animal\n\n\\lx pata\n\\ps n\n\\ge stone\n";
+        let got = parse_toolbox(src);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].word, "kira");
+        assert_eq!(got[0].pronunciation, "ˈki.ɾa");
+        assert_eq!(got[0].pos, "n");
+        assert_eq!(got[0].translation, "bird"); // \ge wins over \de
+        assert_eq!(got[0].example, "kira nami");
+        assert_eq!(got[0].etymology, "from proto *kir");
+        assert_eq!(got[0].notes, "totem animal");
+        assert_eq!(got[1].word, "pata");
+        assert_eq!(got[1].translation, "stone");
+    }
+
+    #[test]
+    fn toolbox_folds_continuation_lines_and_falls_back_to_de() {
+        let src = "\\lx mira\n\\de bright, shining,\n   radiant\n";
+        let got = parse_toolbox(src);
+        assert_eq!(got.len(), 1);
+        // \de used as translation when no \ge; continuation line folded in.
+        assert_eq!(got[0].translation, "bright, shining, radiant");
+    }
+
+    #[test]
+    fn polyglot_parses_words_and_resolves_pos() {
+        let xml = r#"<dictionary>
+          <PartOfSpeechCollection>
+            <wordTypeNode><wordTypeId>1</wordTypeId><wordTypeName>noun</wordTypeName></wordTypeNode>
+          </PartOfSpeechCollection>
+          <word>
+            <conWord>kira</conWord>
+            <localWord>bird</localWord>
+            <wordTypeId>1</wordTypeId>
+            <pronunciation>kira</pronunciation>
+            <definition>&lt;b&gt;a bird&lt;/b&gt;</definition>
+          </word>
+          <word>
+            <conWord>pata</conWord>
+            <localWord>stone</localWord>
+            <wordTypeId>1</wordTypeId>
+          </word>
+        </dictionary>"#;
+        let got = parse_polyglot(xml).expect("parse");
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].word, "kira");
+        assert_eq!(got[0].translation, "bird"); // localWord wins
+        assert_eq!(got[0].pos, "noun"); // resolved from the type table
+        assert_eq!(got[0].pronunciation, "kira");
+        assert_eq!(got[0].notes, "a bird"); // definition HTML stripped into notes
+        assert_eq!(got[1].word, "pata");
+        assert_eq!(got[1].pos, "noun");
+    }
+
+    #[test]
+    fn polyglot_uses_definition_when_no_localword() {
+        let xml = "<dictionary><word><conWord>sol</conWord><definition>the sun</definition></word></dictionary>";
+        let got = parse_polyglot(xml).expect("parse");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].translation, "the sun");
     }
 
     #[test]

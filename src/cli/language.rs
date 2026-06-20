@@ -72,6 +72,12 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
                 )
             }
         }
+        LanguageCommand::Import {
+            language,
+            file,
+            format,
+            r#yes,
+        } => import_foreign(project, &language, &file, format, r#yes),
         LanguageCommand::Doctor { language, json } => doctor(project, &language, json),
         LanguageCommand::Export {
             language,
@@ -5539,6 +5545,135 @@ fn open_in_editor(seed: &str, label: &str) -> Result<String> {
 ///     warning.
 ///   * Tally printed at end (imported / skipped /
 ///     failed counts).
+/// 1.3.19 LANG-1 P6 — import a dictionary from a foreign conlang/linguistics
+/// tool (Toolbox/MDF SFM, PolyGlot). Parses the file into neutral lexemes
+/// (`conlang::interchange`), previews them by default, and writes them into the
+/// Dictionary only with `--yes`. Deterministic format conversion — no AI — but
+/// non-committal by default so an author reviews before the book changes.
+fn import_foreign(
+    project: &Path,
+    language: &str,
+    file: &Path,
+    format: crate::cli::LanguageImportFormat,
+    commit: bool,
+) -> Result<()> {
+    use crate::cli::LanguageImportFormat;
+    use crate::conlang::interchange;
+
+    let (store, _hierarchy, lang_book) = open_lang_book(project, language)?;
+
+    let lexemes = match format {
+        LanguageImportFormat::Toolbox => {
+            let raw = std::fs::read_to_string(file).map_err(|e| {
+                Error::Config(format!("could not read {}: {e}", file.display()))
+            })?;
+            interchange::parse_toolbox(&raw)
+        }
+        LanguageImportFormat::Polyglot => {
+            let xml = read_polyglot_xml(file)?;
+            interchange::parse_polyglot(&xml).map_err(Error::Config)?
+        }
+    };
+
+    if lexemes.is_empty() {
+        eprintln!(
+            "no entries found in {} — is it a {} file?",
+            file.display(),
+            match format {
+                LanguageImportFormat::Toolbox => "Toolbox/SFM",
+                LanguageImportFormat::Polyglot => "PolyGlot",
+            }
+        );
+        return Ok(());
+    }
+
+    if !commit {
+        eprintln!(
+            "{} entr{} parsed from {} (preview — pass --yes to import):\n",
+            lexemes.len(),
+            if lexemes.len() == 1 { "y" } else { "ies" },
+            file.display()
+        );
+        for lx in lexemes.iter().take(20) {
+            let pos = if lx.pos.is_empty() {
+                String::new()
+            } else {
+                format!("  [{}]", lx.pos)
+            };
+            println!("  {:<20} {}{}", lx.word, lx.translation, pos);
+        }
+        if lexemes.len() > 20 {
+            println!("  … and {} more", lexemes.len() - 20);
+        }
+        return Ok(());
+    }
+
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    let (mut added, mut skipped) = (0usize, 0usize);
+    for lx in &lexemes {
+        let entry = ImportEntry {
+            word: lx.word.clone(),
+            pos: lx.pos.clone(),
+            translation: lx.translation.clone(),
+            example: lx.example.clone(),
+            pronunciation: lx.pronunciation.clone(),
+            etymology: lx.etymology.clone(),
+            notes: lx.notes.clone(),
+            ..Default::default()
+        };
+        match add_imported_dictionary_entry(&store, &cfg, &lang_book, &entry) {
+            Ok(_) => added += 1,
+            Err(e) => {
+                skipped += 1;
+                eprintln!("  skipped {}: {e}", lx.word);
+            }
+        }
+    }
+    eprintln!("\nimported {added} entr(y/ies) into {language}'s Dictionary ({skipped} skipped)");
+    Ok(())
+}
+
+/// Read PolyGlot dictionary XML from either the native `.pgd` ZIP archive
+/// (extracting `PGDictionary.xml`) or a raw `.xml` file. The archive member
+/// name has varied across PolyGlot versions, so fall back to the first
+/// `*.xml` entry when the canonical name is absent.
+fn read_polyglot_xml(file: &Path) -> Result<String> {
+    let bytes = std::fs::read(file)
+        .map_err(|e| Error::Config(format!("could not read {}: {e}", file.display())))?;
+    // ZIP archives start with the local-file-header magic `PK\x03\x04`.
+    let is_zip = bytes.starts_with(b"PK\x03\x04");
+    if !is_zip {
+        return String::from_utf8(bytes)
+            .map_err(|e| Error::Config(format!("{} is not valid UTF-8: {e}", file.display())));
+    }
+    let reader = std::io::Cursor::new(bytes);
+    let mut zip = zip::ZipArchive::new(reader)
+        .map_err(|e| Error::Config(format!("{} is not a valid .pgd archive: {e}", file.display())))?;
+    // Prefer the canonical member; else the first .xml in the archive.
+    let names: Vec<String> = (0..zip.len())
+        .filter_map(|i| zip.by_index(i).ok().map(|f| f.name().to_string()))
+        .collect();
+    let target = names
+        .iter()
+        .find(|n| n.eq_ignore_ascii_case("PGDictionary.xml"))
+        .or_else(|| names.iter().find(|n| n.to_ascii_lowercase().ends_with(".xml")))
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "no XML dictionary found inside {} (members: {})",
+                file.display(),
+                names.join(", ")
+            ))
+        })?;
+    let mut member = zip
+        .by_name(&target)
+        .map_err(|e| Error::Config(format!("could not read {target} from archive: {e}")))?;
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut member, &mut xml)
+        .map_err(|e| Error::Config(format!("could not decode {target}: {e}")))?;
+    Ok(xml)
+}
+
 fn import_dictionary_csv(
     project: &Path,
     language: &str,
