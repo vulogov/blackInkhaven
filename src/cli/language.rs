@@ -204,6 +204,14 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             out.as_deref(),
             yes,
         ),
+        LanguageCommand::SpatialTypst {
+            language,
+            template,
+            name,
+            slots,
+            size,
+            out,
+        } => spatial_typst(project, &language, &template, &name, &slots, &size, out.as_deref()),
         LanguageCommand::GlyphDraft {
             language,
             describe,
@@ -891,6 +899,26 @@ fn font_config_show(project: &Path, language: &str, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Resolve a template by name: a config `templates` entry wins over a built-in
+/// of the same name.
+fn resolve_template(
+    font: &crate::conlang::types::font::FontConfig,
+    name: &str,
+) -> Result<crate::conlang::types::spatial::SpatialTemplate> {
+    use crate::conlang::types::spatial::{builtin_template, BUILTIN_TEMPLATES};
+    font.templates
+        .iter()
+        .find(|t| t.name == name)
+        .cloned()
+        .or_else(|| builtin_template(name))
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "unknown template `{name}` (built-ins: {})",
+                BUILTIN_TEMPLATES.join(", ")
+            ))
+        })
+}
+
 /// LANG-1 P5.6 — list the spatial templates available to a language (built-in
 /// plus any defined in its `font` block).
 fn font_templates(project: &Path, language: &str) -> Result<()> {
@@ -929,7 +957,6 @@ fn font_compose(
     out: Option<&Path>,
     yes: bool,
 ) -> Result<()> {
-    use crate::conlang::types::spatial::{builtin_template, BUILTIN_TEMPLATES};
     use crate::conlang::writing::{compose, preflight};
     use std::collections::BTreeMap;
 
@@ -938,18 +965,7 @@ fn font_compose(
     let (composed, report) = {
         let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
         let font = load_font_config(&store, &hierarchy, &lang_book)?.unwrap_or_default();
-        let template = font
-            .templates
-            .iter()
-            .find(|t| t.name == template_name)
-            .cloned()
-            .or_else(|| builtin_template(template_name))
-            .ok_or_else(|| {
-                Error::Config(format!(
-                    "unknown template `{template_name}` (built-ins: {})",
-                    BUILTIN_TEMPLATES.join(", ")
-                ))
-            })?;
+        let template = resolve_template(&font, template_name)?;
 
         // --slot SLOT=GLYPH, each glyph read from the store.
         let dir = glyph_store_dir(store.project_root(), language);
@@ -999,6 +1015,69 @@ fn font_compose(
         eprintln!("preflight: ✓ usable — re-run with --yes to bind it as `{name}`");
         Ok(())
     }
+}
+
+/// LANG-1 P5.6 — binding-time B: emit a Typst quadrat that arranges component
+/// glyphs spatially at layout time (the hieroglyphic path — no precomposed font
+/// glyph). Components render as characters of the language's font, so each must
+/// have a codepoint.
+fn spatial_typst(
+    project: &Path,
+    language: &str,
+    template_name: &str,
+    name: &str,
+    slots: &[String],
+    size: &str,
+    out: Option<&Path>,
+) -> Result<()> {
+    use crate::conlang::writing::compose;
+    use std::collections::BTreeMap;
+
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let font = load_font_config(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no `font` block"))
+    })?;
+    let template = resolve_template(&font, template_name)?;
+    let family = font.family.clone().unwrap_or_else(|| lang_book.title.clone());
+
+    // --slot SLOT=GLYPH, each glyph resolved to its codepoint (Typst renders by
+    // character).
+    let mut chars: BTreeMap<String, char> = BTreeMap::new();
+    for s in slots {
+        let (slot, glyph) = s
+            .split_once('=')
+            .ok_or_else(|| Error::Config(format!("bad --slot `{s}` (expected SLOT=GLYPH)")))?;
+        let g = font
+            .glyphs
+            .iter()
+            .find(|g| g.name == glyph)
+            .ok_or_else(|| Error::Config(format!("slot `{slot}`: no glyph `{glyph}` in {language}'s font")))?;
+        let cp = g.codepoint.ok_or_else(|| {
+            Error::Config(format!(
+                "glyph `{glyph}` has no codepoint — Typst renders by character; \
+                 give it one with `font-import-glyph --codepoint`"
+            ))
+        })?;
+        chars.insert(slot.to_string(), cp);
+    }
+    let cells = template.slots();
+    for slot in chars.keys() {
+        if !cells.contains(&slot.as_str()) {
+            eprintln!("note: slot `{slot}` is not used by template `{template_name}`");
+        }
+    }
+
+    let typ = compose::quadrat_typst(name, &template, &family, &chars, size).map_err(Error::Config)?;
+    if let Some(p) = out {
+        crate::io_atomic::write(p, typ.as_bytes()).map_err(Error::Io)?;
+        println!("quadrat `{name}` → {}", p.display());
+    } else {
+        print!("{typ}");
+    }
+    eprintln!(
+        "(uses the `{family}` font — build it with `font-build --language {language} --format ttf` and embed it in your Typst document)"
+    );
+    Ok(())
 }
 
 /// LANG-1 P5.5 — AI text-to-SVG glyph draft. Advisory: previews the drafted
