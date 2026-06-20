@@ -2352,6 +2352,14 @@ pub enum LanguageCommand {
         /// block's family).
         #[arg(long)]
         font: Option<String>,
+        /// Prepend an AI-written study guide that explains the linguistic terms
+        /// the grammar uses (case, alignment, allophony, …) and how this
+        /// language applies them.  Needs an AI provider.
+        #[arg(long)]
+        study: bool,
+        /// Override the configured AI provider (for `--study`).
+        #[arg(long)]
+        provider: Option<String>,
     },
 
     /// LANG-1 P7 — generate a learner's textbook with the AI: a complete graded

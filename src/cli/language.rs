@@ -109,8 +109,8 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Dictionary { language, format, out, font } => {
             dictionary(project, &language, &format, out.as_deref(), font.as_deref())
         }
-        LanguageCommand::GrammarBook { language, format, out, font } => {
-            grammar_book(project, &language, &format, out.as_deref(), font.as_deref())
+        LanguageCommand::GrammarBook { language, format, out, font, study, provider } => {
+            grammar_book(project, &language, &format, out.as_deref(), font.as_deref(), study, provider.as_deref())
         }
         LanguageCommand::Tutorial { language, format, out, font, provider } => {
             tutorial(project, &language, &format, out.as_deref(), font.as_deref(), provider.as_deref())
@@ -1251,6 +1251,17 @@ subpath wound in the OPPOSITE direction to the outer contour, both in the SAME b
 outer ring clockwise, inner hole counter-clockwise); the opposing winding makes the hole. Use ONE \
 <path> with multiple subpaths so the windings combine. Design the glyph to read clearly at small \
 sizes: bold, centered, with margins inside the viewBox.";
+
+const GRAMMAR_STUDY_SYSTEM: &str = "You are a linguistics tutor writing the study-guide companion \
+to a reference grammar of a constructed language. Your job is to make the grammar approachable to a \
+reader who is NOT a trained linguist: introduce and clearly DEFINE every linguistic term the grammar \
+relies on (phoneme, consonant/vowel, syllable, stress and where it falls, allophony / conditioned \
+sound change, affix and the difference between inflection and derivation, grammatical case, the \
+specific cases present, word order such as SOV, morphosyntactic alignment such as \
+nominative–accusative, adpositions, agent nouns, and any others the brief implies), and explain in \
+plain language what each feature MEANS and how THIS language uses it, with short examples grounded in \
+the brief. Define the term first, then show how it applies here. Be accurate and concise; use only \
+the features in the brief (never invent data). Warm, clear, textbook voice. Output the guide only.";
 
 const TUTORIAL_SYSTEM: &str = "You are an experienced language teacher writing a beginner's \
 textbook for a constructed (invented) language. From the language brief you are given — and using \
@@ -2596,12 +2607,64 @@ fn load_samples(
 }
 
 /// LANG-1 P6.3 — render the grammar as a Markdown or Typst document.
+/// A facts-only brief of the grammatical features that need explaining, for the
+/// AI study guide.
+fn grammar_study_brief(
+    language: &str,
+    phon: &crate::conlang::Phonology,
+    morph: &Option<crate::conlang::types::morphology::Morphology>,
+    typology: &std::collections::BTreeMap<String, String>,
+) -> String {
+    use std::fmt::Write as _;
+    let mut b = String::new();
+    let _ = writeln!(b, "LANGUAGE: {language}");
+    let _ = writeln!(
+        b,
+        "PHONEME INVENTORY: {} consonants, {} vowels",
+        phon.phonemes.iter().filter(|p| matches!(p.kind, crate::conlang::types::phoneme::PhonemeKind::Consonant)).count(),
+        phon.phonemes.iter().filter(|p| matches!(p.kind, crate::conlang::types::phoneme::PhonemeKind::Vowel)).count(),
+    );
+    if let Some(st) = &phon.stress {
+        let _ = writeln!(b, "STRESS RULE: {:?}", st.primary);
+    }
+    if !phon.allophony.is_empty() {
+        let _ = writeln!(b, "ALLOPHONY / SOUND-CHANGE RULES (SPE notation):");
+        for r in &phon.allophony {
+            let _ = writeln!(b, "  {}", r.source);
+        }
+    }
+    if let Some(m) = morph {
+        if !m.morphemes.is_empty() {
+            let _ = writeln!(b, "AFFIXES (these realise grammatical categories — gloss | form | position | category | value):");
+            for mo in &m.morphemes {
+                let _ = writeln!(b, "  {} | {} | {:?} | {} | {}", mo.gloss, mo.form, mo.position, mo.category, mo.value);
+            }
+        }
+        if !m.derivations.is_empty() {
+            let _ = writeln!(b, "WORD-BUILDING (derivation) RULES (name | from POS | to POS):");
+            for d in &m.derivations {
+                let _ = writeln!(b, "  {} | {} | {}", d.name, d.from_pos.as_deref().unwrap_or("any"), d.to_pos);
+            }
+        }
+    }
+    if !typology.is_empty() {
+        let _ = writeln!(b, "TYPOLOGICAL FEATURES (WALS-style feature = value):");
+        for (k, v) in typology {
+            let _ = writeln!(b, "  {k} = {v}");
+        }
+    }
+    b
+}
+
+#[allow(clippy::too_many_arguments)]
 fn grammar_book(
     project: &Path,
     language: &str,
     format: &str,
     out: Option<&Path>,
     font: Option<&str>,
+    study: bool,
+    provider: Option<&str>,
 ) -> Result<()> {
     use crate::conlang::output::{self, GrammarBook};
     use crate::conlang::analysis;
@@ -2629,6 +2692,37 @@ fn grammar_book(
         .or_else(|| font_cfg.as_ref().and_then(|c| c.family.clone()));
     let has_expr = !expressions.idioms.is_empty() || !expressions.metaphors.is_empty();
 
+    // The optional AI study guide explains the linguistic terms the reference
+    // uses. Raw Markdown for the md path; converted Typst for the typ path.
+    let study_doc: Option<String> = if study {
+        let brief = grammar_study_brief(&lang_book.title, &phon, &morphology, &grammar_spec.grammar);
+        let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+        let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+        let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+        eprintln!("inkhaven language grammar-book · study guide · {} · model: {model}", lang_book.title);
+        let raw = crate::ai::stream::collect_blocking(
+            ai.client.clone(),
+            model.to_string(),
+            Some(GRAMMAR_STUDY_SYSTEM.to_string()),
+            format!(
+                "Write the study guide for this language, using ONLY the features in the \
+                 brief below.\n\n{brief}\n\nOUTPUT FORMAT: GitHub-flavored Markdown — use `##` \
+                 for sections and `###` for each term you define. Output the guide only."
+            ),
+        )
+        .map_err(|e| Error::Store(format!("inference error: {e}")))?;
+        let md = strip_code_fence(&raw);
+        if md.trim().is_empty() {
+            None
+        } else if typst {
+            Some(output::markdown_to_typst(&md))
+        } else {
+            Some(md)
+        }
+    } else {
+        None
+    };
+
     let book = GrammarBook {
         language: &lang_book.title,
         font_family: if typst { family.as_deref() } else { None },
@@ -2638,6 +2732,7 @@ fn grammar_book(
         typology: &grammar_spec.grammar,
         expressions: has_expr.then_some(&expressions),
         samples: &samples,
+        study: study_doc.as_deref(),
     };
     let doc = if typst {
         output::grammar_typst(&book)
