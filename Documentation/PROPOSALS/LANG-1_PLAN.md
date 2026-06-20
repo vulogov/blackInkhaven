@@ -396,8 +396,24 @@ releases as they complete.
 > --format md|typ [--out] [--font]`. Verified e2e: a 4-word language with a
 > per-phoneme font → a Typst dictionary compiled by Typst 0.14.2 into a 3-page
 > PDF that embeds the conscript font and renders both Latin text and native
-> glyphs (3246 dark px). Ties P5 (script) to P6 (output). Next P6.3: the grammar
-> book (phonology tables, morphology paradigms, typology, sample texts).
+> glyphs (3246 dark px). Ties P5 (script) to P6 (output).
+>
+> **P6.3 (shipped)** — the grammar book, the companion volume to the dictionary.
+> `conlang::output::grammar_markdown` / `grammar_typst` over a `GrammarBook` that
+> the CLI assembles from the language's own data: phonology (consonant/vowel
+> inventory, syllable structure, phonotactics, allophony, stress, tone),
+> morphology (affixes, derivation), the typology answers (each with its WALS
+> consequence), idioms & metaphors, and the sample texts (loaded from the
+> `Sample texts` chapter). Descriptive helpers (`describe_constraint`,
+> `describe_stress`, `render_template`, `typology_lines`) turn the structured
+> data into prose. Markdown is a flat reference; the Typst path is a paginated
+> A5 book with `#outline()` + numbered sections (and the conscript font when
+> set). `language grammar-book <lang> --format md|typ [--out] [--font]`. Verified
+> e2e: a language with phonotactics/allophony/stress + affixes + typology +
+> idioms + a sample text → both formats, the Typst compiled by Typst 0.14.2 into
+> a 5-page PDF with a table of contents (and embedding the conscript font with
+> `--font`). **★ P6 OUTPUT COMPLETE ★** (P6.1 analysis → P6.2 dictionary → P6.3
+> grammar book). Next: P7 polish (tutorial, a complete worked example language).
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
