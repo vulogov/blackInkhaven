@@ -105,6 +105,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         } => romanize_text(project, &language, &text, scheme.as_deref(), reverse),
         LanguageCommand::Tone { language, tones } => tone_sandhi(project, &language, &tones),
         LanguageCommand::Audit { language, json } => audit(project, &language, json),
+        LanguageCommand::Stats { language, json } => stats(project, &language, json),
         LanguageCommand::LinkPlace {
             place,
             language,
@@ -2458,6 +2459,69 @@ fn load_dictionary(
         }
     }
     Ok(out)
+}
+
+/// LANG-1 P6.1 — descriptive language profile: inventory balance, phoneme
+/// frequency, syllable-length distribution, onset/coda usage, POS spread.
+fn stats(project: &Path, language: &str, json: bool) -> Result<()> {
+    use crate::conlang::analysis;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let prof = analysis::profile(&phon, &entries);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&prof)
+                .map_err(|e| Error::Store(format!("serializing profile: {e}")))?
+        );
+        return Ok(());
+    }
+
+    // "k×12 a×9 …" for the first `n` ranked entries.
+    let top = |freq: &[(String, usize)], n: usize| {
+        freq.iter()
+            .take(n)
+            .map(|(k, c)| format!("{k}×{c}"))
+            .collect::<Vec<_>>()
+            .join("  ")
+    };
+
+    println!("language profile · {language}");
+    println!(
+        "  inventory · {} phonemes ({} C / {} V)",
+        prof.phoneme_inventory, prof.consonants, prof.vowels
+    );
+    println!(
+        "  lexicon   · {} entr(y/ies), {} analyzable",
+        prof.word_count, prof.analyzable_words
+    );
+    if prof.analyzable_words > 0 {
+        println!(
+            "  shape     · avg {:.1} phonemes, {:.1} syllables per word",
+            prof.avg_phonemes, prof.avg_syllables
+        );
+        if !prof.syllable_hist.is_empty() {
+            let max = prof.syllable_hist.iter().map(|(_, c)| *c).max().unwrap_or(1).max(1);
+            println!("  syllables ·");
+            for (n, c) in &prof.syllable_hist {
+                let bar = "█".repeat(((*c * 24) / max).max(1));
+                println!("      {n}σ {bar} {c}");
+            }
+        }
+        println!("  phonemes  · {}", top(&prof.phoneme_freq, 10));
+        if !prof.onset_freq.is_empty() {
+            println!("  onsets    · {}", top(&prof.onset_freq, 8));
+        }
+        if !prof.coda_freq.is_empty() {
+            println!("  codas     · {}", top(&prof.coda_freq, 8));
+        }
+    }
+    if !prof.pos_freq.is_empty() {
+        println!("  parts of speech · {}", top(&prof.pos_freq, 8));
+    }
+    Ok(())
 }
 
 /// LANG-1 P2.1 — deterministic lexicon audit: phonotactic violations,

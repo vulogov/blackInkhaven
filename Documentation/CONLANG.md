@@ -174,6 +174,19 @@ Dictionary entries are HJSON paragraphs under **Dictionary** (created by
 | `language query [--register] [--domain] [--era] [--pos] [--text]` | filter by the rich fields |
 | `language scan-manuscript [--json]` | candidate undefined conlang words in the prose |
 
+## Analysis
+
+```
+inkhaven language stats Avesha [--json]
+```
+
+A descriptive profile of the language (vs `audit`, which hunts for problems):
+inventory balance (consonants / vowels), phoneme frequency across the lexicon,
+the syllable-length distribution (with bars), which onsets and codas actually
+get used, and the part-of-speech spread. Computed over the headwords that
+segment cleanly into the inventory. This is the snapshot the grammar book and
+dictionary output draw on.
+
 ## Worldbuilding links
 
 Stored in `.inkhaven/conlang-links.json` (the prose books are never modified):

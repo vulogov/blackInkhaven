@@ -373,7 +373,19 @@ releases as they complete.
 > a live editor input mode would drive. **★ P5 WRITING SYSTEMS + FONTS COMPLETE
 > ★** (P5.1 preflight → P5.2 SVG→UFO → P5.3 UFO→TTF → P5.4 config-driven binding
 > → P5.5 AI draft → P5.6 spatial templates / both binding times → input method).
-> Next: P6 analysis + package-rich Typst output.
+>
+> **P6.1 (shipped)** — the analysis suite. `conlang::analysis::profile(phon,
+> entries)` builds a deterministic descriptive `LanguageProfile`: inventory
+> balance (C/V), phoneme frequency across the lexicon, syllable-length
+> distribution, onset/coda usage, and POS spread — computed over the headwords
+> that segment cleanly into the inventory (reusing P1.2 `segment`/`syllabify`).
+> Distinct from the P2.1 audit (problems) — this is the descriptive snapshot the
+> P6.2 grammar book / dictionary output draws on. `language stats <lang>
+> [--json]` renders it (with a syllable-count bar chart). Verified e2e on a
+> 6-word language: 5 C / 3 V, avg 4.7 phonemes / 2.2 syllables, `a` the most
+> frequent phoneme, coda `n` from the closed syllables. Next P6.2: the
+> package-rich Typst grammar-book / dictionary output (selectable `.md`/`.typ`,
+> embedding the generated font).
 
 
 The lexicon-building loop. The non-negotiable invariant: **forms obey the
