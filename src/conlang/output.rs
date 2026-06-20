@@ -229,6 +229,9 @@ pub struct GrammarBook<'a> {
     /// Markdown renderer, converted Typst for the Typst renderer. When present,
     /// it leads the book (as a study companion) ahead of the reference sections.
     pub study: Option<&'a str>,
+    /// An example sentence built from the lexicon by the syntax engine, as
+    /// `(surface, interlinear, literal)`. Shown in a "Syntax" section.
+    pub example_sentence: Option<(String, String, String)>,
 }
 
 /// A syllable template's pattern, e.g. `CV(C)`.
@@ -492,6 +495,11 @@ pub fn grammar_markdown(book: &GrammarBook) -> String {
         s.push('\n');
     }
 
+    if let Some((surface, interlinear, literal)) = &book.example_sentence {
+        s.push_str("## Syntax\n\nA sample clause, with its words in the language's order:\n\n");
+        s.push_str(&format!("> {surface}\n\n```\n{interlinear}\n```\n\n*'{literal}'*\n\n"));
+    }
+
     if let Some(ex) = book.expressions {
         if !ex.idioms.is_empty() || !ex.metaphors.is_empty() {
             s.push_str("## Expressions\n\n");
@@ -633,6 +641,13 @@ pub fn grammar_typst(book: &GrammarBook) -> String {
             s.push_str(&format!("  [{}], [{v}],\n", typst_text(label)));
         }
         s.push_str(")\n\n");
+    }
+
+    if let Some((surface, interlinear, literal)) = &book.example_sentence {
+        s.push_str("= Syntax\nA sample clause, with its words in the language's order:\n\n");
+        s.push_str(&format!("#quote(block: true)[{}]\n\n", typst_text(surface)));
+        s.push_str(&format!("#raw(\"{}\")\n\n", interlinear.replace('"', "'")));
+        s.push_str(&format!("_'{}'_\n\n", typst_text(literal)));
     }
 
     if let Some(ex) = book.expressions {
@@ -1079,6 +1094,7 @@ mod tests {
             expressions: None,
             samples: &samples,
             study: None,
+            example_sentence: None,
         };
 
         let md = grammar_markdown(&book);
@@ -1116,6 +1132,7 @@ mod tests {
             expressions: None,
             samples: &samples,
             study: Some("## What is a case?\n\nA grammatical case marks a noun's role."),
+            example_sentence: None,
         };
         let md = grammar_markdown(&book);
         let study_pos = md.find("## Study Guide").unwrap();

@@ -102,6 +102,23 @@ pub fn generate(
         .collect()
 }
 
+/// Inflect `root` through `template` and return the cell whose features match
+/// every `wanted` feature (case-insensitively). `None` if none matches.
+pub fn realize_features(
+    phon: &Phonology,
+    morph: &Morphology,
+    template: &ParadigmTemplate,
+    root: &str,
+    root_gloss: &str,
+    wanted: &BTreeMap<String, String>,
+) -> Option<ParadigmRow> {
+    generate(phon, morph, template, root, root_gloss).into_iter().find(|r| {
+        wanted
+            .iter()
+            .all(|(k, v)| r.features.get(k).is_some_and(|rv| rv.eq_ignore_ascii_case(v)))
+    })
+}
+
 /// Insert an infix's segments into the stem. The default anchor
 /// `before_first_vowel` places it after the first consonant (the Tagalog
 /// pattern, `sulat` → `s-um-ulat`); `after_first_vowel` places it just past it.

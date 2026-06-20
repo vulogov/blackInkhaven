@@ -147,6 +147,27 @@ inkhaven language grammar Eldar --set alignment=ergative_absolutive
 Answers are validated against the catalog and stored as a `{ grammar: { … } }`
 block in the Grammar chapter; the AI grammar book reads them.
 
+## Syntax (sentences)
+
+`inkhaven language sentence <lang>` assembles a clause from its parts and prints
+the surface form, an interlinear gloss, and a literal rendering — putting word
+order, case, and agreement together into something speakable:
+
+```
+inkhaven language sentence Eldar --subject kira:bird --verb nami:see \
+    --object pata:stone --object-adj mira:bright
+```
+
+The engine orders the words by the typology `word_order` (`sov`, `svo`, …),
+case-marks the nouns by `alignment` (nominative–accusative → subject nominative,
+object accusative; ergative–absolutive → subject ergative, object absolutive),
+inflects each noun through the `noun` paradigm to its case (and number), and runs
+agreement (an adjective takes its noun's case; a verb agrees with its subject via
+the `verb` agreement rule). Words are `root` or `root:gloss`; adjective placement
+follows the `adjective_order` typology feature. It degrades gracefully — a
+missing paradigm or case just leaves a word bare. The **grammar book** uses this
+to print a worked example sentence from the lexicon.
+
 ## Diachronics (sound change)
 
 A language can derive from a proto by an ordered chain of sound changes (same
