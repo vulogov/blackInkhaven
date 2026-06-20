@@ -168,6 +168,24 @@ follows the `adjective_order` typology feature. It degrades gracefully — a
 missing paradigm or case just leaves a word bare. The **grammar book** uses this
 to print a worked example sentence from the lexicon.
 
+**Negation and questions** layer on top, realized by the `negation` and
+`question` typology features:
+
+```
+inkhaven language sentence Eldar --subject kira:bird --verb nami:see \
+    --object pata:stone --negate --negator na:not
+inkhaven language sentence Eldar --subject kira:bird --verb nami:see \
+    --object pata:stone --question --q-particle ka:Q
+```
+
+- `--negate` follows the `negation` strategy: `particle`/`auxiliary` sets the
+  negator (`--negator`) as a separate word before the verb (glossed `NEG`);
+  `affix` fuses it onto the verb form (`NEG-…`). With no `--negator`, only the
+  gloss is marked — the engine never coins a word.
+- `--question` follows the `question` strategy: `particle` appends the question
+  particle (`--q-particle`, glossed `Q`); `word_order` fronts the verb
+  (inversion); `morphology` tags the verb (`.Q`); all add a surface `?`.
+
 ## Creative text (compose)
 
 `inkhaven language compose <lang> --kind <kind>` generates creative text. The
