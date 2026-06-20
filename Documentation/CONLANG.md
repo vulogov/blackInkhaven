@@ -187,6 +187,21 @@ get used, and the part-of-speech spread. Computed over the headwords that
 segment cleanly into the inventory. This is the snapshot the grammar book and
 dictionary output draw on.
 
+## Dictionary output
+
+```
+inkhaven language dictionary Avesha --format md|typ [--out dict.typ] [--font Eldar]
+```
+
+Renders the dictionary as a real document. **Markdown** (`md`) is a clean,
+alphabetized listing (headword, pronunciation, POS, gloss, tags, etymology).
+**Typst** (`typ`) is the showpiece: a paginated, two-column A5 book with a title
+page and an overview table, and — when the language has a `font` block — each
+headword shown in the **native script** (transliterated by the input method)
+beside its romanization. Build the font (`font-build --language … --format ttf`)
+and compile with `typst compile --font-path <dir> dict.typ` to get a PDF that
+embeds and renders the conscript.
+
 ## Worldbuilding links
 
 Stored in `.inkhaven/conlang-links.json` (the prose books are never modified):
