@@ -135,6 +135,13 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             template,
             gloss,
         } => paradigm(project, &language, &root, &template, gloss.as_deref()),
+        LanguageCommand::Agree {
+            language,
+            word,
+            pos,
+            features,
+            gloss,
+        } => agree(project, &language, &word, &pos, &features, gloss.as_deref()),
         LanguageCommand::Gloss { language, text } => gloss_text(project, &language, &text),
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
@@ -1919,6 +1926,65 @@ fn paradigm(
     Ok(())
 }
 
+/// LANG-1 P3.x — make a dependent word agree with its head's features.
+fn agree(
+    project: &Path,
+    language: &str,
+    word: &str,
+    pos: &str,
+    features: &str,
+    gloss: Option<&str>,
+) -> Result<()> {
+    use std::collections::BTreeMap;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no phoneme block"))
+    })?;
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no morphology yet — add a `morphemes` / `paradigms` / \
+             `agreement` HJSON paragraph under its `Grammar` chapter"
+        ))
+    })?;
+    let rule = morph.agreement_for(pos).ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no agreement rule for `{pos}` (dependents: {})",
+            morph.agreement.iter().map(|a| a.dependent.as_str()).collect::<Vec<_>>().join(", ")
+        ))
+    })?;
+
+    // Parse `number=pl,case=dat` into a feature map.
+    let head_features: BTreeMap<String, String> = features
+        .split(',')
+        .filter_map(|kv| kv.split_once('='))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .collect();
+
+    let root_gloss = gloss.unwrap_or(word);
+    let result = crate::conlang::morphology::agreement::agree(
+        &phonology, &morph, rule, word, root_gloss, &head_features,
+    )
+    .ok_or_else(|| {
+        Error::Config(format!(
+            "no form of `{word}` agrees with those features — check the `{}` paradigm has a \
+             matching cell, and that --features uses the rule's features ({})",
+            rule.paradigm,
+            rule.features.join(", ")
+        ))
+    })?;
+
+    let matched = result
+        .matched
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let head = if rule.head.is_empty() { "head".to_string() } else { rule.head.clone() };
+    println!("{word} ({pos}) agreeing with its {head} [{matched}]:");
+    println!("  {} — {}", result.form, result.gloss);
+    Ok(())
+}
+
 /// LANG-1 P2.7 — scan the manuscript for candidate undefined conlang words.
 fn scan_manuscript(project: &Path, language: &str, json: bool) -> Result<()> {
     use std::collections::HashSet;
@@ -2635,15 +2701,29 @@ fn grammar_study_brief(
     }
     if let Some(m) = morph {
         if !m.morphemes.is_empty() {
-            let _ = writeln!(b, "AFFIXES (these realise grammatical categories — gloss | form | position | category | value):");
+            let _ = writeln!(b, "MORPHEMES (these realise grammatical categories — gloss | kind | realization | category | value):");
             for mo in &m.morphemes {
-                let _ = writeln!(b, "  {} | {} | {:?} | {} | {}", mo.gloss, mo.form, mo.position, mo.category, mo.value);
+                let _ = writeln!(
+                    b,
+                    "  {} | {} | {} | {} | {}",
+                    mo.gloss,
+                    crate::conlang::output::morpheme_kind(mo),
+                    crate::conlang::output::morpheme_realization(mo),
+                    mo.category,
+                    mo.value
+                );
             }
         }
         if !m.derivations.is_empty() {
             let _ = writeln!(b, "WORD-BUILDING (derivation) RULES (name | from POS | to POS):");
             for d in &m.derivations {
                 let _ = writeln!(b, "  {} | {} | {}", d.name, d.from_pos.as_deref().unwrap_or("any"), d.to_pos);
+            }
+        }
+        if !m.agreement.is_empty() {
+            let _ = writeln!(b, "AGREEMENT RULES (dependent agrees with head in features):");
+            for a in &m.agreement {
+                let _ = writeln!(b, "  {} agrees with {} in {}", a.dependent, a.head, a.features.join(", "));
             }
         }
     }
@@ -2855,12 +2935,15 @@ fn tutorial(
 
     if let Some(m) = &morph {
         if !m.morphemes.is_empty() {
-            let _ = writeln!(brief, "\nAFFIXES (gloss | form | position | meaning):");
+            let _ = writeln!(brief, "\nMORPHEMES (gloss | kind | realization | meaning):");
             for mo in &m.morphemes {
                 let _ = writeln!(
                     brief,
-                    "  {} | {} | {:?} | {}",
-                    mo.gloss, mo.form, mo.position, mo.value
+                    "  {} | {} | {} | {}",
+                    mo.gloss,
+                    crate::conlang::output::morpheme_kind(mo),
+                    crate::conlang::output::morpheme_realization(mo),
+                    mo.value
                 );
             }
         }
@@ -2876,6 +2959,12 @@ fn tutorial(
                     d.form,
                     d.gloss
                 );
+            }
+        }
+        if !m.agreement.is_empty() {
+            let _ = writeln!(brief, "\nAGREEMENT (dependent agrees with head in features):");
+            for a in &m.agreement {
+                let _ = writeln!(brief, "  {} agrees with {} in {}", a.dependent, a.head, a.features.join(", "));
             }
         }
     }
