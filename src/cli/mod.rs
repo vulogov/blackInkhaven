@@ -2301,6 +2301,19 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// LANG-1 P6.1 — a descriptive profile of a language: inventory balance
+    /// (consonants / vowels), phoneme frequency across the lexicon, the
+    /// syllable-length distribution, which onsets/codas get used, and the
+    /// part-of-speech spread.  The snapshot the grammar book / dictionary draw
+    /// on (vs `audit`, which hunts for problems).
+    Stats {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Emit the profile as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// LANG-1 P2.6 — link a Place to a language it's spoken in.  Stored in a
     /// `.inkhaven/conlang-links.json` sidecar (the Places book is prose and is
     /// never modified).  Sets the primary language by default; `--secondary`
