@@ -2768,6 +2768,27 @@ pub enum LanguageCommand {
         gloss: Option<String>,
     },
 
+    /// LANG-1 P3.x — apply **agreement** (concord): inflect a dependent word
+    /// (an adjective, a verb) to agree with the grammatical features of its
+    /// head (its noun, its subject).  Uses the `agreement` rules + paradigm in
+    /// the Morphology chapter.
+    Agree {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The dependent root word to inflect.
+        #[arg(long)]
+        word: String,
+        /// The dependent's part of speech (must match an `agreement` rule).
+        #[arg(long)]
+        pos: String,
+        /// The head's grammatical features, e.g. `number=pl,case=dat`.
+        #[arg(long)]
+        features: String,
+        /// Gloss for the dependent root (defaults to the root itself).
+        #[arg(long)]
+        gloss: Option<String>,
+    },
+
     /// LANG-1 P2.7 — scan the manuscript for candidate **undefined** conlang
     /// words: words that look like the language (segment fully into its
     /// inventory + pass its phonotactics) but aren't in the dictionary.  Only
