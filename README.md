@@ -21,43 +21,48 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.15 — The ConLang Suite (Part 2: morphology & diachronics)
+## Latest release · 1.3.16 — The ConLang Suite (Part 3: writing systems, fonts & output)
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.15.md`](Documentation/RELEASE_NOTES/1.3.15.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.16.md`](Documentation/RELEASE_NOTES/1.3.16.md)
 · Reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md)
 
-1.3.14 shipped the ConLang substrate (phonology + lexicon). 1.3.15 builds two
-whole pillars on it — the rest of **morphology** and all of **diachronics** —
-each reusing the engines already in place. RFC LANG-1; layered on the existing
-`Language` book; **no new dependencies**.
+1.3.14–1.3.15 built the *spoken* language. 1.3.16 builds the **written** one: a
+constructed script goes from hand artwork or an AI description to a real
+TrueType font, a Typst layout, and a typed input method — fully in-process, no
+external tool — and the language starts becoming a **book**. RFC LANG-1.
 
-### Morphology, completed
+### Writing systems + fonts
 
-- **Auto-gloss** — `language gloss --text "kata katai katat"` prints an aligned
-  Leipzig interlinear, recognising inflected *and* allophony-altered forms
-  (`katat` → `stone-DAT`) by generating paradigms forward and matching.
-- **Derived forms** — `language derive --root kata --pos verb` coins new lexemes
-  (agent nouns, diminutives) with allophony; advisory.
-- **Grammar questionnaire** — `language grammar` walks a WALS-aligned catalog of
-  16 typological features; `--set word_order=sov` validates the answer.
-- **Idioms & metaphors** — `language idiom-add` / `metaphor-add` / `idioms`.
+- **Glyph preflight** — `language glyph-lint` checks an SVG is fit for a font
+  outline, and warns on the **counter mistake** (a near-white fill a monochrome
+  font won't honour as a hole).
+- **SVG → UFO → TrueType, in-process** — `language font-build --format
+  ufo|ttf|both` assembles a full OpenType table set with `write-fonts` (cubics
+  quadified); the result passes a fontTools round-trip.
+- **Config-driven font** — `language font-import-glyph` binds a glyph to a
+  phoneme + codepoint in the language; `font-build --language` compiles the
+  script straight from the book.
+- **AI text-to-SVG glyph draft** — `language glyph-draft --describe "…"`,
+  advisory, preflight-gated, prompts reverse-wound counters. *Validated live
+  against DeepSeek.*
+- **Spatial templates** — one engine, two binding times: `language font-compose`
+  bakes a precomposed block (Hangul square / quadrat); `language spatial-typst`
+  arranges components at layout time.
+- **Input method** — `language transliterate --text "katha"` types the script
+  (greedy longest-key romanized → glyph codepoints).
 
-### Diachronics
+### Analysis & output
 
-A sound change *is* an ordered context rewrite, so the engine reuses the
-allophony rewrite engine.
-
-- **`language sound-change <lang> --form tap`** → `taf` (evolve a proto-form).
-- **`language derive-lexicon <daughter>`** evolves a proto's *whole dictionary*
-  through the daughter's sound-change chain.
-- **`language family-tree`** + **`language cognates ProtoEldarin --form takap`**
-  (reflex in every daughter: `Eldar takaf` vs `Sindarin tahaf`).
-- **`language reconstruct`** (AI proto-form from cognates) + **`realism-check`**
-  (AI plausibility of a sound-change chain).
+- **`language stats`** — a descriptive profile: inventory balance, phoneme
+  frequency, syllable distribution, onset/coda usage, POS spread.
+- **`language dictionary --format md|typ`** — render the lexicon as a document;
+  the Typst path is a paginated two-column A5 book that embeds the conscript
+  font and shows each headword in the **native script** beside its romanization.
 
 ### Test stats
 
-Tests 1428 → 1439, **zero new dependencies**. Full reference:
+Tests 1439 → 1479. **One new dependency** (`norad`, for the approved fonts
+pillar; `write-fonts`/`kurbo` reuse crates already in the tree). Full reference:
 [`Documentation/CONLANG.md`](Documentation/CONLANG.md).
 
 Every prior release lives under
