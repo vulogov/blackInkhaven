@@ -353,6 +353,33 @@ recorded in its etymology (so cognates/etymology stay coherent). Scriptable from
 Bund as `lang.borrow` (advisory — returns `{ donor, adapted, steps }`; commit
 with `lang.add_word`).
 
+### Areal features — Sprachbund (LANG-2 P3)
+
+Languages in contact converge on shared structures. A `contact` block in the
+**Grammar** chapter declares a language's membership in a *linguistic area*:
+
+```hjson
+{ contact: {
+  region: "the Inner Sea"
+  with: [ "Sindar", "Khuz" ]                                  // neighbours in contact
+  areal_features: { word_order: "sov", alignment: "ergative_absolutive" }
+} }
+```
+
+```
+inkhaven language areal Eldar      # per-language convergence overlay
+inkhaven language areal            # the whole-world regional view
+```
+
+`areal <lang>` assesses each areal feature against that language's own typology —
+**converged** (already has it, `✓`), **shift** (a different value, would change,
+`→`), or **adopt** (unanswered, would gain it, `+`). It is an *advisory overlay*:
+it never rewrites the grammar. `areal` with no language prints the regional
+Sprachbund view — each contact area, its members, and a per-member status for
+every shared feature. Contact also shows up as **horizontal edges** in
+`language family-tree` (`Eldar ⇄ Sindar`), alongside the vertical inheritance.
+Scriptable as `lang.areal` (returns `{ region, with, convergence }`).
+
 ## Idioms + metaphors
 
 ```

@@ -62,6 +62,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.lang.varieties", w_varieties),
         ("ink.lang.lect", w_lect),
         ("ink.lang.borrow", w_borrow),
+        ("ink.lang.areal", w_areal),
         // ── pure data constructor (uncategorised, allowed) ──
         ("ink.lang.dict", w_dict),
         // ── mutators (store_write) ──
@@ -675,6 +676,54 @@ fn do_borrow(vm: &mut VM) -> Result<&mut VM> {
         "steps".into(),
         Value::from_list(a.steps.into_iter().map(Value::from_string).collect()),
     );
+    push(vm, Value::from_dict(h));
+    Ok(vm)
+}
+
+// ( lang -- {region,with,convergence} )  areal convergence overlay (advisory)
+fn w_areal(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_areal(vm).map_err(to_bund_err)
+}
+fn do_areal(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.areal";
+    require_depth(vm, 1, tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let contact =
+        langapi::load_contact(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let mut h: HashMap<String, Value> = HashMap::new();
+    match contact {
+        None => {
+            h.insert("region".into(), Value::nodata());
+            h.insert("with".into(), Value::from_list(Vec::new()));
+            h.insert("convergence".into(), Value::from_list(Vec::new()));
+        }
+        Some(c) => {
+            let (spec, _) = langapi::load_grammar_spec(store, &hierarchy, &book)
+                .map_err(|e| anyhow!("{tag}: {e}"))?;
+            h.insert("region".into(), Value::from_string(c.region.clone()));
+            h.insert(
+                "with".into(),
+                Value::from_list(c.with.iter().map(|s| Value::from_string(s.clone())).collect()),
+            );
+            let conv: Vec<Value> =
+                crate::conlang::contact::converge(&spec.grammar, &c.areal_features)
+                    .into_iter()
+                    .map(|c| {
+                        let mut d: HashMap<String, Value> = HashMap::new();
+                        d.insert("feature".into(), Value::from_string(c.feature));
+                        d.insert("areal_value".into(), Value::from_string(c.areal_value));
+                        d.insert(
+                            "current".into(),
+                            c.current.map(Value::from_string).unwrap_or_else(Value::nodata),
+                        );
+                        d.insert("status".into(), Value::from_string(c.status.as_str().to_string()));
+                        Value::from_dict(d)
+                    })
+                    .collect();
+            h.insert("convergence".into(), Value::from_list(conv));
+        }
+    }
     push(vm, Value::from_dict(h));
     Ok(vm)
 }

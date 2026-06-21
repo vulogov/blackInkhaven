@@ -254,6 +254,66 @@ fn repair(
     out
 }
 
+// ── Areal convergence (P3) ───────────────────────────────────────────────
+
+use std::collections::BTreeMap;
+
+/// Where a language stands relative to one areal feature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArealStatus {
+    /// The language already has the areal value.
+    Converged,
+    /// The language has a *different* value — contact would shift it.
+    Shift,
+    /// The language has not answered this feature — contact would add it.
+    Adopt,
+}
+
+impl ArealStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ArealStatus::Converged => "converged",
+            ArealStatus::Shift => "shift",
+            ArealStatus::Adopt => "adopt",
+        }
+    }
+}
+
+/// One areal feature assessed against a language's current typology.
+#[derive(Debug, Clone)]
+pub struct Convergence {
+    pub feature: String,
+    pub areal_value: String,
+    pub current: Option<String>,
+    pub status: ArealStatus,
+}
+
+/// Compare a language's typology answers against the areal features — an
+/// *advisory* overlay showing convergence, never rewriting the grammar. Sorted
+/// by feature for stable output.
+pub fn converge(
+    typology: &BTreeMap<String, String>,
+    areal_features: &BTreeMap<String, String>,
+) -> Vec<Convergence> {
+    areal_features
+        .iter()
+        .map(|(f, av)| {
+            let current = typology.get(f).cloned();
+            let status = match &current {
+                Some(c) if c.eq_ignore_ascii_case(av) => ArealStatus::Converged,
+                Some(_) => ArealStatus::Shift,
+                None => ArealStatus::Adopt,
+            };
+            Convergence {
+                feature: f.clone(),
+                areal_value: av.clone(),
+                current,
+                status,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,5 +373,22 @@ mod tests {
         let a = adapt(&recipient(), &loan(), "kata");
         assert_eq!(a.adapted, "kata");
         assert!(a.steps.is_empty());
+    }
+
+    #[test]
+    fn convergence_classifies_each_areal_feature() {
+        let mut typ = BTreeMap::new();
+        typ.insert("word_order".to_string(), "sov".to_string()); // already SOV
+        typ.insert("alignment".to_string(), "nominative_accusative".to_string()); // differs
+        // `case` is unanswered → adopt
+        let mut areal = BTreeMap::new();
+        areal.insert("word_order".to_string(), "sov".to_string());
+        areal.insert("alignment".to_string(), "ergative_absolutive".to_string());
+        areal.insert("case".to_string(), "yes".to_string());
+        let cs = converge(&typ, &areal);
+        let by = |f: &str| cs.iter().find(|c| c.feature == f).unwrap().status;
+        assert_eq!(by("word_order"), ArealStatus::Converged);
+        assert_eq!(by("alignment"), ArealStatus::Shift);
+        assert_eq!(by("case"), ArealStatus::Adopt);
     }
 }
