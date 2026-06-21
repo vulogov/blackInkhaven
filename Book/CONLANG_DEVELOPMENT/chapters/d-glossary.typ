@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#appendix(letter: "C", title: "Glossary of terms")
+#appendix(letter: "D", title: "Glossary of terms")
 
 Every linguistic and technical term used in this book, defined in one place, in
 alphabetical order. Italicised words within a definition have their own entry.
