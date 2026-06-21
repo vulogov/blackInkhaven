@@ -1821,6 +1821,8 @@ fn do_grammar_book(vm: &mut VM) -> Result<&mut VM> {
         .as_ref()
         .and_then(|m| langapi::build_example_sentence(&phon, m, &grammar_spec.grammar, &entries));
     let has_expr = !expressions.idioms.is_empty() || !expressions.metaphors.is_empty();
+    let variation = langapi::build_variation(store, &hierarchy, &book, &phon, &entries, 12)
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
     let bk = GrammarBook {
         language: &book.title,
         font_family: if typst { family.as_deref() } else { None },
@@ -1832,6 +1834,7 @@ fn do_grammar_book(vm: &mut VM) -> Result<&mut VM> {
         samples: &samples,
         study: None,
         example_sentence,
+        variation,
     };
     let doc = if typst {
         output::grammar_typst(&bk)
