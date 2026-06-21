@@ -15,6 +15,7 @@ pub mod helpers;
 mod ink;
 pub mod io;
 mod keymap;
+mod lang;
 mod pdf;
 mod review;
 
@@ -36,5 +37,6 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     review::register(vm)?;
     pdf::register(vm)?;
     export::register(vm)?;
+    lang::register(vm)?;
     Ok(())
 }

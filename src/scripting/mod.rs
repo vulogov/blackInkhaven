@@ -598,7 +598,7 @@ pub fn format_value(v: &Value) -> String {
 /// what every `ink.*` word returns — comes out as Debug noise.
 /// This walks the value ourselves and falls through to a debug
 /// stringification only for variants we don't recognise.
-fn value_to_json(v: &Value) -> serde_json::Value {
+pub(crate) fn value_to_json(v: &Value) -> serde_json::Value {
     if let Ok(s) = v.clone().cast_string() {
         return serde_json::Value::String(s);
     }
