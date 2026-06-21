@@ -82,14 +82,19 @@ contact: {
 
 ## 4. Phases (each independently shippable)
 
-| Phase | Scope | New deps |
-| --- | --- | --- |
-| **P1** | **Variation core** — variety model; render a word/sentence *in a variety* (sound changes via the rewrite engine + lexical/morph overrides); `variety` / `lect` CLI; dialect comparison | none |
-| **P2** | **Borrowing** — deterministic loanword-adaptation engine (perceive → repair to recipient phonotactics); calques (structural borrow); `borrow` / `calque` | none |
-| **P3** | **Areal & contact-induced change** — `contact` bundles; apply convergence (advisory typology overlay); contact as a diachronic event-type that composes with LANG-1 inheritance; `areal` | none |
-| **P4** | **Speech communities & ecology** — extend the links sidecar (Places speak varieties, Characters command languages + a native variety); `ecology` graph (text + an SVG **dialect/contact atlas** via resvg); per-Character **idiolect** + **code-switching** generator | none |
-| **P5** | **Output & surfaces** — a sociolinguistic profile; variation chapters in the grammar book; dialect-comparison tables; the full `ink.lang.*` Bund surface; `Ctrl+B X` hub additions | none |
-| **P6** | **AI advisory** — AI-proposed *plausible* dialects (a coherent sound-change set + lexical swaps), realistic loanword candidates, an areal-plausibility check, and code-switched dialogue. Advisory, `--yes`-gated, deterministic forms where possible | none |
+**Status (1.3.22-dev):** P1–P6 **shipped**. The only deferred piece is
+code-switching, **postponed to the translation RFC track** (it needs that work's
+cross-language machinery); the per-character bilingualism data it will draw on
+already ships in P4.
+
+| Phase | Scope | New deps | Status |
+| --- | --- | --- | --- |
+| **P1** | **Variation core** — variety model; render a word/sentence *in a variety* (sound changes via the rewrite engine + lexical/morph overrides); `variety` / `lect` CLI; dialect comparison | none | ✅ shipped |
+| **P2** | **Borrowing** — deterministic loanword-adaptation engine (perceive → repair to recipient phonotactics); calques (structural borrow); `borrow` / `calque` | none | ✅ shipped |
+| **P3** | **Areal & contact-induced change** — `contact` bundles; apply convergence (advisory typology overlay); contact as a diachronic event-type that composes with LANG-1 inheritance; `areal` | none | ✅ shipped |
+| **P4** | **Speech communities & ecology** — extend the links sidecar (Places speak varieties, Characters command languages + a native variety); `ecology` graph (text + an SVG **dialect/contact atlas** via resvg); per-Character **idiolect** | none | ✅ shipped (code-switching → translation RFC) |
+| **P5** | **Output & surfaces** — variation + contact sections in the grammar book; dialect-comparison tables; the full `ink.lang.*` Bund surface | none | ✅ shipped |
+| **P6** | **AI advisory** — AI-proposed *plausible* dialects (a coherent sound-change set + lexical swaps), realistic loanword candidates, an areal-plausibility check. Advisory, `--yes`-gated, deterministic forms where possible | none | ✅ shipped (code-switched dialogue → translation RFC) |
 
 ## 5. Pillar I — Variation (P1)
 
@@ -157,9 +162,10 @@ Character↔proficiency, and extends it:
   languages/varieties live where, contact edges, prestige — as text and as an
   **SVG atlas** (resvg, already in tree), the dialect-map analogue of the LANG-1
   family tree.
-- **Code-switching** — `code-switch` generates an utterance that mixes two
-  languages a bilingual character commands, marking the switch points (the
-  natural payoff of the syntax engine + per-character bilingualism).
+- **Code-switching** — generating an utterance that mixes two languages a
+  bilingual character commands, marking the switch points. **Postponed to the
+  translation RFC track** (it needs the cross-language machinery that work
+  introduces); the per-character bilingualism data that feeds it ships here in P4.
 
 This is the pillar that makes LANG-2 *worldbuilding*, not just linguistics: a
 character from the lowlands speaks the low-prestige dialect, borrows words from
