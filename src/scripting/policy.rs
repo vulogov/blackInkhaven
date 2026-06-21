@@ -268,6 +268,60 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.export.markdown", category::FS_WRITE),
     ("ink.export.tex", category::FS_WRITE),
     ("ink.export.epub", category::FS_WRITE),
+
+    // 1.3.21 — ConLang Suite from Bund.  The inspectors only read the
+    // language's book blocks + run the (pure) engine → store_read
+    // (default-allowed).  init / define / add_word create book nodes, so they
+    // inherit the store_write deny-by-default gate, exactly like ink.tree.*.
+    ("ink.lang.list", category::STORE_READ),
+    ("ink.lang.generate_word", category::STORE_READ),
+    ("ink.lang.syllabify", category::STORE_READ),
+    ("ink.lang.ipa", category::STORE_READ),
+    ("ink.lang.stress", category::STORE_READ),
+    ("ink.lang.tone", category::STORE_READ),
+    ("ink.lang.transliterate", category::STORE_READ),
+    ("ink.lang.gloss", category::STORE_READ),
+    ("ink.lang.paradigm", category::STORE_READ),
+    ("ink.lang.derive", category::STORE_READ),
+    ("ink.lang.agree", category::STORE_READ),
+    ("ink.lang.sentence", category::STORE_READ),
+    ("ink.lang.relative", category::STORE_READ),
+    ("ink.lang.complement", category::STORE_READ),
+    ("ink.lang.coordinate", category::STORE_READ),
+    ("ink.lang.stats", category::STORE_READ),
+    ("ink.lang.audit", category::STORE_READ),
+    ("ink.lang.query", category::STORE_READ),
+    ("ink.lang.gaps", category::STORE_READ),
+    ("ink.lang.sound_change", category::STORE_READ),
+    ("ink.lang.cognates", category::STORE_READ),
+    ("ink.lang.family_tree", category::STORE_READ),
+    ("ink.lang.names", category::STORE_READ),
+    ("ink.lang.prose", category::STORE_READ),
+    ("ink.lang.poem", category::STORE_READ),
+    // ink.lang.dict is a pure data constructor — uncategorised (allowed).
+    ("ink.lang.init", category::STORE_WRITE),
+    ("ink.lang.define", category::STORE_WRITE),
+    ("ink.lang.add_word", category::STORE_WRITE),
+    ("ink.lang.remove_word", category::STORE_WRITE),
+    ("ink.lang.derive_add", category::STORE_WRITE),
+    ("ink.lang.grammar_set", category::STORE_WRITE),
+    ("ink.lang.idiom_add", category::STORE_WRITE),
+    ("ink.lang.metaphor_add", category::STORE_WRITE),
+    // The AI-backed words call the LLM → ai_write (default-denied). They stay
+    // advisory (return data, never write the book), so a script that commits
+    // their output goes through the separately-gated store_write words.
+    ("ink.lang.compose", category::AI_WRITE),
+    ("ink.lang.reconstruct", category::AI_WRITE),
+    ("ink.lang.realism_check", category::AI_WRITE),
+    ("ink.lang.generate_lexicon", category::AI_WRITE),
+    // File / document output → fs_write (default-denied). `glyph_lint` only
+    // reads an SVG (fs_read). `glyph_draft` writes a file AND calls the LLM, so
+    // it is gated fs_write here and additionally checks ai_write at run time.
+    ("ink.lang.glyph_lint", category::FS_READ),
+    ("ink.lang.dictionary", category::FS_WRITE),
+    ("ink.lang.grammar_book", category::FS_WRITE),
+    ("ink.lang.font_build", category::FS_WRITE),
+    ("ink.lang.glyph_draft", category::FS_WRITE),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
@@ -387,6 +441,13 @@ impl Default for Policy {
 }
 
 impl Policy {
+    /// Whether `category` is denied under this policy. Used by words that need a
+    /// *second* capability beyond their table category (e.g. an AI word that
+    /// also writes a file checks both `ai_write` and `fs_write`).
+    pub fn denies(&self, category: &str) -> bool {
+        self.effective_denied_categories().contains(category)
+    }
+
     /// True when the policy is the trivial "allow everything"
     /// state — used by `init_adam` to skip the apply pass.
     pub fn is_open(&self) -> bool {
@@ -573,6 +634,68 @@ mod tests {
             "ink.export.epub",
         ] {
             assert_eq!(cat(w), Some(category::FS_WRITE), "{w} must be fs_write");
+        }
+    }
+
+    // 1.3.21 — pin the ink.lang.* categories so a refactor can't silently
+    // un-gate the language mutators (which create book nodes) or wrongly gate
+    // the read-only inspectors.
+    #[test]
+    fn lang_words_classified() {
+        let cat = |w: &str| WORD_CATEGORIES.iter().find(|(n, _)| *n == w).map(|(_, c)| *c);
+        for w in [
+            "ink.lang.list",
+            "ink.lang.generate_word",
+            "ink.lang.syllabify",
+            "ink.lang.ipa",
+            "ink.lang.gloss",
+            "ink.lang.sentence",
+        ] {
+            assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");
+        }
+        let mutators = [
+            "ink.lang.init",
+            "ink.lang.define",
+            "ink.lang.add_word",
+            "ink.lang.remove_word",
+            "ink.lang.derive_add",
+            "ink.lang.grammar_set",
+            "ink.lang.idiom_add",
+            "ink.lang.metaphor_add",
+        ];
+        for w in mutators {
+            assert_eq!(
+                cat(w),
+                Some(category::STORE_WRITE),
+                "{w} must inherit the store_write deny-by-default gate"
+            );
+        }
+        // The AI-backed words are ai_write (default-denied).
+        for w in [
+            "ink.lang.compose",
+            "ink.lang.reconstruct",
+            "ink.lang.realism_check",
+            "ink.lang.generate_lexicon",
+        ] {
+            assert_eq!(cat(w), Some(category::AI_WRITE), "{w} must be ai_write");
+        }
+        // And the mutators + AI words are denied under the default policy.
+        let p = Policy::default();
+        let denied = p.effective_denied_categories();
+        for w in mutators {
+            assert!(denied.contains(cat(w).unwrap()), "{w} denied by default");
+        }
+        assert!(denied.contains(category::AI_WRITE), "ai_write denied by default");
+        // File-output words: fs_write (glyph_lint only reads → fs_read).
+        assert_eq!(cat("ink.lang.glyph_lint"), Some(category::FS_READ));
+        for w in [
+            "ink.lang.dictionary",
+            "ink.lang.grammar_book",
+            "ink.lang.font_build",
+            "ink.lang.glyph_draft",
+        ] {
+            assert_eq!(cat(w), Some(category::FS_WRITE), "{w} must be fs_write");
+            assert!(denied.contains(cat(w).unwrap()), "{w} denied by default");
         }
     }
 

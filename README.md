@@ -21,45 +21,53 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.20 — Complement clauses, and a deeper developer's guide
+## Latest release · 1.3.21 — Scripting the ConLang Suite from Bund
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.20.md`](Documentation/RELEASE_NOTES/1.3.20.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.21.md`](Documentation/RELEASE_NOTES/1.3.21.md)
 · Reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md)
 
-A focused follow-on to 1.3.19's syntax engine: it adds the last classic syntax
-construction and substantially deepens the beginner's book about the whole
-ConLang Suite. No new dependencies.
+With RFC LANG-1 complete, this release opens the whole ConLang Suite to **Bund**,
+Inkhaven's scripting layer: one script can define, inspect, generate, AI-author,
+and typeset an entire constructed language — interchangeable with the JSON/CLI
+path. No new dependencies.
 
-### Complement clauses complete the syntax engine
+### The `ink.lang.*` tree (~37 words, also reachable as `lang.X`)
 
-- **Complement clauses** — `language complement` builds a sentence whose object is
-  a whole clause ("I know *that the bird sees the stone*"). The matrix subject and
-  verb wrap an embedded clause (`--comp-*`) introduced by an optional
-  complementizer; because the complement fills the matrix object slot, word order
-  places it on its own (after the matrix verb in SVO, before it in a verb-final
-  language), and the embedded clause still case-marks its own object.
+- **Define a whole language from a script** — `lang.init` / `lang.add_word` /
+  `lang.define` (writes a phonology / grammar / morphology / typology / sample
+  block) build a language byte-for-byte identical to a hand-authored one.
+- **Inspect every layer** (`store_read`) — generate_word, syllabify, ipa, stress,
+  tone, transliterate, gloss, paradigm, derive, agree, sentence, relative,
+  complement, coordinate, stats, audit, query, gaps, sound_change, cognates,
+  family_tree, names, prose, poem. Results return as native Bund dicts/lists.
+- **Mutate** (`store_write`) — remove_word, derive_add, grammar_set, idiom_add,
+  metaphor_add.
+- **AI generation** (`ai_write`, advisory) — compose (blessing/curse/incantation),
+  reconstruct, realism_check, generate_lexicon (deterministic forms + AI meaning
+  + dedup gate).
+- **Produce files** (`fs_write`) — dictionary, grammar_book, font_build (UFO/TTF),
+  glyph_lint, glyph_draft (AI glyph SVG).
+- **Native artefacts** — `lang.dict` (aliased to `word` / `rule` / `phoneme`)
+  builds dicts from `[ key val … ]` lists; hand one to `lang.define`.
 
-That completes the syntax-depth set: **sentence → negation → questions → relative
-clauses → coordination → complement clauses**.
+### Safe by default
 
-### A deeper *Developing a Constructed Language* guide
+Every word is classified into the existing scripting policy: inspectors
+`store_read` (allowed); mutators `store_write`; AI words `ai_write`; file
+producers `fs_write` — all default-denied, opted into per project. AI words stay
+advisory (return data, never auto-write the book); paths stay inside the project
+sandbox.
 
-- **A dedicated interchange chapter** (new Part VIII, *Sharing Your Language*) on
-  moving a lexicon in and out of Inkhaven and the formats the community uses —
-  Standard Format (Toolbox / FieldWorks / Lexique Pro), PolyGlot, ConWorkShop, CAT
-  tools and XLIFF, Anki, linguex — each with a term box, examples, and a CSV
-  round-trip workflow.
-- **A whole-book depth pass** — twenty new glossary terms; worked examples added
-  for circumfix / ablaut / reduplication, sonority sequencing, the tone command,
-  and the family tree; stale notes corrected; complement clauses documented
-  throughout.
-- **Typographic fix** — section headings are kept with the content that follows,
-  so a heading is never stranded at the foot of a page.
+### Also
+
+- The developer's guide gains a *Scripting (Bund)* section, and its
+  end-of-chapter "What you learned" recaps are recoloured pastel mint-green so
+  they stand out.
 
 ### Test stats
 
-Tests 1529 → 1531. **Zero new dependencies.** Backward compatible. Full
-reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md).
+Tests 1531 → 1533. **Zero new dependencies.** Backward compatible. AI/file paths
+validated live. Full reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

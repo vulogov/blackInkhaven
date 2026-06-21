@@ -583,6 +583,97 @@ This is the engine a live editor input mode would drive.
 - **`Ctrl+B Q` / `Ctrl+B Shift+Q`** (1.2.13) — translate a paragraph to / from
   an invented language.
 
+## Scripting (Bund)
+
+The whole ConLang Suite is reachable from **Bund**, so you can *define and
+generate a language from a script* as an alternative to hand-authoring HJSON
+blocks — the two are equivalent, and you can mix them freely. The `ink.lang.*`
+words run against the active project (`inkhaven bund "<script>" --project .` or
+from a Script-book paragraph in the TUI).
+
+Every word is also reachable as `lang.X` (the `ink.` prefix dropped), so the
+examples below use the short form.
+
+**Read-only inspectors** (the `store_read` category, allowed by default):
+
+```
+lang.list             ( -- names )                  lang.gaps         ( lang scope -- report )
+lang.generate_word    ( lang role seed -- word )    lang.audit        ( lang -- report )
+lang.syllabify        ( lang word -- list )         lang.query        ( lang text -- entries )
+lang.ipa              ( lang word -- surface )      lang.stats        ( lang -- profile )
+lang.stress           ( lang word -- marked )       lang.paradigm     ( lang root template gloss -- rows )
+lang.tone             ( lang tones -- result )      lang.derive       ( lang root gloss pos -- forms )
+lang.transliterate    ( lang text -- script )       lang.agree        ( lang word pos features -- form )
+lang.gloss            ( lang text -- gloss )        lang.sound_change ( lang form -- evolved )
+lang.sentence         ( lang subj verb obj -- clause )   lang.cognates ( proto form -- reflexes )
+lang.relative         ( lang head role verb with relativizer -- clause )
+lang.complement       ( lang subj verb comp comp-subj comp-verb comp-obj -- clause )
+lang.coordinate       ( lang clause-list conjunction -- clause )
+lang.family_tree      ( -- tree )                   lang.names        ( lang count seed -- list )
+lang.prose            ( lang count seed -- clauses )    lang.poem      ( lang meter seed -- lines )
+```
+
+Structured results come back as native Bund dicts/lists (e.g. `lang.sentence`
+yields `{ surface, gloss, literal }`; `lang.stats` the full analysis profile),
+so a script can pull fields directly.
+
+**Mutators** (the `store_write` category — default-denied; enable with
+`scripting: { enabled_categories: ["store_write"] }` in `inkhaven.hjson`, the
+same gate as `ink.tree.*`):
+
+```
+lang.init        ( name -- )                    lang.grammar_set ( lang feature value -- )
+lang.define      ( lang chapter block -- )      lang.idiom_add   ( lang form literal meaning -- )
+lang.add_word    ( lang word pos translation -- )   lang.metaphor_add ( lang source target -- )
+lang.remove_word ( lang word -- )               lang.derive_add  ( lang root gloss pos -- count )
+```
+
+**AI-backed words** (the `ai_write` category — default-denied; enable
+`"ai_write"`). They call the LLM and are **advisory** — they *return* data and
+never write the book, so a script commits anything it likes via `add_word`. A
+trailing `provider` string picks a non-default provider (empty = the configured
+default):
+
+```
+lang.compose          ( lang kind provider -- text )           kind = blessing|curse|incantation
+lang.reconstruct      ( forms gloss provider -- text )         a proto-form from cognate forms
+lang.realism_check    ( lang provider -- text )                plausibility of the sound-change chain
+lang.generate_lexicon ( lang topic count provider -- words )   themed words (forms obey phonotactics,
+                                                                 AI assigns meaning, dedup-gated)
+```
+
+`lang.generate_lexicon` returns survivor `{ word, gloss, pos }` dicts; loop them
+through `lang.add_word` to keep the ones you want — forms still come from the
+deterministic generator, the AI only assigns meaning.
+
+**Building artefacts natively.** `lang.dict` turns a flat Bund list
+`[ key val key val … ]` into a real dict (Bund's `{ … }` is a lambda, not a
+dict). It is aliased to self-documenting names — `word`, `rule`, `phoneme`,
+`block` — so a script reads like what it builds, e.g.
+`[ "ipa" "k" "kind" "consonant" ] phoneme`. Hand a dict (or list of dicts, built
+with Bund's `push`) to `lang.define` and it is serialized to the same HJSON the
+book stores. For whole blocks the HJSON-string form below is usually simplest.
+
+`lang.define` writes a definition `block` as a paragraph under a chapter
+(`Phonology` / `Grammar` / `Sample texts` / `Meta`) — exactly the HJSON the book
+stores, so a Bund-built language is byte-for-byte a hand-authored one. The block
+is a JSON/HJSON string (write `\"` for each quote); the book ends up with clean
+HJSON. A whole language, end to end:
+
+```
+"Avesha" ink.lang.init
+"Avesha" "Phonology" "{ phonemes:[{ipa:\"k\",kind:\"consonant\"}{ipa:\"a\",kind:\"vowel\"}]
+   classes:{C:[\"k\"] V:[\"a\"]} templates:{root:[{pattern:\"C V C V\"}]} }" ink.lang.define
+"Avesha" "Grammar" "{ grammar:{word_order:\"sov\",alignment:\"nominative_accusative\"} }" ink.lang.define
+"Avesha" "kira" "noun" "bird" ink.lang.add_word
+"Avesha" "nami" "verb" "see"  ink.lang.add_word
+"Avesha" "pata" "noun" "stone" ink.lang.add_word
+"Avesha" "kira:bird" "nami:see" "pata:stone" ink.lang.sentence println
+```
+
+The same language then opens, inspects, and renders identically through the
+`inkhaven language …` CLI and the editor.
+
 ## Principles
 
 - **Forms obey the language; meanings come from the AI; nothing duplicates.**

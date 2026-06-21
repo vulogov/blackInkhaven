@@ -442,7 +442,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
     }
 }
 
-const LEXGEN_SYSTEM: &str = "You are a meticulous lexicographer for a constructed language. \
+pub(crate) const LEXGEN_SYSTEM: &str = "You are a meticulous lexicographer for a constructed language. \
 Reply with a SINGLE JSON object and nothing else — no prose, no preamble, no markdown fences. \
 Shape: {\"entries\":[{\"form\":\"…\",\"gloss\":\"…\",\"pos\":\"…\",\"example\":\"…\",\"register\":\"…\",\
 \"domain\":[\"…\"]}]}. Choose each `form` ONLY from the provided candidate list (never invent a \
@@ -514,7 +514,7 @@ fn link_character(project: &Path, character: &str, language: &str, proficiency: 
 }
 
 /// Find + parse the `Morphology`-chapter HJSON block for a language sub-book.
-fn load_morphology(
+pub(crate) fn load_morphology(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
@@ -557,7 +557,7 @@ fn load_morphology(
 
 /// Load the `{ diachronics: { proto, rules } }` block from the Phonology
 /// chapter.
-fn load_diachronics(
+pub(crate) fn load_diachronics(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
@@ -673,7 +673,7 @@ fn collect_glyphs_from_dir(glyphs_dir: &Path) -> Result<(Vec<GlyphSource>, usize
 /// Build glyph sources from a language's `font` config block + glyph store.
 /// Returns the resolved family (`--family` > config > language name) and upm
 /// (`--upm` > config).
-fn collect_glyphs_from_config(
+pub(crate) fn collect_glyphs_from_config(
     project: &Path,
     language: &str,
     family_override: Option<&str>,
@@ -725,7 +725,7 @@ fn collect_glyphs_from_config(
 }
 
 /// Shared tail: build the UFO and emit UFO / TTF artifacts per the format.
-fn emit_font(
+pub(crate) fn emit_font(
     family: &str,
     upm: f64,
     sources: &[GlyphSource],
@@ -786,7 +786,7 @@ fn lang_slug(name: &str) -> String {
 }
 
 /// `<project>/.inkhaven/glyphs/<lang-slug>/` — the glyph artwork store.
-fn glyph_store_dir(project_root: &Path, language: &str) -> std::path::PathBuf {
+pub(crate) fn glyph_store_dir(project_root: &Path, language: &str) -> std::path::PathBuf {
     project_root
         .join(".inkhaven")
         .join("glyphs")
@@ -794,7 +794,7 @@ fn glyph_store_dir(project_root: &Path, language: &str) -> std::path::PathBuf {
 }
 
 /// Load a language's `font` config block from its Phonology chapter.
-fn load_font_config(
+pub(crate) fn load_font_config(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
@@ -1368,7 +1368,7 @@ fn glyph_lint(svg: &Path) -> Result<()> {
     Ok(())
 }
 
-const GLYPH_DRAFT_SYSTEM: &str = "You are a type designer drafting a single glyph for a constructed \
+pub(crate) const GLYPH_DRAFT_SYSTEM: &str = "You are a type designer drafting a single glyph for a constructed \
 writing system. Output ONE self-contained SVG and NOTHING else — no prose, no explanation, no \
 markdown fences. Hard requirements (the glyph is rejected otherwise): the root element is <svg> with \
 viewBox=\"0 0 1000 1000\"; the shape is one or more FILLED black <path> elements \
@@ -1406,12 +1406,12 @@ short practice exercise at the end of every lesson. Teach and explain; do not me
 a clear, encouraging textbook voice. Write the document and nothing else (no preamble about what \
 you are doing).";
 
-const RECONSTRUCT_SYSTEM: &str = "You are a historical linguist applying the comparative method. \
+pub(crate) const RECONSTRUCT_SYSTEM: &str = "You are a historical linguist applying the comparative method. \
 Given cognate forms from related daughter languages, propose the single most plausible proto-form. \
 Mark the proto-form with a leading asterisk. Then list the key regular sound correspondences you \
 relied on, and justify the reconstruction in 2–3 sentences. Be concise; output plain text.";
 
-const REALISM_SYSTEM: &str = "You are a historical phonologist. Assess whether a chain of diachronic \
+pub(crate) const REALISM_SYSTEM: &str = "You are a historical phonologist. Assess whether a chain of diachronic \
 sound changes is typologically plausible — i.e. whether each change is a naturally attested type \
 (lenition, assimilation, final devoicing, palatalization, epenthesis, …) and whether the ordering \
 is reasonable. Flag any rule that is unnatural or unattested, and give an overall verdict \
@@ -1645,7 +1645,7 @@ fn derive_lexicon_cmd(project: &Path, language: &str, yes: bool) -> Result<()> {
 
 /// Load the `{ idioms: [...], metaphors: [...] }` block from the Grammar
 /// chapter + the paragraph node that holds it.
-fn load_expressions(
+pub(crate) fn load_expressions(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
@@ -1764,7 +1764,7 @@ fn idioms_list(project: &Path, language: &str) -> Result<()> {
 
 /// Load the `{ grammar: { … } }` typology block from the Grammar chapter,
 /// returning the spec + the paragraph node that holds it (for in-place edits).
-fn load_grammar_spec(
+pub(crate) fn load_grammar_spec(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
@@ -2050,7 +2050,7 @@ fn paradigm(
 }
 
 /// Parse a `root` or `root:gloss` argument into a syntax word.
-fn parse_word(s: &str) -> crate::conlang::syntax::Word {
+pub(crate) fn parse_word(s: &str) -> crate::conlang::syntax::Word {
     use crate::conlang::syntax::Word;
     match s.split_once(':') {
         Some((root, gloss)) => Word { root: root.trim().to_string(), gloss: gloss.trim().to_string() },
@@ -2670,7 +2670,7 @@ fn generate_lexicon(
     Ok(())
 }
 
-fn build_lexgen_prompt(
+pub(crate) fn build_lexgen_prompt(
     language: &str,
     topic: Option<&str>,
     count: usize,
@@ -2912,6 +2912,235 @@ fn open_lang_book(
     Ok((store, hierarchy, lang_book))
 }
 
+// ── Store-based API for the Bund `ink.lang.*` stdlib (1.3.21) ─────────────
+//
+// The CLI handlers above re-open the store from a `&Path`; a Bund script
+// already holds the active project store, so these variants take `&Store`
+// (and an already-loaded `&Hierarchy`) instead, reusing the same engine
+// loaders and node-creation paths.
+
+/// Find a language sub-book by name in an already-loaded hierarchy.
+pub(crate) fn find_language_book(
+    hierarchy: &Hierarchy,
+    name: &str,
+) -> Result<crate::store::node::Node> {
+    let lang_root = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
+        })
+        .ok_or_else(|| {
+            Error::Store("Language system book missing — re-open the project to seed it".into())
+        })?;
+    hierarchy
+        .children_of(Some(lang_root.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(name))
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "language `{name}` not found — create it first (e.g. `ink.lang.init`)"
+            ))
+        })
+}
+
+/// Create a language sub-book plus its scaffold chapters, using the active
+/// store. Errors if the name already exists. Returns the new book node.
+pub(crate) fn init_language(
+    store: &Store,
+    cfg: &Config,
+    name: &str,
+) -> Result<crate::store::node::Node> {
+    let hierarchy = Hierarchy::load(store)?;
+    let lang_book = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Store("Language system book missing — re-open the project to seed it".into())
+        })?;
+    if hierarchy
+        .children_of(Some(lang_book.id))
+        .iter()
+        .any(|n| n.title.eq_ignore_ascii_case(name))
+    {
+        return Err(Error::Config(format!(
+            "language `{name}` already exists under Language"
+        )));
+    }
+    let hierarchy = Hierarchy::load(store)?;
+    let per_lang = store.create_node(
+        cfg,
+        &hierarchy,
+        NodeKind::Book,
+        name,
+        Some(&lang_book),
+        None,
+        InsertPosition::End,
+    )?;
+    scaffold_language_chapters(store, cfg, &per_lang, |_| {})?;
+    Ok(per_lang)
+}
+
+/// Create a paragraph with an HJSON `body` under a named chapter of a language
+/// sub-book — the primitive behind `ink.lang.define`, which lets a Bund script
+/// write a phonology / grammar / morphology / typology / sample block exactly as
+/// it would appear in the book. Returns the created paragraph node.
+pub(crate) fn create_chapter_paragraph(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    chapter_title: &str,
+    paragraph_title: &str,
+    body: &str,
+) -> Result<crate::store::node::Node> {
+    let hierarchy = Hierarchy::load(store)?;
+    let chapter = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case(chapter_title))
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "language `{}` has no `{chapter_title}` chapter (try Phonology, Grammar, \
+                 Sample texts, or Meta)",
+                lang_book.title
+            ))
+        })?;
+    let hierarchy = Hierarchy::load(store)?;
+    let mut entry = store.create_node(
+        cfg,
+        &hierarchy,
+        NodeKind::Paragraph,
+        paragraph_title,
+        Some(&chapter),
+        None,
+        InsertPosition::End,
+    )?;
+    entry.content_type = Some("hjson".to_string());
+    if let Some(rel) = &entry.file {
+        let abs = store.project_root().join(rel);
+        std::fs::write(&abs, body.as_bytes())
+            .map_err(|e| Error::Store(format!("write block: {e}")))?;
+    }
+    store
+        .update_paragraph_content(&mut entry, body.as_bytes())
+        .map_err(|e| Error::Store(format!("seed block: {e}")))?;
+    Ok(entry)
+}
+
+/// Set one typology answer (validated against the WALS catalogue) and persist
+/// the `{ grammar: { … } }` block. Store-based; for `ink.lang.grammar_set`.
+pub(crate) fn set_grammar_feature(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    feature: &str,
+    value: &str,
+) -> Result<()> {
+    let hierarchy = Hierarchy::load(store)?;
+    let (mut spec, node) = load_grammar_spec(store, &hierarchy, lang_book)?;
+    let f = crate::conlang::grammar::feature(feature)
+        .ok_or_else(|| Error::Config(format!("unknown typology feature `{feature}`")))?;
+    if !f.is_valid(value) {
+        return Err(Error::Config(format!(
+            "`{value}` is not a valid value for `{}` — options: {}",
+            f.id,
+            f.values()
+        )));
+    }
+    spec.grammar.insert(f.id.to_string(), value.to_lowercase());
+    let body = serde_json::to_string_pretty(&spec)
+        .map_err(|e| Error::Store(format!("serializing grammar: {e}")))?;
+    upsert_grammar_paragraph(store, cfg, lang_book, "typology", node, &body)
+}
+
+/// Append an idiom to the language's expressions block (store-based).
+pub(crate) fn add_idiom(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    form: &str,
+    literal: &str,
+    meaning: &str,
+) -> Result<()> {
+    use crate::conlang::types::expression::Idiom;
+    let hierarchy = Hierarchy::load(store)?;
+    let (mut expr, node) = load_expressions(store, &hierarchy, lang_book)?;
+    expr.idioms.push(Idiom {
+        form: form.trim().to_string(),
+        literal: literal.trim().to_string(),
+        meaning: meaning.trim().to_string(),
+        register: Vec::new(),
+    });
+    let body = serde_json::to_string_pretty(&expr)
+        .map_err(|e| Error::Store(format!("serializing expressions: {e}")))?;
+    upsert_grammar_paragraph(store, cfg, lang_book, "expressions", node, &body)
+}
+
+/// Append a conceptual metaphor to the language's expressions block.
+pub(crate) fn add_metaphor(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    source: &str,
+    target: &str,
+) -> Result<()> {
+    use crate::conlang::types::expression::Metaphor;
+    let hierarchy = Hierarchy::load(store)?;
+    let (mut expr, node) = load_expressions(store, &hierarchy, lang_book)?;
+    expr.metaphors.push(Metaphor {
+        source: source.trim().to_string(),
+        target: target.trim().to_string(),
+        examples: Vec::new(),
+        note: String::new(),
+    });
+    let body = serde_json::to_string_pretty(&expr)
+        .map_err(|e| Error::Store(format!("serializing expressions: {e}")))?;
+    upsert_grammar_paragraph(store, cfg, lang_book, "expressions", node, &body)
+}
+
+/// Delete a dictionary entry by headword (store-based; for `ink.lang.remove_word`).
+pub(crate) fn remove_dictionary_entry(
+    store: &Store,
+    lang_book: &crate::store::node::Node,
+    word: &str,
+) -> Result<()> {
+    let hierarchy = Hierarchy::load(store)?;
+    let dictionary = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary"))
+        .cloned()
+        .ok_or_else(|| Error::Config("language has no Dictionary chapter".into()))?;
+    let bucket = derive_alphabet_bucket(store, &hierarchy, lang_book, word)?
+        .or_else(|| alphabet_bucket(word))
+        .ok_or_else(|| Error::Config(format!("could not derive alphabet bucket from `{word}`")))?;
+    let subchapter = hierarchy
+        .children_of(Some(dictionary.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Subchapter && n.title.eq_ignore_ascii_case(&bucket))
+        .cloned()
+        .ok_or_else(|| Error::Config(format!("`{word}` isn't defined (no `{bucket}` bucket)")))?;
+    let entry = hierarchy
+        .children_of(Some(subchapter.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Paragraph && n.title.eq_ignore_ascii_case(word))
+        .cloned()
+        .ok_or_else(|| Error::Config(format!("word `{word}` not found")))?;
+    let ids = hierarchy.collect_subtree(entry.id);
+    let fs_rel = entry
+        .file
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default();
+    store
+        .delete_subtree(&fs_rel, &ids)
+        .map_err(|e| Error::Store(format!("delete entry: {e}")))?;
+    Ok(())
+}
+
 /// Open a project and load a language's `Phonology` value — the shared
 /// front-half of every P1 phonology inspector / generator.
 fn open_phonology(project: &Path, language: &str) -> Result<(Store, crate::conlang::Phonology)> {
@@ -2927,7 +3156,7 @@ fn open_phonology(project: &Path, language: &str) -> Result<(Store, crate::conla
 
 /// Load every parseable `DictionaryEntry` under a language's `Dictionary`
 /// chapter (across all alphabet subchapters).
-fn load_dictionary(
+pub(crate) fn load_dictionary(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
@@ -3170,7 +3399,7 @@ fn compose(
 }
 
 /// A compact human summary of the typology answers for an AI prompt.
-fn summarize_typology(typology: &std::collections::BTreeMap<String, String>) -> String {
+pub(crate) fn summarize_typology(typology: &std::collections::BTreeMap<String, String>) -> String {
     if typology.is_empty() {
         return "word order: SVO; alignment: nominative–accusative (defaults)".into();
     }
@@ -3280,7 +3509,7 @@ fn stats(project: &Path, language: &str, json: bool) -> Result<()> {
 
 /// Syllabified surface pronunciation of a headword (e.g. `ka.ta`), or `None`
 /// when it doesn't read as the language's phonemes.
-fn pronounce(phon: &crate::conlang::Phonology, word: &str) -> Option<String> {
+pub(crate) fn pronounce(phon: &crate::conlang::Phonology, word: &str) -> Option<String> {
     let seq = phon.segment(&word.to_lowercase());
     if seq.is_empty() || !seq.iter().all(|s| phon.phoneme(s).is_some()) {
         return None;
@@ -3300,7 +3529,7 @@ fn pronounce(phon: &crate::conlang::Phonology, word: &str) -> Option<String> {
 }
 
 /// Load `(title, body)` pairs from a language's `Sample texts` chapter.
-fn load_samples(
+pub(crate) fn load_samples(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
@@ -3395,7 +3624,7 @@ fn grammar_study_brief(
 /// Build an example clause from the lexicon (first noun = subject, first verb,
 /// second noun = object) via the syntax engine, returned as `(surface,
 /// interlinear, literal)`. `None` when there isn't at least a noun and a verb.
-fn build_example_sentence(
+pub(crate) fn build_example_sentence(
     phon: &crate::conlang::Phonology,
     morph: &crate::conlang::types::morphology::Morphology,
     typology: &std::collections::BTreeMap<String, String>,
@@ -3905,7 +4134,7 @@ fn audit(project: &Path, language: &str, json: bool) -> Result<()> {
 /// sub-book.  Scans every paragraph under the `Phonology` chapter and
 /// returns the first that parses as a phonology block (so the author can keep
 /// it in `overview`, a dedicated `inventory` paragraph, or wherever).
-fn load_phonology(
+pub(crate) fn load_phonology(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
