@@ -323,6 +323,36 @@ dialectology comparison — each headword across the base and every variety (a
 trailing `*` marks a word override). All are scriptable from Bund
 (`lang.varieties`, `lang.lect`).
 
+## Contact — borrowing (LANG-2 P2)
+
+A loanword is a **phonotactic repair**: a donor word is *perceived* against the
+recipient's inventory, then any sequence the recipient forbids is fixed. How a
+language nativises borrowings is declared in a `loan_phonology` block in its
+**Phonology** chapter:
+
+```hjson
+{ loan_phonology: {
+  repair: "epenthesis",          // epenthesis (insert a vowel) | deletion
+  epenthetic_vowel: "u",         // empty → the first declared vowel
+  substitutions: { "θ": "t", "r": "l" }   // a donor sound the recipient lacks → nearest native
+} }
+```
+
+```
+inkhaven language borrow Eldar --form tras --from Drake            # tras → tulasu
+inkhaven language borrow Eldar --form θuk --from Drake --gloss demon --yes
+```
+
+Adaptation runs in two steps: **perceive** (apply the substitutions, keep sounds
+the recipient has, map the rest to the nearest native phoneme by sonority) and
+**repair** (consonant runs longer than the recipient's templates allow get the
+epenthetic vowel — Japanese *sutoraiku* — or the offending consonant is deleted).
+The donor form is given *phonemically* (one symbol per sound). With `--yes` and a
+`--gloss`, the adapted word joins the recipient's Dictionary with the donor
+recorded in its etymology (so cognates/etymology stay coherent). Scriptable from
+Bund as `lang.borrow` (advisory — returns `{ donor, adapted, steps }`; commit
+with `lang.add_word`).
+
 ## Idioms + metaphors
 
 ```
