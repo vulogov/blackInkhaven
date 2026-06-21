@@ -314,6 +314,14 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.lang.reconstruct", category::AI_WRITE),
     ("ink.lang.realism_check", category::AI_WRITE),
     ("ink.lang.generate_lexicon", category::AI_WRITE),
+    // File / document output → fs_write (default-denied). `glyph_lint` only
+    // reads an SVG (fs_read). `glyph_draft` writes a file AND calls the LLM, so
+    // it is gated fs_write here and additionally checks ai_write at run time.
+    ("ink.lang.glyph_lint", category::FS_READ),
+    ("ink.lang.dictionary", category::FS_WRITE),
+    ("ink.lang.grammar_book", category::FS_WRITE),
+    ("ink.lang.font_build", category::FS_WRITE),
+    ("ink.lang.glyph_draft", category::FS_WRITE),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
@@ -433,6 +441,13 @@ impl Default for Policy {
 }
 
 impl Policy {
+    /// Whether `category` is denied under this policy. Used by words that need a
+    /// *second* capability beyond their table category (e.g. an AI word that
+    /// also writes a file checks both `ai_write` and `fs_write`).
+    pub fn denies(&self, category: &str) -> bool {
+        self.effective_denied_categories().contains(category)
+    }
+
     /// True when the policy is the trivial "allow everything"
     /// state — used by `init_adam` to skip the apply pass.
     pub fn is_open(&self) -> bool {
@@ -671,6 +686,17 @@ mod tests {
             assert!(denied.contains(cat(w).unwrap()), "{w} denied by default");
         }
         assert!(denied.contains(category::AI_WRITE), "ai_write denied by default");
+        // File-output words: fs_write (glyph_lint only reads → fs_read).
+        assert_eq!(cat("ink.lang.glyph_lint"), Some(category::FS_READ));
+        for w in [
+            "ink.lang.dictionary",
+            "ink.lang.grammar_book",
+            "ink.lang.font_build",
+            "ink.lang.glyph_draft",
+        ] {
+            assert_eq!(cat(w), Some(category::FS_WRITE), "{w} must be fs_write");
+            assert!(denied.contains(cat(w).unwrap()), "{w} denied by default");
+        }
     }
 
     #[test]

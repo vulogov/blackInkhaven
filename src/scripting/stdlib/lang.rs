@@ -75,6 +75,12 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.lang.reconstruct", w_reconstruct),
         ("ink.lang.realism_check", w_realism_check),
         ("ink.lang.generate_lexicon", w_generate_lexicon),
+        // ── file / document output (fs_write; glyph_draft also ai_write) ──
+        ("ink.lang.glyph_lint", w_glyph_lint),
+        ("ink.lang.dictionary", w_dictionary),
+        ("ink.lang.grammar_book", w_grammar_book),
+        ("ink.lang.font_build", w_font_build),
+        ("ink.lang.glyph_draft", w_glyph_draft),
     ];
     for (name, f) in words {
         vm.register_inline(name.to_string(), *f)
@@ -1425,6 +1431,292 @@ fn do_generate_lexicon(vm: &mut VM) -> Result<&mut VM> {
         })
         .collect();
     push(vm, Value::from_list(out));
+    Ok(vm)
+}
+
+// ── file / document output (fs_write; some also ai_write) ────────────────
+//
+// These produce a file (a font, a typeset book, a glyph SVG). The table gates
+// them on the capability that's *always* exercised; a word that ALSO calls the
+// LLM checks `ai_write` manually via `require_category`, so it needs both. Paths
+// go through the same project-root sandbox as `ink.fs.write`.
+
+/// Error if `category` is denied by the active policy — for words needing a
+/// second capability beyond their table gate.
+fn require_category(tag: &str, category: &str) -> Result<()> {
+    if let Some(p) = crate::scripting::active_policy() {
+        if p.denies(category) {
+            return Err(anyhow!(
+                "{tag}: blocked — enable the `{category}` scripting category in inkhaven.hjson"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn parse_doc_format(tag: &str, fmt: &str) -> Result<bool> {
+    match fmt.to_ascii_lowercase().as_str() {
+        "md" | "markdown" => Ok(false),
+        "typ" | "typst" => Ok(true),
+        other => Err(anyhow!("{tag}: unknown format `{other}` (expected md or typ)")),
+    }
+}
+
+// ( svg-path -- report-dict )  lint an SVG file for font suitability
+fn w_glyph_lint(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_glyph_lint(vm).map_err(to_bund_err)
+}
+fn do_glyph_lint(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.glyph_lint";
+    require_depth(vm, 1, tag)?;
+    let path = value_to_string(pull(vm, tag)?, "svg-path", tag)?;
+    let resolved = super::helpers::resolve_fs_path(tag, &path)?;
+    let body = std::fs::read_to_string(&resolved)
+        .map_err(|e| anyhow!("{tag}: reading {}: {e}", resolved.display()))?;
+    let report = crate::conlang::writing::preflight::lint_svg(&body);
+    let mut h: HashMap<String, Value> = HashMap::new();
+    h.insert("usable".into(), Value::from_bool(report.is_usable()));
+    let strs = |v: &[String]| Value::from_list(v.iter().map(|s| Value::from_string(s.clone())).collect());
+    h.insert("info".into(), strs(&report.info));
+    h.insert("warnings".into(), strs(&report.warnings));
+    h.insert("errors".into(), strs(&report.errors));
+    push(vm, Value::from_dict(h));
+    Ok(vm)
+}
+
+// ( lang format out font -- out-path )
+fn w_dictionary(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_dictionary(vm).map_err(to_bund_err)
+}
+fn do_dictionary(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::analysis;
+    use crate::conlang::output::{self, DictMeta, RenderEntry};
+    use crate::conlang::writing::input;
+    let tag = "ink.lang.dictionary";
+    require_depth(vm, 4, tag)?;
+    let font = value_to_string(pull(vm, tag)?, "font", tag)?;
+    let out = value_to_string(pull(vm, tag)?, "out", tag)?;
+    let fmt = value_to_string(pull(vm, tag)?, "format", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let typst = parse_doc_format(tag, &fmt)?;
+    let resolved = super::helpers::resolve_fs_path(tag, &out)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let entries =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let font_cfg =
+        langapi::load_font_config(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let profile = analysis::profile(&phon, &entries);
+    let family = if font.trim().is_empty() {
+        font_cfg.as_ref().and_then(|c| c.family.clone())
+    } else {
+        Some(font.clone())
+    };
+    let can_translit = font_cfg.as_ref().is_some_and(|c| !c.glyphs.is_empty());
+    let rendered: Vec<RenderEntry> = entries
+        .iter()
+        .map(|e| RenderEntry {
+            headword: e.word.clone(),
+            conscript: match (&font_cfg, can_translit) {
+                (Some(c), true) => {
+                    let o = input::to_script(c, &e.word);
+                    (o.mapped > 0).then_some(o.script)
+                }
+                _ => None,
+            },
+            pronunciation: langapi::pronounce(&phon, &e.word),
+            pos: e.pos.clone(),
+            gloss: e.translation.clone(),
+            registers: e.registers.clone(),
+            domain: e.domain.clone(),
+            era: e.era.clone(),
+            etymology: e.etymology.clone(),
+            example: (!e.example.trim().is_empty()).then(|| e.example.clone()),
+        })
+        .collect();
+    let meta = DictMeta {
+        language: &book.title,
+        font_family: if typst { family.as_deref() } else { None },
+        profile: Some(&profile),
+    };
+    let doc = if typst {
+        output::dictionary_typst(&meta, &rendered)
+    } else {
+        output::dictionary_markdown(&meta, &rendered)
+    };
+    crate::io_atomic::write(&resolved, doc.as_bytes())
+        .map_err(|e| anyhow!("{tag}: write {}: {e}", resolved.display()))?;
+    push(vm, Value::from_string(resolved.display().to_string()));
+    Ok(vm)
+}
+
+// ( lang format out font -- out-path )
+fn w_grammar_book(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_grammar_book(vm).map_err(to_bund_err)
+}
+fn do_grammar_book(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::analysis;
+    use crate::conlang::output::{self, GrammarBook};
+    let tag = "ink.lang.grammar_book";
+    require_depth(vm, 4, tag)?;
+    let font = value_to_string(pull(vm, tag)?, "font", tag)?;
+    let out = value_to_string(pull(vm, tag)?, "out", tag)?;
+    let fmt = value_to_string(pull(vm, tag)?, "format", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let typst = parse_doc_format(tag, &fmt)?;
+    let resolved = super::helpers::resolve_fs_path(tag, &out)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let entries =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let morphology =
+        langapi::load_morphology(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let (grammar_spec, _) =
+        langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let (expressions, _) =
+        langapi::load_expressions(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let samples =
+        langapi::load_samples(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let font_cfg =
+        langapi::load_font_config(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let profile = analysis::profile(&phon, &entries);
+    let family = if font.trim().is_empty() {
+        font_cfg.as_ref().and_then(|c| c.family.clone())
+    } else {
+        Some(font.clone())
+    };
+    let example_sentence = morphology
+        .as_ref()
+        .and_then(|m| langapi::build_example_sentence(&phon, m, &grammar_spec.grammar, &entries));
+    let has_expr = !expressions.idioms.is_empty() || !expressions.metaphors.is_empty();
+    let bk = GrammarBook {
+        language: &book.title,
+        font_family: if typst { family.as_deref() } else { None },
+        profile: &profile,
+        phonology: &phon,
+        morphology: morphology.as_ref(),
+        typology: &grammar_spec.grammar,
+        expressions: has_expr.then_some(&expressions),
+        samples: &samples,
+        study: None,
+        example_sentence,
+    };
+    let doc = if typst {
+        output::grammar_typst(&bk)
+    } else {
+        output::grammar_markdown(&bk)
+    };
+    crate::io_atomic::write(&resolved, doc.as_bytes())
+        .map_err(|e| anyhow!("{tag}: write {}: {e}", resolved.display()))?;
+    push(vm, Value::from_string(resolved.display().to_string()));
+    Ok(vm)
+}
+
+// ( lang format out -- out-stem )  compile the font to UFO / TTF
+fn w_font_build(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_font_build(vm).map_err(to_bund_err)
+}
+fn do_font_build(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::writing::font::GlyphSource;
+    use crate::conlang::writing::preflight;
+    let tag = "ink.lang.font_build";
+    require_depth(vm, 3, tag)?;
+    let out = value_to_string(pull(vm, tag)?, "out", tag)?;
+    let fmt = value_to_string(pull(vm, tag)?, "format", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (want_ufo, want_ttf) = match fmt.to_ascii_lowercase().as_str() {
+        "ufo" => (true, false),
+        "ttf" => (false, true),
+        "both" => (true, true),
+        other => return Err(anyhow!("{tag}: unknown format `{other}` (ufo/ttf/both)")),
+    };
+    let resolved = super::helpers::resolve_fs_path(tag, &out)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let cfg = langapi::load_font_config(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .ok_or_else(|| anyhow!("{tag}: language `{name}` has no `font` block"))?;
+    if cfg.glyphs.is_empty() {
+        return Err(anyhow!("{tag}: language `{name}` declares no glyphs"));
+    }
+    let family = cfg.family.clone().unwrap_or_else(|| book.title.clone());
+    let dir = langapi::glyph_store_dir(store.project_root(), &name);
+    let mut sources: Vec<GlyphSource> = Vec::new();
+    let mut skipped = 0usize;
+    for g in &cfg.glyphs {
+        let path = dir.join(format!("{}.svg", g.name));
+        let svg = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => {
+                skipped += 1;
+                continue;
+            }
+        };
+        if !preflight::lint_svg(&svg).is_usable() {
+            skipped += 1;
+            continue;
+        }
+        sources.push(GlyphSource {
+            name: g.name.clone(),
+            codepoint: g.codepoint,
+            svg,
+        });
+    }
+    langapi::emit_font(
+        &family,
+        cfg.upm,
+        &sources,
+        skipped,
+        Some(&resolved),
+        want_ufo,
+        want_ttf,
+    )
+    .map_err(|e| anyhow!("{tag}: {e}"))?;
+    push(vm, Value::from_string(resolved.display().to_string()));
+    Ok(vm)
+}
+
+// ( lang describe phoneme out provider -- out-path )  AI-draft a glyph SVG (advisory)
+fn w_glyph_draft(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_glyph_draft(vm).map_err(to_bund_err)
+}
+fn do_glyph_draft(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::writing::{draft, preflight};
+    let tag = "ink.lang.glyph_draft";
+    require_depth(vm, 5, tag)?;
+    require_category(tag, "ai_write")?; // table gates fs_write; this needs both
+    let provider = value_to_string(pull(vm, tag)?, "provider", tag)?;
+    let out = value_to_string(pull(vm, tag)?, "out", tag)?;
+    let phoneme = value_to_string(pull(vm, tag)?, "phoneme", tag)?;
+    let describe = value_to_string(pull(vm, tag)?, "describe", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let cfg = active_config(tag)?;
+    let resolved = super::helpers::resolve_fs_path(tag, &out)?;
+    let phon_clause = if phoneme.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" It renders the phoneme /{}/.", phoneme.trim())
+    };
+    let user = format!(
+        "Draft a glyph for the constructed writing system of the language '{name}'.{phon_clause}\n\n\
+         Description: {describe}"
+    );
+    let raw = ai_call(tag, cfg, &provider, langapi::GLYPH_DRAFT_SYSTEM.to_string(), user)?;
+    let svg = draft::extract_svg(&raw)
+        .ok_or_else(|| anyhow!("{tag}: the model did not return an SVG glyph"))?;
+    let report = preflight::lint_svg(&svg);
+    if !report.is_usable() {
+        return Err(anyhow!(
+            "{tag}: drafted glyph is not usable — {}",
+            report.errors.join("; ")
+        ));
+    }
+    crate::io_atomic::write(&resolved, svg.as_bytes())
+        .map_err(|e| anyhow!("{tag}: write {}: {e}", resolved.display()))?;
+    push(vm, Value::from_string(resolved.display().to_string()));
     Ok(vm)
 }
 
