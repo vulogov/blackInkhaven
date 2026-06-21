@@ -3086,6 +3086,26 @@ pub enum LanguageCommand {
     /// variety's sound changes (the same engine diachronics uses,
     /// synchronically) to a `--word` or a `--text` run, showing the base →
     /// variety diff.  A variety is a *dialect*, *register*, or *sociolect*.
+    /// 1.3.23 LANG-3 P0 — **translate** English into the conlang. Tier 1 (the
+    /// deterministic rule-based spine): each English word is mapped to a
+    /// headword by its lexicon gloss, and the LANG-1 syntax engine orders,
+    /// case-marks, inflects, and agrees the result. Pure-Rust and offline; it
+    /// handles simple declarative sentences (the neural tiers, for richer
+    /// parsing and fluency, arrive in later phases). Unknown words are marked
+    /// `«word»` and listed so you can coin or `add-word` them.
+    Translate {
+        /// Source language name (case-insensitive).
+        language: String,
+        /// The English text to translate.
+        text: String,
+        /// Show the per-word decision trace.
+        #[arg(long)]
+        trace: bool,
+        /// Emit JSON instead of the formatted display.
+        #[arg(long)]
+        json: bool,
+    },
+
     Lect {
         /// Target language name (case-insensitive).
         language: String,

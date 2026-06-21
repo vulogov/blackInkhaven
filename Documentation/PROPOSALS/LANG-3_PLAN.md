@@ -17,6 +17,25 @@
 > areal features, speech communities — shipped 1.3.22), so the translation track
 > is filed here as **LANG-3**. Content is otherwise the author's original.
 
+> **Status (1.3.23-dev): P0.1 — Tier 1 (RBMT) core landed.** The pure-Rust,
+> offline, deterministic spine is in `src/conlang/translate/` (`english.rs` a
+> dependency-free English analyzer, `lexmap.rs` gloss→headword mapping,
+> `mod.rs` the `translate()` orchestrator). It reuses the LANG-1 syntax engine
+> (`syntax::assemble`) wholesale for word order / case / inflection / agreement,
+> so a translation reorders and inflects for free. Surfaces: CLI
+> `inkhaven language translate <lang> "<text>" [--trace] [--json]` and Bund
+> `lang.translate` (`store_read`). Per-word confidence + decision trace;
+> untranslatable words marked `«word»` and listed. Validated live (SVO→SOV
+> reorder, pronoun person, plural, unknown-word handling). Zero new deps; tests
+> 1548 → 1559. **Deliberate deviation from the RFC's P0:** the heavy neural
+> DistilBERT English parser is deferred — the first cut uses a small rule-based
+> analyzer (the RFC's documented fallback) behind the same `analyze` interface,
+> keeping LANG-3 dependency-light and offline-testable until the ML tiers (P1+)
+> are scoped. Remaining P0 work: richer source parsing (multi-word NPs,
+> adjectives, subordinate clauses), `reverse` (conlang→English) and `cross`
+> (conlang→conlang via two passes), and the routing/merge layer (trivial while
+> only Tier 1 exists).
+
 ---
 
 ## 1. Summary

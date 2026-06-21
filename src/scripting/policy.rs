@@ -285,6 +285,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.lang.derive", category::STORE_READ),
     ("ink.lang.agree", category::STORE_READ),
     ("ink.lang.sentence", category::STORE_READ),
+    ("ink.lang.translate", category::STORE_READ),
     ("ink.lang.relative", category::STORE_READ),
     ("ink.lang.complement", category::STORE_READ),
     ("ink.lang.coordinate", category::STORE_READ),

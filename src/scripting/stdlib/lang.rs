@@ -46,6 +46,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.lang.derive", w_derive),
         ("ink.lang.agree", w_agree),
         ("ink.lang.sentence", w_sentence),
+        ("ink.lang.translate", w_translate),
         ("ink.lang.relative", w_relative),
         ("ink.lang.complement", w_complement),
         ("ink.lang.coordinate", w_coordinate),
@@ -313,6 +314,44 @@ fn do_sentence(vm: &mut VM) -> Result<&mut VM> {
     h.insert("surface".into(), Value::from_string(r.surface));
     h.insert("gloss".into(), Value::from_string(gloss));
     h.insert("literal".into(), Value::from_string(r.literal));
+    push(vm, Value::from_dict(h));
+    Ok(vm)
+}
+
+// ( lang text -- dict{surface,gloss,literal,confidence,unresolved} )
+// LANG-3 Tier 1 (RBMT): translate English into the conlang, deterministically.
+fn w_translate(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_translate(vm).map_err(to_bund_err)
+}
+fn do_translate(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::translate;
+    let tag = "ink.lang.translate";
+    require_depth(vm, 2, tag)?;
+    let text = value_to_string(pull(vm, tag)?, "text", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let morph = langapi::load_morphology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let (grammar_spec, _) =
+        langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let entries =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let t = translate::translate(&phon, &morph, &grammar_spec.grammar, &entries, &text);
+    let gloss =
+        t.words.iter().map(|(w, g)| format!("{w}={g}")).collect::<Vec<_>>().join(" ");
+    let mut h: HashMap<String, Value> = HashMap::new();
+    h.insert("surface".into(), Value::from_string(t.target));
+    h.insert("gloss".into(), Value::from_string(gloss));
+    h.insert("literal".into(), Value::from_string(t.literal));
+    h.insert("confidence".into(), Value::from_float(t.confidence as f64));
+    h.insert(
+        "unresolved".into(),
+        Value::from_list(t.unresolved.into_iter().map(Value::from_string).collect()),
+    );
     push(vm, Value::from_dict(h));
     Ok(vm)
 }

@@ -719,6 +719,43 @@ This is the engine a live editor input mode would drive.
 - **`Ctrl+B Q` / `Ctrl+B Shift+Q`** (1.2.13) — translate a paragraph to / from
   an invented language.
 
+## Translation — Tier 1 RBMT (LANG-3 P0)
+
+A constructed language can be *translated into*, deterministically and offline,
+the moment it has a lexicon. RFC LANG-3 plans a three-tier stack (a rule-based
+spine, a per-language neural model, an optional resolver); the first tier — the
+pure-Rust **rule-based machine translator (RBMT)** — is in:
+
+```
+inkhaven language translate <lang> "the bird sees the stone" [--trace] [--json]
+```
+
+Why this is feasible for a conlang where it is not for a natural language: a
+LANG-1 language carries a *complete formal description*, so translation is mostly
+**orchestration over the existing engines**. An English sentence is analysed into
+a simple clause, each word is mapped to a headword **by its lexicon gloss**, and
+the result is handed to the **LANG-1 syntax engine** (`language sentence`) — which
+already orders by `word_order`, case-marks by `alignment`, inflects via the
+morphology spec, and runs agreement. So a translation reorders and inflects for
+free:
+
+```
+the bird sees the stone   →  kira nami pata   (SVO)
+                          →  kira pata nami   (SOV — same lexicon, different word_order)
+```
+
+Every word carries a confidence and a decision **trace** (`--trace`): which
+lexicon entry, or *untranslatable* — an English word the lexicon does not cover
+is passed through marked `«word»`, listed so you can coin it or `add-word` it.
+Output is human-readable or `--json`.
+
+Scope of Tier 1: simple declarative sentences (articles, `-s` plural, 3rd-person
+`-s` verbs, subject pronouns for verb person), one content word per constituent.
+The richer source-side parsing (multi-word phrases, subordinate clauses) and the
+fluency of a trained neural model arrive with the later LANG-3 tiers. Scriptable
+from Bund as `lang.translate` (`store_read`, returns
+`{ surface, gloss, literal, confidence, unresolved }`).
+
 ## Scripting (Bund)
 
 The whole ConLang Suite is reachable from **Bund**, so you can *define and
@@ -742,6 +779,7 @@ lang.tone             ( lang tones -- result )      lang.derive       ( lang roo
 lang.transliterate    ( lang text -- script )       lang.agree        ( lang word pos features -- form )
 lang.gloss            ( lang text -- gloss )        lang.sound_change ( lang form -- evolved )
 lang.sentence         ( lang subj verb obj -- clause )   lang.cognates ( proto form -- reflexes )
+lang.translate        ( lang text -- {surface,gloss,literal,confidence,unresolved} )  English → conlang (Tier 1 RBMT)
 lang.relative         ( lang head role verb with relativizer -- clause )
 lang.complement       ( lang subj verb comp comp-subj comp-verb comp-obj -- clause )
 lang.coordinate       ( lang clause-list conjunction -- clause )
