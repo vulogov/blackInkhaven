@@ -21,6 +21,8 @@
 #let ink_code_bg = rgb("#f3eee4")
 #let ink_call_bg = rgb("#f6f1e6")
 #let ink_term_bg = rgb("#eef3f7")
+#let ink_recap   = rgb("#3f6b4a")            // muted green — recap accent
+#let ink_recap_bg = rgb("#e9f3ea")           // pastel mint — "what you learned"
 
 // Bundled families only (no host-font setup, no warnings).
 #let body_family = ("Libertinus Serif", "New Computer Modern")
@@ -147,14 +149,14 @@
 #let recap(items) = {
   v(7mm)
   block(
-    fill: ink_call_bg,
-    stroke: (left: 2pt + ink_accent),
+    fill: ink_recap_bg,
+    stroke: (left: 2pt + ink_recap),
     inset: (left: 9pt, right: 9pt, top: 8pt, bottom: 8pt),
     width: 100%,
     radius: 1pt,
     breakable: false,
     {
-      text(font: body_family, size: 9pt, weight: "bold", fill: ink_accent, tracking: 1.5pt, "WHAT YOU LEARNED")
+      text(font: body_family, size: 9pt, weight: "bold", fill: ink_recap, tracking: 1.5pt, "WHAT YOU LEARNED")
       v(2mm)
       list(..items)
     },
