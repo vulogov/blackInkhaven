@@ -2474,6 +2474,10 @@ pub enum LanguageCommand {
         /// Add as a secondary language instead of setting the primary.
         #[arg(long)]
         secondary: bool,
+        /// 1.3.22 LANG-2 P4 — the variety (dialect/register id) of the primary
+        /// language spoken here.
+        #[arg(long)]
+        variety: Option<String>,
     },
 
     /// LANG-1 P2.6 — declare a Character's proficiency in a language (native /
@@ -2486,12 +2490,39 @@ pub enum LanguageCommand {
         language: String,
         /// Proficiency: native | fluent | conversational | broken | reading_only.
         proficiency: String,
+        /// 1.3.22 LANG-2 P4 — the variety this character natively speaks (their
+        /// idiolect base).
+        #[arg(long)]
+        native_variety: Option<String>,
     },
 
     /// LANG-1 P2.6 — list the Places and Characters linked to a language.
     Speakers {
         /// Language name (case-insensitive).
         language: String,
+    },
+
+    /// 1.3.22 LANG-2 P4 — the language **ecology**: who speaks what (and which
+    /// variety) where.  Lists every place with its language + variety, every
+    /// character with their commanded languages + native variety, and the
+    /// contact areas.  With `--svg <path>` writes a node-link **atlas**.
+    Ecology {
+        /// Write the atlas as an SVG file at this path (instead of the text report).
+        #[arg(long)]
+        svg: Option<std::path::PathBuf>,
+    },
+
+    /// 1.3.22 LANG-2 P4 — render a form / text in a **character's idiolect** —
+    /// their native variety of their primary language (from the links sidecar).
+    Idiolect {
+        /// Character name (case-insensitive).
+        character: String,
+        /// A single base form to render in the idiolect.
+        #[arg(long)]
+        word: Option<String>,
+        /// A run of whitespace-separated base forms, rendered word by word.
+        #[arg(long)]
+        text: Option<String>,
     },
 
     /// LANG-1 P5.2 — compile a directory of glyph SVGs into a UFO font source.
@@ -3041,6 +3072,134 @@ pub enum LanguageCommand {
         /// Gloss for the dependent root (defaults to the root itself).
         #[arg(long)]
         gloss: Option<String>,
+    },
+
+    /// 1.3.22 LANG-2 P1 — list the **varieties** (dialects / registers /
+    /// sociolects) declared for a language, with their axis, prestige, and the
+    /// size of their sound-change + word-override deltas.
+    Varieties {
+        /// Target language name (case-insensitive).
+        language: String,
+    },
+
+    /// 1.3.22 LANG-2 P1 — render a form *in a variety* (`lect`).  Applies the
+    /// variety's sound changes (the same engine diachronics uses,
+    /// synchronically) to a `--word` or a `--text` run, showing the base →
+    /// variety diff.  A variety is a *dialect*, *register*, or *sociolect*.
+    Lect {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The variety id (e.g. `lowland`, `formal`).
+        variety: String,
+        /// A single base form to render in the variety.
+        #[arg(long)]
+        word: Option<String>,
+        /// A run of whitespace-separated base forms, rendered word by word.
+        #[arg(long)]
+        text: Option<String>,
+    },
+
+    /// 1.3.22 LANG-2 P1 — a **dialect-comparison** table: the first `--count`
+    /// dictionary headwords rendered across the base form and every declared
+    /// variety (the classic dialectology display).
+    Dialects {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// How many headwords to compare.
+        #[arg(long, default_value_t = 12)]
+        count: usize,
+    },
+
+    /// 1.3.22 LANG-2 P2 — **borrow** a word into a language: nativise a donor
+    /// form to the recipient's inventory + phonotactics (perceive → repair via
+    /// the `loan_phonology` block).  Shows the adaptation trace.  With `--yes`,
+    /// adds the adapted word to the recipient's Dictionary, recording the donor
+    /// in the etymology.  The donor form is given *phonemically* (one symbol per
+    /// sound).
+    Borrow {
+        /// Recipient language (the borrower).
+        language: String,
+        /// The donor form to adapt (phonemic).
+        #[arg(long)]
+        form: String,
+        /// The donor language name, recorded in the etymology.
+        #[arg(long)]
+        from: Option<String>,
+        /// Working-language gloss for the loanword (needed with `--yes`).
+        #[arg(long)]
+        gloss: Option<String>,
+        /// Part of speech for the added entry (default `noun`).
+        #[arg(long, default_value = "noun")]
+        r#type: String,
+        /// Add the adapted word to the recipient's Dictionary.
+        #[arg(long)]
+        r#yes: bool,
+    },
+
+    /// 1.3.22 LANG-2 P3 — show **areal** (Sprachbund) convergence.  With a
+    /// language, assesses each declared areal feature against that language's
+    /// own typology — already converged, would shift, or would adopt (an
+    /// advisory overlay, never rewriting the grammar).  With no language, prints
+    /// the regional view: every contact area, its member languages, and the
+    /// shared features.
+    Areal {
+        /// Language to assess (omit for the whole-world regional view).
+        language: Option<String>,
+    },
+
+    /// 1.3.22 LANG-2 P6 — (AI) **propose a dialect/register**: the model suggests
+    /// a coherent set of sound changes + a few lexical swaps for the requested
+    /// flavour; the deterministic engine validates them (so the variety is always
+    /// phonologically legal) and previews the result.  With `--yes`, writes the
+    /// variety into the Grammar chapter.
+    ProposeDialect {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The flavour to design, e.g. "a coastal trading dialect" or "an
+        /// archaic priestly register".
+        #[arg(long)]
+        describe: String,
+        /// The variety id to use (default: derived from the description).
+        #[arg(long)]
+        id: Option<String>,
+        /// AI provider override.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Write the proposed variety into the Grammar chapter.
+        #[arg(long)]
+        r#yes: bool,
+    },
+
+    /// 1.3.22 LANG-2 P6 — (AI) assess whether a language's declared **areal**
+    /// (Sprachbund) features are typologically plausible — the contact analogue
+    /// of `realism-check`.
+    ArealCheck {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// AI provider override.
+        #[arg(long)]
+        provider: Option<String>,
+    },
+
+    /// 1.3.22 LANG-2 P6 — (AI) **propose realistic loanwords**: which concepts a
+    /// language would borrow from a donor in a topic domain, each with a
+    /// plausible donor form, then nativised by the deterministic adapter (P2).
+    /// Advisory — add the ones you like with `borrow … --yes`.
+    ProposeLoans {
+        /// Recipient language (the borrower).
+        language: String,
+        /// The donor language name.
+        #[arg(long)]
+        from: String,
+        /// The semantic domain to borrow in (trade, religion, seafaring …).
+        #[arg(long)]
+        topic: Option<String>,
+        /// How many loanwords to propose.
+        #[arg(long, default_value_t = 6)]
+        count: usize,
+        /// AI provider override.
+        #[arg(long)]
+        provider: Option<String>,
     },
 
     /// LANG-1 P2.7 — scan the manuscript for candidate **undefined** conlang

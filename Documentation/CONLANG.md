@@ -290,6 +290,118 @@ defined on proto sounds).
 - `inkhaven language realism-check Eldar` — AI assessment of whether the
   language's sound-change chain is typologically plausible.
 
+## Varieties — dialects, registers, sociolects (LANG-2 P1)
+
+A language is not uniform. A **variety** is a *delta* on the base language —
+declared in a `varieties` block in the **Grammar** chapter:
+
+```hjson
+{ varieties: [
+  { id: "lowland", kind: "dialect", axis: "region", prestige: "low",
+    sound_changes: [ { rule: "t > d / V _ V" } ],   // SPE, as in diachronics
+    lexicon: { "water": "móru" } }                  // suppletive overrides
+  { id: "high", kind: "register", axis: "formality", prestige: "high",
+    sound_changes: [ { rule: "k > q / # _" } ] }
+] }
+```
+
+The key idea: **a dialect's sound differences are an ordered set of sound changes
+— the same `AllophonyRule` engine as diachronics — applied _synchronously_** (a
+living variety) instead of _diachronically_ (a daughter language). A variety may
+also override individual words (suppletive forms the sound changes don't derive).
+
+```
+inkhaven language varieties Eldar                      # list them
+inkhaven language lect Eldar lowland --word kata        # → kada (t > d / V_V)
+inkhaven language lect Eldar lowland --text "kata tira" # word by word
+inkhaven language dialects Eldar [--count N]            # comparison table
+```
+
+`varieties` lists each variety with its axis/prestige and delta sizes; `lect`
+renders a form or text *in* a variety; `dialects` prints the classic
+dialectology comparison — each headword across the base and every variety (a
+trailing `*` marks a word override). All are scriptable from Bund
+(`lang.varieties`, `lang.lect`).
+
+## Contact — borrowing (LANG-2 P2)
+
+A loanword is a **phonotactic repair**: a donor word is *perceived* against the
+recipient's inventory, then any sequence the recipient forbids is fixed. How a
+language nativises borrowings is declared in a `loan_phonology` block in its
+**Phonology** chapter:
+
+```hjson
+{ loan_phonology: {
+  repair: "epenthesis",          // epenthesis (insert a vowel) | deletion
+  epenthetic_vowel: "u",         // empty → the first declared vowel
+  substitutions: { "θ": "t", "r": "l" }   // a donor sound the recipient lacks → nearest native
+} }
+```
+
+```
+inkhaven language borrow Eldar --form tras --from Drake            # tras → tulasu
+inkhaven language borrow Eldar --form θuk --from Drake --gloss demon --yes
+```
+
+Adaptation runs in two steps: **perceive** (apply the substitutions, keep sounds
+the recipient has, map the rest to the nearest native phoneme by sonority) and
+**repair** (consonant runs longer than the recipient's templates allow get the
+epenthetic vowel — Japanese *sutoraiku* — or the offending consonant is deleted).
+The donor form is given *phonemically* (one symbol per sound). With `--yes` and a
+`--gloss`, the adapted word joins the recipient's Dictionary with the donor
+recorded in its etymology (so cognates/etymology stay coherent). Scriptable from
+Bund as `lang.borrow` (advisory — returns `{ donor, adapted, steps }`; commit
+with `lang.add_word`).
+
+### Areal features — Sprachbund (LANG-2 P3)
+
+Languages in contact converge on shared structures. A `contact` block in the
+**Grammar** chapter declares a language's membership in a *linguistic area*:
+
+```hjson
+{ contact: {
+  region: "the Inner Sea"
+  with: [ "Sindar", "Khuz" ]                                  // neighbours in contact
+  areal_features: { word_order: "sov", alignment: "ergative_absolutive" }
+} }
+```
+
+```
+inkhaven language areal Eldar      # per-language convergence overlay
+inkhaven language areal            # the whole-world regional view
+```
+
+`areal <lang>` assesses each areal feature against that language's own typology —
+**converged** (already has it, `✓`), **shift** (a different value, would change,
+`→`), or **adopt** (unanswered, would gain it, `+`). It is an *advisory overlay*:
+it never rewrites the grammar. `areal` with no language prints the regional
+Sprachbund view — each contact area, its members, and a per-member status for
+every shared feature. Contact also shows up as **horizontal edges** in
+`language family-tree` (`Eldar ⇄ Sindar`), alongside the vertical inheritance.
+Scriptable as `lang.areal` (returns `{ region, with, convergence }`).
+
+### AI advisories (LANG-2 P6)
+
+The AI proposes *choices*, the deterministic engine *applies* them — so the forms
+stay legal and nothing is written without `--yes`:
+
+```
+inkhaven language propose-dialect Eldar --describe "a harsh mountain dialect" [--yes]
+inkhaven language propose-loans Eldar --from Drake --topic seafaring --count 6
+inkhaven language areal-check Eldar
+```
+
+- **`propose-dialect`** — the model suggests a coherent set of sound changes + a
+  few lexical swaps for the requested flavour; each rule is validated against the
+  inventory and previewed; `--yes` writes the variety into the Grammar chapter.
+- **`propose-loans`** — proposes concepts a language would borrow from a donor in
+  a topic domain, with donor forms, then the **deterministic adapter** (the
+  borrowing engine) nativises each (so `stɔrm → sitarimi`). Add the ones you like
+  with `borrow … --yes`.
+- **`areal-check`** — assesses whether a declared Sprachbund is typologically
+  plausible (the contact analogue of `realism-check`). All key off the project
+  working language.
+
 ## Idioms + metaphors
 
 ```
@@ -374,9 +486,13 @@ inkhaven language grammar-book Avesha --format md|typ [--out g.typ] [--font Elda
 The companion volume: a **reference grammar**, drawing every section from the
 language's own data — phonology (consonant/vowel inventory, syllable structure,
 phonotactics, allophony, stress, tone), morphology (affixes, derivation), the
-typology answers (with their consequences), idioms & metaphors, and the sample
-texts. Markdown is a flat reference; **Typst** is the same manual-style B5 book
-(title page, contents, sections) as the dictionary, with the conscript font.
+typology answers (with their consequences), a sample sentence, idioms &
+metaphors, and the sample texts. When the language declares varieties or contact
+(LANG-2), it also gains a **Variation** section (the dialects/registers + a
+dialect-comparison table) and a **Contact** section (the linguistic area, shared
+areal features, and loanword adaptation). Markdown is a flat reference; **Typst**
+is the same manual-style B5 book (title page, contents, sections) as the
+dictionary, with the conscript font.
 
 With **`--study`** it also becomes **study material**: an AI-written study guide
 leads the book, defining and explaining every linguistic term the reference uses
@@ -455,10 +571,30 @@ that export CSV, such as ConWorkShop, can come in through `add-word --import`.)
 Stored in `.inkhaven/conlang-links.json` (the prose books are never modified):
 
 ```
-inkhaven language link-place Tirion Quenya [--secondary]
-inkhaven language link-character Erendil Quenya native   # native|fluent|conversational|broken|reading_only
+inkhaven language link-place Tirion Quenya [--secondary] [--variety lowland]
+inkhaven language link-character Erendil Quenya native [--native-variety court]
 inkhaven language speakers Quenya
 ```
+
+### Speech communities & ecology (LANG-2 P4)
+
+The links carry **varieties** too: a Place speaks a particular dialect/register
+of its language (`--variety`), and a Character has a **native variety** — the
+base of their idiolect (`--native-variety`).
+
+```
+inkhaven language ecology                 # who speaks what (and which variety) where
+inkhaven language ecology --svg atlas.svg  # a node-link atlas of the contact areas
+inkhaven language idiolect Tost --text "kata tira"   # render in a character's dialect
+```
+
+`ecology` reports the whole speech-community picture — places with their language
++ variety, characters with their commanded languages + native variety, and the
+contact areas (P3); `--svg` writes a labelled atlas. `idiolect <character>`
+renders a form or text in that character's native variety (their primary language
++ native variety, run through the P1 variety engine) — so a marsh-dweller's
+speech comes out in the lowland dialect. Scriptable from Bund as `lang.ecology`
+and `lang.idiolect`.
 
 ## Writing systems + fonts
 

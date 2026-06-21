@@ -7,6 +7,7 @@
 
 pub mod allophony;
 pub mod constraint;
+pub mod contact;
 pub mod diachronic;
 pub mod expression;
 pub mod font;
@@ -18,6 +19,7 @@ pub mod spatial;
 pub mod stress;
 pub mod template;
 pub mod tone;
+pub mod variety;
 
 pub use allophony::{AllophonyRule, PatternAtom};
 pub use constraint::PhonotacticConstraint;

@@ -57,12 +57,20 @@ pub struct PlaceLink {
     pub primary: Option<String>,
     #[serde(default)]
     pub secondary: Vec<String>,
+    /// LANG-2 P4 — which *variety* of the primary language is spoken here
+    /// (a dialect/register id from the language's `varieties` block).
+    #[serde(default)]
+    pub variety: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CharacterLink {
     #[serde(default)]
     pub languages: Vec<Proficiency>,
+    /// LANG-2 P4 — the variety this character natively speaks (their idiolect's
+    /// base), a variety id of their primary/first language.
+    #[serde(default)]
+    pub native_variety: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -109,6 +117,17 @@ impl ConlangLinks {
         if !link.secondary.iter().any(|l| l.eq_ignore_ascii_case(language)) {
             link.secondary.push(language.to_string());
         }
+    }
+
+    /// LANG-2 P4 — set the variety of the primary language spoken at a place.
+    pub fn set_place_variety(&mut self, place: &str, variety: &str) {
+        self.places.entry(place.to_string()).or_default().variety = Some(variety.to_string());
+    }
+
+    /// LANG-2 P4 — set a character's native variety (idiolect base).
+    pub fn set_character_native_variety(&mut self, character: &str, variety: &str) {
+        self.characters.entry(character.to_string()).or_default().native_variety =
+            Some(variety.to_string());
     }
 
     /// Set (or update) a character's proficiency in a language.
@@ -180,6 +199,18 @@ mod tests {
         let (sjn_places, sjn_chars) = links.speakers_of("Sindarin");
         assert_eq!(sjn_places, vec!["Menegroth", "Tirion"]); // primary + secondary, sorted
         assert_eq!(sjn_chars, vec![("Erendil".to_string(), "fluent".to_string())]);
+    }
+
+    #[test]
+    fn variety_links_are_stored() {
+        // LANG-2 P4 — a place's spoken variety + a character's native variety.
+        let mut links = ConlangLinks::default();
+        links.set_place_primary("Marsh", "Eldar");
+        links.set_place_variety("Marsh", "lowland");
+        links.set_character_proficiency("Tost", "Eldar", Level::Native);
+        links.set_character_native_variety("Tost", "lowland");
+        assert_eq!(links.places["Marsh"].variety.as_deref(), Some("lowland"));
+        assert_eq!(links.characters["Tost"].native_variety.as_deref(), Some("lowland"));
     }
 
     #[test]

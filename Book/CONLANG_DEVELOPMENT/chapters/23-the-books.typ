@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 20, title: "Producing the books")
+#chapter(number: 23, title: "Producing the books")
 
 Everything you have built — sounds, words, grammar, history, a script — can now be
 turned into finished, printable books. Inkhaven produces four kinds of document
@@ -53,6 +53,14 @@ endings together, all the number endings together — using the `category` and
 suffix, infix, circumfix, ablaut, reduplication) shown. Any agreement rules get
 their own short section. The more carefully you tag your morphemes, the clearer
 this grammar reads.
+
+If your language declares the sociolinguistics of Part VI, the grammar grows two
+more sections automatically. A *Variation* section lists every dialect and
+register with the dialectology comparison table (Chapter 17), so the printed
+grammar records how the language is spoken across its speakers. A *Contact*
+section describes the linguistic area, the areal features it shares, and how it
+adapts loanwords (Chapter 18). Declare varieties and contact, and your published
+grammar describes a living, situated language — not one frozen in a single voice.
 
 #section("The study guide (AI)")
 

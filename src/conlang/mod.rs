@@ -8,6 +8,7 @@
 //! seeded word generator. Pure, deterministic, dependency-free.
 
 pub mod analysis;
+pub mod contact;
 pub mod creative;
 pub mod diachronic;
 pub mod gaps;
@@ -21,6 +22,7 @@ pub mod output;
 pub mod phonology;
 pub mod syntax;
 pub mod types;
+pub mod variety;
 pub mod writing;
 
 pub use types::{Phonology, TemplateRole};
