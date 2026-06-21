@@ -3106,6 +3106,36 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.3.23 LANG-3 P0 — **reverse** a conlang sentence back into English
+    /// (Tier 1 RBMT). Each surface word is un-inflected against the lexicon's
+    /// paradigm forms and glossed; roles are read off the language's
+    /// `word_order`. English generation is deliberately plain.
+    Reverse {
+        /// Source (conlang) language name (case-insensitive).
+        language: String,
+        /// The conlang surface text to reverse-translate.
+        text: String,
+        /// Emit JSON instead of the formatted display.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.3.23 LANG-3 P0 — **cross-translate** one conlang into another by
+    /// pivoting through English (reverse the source, then translate into the
+    /// target). The English waypoint is shown; error compounds across the two
+    /// passes.
+    Cross {
+        /// Source (conlang) language name (case-insensitive).
+        from: String,
+        /// Target (conlang) language name (case-insensitive).
+        to: String,
+        /// The source-language surface text.
+        text: String,
+        /// Emit JSON instead of the formatted display.
+        #[arg(long)]
+        json: bool,
+    },
+
     Lect {
         /// Target language name (case-insensitive).
         language: String,

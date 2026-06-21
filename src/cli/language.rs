@@ -213,6 +213,12 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Translate { language, text, trace, json } => {
             translate(project, &language, &text, trace, json)
         }
+        LanguageCommand::Reverse { language, text, json } => {
+            reverse_translate(project, &language, &text, json)
+        }
+        LanguageCommand::Cross { from, to, text, json } => {
+            cross_translate(project, &from, &to, &text, json)
+        }
         LanguageCommand::Relative {
             language,
             head,
@@ -2810,6 +2816,85 @@ fn translate(project: &Path, language: &str, text: &str, trace: bool, json: bool
             };
             eprintln!("  {:<8} {:<12} {how}  [{:.2}]", e.role, e.source, e.confidence);
         }
+    }
+    Ok(())
+}
+
+/// 1.3.23 LANG-3 P0 — reverse a conlang sentence back into English (Tier 1).
+fn reverse_translate(project: &Path, language: &str, text: &str, json: bool) -> Result<()> {
+    use crate::conlang::translate::reverse;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+
+    let r = reverse::reverse(&phon, &morph, &grammar_spec.grammar, &entries, text);
+
+    if json {
+        let out = serde_json::json!({
+            "source": r.source, "english": r.english,
+            "confidence": r.confidence, "unresolved": r.unresolved,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out)
+                .map_err(|e| Error::Store(format!("serializing reverse: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("{}  (Tier 1 RBMT · confidence {:.2})", r.english, r.confidence);
+    let gl: Vec<String> = r.words.iter().map(|(w, g)| format!("{w}={g}")).collect();
+    println!("  {}", gl.join("  "));
+    if !r.unresolved.is_empty() {
+        eprintln!("\nnot in {language}'s lexicon: {}", r.unresolved.join(", "));
+    }
+    Ok(())
+}
+
+/// 1.3.23 LANG-3 P0 — cross-translate conlang `from` → conlang `to` via English.
+fn cross_translate(project: &Path, from: &str, to: &str, text: &str, json: bool) -> Result<()> {
+    use crate::conlang::translate::reverse::{self, LangCtx};
+    // Open the project once; resolve both language books from the same store.
+    let (store, hierarchy, from_book) = open_lang_book(project, from)?;
+    let to_book = find_language_book(&hierarchy, to)?;
+
+    let f_phon = load_phonology(&store, &hierarchy, &from_book)?.unwrap_or_default();
+    let f_morph = load_morphology(&store, &hierarchy, &from_book)?.unwrap_or_default();
+    let (f_spec, _) = load_grammar_spec(&store, &hierarchy, &from_book)?;
+    let f_entries = load_dictionary(&store, &hierarchy, &from_book)?;
+
+    let t_phon = load_phonology(&store, &hierarchy, &to_book)?.unwrap_or_default();
+    let t_morph = load_morphology(&store, &hierarchy, &to_book)?.unwrap_or_default();
+    let (t_spec, _) = load_grammar_spec(&store, &hierarchy, &to_book)?;
+    let t_entries = load_dictionary(&store, &hierarchy, &to_book)?;
+
+    let fromctx =
+        LangCtx { phon: &f_phon, morph: &f_morph, typology: &f_spec.grammar, entries: &f_entries };
+    let toctx =
+        LangCtx { phon: &t_phon, morph: &t_morph, typology: &t_spec.grammar, entries: &t_entries };
+    let c = reverse::cross(&fromctx, &toctx, text);
+
+    if json {
+        let out = serde_json::json!({
+            "source": c.source, "english": c.english, "target": c.target,
+            "confidence": c.confidence, "unresolved": c.unresolved,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out)
+                .map_err(|e| Error::Store(format!("serializing cross: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("{from} → {to}  (via English · confidence {:.2})", c.confidence);
+    println!("  {}  ({})", c.source, from);
+    println!("  ↓ {}", c.english);
+    println!("  {}  ({})", c.target, to);
+    if !c.unresolved.is_empty() {
+        eprintln!("\nlost in pivot: {}", c.unresolved.join(", "));
     }
     Ok(())
 }

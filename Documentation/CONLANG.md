@@ -749,12 +749,29 @@ lexicon entry, or *untranslatable* — an English word the lexicon does not cove
 is passed through marked `«word»`, listed so you can coin it or `add-word` it.
 Output is human-readable or `--json`.
 
+It also runs **in reverse and across languages**:
+
+```
+inkhaven language reverse <lang> "kira nami pata"          # → "the bird see the stone"
+inkhaven language cross <from> <to> "kira nami pata"       # conlang → conlang via English
+```
+
+`reverse` (conlang → English) un-inflects each surface word against the lexicon's
+*paradigm-generated* forms (so an inflected word finds its lemma), reads roles off
+the language's `word_order`, and generates a plain English clause. `cross`
+(conlang A → conlang B) is the documented degraded path — it reverses A into
+English, then forwards that English into B, **exposing the English pivot** and
+multiplying the two passes' confidence (error compounds). So an SVO language's
+`kira nami pata` crosses into an SOV language as `turi moki vela`, reordered for
+free.
+
 Scope of Tier 1: simple declarative sentences (articles, `-s` plural, 3rd-person
 `-s` verbs, subject pronouns for verb person), one content word per constituent.
 The richer source-side parsing (multi-word phrases, subordinate clauses) and the
 fluency of a trained neural model arrive with the later LANG-3 tiers. Scriptable
-from Bund as `lang.translate` (`store_read`, returns
-`{ surface, gloss, literal, confidence, unresolved }`).
+from Bund as `lang.translate` (`{ surface, gloss, literal, confidence, unresolved }`),
+`lang.reverse` (`{ english, gloss, confidence, unresolved }`), and `lang.cross`
+(`{ english, target, gloss, confidence, unresolved }`) — all `store_read`.
 
 ## Scripting (Bund)
 
@@ -780,6 +797,8 @@ lang.transliterate    ( lang text -- script )       lang.agree        ( lang wor
 lang.gloss            ( lang text -- gloss )        lang.sound_change ( lang form -- evolved )
 lang.sentence         ( lang subj verb obj -- clause )   lang.cognates ( proto form -- reflexes )
 lang.translate        ( lang text -- {surface,gloss,literal,confidence,unresolved} )  English → conlang (Tier 1 RBMT)
+lang.reverse          ( lang surface -- {english,gloss,confidence,unresolved} )       conlang → English
+lang.cross            ( from to surface -- {english,target,gloss,confidence,unresolved} )  conlang → conlang via English
 lang.relative         ( lang head role verb with relativizer -- clause )
 lang.complement       ( lang subj verb comp comp-subj comp-verb comp-obj -- clause )
 lang.coordinate       ( lang clause-list conjunction -- clause )

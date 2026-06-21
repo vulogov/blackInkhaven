@@ -27,6 +27,7 @@
 
 pub mod english;
 pub mod lexmap;
+pub mod reverse;
 
 use std::collections::BTreeMap;
 
