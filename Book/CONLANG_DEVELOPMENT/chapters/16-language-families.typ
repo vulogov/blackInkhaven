@@ -56,8 +56,18 @@ inkhaven language family-tree
 ```
 
 It prints a genealogical diagram of your languages, each nested under its
-`proto`. As you add daughters and granddaughters, the tree grows to show the full
-shape of your invented family.
+`proto`, like this:
+
+```
+ProtoEldarin
+├─ Eldar
+│  └─ LowEldar
+└─ Sindarin
+```
+
+Here *Eldar* and *Sindarin* both descend from *ProtoEldarin*, and *LowEldar* is a
+daughter of *Eldar* — a granddaughter of the proto. As you add daughters and
+granddaughters, the tree grows to show the full shape of your invented family.
 
 #section("Looking backward: reconstruction")
 

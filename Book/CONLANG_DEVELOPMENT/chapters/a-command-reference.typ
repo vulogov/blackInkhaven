@@ -31,6 +31,7 @@ language <action> <language> [options]`. Add `--help` to any for full details.
 / `gaps <lang> [--scope swadesh_100|file.hjson] [--json]`: Report which reference concepts the lexicon is still missing.
 / `compose <lang> --kind names|prose|poem|blessing|curse|incantation [--count N] [--meter 5,7,5] [--seed N] [--provider P]`: Generate creative text grounded in your language.
 / `import <lang> --file F --format toolbox|polyglot [--yes]`: Import a lexicon from another tool (previews without `--yes`).
+/ `export <lang> --format json|csv|anki|xliff|linguex|ipa-chart|dictionary-twocol|grammar|phrasebook [--out F]`: Export the lexicon to a portable or typeset format.
 
 #section("Grammar")
 
@@ -42,6 +43,7 @@ language <action> <language> [options]`. Add `--help` to any for full details.
 / `sentence <lang> --subject W --verb W --object W [--*-adj W] [--*-number N] [--negate --negator W] [--question --q-particle W]`: Assemble a clause — order, case, agreement, optional negation / yes-no question — with an interlinear gloss.
 / `relative <lang> --head H --role subject|object --verb V [--with O] [--relativizer W]`: Build a noun phrase modified by a relative clause.
 / `coordinate <lang> [--np W …] [--clause "subj verb obj" …] --conjunction W`: Join nouns or clauses with a conjunction.
+/ `complement <lang> --subject S --verb V [--complementizer W] --comp-subject S2 --comp-verb V2 [--comp-object O2]`: Make a clause the object of a matrix verb ("I know that …").
 / `idiom-add <lang> --form F --literal L --meaning M [--register R]`: Record an idiom.
 / `metaphor-add <lang> --source S --target T [--example E]`: Record a conceptual metaphor.
 / `idioms <lang>`: List recorded idioms and metaphors.

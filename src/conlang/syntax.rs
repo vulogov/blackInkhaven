@@ -278,6 +278,120 @@ pub fn relative_np(
     }
 }
 
+/// A complement (subordinate) clause: a whole clause serving as the object of a
+/// matrix verb of speech or cognition — "I **know that the bird sees the
+/// stone**". The matrix has its own subject and verb; the embedded clause is
+/// introduced by an optional complementizer ("that").
+#[derive(Debug, Clone)]
+pub struct ComplementSentence {
+    /// The matrix-clause subject ("I" in "I know …").
+    pub matrix_subject: Option<Word>,
+    /// The matrix verb ("know", "say", "think").
+    pub matrix_verb: Word,
+    /// The matrix subject's person, for verb agreement.
+    pub matrix_person: String,
+    /// The matrix subject's number.
+    pub matrix_number: String,
+    /// The complementizer introducing the embedded clause (glossed `COMP`).
+    pub complementizer: Option<Word>,
+    /// The embedded clause that is the matrix verb's object.
+    pub complement: Clause,
+    pub noun_paradigm: String,
+    pub verb_paradigm: String,
+}
+
+/// Assemble a sentence whose object is a complement clause. The embedded clause
+/// runs through [`assemble`] (so it case-marks and agrees on its own), then the
+/// matrix subject and verb are rendered and ordered around it by `word_order` —
+/// the complement clause occupies the object slot, so a verb-final language puts
+/// it before the matrix verb and an SVO language puts it after. The matrix verb
+/// agrees with the matrix subject just as in a plain clause.
+pub fn complement_sentence(
+    phon: &Phonology,
+    morph: &Morphology,
+    typology: &BTreeMap<String, String>,
+    cs: &ComplementSentence,
+) -> RenderedClause {
+    let order = typology.get("word_order").map(String::as_str).unwrap_or("svo");
+
+    // The embedded clause, assembled in full.
+    let embedded = assemble(phon, morph, typology, &cs.complement);
+
+    // The matrix subject, nominative (the default; matrix subjects are not
+    // marked by the embedded clause's alignment here).
+    let subj_words = cs.matrix_subject.as_ref().map(|w| {
+        let mut feats: BTreeMap<String, String> = BTreeMap::new();
+        if !cs.matrix_number.is_empty() {
+            feats.insert("number".into(), cs.matrix_number.clone());
+        }
+        feats.insert("case".into(), "nom".into());
+        vec![inflect(phon, morph, &cs.noun_paradigm, w, &feats)]
+    });
+
+    // The matrix verb, agreeing with the matrix subject when a rule says so.
+    let verb_words = {
+        if let (Some(rule), Some(_subj)) = (morph.agreement_for("verb"), &cs.matrix_subject) {
+            let mut head: BTreeMap<String, String> = BTreeMap::new();
+            head.insert("person".into(), cs.matrix_person.clone());
+            head.insert("number".into(), cs.matrix_number.clone());
+            crate::conlang::morphology::agreement::agree(
+                phon,
+                morph,
+                rule,
+                &cs.matrix_verb.root,
+                &cs.matrix_verb.gloss,
+                &head,
+            )
+            .map(|a| vec![(a.form, a.gloss)])
+            .unwrap_or_else(|| {
+                vec![inflect(phon, morph, &cs.verb_paradigm, &cs.matrix_verb, &BTreeMap::new())]
+            })
+        } else {
+            vec![inflect(phon, morph, &cs.verb_paradigm, &cs.matrix_verb, &BTreeMap::new())]
+        }
+    };
+
+    // The complement block: the complementizer, then the embedded clause. This
+    // block fills the matrix object slot.
+    let mut comp_block: Vec<(String, String)> = Vec::new();
+    if let Some(c) = &cs.complementizer {
+        comp_block.push((c.root.clone(), "COMP".into()));
+    }
+    comp_block.extend(embedded.words.iter().cloned());
+
+    // Order matrix subject, matrix verb, and the complement block by word order.
+    let mut words: Vec<(String, String)> = Vec::new();
+    for role in word_order(order) {
+        match role {
+            Role::Subject => {
+                if let Some(ws) = &subj_words {
+                    words.extend(ws.iter().cloned());
+                }
+            }
+            Role::Verb => words.extend(verb_words.iter().cloned()),
+            Role::Object => words.extend(comp_block.iter().cloned()),
+        }
+    }
+
+    let surface = words.iter().map(|(w, _)| w.as_str()).collect::<Vec<_>>().join(" ");
+    let matrix_subj_gloss = cs
+        .matrix_subject
+        .as_ref()
+        .map(|w| w.gloss.clone())
+        .unwrap_or_default();
+    let literal = format!(
+        "{} {} that {}",
+        matrix_subj_gloss, cs.matrix_verb.gloss, embedded.literal
+    )
+    .trim()
+    .to_string();
+    RenderedClause {
+        words,
+        surface,
+        literal,
+    }
+}
+
 /// Coordinate two or more rendered constituents (noun phrases or whole clauses)
 /// with a conjunction — "the bird **and** the stone", "the bird sees **and** the
 /// river falls". The conjunction sits medially between adjacent conjuncts
@@ -687,6 +801,52 @@ mod tests {
         assert_eq!(r.surface, "kira nami pata");
         assert_eq!(r.words.last().unwrap().0, "pata"); // head last
         assert_eq!(r.literal, "the stone that bird see");
+    }
+
+    #[test]
+    fn complement_clause_svo_follows_the_matrix_verb() {
+        // "I know that the bird sees the stone" — matrix S V, then the
+        // complement clause (with its object accusative).
+        let mut t = BTreeMap::new();
+        t.insert("word_order".to_string(), "svo".to_string());
+        let cs = ComplementSentence {
+            matrix_subject: Some(Word { root: "mi".into(), gloss: "I".into() }),
+            matrix_verb: Word { root: "tira".into(), gloss: "know".into() },
+            matrix_person: "1".into(),
+            matrix_number: "sg".into(),
+            complementizer: Some(Word { root: "ya".into(), gloss: "that".into() }),
+            complement: clause(), // kira nami pata(n)
+            noun_paradigm: "noun".into(),
+            verb_paradigm: "verb".into(),
+        };
+        let r = complement_sentence(&phon(), &morph(), &t, &cs);
+        // matrix S V, complementizer, then embedded S V O-ACC.
+        assert_eq!(r.surface, "mi tira ya kira nami patan");
+        assert!(r.words.iter().any(|(_, g)| g == "COMP"));
+        assert!(r.words.iter().any(|(_, g)| g == "stone-ACC"));
+        assert_eq!(r.literal, "I know that bird see stone");
+    }
+
+    #[test]
+    fn complement_clause_sov_precedes_the_matrix_verb() {
+        // A verb-final language puts the complement (the object) before the
+        // matrix verb: "I [bird stone-ACC see] that know".
+        let mut t = BTreeMap::new();
+        t.insert("word_order".to_string(), "sov".to_string());
+        let cs = ComplementSentence {
+            matrix_subject: Some(Word { root: "mi".into(), gloss: "I".into() }),
+            matrix_verb: Word { root: "tira".into(), gloss: "know".into() },
+            matrix_person: "1".into(),
+            matrix_number: "sg".into(),
+            complementizer: Some(Word { root: "ya".into(), gloss: "that".into() }),
+            complement: clause(),
+            noun_paradigm: "noun".into(),
+            verb_paradigm: "verb".into(),
+        };
+        let r = complement_sentence(&phon(), &morph(), &t, &cs);
+        // S, then complement block (O slot), then matrix V last.
+        assert_eq!(r.surface, "mi ya kira patan nami tira");
+        assert_eq!(r.words.last().unwrap().0, "tira"); // matrix verb final
     }
 
     #[test]
