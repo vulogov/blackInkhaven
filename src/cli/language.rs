@@ -557,7 +557,7 @@ pub(crate) fn load_morphology(
 
 /// Load the `{ diachronics: { proto, rules } }` block from the Phonology
 /// chapter.
-fn load_diachronics(
+pub(crate) fn load_diachronics(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
@@ -794,7 +794,7 @@ fn glyph_store_dir(project_root: &Path, language: &str) -> std::path::PathBuf {
 }
 
 /// Load a language's `font` config block from its Phonology chapter.
-fn load_font_config(
+pub(crate) fn load_font_config(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
@@ -1645,7 +1645,7 @@ fn derive_lexicon_cmd(project: &Path, language: &str, yes: bool) -> Result<()> {
 
 /// Load the `{ idioms: [...], metaphors: [...] }` block from the Grammar
 /// chapter + the paragraph node that holds it.
-fn load_expressions(
+pub(crate) fn load_expressions(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
@@ -3028,6 +3028,117 @@ pub(crate) fn create_chapter_paragraph(
         .update_paragraph_content(&mut entry, body.as_bytes())
         .map_err(|e| Error::Store(format!("seed block: {e}")))?;
     Ok(entry)
+}
+
+/// Set one typology answer (validated against the WALS catalogue) and persist
+/// the `{ grammar: { … } }` block. Store-based; for `ink.lang.grammar_set`.
+pub(crate) fn set_grammar_feature(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    feature: &str,
+    value: &str,
+) -> Result<()> {
+    let hierarchy = Hierarchy::load(store)?;
+    let (mut spec, node) = load_grammar_spec(store, &hierarchy, lang_book)?;
+    let f = crate::conlang::grammar::feature(feature)
+        .ok_or_else(|| Error::Config(format!("unknown typology feature `{feature}`")))?;
+    if !f.is_valid(value) {
+        return Err(Error::Config(format!(
+            "`{value}` is not a valid value for `{}` — options: {}",
+            f.id,
+            f.values()
+        )));
+    }
+    spec.grammar.insert(f.id.to_string(), value.to_lowercase());
+    let body = serde_json::to_string_pretty(&spec)
+        .map_err(|e| Error::Store(format!("serializing grammar: {e}")))?;
+    upsert_grammar_paragraph(store, cfg, lang_book, "typology", node, &body)
+}
+
+/// Append an idiom to the language's expressions block (store-based).
+pub(crate) fn add_idiom(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    form: &str,
+    literal: &str,
+    meaning: &str,
+) -> Result<()> {
+    use crate::conlang::types::expression::Idiom;
+    let hierarchy = Hierarchy::load(store)?;
+    let (mut expr, node) = load_expressions(store, &hierarchy, lang_book)?;
+    expr.idioms.push(Idiom {
+        form: form.trim().to_string(),
+        literal: literal.trim().to_string(),
+        meaning: meaning.trim().to_string(),
+        register: Vec::new(),
+    });
+    let body = serde_json::to_string_pretty(&expr)
+        .map_err(|e| Error::Store(format!("serializing expressions: {e}")))?;
+    upsert_grammar_paragraph(store, cfg, lang_book, "expressions", node, &body)
+}
+
+/// Append a conceptual metaphor to the language's expressions block.
+pub(crate) fn add_metaphor(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    source: &str,
+    target: &str,
+) -> Result<()> {
+    use crate::conlang::types::expression::Metaphor;
+    let hierarchy = Hierarchy::load(store)?;
+    let (mut expr, node) = load_expressions(store, &hierarchy, lang_book)?;
+    expr.metaphors.push(Metaphor {
+        source: source.trim().to_string(),
+        target: target.trim().to_string(),
+        examples: Vec::new(),
+        note: String::new(),
+    });
+    let body = serde_json::to_string_pretty(&expr)
+        .map_err(|e| Error::Store(format!("serializing expressions: {e}")))?;
+    upsert_grammar_paragraph(store, cfg, lang_book, "expressions", node, &body)
+}
+
+/// Delete a dictionary entry by headword (store-based; for `ink.lang.remove_word`).
+pub(crate) fn remove_dictionary_entry(
+    store: &Store,
+    lang_book: &crate::store::node::Node,
+    word: &str,
+) -> Result<()> {
+    let hierarchy = Hierarchy::load(store)?;
+    let dictionary = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary"))
+        .cloned()
+        .ok_or_else(|| Error::Config("language has no Dictionary chapter".into()))?;
+    let bucket = derive_alphabet_bucket(store, &hierarchy, lang_book, word)?
+        .or_else(|| alphabet_bucket(word))
+        .ok_or_else(|| Error::Config(format!("could not derive alphabet bucket from `{word}`")))?;
+    let subchapter = hierarchy
+        .children_of(Some(dictionary.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Subchapter && n.title.eq_ignore_ascii_case(&bucket))
+        .cloned()
+        .ok_or_else(|| Error::Config(format!("`{word}` isn't defined (no `{bucket}` bucket)")))?;
+    let entry = hierarchy
+        .children_of(Some(subchapter.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Paragraph && n.title.eq_ignore_ascii_case(word))
+        .cloned()
+        .ok_or_else(|| Error::Config(format!("word `{word}` not found")))?;
+    let ids = hierarchy.collect_subtree(entry.id);
+    let fs_rel = entry
+        .file
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default();
+    store
+        .delete_subtree(&fs_rel, &ids)
+        .map_err(|e| Error::Store(format!("delete entry: {e}")))?;
+    Ok(())
 }
 
 /// Open a project and load a language's `Phonology` value — the shared

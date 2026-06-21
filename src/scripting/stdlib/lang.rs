@@ -33,21 +33,61 @@ use crate::store::Store;
 
 pub fn register(vm: &mut VM) -> Result<()> {
     let words: &[(&str, fn(&mut VM) -> std::result::Result<&mut VM, BundError>)] = &[
-        // read-only inspectors
+        // ── read-only inspectors (store_read) ──
         ("ink.lang.list", w_list),
         ("ink.lang.generate_word", w_generate_word),
         ("ink.lang.syllabify", w_syllabify),
         ("ink.lang.ipa", w_ipa),
+        ("ink.lang.stress", w_stress),
+        ("ink.lang.tone", w_tone),
+        ("ink.lang.transliterate", w_transliterate),
         ("ink.lang.gloss", w_gloss),
+        ("ink.lang.paradigm", w_paradigm),
+        ("ink.lang.derive", w_derive),
+        ("ink.lang.agree", w_agree),
         ("ink.lang.sentence", w_sentence),
-        // mutators (store_write)
+        ("ink.lang.relative", w_relative),
+        ("ink.lang.complement", w_complement),
+        ("ink.lang.coordinate", w_coordinate),
+        ("ink.lang.stats", w_stats),
+        ("ink.lang.audit", w_audit),
+        ("ink.lang.query", w_query),
+        ("ink.lang.gaps", w_gaps),
+        ("ink.lang.sound_change", w_sound_change),
+        ("ink.lang.cognates", w_cognates),
+        ("ink.lang.family_tree", w_family_tree),
+        ("ink.lang.names", w_names),
+        ("ink.lang.prose", w_prose),
+        ("ink.lang.poem", w_poem),
+        // ── pure data constructor (uncategorised, allowed) ──
+        ("ink.lang.dict", w_dict),
+        // ── mutators (store_write) ──
         ("ink.lang.init", w_init),
         ("ink.lang.define", w_define),
         ("ink.lang.add_word", w_add_word),
+        ("ink.lang.remove_word", w_remove_word),
+        ("ink.lang.derive_add", w_derive_add),
+        ("ink.lang.grammar_set", w_grammar_set),
+        ("ink.lang.idiom_add", w_idiom_add),
+        ("ink.lang.metaphor_add", w_metaphor_add),
     ];
     for (name, f) in words {
         vm.register_inline(name.to_string(), *f)
             .map_err(|e| anyhow!("register {name}: {e}"))?;
+    }
+
+    // Ergonomic aliases. Every `ink.lang.X` also answers to the shorter
+    // `lang.X`; the data constructor `ink.lang.dict` additionally answers to
+    // self-documenting names (`word`, `rule`, `phoneme`, `block`) so a script
+    // reads like the artefact it builds. Aliases resolve to the target word, so
+    // they inherit its policy gate.
+    for (name, _) in words {
+        if let Some(short) = name.strip_prefix("ink.") {
+            let _ = vm.register_alias(short.to_string(), name.to_string());
+        }
+    }
+    for sugar in ["word", "rule", "phoneme", "block"] {
+        let _ = vm.register_alias(sugar.to_string(), "ink.lang.dict".to_string());
     }
     Ok(())
 }
@@ -367,6 +407,867 @@ fn do_add_word(vm: &mut VM) -> Result<&mut VM> {
     };
     langapi::add_imported_dictionary_entry(store, cfg, &book, &entry)
         .map_err(|e| anyhow!("{tag}: {e}"))?;
+    Ok(vm)
+}
+
+// ── native artefact construction (the user-suggested aliasing path) ──────
+//
+// Bund's `{ … }` builds a lambda/ctx, not a dict, so `ink.lang.dict` turns a
+// flat Bund list `[ key val key val … ]` into a real dict Value. Nest it (and
+// the `[ … ]` list literal) to build any artefact natively — then hand it to
+// `ink.lang.define` with no string escaping. Authors typically alias it, e.g.
+// `'ink.lang.dict alias d` or define `word` / `rule` constructors on top.
+//
+// ( [k v k v …] -- dict )
+fn w_dict(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_dict(vm).map_err(to_bund_err)
+}
+fn do_dict(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.dict";
+    require_depth(vm, 1, tag)?;
+    let list = pull(vm, tag)?
+        .cast_list()
+        .map_err(|e| anyhow!("{tag}: expected a list of key/value pairs: {e}"))?;
+    if list.len() % 2 != 0 {
+        return Err(anyhow!(
+            "{tag}: list has an odd length ({}) — it must be alternating key value pairs",
+            list.len()
+        ));
+    }
+    let mut h: HashMap<String, Value> = HashMap::new();
+    let mut it = list.into_iter();
+    while let (Some(k), Some(v)) = (it.next(), it.next()) {
+        let key = k
+            .cast_string()
+            .map_err(|e| anyhow!("{tag}: dict key must be a string: {e}"))?;
+        h.insert(key, v);
+    }
+    push(vm, Value::from_dict(h));
+    Ok(vm)
+}
+
+/// `serde_json::Value` → Bund `Value`, the inverse of `value_to_json` — lets any
+/// `Serialize` engine output return as native Bund data (dicts / lists).
+fn json_to_value(j: &serde_json::Value) -> Value {
+    match j {
+        serde_json::Value::Null => Value::nodata(),
+        serde_json::Value::Bool(b) => Value::from_bool(*b),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(Value::from_int)
+            .unwrap_or_else(|| Value::from_float(n.as_f64().unwrap_or(0.0))),
+        serde_json::Value::String(s) => Value::from_string(s.clone()),
+        serde_json::Value::Array(a) => Value::from_list(a.iter().map(json_to_value).collect()),
+        serde_json::Value::Object(m) => {
+            let mut h: HashMap<String, Value> = HashMap::new();
+            for (k, v) in m {
+                h.insert(k.clone(), json_to_value(v));
+            }
+            Value::from_dict(h)
+        }
+    }
+}
+
+/// Serialize anything `Serialize` straight to a Bund value.
+fn serial_to_value<T: serde::Serialize>(tag: &str, v: &T) -> Result<Value> {
+    let j = serde_json::to_value(v).map_err(|e| anyhow!("{tag}: serialize: {e}"))?;
+    Ok(json_to_value(&j))
+}
+
+/// Parse a `key=val,key=val` feature string into a map.
+fn parse_features(s: &str) -> std::collections::BTreeMap<String, String> {
+    let mut m = std::collections::BTreeMap::new();
+    for pair in s.split(',') {
+        if let Some((k, v)) = pair.split_once('=') {
+            let (k, v) = (k.trim(), v.trim());
+            if !k.is_empty() {
+                m.insert(k.to_string(), v.to_string());
+            }
+        }
+    }
+    m
+}
+
+fn rendered_to_dict(r: &crate::conlang::syntax::RenderedClause) -> Value {
+    let gloss = r
+        .words
+        .iter()
+        .map(|(w, g)| format!("{w}={g}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut h: HashMap<String, Value> = HashMap::new();
+    h.insert("surface".into(), Value::from_string(r.surface.clone()));
+    h.insert("gloss".into(), Value::from_string(gloss));
+    h.insert("literal".into(), Value::from_string(r.literal.clone()));
+    Value::from_dict(h)
+}
+
+// ── phonology inspectors ─────────────────────────────────────────────────
+
+// ( lang word -- stress-marked-string )
+fn w_stress(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_stress(vm).map_err(to_bund_err)
+}
+fn do_stress(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::phonology::{stress_eval, syllable};
+    let tag = "ink.lang.stress";
+    require_depth(vm, 2, tag)?;
+    let word = value_to_string(pull(vm, tag)?, "word", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let rule = phon
+        .stress
+        .clone()
+        .ok_or_else(|| anyhow!("{tag}: language `{name}` declares no `stress` rule"))?;
+    let seq = phon.segment(&word);
+    let sylls = syllable::syllabify(&phon, &seq);
+    let stressed = stress_eval::primary_stress(&rule, &sylls);
+    let marked = sylls
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let body = format!("{}{}{}", s.onset.join(""), s.nucleus.join(""), s.coda.join(""));
+            if Some(i) == stressed {
+                format!("ˈ{body}")
+            } else {
+                body
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".");
+    push(vm, Value::from_string(marked));
+    Ok(vm)
+}
+
+// ( lang tones -- result )  tones e.g. "3 3 3" → "2 2 3"
+fn w_tone(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_tone(vm).map_err(to_bund_err)
+}
+fn do_tone(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.tone";
+    require_depth(vm, 2, tag)?;
+    let tones = value_to_string(pull(vm, tag)?, "tones", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let system = phon
+        .tone
+        .clone()
+        .ok_or_else(|| anyhow!("{tag}: language `{name}` declares no `tone` system"))?;
+    let seq: Vec<String> = tones.split_whitespace().map(String::from).collect();
+    let out = crate::conlang::phonology::tone_eval::apply_sandhi(&system, &seq);
+    push(vm, Value::from_string(out.join(" ")));
+    Ok(vm)
+}
+
+// ( lang text -- script )
+fn w_transliterate(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_transliterate(vm).map_err(to_bund_err)
+}
+fn do_transliterate(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.transliterate";
+    require_depth(vm, 2, tag)?;
+    let text = value_to_string(pull(vm, tag)?, "text", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let font = langapi::load_font_config(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .ok_or_else(|| anyhow!("{tag}: language `{name}` has no font config to transliterate with"))?;
+    let out = crate::conlang::writing::input::to_script(&font, &text);
+    push(vm, Value::from_string(out.script));
+    Ok(vm)
+}
+
+// ── morphology inspectors ────────────────────────────────────────────────
+
+// ( lang root template gloss -- list-of-dicts )
+fn w_paradigm(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_paradigm(vm).map_err(to_bund_err)
+}
+fn do_paradigm(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.paradigm";
+    require_depth(vm, 4, tag)?;
+    let gloss = value_to_string(pull(vm, tag)?, "gloss", tag)?;
+    let template = value_to_string(pull(vm, tag)?, "template", tag)?;
+    let root = value_to_string(pull(vm, tag)?, "root", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let morph = langapi::load_morphology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let tmpl = morph
+        .paradigm(&template)
+        .ok_or_else(|| anyhow!("{tag}: no paradigm named `{template}`"))?;
+    let rows = crate::conlang::morphology::paradigm::generate(&phon, &morph, tmpl, &root, &gloss);
+    let out: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let mut h: HashMap<String, Value> = HashMap::new();
+            h.insert("form".into(), Value::from_string(r.form.clone()));
+            h.insert("gloss".into(), Value::from_string(r.gloss.clone()));
+            let feats: HashMap<String, Value> = r
+                .features
+                .iter()
+                .map(|(k, v)| (k.clone(), Value::from_string(v.clone())))
+                .collect();
+            h.insert("features".into(), Value::from_dict(feats));
+            Value::from_dict(h)
+        })
+        .collect();
+    push(vm, Value::from_list(out));
+    Ok(vm)
+}
+
+// ( lang root gloss pos -- list-of-dicts )
+fn w_derive(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_derive(vm, false).map_err(to_bund_err)
+}
+// ( lang root gloss pos -- added-count )  — derive AND commit to the lexicon.
+fn w_derive_add(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_derive(vm, true).map_err(to_bund_err)
+}
+fn do_derive(vm: &mut VM, commit: bool) -> Result<&mut VM> {
+    let tag = if commit { "ink.lang.derive_add" } else { "ink.lang.derive" };
+    require_depth(vm, 4, tag)?;
+    let pos = value_to_string(pull(vm, tag)?, "pos", tag)?;
+    let gloss = value_to_string(pull(vm, tag)?, "gloss", tag)?;
+    let root = value_to_string(pull(vm, tag)?, "root", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let morph = langapi::load_morphology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let derived = crate::conlang::morphology::derive::generate(&phon, &morph, &root, &gloss, &pos);
+    if commit {
+        let cfg = active_config(tag)?;
+        let mut added = 0i64;
+        for d in &derived {
+            let entry = langapi::ImportEntry {
+                word: d.form.clone(),
+                pos: d.pos.clone(),
+                translation: d.gloss.clone(),
+                etymology: format!("derived from {root} via {}", d.rule),
+                ..Default::default()
+            };
+            if langapi::add_imported_dictionary_entry(store, cfg, &book, &entry).is_ok() {
+                added += 1;
+            }
+        }
+        push(vm, Value::from_int(added));
+    } else {
+        let out: Vec<Value> = derived
+            .iter()
+            .map(|d| {
+                let mut h: HashMap<String, Value> = HashMap::new();
+                h.insert("form".into(), Value::from_string(d.form.clone()));
+                h.insert("gloss".into(), Value::from_string(d.gloss.clone()));
+                h.insert("pos".into(), Value::from_string(d.pos.clone()));
+                h.insert("rule".into(), Value::from_string(d.rule.clone()));
+                Value::from_dict(h)
+            })
+            .collect();
+        push(vm, Value::from_list(out));
+    }
+    Ok(vm)
+}
+
+// ( lang word pos features -- dict )  features e.g. "number=pl,case=dat"
+fn w_agree(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_agree(vm).map_err(to_bund_err)
+}
+fn do_agree(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.agree";
+    require_depth(vm, 4, tag)?;
+    let features = value_to_string(pull(vm, tag)?, "features", tag)?;
+    let pos = value_to_string(pull(vm, tag)?, "pos", tag)?;
+    let word = value_to_string(pull(vm, tag)?, "word", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let morph = langapi::load_morphology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let rule = morph
+        .agreement_for(&pos)
+        .ok_or_else(|| anyhow!("{tag}: no agreement rule for pos `{pos}`"))?;
+    let head = parse_features(&features);
+    let a = crate::conlang::morphology::agreement::agree(&phon, &morph, rule, &word, &word, &head)
+        .ok_or_else(|| anyhow!("{tag}: no matching paradigm cell for those features"))?;
+    let mut h: HashMap<String, Value> = HashMap::new();
+    h.insert("form".into(), Value::from_string(a.form));
+    h.insert("gloss".into(), Value::from_string(a.gloss));
+    push(vm, Value::from_dict(h));
+    Ok(vm)
+}
+
+// ── syntax inspectors ────────────────────────────────────────────────────
+
+// ( lang head role verb with relativizer -- dict )
+fn w_relative(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_relative(vm).map_err(to_bund_err)
+}
+fn do_relative(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::syntax::{self, RelativeClause};
+    let tag = "ink.lang.relative";
+    require_depth(vm, 6, tag)?;
+    let relativizer = value_to_string(pull(vm, tag)?, "relativizer", tag)?;
+    let with = value_to_string(pull(vm, tag)?, "with", tag)?;
+    let verb = value_to_string(pull(vm, tag)?, "verb", tag)?;
+    let role = value_to_string(pull(vm, tag)?, "role", tag)?;
+    let head = value_to_string(pull(vm, tag)?, "head", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let head_is_subject = !role.eq_ignore_ascii_case("object");
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let morph = langapi::load_morphology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let (gs, _) =
+        langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let rc = RelativeClause {
+        head_is_subject,
+        verb: langapi::parse_word(&verb),
+        other: if with.trim().is_empty() {
+            None
+        } else {
+            Some(langapi::parse_word(&with))
+        },
+        relativizer: if relativizer.trim().is_empty() {
+            None
+        } else {
+            Some(langapi::parse_word(&relativizer))
+        },
+        noun_paradigm: "noun".into(),
+        verb_paradigm: "verb".into(),
+    };
+    let r = syntax::relative_np(&phon, &morph, &gs.grammar, &langapi::parse_word(&head), &rc);
+    push(vm, rendered_to_dict(&r));
+    Ok(vm)
+}
+
+// ( lang subject verb complementizer comp-subject comp-verb comp-object -- dict )
+fn w_complement(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_complement(vm).map_err(to_bund_err)
+}
+fn do_complement(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::syntax::{self, Clause, ComplementSentence, NounPhrase};
+    let tag = "ink.lang.complement";
+    require_depth(vm, 7, tag)?;
+    let comp_object = value_to_string(pull(vm, tag)?, "comp_object", tag)?;
+    let comp_verb = value_to_string(pull(vm, tag)?, "comp_verb", tag)?;
+    let comp_subject = value_to_string(pull(vm, tag)?, "comp_subject", tag)?;
+    let complementizer = value_to_string(pull(vm, tag)?, "complementizer", tag)?;
+    let verb = value_to_string(pull(vm, tag)?, "verb", tag)?;
+    let subject = value_to_string(pull(vm, tag)?, "subject", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let morph = langapi::load_morphology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let (gs, _) =
+        langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let np = |w: &str| {
+        if w.trim().is_empty() {
+            None
+        } else {
+            Some(NounPhrase {
+                head: langapi::parse_word(w),
+                number: "sg".into(),
+                adjective: None,
+            })
+        }
+    };
+    let embedded = Clause {
+        subject: np(&comp_subject),
+        verb: Some(langapi::parse_word(&comp_verb)),
+        verb_person: "3".into(),
+        object: np(&comp_object),
+        noun_paradigm: "noun".into(),
+        verb_paradigm: "verb".into(),
+        ..Default::default()
+    };
+    let cs = ComplementSentence {
+        matrix_subject: if subject.trim().is_empty() {
+            None
+        } else {
+            Some(langapi::parse_word(&subject))
+        },
+        matrix_verb: langapi::parse_word(&verb),
+        matrix_person: "1".into(),
+        matrix_number: "sg".into(),
+        complementizer: if complementizer.trim().is_empty() {
+            None
+        } else {
+            Some(langapi::parse_word(&complementizer))
+        },
+        complement: embedded,
+        noun_paradigm: "noun".into(),
+        verb_paradigm: "verb".into(),
+    };
+    let r = syntax::complement_sentence(&phon, &morph, &gs.grammar, &cs);
+    push(vm, rendered_to_dict(&r));
+    Ok(vm)
+}
+
+// ( lang clause-list conjunction -- dict )  clause-list = list of "subj verb [obj]"
+fn w_coordinate(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_coordinate(vm).map_err(to_bund_err)
+}
+fn do_coordinate(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::syntax::{self, Clause, NounPhrase};
+    let tag = "ink.lang.coordinate";
+    require_depth(vm, 3, tag)?;
+    let conj = value_to_string(pull(vm, tag)?, "conjunction", tag)?;
+    let clauses_v = pull(vm, tag)?
+        .cast_list()
+        .map_err(|e| anyhow!("{tag}: expected a list of clause strings: {e}"))?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let morph = langapi::load_morphology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let (gs, _) =
+        langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let np = |w: &str| NounPhrase {
+        head: langapi::parse_word(w),
+        number: "sg".into(),
+        adjective: None,
+    };
+    let mut parts = Vec::new();
+    for cv in clauses_v {
+        let spec = cv.cast_string().map_err(|e| anyhow!("{tag}: clause must be a string: {e}"))?;
+        let toks: Vec<&str> = spec.split_whitespace().collect();
+        if toks.len() < 2 {
+            return Err(anyhow!("{tag}: clause `{spec}` needs a subject and a verb"));
+        }
+        let c = Clause {
+            subject: Some(np(toks[0])),
+            verb: Some(langapi::parse_word(toks[1])),
+            verb_person: "3".into(),
+            object: toks.get(2).map(|t| np(t)),
+            noun_paradigm: "noun".into(),
+            verb_paradigm: "verb".into(),
+            ..Default::default()
+        };
+        parts.push(syntax::assemble(&phon, &morph, &gs.grammar, &c));
+    }
+    let conj_word = if conj.trim().is_empty() {
+        None
+    } else {
+        Some(langapi::parse_word(&conj))
+    };
+    let r = syntax::coordinate(&parts, conj_word.as_ref());
+    push(vm, rendered_to_dict(&r));
+    Ok(vm)
+}
+
+// ── analysis / lexicon inspectors ────────────────────────────────────────
+
+// ( lang -- profile-dict )
+fn w_stats(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_stats(vm).map_err(to_bund_err)
+}
+fn do_stats(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.stats";
+    require_depth(vm, 1, tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let entries =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let profile = crate::conlang::analysis::profile(&phon, &entries);
+    push(vm, serial_to_value(tag, &profile)?);
+    Ok(vm)
+}
+
+// ( lang -- report-dict )
+fn w_audit(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_audit(vm).map_err(to_bund_err)
+}
+fn do_audit(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.audit";
+    require_depth(vm, 1, tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let entries =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let report = crate::conlang::lexicon::analyze(&phon, &entries);
+    push(vm, serial_to_value(tag, &report)?);
+    Ok(vm)
+}
+
+// ( lang text -- list-of-entry-dicts )  text filters the gloss/headword
+fn w_query(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_query(vm).map_err(to_bund_err)
+}
+fn do_query(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.query";
+    require_depth(vm, 2, tag)?;
+    let text = value_to_string(pull(vm, tag)?, "text", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let entries =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let text_opt = if text.trim().is_empty() { None } else { Some(text.as_str()) };
+    let filter = crate::conlang::lexicon::Filter {
+        register: None,
+        domain: None,
+        era: None,
+        pos: None,
+        text: text_opt,
+    };
+    let matches = crate::conlang::lexicon::filter(&entries, &filter);
+    let out: Vec<Value> = matches
+        .iter()
+        .map(|e| {
+            let mut h: HashMap<String, Value> = HashMap::new();
+            h.insert("word".into(), Value::from_string(e.word.clone()));
+            h.insert("pos".into(), Value::from_string(e.pos.clone()));
+            h.insert("translation".into(), Value::from_string(e.translation.clone()));
+            Value::from_dict(h)
+        })
+        .collect();
+    push(vm, Value::from_list(out));
+    Ok(vm)
+}
+
+// ( lang scope -- gap-report-dict )  scope = "swadesh_100" or a file path
+fn w_gaps(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_gaps(vm).map_err(to_bund_err)
+}
+fn do_gaps(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::gaps as gapmod;
+    let tag = "ink.lang.gaps";
+    require_depth(vm, 2, tag)?;
+    let scope = value_to_string(pull(vm, tag)?, "scope", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let cfg = active_config(tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let entries =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let glosses: Vec<String> = entries
+        .iter()
+        .map(|e| e.translation.clone())
+        .filter(|g| !g.trim().is_empty())
+        .collect();
+    let (scope_name, concepts) = if gapmod::is_builtin(&scope) {
+        (
+            format!("Swadesh-100 ({})", cfg.language),
+            gapmod::swadesh_100(&cfg.language),
+        )
+    } else {
+        let body = std::fs::read_to_string(&scope)
+            .map_err(|e| anyhow!("{tag}: scope `{scope}` is not a builtin nor a readable file: {e}"))?;
+        let parsed = gapmod::ScopeFile::from_hjson(&body).map_err(|e| anyhow!("{tag}: {e}"))?;
+        let nm = parsed.name.clone().unwrap_or_else(|| scope.clone());
+        (nm, parsed.into_concepts())
+    };
+    let report = gapmod::find_gaps(&scope_name, &concepts, &glosses);
+    let mut h: HashMap<String, Value> = HashMap::new();
+    h.insert("scope".into(), Value::from_string(report.scope_name.clone()));
+    h.insert("total".into(), Value::from_int(report.total as i64));
+    h.insert(
+        "coverage_pct".into(),
+        Value::from_float(report.coverage_pct() as f64),
+    );
+    h.insert(
+        "covered".into(),
+        Value::from_list(report.covered.iter().map(|s| Value::from_string(s.clone())).collect()),
+    );
+    h.insert(
+        "missing".into(),
+        Value::from_list(report.missing.iter().map(|s| Value::from_string(s.clone())).collect()),
+    );
+    push(vm, Value::from_dict(h));
+    Ok(vm)
+}
+
+// ── diachronics inspectors ───────────────────────────────────────────────
+
+// ( lang form -- evolved-form )  evolve a proto-form through the daughter's chain
+fn w_sound_change(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_sound_change(vm).map_err(to_bund_err)
+}
+fn do_sound_change(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.sound_change";
+    require_depth(vm, 2, tag)?;
+    let form = value_to_string(pull(vm, tag)?, "form", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let dia = langapi::load_diachronics(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .ok_or_else(|| anyhow!("{tag}: language `{name}` declares no `diachronics` block"))?;
+    // Sound changes operate on the proto's inventory (segmentation + classes).
+    let proto_phon = match dia.proto.as_deref() {
+        Some(p) => {
+            let pbook = langapi::find_language_book(&hierarchy, p)
+                .map_err(|e| anyhow!("{tag}: proto `{p}`: {e}"))?;
+            langapi::load_phonology(store, &hierarchy, &pbook)
+                .map_err(|e| anyhow!("{tag}: {e}"))?
+                .unwrap_or_default()
+        }
+        None => langapi::load_phonology(store, &hierarchy, &book)
+            .map_err(|e| anyhow!("{tag}: {e}"))?
+            .unwrap_or_default(),
+    };
+    let out = crate::conlang::diachronic::apply::derive_form(&proto_phon, &dia.rules, &form);
+    push(vm, Value::from_string(out));
+    Ok(vm)
+}
+
+// ( proto form -- list-of-{language,reflex} )
+fn w_cognates(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_cognates(vm).map_err(to_bund_err)
+}
+fn do_cognates(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.cognates";
+    require_depth(vm, 2, tag)?;
+    let form = value_to_string(pull(vm, tag)?, "form", tag)?;
+    let proto = value_to_string(pull(vm, tag)?, "proto", tag)?;
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let proto_book =
+        langapi::find_language_book(&hierarchy, &proto).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let proto_phon = langapi::load_phonology(store, &hierarchy, &proto_book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    // Daughters: language books whose diachronics name this proto.
+    let root = hierarchy.iter().find(|n| {
+        n.kind == NodeKind::Book
+            && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_LANGUAGES)
+    });
+    let mut out: Vec<Value> = Vec::new();
+    if let Some(root) = root {
+        for n in hierarchy.children_of(Some(root.id)) {
+            if n.kind != NodeKind::Book || n.id == proto_book.id {
+                continue;
+            }
+            if let Ok(Some(dia)) = langapi::load_diachronics(store, &hierarchy, n) {
+                if dia.proto.as_deref().is_some_and(|p| p.eq_ignore_ascii_case(&proto)) {
+                    let reflex = crate::conlang::diachronic::apply::derive_form(
+                        &proto_phon,
+                        &dia.rules,
+                        &form,
+                    );
+                    let mut h: HashMap<String, Value> = HashMap::new();
+                    h.insert("language".into(), Value::from_string(n.title.clone()));
+                    h.insert("reflex".into(), Value::from_string(reflex));
+                    out.push(Value::from_dict(h));
+                }
+            }
+        }
+    }
+    push(vm, Value::from_list(out));
+    Ok(vm)
+}
+
+// ( -- tree-string )
+fn w_family_tree(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_family_tree(vm).map_err(to_bund_err)
+}
+fn do_family_tree(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.family_tree";
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let root = hierarchy.iter().find(|n| {
+        n.kind == NodeKind::Book
+            && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_LANGUAGES)
+    });
+    let mut pairs: Vec<(String, Option<String>)> = Vec::new();
+    if let Some(root) = root {
+        for n in hierarchy.children_of(Some(root.id)) {
+            if n.kind != NodeKind::Book {
+                continue;
+            }
+            let proto = langapi::load_diachronics(store, &hierarchy, n)
+                .ok()
+                .flatten()
+                .and_then(|d| d.proto);
+            pairs.push((n.title.clone(), proto));
+        }
+    }
+    let tree = crate::conlang::diachronic::family::render_tree(&pairs);
+    push(vm, Value::from_string(tree));
+    Ok(vm)
+}
+
+// ── creative inspectors ──────────────────────────────────────────────────
+
+// ( lang count seed -- list )
+fn w_names(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_names(vm).map_err(to_bund_err)
+}
+fn do_names(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.names";
+    require_depth(vm, 3, tag)?;
+    let seed = value_to_i64(pull(vm, tag)?, "seed", tag)?;
+    let count = value_to_i64(pull(vm, tag)?, "count", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let names = crate::conlang::creative::names(&phon, count.max(0) as usize, seed as u64);
+    push(vm, Value::from_list(names.into_iter().map(Value::from_string).collect()));
+    Ok(vm)
+}
+
+// ( lang count seed -- list-of-sentence-dicts )
+fn w_prose(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_prose(vm).map_err(to_bund_err)
+}
+fn do_prose(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.prose";
+    require_depth(vm, 3, tag)?;
+    let seed = value_to_i64(pull(vm, tag)?, "seed", tag)?;
+    let count = value_to_i64(pull(vm, tag)?, "count", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let morph = langapi::load_morphology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let (gs, _) =
+        langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let entries =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let lines = crate::conlang::creative::prose(
+        &phon,
+        &morph,
+        &gs.grammar,
+        &entries,
+        count.max(0) as usize,
+        seed as u64,
+    );
+    push(vm, Value::from_list(lines.iter().map(rendered_to_dict).collect()));
+    Ok(vm)
+}
+
+// ( lang meter seed -- list-of-lines )  meter e.g. "5,7,5"
+fn w_poem(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_poem(vm).map_err(to_bund_err)
+}
+fn do_poem(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.poem";
+    require_depth(vm, 3, tag)?;
+    let seed = value_to_i64(pull(vm, tag)?, "seed", tag)?;
+    let meter_s = value_to_string(pull(vm, tag)?, "meter", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let meter: Vec<usize> = meter_s
+        .split(',')
+        .filter_map(|s| s.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .collect();
+    if meter.is_empty() {
+        return Err(anyhow!("{tag}: invalid meter `{meter_s}` (e.g. 5,7,5)"));
+    }
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let entries =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let lines = crate::conlang::creative::poem(&phon, &entries, &meter, seed as u64);
+    push(vm, Value::from_list(lines.iter().map(|l| Value::from_string(l.text.clone())).collect()));
+    Ok(vm)
+}
+
+// ── mutators (store_write) ───────────────────────────────────────────────
+
+// ( lang word -- )
+fn w_remove_word(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_remove_word(vm).map_err(to_bund_err)
+}
+fn do_remove_word(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.remove_word";
+    require_depth(vm, 2, tag)?;
+    let word = value_to_string(pull(vm, tag)?, "word", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let _ = hierarchy;
+    langapi::remove_dictionary_entry(store, &book, &word).map_err(|e| anyhow!("{tag}: {e}"))?;
+    Ok(vm)
+}
+
+// ( lang feature value -- )
+fn w_grammar_set(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_grammar_set(vm).map_err(to_bund_err)
+}
+fn do_grammar_set(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.grammar_set";
+    require_depth(vm, 3, tag)?;
+    let value = value_to_string(pull(vm, tag)?, "value", tag)?;
+    let feature = value_to_string(pull(vm, tag)?, "feature", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let cfg = active_config(tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let _ = hierarchy;
+    langapi::set_grammar_feature(store, cfg, &book, &feature, &value)
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    Ok(vm)
+}
+
+// ( lang form literal meaning -- )
+fn w_idiom_add(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_idiom_add(vm).map_err(to_bund_err)
+}
+fn do_idiom_add(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.idiom_add";
+    require_depth(vm, 4, tag)?;
+    let meaning = value_to_string(pull(vm, tag)?, "meaning", tag)?;
+    let literal = value_to_string(pull(vm, tag)?, "literal", tag)?;
+    let form = value_to_string(pull(vm, tag)?, "form", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let cfg = active_config(tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let _ = hierarchy;
+    langapi::add_idiom(store, cfg, &book, &form, &literal, &meaning)
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    Ok(vm)
+}
+
+// ( lang source target -- )
+fn w_metaphor_add(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_metaphor_add(vm).map_err(to_bund_err)
+}
+fn do_metaphor_add(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.metaphor_add";
+    require_depth(vm, 3, tag)?;
+    let target = value_to_string(pull(vm, tag)?, "target", tag)?;
+    let source = value_to_string(pull(vm, tag)?, "source", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let cfg = active_config(tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let _ = hierarchy;
+    langapi::add_metaphor(store, cfg, &book, &source, &target).map_err(|e| anyhow!("{tag}: {e}"))?;
     Ok(vm)
 }
 
