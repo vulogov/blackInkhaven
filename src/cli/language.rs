@@ -265,6 +265,14 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             features,
             gloss,
         } => agree(project, &language, &word, &pos, &features, gloss.as_deref()),
+        LanguageCommand::Varieties { language } => varieties(project, &language),
+        LanguageCommand::Lect {
+            language,
+            variety,
+            word,
+            text,
+        } => lect(project, &language, &variety, word.as_deref(), text.as_deref()),
+        LanguageCommand::Dialects { language, count } => dialects(project, &language, count),
         LanguageCommand::Gloss { language, text } => gloss_text(project, &language, &text),
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
@@ -553,6 +561,34 @@ pub(crate) fn load_morphology(
         }
     }
     Ok(None)
+}
+
+/// LANG-2 P1 — load the `{ varieties: [ … ] }` block from the Grammar chapter.
+pub(crate) fn load_varieties(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<crate::conlang::types::variety::Varieties> {
+    use crate::conlang::types::variety::Varieties;
+    let chapters: Vec<_> = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .filter(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Grammar"))
+        .cloned()
+        .collect();
+    for chapter in chapters {
+        for para in hierarchy.children_of(Some(chapter.id)) {
+            if para.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let Some(bytes) = store.get_content(para.id)? else { continue };
+            let body = String::from_utf8_lossy(&bytes);
+            if let Ok(Some(v)) = Varieties::from_hjson(&body) {
+                return Ok(v);
+            }
+        }
+    }
+    Ok(Varieties::default())
 }
 
 /// Load the `{ diachronics: { proto, rules } }` block from the Phonology
@@ -2377,6 +2413,111 @@ fn agree(
     let head = if rule.head.is_empty() { "head".to_string() } else { rule.head.clone() };
     println!("{word} ({pos}) agreeing with its {head} [{matched}]:");
     println!("  {} — {}", result.form, result.gloss);
+    Ok(())
+}
+
+/// LANG-2 P1 — list a language's declared varieties.
+fn varieties(project: &Path, language: &str) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let vs = load_varieties(&store, &hierarchy, &lang_book)?;
+    if vs.varieties.is_empty() {
+        println!(
+            "{language} declares no varieties — add a `{{ varieties: [ … ] }}` block to its \
+             Grammar chapter (see Documentation/CONLANG.md)."
+        );
+        return Ok(());
+    }
+    println!("{language} · {} variet(y/ies):", vs.varieties.len());
+    for v in &vs.varieties {
+        println!("  {:<14} {}", v.id, v.summary());
+    }
+    Ok(())
+}
+
+/// LANG-2 P1 — render a form / text in a variety.
+fn lect(
+    project: &Path,
+    language: &str,
+    variety: &str,
+    word: Option<&str>,
+    text: Option<&str>,
+) -> Result<()> {
+    use crate::conlang::variety as varengine;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let vs = load_varieties(&store, &hierarchy, &lang_book)?;
+    let v = vs.get(variety).ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no variety `{variety}` (try `inkhaven language varieties {language}`)"
+        ))
+    })?;
+    println!("{language} · {} ({})", v.id, v.summary());
+    if let Some(w) = word {
+        let rendered = varengine::render_form(&phon, v, w);
+        let mark = if rendered == w { "  (unchanged)" } else { "" };
+        println!("  {w}  →  {rendered}{mark}");
+    }
+    if let Some(t) = text {
+        println!("  base    {t}");
+        println!("  {:<7} {}", v.id, varengine::render_text(&phon, v, t));
+    }
+    if word.is_none() && text.is_none() {
+        return Err(Error::Config("give --word <form> or --text \"…\"".into()));
+    }
+    Ok(())
+}
+
+/// LANG-2 P1 — a dialect-comparison table across every declared variety.
+fn dialects(project: &Path, language: &str, count: usize) -> Result<()> {
+    use crate::conlang::variety as varengine;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let vs = load_varieties(&store, &hierarchy, &lang_book)?;
+    if vs.varieties.is_empty() {
+        println!("{language} declares no varieties to compare.");
+        return Ok(());
+    }
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let sample: Vec<_> = entries.iter().take(count).collect();
+    if sample.is_empty() {
+        println!("{language} has no dictionary entries to compare.");
+        return Ok(());
+    }
+
+    // Column header: gloss | base | <each variety id>.
+    let mut header = vec!["gloss".to_string(), "base".to_string()];
+    header.extend(vs.varieties.iter().map(|v| v.id.clone()));
+    // Build rows, tracking the widest cell per column for alignment.
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    for e in &sample {
+        let mut row = vec![e.translation.clone(), e.word.clone()];
+        for v in &vs.varieties {
+            let (form, overridden) = varengine::render_concept(&phon, v, &e.translation, &e.word);
+            row.push(if overridden { format!("{form}*") } else { form });
+        }
+        rows.push(row);
+    }
+    let cols = header.len();
+    let widths: Vec<usize> = (0..cols)
+        .map(|c| {
+            header[c]
+                .chars()
+                .count()
+                .max(rows.iter().map(|r| r[c].chars().count()).max().unwrap_or(0))
+        })
+        .collect();
+    let fmt_row = |r: &[String]| {
+        r.iter()
+            .enumerate()
+            .map(|(c, cell)| format!("{:<width$}", cell, width = widths[c]))
+            .collect::<Vec<_>>()
+            .join("  ")
+    };
+    println!("{language} · dialect comparison ({} entries, * = word override):", sample.len());
+    println!("  {}", fmt_row(&header));
+    for r in &rows {
+        println!("  {}", fmt_row(r));
+    }
     Ok(())
 }
 
