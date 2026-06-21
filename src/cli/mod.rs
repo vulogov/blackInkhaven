@@ -2474,6 +2474,10 @@ pub enum LanguageCommand {
         /// Add as a secondary language instead of setting the primary.
         #[arg(long)]
         secondary: bool,
+        /// 1.3.22 LANG-2 P4 — the variety (dialect/register id) of the primary
+        /// language spoken here.
+        #[arg(long)]
+        variety: Option<String>,
     },
 
     /// LANG-1 P2.6 — declare a Character's proficiency in a language (native /
@@ -2486,12 +2490,39 @@ pub enum LanguageCommand {
         language: String,
         /// Proficiency: native | fluent | conversational | broken | reading_only.
         proficiency: String,
+        /// 1.3.22 LANG-2 P4 — the variety this character natively speaks (their
+        /// idiolect base).
+        #[arg(long)]
+        native_variety: Option<String>,
     },
 
     /// LANG-1 P2.6 — list the Places and Characters linked to a language.
     Speakers {
         /// Language name (case-insensitive).
         language: String,
+    },
+
+    /// 1.3.22 LANG-2 P4 — the language **ecology**: who speaks what (and which
+    /// variety) where.  Lists every place with its language + variety, every
+    /// character with their commanded languages + native variety, and the
+    /// contact areas.  With `--svg <path>` writes a node-link **atlas**.
+    Ecology {
+        /// Write the atlas as an SVG file at this path (instead of the text report).
+        #[arg(long)]
+        svg: Option<std::path::PathBuf>,
+    },
+
+    /// 1.3.22 LANG-2 P4 — render a form / text in a **character's idiolect** —
+    /// their native variety of their primary language (from the links sidecar).
+    Idiolect {
+        /// Character name (case-insensitive).
+        character: String,
+        /// A single base form to render in the idiolect.
+        #[arg(long)]
+        word: Option<String>,
+        /// A run of whitespace-separated base forms, rendered word by word.
+        #[arg(long)]
+        text: Option<String>,
     },
 
     /// LANG-1 P5.2 — compile a directory of glyph SVGs into a UFO font source.

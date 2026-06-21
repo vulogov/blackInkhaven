@@ -146,13 +146,27 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             place,
             language,
             secondary,
-        } => link_place(project, &place, &language, secondary),
+            variety,
+        } => link_place(project, &place, &language, secondary, variety.as_deref()),
         LanguageCommand::LinkCharacter {
             character,
             language,
             proficiency,
-        } => link_character(project, &character, &language, &proficiency),
+            native_variety,
+        } => link_character(
+            project,
+            &character,
+            &language,
+            &proficiency,
+            native_variety.as_deref(),
+        ),
         LanguageCommand::Speakers { language } => speakers(project, &language),
+        LanguageCommand::Ecology { svg } => ecology(project, svg.as_deref()),
+        LanguageCommand::Idiolect {
+            character,
+            word,
+            text,
+        } => idiolect(project, &character, word.as_deref(), text.as_deref()),
         LanguageCommand::ScanManuscript { language, json } => {
             scan_manuscript(project, &language, json)
         }
@@ -491,7 +505,13 @@ fn resolve_system_node(hierarchy: &Hierarchy, system_tag: &str, name: &str) -> O
 }
 
 /// LANG-1 P2.6 — link a Place to a (primary or secondary) language.
-fn link_place(project: &Path, place: &str, language: &str, secondary: bool) -> Result<()> {
+fn link_place(
+    project: &Path,
+    place: &str,
+    language: &str,
+    secondary: bool,
+    variety: Option<&str>,
+) -> Result<()> {
     use crate::conlang::links::ConlangLinks;
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
     let place_name = match resolve_system_node(&hierarchy, SYSTEM_TAG_PLACES, place) {
@@ -510,12 +530,22 @@ fn link_place(project: &Path, place: &str, language: &str, secondary: bool) -> R
         links.set_place_primary(&place_name, &lang_book.title);
         eprintln!("{place_name} → primary language {}", lang_book.title);
     }
+    if let Some(v) = variety {
+        links.set_place_variety(&place_name, v);
+        eprintln!("{place_name} speaks the {v} variety");
+    }
     links.save(root).map_err(Error::Io)?;
     Ok(())
 }
 
 /// LANG-1 P2.6 — declare a Character's proficiency in a language.
-fn link_character(project: &Path, character: &str, language: &str, proficiency: &str) -> Result<()> {
+fn link_character(
+    project: &Path,
+    character: &str,
+    language: &str,
+    proficiency: &str,
+    native_variety: Option<&str>,
+) -> Result<()> {
     use crate::conlang::links::{ConlangLinks, Level};
     let level = Level::parse(proficiency).ok_or_else(|| {
         Error::Config(format!(
@@ -533,8 +563,182 @@ fn link_character(project: &Path, character: &str, language: &str, proficiency: 
     let root = store.project_root();
     let mut links = ConlangLinks::load(root).map_err(Error::Io)?;
     links.set_character_proficiency(&char_name, &lang_book.title, level);
+    if let Some(v) = native_variety {
+        links.set_character_native_variety(&char_name, v);
+    }
     links.save(root).map_err(Error::Io)?;
-    eprintln!("{char_name} → {} ({})", lang_book.title, level.as_str());
+    let nv = native_variety.map(|v| format!(", native variety {v}")).unwrap_or_default();
+    eprintln!("{char_name} → {} ({}){nv}", lang_book.title, level.as_str());
+    Ok(())
+}
+
+/// LANG-2 P4 — the language ecology: who speaks what (and which variety) where.
+fn ecology(project: &Path, svg: Option<&Path>) -> Result<()> {
+    use crate::conlang::links::ConlangLinks;
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+    let links = ConlangLinks::load(store.project_root()).map_err(Error::Io)?;
+
+    // Contact areas (P3), gathered across every language.
+    let mut areas: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    for book in all_language_books(&hierarchy) {
+        if let Some(c) = load_contact(&store, &hierarchy, &book)? {
+            let key = if c.region.is_empty() { "(unnamed area)".into() } else { c.region.clone() };
+            areas.entry(key).or_default().push(book.title.clone());
+        }
+    }
+
+    if let Some(path) = svg {
+        let doc = ecology_svg(&links, &areas);
+        crate::io_atomic::write(path, doc.as_bytes()).map_err(Error::Io)?;
+        eprintln!("ecology atlas → {}", path.display());
+        return Ok(());
+    }
+
+    if links.places.is_empty() && links.characters.is_empty() && areas.is_empty() {
+        println!("no speech-community links yet — use `link-place` / `link-character` (with --variety).");
+        return Ok(());
+    }
+    if !links.places.is_empty() {
+        println!("Places:");
+        for (place, l) in &links.places {
+            let lang = l.primary.as_deref().unwrap_or("—");
+            let var = l.variety.as_deref().map(|v| format!(" · {v}")).unwrap_or_default();
+            let sec = if l.secondary.is_empty() {
+                String::new()
+            } else {
+                format!("  (also {})", l.secondary.join(", "))
+            };
+            println!("  {:<16} {lang}{var}{sec}", place);
+        }
+    }
+    if !links.characters.is_empty() {
+        println!("\nCharacters:");
+        for (ch, c) in &links.characters {
+            let langs: Vec<String> = c
+                .languages
+                .iter()
+                .map(|p| format!("{} ({})", p.language, p.level))
+                .collect();
+            let nv = c.native_variety.as_deref().map(|v| format!(" · native {v}")).unwrap_or_default();
+            println!("  {:<16} {}{nv}", ch, langs.join(", "));
+        }
+    }
+    if !areas.is_empty() {
+        println!("\nContact areas:");
+        for (region, members) in &areas {
+            println!("  {region} — {}", members.join(", "));
+        }
+    }
+    Ok(())
+}
+
+/// A simple node-link atlas: each contact area is a labelled box listing its
+/// member languages; standalone languages (places' primaries) sit below.
+fn ecology_svg(
+    links: &crate::conlang::links::ConlangLinks,
+    areas: &std::collections::BTreeMap<String, Vec<String>>,
+) -> String {
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let w = 720;
+    let mut y = 40;
+    let mut body = String::new();
+    body.push_str(&format!(
+        "<text x='{}' y='{}' font-family='sans-serif' font-size='22' font-weight='bold' text-anchor='middle'>Language Ecology</text>\n",
+        w / 2,
+        y
+    ));
+    y += 30;
+    for (region, members) in areas {
+        let h = 30 + members.len() as i32 * 22;
+        body.push_str(&format!(
+            "<rect x='30' y='{y}' width='{}' height='{h}' rx='8' fill='#eef3f7' stroke='#2f5d7a'/>\n",
+            w - 60
+        ));
+        body.push_str(&format!(
+            "<text x='44' y='{}' font-family='sans-serif' font-size='14' font-weight='bold' fill='#2f5d7a'>{}</text>\n",
+            y + 20,
+            esc(region)
+        ));
+        let mut ly = y + 42;
+        for m in members {
+            // count places speaking m
+            let where_: Vec<String> = links
+                .places
+                .iter()
+                .filter(|(_, l)| l.primary.as_deref().is_some_and(|p| p.eq_ignore_ascii_case(m)))
+                .map(|(p, l)| match &l.variety {
+                    Some(v) => format!("{p} ({v})"),
+                    None => p.clone(),
+                })
+                .collect();
+            let suffix = if where_.is_empty() { String::new() } else { format!("  —  {}", where_.join(", ")) };
+            body.push_str(&format!(
+                "<text x='58' y='{ly}' font-family='sans-serif' font-size='13'>• {}{}</text>\n",
+                esc(m),
+                esc(&suffix)
+            ));
+            ly += 22;
+        }
+        y += h + 20;
+    }
+    let total_h = y + 20;
+    format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {w} {total_h}' width='{w}' height='{total_h}'>\n\
+         <rect width='{w}' height='{total_h}' fill='#fdfaf3'/>\n{body}</svg>\n"
+    )
+}
+
+/// LANG-2 P4 — render a form/text in a character's idiolect (their native
+/// variety of their primary language).
+fn idiolect(project: &Path, character: &str, word: Option<&str>, text: Option<&str>) -> Result<()> {
+    use crate::conlang::links::ConlangLinks;
+    use crate::conlang::variety as varengine;
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+    let links = ConlangLinks::load(store.project_root()).map_err(Error::Io)?;
+
+    let link = links
+        .characters
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(character))
+        .map(|(_, v)| v)
+        .ok_or_else(|| Error::Config(format!("no language links recorded for character `{character}`")))?;
+    let lang = link
+        .languages
+        .first()
+        .map(|p| p.language.clone())
+        .ok_or_else(|| Error::Config(format!("`{character}` commands no language")))?;
+    let var_id = link.native_variety.clone().ok_or_else(|| {
+        Error::Config(format!(
+            "`{character}` has no native variety — set one with `link-character … --native-variety <id>`"
+        ))
+    })?;
+
+    let lang_book = find_language_book(&hierarchy, &lang)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let vs = load_varieties(&store, &hierarchy, &lang_book)?;
+    let v = vs.get(&var_id).ok_or_else(|| {
+        Error::Config(format!("language `{lang}` has no variety `{var_id}`"))
+    })?;
+
+    println!("{character} · {lang} ({})", v.id);
+    if let Some(w) = word {
+        println!("  {w}  →  {}", varengine::render_form(&phon, v, w));
+    }
+    if let Some(t) = text {
+        println!("  base       {t}");
+        println!("  idiolect   {}", varengine::render_text(&phon, v, t));
+    }
+    if word.is_none() && text.is_none() {
+        return Err(Error::Config("give --word <form> or --text \"…\"".into()));
+    }
     Ok(())
 }
 

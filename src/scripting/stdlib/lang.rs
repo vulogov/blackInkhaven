@@ -63,6 +63,8 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.lang.lect", w_lect),
         ("ink.lang.borrow", w_borrow),
         ("ink.lang.areal", w_areal),
+        ("ink.lang.idiolect", w_idiolect),
+        ("ink.lang.ecology", w_ecology),
         // ── pure data constructor (uncategorised, allowed) ──
         ("ink.lang.dict", w_dict),
         // ── mutators (store_write) ──
@@ -724,6 +726,98 @@ fn do_areal(vm: &mut VM) -> Result<&mut VM> {
             h.insert("convergence".into(), Value::from_list(conv));
         }
     }
+    push(vm, Value::from_dict(h));
+    Ok(vm)
+}
+
+// ( character word -- rendered )  render a form in a character's idiolect
+fn w_idiolect(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_idiolect(vm).map_err(to_bund_err)
+}
+fn do_idiolect(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::links::ConlangLinks;
+    let tag = "ink.lang.idiolect";
+    require_depth(vm, 2, tag)?;
+    let word = value_to_string(pull(vm, tag)?, "word", tag)?;
+    let character = value_to_string(pull(vm, tag)?, "character", tag)?;
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let links = ConlangLinks::load(store.project_root())
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    let link = links
+        .characters
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(&character))
+        .map(|(_, v)| v)
+        .ok_or_else(|| anyhow!("{tag}: no links for character `{character}`"))?;
+    let lang = link
+        .languages
+        .first()
+        .map(|p| p.language.clone())
+        .ok_or_else(|| anyhow!("{tag}: `{character}` commands no language"))?;
+    let var_id = link
+        .native_variety
+        .clone()
+        .ok_or_else(|| anyhow!("{tag}: `{character}` has no native variety"))?;
+    let book = langapi::find_language_book(&hierarchy, &lang).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let vs = langapi::load_varieties(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let v = vs
+        .get(&var_id)
+        .ok_or_else(|| anyhow!("{tag}: language `{lang}` has no variety `{var_id}`"))?;
+    push(vm, Value::from_string(crate::conlang::variety::render_form(&phon, v, &word)));
+    Ok(vm)
+}
+
+// ( -- {places,characters} )  the speech-community ecology
+fn w_ecology(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_ecology(vm).map_err(to_bund_err)
+}
+fn do_ecology(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::links::ConlangLinks;
+    let tag = "ink.lang.ecology";
+    let store = active_store(tag)?;
+    let links = ConlangLinks::load(store.project_root())
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    let places: Vec<Value> = links
+        .places
+        .iter()
+        .map(|(name, l)| {
+            let mut d: HashMap<String, Value> = HashMap::new();
+            d.insert("place".into(), Value::from_string(name.clone()));
+            d.insert(
+                "language".into(),
+                l.primary.clone().map(Value::from_string).unwrap_or_else(Value::nodata),
+            );
+            d.insert(
+                "variety".into(),
+                l.variety.clone().map(Value::from_string).unwrap_or_else(Value::nodata),
+            );
+            Value::from_dict(d)
+        })
+        .collect();
+    let characters: Vec<Value> = links
+        .characters
+        .iter()
+        .map(|(name, c)| {
+            let mut d: HashMap<String, Value> = HashMap::new();
+            d.insert("character".into(), Value::from_string(name.clone()));
+            d.insert(
+                "languages".into(),
+                Value::from_list(c.languages.iter().map(|p| Value::from_string(p.language.clone())).collect()),
+            );
+            d.insert(
+                "native_variety".into(),
+                c.native_variety.clone().map(Value::from_string).unwrap_or_else(Value::nodata),
+            );
+            Value::from_dict(d)
+        })
+        .collect();
+    let mut h: HashMap<String, Value> = HashMap::new();
+    h.insert("places".into(), Value::from_list(places));
+    h.insert("characters".into(), Value::from_list(characters));
     push(vm, Value::from_dict(h));
     Ok(vm)
 }
