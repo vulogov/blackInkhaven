@@ -21,52 +21,44 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.19 — The ConLang Suite: syntax, interchange & creative text
+## Latest release · 1.3.20 — Complement clauses, and a deeper developer's guide
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.19.md`](Documentation/RELEASE_NOTES/1.3.19.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.20.md`](Documentation/RELEASE_NOTES/1.3.20.md)
 · Reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md)
 
-With RFC LANG-1 complete and morphology deepened, this release makes a
-constructed language **speak** — a real syntax engine — and lets it **travel**:
-interchange with other tools, a coverage gauge, and creative-text generators. No
-new dependencies.
+A focused follow-on to 1.3.19's syntax engine: it adds the last classic syntax
+construction and substantially deepens the beginner's book about the whole
+ConLang Suite. No new dependencies.
 
-### Speaking the language: the syntax engine
+### Complement clauses complete the syntax engine
 
-- **Sentences** — `language sentence` assembles a clause from a subject, verb,
-  and object: it orders by `word_order`, case-marks by `alignment`, inflects each
-  noun, and runs agreement, printing the surface clause, an interlinear gloss, and
-  a literal. The grammar book now prints a worked example from your own lexicon.
-- **Negation & polar questions** — `--negate` / `--question` realize negation and
-  yes/no questions per your `negation` and `question` typology (particle / affix;
-  particle / inversion / morphology), never inventing a word.
-- **Relative clauses** — `language relative` builds "the bird that sees the
-  stone"; the embedded clause case-marks and agrees, pre- or postnominal per
-  `relative_clause`.
-- **Coordination** — `language coordinate` joins nouns (`--np`) or clauses
-  (`--clause`) with a conjunction.
+- **Complement clauses** — `language complement` builds a sentence whose object is
+  a whole clause ("I know *that the bird sees the stone*"). The matrix subject and
+  verb wrap an embedded clause (`--comp-*`) introduced by an optional
+  complementizer; because the complement fills the matrix object slot, word order
+  places it on its own (after the matrix verb in SVO, before it in a verb-final
+  language), and the embedded clause still case-marks its own object.
 
-### Letting the language travel: interchange
+That completes the syntax-depth set: **sentence → negation → questions → relative
+clauses → coordination → complement clauses**.
 
-- **Exporters** — `export --format` gains **xliff** (translation memory for
-  OmegaT / memoQ / Weblate), **linguex** (LaTeX glossed examples), and
-  **ipa-chart**, beside json / anki / csv.
-- **Importers** — `language import` reads **toolbox** (Toolbox / MDF / Lexique
-  Pro Standard Format) and **polyglot** (`.pgd` or `.xml`); it previews until
-  `--yes`.
+### A deeper *Developing a Constructed Language* guide
 
-### Filling gaps, and having fun
-
-- **Semantic-gap finder** — `language gaps` diffs your lexicon against the bundled
-  **Swadesh-100** (in every working language) or your own concept list and reports
-  what's missing, ready for `generate-lexicon`.
-- **Creative text** — `language compose --kind` makes **names**, **prose**
-  (grammatical sentences), and **poem** (metered verse); the themed **blessing** /
-  **curse** / **incantation** are AI-composed but constrained to your lexicon.
+- **A dedicated interchange chapter** (new Part VIII, *Sharing Your Language*) on
+  moving a lexicon in and out of Inkhaven and the formats the community uses —
+  Standard Format (Toolbox / FieldWorks / Lexique Pro), PolyGlot, ConWorkShop, CAT
+  tools and XLIFF, Anki, linguex — each with a term box, examples, and a CSV
+  round-trip workflow.
+- **A whole-book depth pass** — twenty new glossary terms; worked examples added
+  for circumfix / ablaut / reduplication, sonority sequencing, the tone command,
+  and the family tree; stale notes corrected; complement clauses documented
+  throughout.
+- **Typographic fix** — section headings are kept with the content that follows,
+  so a heading is never stranded at the foot of a page.
 
 ### Test stats
 
-Tests 1490 → 1529. **Zero new dependencies.** Backward compatible. Full
+Tests 1529 → 1531. **Zero new dependencies.** Backward compatible. Full
 reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md).
 
 Every prior release lives under
