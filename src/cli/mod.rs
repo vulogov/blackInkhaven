@@ -3105,6 +3105,17 @@ pub enum LanguageCommand {
         r#yes: bool,
     },
 
+    /// 1.3.22 LANG-2 P3 — show **areal** (Sprachbund) convergence.  With a
+    /// language, assesses each declared areal feature against that language's
+    /// own typology — already converged, would shift, or would adopt (an
+    /// advisory overlay, never rewriting the grammar).  With no language, prints
+    /// the regional view: every contact area, its member languages, and the
+    /// shared features.
+    Areal {
+        /// Language to assess (omit for the whole-world regional view).
+        language: Option<String>,
+    },
+
     /// LANG-1 P2.7 — scan the manuscript for candidate **undefined** conlang
     /// words: words that look like the language (segment fully into its
     /// inventory + pass its phonotactics) but aren't in the dictionary.  Only

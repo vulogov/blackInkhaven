@@ -289,6 +289,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             &r#type,
             r#yes,
         ),
+        LanguageCommand::Areal { language } => areal(project, language.as_deref()),
         LanguageCommand::Gloss { language, text } => gloss_text(project, &language, &text),
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
@@ -605,6 +606,34 @@ pub(crate) fn load_varieties(
         }
     }
     Ok(Varieties::default())
+}
+
+/// LANG-2 P3 — load the `{ contact: { … } }` block from the Grammar chapter
+/// (a language's areal / Sprachbund membership). `None` when absent.
+pub(crate) fn load_contact(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<Option<crate::conlang::types::contact::Contact>> {
+    use crate::conlang::types::contact::Contact;
+    let chapters: Vec<_> = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .filter(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Grammar"))
+        .cloned()
+        .collect();
+    for chapter in chapters {
+        for para in hierarchy.children_of(Some(chapter.id)) {
+            if para.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
+            if let Ok(Some(c)) = Contact::from_hjson(&String::from_utf8_lossy(&bytes)) {
+                return Ok(Some(c));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// LANG-2 P2 — load the `{ loan_phonology: { … } }` block from the Phonology
@@ -1596,6 +1625,29 @@ fn family_tree(project: &Path) -> Result<()> {
         pairs.push((l.title.clone(), proto));
     }
     print!("{}", crate::conlang::diachronic::family::render_tree(&pairs));
+
+    // LANG-2 P3 — horizontal contact edges alongside the vertical inheritance.
+    let mut edges: Vec<(String, String, String)> = Vec::new(); // (a, b, region)
+    for l in &langs {
+        if let Some(c) = load_contact(&store, &hierarchy, l)? {
+            for n in &c.with {
+                let (mut a, mut b) = (l.title.clone(), n.clone());
+                if a.to_lowercase() > b.to_lowercase() {
+                    std::mem::swap(&mut a, &mut b);
+                }
+                edges.push((a, b, c.region.clone()));
+            }
+        }
+    }
+    edges.sort();
+    edges.dedup_by(|x, y| x.0.eq_ignore_ascii_case(&y.0) && x.1.eq_ignore_ascii_case(&y.1));
+    if !edges.is_empty() {
+        println!("\ncontact (horizontal):");
+        for (a, b, region) in &edges {
+            let where_ = if region.is_empty() { String::new() } else { format!("  ({region})") };
+            println!("  {a} ⇄ {b}{where_}");
+        }
+    }
     Ok(())
 }
 
@@ -2615,6 +2667,100 @@ fn borrow(
         }
     } else {
         eprintln!("\n(advisory — re-run with --yes --gloss <meaning> to add it)");
+    }
+    Ok(())
+}
+
+/// LANG-2 P3 — areal (Sprachbund) convergence: per-language overlay, or the
+/// whole-world regional view when no language is named.
+fn areal(project: &Path, language: Option<&str>) -> Result<()> {
+    use crate::conlang::contact::{converge, ArealStatus};
+    let mark = |s: ArealStatus| match s {
+        ArealStatus::Converged => "✓",
+        ArealStatus::Shift => "→",
+        ArealStatus::Adopt => "+",
+    };
+
+    match language {
+        // ── per-language convergence overlay ──────────────────────────────
+        Some(lang) => {
+            let (store, hierarchy, lang_book) = open_lang_book(project, lang)?;
+            let Some(contact) = load_contact(&store, &hierarchy, &lang_book)? else {
+                println!(
+                    "{lang} declares no `contact` block — add `{{ contact: {{ region, with, \
+                     areal_features }} }}` to its Grammar chapter."
+                );
+                return Ok(());
+            };
+            let (spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+            println!("{lang} · contact: {}", if contact.region.is_empty() { "(unnamed area)" } else { &contact.region });
+            if !contact.with.is_empty() {
+                println!("  in contact with: {}", contact.with.join(", "));
+            }
+            if contact.areal_features.is_empty() {
+                return Ok(());
+            }
+            println!("  areal features (advisory overlay — grammar is unchanged):");
+            for c in converge(&spec.grammar, &contact.areal_features) {
+                let detail = match c.status {
+                    ArealStatus::Converged => format!("already {}", c.areal_value),
+                    ArealStatus::Shift => format!(
+                        "would shift {} → {}",
+                        c.current.as_deref().unwrap_or("?"),
+                        c.areal_value
+                    ),
+                    ArealStatus::Adopt => format!("would adopt {} (currently unset)", c.areal_value),
+                };
+                println!("    {} {:<16} {detail}", mark(c.status), c.feature);
+            }
+        }
+        // ── regional Sprachbund view across every language ────────────────
+        None => {
+            let layout = ProjectLayout::new(project);
+            layout.require_initialized()?;
+            let cfg = Config::load_layered(&layout.config_path())?;
+            let store = Store::open(layout, &cfg)?;
+            let hierarchy = Hierarchy::load(&store)?;
+            // region → (members, merged areal_features)
+            let mut regions: std::collections::BTreeMap<
+                String,
+                (Vec<crate::store::node::Node>, std::collections::BTreeMap<String, String>),
+            > = std::collections::BTreeMap::new();
+            for book in all_language_books(&hierarchy) {
+                if let Some(c) = load_contact(&store, &hierarchy, &book)? {
+                    let key = if c.region.is_empty() { "(unnamed area)".to_string() } else { c.region.clone() };
+                    let entry = regions.entry(key).or_default();
+                    entry.0.push(book);
+                    for (f, v) in c.areal_features {
+                        entry.1.entry(f).or_insert(v);
+                    }
+                }
+            }
+            if regions.is_empty() {
+                println!("no contact areas declared — add a `contact` block to a language's Grammar.");
+                return Ok(());
+            }
+            for (region, (members, features)) in &regions {
+                let names: Vec<&str> = members.iter().map(|m| m.title.as_str()).collect();
+                println!("{region} — {}", names.join(", "));
+                if features.is_empty() {
+                    continue;
+                }
+                for (f, av) in features {
+                    let cells: Vec<String> = members
+                        .iter()
+                        .map(|m| {
+                            let (spec, _) = load_grammar_spec(&store, &hierarchy, m).unwrap_or_default();
+                            let mut one = std::collections::BTreeMap::new();
+                            one.insert(f.clone(), av.clone());
+                            let status = converge(&spec.grammar, &one)[0].status;
+                            format!("{} {}", m.title, mark(status))
+                        })
+                        .collect();
+                    println!("  {f} = {av:<18}  {}", cells.join("  "));
+                }
+            }
+        }
     }
     Ok(())
 }
