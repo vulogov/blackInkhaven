@@ -61,6 +61,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.lang.poem", w_poem),
         ("ink.lang.varieties", w_varieties),
         ("ink.lang.lect", w_lect),
+        ("ink.lang.borrow", w_borrow),
         // ── pure data constructor (uncategorised, allowed) ──
         ("ink.lang.dict", w_dict),
         // ── mutators (store_write) ──
@@ -648,6 +649,33 @@ fn do_lect(vm: &mut VM) -> Result<&mut VM> {
         .get(&variety)
         .ok_or_else(|| anyhow!("{tag}: language `{name}` has no variety `{variety}`"))?;
     push(vm, Value::from_string(crate::conlang::variety::render_form(&phon, v, &word)));
+    Ok(vm)
+}
+
+// ( recipient donor-form -- {donor,adapted,steps} )  nativise a loanword (advisory)
+fn w_borrow(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_borrow(vm).map_err(to_bund_err)
+}
+fn do_borrow(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.borrow";
+    require_depth(vm, 2, tag)?;
+    let donor = value_to_string(pull(vm, tag)?, "donor-form", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .ok_or_else(|| anyhow!("{tag}: language `{name}` has no phoneme block"))?;
+    let loan =
+        langapi::load_loan_phonology(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let a = crate::conlang::contact::adapt(&phon, &loan, &donor);
+    let mut h: HashMap<String, Value> = HashMap::new();
+    h.insert("donor".into(), Value::from_string(a.donor));
+    h.insert("adapted".into(), Value::from_string(a.adapted));
+    h.insert(
+        "steps".into(),
+        Value::from_list(a.steps.into_iter().map(Value::from_string).collect()),
+    );
+    push(vm, Value::from_dict(h));
     Ok(vm)
 }
 

@@ -273,6 +273,22 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             text,
         } => lect(project, &language, &variety, word.as_deref(), text.as_deref()),
         LanguageCommand::Dialects { language, count } => dialects(project, &language, count),
+        LanguageCommand::Borrow {
+            language,
+            form,
+            from,
+            gloss,
+            r#type,
+            r#yes,
+        } => borrow(
+            project,
+            &language,
+            &form,
+            from.as_deref(),
+            gloss.as_deref(),
+            &r#type,
+            r#yes,
+        ),
         LanguageCommand::Gloss { language, text } => gloss_text(project, &language, &text),
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
@@ -589,6 +605,34 @@ pub(crate) fn load_varieties(
         }
     }
     Ok(Varieties::default())
+}
+
+/// LANG-2 P2 — load the `{ loan_phonology: { … } }` block from the Phonology
+/// chapter (how this language nativises borrowings). Defaults when absent.
+pub(crate) fn load_loan_phonology(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<crate::conlang::types::contact::LoanPhonology> {
+    use crate::conlang::types::contact::LoanPhonology;
+    let chapters: Vec<_> = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .filter(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Phonology"))
+        .cloned()
+        .collect();
+    for chapter in chapters {
+        for para in hierarchy.children_of(Some(chapter.id)) {
+            if para.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
+            if let Ok(Some(lp)) = LoanPhonology::from_hjson(&String::from_utf8_lossy(&bytes)) {
+                return Ok(lp);
+            }
+        }
+    }
+    Ok(LoanPhonology::default())
 }
 
 /// Load the `{ diachronics: { proto, rules } }` block from the Phonology
@@ -2517,6 +2561,60 @@ fn dialects(project: &Path, language: &str, count: usize) -> Result<()> {
     println!("  {}", fmt_row(&header));
     for r in &rows {
         println!("  {}", fmt_row(r));
+    }
+    Ok(())
+}
+
+/// LANG-2 P2 — borrow (nativise) a donor form into a recipient language.
+fn borrow(
+    project: &Path,
+    language: &str,
+    form: &str,
+    from: Option<&str>,
+    gloss: Option<&str>,
+    pos: &str,
+    commit: bool,
+) -> Result<()> {
+    use crate::conlang::contact;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no phoneme block to borrow into"))
+    })?;
+    let loan = load_loan_phonology(&store, &hierarchy, &lang_book)?;
+    let a = contact::adapt(&phon, &loan, form);
+
+    let donor_lang = from.map(|f| format!(" from {f}")).unwrap_or_default();
+    println!("{language} borrows{donor_lang}: {form}  →  {}", a.adapted);
+    if a.steps.is_empty() {
+        println!("  (already legal — no repair needed)");
+    } else {
+        for s in &a.steps {
+            println!("  · {s}");
+        }
+    }
+
+    if commit {
+        let g = gloss.ok_or_else(|| {
+            Error::Config("--yes needs --gloss (the loanword's meaning)".into())
+        })?;
+        let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+        let etymology = match from {
+            Some(f) => format!("borrowed from {f} ({form})"),
+            None => format!("borrowed ({form})"),
+        };
+        let entry = ImportEntry {
+            word: a.adapted.clone(),
+            pos: pos.to_string(),
+            translation: g.to_string(),
+            etymology,
+            ..Default::default()
+        };
+        match add_imported_dictionary_entry(&store, &cfg, &lang_book, &entry) {
+            Ok(_) => eprintln!("\nadded `{}` ({g}) to {language}'s Dictionary", a.adapted),
+            Err(e) => eprintln!("\nnot added: {e}"),
+        }
+    } else {
+        eprintln!("\n(advisory — re-run with --yes --gloss <meaning> to add it)");
     }
     Ok(())
 }

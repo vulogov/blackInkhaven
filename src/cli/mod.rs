@@ -3079,6 +3079,32 @@ pub enum LanguageCommand {
         count: usize,
     },
 
+    /// 1.3.22 LANG-2 P2 — **borrow** a word into a language: nativise a donor
+    /// form to the recipient's inventory + phonotactics (perceive → repair via
+    /// the `loan_phonology` block).  Shows the adaptation trace.  With `--yes`,
+    /// adds the adapted word to the recipient's Dictionary, recording the donor
+    /// in the etymology.  The donor form is given *phonemically* (one symbol per
+    /// sound).
+    Borrow {
+        /// Recipient language (the borrower).
+        language: String,
+        /// The donor form to adapt (phonemic).
+        #[arg(long)]
+        form: String,
+        /// The donor language name, recorded in the etymology.
+        #[arg(long)]
+        from: Option<String>,
+        /// Working-language gloss for the loanword (needed with `--yes`).
+        #[arg(long)]
+        gloss: Option<String>,
+        /// Part of speech for the added entry (default `noun`).
+        #[arg(long, default_value = "noun")]
+        r#type: String,
+        /// Add the adapted word to the recipient's Dictionary.
+        #[arg(long)]
+        r#yes: bool,
+    },
+
     /// LANG-1 P2.7 — scan the manuscript for candidate **undefined** conlang
     /// words: words that look like the language (segment fully into its
     /// inventory + pass its phonotactics) but aren't in the dictionary.  Only
