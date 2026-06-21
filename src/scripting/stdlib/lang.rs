@@ -59,6 +59,8 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.lang.names", w_names),
         ("ink.lang.prose", w_prose),
         ("ink.lang.poem", w_poem),
+        ("ink.lang.varieties", w_varieties),
+        ("ink.lang.lect", w_lect),
         // ── pure data constructor (uncategorised, allowed) ──
         ("ink.lang.dict", w_dict),
         // ── mutators (store_write) ──
@@ -591,6 +593,61 @@ fn do_transliterate(vm: &mut VM) -> Result<&mut VM> {
         .ok_or_else(|| anyhow!("{tag}: language `{name}` has no font config to transliterate with"))?;
     let out = crate::conlang::writing::input::to_script(&font, &text);
     push(vm, Value::from_string(out.script));
+    Ok(vm)
+}
+
+// ── variety inspectors (LANG-2 P1) ───────────────────────────────────────
+
+// ( lang -- list-of-variety-dicts )
+fn w_varieties(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_varieties(vm).map_err(to_bund_err)
+}
+fn do_varieties(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.varieties";
+    require_depth(vm, 1, tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let vs = langapi::load_varieties(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let out: Vec<Value> = vs
+        .varieties
+        .iter()
+        .map(|v| {
+            let mut h: HashMap<String, Value> = HashMap::new();
+            h.insert("id".into(), Value::from_string(v.id.clone()));
+            h.insert("kind".into(), Value::from_string(v.kind.clone()));
+            h.insert("axis".into(), Value::from_string(v.axis.clone()));
+            h.insert(
+                "prestige".into(),
+                v.prestige.clone().map(Value::from_string).unwrap_or_else(Value::nodata),
+            );
+            h.insert("sound_changes".into(), Value::from_int(v.sound_changes.len() as i64));
+            h.insert("overrides".into(), Value::from_int(v.lexicon.len() as i64));
+            Value::from_dict(h)
+        })
+        .collect();
+    push(vm, Value::from_list(out));
+    Ok(vm)
+}
+
+// ( lang variety word -- rendered )  render a base form in a variety
+fn w_lect(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_lect(vm).map_err(to_bund_err)
+}
+fn do_lect(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.lect";
+    require_depth(vm, 3, tag)?;
+    let word = value_to_string(pull(vm, tag)?, "word", tag)?;
+    let variety = value_to_string(pull(vm, tag)?, "variety", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let vs = langapi::load_varieties(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let v = vs
+        .get(&variety)
+        .ok_or_else(|| anyhow!("{tag}: language `{name}` has no variety `{variety}`"))?;
+    push(vm, Value::from_string(crate::conlang::variety::render_form(&phon, v, &word)));
     Ok(vm)
 }
 

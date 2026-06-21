@@ -290,6 +290,39 @@ defined on proto sounds).
 - `inkhaven language realism-check Eldar` — AI assessment of whether the
   language's sound-change chain is typologically plausible.
 
+## Varieties — dialects, registers, sociolects (LANG-2 P1)
+
+A language is not uniform. A **variety** is a *delta* on the base language —
+declared in a `varieties` block in the **Grammar** chapter:
+
+```hjson
+{ varieties: [
+  { id: "lowland", kind: "dialect", axis: "region", prestige: "low",
+    sound_changes: [ { rule: "t > d / V _ V" } ],   // SPE, as in diachronics
+    lexicon: { "water": "móru" } }                  // suppletive overrides
+  { id: "high", kind: "register", axis: "formality", prestige: "high",
+    sound_changes: [ { rule: "k > q / # _" } ] }
+] }
+```
+
+The key idea: **a dialect's sound differences are an ordered set of sound changes
+— the same `AllophonyRule` engine as diachronics — applied _synchronously_** (a
+living variety) instead of _diachronically_ (a daughter language). A variety may
+also override individual words (suppletive forms the sound changes don't derive).
+
+```
+inkhaven language varieties Eldar                      # list them
+inkhaven language lect Eldar lowland --word kata        # → kada (t > d / V_V)
+inkhaven language lect Eldar lowland --text "kata tira" # word by word
+inkhaven language dialects Eldar [--count N]            # comparison table
+```
+
+`varieties` lists each variety with its axis/prestige and delta sizes; `lect`
+renders a form or text *in* a variety; `dialects` prints the classic
+dialectology comparison — each headword across the base and every variety (a
+trailing `*` marks a word override). All are scriptable from Bund
+(`lang.varieties`, `lang.lect`).
+
 ## Idioms + metaphors
 
 ```

@@ -18,6 +18,7 @@ pub mod spatial;
 pub mod stress;
 pub mod template;
 pub mod tone;
+pub mod variety;
 
 pub use allophony::{AllophonyRule, PatternAtom};
 pub use constraint::PhonotacticConstraint;

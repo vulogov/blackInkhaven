@@ -3043,6 +3043,42 @@ pub enum LanguageCommand {
         gloss: Option<String>,
     },
 
+    /// 1.3.22 LANG-2 P1 — list the **varieties** (dialects / registers /
+    /// sociolects) declared for a language, with their axis, prestige, and the
+    /// size of their sound-change + word-override deltas.
+    Varieties {
+        /// Target language name (case-insensitive).
+        language: String,
+    },
+
+    /// 1.3.22 LANG-2 P1 — render a form *in a variety* (`lect`).  Applies the
+    /// variety's sound changes (the same engine diachronics uses,
+    /// synchronically) to a `--word` or a `--text` run, showing the base →
+    /// variety diff.  A variety is a *dialect*, *register*, or *sociolect*.
+    Lect {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The variety id (e.g. `lowland`, `formal`).
+        variety: String,
+        /// A single base form to render in the variety.
+        #[arg(long)]
+        word: Option<String>,
+        /// A run of whitespace-separated base forms, rendered word by word.
+        #[arg(long)]
+        text: Option<String>,
+    },
+
+    /// 1.3.22 LANG-2 P1 — a **dialect-comparison** table: the first `--count`
+    /// dictionary headwords rendered across the base form and every declared
+    /// variety (the classic dialectology display).
+    Dialects {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// How many headwords to compare.
+        #[arg(long, default_value_t = 12)]
+        count: usize,
+    },
+
     /// LANG-1 P2.7 — scan the manuscript for candidate **undefined** conlang
     /// words: words that look like the language (segment fully into its
     /// inventory + pass its phonotactics) but aren't in the dictionary.  Only
