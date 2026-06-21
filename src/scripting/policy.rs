@@ -302,6 +302,8 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.lang.lect", category::STORE_READ),
     ("ink.lang.borrow", category::STORE_READ),
     ("ink.lang.areal", category::STORE_READ),
+    ("ink.lang.idiolect", category::STORE_READ),
+    ("ink.lang.ecology", category::STORE_READ),
     // ink.lang.dict is a pure data constructor — uncategorised (allowed).
     ("ink.lang.init", category::STORE_WRITE),
     ("ink.lang.define", category::STORE_WRITE),

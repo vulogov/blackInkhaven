@@ -545,10 +545,30 @@ that export CSV, such as ConWorkShop, can come in through `add-word --import`.)
 Stored in `.inkhaven/conlang-links.json` (the prose books are never modified):
 
 ```
-inkhaven language link-place Tirion Quenya [--secondary]
-inkhaven language link-character Erendil Quenya native   # native|fluent|conversational|broken|reading_only
+inkhaven language link-place Tirion Quenya [--secondary] [--variety lowland]
+inkhaven language link-character Erendil Quenya native [--native-variety court]
 inkhaven language speakers Quenya
 ```
+
+### Speech communities & ecology (LANG-2 P4)
+
+The links carry **varieties** too: a Place speaks a particular dialect/register
+of its language (`--variety`), and a Character has a **native variety** — the
+base of their idiolect (`--native-variety`).
+
+```
+inkhaven language ecology                 # who speaks what (and which variety) where
+inkhaven language ecology --svg atlas.svg  # a node-link atlas of the contact areas
+inkhaven language idiolect Tost --text "kata tira"   # render in a character's dialect
+```
+
+`ecology` reports the whole speech-community picture — places with their language
++ variety, characters with their commanded languages + native variety, and the
+contact areas (P3); `--svg` writes a labelled atlas. `idiolect <character>`
+renders a form or text in that character's native variety (their primary language
++ native variety, run through the P1 variety engine) — so a marsh-dweller's
+speech comes out in the lowland dialect. Scriptable from Bund as `lang.ecology`
+and `lang.idiolect`.
 
 ## Writing systems + fonts
 
