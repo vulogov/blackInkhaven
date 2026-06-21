@@ -57,6 +57,19 @@ language <action> <language> [options]`. Add `--help` to any for full details.
 / `reconstruct --forms "…" [--gloss G]`: (AI) Propose a proto-form from cognates.
 / `realism-check <lang>`: (AI) Assess whether the sound-change chain is plausible.
 
+#section("Sociolinguistics and contact")
+
+/ `varieties <lang>`: List the language's dialects, registers, and sociolects with their deltas.
+/ `lect <lang> <variety> --word W | --text "…"`: Render a form or text in a chosen variety.
+/ `dialects <lang> [--count N]`: Print the dialectology comparison table (a `*` marks a word override).
+/ `borrow <recipient> --form W --from L [--gloss G] [--yes]`: Adapt a donor word to the recipient's sounds (add it with `--yes`).
+/ `areal [lang]`: Show one language's convergence overlay, or (no language) the whole-region Sprachbund view.
+/ `propose-dialect <lang> --describe "…" [--id N] [--provider P] [--yes]`: (AI) Suggest a coherent dialect; rules are validated and previewed.
+/ `propose-loans <recipient> --from L --topic T --count N [--provider P]`: (AI) Propose borrowings, each nativised by the adapter.
+/ `areal-check <lang>`: (AI) Judge whether a declared Sprachbund is typologically plausible.
+/ `ecology [--svg F]`: Report who speaks what variety where (or write a node-link atlas).
+/ `idiolect <character> --word W | --text "…"`: Render a form or text in a character's native variety.
+
 #section("Writing systems")
 
 / `glyph-lint --svg F`: Check whether an SVG is suitable as a font glyph.
@@ -77,6 +90,6 @@ language <action> <language> [options]`. Add `--help` to any for full details.
 
 #section("Worldbuilding links")
 
-/ `link-place <place> <lang> [--secondary]`: Link a place to a language spoken there.
-/ `link-character <char> <lang> <level>`: Record a character's fluency in a language.
+/ `link-place <place> <lang> [--secondary] [--variety V]`: Link a place to a language (and the variety) spoken there.
+/ `link-character <char> <lang> <level> [--native-variety V]`: Record a character's fluency, and their native variety.
 / `speakers <lang>`: List who speaks a language.

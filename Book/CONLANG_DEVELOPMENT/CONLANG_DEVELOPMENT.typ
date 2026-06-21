@@ -38,19 +38,24 @@
   include "chapters/15-sound-change.typ",
   include "chapters/16-language-families.typ",
 
-  part(number: "VI", title: "A Writing System"),
-  include "chapters/17-designing-glyphs.typ",
-  include "chapters/18-building-the-font.typ",
-  include "chapters/19-complex-scripts.typ",
+  part(number: "VI", title: "A Language in a World"),
+  include "chapters/17-dialects-and-registers.typ",
+  include "chapters/18-languages-in-contact.typ",
+  include "chapters/19-speech-communities.typ",
 
-  part(number: "VII", title: "Producing the Books"),
-  include "chapters/20-the-books.typ",
+  part(number: "VII", title: "A Writing System"),
+  include "chapters/20-designing-glyphs.typ",
+  include "chapters/21-building-the-font.typ",
+  include "chapters/22-complex-scripts.typ",
 
-  part(number: "VIII", title: "Sharing Your Language"),
-  include "chapters/21-interchange.typ",
+  part(number: "VIII", title: "Producing the Books"),
+  include "chapters/23-the-books.typ",
 
-  part(number: "IX", title: "A Complete Walkthrough"),
-  include "chapters/22-walkthrough.typ",
+  part(number: "IX", title: "Sharing Your Language"),
+  include "chapters/24-interchange.typ",
+
+  part(number: "X", title: "A Complete Walkthrough"),
+  include "chapters/25-walkthrough.typ",
 
   include "chapters/a-command-reference.typ",
   include "chapters/b-hjson-reference.typ",

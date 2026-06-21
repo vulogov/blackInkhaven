@@ -81,7 +81,7 @@ inkhaven language grammar Eldar --set case=yes
 ```
 
 Each answer is stored in the *Grammar* chapter. They are not just notes:
-Inkhaven's grammar book and study guide (Part VII) read these answers and explain
+Inkhaven's grammar book and study guide (Part VIII) read these answers and explain
 them, and the AI translator uses them to put words in the right order.
 
 #callout(label: "Let your choices reinforce each other")[

@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 19, title: "Complex scripts and typing")
+#chapter(number: 22, title: "Complex scripts and typing")
 
 Not every writing system is a simple row of letters. Korean stacks letters into
 square syllable blocks; Egyptian hieroglyphs pack signs into rectangular groups.

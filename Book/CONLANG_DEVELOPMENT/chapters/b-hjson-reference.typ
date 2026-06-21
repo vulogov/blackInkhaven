@@ -58,6 +58,17 @@ font: {
 }
 ```
 
+The `loan_phonology` block — how the language nativises borrowings (Chapter 18) —
+also lives in the Phonology chapter:
+
+```hjson
+{ loan_phonology: {
+  repair: "epenthesis"                    // epenthesis (insert a vowel) | deletion
+  epenthetic_vowel: "u"                   // empty → the first declared vowel
+  substitutions: { "θ": "t", "r": "l" }   // a donor sound we lack → nearest native
+} }
+```
+
 #section("Grammar chapter")
 
 The morphology block — affixes, processes, paradigms, derivations, agreement:
@@ -95,6 +106,31 @@ The morphology block — affixes, processes, paradigms, derivations, agreement:
 
 The typology answers (written for you by `grammar --set`) and idioms / metaphors
 (written by `idiom-add` / `metaphor-add`) are also stored in this chapter.
+
+The `varieties` block — the language's dialects and registers (Chapter 17) —
+lives here too. Each variety is a *delta*: an ordered list of `sound_changes` (SPE
+notation, applied synchronously) plus optional suppletive `lexicon` overrides:
+
+```hjson
+{ varieties: [
+  { id: "lowland", kind: "dialect", axis: "region", prestige: "low",
+    sound_changes: [ { rule: "t > d / V _ V" } ]
+    lexicon: { "water": "móru" } }              // a suppletive override
+  { id: "high", kind: "register", axis: "formality", prestige: "high",
+    sound_changes: [ { rule: "k > q / # _" } ] }
+] }                                              // kind: dialect | register | sociolect | idiolect
+```
+
+The `contact` block — the language's membership in a linguistic area / Sprachbund
+(Chapter 18):
+
+```hjson
+{ contact: {
+  region: "the Inner Sea"
+  with: [ "Sindar", "Khuz" ]                                  // neighbours
+  areal_features: { word_order: "sov", alignment: "ergative_absolutive" }
+} }
+```
 
 #section("Dictionary chapter")
 
