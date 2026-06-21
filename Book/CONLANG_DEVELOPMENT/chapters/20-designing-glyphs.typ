@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 17, title: "Designing glyphs")
+#chapter(number: 20, title: "Designing glyphs")
 
 So far your language has been written in ordinary letters. Now you can give it its
 own *script* — an alphabet of shapes you design, compiled into a real, usable
