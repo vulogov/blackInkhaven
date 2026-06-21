@@ -628,6 +628,24 @@ lang.add_word    ( lang word pos translation -- )   lang.metaphor_add ( lang sou
 lang.remove_word ( lang word -- )               lang.derive_add  ( lang root gloss pos -- count )
 ```
 
+**AI-backed words** (the `ai_write` category — default-denied; enable
+`"ai_write"`). They call the LLM and are **advisory** — they *return* data and
+never write the book, so a script commits anything it likes via `add_word`. A
+trailing `provider` string picks a non-default provider (empty = the configured
+default):
+
+```
+lang.compose          ( lang kind provider -- text )           kind = blessing|curse|incantation
+lang.reconstruct      ( forms gloss provider -- text )         a proto-form from cognate forms
+lang.realism_check    ( lang provider -- text )                plausibility of the sound-change chain
+lang.generate_lexicon ( lang topic count provider -- words )   themed words (forms obey phonotactics,
+                                                                 AI assigns meaning, dedup-gated)
+```
+
+`lang.generate_lexicon` returns survivor `{ word, gloss, pos }` dicts; loop them
+through `lang.add_word` to keep the ones you want — forms still come from the
+deterministic generator, the AI only assigns meaning.
+
 **Building artefacts natively.** `lang.dict` turns a flat Bund list
 `[ key val key val … ]` into a real dict (Bund's `{ … }` is a lambda, not a
 dict). It is aliased to self-documenting names — `word`, `rule`, `phoneme`,

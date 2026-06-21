@@ -70,6 +70,11 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.lang.grammar_set", w_grammar_set),
         ("ink.lang.idiom_add", w_idiom_add),
         ("ink.lang.metaphor_add", w_metaphor_add),
+        // ── AI-backed (ai_write; advisory) ──
+        ("ink.lang.compose", w_compose),
+        ("ink.lang.reconstruct", w_reconstruct),
+        ("ink.lang.realism_check", w_realism_check),
+        ("ink.lang.generate_lexicon", w_generate_lexicon),
     ];
     for (name, f) in words {
         vm.register_inline(name.to_string(), *f)
@@ -1268,6 +1273,158 @@ fn do_metaphor_add(vm: &mut VM) -> Result<&mut VM> {
     let (store, hierarchy, book) = ctx(tag, &name)?;
     let _ = hierarchy;
     langapi::add_metaphor(store, cfg, &book, &source, &target).map_err(|e| anyhow!("{tag}: {e}"))?;
+    Ok(vm)
+}
+
+// ── AI-backed words (ai_write; advisory — return data, never write the book) ─
+//
+// Each calls the configured LLM (an optional trailing `provider` string picks a
+// non-default provider; empty = the configured default) and returns the model's
+// output as data. Nothing is committed: a script that wants to keep generated
+// words calls `lang.add_word` itself, so the AI stays advisory (the same
+// principle as the CLI's `--yes` gate).
+
+/// Run one blocking chat completion against the configured provider.
+fn ai_call(
+    tag: &str,
+    cfg: &crate::config::Config,
+    provider: &str,
+    system: String,
+    user: String,
+) -> Result<String> {
+    let ai = crate::ai::AiClient::from_config(&cfg.llm).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let prov = if provider.trim().is_empty() { None } else { Some(provider) };
+    let (model, _env) = ai
+        .resolve_provider(&cfg.llm, prov)
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    crate::ai::stream::collect_blocking(ai.client.clone(), model.to_string(), Some(system), user)
+        .map_err(|e| anyhow!("{tag}: inference error: {e}"))
+}
+
+// ( lang kind provider -- text )  themed text: blessing | curse | incantation
+fn w_compose(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_compose(vm).map_err(to_bund_err)
+}
+fn do_compose(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.compose";
+    require_depth(vm, 3, tag)?;
+    let provider = value_to_string(pull(vm, tag)?, "provider", tag)?;
+    let kind = value_to_string(pull(vm, tag)?, "kind", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let cfg = active_config(tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let (gs, _) =
+        langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let entries =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    if entries.is_empty() {
+        return Err(anyhow!("{tag}: lexicon is empty — add words before composing themed text"));
+    }
+    let summary = langapi::summarize_typology(&gs.grammar);
+    let (system, user) =
+        crate::conlang::creative::themed_prompt(&book.title, &kind, &cfg.language, &summary, &entries);
+    let raw = ai_call(tag, cfg, &provider, system, user)?;
+    push(vm, Value::from_string(raw.trim().to_string()));
+    Ok(vm)
+}
+
+// ( forms gloss provider -- text )  reconstruct a proto-form from cognate forms
+fn w_reconstruct(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_reconstruct(vm).map_err(to_bund_err)
+}
+fn do_reconstruct(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.reconstruct";
+    require_depth(vm, 3, tag)?;
+    let provider = value_to_string(pull(vm, tag)?, "provider", tag)?;
+    let gloss = value_to_string(pull(vm, tag)?, "gloss", tag)?;
+    let forms = value_to_string(pull(vm, tag)?, "forms", tag)?;
+    let cfg = active_config(tag)?;
+    let gloss_clause = if gloss.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" meaning '{}'", gloss.trim())
+    };
+    let user = format!("Cognate daughter forms{gloss_clause}: {forms}.\n\nReconstruct the proto-form.");
+    let raw = ai_call(tag, cfg, &provider, langapi::RECONSTRUCT_SYSTEM.to_string(), user)?;
+    push(vm, Value::from_string(raw.trim().to_string()));
+    Ok(vm)
+}
+
+// ( lang provider -- text )  assess the plausibility of the sound-change chain
+fn w_realism_check(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_realism_check(vm).map_err(to_bund_err)
+}
+fn do_realism_check(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.realism_check";
+    require_depth(vm, 2, tag)?;
+    let provider = value_to_string(pull(vm, tag)?, "provider", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let cfg = active_config(tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let dia = langapi::load_diachronics(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .ok_or_else(|| anyhow!("{tag}: language `{name}` has no diachronics chain to check"))?;
+    let rules_text = dia
+        .rules
+        .iter()
+        .enumerate()
+        .map(|(i, r)| format!("{}. {}", i + 1, r.source))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let proto = dia.proto.as_deref().unwrap_or("the proto-language");
+    let user = format!(
+        "Sound-change chain deriving {name} from {proto} (applied in order):\n{rules_text}\n\n\
+         Assess the plausibility, rule by rule, then give an overall verdict."
+    );
+    let raw = ai_call(tag, cfg, &provider, langapi::REALISM_SYSTEM.to_string(), user)?;
+    push(vm, Value::from_string(raw.trim().to_string()));
+    Ok(vm)
+}
+
+// ( lang topic count provider -- list-of-{word,gloss,pos} )
+// Generates themed words: forms come from the deterministic generator (so they
+// obey the phonotactics), the AI assigns meaning, and the dedup gate drops
+// homophones / duplicate senses. Returns the survivors — advisory, uncommitted.
+fn w_generate_lexicon(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_generate_lexicon(vm).map_err(to_bund_err)
+}
+fn do_generate_lexicon(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.generate_lexicon";
+    require_depth(vm, 4, tag)?;
+    let provider = value_to_string(pull(vm, tag)?, "provider", tag)?;
+    let count = value_to_i64(pull(vm, tag)?, "count", tag)?.max(1) as usize;
+    let topic = value_to_string(pull(vm, tag)?, "topic", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let cfg = active_config(tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .ok_or_else(|| anyhow!("{tag}: language `{name}` has no phonology block"))?;
+    let existing =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let pool = crate::conlang::generate::lexicon::build_pool(&phon, &existing, count);
+    if pool.is_empty() {
+        return Err(anyhow!("{tag}: could not generate candidate forms — loosen the phonotactics"));
+    }
+    let work_lang = if cfg.language.trim().is_empty() { "english" } else { cfg.language.trim() };
+    let topic_opt = if topic.trim().is_empty() { None } else { Some(topic.as_str()) };
+    let user = langapi::build_lexgen_prompt(&book.title, topic_opt, count, None, None, work_lang, &pool);
+    let raw = ai_call(tag, cfg, &provider, langapi::LEXGEN_SYSTEM.to_string(), user)?;
+    let proposals = crate::conlang::generate::lexicon::parse_proposals(&raw)
+        .map_err(|e| anyhow!("{tag}: could not parse model reply: {e}"))?;
+    let (kept, _rejected) =
+        crate::conlang::generate::lexicon::dedup(&phon, &existing, proposals);
+    let out: Vec<Value> = kept
+        .iter()
+        .map(|p| {
+            let mut h: HashMap<String, Value> = HashMap::new();
+            h.insert("word".into(), Value::from_string(p.form.clone()));
+            h.insert("gloss".into(), Value::from_string(p.gloss.clone()));
+            h.insert("pos".into(), Value::from_string(p.pos.clone()));
+            Value::from_dict(h)
+        })
+        .collect();
+    push(vm, Value::from_list(out));
     Ok(vm)
 }
 
