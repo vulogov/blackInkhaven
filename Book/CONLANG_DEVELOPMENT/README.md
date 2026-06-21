@@ -11,7 +11,7 @@ who knew neither linguistics nor Inkhaven can build their own language.
 ## Reading it
 
 The compiled book is [`CONLANG_DEVELOPMENT.pdf`](CONLANG_DEVELOPMENT.pdf)
-(~156 pages, B5). To rebuild it from source you need [Typst](https://typst.app):
+(~168 pages, B5). To rebuild it from source you need [Typst](https://typst.app):
 
 ```sh
 typst compile CONLANG_DEVELOPMENT.typ CONLANG_DEVELOPMENT.pdf
@@ -26,7 +26,7 @@ It uses only fonts Typst bundles, so it compiles warning-free with no font setup
 - **Design system:** [`design.typ`](design.typ) — page chrome, the cover (using
   the project logo), and the helper boxes (term definitions, callouts, recaps).
 - **Chapters:** [`chapters/`](chapters/) — one file per chapter, grouped into
-  ten parts plus three appendices.
+  eleven parts plus four appendices.
 
 ## What it covers
 
@@ -41,9 +41,11 @@ It uses only fonts Typst bundles, so it compiles warning-free with no font setup
 8. **The books** — producing the dictionary, grammar, and tutorial.
 9. **Sharing your language** — interchange with other linguistics tools.
 10. **A complete walkthrough** — building one language end to end.
+11. **Scripting your language** — a gentle introduction to building a conlang
+    programmatically with the Bund language.
 
-Appendices: a full command reference, a configuration-block reference, and a
-glossary of every linguistic term used.
+Appendices: a full command reference, a configuration-block reference, a Bund
+API reference, and a glossary of every linguistic term used.
 
 The book documents the ConLang Suite (RFC LANG-1); the canonical command
 reference is [`Documentation/CONLANG.md`](../../Documentation/CONLANG.md).

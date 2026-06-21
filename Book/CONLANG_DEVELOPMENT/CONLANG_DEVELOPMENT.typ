@@ -57,7 +57,11 @@
   part(number: "X", title: "A Complete Walkthrough"),
   include "chapters/25-walkthrough.typ",
 
+  part(number: "XI", title: "Scripting Your Language"),
+  include "chapters/26-scripting-with-bund.typ",
+
   include "chapters/a-command-reference.typ",
   include "chapters/b-hjson-reference.typ",
-  include "chapters/c-glossary.typ",
+  include "chapters/c-bund-api.typ",
+  include "chapters/d-glossary.typ",
 ))
