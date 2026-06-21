@@ -464,9 +464,13 @@ inkhaven language grammar-book Avesha --format md|typ [--out g.typ] [--font Elda
 The companion volume: a **reference grammar**, drawing every section from the
 language's own data — phonology (consonant/vowel inventory, syllable structure,
 phonotactics, allophony, stress, tone), morphology (affixes, derivation), the
-typology answers (with their consequences), idioms & metaphors, and the sample
-texts. Markdown is a flat reference; **Typst** is the same manual-style B5 book
-(title page, contents, sections) as the dictionary, with the conscript font.
+typology answers (with their consequences), a sample sentence, idioms &
+metaphors, and the sample texts. When the language declares varieties or contact
+(LANG-2), it also gains a **Variation** section (the dialects/registers + a
+dialect-comparison table) and a **Contact** section (the linguistic area, shared
+areal features, and loanword adaptation). Markdown is a flat reference; **Typst**
+is the same manual-style B5 book (title page, contents, sections) as the
+dictionary, with the conscript font.
 
 With **`--study`** it also becomes **study material**: an AI-written study guide
 leads the book, defining and explaining every linguistic term the reference uses

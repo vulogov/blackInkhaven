@@ -742,6 +742,65 @@ fn idiolect(project: &Path, character: &str, word: Option<&str>, text: Option<&s
     Ok(())
 }
 
+/// LANG-2 P5 — assemble the variation + contact data the grammar book renders
+/// (varieties, a dialect-comparison table, areal/contact info). `None` when the
+/// language declares no varieties, contact, or loan phonology.
+pub(crate) fn build_variation(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+    phon: &crate::conlang::Phonology,
+    entries: &[crate::language_entry::DictionaryEntry],
+    count: usize,
+) -> Result<Option<crate::conlang::output::Variation>> {
+    use crate::conlang::output::Variation;
+    use crate::conlang::variety as varengine;
+    let vs = load_varieties(store, hierarchy, lang_book)?;
+    let contact = load_contact(store, hierarchy, lang_book)?;
+    let loan = load_loan_phonology(store, hierarchy, lang_book)?;
+
+    let mut v = Variation::default();
+    for var in &vs.varieties {
+        v.varieties.push((var.id.clone(), var.summary()));
+    }
+    if !vs.varieties.is_empty() {
+        v.dialect_header = vec!["gloss".to_string(), "base".to_string()];
+        v.dialect_header.extend(vs.varieties.iter().map(|x| x.id.clone()));
+        for e in entries.iter().take(count) {
+            let mut row = vec![e.translation.clone(), e.word.clone()];
+            for var in &vs.varieties {
+                let (form, overridden) =
+                    varengine::render_concept(phon, var, &e.translation, &e.word);
+                row.push(if overridden { format!("{form}*") } else { form });
+            }
+            v.dialect_rows.push(row);
+        }
+    }
+    if let Some(c) = contact {
+        v.region = (!c.region.is_empty()).then(|| c.region.clone());
+        v.neighbours = c.with.clone();
+        v.areal = c.areal_features.iter().map(|(f, val)| (f.clone(), val.clone())).collect();
+    }
+    // A loan-phonology summary only when a real block was declared (the default
+    // carries no substitutions and no epenthetic vowel).
+    if !loan.substitutions.is_empty() || !loan.epenthetic_vowel.is_empty() {
+        let subs = if loan.substitutions.is_empty() {
+            String::new()
+        } else {
+            format!(
+                ", substituting {}",
+                loan.substitutions
+                    .iter()
+                    .map(|(k, vv)| format!("{k}→{vv}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        };
+        v.loan_summary = Some(format!("nativised by {}{}", loan.repair, subs));
+    }
+    Ok((!v.is_empty()).then_some(v))
+}
+
 /// Find + parse the `Morphology`-chapter HJSON block for a language sub-book.
 pub(crate) fn load_morphology(
     store: &Store,
@@ -4324,6 +4383,7 @@ fn grammar_book(
     let example_sentence = morphology
         .as_ref()
         .and_then(|m| build_example_sentence(&phon, m, &grammar_spec.grammar, &entries));
+    let variation = build_variation(&store, &hierarchy, &lang_book, &phon, &entries, 12)?;
 
     let book = GrammarBook {
         language: &lang_book.title,
@@ -4336,6 +4396,7 @@ fn grammar_book(
         samples: &samples,
         study: study_doc.as_deref(),
         example_sentence,
+        variation,
     };
     let doc = if typst {
         output::grammar_typst(&book)

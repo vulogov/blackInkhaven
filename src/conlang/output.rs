@@ -232,6 +232,39 @@ pub struct GrammarBook<'a> {
     /// An example sentence built from the lexicon by the syntax engine, as
     /// `(surface, interlinear, literal)`. Shown in a "Syntax" section.
     pub example_sentence: Option<(String, String, String)>,
+    /// LANG-2 — variation (dialects/registers) + contact (loans, areal
+    /// features), precomputed by the caller. Shown in "Variation" / "Contact"
+    /// sections when present.
+    pub variation: Option<Variation>,
+}
+
+/// LANG-2 — the variation + contact data the grammar book renders. Assembled by
+/// the CLI (so the renderer stays engine-free).
+#[derive(Debug, Clone, Default)]
+pub struct Variation {
+    /// `(id, characterisation)` for each declared variety.
+    pub varieties: Vec<(String, String)>,
+    /// Dialect-comparison table header: `["gloss", "base", <variety ids…>]`.
+    pub dialect_header: Vec<String>,
+    /// One row per compared concept, aligned to `dialect_header`.
+    pub dialect_rows: Vec<Vec<String>>,
+    /// The contact region, when declared.
+    pub region: Option<String>,
+    /// Neighbouring languages in contact.
+    pub neighbours: Vec<String>,
+    /// Areal features that have converged: `(feature, value)`.
+    pub areal: Vec<(String, String)>,
+    /// A one-line summary of the loan phonology, when declared.
+    pub loan_summary: Option<String>,
+}
+
+impl Variation {
+    pub fn is_empty(&self) -> bool {
+        self.varieties.is_empty()
+            && self.region.is_none()
+            && self.areal.is_empty()
+            && self.loan_summary.is_none()
+    }
 }
 
 /// A syllable template's pattern, e.g. `CV(C)`.
@@ -500,6 +533,46 @@ pub fn grammar_markdown(book: &GrammarBook) -> String {
         s.push_str(&format!("> {surface}\n\n```\n{interlinear}\n```\n\n*'{literal}'*\n\n"));
     }
 
+    if let Some(v) = book.variation.as_ref().filter(|v| !v.is_empty()) {
+        if !v.varieties.is_empty() {
+            s.push_str("## Variation\n\nThis language is not uniform — it has these varieties:\n\n");
+            for (id, desc) in &v.varieties {
+                s.push_str(&format!("- **{id}** — {desc}\n"));
+            }
+            s.push('\n');
+            if v.dialect_rows.len() > 0 && !v.dialect_header.is_empty() {
+                s.push_str("A comparison across the base and each variety:\n\n");
+                s.push_str(&format!("| {} |\n", v.dialect_header.join(" | ")));
+                s.push_str(&format!("|{}|\n", v.dialect_header.iter().map(|_| "---").collect::<Vec<_>>().join("|")));
+                for row in &v.dialect_rows {
+                    s.push_str(&format!("| {} |\n", row.join(" | ")));
+                }
+                s.push('\n');
+            }
+        }
+        if v.region.is_some() || !v.areal.is_empty() || v.loan_summary.is_some() {
+            s.push_str("## Contact\n\n");
+            if let Some(r) = &v.region {
+                let with = if v.neighbours.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — in contact with {}", v.neighbours.join(", "))
+                };
+                s.push_str(&format!("Part of the **{r}** linguistic area{with}.\n\n"));
+            }
+            if !v.areal.is_empty() {
+                s.push_str("Shared areal features:\n\n");
+                for (f, val) in &v.areal {
+                    s.push_str(&format!("- {f}: {val}\n"));
+                }
+                s.push('\n');
+            }
+            if let Some(ls) = &v.loan_summary {
+                s.push_str(&format!("*Loanwords:* {ls}\n\n"));
+            }
+        }
+    }
+
     if let Some(ex) = book.expressions {
         if !ex.idioms.is_empty() || !ex.metaphors.is_empty() {
             s.push_str("## Expressions\n\n");
@@ -648,6 +721,49 @@ pub fn grammar_typst(book: &GrammarBook) -> String {
         s.push_str(&format!("#quote(block: true)[{}]\n\n", typst_text(surface)));
         s.push_str(&format!("#raw(\"{}\")\n\n", interlinear.replace('"', "'")));
         s.push_str(&format!("_'{}'_\n\n", typst_text(literal)));
+    }
+
+    if let Some(v) = book.variation.as_ref().filter(|v| !v.is_empty()) {
+        if !v.varieties.is_empty() {
+            s.push_str("= Variation\nThis language is not uniform — it has these varieties:\n\n");
+            for (id, desc) in &v.varieties {
+                s.push_str(&format!("/ #strong[{}]: {}\n", typst_text(id), typst_text(desc)));
+            }
+            s.push('\n');
+            if !v.dialect_rows.is_empty() && !v.dialect_header.is_empty() {
+                let cols = v.dialect_header.len();
+                s.push_str(&format!("#table(columns: {cols}, stroke: 0.4pt,\n"));
+                for h in &v.dialect_header {
+                    s.push_str(&format!("  [#strong[{}]],\n", typst_text(h)));
+                }
+                for row in &v.dialect_rows {
+                    for cell in row {
+                        s.push_str(&format!("  [{}],\n", typst_text(cell)));
+                    }
+                }
+                s.push_str(")\n\n");
+            }
+        }
+        if v.region.is_some() || !v.areal.is_empty() || v.loan_summary.is_some() {
+            s.push_str("= Contact\n");
+            if let Some(r) = &v.region {
+                let with = if v.neighbours.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — in contact with {}", typst_text(&v.neighbours.join(", ")))
+                };
+                s.push_str(&format!("Part of the #strong[{}] linguistic area{with}.\n\n", typst_text(r)));
+            }
+            for (f, val) in &v.areal {
+                s.push_str(&format!("- {}: {}\n", typst_text(f), typst_text(val)));
+            }
+            if !v.areal.is_empty() {
+                s.push('\n');
+            }
+            if let Some(ls) = &v.loan_summary {
+                s.push_str(&format!("_Loanwords:_ {}\n\n", typst_text(ls)));
+            }
+        }
     }
 
     if let Some(ex) = book.expressions {
@@ -1095,6 +1211,7 @@ mod tests {
             samples: &samples,
             study: None,
             example_sentence: None,
+            variation: None,
         };
 
         let md = grammar_markdown(&book);
@@ -1133,6 +1250,7 @@ mod tests {
             samples: &samples,
             study: Some("## What is a case?\n\nA grammatical case marks a noun's role."),
             example_sentence: None,
+            variation: None,
         };
         let md = grammar_markdown(&book);
         let study_pos = md.find("## Study Guide").unwrap();
@@ -1142,6 +1260,48 @@ mod tests {
 
         let typ = grammar_typst(&book);
         assert!(typ.contains("= Study Guide"));
+    }
+
+    #[test]
+    fn variation_and_contact_sections_render() {
+        let profile = LanguageProfile::default();
+        let phon = grammar_phon();
+        let typology = std::collections::BTreeMap::new();
+        let samples: Vec<(String, String)> = Vec::new();
+        let variation = Variation {
+            varieties: vec![("lowland".into(), "dialect, 1 sound change(s)".into())],
+            dialect_header: vec!["gloss".into(), "base".into(), "lowland".into()],
+            dialect_rows: vec![vec!["water".into(), "kata".into(), "kada".into()]],
+            region: Some("the Inner Sea".into()),
+            neighbours: vec!["Sindar".into()],
+            areal: vec![("word_order".into(), "sov".into())],
+            loan_summary: Some("nativised by epenthesis".into()),
+        };
+        let book = GrammarBook {
+            language: "Eldar",
+            font_family: None,
+            profile: &profile,
+            phonology: &phon,
+            morphology: None,
+            typology: &typology,
+            expressions: None,
+            samples: &samples,
+            study: None,
+            example_sentence: None,
+            variation: Some(variation),
+        };
+        let md = grammar_markdown(&book);
+        assert!(md.contains("## Variation"));
+        assert!(md.contains("**lowland**"));
+        assert!(md.contains("| water | kata | kada |"));
+        assert!(md.contains("## Contact"));
+        assert!(md.contains("the Inner Sea"));
+        assert!(md.contains("word_order: sov"));
+        assert!(md.contains("nativised by epenthesis"));
+        // Typst path renders a table + sections without panicking.
+        let typ = grammar_typst(&book);
+        assert!(typ.contains("= Variation"));
+        assert!(typ.contains("= Contact"));
     }
 
     #[test]
