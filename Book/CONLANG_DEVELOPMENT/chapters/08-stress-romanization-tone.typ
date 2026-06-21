@@ -22,8 +22,11 @@ the first syllable, or always the next-to-last.
 ]
 
 You set a stress rule with the `stress` field in the phonology block. The value
-is one of `initial`, `final`, `penultimate`, `antepenultimate`, or `latin` (a
-weight-sensitive rule used in Latin). Eldar will stress the second-to-last
+is one of `initial`, `final`, `penultimate`, `antepenultimate`, or `latin`. That
+last one is *weight-sensitive*: it stresses the second-to-last syllable when that
+syllable is *heavy* (it has a long vowel or ends in a consonant) and otherwise
+moves the stress one syllable earlier — the rule classical Latin used. (See
+*syllable weight* in the glossary.) Eldar will simply stress the second-to-last
 syllable:
 
 ```hjson
@@ -76,8 +79,10 @@ inkhaven language romanize Eldar --text /kase/ --reverse
 ```
 
 The first reads spelled text into sounds; the second (`--reverse`) writes sounds
-back out as spelling. For most languages the simple per-phoneme `romanize` fields
-are all you need, and you can skip schemes entirely.
+back out as spelling — note the slashes around `/kase/`, the usual way of marking
+that the input is a string of sounds (IPA) rather than ordinary spelling. For
+most languages the simple per-phoneme `romanize` fields are all you need, and you
+can skip schemes entirely.
 
 #section("Tone (optional)")
 
@@ -104,11 +109,16 @@ tone: {
 }
 ```
 
-This gives four tones (numbered) and one sandhi rule — "a third tone becomes a
-second tone before another third tone", the famous Mandarin pattern. Try it with:
+The `kind` says what sort of tones these are. A *contour* tone glides during the
+syllable (rising, falling, dipping) — the Mandarin style, where the numbers name
+shapes; the alternative, `register`, is for tones held level at a fixed pitch
+(high, mid, low). This example gives four contour tones (numbered) and one
+*sandhi* rule — "a third tone becomes a second tone before another third tone",
+the famous Mandarin pattern. Apply it to a sequence of tone numbers with:
 
 ```sh
 inkhaven language tone Eldar --tones "3 3 3"
+# → 2 2 3   (each 3 before another 3 lowers to 2; the last one is unchanged)
 ```
 
 #callout(label: "Your phonology is done")[

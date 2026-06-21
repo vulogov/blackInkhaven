@@ -14,24 +14,34 @@ alphabetical order. Italicised words within a definition have their own entry.
 / Allophone: One of the several ways a single *phoneme* is actually pronounced, chosen by context.
 / Allophony: The system of context-dependent pronunciation variants within a language.
 / Alignment: How a language marks the subject of a sentence — *nominative–accusative* or *ergative–absolutive*.
+/ Anki: A spaced-repetition flashcard program; Inkhaven can export your lexicon as an Anki deck.
 / API key: A secret password that lets your copy of Inkhaven use an *AI provider*.
+/ Aspect: How an action unfolds in time — whether it is ongoing, completed, or habitual — as opposed to *when* it happens (that is tense).
+/ Cluster: Two or more consonants in a row with no vowel between them (the *str* of *string*).
 / Cognate: A word descended from the same ancestral word as a word in a related language (*father* / Latin *pater*).
 / Codepoint: The unique number identifying a character in the Unicode standard (written like *U+0041*).
 / Circumfix: A single affix in two pieces wrapping the root (German *ge-…-t*).
 / Conceptual metaphor: A systematic understanding of one domain in terms of another (LIFE IS A JOURNEY).
+/ CAT tool: Computer-assisted-translation software (OmegaT, memoQ, Weblate) that reuses past translations stored in a *translation memory*.
+/ Complement clause: A subordinate clause acting as an argument of a matrix verb of speech or thought ("I know *that the bird flies*").
+/ Complementizer: The word introducing a *complement clause* ("that"), glossed COMP.
 / Conjunction: A word that joins two elements of the same kind ("and", "or").
 / Conlang: Short for *constructed language* — a language built on purpose.
 / Consonant: A sound made by obstructing the airflow (p, t, k, s, m, …).
 / Constraint: A single *phonotactic* rule that rejects certain words.
 / Constructed language: A language deliberately created, with invented vocabulary and grammar.
 / Coordination: Joining two phrases or clauses of equal status with a *conjunction*.
+/ Contour tone: A *tone* that glides during the syllable (rising, falling, dipping), as opposed to a level tone held at one pitch.
 / Counter: The enclosed empty space inside a glyph (the hole in "O"), cut with a reverse-wound outline.
 / Daughter language: A language descended from a given *proto-language*.
 / Dedup gate: The automatic checks that stop word generation from ever creating a duplicate.
+/ Definiteness: Whether a noun is marked as specific/known ("the dog") versus general ("a dog").
 / Derivation: Forming a genuinely new word from an existing one (*build* → *builder*).
+/ Design grid: The coordinate square (also called the em-square) every glyph is drawn within; its size is the font's units-per-em.
 / Diachronics: The historical change of a language over time, and how it splits into a family.
 / Domain: The subject area a word belongs to (weapon, kinship, weather).
 / Etymology: The origin and history of a word — what it descended or was derived from.
+/ Evidentiality: Grammatically marking the *source* of information — whether the speaker witnessed it, was told it, or inferred it (as in Quechua and Tariana).
 / Font: A file of drawn glyphs that computers display and print.
 / Gap (syntactic): The empty slot a noun leaves inside a *relative clause* — the role the head noun plays there but does not itself fill (in "the bird that sees the stone", the bird is the missing subject of "sees").
 / Geminate: A doubled or lengthened consonant (Italian *gatto*).
@@ -48,8 +58,12 @@ alphabetical order. Italicised words within a definition have their own entry.
 / Interlinear gloss: A word-by-word breakdown lined up under a sentence (Leipzig glossing).
 / IPA: The International Phonetic Alphabet — one symbol per speech sound.
 / Language family: A group of languages descended from a common *proto-language*.
+/ Lexeme: A single vocabulary item — one word with its own dictionary entry, independent of the forms it inflects into.
 / Lexicon: The full vocabulary of a language; a single word is a *lexeme*.
+/ linguex: A LaTeX package for typesetting numbered, glossed example sentences; an export format for academic writing.
 / Linguistics: The scientific study of human language.
+/ Matrix clause: The main clause that contains a subordinate one — "I know" in "I know that it rains".
+/ Mood: Grammatically marking a speaker's stance toward an event — fact, command, wish, possibility (indicative, imperative, subjunctive…).
 / Morpheme: The smallest unit of a word that carries meaning.
 / Morphology: How words are built from morphemes and change shape for grammar.
 / Naturalism: Making a constructed language feel like it could be a real human language.
@@ -57,6 +71,7 @@ alphabetical order. Italicised words within a definition have their own entry.
 / Nucleus: The vowel at the centre of a *syllable*.
 / Onset: The consonant(s) before the vowel in a *syllable*.
 / Coda: The consonant(s) after the vowel in a *syllable*.
+/ Packed script: A writing system whose signs are grouped into blocks read as units rather than written in a single line (Egyptian *quadrats*, Korean Hangul syllable blocks).
 / Paradigm: The organised set of all inflected forms of a word.
 / Part of speech: The grammatical category of a word (noun, verb, adjective, adverb).
 / Phoneme: A single distinct sound that can change a word's meaning.
@@ -66,24 +81,31 @@ alphabetical order. Italicised words within a definition have their own entry.
 / Polar question: A yes/no question, as opposed to a *content* question (who, what, where).
 / Private Use Area: A range of Unicode codepoints (from *U+E000*) reserved for invented characters.
 / Proto-language: An ancestral language that later languages descend from.
+/ Quadrat: A rectangular group of signs arranged and read as a single unit, as in Egyptian hieroglyphic writing.
 / Reconstruction: Working out an unrecorded ancestral word from its surviving descendants.
 / Reduplication: Marking grammar by repeating part or all of the root (*buku* → *buku-buku*).
 / Register: The level of formality a word belongs to (formal, neutral, vulgar, sacred, archaic).
 / Relative clause: A clause that modifies a noun, the way "that sees the stone" narrows "the bird"; the modified noun is the *head*.
 / Relativizer: The word that introduces a *relative clause* ("that", "which"), glossed REL.
 / Romanization: Writing a language's sounds with the Latin alphabet.
+/ Sandhi: A sound change that happens at a boundary because of neighbouring sounds; *tone sandhi* is when one tone shifts next to another.
 / Script: A system of written symbols for a language.
 / Sonority: How open and resonant a sound is; clusters tend to rise toward the vowel.
 / Sound change: A regular historical shift in pronunciation that turns one language into another.
 / SPE notation: The shorthand `target > result / left _ right` for sound rules.
+/ Standard Format (SFM / MDF): A plain-text dictionary format with backslash field markers (`\lx`, `\ps`, `\ge`), shared by Toolbox, FieldWorks, and Lexique Pro.
+/ Stop: A consonant made by fully blocking the airflow and releasing it (p, t, k, b, d, g).
 / Stress: The relative emphasis given to one syllable of a word.
 / Surface form: How a word is actually pronounced after allophony rules apply.
 / SVG: Scalable Vector Graphics — a drawing made of shapes and curves; each glyph is one.
 / Swadesh list: A standard list of the most basic, universal concepts (here 100 of them), used to gauge how much core vocabulary a language has.
+/ Syllabary: A writing system with one symbol per syllable (Japanese kana), rather than one per sound.
 / Syllable: A beat of speech built around a vowel (onset + nucleus + coda).
 / Syllable template: A pattern of class names describing an allowed syllable shape (C V (C)).
+/ Syllable weight: Whether a syllable counts as *heavy* (a long vowel or a coda) or *light* (a short vowel, no coda) — some stress rules fall on the heaviest syllable.
 / Syntax: The part of grammar dealing with word order and sentence structure.
 / Tone: The use of pitch to distinguish word meanings.
+/ Translation memory: A store of source–target phrase pairs a *CAT tool* reuses; exporting to *XLIFF* makes your lexicon one.
 / Transliteration: Converting text from one script into another (here, Latin → your script).
 / TrueType: An everyday font format (`.ttf`), ready to install and use.
 / Typology: The classification of languages by their structural features.
@@ -92,3 +114,4 @@ alphabetical order. Italicised words within a definition have their own entry.
 / Vowel: A sound made with open, unobstructed airflow (a, e, i, o, u).
 / Word order: The default order of subject, verb, and object (SOV, SVO, …).
 / Word root: The core form of a word, carrying its basic meaning, before affixes.
+/ XLIFF: An XML interchange file for a *translation memory*, read by *CAT tools*; a lexicon export format.

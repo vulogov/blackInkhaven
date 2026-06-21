@@ -26,10 +26,15 @@ your language's current answers, and how much you have filled in:
 inkhaven language grammar Eldar
 ```
 
-The features include word order, alignment, case, gender, number, definiteness,
-tense, aspect, mood, evidentiality, negation, question formation, and relative
-clauses. You do not have to answer all of them; answer the ones that matter to
-your language and leave the rest.
+The sixteen are word order, adjective order, genitive order, adpositions
+(prepositions versus postpositions), alignment, case, gender, number,
+definiteness, tense, aspect, mood, evidentiality, negation, question formation,
+and relative clauses. A few of these may be unfamiliar: *aspect* is how an action
+unfolds in time (ongoing versus completed), *mood* is the speaker's stance
+(fact, command, wish), *definiteness* is the "a" versus "the" distinction, and
+*evidentiality* is marking how you know something (witnessed, reported,
+inferred) — each has a glossary entry. You do not have to answer all sixteen;
+answer the ones that matter to your language and leave the rest.
 
 #section("Three choices worth understanding")
 
@@ -88,7 +93,7 @@ them, and the AI translator uses them to put words in the right order.
   but knowing them helps you break them on purpose.
 ]
 
-== Putting words into a sentence
+#section("Putting words into a sentence")
 
 Word order, case, and agreement only come alive when you string words together.
 Inkhaven can do exactly that. Give it a subject, a verb, and an object — each a
@@ -121,7 +126,7 @@ sentence from your own vocabulary — proof that your phonology, lexicon,
 paradigms, and typology have come together into something you can actually
 *say*.
 
-== Saying no, and asking: negation and questions
+#section("Saying no, and asking: negation and questions")
 
 A language needs more than plain statements. Two clause-level operations come
 straight from typology answers you already gave through the questionnaire above.
@@ -147,11 +152,17 @@ language uses one):
   inverting the word order, by special verb morphology, or by intonation alone.
 ]
 
-Your `question` feature decides the realization: a *particle* is appended at the
-clause edge (glossed `Q`), *word_order* fronts the verb (English-style
-inversion), *morphology* tags the verb, and every strategy adds a surface "?".
+```
+inkhaven language sentence Eldar --subject kira:bird --verb nami:see \
+    --object pata:stone --question --q-particle ka:Q
+```
 
-== Building bigger sentences: relative clauses and coordination
+Your `question` feature decides the realization: a *particle* is appended at the
+clause edge (glossed `Q`, so the example above yields `kira patan nami ka?`),
+*word_order* fronts the verb (English-style inversion), *morphology* tags the
+verb, and every strategy adds a surface "?".
+
+#section("Building bigger sentences: relative clauses and coordination")
 
 Real sentences nest and join. A *relative clause* lets one clause modify a noun —
 "the bird #emph[that sees the stone]":
@@ -189,6 +200,30 @@ space-separated `root:gloss` words), and Inkhaven threads your conjunction
 between them — assembling each clause in full, so "bird sees stone and river
 falls" keeps its case marking throughout.
 
+Finally, a *complement clause* lets one whole clause become the object of another
+— "I know #emph[that the bird sees the stone]":
+
+#term("Complement clause")[
+  A subordinate clause that serves as an argument — usually the object — of a main
+  (#emph[matrix]) verb of speech or thought, such as *know*, *say*, or *think*. It
+  is often introduced by a *complementizer* like "that". The matrix clause ("I
+  know…") and the embedded clause ("the bird sees the stone") each have their own
+  subject and verb.
+]
+
+```
+inkhaven language complement Eldar --subject mi:I --verb tira:know \
+    --complementizer ya:that \
+    --comp-subject kira:bird --comp-verb nami:see --comp-object pata:stone
+```
+
+The matrix subject and verb wrap the embedded clause (`--comp-subject` /
+`--comp-verb` / `--comp-object`), introduced by an optional complementizer
+(glossed `COMP`). Because the complement fills the matrix *object* slot, your word
+order places it correctly on its own — an SVO language prints it after the matrix
+verb, a verb-final language before it — and the embedded clause still case-marks
+its own object.
+
 #callout(label: "Grammar you can hear")[
   Negation, questions, relative clauses, and coordination all read from the same
   typology answers and the same paradigms as a plain sentence. Once your phonology,
@@ -212,4 +247,6 @@ falls" keeps its case marking throughout.
    your `negation` and `question` features.],
   [`relative` builds a noun modified by a *relative clause* (gap + relativizer,
    pre- or postnominal); `coordinate` joins nouns or clauses with a conjunction.],
+  [`complement` makes one clause the object of another ("I know *that* …"), placed
+   by word order around the matrix verb.],
 ))

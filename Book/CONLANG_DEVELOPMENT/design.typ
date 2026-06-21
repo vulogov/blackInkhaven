@@ -82,16 +82,24 @@
 }
 
 // ── Section / subsection ────────────────────────────────────────────
+// `sticky: true` keeps the heading glued to the block that follows it, so a
+// heading is never left stranded as the last line on a page.
 #let section(title) = {
   hide(heading(level: 2, numbering: none, outlined: true, title))
-  v(7mm)
-  text(font: body_family, size: 15pt, weight: "bold", fill: ink_black, title)
-  v(1.5mm)
+  block(
+    sticky: true,
+    above: 7mm,
+    below: 1.5mm,
+    text(font: body_family, size: 15pt, weight: "bold", fill: ink_black, title),
+  )
 }
 #let subsection(title) = {
-  v(4mm)
-  text(font: body_family, size: 11.5pt, weight: "bold", fill: ink_black, title)
-  v(0.5mm)
+  block(
+    sticky: true,
+    above: 4mm,
+    below: 0.5mm,
+    text(font: body_family, size: 11.5pt, weight: "bold", fill: ink_black, title),
+  )
 }
 
 // ── Term box — DEFINE a linguistic term (used heavily, this book is for

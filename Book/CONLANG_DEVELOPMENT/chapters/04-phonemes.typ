@@ -54,6 +54,12 @@ explained how to add a block). Each phoneme gives three things: its `ipa` symbol
 (the sound), an optional `romanize` spelling (how you will write it with ordinary
 letters), and its `kind` — `"consonant"` or `"vowel"`.
 
+The `romanize` field earns its keep when the sound has no plain letter. In the
+inventory below the eighth consonant is a *tap* (IPA `ɾ`, the quick flicked "r"
+of Spanish *pero*); writing `romanize: "r"` lets you keep typing an everyday "r"
+while the engine knows the real sound. When the IPA symbol *is* an ordinary
+letter, the two simply match.
+
 Here is a small starter inventory for Eldar — eight consonants and three vowels:
 
 ```hjson
@@ -66,7 +72,7 @@ Here is a small starter inventory for Eldar — eight consonants and three vowel
     { ipa: "m", romanize: "m", kind: "consonant" }
     { ipa: "n", romanize: "n", kind: "consonant" }
     { ipa: "l", romanize: "l", kind: "consonant" }
-    { ipa: "r", romanize: "r", kind: "consonant" }
+    { ipa: "ɾ", romanize: "r", kind: "consonant" }
     { ipa: "a", romanize: "a", kind: "vowel" }
     { ipa: "i", romanize: "i", kind: "vowel" }
     { ipa: "u", romanize: "u", kind: "vowel" }
@@ -95,18 +101,22 @@ called `C` and `V`:
 
 ```hjson
 classes: {
-  C: ["p", "t", "k", "s", "m", "n", "l", "r"]
+  C: ["p", "t", "k", "s", "m", "n", "l", "ɾ"]
   V: ["a", "i", "u"]
 }
 ```
+
+(A class lists phonemes by their `ipa` symbol, which is why the tap appears as
+`ɾ` here, not as its `r` spelling.)
 
 Add this `classes` field inside the same phonology block, beside `phonemes`. We
 will use `C` and `V` in the next chapter to describe the shapes words can take.
 
 #term("Phoneme class")[
   A named group of phonemes that behave alike for some rule — for example all
-  consonants, all vowels, or all *front* vowels. Classes let you write a rule
-  once for a whole family instead of repeating it for each sound.
+  consonants, all vowels, or all *front* vowels (those made with the tongue
+  forward in the mouth, like *i* and *e*). Classes let you write a rule once for a
+  whole family instead of repeating it for each sound.
 ]
 
 #section("Checking your work")

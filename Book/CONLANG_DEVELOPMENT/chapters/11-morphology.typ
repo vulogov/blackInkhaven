@@ -31,7 +31,9 @@ to a word is an *affix*. Affixes that go on the front are *prefixes* (*re-* in
 #term("Affix")[
   A morpheme attached to a root to modify its meaning or grammar. A *prefix*
   attaches to the front (*re-do*), a *suffix* to the end (*cat-s*), an *infix* in
-  the middle. Inkhaven supports prefixes and suffixes.
+  the middle. Inkhaven supports prefixes, suffixes, infixes, and circumfixes —
+  and beyond gluing pieces on, the stem-changing processes covered later in this
+  chapter (ablaut and reduplication).
 ]
 
 #section("Declaring your affixes")
@@ -195,8 +197,19 @@ supports the other common strategies too; you choose them on a morpheme with
 
 All four are written as ordinary morphemes and used in paradigm cells exactly
 like prefixes and suffixes — and allophony still applies across the new seams.
-For example, a morpheme `{ id: "ag", gloss: "AG", form: "um", position:
-"infix" }` turns the root *tanik* into *t-um-anik*.
+Here is each one as a declaration and the form it produces, so you can see the
+process at work:
+
+- *Infix* — `{ gloss: "AG", form: "um", position: "infix" }` turns the root
+  *tanik* into *t-um-anik*.
+- *Circumfix* — `{ gloss: "PTCP", position: "circumfix", form: "ge_t" }` wraps
+  the root *sag* into *ge-sag-t* (the `_` is where the stem lands).
+- *Ablaut* — `{ gloss: "PAST", process: "ablaut", rules: ["i > a"] }` rewrites
+  the vowel of *kit* in place, giving *kat*.
+- *Reduplication* — `{ gloss: "PL", process: "reduplication", reduplicate:
+  "full" }` doubles the stem, so *kata* becomes *kata-kata*; with `reduplicate:
+  "initial_cv"` only the first consonant-plus-vowel copies to the front, so
+  *tanik* becomes *ta-tanik*.
 
 #section("Agreement")
 
