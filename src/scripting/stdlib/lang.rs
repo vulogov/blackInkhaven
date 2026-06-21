@@ -626,6 +626,10 @@ fn do_varieties(vm: &mut VM) -> Result<&mut VM> {
             );
             h.insert("sound_changes".into(), Value::from_int(v.sound_changes.len() as i64));
             h.insert("overrides".into(), Value::from_int(v.lexicon.len() as i64));
+            h.insert(
+                "note".into(),
+                v.note.clone().map(Value::from_string).unwrap_or_else(Value::nodata),
+            );
             Value::from_dict(h)
         })
         .collect();
@@ -655,7 +659,7 @@ fn do_lect(vm: &mut VM) -> Result<&mut VM> {
     Ok(vm)
 }
 
-// ( recipient donor-form -- {donor,adapted,steps} )  nativise a loanword (advisory)
+// ( recipient donor-form -- {donor,adapted,ipa,steps} )  nativise a loanword (advisory)
 fn w_borrow(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     do_borrow(vm).map_err(to_bund_err)
 }
@@ -674,6 +678,10 @@ fn do_borrow(vm: &mut VM) -> Result<&mut VM> {
     let mut h: HashMap<String, Value> = HashMap::new();
     h.insert("donor".into(), Value::from_string(a.donor));
     h.insert("adapted".into(), Value::from_string(a.adapted));
+    h.insert(
+        "ipa".into(),
+        Value::from_list(a.ipa.into_iter().map(Value::from_string).collect()),
+    );
     h.insert(
         "steps".into(),
         Value::from_list(a.steps.into_iter().map(Value::from_string).collect()),

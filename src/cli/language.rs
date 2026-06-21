@@ -3058,6 +3058,9 @@ fn varieties(project: &Path, language: &str) -> Result<()> {
     println!("{language} · {} variet(y/ies):", vs.varieties.len());
     for v in &vs.varieties {
         println!("  {:<14} {}", v.id, v.summary());
+        if let Some(note) = &v.note {
+            println!("  {:<14} {}", "", note);
+        }
     }
     Ok(())
 }
@@ -3169,6 +3172,9 @@ fn borrow(
 
     let donor_lang = from.map(|f| format!(" from {f}")).unwrap_or_default();
     println!("{language} borrows{donor_lang}: {form}  →  {}", a.adapted);
+    if !a.ipa.is_empty() {
+        println!("  /{}/", a.ipa.join(""));
+    }
     if a.steps.is_empty() {
         println!("  (already legal — no repair needed)");
     } else {
