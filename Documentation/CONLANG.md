@@ -380,6 +380,28 @@ every shared feature. Contact also shows up as **horizontal edges** in
 `language family-tree` (`Eldar ⇄ Sindar`), alongside the vertical inheritance.
 Scriptable as `lang.areal` (returns `{ region, with, convergence }`).
 
+### AI advisories (LANG-2 P6)
+
+The AI proposes *choices*, the deterministic engine *applies* them — so the forms
+stay legal and nothing is written without `--yes`:
+
+```
+inkhaven language propose-dialect Eldar --describe "a harsh mountain dialect" [--yes]
+inkhaven language propose-loans Eldar --from Drake --topic seafaring --count 6
+inkhaven language areal-check Eldar
+```
+
+- **`propose-dialect`** — the model suggests a coherent set of sound changes + a
+  few lexical swaps for the requested flavour; each rule is validated against the
+  inventory and previewed; `--yes` writes the variety into the Grammar chapter.
+- **`propose-loans`** — proposes concepts a language would borrow from a donor in
+  a topic domain, with donor forms, then the **deterministic adapter** (the
+  borrowing engine) nativises each (so `stɔrm → sitarimi`). Add the ones you like
+  with `borrow … --yes`.
+- **`areal-check`** — assesses whether a declared Sprachbund is typologically
+  plausible (the contact analogue of `realism-check`). All key off the project
+  working language.
+
 ## Idioms + metaphors
 
 ```

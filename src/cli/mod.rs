@@ -3147,6 +3147,61 @@ pub enum LanguageCommand {
         language: Option<String>,
     },
 
+    /// 1.3.22 LANG-2 P6 — (AI) **propose a dialect/register**: the model suggests
+    /// a coherent set of sound changes + a few lexical swaps for the requested
+    /// flavour; the deterministic engine validates them (so the variety is always
+    /// phonologically legal) and previews the result.  With `--yes`, writes the
+    /// variety into the Grammar chapter.
+    ProposeDialect {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The flavour to design, e.g. "a coastal trading dialect" or "an
+        /// archaic priestly register".
+        #[arg(long)]
+        describe: String,
+        /// The variety id to use (default: derived from the description).
+        #[arg(long)]
+        id: Option<String>,
+        /// AI provider override.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Write the proposed variety into the Grammar chapter.
+        #[arg(long)]
+        r#yes: bool,
+    },
+
+    /// 1.3.22 LANG-2 P6 — (AI) assess whether a language's declared **areal**
+    /// (Sprachbund) features are typologically plausible — the contact analogue
+    /// of `realism-check`.
+    ArealCheck {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// AI provider override.
+        #[arg(long)]
+        provider: Option<String>,
+    },
+
+    /// 1.3.22 LANG-2 P6 — (AI) **propose realistic loanwords**: which concepts a
+    /// language would borrow from a donor in a topic domain, each with a
+    /// plausible donor form, then nativised by the deterministic adapter (P2).
+    /// Advisory — add the ones you like with `borrow … --yes`.
+    ProposeLoans {
+        /// Recipient language (the borrower).
+        language: String,
+        /// The donor language name.
+        #[arg(long)]
+        from: String,
+        /// The semantic domain to borrow in (trade, religion, seafaring …).
+        #[arg(long)]
+        topic: Option<String>,
+        /// How many loanwords to propose.
+        #[arg(long, default_value_t = 6)]
+        count: usize,
+        /// AI provider override.
+        #[arg(long)]
+        provider: Option<String>,
+    },
+
     /// LANG-1 P2.7 — scan the manuscript for candidate **undefined** conlang
     /// words: words that look like the language (segment fully into its
     /// inventory + pass its phonotactics) but aren't in the dictionary.  Only
