@@ -93,7 +93,7 @@ them, and the AI translator uses them to put words in the right order.
   but knowing them helps you break them on purpose.
 ]
 
-== Putting words into a sentence
+#section("Putting words into a sentence")
 
 Word order, case, and agreement only come alive when you string words together.
 Inkhaven can do exactly that. Give it a subject, a verb, and an object — each a
@@ -126,7 +126,7 @@ sentence from your own vocabulary — proof that your phonology, lexicon,
 paradigms, and typology have come together into something you can actually
 *say*.
 
-== Saying no, and asking: negation and questions
+#section("Saying no, and asking: negation and questions")
 
 A language needs more than plain statements. Two clause-level operations come
 straight from typology answers you already gave through the questionnaire above.
@@ -162,7 +162,7 @@ clause edge (glossed `Q`, so the example above yields `kira patan nami ka?`),
 *word_order* fronts the verb (English-style inversion), *morphology* tags the
 verb, and every strategy adds a surface "?".
 
-== Building bigger sentences: relative clauses and coordination
+#section("Building bigger sentences: relative clauses and coordination")
 
 Real sentences nest and join. A *relative clause* lets one clause modify a noun —
 "the bird #emph[that sees the stone]":

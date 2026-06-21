@@ -16,7 +16,7 @@ Dictionary. Everything here works on the lexicon you have already built with
 `add-word` and `generate-lexicon`; nothing new about the language itself is
 required.
 
-== The landscape: who uses what
+#section("The landscape: who uses what")
 
 Before the commands, it helps to know the formats by name. Each of the following
 is a real tool or standard you may run into when you look for conlang resources or
@@ -85,7 +85,7 @@ Inkhaven reads or writes each.
   document of your lexicon, headwords and examples included.
 ]
 
-== Exporting your lexicon
+#section("Exporting your lexicon")
 
 The single command is `export`, with a `--format` choosing what to write. By
 default it prints to your screen; add `--out FILE` (or redirect with `>`) to save:
@@ -127,7 +127,7 @@ example —
   language, use `xliff`. The IPA chart is for a quick reference.
 ]
 
-== Importing a lexicon
+#section("Importing a lexicon")
 
 Going the other way, `import` reads a foreign file and adds its entries to your
 Dictionary. It has one safety habit worth knowing: it *previews by default* and
@@ -160,7 +160,7 @@ inkhaven language add-word Eldar --import cws-export.csv
   a re-import never clobbers your edits.
 ]
 
-== A round-trip workflow
+#section("A round-trip workflow")
 
 The CSV format is built to make a loop: export your lexicon, edit it somewhere
 comfortable, and bring it back. A common pattern is bulk-editing in a spreadsheet:
