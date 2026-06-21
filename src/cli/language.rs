@@ -304,6 +304,23 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             r#yes,
         ),
         LanguageCommand::Areal { language } => areal(project, language.as_deref()),
+        LanguageCommand::ProposeDialect {
+            language,
+            describe,
+            id,
+            provider,
+            r#yes,
+        } => propose_dialect(project, &language, &describe, id.as_deref(), provider.as_deref(), r#yes),
+        LanguageCommand::ArealCheck { language, provider } => {
+            areal_check(project, &language, provider.as_deref())
+        }
+        LanguageCommand::ProposeLoans {
+            language,
+            from,
+            topic,
+            count,
+            provider,
+        } => propose_loans(project, &language, &from, topic.as_deref(), count, provider.as_deref()),
         LanguageCommand::Gloss { language, text } => gloss_text(project, &language, &text),
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
@@ -742,6 +759,250 @@ fn idiolect(project: &Path, character: &str, word: Option<&str>, text: Option<&s
     Ok(())
 }
 
+pub(crate) const PROPOSE_DIALECT_SYSTEM: &str = "You are a dialectologist designing a variety of a \
+constructed language. Propose a COHERENT, naturalistic set of sound changes plus a few suppletive \
+lexical swaps that give the variety the requested character. HARD CONSTRAINTS: every sound change uses \
+ONLY the language's listed phonemes; write each in SPE notation `target > result / left _ right` (use \
+`_` for the target slot, `#` for a word boundary, and a phoneme-class name such as `V` for context — \
+omit the `/ …` context for an unconditioned change); 3 to 6 sound changes; 0 to 4 lexical swaps using \
+only the inventory. Output EXACTLY two labelled blocks and NOTHING else:\nSOUND_CHANGES:\n<one rule per \
+line>\nLEXICON:\n<gloss = newform, one per line>";
+
+/// LANG-2 P6 — AI-propose a dialect/register; the deterministic engine validates.
+fn propose_dialect(
+    project: &Path,
+    language: &str,
+    describe: &str,
+    id: Option<&str>,
+    provider: Option<&str>,
+    commit: bool,
+) -> Result<()> {
+    use crate::conlang::types::allophony::AllophonyRule;
+    use crate::conlang::types::variety::Variety;
+    use crate::conlang::variety as varengine;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no phoneme block"))
+    })?;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+
+    let inventory = phon.phonemes.iter().map(|p| p.ipa.clone()).collect::<Vec<_>>().join(" ");
+    let vowels = phon
+        .phonemes
+        .iter()
+        .filter(|p| p.kind == crate::conlang::types::PhonemeKind::Vowel)
+        .map(|p| p.ipa.clone())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let some_glosses = entries
+        .iter()
+        .take(8)
+        .map(|e| e.translation.clone())
+        .filter(|g| !g.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let user = format!(
+        "Language phonemes: {inventory}. Vowel class V = {vowels}. Concepts you may give a \
+         dialect-specific word (gloss → form): {some_glosses}. Design a variety that is: {describe}."
+    );
+
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    eprintln!("inkhaven language propose-dialect · {language} · model: {model}");
+    let raw = crate::ai::stream::collect_blocking(
+        ai.client.clone(),
+        model.to_string(),
+        Some(PROPOSE_DIALECT_SYSTEM.to_string()),
+        user,
+    )
+    .map_err(|e| Error::Store(format!("inference error: {e}")))?;
+
+    // Parse the two labelled blocks.
+    let (mut rules, mut lexicon): (Vec<String>, Vec<(String, String)>) = (Vec::new(), Vec::new());
+    let mut section = "";
+    for line in raw.lines() {
+        let t = line.trim();
+        let up = t.to_ascii_uppercase();
+        if up.starts_with("SOUND_CHANGES") {
+            section = "rules";
+            continue;
+        } else if up.starts_with("LEXICON") {
+            section = "lex";
+            continue;
+        }
+        if t.is_empty() {
+            continue;
+        }
+        match section {
+            "rules" if t.contains('>') => rules.push(t.trim_start_matches(['-', '*', ' ']).to_string()),
+            "lex" => {
+                if let Some((g, f)) = t.split_once('=') {
+                    let (g, f) = (g.trim().to_string(), f.trim().to_string());
+                    if !g.is_empty() && !f.is_empty() {
+                        lexicon.push((g, f));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // Validate each rule parses as an AllophonyRule; drop the ones that don't.
+    let valid: Vec<(String, AllophonyRule)> = rules
+        .drain(..)
+        .filter_map(|r| {
+            serde_hjson::from_str::<AllophonyRule>(&format!("{{ rule: \"{r}\" }}"))
+                .ok()
+                .map(|ar| (r, ar))
+        })
+        .collect();
+    if valid.is_empty() {
+        eprintln!("the model proposed no usable sound changes\n--- raw ---\n{raw}");
+        return Ok(());
+    }
+    let var_id = id
+        .map(str::to_string)
+        .unwrap_or_else(|| describe.split_whitespace().last().unwrap_or("variety").to_lowercase());
+    let variety = Variety {
+        id: var_id.clone(),
+        kind: "dialect".into(),
+        axis: String::new(),
+        prestige: None,
+        sound_changes: valid.iter().map(|(_, ar)| ar.clone()).collect(),
+        lexicon: lexicon.iter().cloned().collect(),
+        note: Some(describe.to_string()),
+    };
+
+    println!("proposed variety `{var_id}` ({describe}):");
+    println!("  sound changes:");
+    for (r, _) in &valid {
+        println!("    {r}");
+    }
+    for (g, f) in &lexicon {
+        println!("    word: {g} → {f}");
+    }
+    println!("  preview (base → {var_id}):");
+    for e in entries.iter().take(5) {
+        let (form, _) = varengine::render_concept(&phon, &variety, &e.translation, &e.word);
+        if form != e.word || !lexicon.is_empty() {
+            println!("    {:<12} {} → {form}", e.translation, e.word);
+        }
+    }
+
+    if commit {
+        let rules_hjson = valid
+            .iter()
+            .map(|(r, _)| format!("{{rule:\"{r}\"}}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let lex_hjson = lexicon
+            .iter()
+            .map(|(g, f)| format!("\"{g}\":\"{f}\""))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let body = format!(
+            "{{ varieties:[{{ id:\"{var_id}\", kind:\"dialect\", note:\"{}\", \
+             sound_changes:[{rules_hjson}], lexicon:{{{lex_hjson}}} }}] }}",
+            describe.replace('"', "'")
+        );
+        create_chapter_paragraph(&store, &cfg, &lang_book, "Grammar", &format!("variety-{var_id}"), &body)?;
+        eprintln!("\nadded variety `{var_id}` to {language}'s Grammar");
+    } else {
+        eprintln!("\n(advisory — re-run with --yes to add it to {language})");
+    }
+    Ok(())
+}
+
+/// LANG-2 P6 — AI areal-plausibility check.
+fn areal_check(project: &Path, language: &str, provider: Option<&str>) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let contact = load_contact(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` declares no `contact` block to check"))
+    })?;
+    let (spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+
+    let features = contact
+        .areal_features
+        .iter()
+        .map(|(f, v)| format!("{f} = {v}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let own = spec
+        .grammar
+        .iter()
+        .map(|(f, v)| format!("{f}={v}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let system = "You are a contact linguist. Assess whether a declared linguistic area (Sprachbund) \
+        is typologically plausible — whether these features realistically spread across languages by \
+        contact. Comment feature by feature, then give an overall verdict. Be concise.";
+    let user = format!(
+        "Language: {language}. It belongs to the contact area `{}` with neighbours: {}. The areal \
+         features said to have converged: {features}. {language}'s own typology: {own}. Assess the \
+         plausibility.",
+        contact.region,
+        contact.with.join(", ")
+    );
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    eprintln!("inkhaven language areal-check · {language} · model: {model}");
+    let raw = crate::ai::stream::collect_blocking(ai.client.clone(), model.to_string(), Some(system.to_string()), user)
+        .map_err(|e| Error::Store(format!("inference error: {e}")))?;
+    println!("{}", raw.trim());
+    Ok(())
+}
+
+/// LANG-2 P6 — AI-propose realistic loanwords, nativised by the P2 adapter.
+fn propose_loans(
+    project: &Path,
+    language: &str,
+    from: &str,
+    topic: Option<&str>,
+    count: usize,
+    provider: Option<&str>,
+) -> Result<()> {
+    use crate::conlang::contact;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!("language `{language}` has no phoneme block to borrow into"))
+    })?;
+    let loan = load_loan_phonology(&store, &hierarchy, &lang_book)?;
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    let work_lang = if cfg.language.trim().is_empty() { "english" } else { cfg.language.trim() };
+    let topic_clause = topic.map(|t| format!(" in the domain of {t}")).unwrap_or_default();
+
+    let system = format!(
+        "You are a contact linguist. Propose concepts a language would realistically BORROW from a \
+         donor language{topic_clause} (trade goods, technology, religion, institutions — things a \
+         culture adopts from neighbours). For each, give a plausible PHONEMIC donor word (one symbol \
+         per sound, IPA-ish). Output exactly `concept = donorform`, one per line, the concept glossed \
+         in {work_lang}, and NOTHING else."
+    );
+    let user = format!("Donor language: {from}. Propose {count} loanwords{topic_clause}.");
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    eprintln!("inkhaven language propose-loans · {language} ← {from} · model: {model}");
+    let raw = crate::ai::stream::collect_blocking(ai.client.clone(), model.to_string(), Some(system), user)
+        .map_err(|e| Error::Store(format!("inference error: {e}")))?;
+
+    println!("{language} could borrow from {from}{topic_clause}:");
+    println!("  {:<20} {:<14} {}", "concept", "donor", "nativised");
+    for line in raw.lines() {
+        let t = line.trim();
+        if let Some((concept, donor)) = t.split_once('=') {
+            let (concept, donor) = (concept.trim(), donor.trim());
+            if concept.is_empty() || donor.is_empty() {
+                continue;
+            }
+            let a = contact::adapt(&phon, &loan, donor);
+            println!("  {:<20} {:<14} {}", concept, donor, a.adapted);
+        }
+    }
+    eprintln!("\n(advisory — add one with `inkhaven language borrow {language} --from {from} --form <donor> --gloss <concept> --yes`)");
+    Ok(())
+}
+
 /// LANG-2 P5 — assemble the variation + contact data the grammar book renders
 /// (varieties, a dialect-comparison table, areal/contact info). `None` when the
 /// language declares no varieties, contact, or loan phonology.
@@ -856,6 +1117,10 @@ pub(crate) fn load_varieties(
         .filter(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Grammar"))
         .cloned()
         .collect();
+    // Merge every `{ varieties: [ … ] }` block across the Grammar chapter, so a
+    // hand-authored set and AI-proposed dialects (written as separate paragraphs)
+    // are all seen together.
+    let mut merged = Varieties::default();
     for chapter in chapters {
         for para in hierarchy.children_of(Some(chapter.id)) {
             if para.kind != NodeKind::Paragraph {
@@ -864,11 +1129,15 @@ pub(crate) fn load_varieties(
             let Some(bytes) = store.get_content(para.id)? else { continue };
             let body = String::from_utf8_lossy(&bytes);
             if let Ok(Some(v)) = Varieties::from_hjson(&body) {
-                return Ok(v);
+                for var in v.varieties {
+                    if !merged.varieties.iter().any(|x| x.id.eq_ignore_ascii_case(&var.id)) {
+                        merged.varieties.push(var);
+                    }
+                }
             }
         }
     }
-    Ok(Varieties::default())
+    Ok(merged)
 }
 
 /// LANG-2 P3 — load the `{ contact: { … } }` block from the Grammar chapter
