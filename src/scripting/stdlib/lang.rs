@@ -47,6 +47,8 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.lang.agree", w_agree),
         ("ink.lang.sentence", w_sentence),
         ("ink.lang.translate", w_translate),
+        ("ink.lang.reverse", w_reverse),
+        ("ink.lang.cross", w_cross),
         ("ink.lang.relative", w_relative),
         ("ink.lang.complement", w_complement),
         ("ink.lang.coordinate", w_coordinate),
@@ -351,6 +353,92 @@ fn do_translate(vm: &mut VM) -> Result<&mut VM> {
     h.insert(
         "unresolved".into(),
         Value::from_list(t.unresolved.into_iter().map(Value::from_string).collect()),
+    );
+    push(vm, Value::from_dict(h));
+    Ok(vm)
+}
+
+// ( lang surface -- dict{english,gloss,confidence,unresolved} )
+// LANG-3 Tier 1 (RBMT): reverse a conlang sentence back into English.
+fn w_reverse(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_reverse(vm).map_err(to_bund_err)
+}
+fn do_reverse(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::translate::reverse;
+    let tag = "ink.lang.reverse";
+    require_depth(vm, 2, tag)?;
+    let surface = value_to_string(pull(vm, tag)?, "surface", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let morph = langapi::load_morphology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let (spec, _) =
+        langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let entries =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let r = reverse::reverse(&phon, &morph, &spec.grammar, &entries, &surface);
+    let gloss = r.words.iter().map(|(w, g)| format!("{w}={g}")).collect::<Vec<_>>().join(" ");
+    let mut h: HashMap<String, Value> = HashMap::new();
+    h.insert("english".into(), Value::from_string(r.english));
+    h.insert("gloss".into(), Value::from_string(gloss));
+    h.insert("confidence".into(), Value::from_float(r.confidence as f64));
+    h.insert(
+        "unresolved".into(),
+        Value::from_list(r.unresolved.into_iter().map(Value::from_string).collect()),
+    );
+    push(vm, Value::from_dict(h));
+    Ok(vm)
+}
+
+// ( from to surface -- dict{english,target,gloss,confidence,unresolved} )
+// LANG-3 Tier 1 (RBMT): cross-translate conlang `from` → `to` via English.
+fn w_cross(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_cross(vm).map_err(to_bund_err)
+}
+fn do_cross(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::translate::reverse::{self, LangCtx};
+    let tag = "ink.lang.cross";
+    require_depth(vm, 3, tag)?;
+    let surface = value_to_string(pull(vm, tag)?, "surface", tag)?;
+    let to = value_to_string(pull(vm, tag)?, "to", tag)?;
+    let from = value_to_string(pull(vm, tag)?, "from", tag)?;
+    let (store, hierarchy, from_book) = ctx(tag, &from)?;
+    let to_book =
+        langapi::find_language_book(&hierarchy, &to).map_err(|e| anyhow!("{tag}: {e}"))?;
+
+    let load = |book: &Node| -> Result<_> {
+        let phon = langapi::load_phonology(store, &hierarchy, book)
+            .map_err(|e| anyhow!("{tag}: {e}"))?
+            .unwrap_or_default();
+        let morph = langapi::load_morphology(store, &hierarchy, book)
+            .map_err(|e| anyhow!("{tag}: {e}"))?
+            .unwrap_or_default();
+        let (spec, _) =
+            langapi::load_grammar_spec(store, &hierarchy, book).map_err(|e| anyhow!("{tag}: {e}"))?;
+        let entries =
+            langapi::load_dictionary(store, &hierarchy, book).map_err(|e| anyhow!("{tag}: {e}"))?;
+        Ok((phon, morph, spec, entries))
+    };
+    let (f_phon, f_morph, f_spec, f_entries) = load(&from_book)?;
+    let (t_phon, t_morph, t_spec, t_entries) = load(&to_book)?;
+    let fromctx =
+        LangCtx { phon: &f_phon, morph: &f_morph, typology: &f_spec.grammar, entries: &f_entries };
+    let toctx =
+        LangCtx { phon: &t_phon, morph: &t_morph, typology: &t_spec.grammar, entries: &t_entries };
+    let c = reverse::cross(&fromctx, &toctx, &surface);
+    let gloss = c.words.iter().map(|(w, g)| format!("{w}={g}")).collect::<Vec<_>>().join(" ");
+    let mut h: HashMap<String, Value> = HashMap::new();
+    h.insert("english".into(), Value::from_string(c.english));
+    h.insert("target".into(), Value::from_string(c.target));
+    h.insert("gloss".into(), Value::from_string(gloss));
+    h.insert("confidence".into(), Value::from_float(c.confidence as f64));
+    h.insert(
+        "unresolved".into(),
+        Value::from_list(c.unresolved.into_iter().map(Value::from_string).collect()),
     );
     push(vm, Value::from_dict(h));
     Ok(vm)

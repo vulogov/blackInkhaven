@@ -31,10 +31,22 @@
 > DistilBERT English parser is deferred — the first cut uses a small rule-based
 > analyzer (the RFC's documented fallback) behind the same `analyze` interface,
 > keeping LANG-3 dependency-light and offline-testable until the ML tiers (P1+)
-> are scoped. Remaining P0 work: richer source parsing (multi-word NPs,
-> adjectives, subordinate clauses), `reverse` (conlang→English) and `cross`
-> (conlang→conlang via two passes), and the routing/merge layer (trivial while
-> only Tier 1 exists).
+> are scoped.
+>
+> **P0.2 — `reverse` + `cross` landed.** `src/conlang/translate/reverse.rs`:
+> `reverse` (conlang→English) un-inflects each surface word against the lexicon's
+> paradigm-generated forms (a `ReverseIndex` over headwords + explicit inflections
+> + every `paradigm::generate` form), reads roles off `word_order`, and generates
+> a plain English clause; `cross` (conlang A→B) reverses A then forwards into B
+> through the English pivot (exposed; confidence = product of the two passes).
+> CLI `language reverse <lang> "<surface>"` and `language cross <from> <to>
+> "<surface>"`; Bund `lang.reverse` / `lang.cross` (`store_read`). Validated live
+> (Eldar SVO `kira nami pata` → English → Sindar SOV `turi moki vela`). tests
+> 1559 → 1563.
+>
+> Remaining P0 work: richer source parsing (multi-word NPs, adjectives,
+> subordinate clauses), better English generation in `reverse` (number/tense
+> agreement), and the routing/merge layer (trivial while only Tier 1 exists).
 
 ---
 
