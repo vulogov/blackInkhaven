@@ -673,7 +673,7 @@ fn collect_glyphs_from_dir(glyphs_dir: &Path) -> Result<(Vec<GlyphSource>, usize
 /// Build glyph sources from a language's `font` config block + glyph store.
 /// Returns the resolved family (`--family` > config > language name) and upm
 /// (`--upm` > config).
-fn collect_glyphs_from_config(
+pub(crate) fn collect_glyphs_from_config(
     project: &Path,
     language: &str,
     family_override: Option<&str>,
@@ -725,7 +725,7 @@ fn collect_glyphs_from_config(
 }
 
 /// Shared tail: build the UFO and emit UFO / TTF artifacts per the format.
-fn emit_font(
+pub(crate) fn emit_font(
     family: &str,
     upm: f64,
     sources: &[GlyphSource],
@@ -786,7 +786,7 @@ fn lang_slug(name: &str) -> String {
 }
 
 /// `<project>/.inkhaven/glyphs/<lang-slug>/` — the glyph artwork store.
-fn glyph_store_dir(project_root: &Path, language: &str) -> std::path::PathBuf {
+pub(crate) fn glyph_store_dir(project_root: &Path, language: &str) -> std::path::PathBuf {
     project_root
         .join(".inkhaven")
         .join("glyphs")
@@ -1368,7 +1368,7 @@ fn glyph_lint(svg: &Path) -> Result<()> {
     Ok(())
 }
 
-const GLYPH_DRAFT_SYSTEM: &str = "You are a type designer drafting a single glyph for a constructed \
+pub(crate) const GLYPH_DRAFT_SYSTEM: &str = "You are a type designer drafting a single glyph for a constructed \
 writing system. Output ONE self-contained SVG and NOTHING else — no prose, no explanation, no \
 markdown fences. Hard requirements (the glyph is rejected otherwise): the root element is <svg> with \
 viewBox=\"0 0 1000 1000\"; the shape is one or more FILLED black <path> elements \
@@ -3509,7 +3509,7 @@ fn stats(project: &Path, language: &str, json: bool) -> Result<()> {
 
 /// Syllabified surface pronunciation of a headword (e.g. `ka.ta`), or `None`
 /// when it doesn't read as the language's phonemes.
-fn pronounce(phon: &crate::conlang::Phonology, word: &str) -> Option<String> {
+pub(crate) fn pronounce(phon: &crate::conlang::Phonology, word: &str) -> Option<String> {
     let seq = phon.segment(&word.to_lowercase());
     if seq.is_empty() || !seq.iter().all(|s| phon.phoneme(s).is_some()) {
         return None;
@@ -3529,7 +3529,7 @@ fn pronounce(phon: &crate::conlang::Phonology, word: &str) -> Option<String> {
 }
 
 /// Load `(title, body)` pairs from a language's `Sample texts` chapter.
-fn load_samples(
+pub(crate) fn load_samples(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
@@ -3624,7 +3624,7 @@ fn grammar_study_brief(
 /// Build an example clause from the lexicon (first noun = subject, first verb,
 /// second noun = object) via the syntax engine, returned as `(surface,
 /// interlinear, literal)`. `None` when there isn't at least a noun and a verb.
-fn build_example_sentence(
+pub(crate) fn build_example_sentence(
     phon: &crate::conlang::Phonology,
     morph: &crate::conlang::types::morphology::Morphology,
     typology: &std::collections::BTreeMap<String, String>,
