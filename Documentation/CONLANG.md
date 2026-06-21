@@ -591,28 +591,52 @@ blocks — the two are equivalent, and you can mix them freely. The `ink.lang.*`
 words run against the active project (`inkhaven bund "<script>" --project .` or
 from a Script-book paragraph in the TUI).
 
+Every word is also reachable as `lang.X` (the `ink.` prefix dropped), so the
+examples below use the short form.
+
 **Read-only inspectors** (the `store_read` category, allowed by default):
 
 ```
-ink.lang.list                              ( -- list-of-names )
-ink.lang.generate_word                     ( lang role seed -- word )
-ink.lang.syllabify                         ( lang word -- list )
-ink.lang.ipa                               ( lang word -- surface )
-ink.lang.gloss                             ( lang text -- gloss )
-ink.lang.sentence                          ( lang subject verb object -- {surface,gloss,literal} )
+lang.list             ( -- names )                  lang.gaps         ( lang scope -- report )
+lang.generate_word    ( lang role seed -- word )    lang.audit        ( lang -- report )
+lang.syllabify        ( lang word -- list )         lang.query        ( lang text -- entries )
+lang.ipa              ( lang word -- surface )      lang.stats        ( lang -- profile )
+lang.stress           ( lang word -- marked )       lang.paradigm     ( lang root template gloss -- rows )
+lang.tone             ( lang tones -- result )      lang.derive       ( lang root gloss pos -- forms )
+lang.transliterate    ( lang text -- script )       lang.agree        ( lang word pos features -- form )
+lang.gloss            ( lang text -- gloss )        lang.sound_change ( lang form -- evolved )
+lang.sentence         ( lang subj verb obj -- clause )   lang.cognates ( proto form -- reflexes )
+lang.relative         ( lang head role verb with relativizer -- clause )
+lang.complement       ( lang subj verb comp comp-subj comp-verb comp-obj -- clause )
+lang.coordinate       ( lang clause-list conjunction -- clause )
+lang.family_tree      ( -- tree )                   lang.names        ( lang count seed -- list )
+lang.prose            ( lang count seed -- clauses )    lang.poem      ( lang meter seed -- lines )
 ```
+
+Structured results come back as native Bund dicts/lists (e.g. `lang.sentence`
+yields `{ surface, gloss, literal }`; `lang.stats` the full analysis profile),
+so a script can pull fields directly.
 
 **Mutators** (the `store_write` category — default-denied; enable with
 `scripting: { enabled_categories: ["store_write"] }` in `inkhaven.hjson`, the
 same gate as `ink.tree.*`):
 
 ```
-ink.lang.init                              ( name -- )
-ink.lang.define                            ( lang chapter block -- )
-ink.lang.add_word                          ( lang word pos translation -- )
+lang.init        ( name -- )                    lang.grammar_set ( lang feature value -- )
+lang.define      ( lang chapter block -- )      lang.idiom_add   ( lang form literal meaning -- )
+lang.add_word    ( lang word pos translation -- )   lang.metaphor_add ( lang source target -- )
+lang.remove_word ( lang word -- )               lang.derive_add  ( lang root gloss pos -- count )
 ```
 
-`ink.lang.define` writes a definition `block` as a paragraph under a chapter
+**Building artefacts natively.** `lang.dict` turns a flat Bund list
+`[ key val key val … ]` into a real dict (Bund's `{ … }` is a lambda, not a
+dict). It is aliased to self-documenting names — `word`, `rule`, `phoneme`,
+`block` — so a script reads like what it builds, e.g.
+`[ "ipa" "k" "kind" "consonant" ] phoneme`. Hand a dict (or list of dicts, built
+with Bund's `push`) to `lang.define` and it is serialized to the same HJSON the
+book stores. For whole blocks the HJSON-string form below is usually simplest.
+
+`lang.define` writes a definition `block` as a paragraph under a chapter
 (`Phonology` / `Grammar` / `Sample texts` / `Meta`) — exactly the HJSON the book
 stores, so a Bund-built language is byte-for-byte a hand-authored one. The block
 is a JSON/HJSON string (write `\"` for each quote); the book ends up with clean

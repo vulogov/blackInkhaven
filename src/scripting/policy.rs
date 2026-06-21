@@ -277,11 +277,36 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.lang.generate_word", category::STORE_READ),
     ("ink.lang.syllabify", category::STORE_READ),
     ("ink.lang.ipa", category::STORE_READ),
+    ("ink.lang.stress", category::STORE_READ),
+    ("ink.lang.tone", category::STORE_READ),
+    ("ink.lang.transliterate", category::STORE_READ),
     ("ink.lang.gloss", category::STORE_READ),
+    ("ink.lang.paradigm", category::STORE_READ),
+    ("ink.lang.derive", category::STORE_READ),
+    ("ink.lang.agree", category::STORE_READ),
     ("ink.lang.sentence", category::STORE_READ),
+    ("ink.lang.relative", category::STORE_READ),
+    ("ink.lang.complement", category::STORE_READ),
+    ("ink.lang.coordinate", category::STORE_READ),
+    ("ink.lang.stats", category::STORE_READ),
+    ("ink.lang.audit", category::STORE_READ),
+    ("ink.lang.query", category::STORE_READ),
+    ("ink.lang.gaps", category::STORE_READ),
+    ("ink.lang.sound_change", category::STORE_READ),
+    ("ink.lang.cognates", category::STORE_READ),
+    ("ink.lang.family_tree", category::STORE_READ),
+    ("ink.lang.names", category::STORE_READ),
+    ("ink.lang.prose", category::STORE_READ),
+    ("ink.lang.poem", category::STORE_READ),
+    // ink.lang.dict is a pure data constructor — uncategorised (allowed).
     ("ink.lang.init", category::STORE_WRITE),
     ("ink.lang.define", category::STORE_WRITE),
     ("ink.lang.add_word", category::STORE_WRITE),
+    ("ink.lang.remove_word", category::STORE_WRITE),
+    ("ink.lang.derive_add", category::STORE_WRITE),
+    ("ink.lang.grammar_set", category::STORE_WRITE),
+    ("ink.lang.idiom_add", category::STORE_WRITE),
+    ("ink.lang.metaphor_add", category::STORE_WRITE),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
@@ -606,7 +631,17 @@ mod tests {
         ] {
             assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");
         }
-        for w in ["ink.lang.init", "ink.lang.define", "ink.lang.add_word"] {
+        let mutators = [
+            "ink.lang.init",
+            "ink.lang.define",
+            "ink.lang.add_word",
+            "ink.lang.remove_word",
+            "ink.lang.derive_add",
+            "ink.lang.grammar_set",
+            "ink.lang.idiom_add",
+            "ink.lang.metaphor_add",
+        ];
+        for w in mutators {
             assert_eq!(
                 cat(w),
                 Some(category::STORE_WRITE),
@@ -616,7 +651,7 @@ mod tests {
         // And the mutators are denied under the default policy.
         let p = Policy::default();
         let denied = p.effective_denied_categories();
-        for w in ["ink.lang.init", "ink.lang.define", "ink.lang.add_word"] {
+        for w in mutators {
             assert!(denied.contains(cat(w).unwrap()), "{w} denied by default");
         }
     }
