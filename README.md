@@ -21,53 +21,54 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.21 — Scripting the ConLang Suite from Bund
+## Latest release · 1.3.22 — The ConLang Suite: Sociolinguistics & Contact
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.21.md`](Documentation/RELEASE_NOTES/1.3.21.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.22.md`](Documentation/RELEASE_NOTES/1.3.22.md)
 · Reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md)
 
-With RFC LANG-1 complete, this release opens the whole ConLang Suite to **Bund**,
-Inkhaven's scripting layer: one script can define, inspect, generate, AI-author,
-and typeset an entire constructed language — interchangeable with the JSON/CLI
-path. No new dependencies.
+A whole new pillar (RFC LANG-2): a constructed language stops being uniform and
+starts living among its speakers and neighbours. The insight throughout — a
+**dialect is a sound-change chain applied synchronically**, a **loanword is a
+phonotactic repair** — so the features are mostly orchestration over the LANG-1
+engines. No new dependencies.
 
-### The `ink.lang.*` tree (~37 words, also reachable as `lang.X`)
+### Variation, contact, community
 
-- **Define a whole language from a script** — `lang.init` / `lang.add_word` /
-  `lang.define` (writes a phonology / grammar / morphology / typology / sample
-  block) build a language byte-for-byte identical to a hand-authored one.
-- **Inspect every layer** (`store_read`) — generate_word, syllabify, ipa, stress,
-  tone, transliterate, gloss, paradigm, derive, agree, sentence, relative,
-  complement, coordinate, stats, audit, query, gaps, sound_change, cognates,
-  family_tree, names, prose, poem. Results return as native Bund dicts/lists.
-- **Mutate** (`store_write`) — remove_word, derive_add, grammar_set, idiom_add,
-  metaphor_add.
-- **AI generation** (`ai_write`, advisory) — compose (blessing/curse/incantation),
-  reconstruct, realism_check, generate_lexicon (deterministic forms + AI meaning
-  + dedup gate).
-- **Produce files** (`fs_write`) — dictionary, grammar_book, font_build (UFO/TTF),
-  glyph_lint, glyph_draft (AI glyph SVG).
-- **Native artefacts** — `lang.dict` (aliased to `word` / `rule` / `phoneme`)
-  builds dicts from `[ key val … ]` lists; hand one to `lang.define`.
+- **Dialects & registers** (`varieties` block) — a **variety** is a delta on the
+  base: an ordered list of `sound_changes` (the diachronics engine, run *now*)
+  plus suppletive `lexicon` overrides. `language varieties` / `lect` (render in a
+  variety, `kata` → `kada`) / `dialects` (the dialectology comparison table).
+- **Borrowing** (`loan_phonology` block) — `language borrow` adapts a donor word
+  by **perceive** (nearest native sound) + **repair** (epenthesis / deletion):
+  `tras` → `tulasu`; `--yes` records the donor in the etymology.
+- **Areal features / Sprachbund** (`contact` block) — `language areal` overlays
+  convergence (✓ converged · → shift · + adopt); `family-tree` gains horizontal
+  contact edges (`Eldar ⇄ Sindar`).
+- **Speech communities & ecology** — places carry a `--variety`, characters a
+  `--native-variety`; `language ecology` (+ `--svg` atlas) maps who speaks what
+  where, and `language idiolect` renders a character's speech in their own dialect.
+- **Grammar book** — gains **Variation** and **Contact** sections automatically
+  when a language declares them.
 
-### Safe by default
+### Advisory AI (`--yes`-gated, multilingual)
 
-Every word is classified into the existing scripting policy: inspectors
-`store_read` (allowed); mutators `store_write`; AI words `ai_write`; file
-producers `fs_write` — all default-denied, opted into per project. AI words stay
-advisory (return data, never auto-write the book); paths stay inside the project
-sandbox.
+- **`propose-dialect`** suggests a coherent dialect (each rule validated +
+  previewed); **`propose-loans`** proposes borrowings the deterministic adapter
+  then nativises (`stɔrm` → `sitarimi`); **`areal-check`** judges a Sprachbund's
+  plausibility. The AI proposes; the engine applies and validates.
 
-### Also
+### The developer's guide
 
-- The developer's guide gains a *Scripting (Bund)* section, and its
-  end-of-chapter "What you learned" recaps are recoloured pastel mint-green so
-  they stand out.
+*Developing a Constructed Language with Inkhaven* gains **Part VI — "A Language in
+a World"** (dialects, contact, speech communities, with a term box for every new
+concept) and **Part XI — "Scripting Your Language"** (a gentle, non-programmer's
+introduction to building a conlang with Bund, plus a full **Bund API reference**
+appendix). ~135 → ~168 B5 pages, warning-free.
 
 ### Test stats
 
-Tests 1531 → 1533. **Zero new dependencies.** Backward compatible. AI/file paths
-validated live. Full reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md).
+Tests 1533 → 1548. **Zero new dependencies.** Backward compatible. Deterministic
+core, advisory AI validated live. Full reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

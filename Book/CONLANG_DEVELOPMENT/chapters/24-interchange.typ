@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 21, title: "Sharing your language")
+#chapter(number: 24, title: "Sharing your language")
 
 Your language does not have to live only inside Inkhaven. You may want to typeset
 a paper about it, study it on your phone, hand the lexicon to a collaborator,

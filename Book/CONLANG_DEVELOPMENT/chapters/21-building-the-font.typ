@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 18, title: "Building the font")
+#chapter(number: 21, title: "Building the font")
 
 You have glyphs. Now you *bind* each one to a sound and a character slot, and
 compile them into a finished font file. Inkhaven does the whole compilation
@@ -83,7 +83,7 @@ open in professional font editors) or `both`.
 
 #callout(label: "Using your font")[
   The `.ttf` file is a real font. Install it like any other to type your script
-  in any program, or — as Part VII shows — let Inkhaven embed it directly in the
+  in any program, or — as Part VIII shows — let Inkhaven embed it directly in the
   PDF books it produces, so your dictionary shows each headword in its own native
   script. To preview the font in a document, compile a Typst file that uses it
   with `typst compile --font-path <folder> document.typ`.

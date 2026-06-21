@@ -60,10 +60,16 @@ book has one part for each, and they build on one another in order:
   it is what gives a language depth and realism. *Part V.*
 ]
 
+#term("Sociolinguistics")[
+  How a language varies across its speakers and lives among its neighbours: its
+  *dialects* and *registers*, the words it *borrows* from other tongues, and the
+  speech of the particular people and places of your world. *Part VI.*
+]
+
 #term("Writing system (orthography)")[
   How the language is written down: an alphabet, a syllabary, or a set of
   symbols, and the rules for using them. You can borrow the Latin alphabet you
-  are reading now, or invent a script of your own. *Part VI.*
+  are reading now, or invent a script of your own. *Part VII.*
 ]
 
 #section("A priori and a posteriori")
