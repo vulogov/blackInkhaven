@@ -442,7 +442,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
     }
 }
 
-const LEXGEN_SYSTEM: &str = "You are a meticulous lexicographer for a constructed language. \
+pub(crate) const LEXGEN_SYSTEM: &str = "You are a meticulous lexicographer for a constructed language. \
 Reply with a SINGLE JSON object and nothing else — no prose, no preamble, no markdown fences. \
 Shape: {\"entries\":[{\"form\":\"…\",\"gloss\":\"…\",\"pos\":\"…\",\"example\":\"…\",\"register\":\"…\",\
 \"domain\":[\"…\"]}]}. Choose each `form` ONLY from the provided candidate list (never invent a \
@@ -1406,12 +1406,12 @@ short practice exercise at the end of every lesson. Teach and explain; do not me
 a clear, encouraging textbook voice. Write the document and nothing else (no preamble about what \
 you are doing).";
 
-const RECONSTRUCT_SYSTEM: &str = "You are a historical linguist applying the comparative method. \
+pub(crate) const RECONSTRUCT_SYSTEM: &str = "You are a historical linguist applying the comparative method. \
 Given cognate forms from related daughter languages, propose the single most plausible proto-form. \
 Mark the proto-form with a leading asterisk. Then list the key regular sound correspondences you \
 relied on, and justify the reconstruction in 2–3 sentences. Be concise; output plain text.";
 
-const REALISM_SYSTEM: &str = "You are a historical phonologist. Assess whether a chain of diachronic \
+pub(crate) const REALISM_SYSTEM: &str = "You are a historical phonologist. Assess whether a chain of diachronic \
 sound changes is typologically plausible — i.e. whether each change is a naturally attested type \
 (lenition, assimilation, final devoicing, palatalization, epenthesis, …) and whether the ordering \
 is reasonable. Flag any rule that is unnatural or unattested, and give an overall verdict \
@@ -2670,7 +2670,7 @@ fn generate_lexicon(
     Ok(())
 }
 
-fn build_lexgen_prompt(
+pub(crate) fn build_lexgen_prompt(
     language: &str,
     topic: Option<&str>,
     count: usize,
@@ -3399,7 +3399,7 @@ fn compose(
 }
 
 /// A compact human summary of the typology answers for an AI prompt.
-fn summarize_typology(typology: &std::collections::BTreeMap<String, String>) -> String {
+pub(crate) fn summarize_typology(typology: &std::collections::BTreeMap<String, String>) -> String {
     if typology.is_empty() {
         return "word order: SVO; alignment: nominative–accusative (defaults)".into();
     }

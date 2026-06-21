@@ -307,6 +307,13 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.lang.grammar_set", category::STORE_WRITE),
     ("ink.lang.idiom_add", category::STORE_WRITE),
     ("ink.lang.metaphor_add", category::STORE_WRITE),
+    // The AI-backed words call the LLM → ai_write (default-denied). They stay
+    // advisory (return data, never write the book), so a script that commits
+    // their output goes through the separately-gated store_write words.
+    ("ink.lang.compose", category::AI_WRITE),
+    ("ink.lang.reconstruct", category::AI_WRITE),
+    ("ink.lang.realism_check", category::AI_WRITE),
+    ("ink.lang.generate_lexicon", category::AI_WRITE),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
@@ -648,12 +655,22 @@ mod tests {
                 "{w} must inherit the store_write deny-by-default gate"
             );
         }
-        // And the mutators are denied under the default policy.
+        // The AI-backed words are ai_write (default-denied).
+        for w in [
+            "ink.lang.compose",
+            "ink.lang.reconstruct",
+            "ink.lang.realism_check",
+            "ink.lang.generate_lexicon",
+        ] {
+            assert_eq!(cat(w), Some(category::AI_WRITE), "{w} must be ai_write");
+        }
+        // And the mutators + AI words are denied under the default policy.
         let p = Policy::default();
         let denied = p.effective_denied_categories();
         for w in mutators {
             assert!(denied.contains(cat(w).unwrap()), "{w} denied by default");
         }
+        assert!(denied.contains(category::AI_WRITE), "ai_write denied by default");
     }
 
     #[test]
