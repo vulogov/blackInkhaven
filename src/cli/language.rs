@@ -210,6 +210,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             question,
             q_particle.as_deref(),
         ),
+        LanguageCommand::Translate { language, text, trace, json } => {
+            translate(project, &language, &text, trace, json)
+        }
         LanguageCommand::Relative {
             language,
             head,
@@ -2720,6 +2723,95 @@ pub(crate) fn parse_word(s: &str) -> crate::conlang::syntax::Word {
         Some((root, gloss)) => Word { root: root.trim().to_string(), gloss: gloss.trim().to_string() },
         None => Word { root: s.trim().to_string(), gloss: s.trim().to_string() },
     }
+}
+
+/// 1.3.23 LANG-3 P0 — translate English into the conlang (Tier 1, RBMT).
+fn translate(project: &Path, language: &str, text: &str, trace: bool, json: bool) -> Result<()> {
+    use crate::conlang::translate::{self, Decision};
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    // Phonology is only needed for inflection/allophony; without it the engine
+    // still orders and concatenates the mapped roots.
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+
+    let t = translate::translate(&phon, &morph, &grammar_spec.grammar, &entries, text);
+
+    if json {
+        let trace_json: Vec<serde_json::Value> = t
+            .trace
+            .iter()
+            .map(|e| {
+                let decision = match &e.decision {
+                    Decision::LexiconLookup { word, pos } => {
+                        serde_json::json!({ "kind": "lexicon", "word": word, "pos": pos })
+                    }
+                    Decision::Untranslatable => serde_json::json!({ "kind": "untranslatable" }),
+                };
+                serde_json::json!({
+                    "source": e.source, "role": e.role, "target": e.target,
+                    "confidence": e.confidence, "decision": decision,
+                })
+            })
+            .collect();
+        let out = serde_json::json!({
+            "source": t.source,
+            "target": t.target,
+            "literal": t.literal,
+            "confidence": t.confidence,
+            "unresolved": t.unresolved,
+            "trace": trace_json,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out)
+                .map_err(|e| Error::Store(format!("serializing translation: {e}")))?
+        );
+        return Ok(());
+    }
+
+    let order = grammar_spec.grammar.get("word_order").map(String::as_str).unwrap_or("svo");
+    println!(
+        "{}  ({} · {} · confidence {:.2})",
+        t.target,
+        order.to_uppercase(),
+        t.tier.label(),
+        t.confidence
+    );
+
+    // Interlinear: surface words over their glosses.
+    if !t.words.is_empty() {
+        let widths: Vec<usize> =
+            t.words.iter().map(|(w, g)| w.chars().count().max(g.chars().count()) + 2).collect();
+        let mut line1 = String::from("  ");
+        let mut line2 = String::from("  ");
+        for (i, (w, g)) in t.words.iter().enumerate() {
+            line1.push_str(&format!("{:<width$}", w, width = widths[i]));
+            line2.push_str(&format!("{:<width$}", g, width = widths[i]));
+        }
+        println!("{line1}");
+        println!("{line2}");
+    }
+    println!("  '{}'", t.literal);
+
+    if !t.unresolved.is_empty() {
+        eprintln!(
+            "\nnot in {language}'s lexicon: {} — coin them, or add with `language add-word`",
+            t.unresolved.join(", ")
+        );
+    }
+    if trace {
+        eprintln!("\ntrace:");
+        for e in &t.trace {
+            let how = match &e.decision {
+                Decision::LexiconLookup { word, pos } => format!("lexicon → {word} ({pos})"),
+                Decision::Untranslatable => "untranslatable (passed through)".to_string(),
+            };
+            eprintln!("  {:<8} {:<12} {how}  [{:.2}]", e.role, e.source, e.confidence);
+        }
+    }
+    Ok(())
 }
 
 /// LANG-1 syntax — assemble a sentence from its parts and print the clause.
