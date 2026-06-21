@@ -583,6 +583,55 @@ This is the engine a live editor input mode would drive.
 - **`Ctrl+B Q` / `Ctrl+B Shift+Q`** (1.2.13) — translate a paragraph to / from
   an invented language.
 
+## Scripting (Bund)
+
+The whole ConLang Suite is reachable from **Bund**, so you can *define and
+generate a language from a script* as an alternative to hand-authoring HJSON
+blocks — the two are equivalent, and you can mix them freely. The `ink.lang.*`
+words run against the active project (`inkhaven bund "<script>" --project .` or
+from a Script-book paragraph in the TUI).
+
+**Read-only inspectors** (the `store_read` category, allowed by default):
+
+```
+ink.lang.list                              ( -- list-of-names )
+ink.lang.generate_word                     ( lang role seed -- word )
+ink.lang.syllabify                         ( lang word -- list )
+ink.lang.ipa                               ( lang word -- surface )
+ink.lang.gloss                             ( lang text -- gloss )
+ink.lang.sentence                          ( lang subject verb object -- {surface,gloss,literal} )
+```
+
+**Mutators** (the `store_write` category — default-denied; enable with
+`scripting: { enabled_categories: ["store_write"] }` in `inkhaven.hjson`, the
+same gate as `ink.tree.*`):
+
+```
+ink.lang.init                              ( name -- )
+ink.lang.define                            ( lang chapter block -- )
+ink.lang.add_word                          ( lang word pos translation -- )
+```
+
+`ink.lang.define` writes a definition `block` as a paragraph under a chapter
+(`Phonology` / `Grammar` / `Sample texts` / `Meta`) — exactly the HJSON the book
+stores, so a Bund-built language is byte-for-byte a hand-authored one. The block
+is a JSON/HJSON string (write `\"` for each quote); the book ends up with clean
+HJSON. A whole language, end to end:
+
+```
+"Avesha" ink.lang.init
+"Avesha" "Phonology" "{ phonemes:[{ipa:\"k\",kind:\"consonant\"}{ipa:\"a\",kind:\"vowel\"}]
+   classes:{C:[\"k\"] V:[\"a\"]} templates:{root:[{pattern:\"C V C V\"}]} }" ink.lang.define
+"Avesha" "Grammar" "{ grammar:{word_order:\"sov\",alignment:\"nominative_accusative\"} }" ink.lang.define
+"Avesha" "kira" "noun" "bird" ink.lang.add_word
+"Avesha" "nami" "verb" "see"  ink.lang.add_word
+"Avesha" "pata" "noun" "stone" ink.lang.add_word
+"Avesha" "kira:bird" "nami:see" "pata:stone" ink.lang.sentence println
+```
+
+The same language then opens, inspects, and renders identically through the
+`inkhaven language …` CLI and the editor.
+
 ## Principles
 
 - **Forms obey the language; meanings come from the AI; nothing duplicates.**

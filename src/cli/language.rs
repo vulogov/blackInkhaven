@@ -514,7 +514,7 @@ fn link_character(project: &Path, character: &str, language: &str, proficiency: 
 }
 
 /// Find + parse the `Morphology`-chapter HJSON block for a language sub-book.
-fn load_morphology(
+pub(crate) fn load_morphology(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
@@ -1764,7 +1764,7 @@ fn idioms_list(project: &Path, language: &str) -> Result<()> {
 
 /// Load the `{ grammar: { … } }` typology block from the Grammar chapter,
 /// returning the spec + the paragraph node that holds it (for in-place edits).
-fn load_grammar_spec(
+pub(crate) fn load_grammar_spec(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
@@ -2050,7 +2050,7 @@ fn paradigm(
 }
 
 /// Parse a `root` or `root:gloss` argument into a syntax word.
-fn parse_word(s: &str) -> crate::conlang::syntax::Word {
+pub(crate) fn parse_word(s: &str) -> crate::conlang::syntax::Word {
     use crate::conlang::syntax::Word;
     match s.split_once(':') {
         Some((root, gloss)) => Word { root: root.trim().to_string(), gloss: gloss.trim().to_string() },
@@ -2912,6 +2912,124 @@ fn open_lang_book(
     Ok((store, hierarchy, lang_book))
 }
 
+// ── Store-based API for the Bund `ink.lang.*` stdlib (1.3.21) ─────────────
+//
+// The CLI handlers above re-open the store from a `&Path`; a Bund script
+// already holds the active project store, so these variants take `&Store`
+// (and an already-loaded `&Hierarchy`) instead, reusing the same engine
+// loaders and node-creation paths.
+
+/// Find a language sub-book by name in an already-loaded hierarchy.
+pub(crate) fn find_language_book(
+    hierarchy: &Hierarchy,
+    name: &str,
+) -> Result<crate::store::node::Node> {
+    let lang_root = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
+        })
+        .ok_or_else(|| {
+            Error::Store("Language system book missing — re-open the project to seed it".into())
+        })?;
+    hierarchy
+        .children_of(Some(lang_root.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(name))
+        .cloned()
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "language `{name}` not found — create it first (e.g. `ink.lang.init`)"
+            ))
+        })
+}
+
+/// Create a language sub-book plus its scaffold chapters, using the active
+/// store. Errors if the name already exists. Returns the new book node.
+pub(crate) fn init_language(
+    store: &Store,
+    cfg: &Config,
+    name: &str,
+) -> Result<crate::store::node::Node> {
+    let hierarchy = Hierarchy::load(store)?;
+    let lang_book = hierarchy
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_LANGUAGES)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Store("Language system book missing — re-open the project to seed it".into())
+        })?;
+    if hierarchy
+        .children_of(Some(lang_book.id))
+        .iter()
+        .any(|n| n.title.eq_ignore_ascii_case(name))
+    {
+        return Err(Error::Config(format!(
+            "language `{name}` already exists under Language"
+        )));
+    }
+    let hierarchy = Hierarchy::load(store)?;
+    let per_lang = store.create_node(
+        cfg,
+        &hierarchy,
+        NodeKind::Book,
+        name,
+        Some(&lang_book),
+        None,
+        InsertPosition::End,
+    )?;
+    scaffold_language_chapters(store, cfg, &per_lang, |_| {})?;
+    Ok(per_lang)
+}
+
+/// Create a paragraph with an HJSON `body` under a named chapter of a language
+/// sub-book — the primitive behind `ink.lang.define`, which lets a Bund script
+/// write a phonology / grammar / morphology / typology / sample block exactly as
+/// it would appear in the book. Returns the created paragraph node.
+pub(crate) fn create_chapter_paragraph(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    chapter_title: &str,
+    paragraph_title: &str,
+    body: &str,
+) -> Result<crate::store::node::Node> {
+    let hierarchy = Hierarchy::load(store)?;
+    let chapter = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case(chapter_title))
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "language `{}` has no `{chapter_title}` chapter (try Phonology, Grammar, \
+                 Sample texts, or Meta)",
+                lang_book.title
+            ))
+        })?;
+    let hierarchy = Hierarchy::load(store)?;
+    let mut entry = store.create_node(
+        cfg,
+        &hierarchy,
+        NodeKind::Paragraph,
+        paragraph_title,
+        Some(&chapter),
+        None,
+        InsertPosition::End,
+    )?;
+    entry.content_type = Some("hjson".to_string());
+    if let Some(rel) = &entry.file {
+        let abs = store.project_root().join(rel);
+        std::fs::write(&abs, body.as_bytes())
+            .map_err(|e| Error::Store(format!("write block: {e}")))?;
+    }
+    store
+        .update_paragraph_content(&mut entry, body.as_bytes())
+        .map_err(|e| Error::Store(format!("seed block: {e}")))?;
+    Ok(entry)
+}
+
 /// Open a project and load a language's `Phonology` value — the shared
 /// front-half of every P1 phonology inspector / generator.
 fn open_phonology(project: &Path, language: &str) -> Result<(Store, crate::conlang::Phonology)> {
@@ -2927,7 +3045,7 @@ fn open_phonology(project: &Path, language: &str) -> Result<(Store, crate::conla
 
 /// Load every parseable `DictionaryEntry` under a language's `Dictionary`
 /// chapter (across all alphabet subchapters).
-fn load_dictionary(
+pub(crate) fn load_dictionary(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
@@ -3905,7 +4023,7 @@ fn audit(project: &Path, language: &str, json: bool) -> Result<()> {
 /// sub-book.  Scans every paragraph under the `Phonology` chapter and
 /// returns the first that parses as a phonology block (so the author can keep
 /// it in `overview`, a dedicated `inventory` paragraph, or wherever).
-fn load_phonology(
+pub(crate) fn load_phonology(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,

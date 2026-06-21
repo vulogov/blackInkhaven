@@ -268,6 +268,20 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.export.markdown", category::FS_WRITE),
     ("ink.export.tex", category::FS_WRITE),
     ("ink.export.epub", category::FS_WRITE),
+
+    // 1.3.21 — ConLang Suite from Bund.  The inspectors only read the
+    // language's book blocks + run the (pure) engine → store_read
+    // (default-allowed).  init / define / add_word create book nodes, so they
+    // inherit the store_write deny-by-default gate, exactly like ink.tree.*.
+    ("ink.lang.list", category::STORE_READ),
+    ("ink.lang.generate_word", category::STORE_READ),
+    ("ink.lang.syllabify", category::STORE_READ),
+    ("ink.lang.ipa", category::STORE_READ),
+    ("ink.lang.gloss", category::STORE_READ),
+    ("ink.lang.sentence", category::STORE_READ),
+    ("ink.lang.init", category::STORE_WRITE),
+    ("ink.lang.define", category::STORE_WRITE),
+    ("ink.lang.add_word", category::STORE_WRITE),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
@@ -573,6 +587,37 @@ mod tests {
             "ink.export.epub",
         ] {
             assert_eq!(cat(w), Some(category::FS_WRITE), "{w} must be fs_write");
+        }
+    }
+
+    // 1.3.21 — pin the ink.lang.* categories so a refactor can't silently
+    // un-gate the language mutators (which create book nodes) or wrongly gate
+    // the read-only inspectors.
+    #[test]
+    fn lang_words_classified() {
+        let cat = |w: &str| WORD_CATEGORIES.iter().find(|(n, _)| *n == w).map(|(_, c)| *c);
+        for w in [
+            "ink.lang.list",
+            "ink.lang.generate_word",
+            "ink.lang.syllabify",
+            "ink.lang.ipa",
+            "ink.lang.gloss",
+            "ink.lang.sentence",
+        ] {
+            assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");
+        }
+        for w in ["ink.lang.init", "ink.lang.define", "ink.lang.add_word"] {
+            assert_eq!(
+                cat(w),
+                Some(category::STORE_WRITE),
+                "{w} must inherit the store_write deny-by-default gate"
+            );
+        }
+        // And the mutators are denied under the default policy.
+        let p = Policy::default();
+        let denied = p.effective_denied_categories();
+        for w in ["ink.lang.init", "ink.lang.define", "ink.lang.add_word"] {
+            assert!(denied.contains(cat(w).unwrap()), "{w} denied by default");
         }
     }
 
