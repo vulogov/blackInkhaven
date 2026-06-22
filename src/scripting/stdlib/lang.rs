@@ -360,6 +360,8 @@ fn do_translate(vm: &mut VM) -> Result<&mut VM> {
         &mem,
         query_embedding.as_deref(),
     );
+    // PANE-1 P2 — route into the Output pane (no-op unless a store is active).
+    langapi::emit_translation_output(&name, &text, &t.target, t.confidence, "forward", &t.unresolved, langapi::translation_trace_json(&t));
     let gloss =
         t.words.iter().map(|(w, g)| format!("{w}={g}")).collect::<Vec<_>>().join(" ");
     let alts: Vec<Value> = t
@@ -409,6 +411,7 @@ fn do_reverse(vm: &mut VM) -> Result<&mut VM> {
     let entries =
         langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
     let r = reverse::reverse(&phon, &morph, &spec.grammar, &entries, &surface);
+    langapi::emit_translation_output(&name, &surface, &r.english, r.confidence, "reverse", &r.unresolved, serde_json::Value::Null);
     let gloss = r.words.iter().map(|(w, g)| format!("{w}={g}")).collect::<Vec<_>>().join(" ");
     let mut h: HashMap<String, Value> = HashMap::new();
     h.insert("english".into(), Value::from_string(r.english));
@@ -458,6 +461,7 @@ fn do_cross(vm: &mut VM) -> Result<&mut VM> {
     let toctx =
         LangCtx { phon: &t_phon, morph: &t_morph, typology: &t_spec.grammar, entries: &t_entries };
     let c = reverse::cross(&fromctx, &toctx, &surface);
+    langapi::emit_translation_output(&from, &surface, &c.target, c.confidence, "cross", &c.unresolved, serde_json::Value::Null);
     let gloss = c.words.iter().map(|(w, g)| format!("{w}={g}")).collect::<Vec<_>>().join(" ");
     let mut h: HashMap<String, Value> = HashMap::new();
     h.insert("english".into(), Value::from_string(c.english));

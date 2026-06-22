@@ -22,6 +22,7 @@ pub mod doctor_scan;
 pub mod event;
 pub mod comments;
 pub mod language;
+pub mod output;
 pub mod templates;
 pub mod thread;
 pub mod tts;
@@ -902,6 +903,10 @@ pub enum Command {
     /// See `Documentation/PROPOSALS/1.2.14_PLAN.md`.
     #[command(subcommand)]
     Thread(ThreadCommand),
+
+    /// 1.3.24 PANE-1 — the Output message channel (CLI surface; the pane is TUI).
+    #[command(subcommand)]
+    Output(OutputCommand),
     /// `inkhaven template
     /// <subcommand>`.  Surfaces information about
     /// the project templates available to
@@ -3497,6 +3502,53 @@ pub enum ThreadExportFormat {
     Markdown,
 }
 
+/// 1.3.24 PANE-1 — sub-subcommands under `inkhaven output …`. The minimal CLI
+/// surface over the Output message store (the pane itself is a TUI feature);
+/// useful for scripting and for sshing into a project without a TUI.
+#[derive(Debug, Subcommand)]
+pub enum OutputCommand {
+    /// List active Output messages.
+    Show {
+        /// Only this kind.
+        #[arg(long)]
+        kind: Option<String>,
+        /// Only this severity (info | warning | contradiction | progress).
+        #[arg(long)]
+        severity: Option<String>,
+        /// Cap how many to show.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Emit JSON instead of the formatted display.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Emit a message (for testing / scripting).
+    Emit {
+        /// Message kind (e.g. `bund_print`).
+        kind: String,
+        /// Kind-specific metadata as a JSON object.
+        #[arg(long, default_value = "{}")]
+        metadata: String,
+        /// Severity (info | warning | contradiction | progress).
+        #[arg(long, default_value = "info")]
+        severity: String,
+    },
+    /// Dismiss a message by id.
+    Dismiss {
+        /// The message UUID.
+        id: String,
+    },
+    /// Clear messages — a kind, or everything with `--all`.
+    Clear {
+        /// Only this kind.
+        #[arg(long)]
+        kind: Option<String>,
+        /// Dismiss all active messages.
+        #[arg(long)]
+        all: bool,
+    },
+}
+
 /// 1.2.14+ — sub-subcommands under
 /// `inkhaven thread …`.  Manages plot-thread
 /// paragraphs under the `Threads` system book.
@@ -3916,6 +3968,7 @@ impl Cli {
             Command::Language(cmd) => {
                 language::run(&project, cmd).map_err(Into::into)
             }
+            Command::Output(cmd) => output::run(&project, cmd).map_err(Into::into),
             Command::Thread(cmd) => {
                 thread::run(&project, cmd).map_err(Into::into)
             }

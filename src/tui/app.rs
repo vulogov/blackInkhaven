@@ -1495,6 +1495,14 @@ pub(crate) struct FactCheckNav {
     pub idx: usize,
 }
 
+/// PANE-1 — which pane occupies the right-side region. Cycled by `Ctrl+B Tab`.
+/// `Translation` is reserved for a future active-session flow (not built).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RightPane {
+    Output,
+    Ai,
+}
+
 pub(crate) struct App {
     layout: ProjectLayout,
     store: Store,
@@ -1575,6 +1583,13 @@ pub(crate) struct App {
     modal: Modal,
 
     focus: Focus,
+    /// PANE-1 — which pane the right-side region shows. Default AI preserves the
+    /// pre-PANE-1 launch view; Output is reached with `Ctrl+B Tab`.
+    right_pane: RightPane,
+    /// Selected row in the Output pane.
+    output_selected: usize,
+    /// Output messages whose detail is expanded (`o`/Space).
+    output_expanded: std::collections::HashSet<Uuid>,
     tree_cursor: usize,
     tree_scroll: usize,
 
@@ -2175,6 +2190,9 @@ impl App {
             bund_pending: false,
             view_pending: false,
             focus: Focus::Tree,
+            right_pane: RightPane::Ai,
+            output_selected: 0,
+            output_expanded: std::collections::HashSet::new(),
             tree_cursor: 0,
             tree_scroll: 0,
             search_input: TextInput::new(),
@@ -2270,6 +2288,12 @@ impl App {
     /// store stays uninstalled — progress tracking degrades to
     /// "(disabled)" rather than aborting startup.
     pub(crate) fn install_progress(&mut self) {
+        // PANE-1 — install the process-global Output store so the pane and the
+        // `ink.io.*` words share one `output.db` instance. Failure degrades to
+        // "Output disabled", never aborts startup.
+        if let Err(e) = crate::pane::output::install(&self.layout.root) {
+            tracing::warn!(target: "inkhaven::pane", "output install: {e:#}");
+        }
         if let Err(e) = crate::progress::install(&self.layout.root) {
             tracing::warn!(target: "inkhaven::progress", "install: {e:#}");
             return;
@@ -3704,6 +3728,8 @@ impl App {
         match self.focus {
             Focus::Tree => self.handle_tree_key(key),
             Focus::Editor => self.handle_editor_key(key),
+            // PANE-1 — when the right region shows Output, its keys win; else AI.
+            Focus::Ai if self.right_pane == RightPane::Output => self.handle_output_key(key),
             Focus::Ai => self.handle_passive_key(key),
             Focus::SearchBar => self.handle_input_key(key, true),
             Focus::AiPrompt => self.handle_input_key(key, false),
@@ -6585,11 +6611,186 @@ impl App {
     ///   * Tree (and Search bar): hierarchy operations
     ///   * Editor: save / snapshots / file load / split-edit
     ///   * AI (and AI prompt): inference management
+    /// PANE-1 — cycle the right-side region pane (Ctrl+B Tab / Shift+Tab). With
+    /// only Output and AI today both directions toggle; focus moves to the
+    /// region so its keys (and the cycle chord) take effect immediately.
+    fn cycle_right_pane(&mut self, _forward: bool) {
+        self.right_pane = match self.right_pane {
+            RightPane::Output => RightPane::Ai,
+            RightPane::Ai => RightPane::Output,
+        };
+        self.output_selected = 0;
+        self.change_focus(Focus::Ai);
+        self.status = match self.right_pane {
+            RightPane::Output => "pane → Output".into(),
+            RightPane::Ai => "pane → AI".into(),
+        };
+    }
+
+    /// PANE-1 — keys for the Output pane (active when the right region shows
+    /// Output): ↑/↓ select, `d` dismiss, `p` pin/unpin, `g`/`G` first/last.
+    fn handle_output_key(&mut self, key: KeyEvent) -> Result<bool> {
+        let msgs = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default();
+        let n = msgs.len();
+        if n > 0 && self.output_selected >= n {
+            self.output_selected = n - 1;
+        }
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') if plain => {
+                self.output_selected = self.output_selected.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') if plain => {
+                if self.output_selected + 1 < n {
+                    self.output_selected += 1;
+                }
+            }
+            KeyCode::Char('g') if plain => self.output_selected = 0,
+            KeyCode::Char('G') => self.output_selected = n.saturating_sub(1),
+            KeyCode::Char('d') if plain => {
+                if let Some(m) = msgs.get(self.output_selected) {
+                    if let Some(s) = crate::pane::output::active() {
+                        let _ = s.dismiss(m.id);
+                    }
+                    self.status = "dismissed".into();
+                }
+            }
+            KeyCode::Char('p') if plain => {
+                if let Some(m) = msgs.get(self.output_selected) {
+                    if let Some(s) = crate::pane::output::active() {
+                        let _ = s.set_pinned(m.id, !m.pinned);
+                    }
+                    self.status = if msgs[self.output_selected].pinned {
+                        "unpinned".into()
+                    } else {
+                        "pinned".into()
+                    };
+                }
+            }
+            KeyCode::Char('a') if plain => self.ask_ai_about_output(),
+            KeyCode::Char('o') | KeyCode::Char(' ') if plain => {
+                if let Some(m) = msgs.get(self.output_selected) {
+                    if !self.output_expanded.remove(&m.id) {
+                        self.output_expanded.insert(m.id);
+                    }
+                }
+            }
+            KeyCode::Char('r') if plain => self.remember_output_translation(),
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    /// PANE-1 P2 — the `r` Remember action on a `translation_result`: commit its
+    /// `source → target` to the language's translation memory (LANG-3), so the
+    /// next identical translation hits the memory. Embeds the source via the
+    /// project store so semantic recall works. A no-op on other kinds.
+    fn remember_output_translation(&mut self) {
+        let msgs = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default();
+        let Some(m) = msgs.get(self.output_selected) else { return };
+        if m.kind != crate::pane::output::kinds::TRANSLATION_RESULT {
+            self.status = "Remember: only for translation results".into();
+            return;
+        }
+        let get = |k: &str| m.metadata.get(k).and_then(|v| v.as_str()).map(str::to_string);
+        let (Some(lang), Some(source), Some(target)) =
+            (get("language"), get("source"), get("target"))
+        else {
+            self.status = "Remember: message missing language/source/target".into();
+            return;
+        };
+        if target.contains('«') {
+            self.status = "Remember: translation has uncovered words — add them first".into();
+            return;
+        }
+
+        use crate::conlang::translate::memory::TranslationMemory;
+        let mut mem = match TranslationMemory::load(&self.layout.root, &lang) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status = format!("Remember: {e}");
+                return;
+            }
+        };
+        mem.add(&source, &target);
+        // Embed any pending pairs via the project store (best-effort).
+        let need = mem.needs_embeddings();
+        if !need.is_empty() {
+            let refs: Vec<&str> = need.iter().map(String::as_str).collect();
+            if let Ok(vecs) = self.store.embed_batch(&refs) {
+                for (en, v) in need.iter().zip(vecs) {
+                    mem.set_embedding(en, v);
+                }
+            }
+        }
+        match mem.save(&self.layout.root, &lang) {
+            Ok(()) => self.status = format!("remembered: {source} → {target}"),
+            Err(e) => self.status = format!("Remember: save failed: {e}"),
+        }
+    }
+
+    /// PANE-1 — the ask-AI bridge (RFC §8.9). Take the selected Output message's
+    /// full structured detail into the AI conversation *by reference, not value*:
+    /// the detail is armed as the one-shot `pending_rag_prefix` (prepended to the
+    /// next prompt, exactly like the Ctrl+B P/C RAG flows), a short human-readable
+    /// quote is placed in the AI input, and focus moves to the AI prompt so the
+    /// author just types their question. The model sees the rich context; the
+    /// conversation pane shows only the quote + question.
+    fn ask_ai_about_output(&mut self) {
+        let msgs = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default();
+        let Some(m) = msgs.get(self.output_selected) else {
+            self.status = "Output: nothing to ask about".into();
+            return;
+        };
+        let kind = m.kind.clone();
+        let severity = m.severity.as_str();
+        let detail = serde_json::to_string_pretty(&m.metadata).unwrap_or_default();
+        let quote_text =
+            m.metadata.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        let prefix = format!(
+            "── Output message context ──\nkind: {kind}\nseverity: {severity}\ndetail:\n{detail}\n── end Output context ──"
+        );
+        self.pending_rag_prefix = Some(prefix);
+
+        // A short visible quote in the prompt; the cursor lands after it.
+        self.ai_input.clear();
+        let quote = format!("about [{kind}] \"{quote_text}\" — ");
+        for c in quote.chars() {
+            self.ai_input.insert_char(c);
+        }
+
+        self.right_pane = RightPane::Ai;
+        self.change_focus(Focus::AiPrompt);
+        self.status = "ask AI — type your question and Enter".into();
+    }
+
     fn handle_meta_action(&mut self, key: KeyEvent) {
         self.meta_pending = false;
         if matches!(key.code, KeyCode::Esc) {
             self.status = "meta cancelled".into();
             return;
+        }
+        // PANE-1 — Ctrl+B Tab / Ctrl+B Shift+Tab cycle the right-side pane.
+        // Handled before the modifier check (BackTab carries Shift).
+        match key.code {
+            KeyCode::Tab => {
+                self.cycle_right_pane(true);
+                return;
+            }
+            KeyCode::BackTab => {
+                self.cycle_right_pane(false);
+                return;
+            }
+            _ => {}
         }
         let plain = !key
             .modifiers
@@ -20159,7 +20360,11 @@ impl App {
             self.draw_secondary_editor(f, body[2]);
         } else {
             self.draw_editor(f, body[1]);
-            self.draw_ai(f, body[2]);
+            // PANE-1 — the right region shows Output or AI.
+            match self.right_pane {
+                RightPane::Output => self.draw_output(f, body[2]),
+                RightPane::Ai => self.draw_ai(f, body[2]),
+            }
         }
         self.draw_ai_prompt(f, outer[2]);
         self.draw_status(f, outer[3]);

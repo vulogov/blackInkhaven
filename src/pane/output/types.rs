@@ -1,0 +1,260 @@
+//! PANE-1 — the Output message envelope (RFC §7.2).
+//!
+//! One universal outer shape every emitter writes through. `kind` is a string
+//! (not a closed enum) so future subsystems and Bund-registered kinds extend the
+//! channel without touching this type; the well-known kinds at launch are the
+//! consts in [`kinds`]. `metadata` is kind-specific JSON.
+//!
+//! Timestamps are unix seconds (`i64`), matching the in-tree progress/blob
+//! stores rather than the RFC's `TIMESTAMP` columns — simpler to round-trip
+//! through DuckDB, same ordering semantics.
+
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// The well-known message kinds at PANE-1 launch (RFC §8.2). New kinds are just
+/// new strings; these consts keep the in-tree emitters from drifting.
+pub mod kinds {
+    pub const BUND_PRINT: &str = "bund_print";
+    pub const BUND_LOG: &str = "bund_log";
+    pub const TRANSLATION_RESULT: &str = "translation_result";
+    pub const TRANSLATION_MEMORY_LISTING: &str = "translation_memory_listing";
+    pub const TRANSLATION_CORPUS_PROGRESS: &str = "translation_corpus_progress";
+    pub const TRANSLATION_EVAL_RESULT: &str = "translation_eval_result";
+    pub const TRANSLATION_EXPORT_RESULT: &str = "translation_export_result";
+    pub const TRANSLATION_UNCOVERED_WORD_REPORT: &str = "translation_uncovered_word_report";
+    pub const LEXICON_PROPOSAL: &str = "lexicon_proposal";
+    pub const VARIETY_RENDERING: &str = "variety_rendering";
+    pub const AI_TASK_COMPLETE: &str = "ai_task_complete";
+}
+
+/// Visual / priority class (RFC §7.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Severity {
+    Info,
+    Warning,
+    Contradiction,
+    Progress,
+}
+
+impl Severity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Severity::Info => "info",
+            Severity::Warning => "warning",
+            Severity::Contradiction => "contradiction",
+            Severity::Progress => "progress",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "warning" => Severity::Warning,
+            "contradiction" => Severity::Contradiction,
+            "progress" => Severity::Progress,
+            _ => Severity::Info,
+        }
+    }
+
+    /// The severity icon used by the pane (RFC §8.6).
+    pub fn icon(self) -> char {
+        match self {
+            Severity::Info => '●',
+            Severity::Warning => '⚠',
+            Severity::Contradiction => '⊗',
+            Severity::Progress => '↻',
+        }
+    }
+}
+
+/// How long a message lives (RFC §7.4).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Lifetime {
+    /// Keep only the most recent N of this kind (count-bounded; enforced at
+    /// cleanup, not by wall-clock).
+    Session(usize),
+    /// Expire this many hours after emission.
+    Hours(f32),
+    /// Keep until accepted / rejected / dismissed.
+    UntilActedOn,
+    /// Expire when the referenced paragraph changes.
+    UntilParagraphEdited(Uuid),
+    /// Keep until explicitly dismissed.
+    Never,
+}
+
+impl Lifetime {
+    /// `(lifetime_kind, lifetime_value)` columns for storage.
+    pub fn to_columns(&self) -> (&'static str, Option<String>) {
+        match self {
+            Lifetime::Session(n) => ("session", Some(n.to_string())),
+            Lifetime::Hours(h) => ("hours", Some(h.to_string())),
+            Lifetime::UntilActedOn => ("until_acted", None),
+            Lifetime::UntilParagraphEdited(p) => ("until_paragraph_edit", Some(p.to_string())),
+            Lifetime::Never => ("never", None),
+        }
+    }
+
+    pub fn from_columns(kind: &str, value: Option<&str>) -> Self {
+        match kind {
+            "session" => Lifetime::Session(value.and_then(|v| v.parse().ok()).unwrap_or(100)),
+            "hours" => Lifetime::Hours(value.and_then(|v| v.parse().ok()).unwrap_or(1.0)),
+            "until_paragraph_edit" => value
+                .and_then(|v| Uuid::parse_str(v).ok())
+                .map(Lifetime::UntilParagraphEdited)
+                .unwrap_or(Lifetime::UntilActedOn),
+            "never" => Lifetime::Never,
+            _ => Lifetime::UntilActedOn,
+        }
+    }
+
+    /// The wall-clock expiry (unix secs) implied by this lifetime, or `None` when
+    /// it doesn't expire by time (`Session` is count-bounded; the others persist
+    /// until acted on / edited / dismissed).
+    pub fn expires_at(&self, created_at: i64) -> Option<i64> {
+        match self {
+            Lifetime::Hours(h) => Some(created_at + (h * 3600.0) as i64),
+            _ => None,
+        }
+    }
+}
+
+/// One of the seven interaction primitives (RFC §7.3). Kind-specific extras
+/// (e.g. `Remember`) live outside this enum and are handled by the UI layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActionId {
+    Primary,
+    Dismiss,
+    Pin,
+    AskAi,
+    Promote,
+    Snooze,
+    Expand,
+}
+
+impl ActionId {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ActionId::Primary => "primary",
+            ActionId::Dismiss => "dismiss",
+            ActionId::Pin => "pin",
+            ActionId::AskAi => "ask_ai",
+            ActionId::Promote => "promote",
+            ActionId::Snooze => "snooze",
+            ActionId::Expand => "expand",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "primary" => ActionId::Primary,
+            "dismiss" => ActionId::Dismiss,
+            "pin" => ActionId::Pin,
+            "ask_ai" => ActionId::AskAi,
+            "promote" => ActionId::Promote,
+            "snooze" => ActionId::Snooze,
+            "expand" => ActionId::Expand,
+            _ => return None,
+        })
+    }
+}
+
+/// Current unix-seconds timestamp.
+pub fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// A structured Output notification (RFC §7.2).
+#[derive(Debug, Clone)]
+pub struct Message {
+    pub id: Uuid,
+    pub kind: String,
+    pub timestamp: i64,
+    pub metadata: serde_json::Value,
+    pub actions: Vec<ActionId>,
+    pub severity: Severity,
+    pub lifetime: Lifetime,
+    pub group_key: Option<String>,
+    pub pinned: bool,
+    pub snoozed_until: Option<i64>,
+    pub dismissed: bool,
+    pub dismissed_at: Option<i64>,
+    pub expires_at: Option<i64>,
+    pub source_paragraph_id: Option<Uuid>,
+    pub source_language_id: Option<String>,
+    pub trace_id: Option<Uuid>,
+}
+
+impl Message {
+    /// Start a new message — a UUIDv7 id, the current timestamp, the
+    /// lifetime-implied `expires_at`, and the default action set for its severity
+    /// (every kind gets Dismiss / Expand; everything but Progress also gets
+    /// AskAi). Refine with the `with_*` builders.
+    pub fn new(
+        kind: impl Into<String>,
+        severity: Severity,
+        lifetime: Lifetime,
+        metadata: serde_json::Value,
+    ) -> Self {
+        let timestamp = now_secs();
+        let expires_at = lifetime.expires_at(timestamp);
+        let mut actions = vec![ActionId::Dismiss, ActionId::Expand, ActionId::Pin];
+        if severity != Severity::Progress {
+            actions.push(ActionId::AskAi);
+        }
+        Message {
+            id: Uuid::now_v7(),
+            kind: kind.into(),
+            timestamp,
+            metadata,
+            actions,
+            severity,
+            lifetime,
+            group_key: None,
+            pinned: false,
+            snoozed_until: None,
+            dismissed: false,
+            dismissed_at: None,
+            expires_at,
+            source_paragraph_id: None,
+            source_language_id: None,
+            trace_id: None,
+        }
+    }
+
+    pub fn with_actions(mut self, actions: Vec<ActionId>) -> Self {
+        self.actions = actions;
+        self
+    }
+
+    pub fn with_group_key(mut self, key: impl Into<String>) -> Self {
+        self.group_key = Some(key.into());
+        self
+    }
+
+    pub fn with_source_paragraph(mut self, id: Uuid) -> Self {
+        self.source_paragraph_id = Some(id);
+        self
+    }
+
+    pub fn with_source_language(mut self, lang: impl Into<String>) -> Self {
+        self.source_language_id = Some(lang.into());
+        self
+    }
+
+    pub fn with_trace(mut self, id: Uuid) -> Self {
+        self.trace_id = Some(id);
+        self
+    }
+
+    /// Whether this message is currently visible: not dismissed, not snoozed
+    /// past `now`, and not time-expired.
+    pub fn is_active(&self, now: i64) -> bool {
+        !self.dismissed
+            && self.snoozed_until.map(|t| t <= now).unwrap_or(true)
+            && self.expires_at.map(|t| t > now).unwrap_or(true)
+    }
+}
