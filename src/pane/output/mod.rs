@@ -11,6 +11,6 @@ pub mod install;
 pub mod store;
 pub mod types;
 
-pub use install::{active, emit, install, uninstall};
+pub use install::{active, emit, emit_task_complete, install, uninstall};
 pub use store::OutputStore;
 pub use types::{kinds, ActionId, Lifetime, Message, Severity};
