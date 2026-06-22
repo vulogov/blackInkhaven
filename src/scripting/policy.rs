@@ -285,6 +285,12 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.lang.derive", category::STORE_READ),
     ("ink.lang.agree", category::STORE_READ),
     ("ink.lang.sentence", category::STORE_READ),
+    ("ink.lang.translate", category::STORE_READ),
+    ("ink.lang.reverse", category::STORE_READ),
+    ("ink.lang.cross", category::STORE_READ),
+    ("ink.lang.memory", category::STORE_READ),
+    ("ink.lang.corpus", category::STORE_READ),
+    ("ink.lang.eval", category::STORE_READ),
     ("ink.lang.relative", category::STORE_READ),
     ("ink.lang.complement", category::STORE_READ),
     ("ink.lang.coordinate", category::STORE_READ),
@@ -308,6 +314,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.lang.init", category::STORE_WRITE),
     ("ink.lang.define", category::STORE_WRITE),
     ("ink.lang.add_word", category::STORE_WRITE),
+    ("ink.lang.remember", category::STORE_WRITE),
     ("ink.lang.remove_word", category::STORE_WRITE),
     ("ink.lang.derive_add", category::STORE_WRITE),
     ("ink.lang.grammar_set", category::STORE_WRITE),
@@ -324,6 +331,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // reads an SVG (fs_read). `glyph_draft` writes a file AND calls the LLM, so
     // it is gated fs_write here and additionally checks ai_write at run time.
     ("ink.lang.glyph_lint", category::FS_READ),
+    ("ink.lang.export", category::FS_WRITE),
     ("ink.lang.dictionary", category::FS_WRITE),
     ("ink.lang.grammar_book", category::FS_WRITE),
     ("ink.lang.font_build", category::FS_WRITE),

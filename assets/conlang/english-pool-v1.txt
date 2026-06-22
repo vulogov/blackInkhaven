@@ -1,0 +1,111 @@
+# LANG-3 — bundled English source pool, v1.
+#
+# A small, curated set of simple declarative sentences built from core
+# (Swadesh-ish) vocabulary, used to seed a conlang's translation memory: the
+# RBMT translates each, and the ones a language can fully cover are kept. The
+# vocabulary is deliberately basic so a young conlang already covers some of it;
+# the acceptance rate is itself a useful signal of lexicon maturity.
+#
+# Lines starting with '#' and blank lines are ignored. One sentence per line,
+# simple declarative (SVO / SV), present tense — what the Tier-1 RBMT handles.
+# Supply a larger pool with `language corpus <lang> --pool <file>`.
+
+the man sees the bird
+the woman sees the child
+the child sees the dog
+the dog sees the bird
+the bird sees the fish
+the man eats the fish
+the woman eats the bird
+the child drinks the water
+the man drinks the water
+the dog eats the fish
+the man kills the bird
+the woman holds the child
+the child holds the stone
+the man holds the stone
+the man takes the stone
+the woman takes the water
+the man gives the stone
+the woman gives the water
+the man sees the woman
+the woman sees the man
+the child hears the bird
+the man hears the wind
+the woman hears the rain
+the man knows the woman
+the woman knows the name
+the child knows the road
+the man sees the sun
+the woman sees the moon
+the child sees the star
+the man sees the fire
+the woman sees the tree
+the man sees the mountain
+the bird sees the tree
+the fish sees the water
+the dog sees the man
+the man sees the house
+the woman sees the road
+the child sees the river
+the man sees the stone
+the woman sees the bird
+the birds see the trees
+the men see the fish
+the women see the children
+the dogs eat the fish
+the children drink the water
+the men hold the stones
+the birds eat the fish
+the man sees the birds
+the woman holds the children
+the bird sleeps
+the man sleeps
+the woman sleeps
+the child sleeps
+the dog sleeps
+the fish swims
+the bird flies
+the man runs
+the woman runs
+the child runs
+the man walks
+the woman walks
+the dog runs
+the fire burns
+the sun burns
+the man comes
+the woman comes
+the child comes
+the man goes
+the woman goes
+the bird comes
+the man speaks
+the woman speaks
+the child speaks
+the man stands
+the woman sits
+the child sits
+the man sits
+the dog stands
+the bird falls
+the stone falls
+the man dies
+the bird dies
+the fish dies
+the man thinks
+the woman thinks
+the man fears the fire
+the woman fears the night
+the child fears the dog
+the man loves the woman
+the woman loves the child
+the bird drinks the water
+the fish eats the fish
+the man hears the woman
+the woman sees the fire
+the child holds the bird
+the dog eats the bird
+the man takes the fish
+the woman gives the bird
+the men see the mountains

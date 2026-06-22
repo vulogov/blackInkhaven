@@ -21,54 +21,52 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.22 — The ConLang Suite: Sociolinguistics & Contact
+## Latest release · 1.3.23 — Local Translation: the ConLang Suite learns to translate
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.22.md`](Documentation/RELEASE_NOTES/1.3.22.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.23.md`](Documentation/RELEASE_NOTES/1.3.23.md)
 · Reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md)
 
-A whole new pillar (RFC LANG-2): a constructed language stops being uniform and
-starts living among its speakers and neighbours. The insight throughout — a
-**dialect is a sound-change chain applied synchronically**, a **loanword is a
-phonotactic repair** — so the features are mostly orchestration over the LANG-1
-engines. No new dependencies.
+A constructed language can now be **translated** — English → conlang, conlang →
+English, conlang → conlang — fully offline, deterministically, and improving as
+you correct it (the core of RFC LANG-3). The insight: a conlang is a closed,
+formally-described domain, so translation is mostly orchestration over the LANG-1
+engines plus retrieval over the embedding + vector stack already in the binary.
+**Python-free, training-free, zero new dependencies.**
 
-### Variation, contact, community
+### Tier 1 — the rule-based translator
 
-- **Dialects & registers** (`varieties` block) — a **variety** is a delta on the
-  base: an ordered list of `sound_changes` (the diachronics engine, run *now*)
-  plus suppletive `lexicon` overrides. `language varieties` / `lect` (render in a
-  variety, `kata` → `kada`) / `dialects` (the dialectology comparison table).
-- **Borrowing** (`loan_phonology` block) — `language borrow` adapts a donor word
-  by **perceive** (nearest native sound) + **repair** (epenthesis / deletion):
-  `tras` → `tulasu`; `--yes` records the donor in the etymology.
-- **Areal features / Sprachbund** (`contact` block) — `language areal` overlays
-  convergence (✓ converged · → shift · + adopt); `family-tree` gains horizontal
-  contact edges (`Eldar ⇄ Sindar`).
-- **Speech communities & ecology** — places carry a `--variety`, characters a
-  `--native-variety`; `language ecology` (+ `--svg` atlas) maps who speaks what
-  where, and `language idiolect` renders a character's speech in their own dialect.
-- **Grammar book** — gains **Variation** and **Contact** sections automatically
-  when a language declares them.
+- **`language translate`** maps each English word to a headword by its lexicon
+  gloss and hands the clause to the LANG-1 syntax engine, so it reorders and
+  inflects for free: *the bird sees the stone* → `kira nami pata` (SVO) or `kira
+  pata nami` (SOV) from the same lexicon. Parsing is lexicon-aware — the verb is
+  found by meaning, adjectives agree, number flows through.
+- **`language reverse`** goes back to English (un-inflecting against the
+  paradigms); **`language cross`** translates one conlang into another through an
+  English pivot. Every output carries a per-word confidence + decision trace.
 
-### Advisory AI (`--yes`-gated, multilingual)
+### Tier 2 — retrieval, not a trained model
 
-- **`propose-dialect`** suggests a coherent dialect (each rule validated +
-  previewed); **`propose-loans`** proposes borrowings the deterministic adapter
-  then nativises (`stɔrm` → `sitarimi`); **`areal-check`** judges a Sprachbund's
-  plausibility. The AI proposes; the engine applies and validates.
+A conlang's corpus *is* its knowledge, so it is **retrieved**, not baked into
+weights — reusing the in-binary `fastembed` + vector store.
 
-### The developer's guide
+- **`language remember`** confirms a translation; it is reused **immediately, on
+  the next call** — no retraining. Exact matches override (rule-based kept as an
+  alternative); near matches are **semantic** (a paraphrase recalls a confirmed
+  translation with no shared words).
+- **`language corpus`** seeds the memory from a bundled English pool;
+  **`language eval`** scores quality without a human reference (round-trip +
+  coverage); **`language export-translation`** ships the whole system as a
+  portable single-file `.itm` pack.
 
-*Developing a Constructed Language with Inkhaven* gains **Part VI — "A Language in
-a World"** (dialects, contact, speech communities, with a term box for every new
-concept) and **Part XI — "Scripting Your Language"** (a gentle, non-programmer's
-introduction to building a conlang with Bund, plus a full **Bund API reference**
-appendix). ~135 → ~168 B5 pages, warning-free.
+### Scripting
+
+The full pipeline scripts from Bund: `lang.translate` / `reverse` / `cross` /
+`remember` / `memory` / `corpus` / `eval` / `export`.
 
 ### Test stats
 
-Tests 1533 → 1548. **Zero new dependencies.** Backward compatible. Deterministic
-core, advisory AI validated live. Full reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md).
+Tests 1548 → 1576. **Zero new dependencies. No required downloads.** Deterministic
++ advisory; validated live. Full reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

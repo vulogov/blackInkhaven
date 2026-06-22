@@ -21,6 +21,7 @@ pub mod morphology;
 pub mod output;
 pub mod phonology;
 pub mod syntax;
+pub mod translate;
 pub mod types;
 pub mod variety;
 pub mod writing;
