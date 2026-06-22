@@ -2779,7 +2779,8 @@ impl App {
         let worker_cancel = cancel.clone();
         std::thread::spawn(move || work(tx, worker_cancel));
         self.status = format!("⟳ {label}…");
-        self.bg_job = Some(BgJob { rx, label, kind, cancel });
+        self.bg_job =
+            Some(BgJob { rx, label, kind, cancel, started: std::time::Instant::now() });
         true
     }
 
@@ -2811,15 +2812,21 @@ impl App {
         match done {
             Some(result) => {
                 let kind = job.kind;
+                let elapsed = job.started.elapsed().as_secs();
                 drop(job);
-                self.on_bg_job_done(kind, result);
+                self.on_bg_job_done(kind, result, elapsed);
             }
             None => self.bg_job = Some(job),
         }
     }
 
     /// Completion dispatch for a finished background job.
-    fn on_bg_job_done(&mut self, kind: BgJobKind, result: std::result::Result<String, String>) {
+    fn on_bg_job_done(
+        &mut self,
+        kind: BgJobKind,
+        result: std::result::Result<String, String>,
+        elapsed_secs: u64,
+    ) {
         match kind {
             BgJobKind::DeepRefresh => match result {
                 // The Ok payload is the outcome verb ("done" / "cancelled").
@@ -2835,10 +2842,56 @@ impl App {
                     )
                     .summary();
                     self.status = format!("deep refresh {verb} — {summary}");
+                    // PANE-1 P5 — a single completion notification in Output, so an
+                    // author who switched panes during the (long) refresh is told.
+                    // Only on a real completion, not a cancellation.
+                    if verb != "cancelled" {
+                        self.emit_ai_task_complete(
+                            "deep_world_refresh",
+                            &format!("Deep world refresh {verb}. {summary}"),
+                            elapsed_secs,
+                            None,
+                        );
+                    }
                 }
                 Err(e) => self.status = format!("deep refresh failed: {e}"),
             },
         }
+    }
+
+    /// PANE-1 P5 — emit a single `ai_task_complete` Output message when a
+    /// long-running AI task finishes (§8.10). `target` is an optional paragraph
+    /// to jump to via the Primary action. A no-op when no Output store is
+    /// installed.
+    fn emit_ai_task_complete(
+        &self,
+        task: &str,
+        summary: &str,
+        elapsed_secs: u64,
+        target: Option<uuid::Uuid>,
+    ) {
+        use crate::pane::output::{kinds, ActionId, Lifetime, Message, Severity};
+        let mut meta = serde_json::json!({
+            "text": summary,
+            "task": task,
+            "elapsed_seconds": elapsed_secs,
+            "summary": summary,
+        });
+        if let (Some(obj), Some(id)) = (meta.as_object_mut(), target) {
+            obj.insert("target_paragraph".into(), serde_json::Value::String(id.to_string()));
+        }
+        // Hours(12) per the RFC's default lifetime for completion notices.
+        let mut msg =
+            Message::new(kinds::AI_TASK_COMPLETE, Severity::Info, Lifetime::Hours(12.0), meta)
+                .with_actions(vec![
+                    ActionId::Primary,
+                    ActionId::Dismiss,
+                    ActionId::Pin,
+                ]);
+        if let Some(id) = target {
+            msg = msg.with_source_paragraph(id);
+        }
+        crate::pane::output::emit(&msg);
     }
 
     /// 1.3.12 DEEP-1 P2 — kick off the deep AI world refresh (`Ctrl+V Shift+F`)
@@ -5608,6 +5661,9 @@ pub(super) struct BgJob {
     /// Set by the UI (re-pressing the launch chord) to request cancellation;
     /// the worker checks it between/within scans and stops promptly.
     pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// PANE-1 P5 — when the job started, so completion can report elapsed time
+    /// in its `ai_task_complete` Output notification.
+    pub started: std::time::Instant,
 }
 
 /// Drain everything available on a background job's channel without blocking:
@@ -6689,10 +6745,115 @@ impl App {
                 }
             }
             KeyCode::Char('r') if plain => self.remember_output_translation(),
-            KeyCode::Enter => self.promote_output_message(),
+            KeyCode::Char('e') if plain => self.edit_output_translation(),
+            KeyCode::Enter => self.output_primary_action(),
             _ => {}
         }
         Ok(false)
+    }
+
+    /// PANE-1 P5 — the per-kind **primary** action (`Enter`), §8.3. The primitive
+    /// `Primary` means different things per kind: a `translation_result` inserts
+    /// its target at the editor cursor; a `lexicon_proposal` promotes its words
+    /// into the Dictionary; an `ai_task_complete` jumps to its target paragraph.
+    /// Kinds without a primary action say so.
+    fn output_primary_action(&mut self) {
+        let kind = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default()
+            .get(self.output_selected)
+            .map(|m| m.kind.clone());
+        match kind.as_deref() {
+            Some(k) if k == crate::pane::output::kinds::TRANSLATION_RESULT => {
+                self.insert_output_translation();
+            }
+            Some(k) if k == crate::pane::output::kinds::LEXICON_PROPOSAL => {
+                self.promote_output_message();
+            }
+            Some(k) if k == crate::pane::output::kinds::AI_TASK_COMPLETE => {
+                self.jump_to_output_target();
+            }
+            Some(_) => self.status = "no primary action for this message".into(),
+            None => {}
+        }
+    }
+
+    /// PANE-1 P5 — insert a `translation_result`'s target text at the editor
+    /// cursor (the `Enter`/Primary "insert" action, §8.3). Returns whether it
+    /// landed, so the `e` edit+remember gesture can chain a Remember after.
+    fn insert_output_translation(&mut self) -> bool {
+        let target = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default()
+            .get(self.output_selected)
+            .filter(|m| m.kind == crate::pane::output::kinds::TRANSLATION_RESULT)
+            .and_then(|m| m.metadata.get("target").and_then(|v| v.as_str()).map(str::to_string));
+        let Some(target) = target else {
+            self.status = "insert: not a translation result".into();
+            return false;
+        };
+        if self.opened.is_none() {
+            self.status = "insert: no paragraph open".into();
+            return false;
+        }
+        let n = target.chars().count();
+        if let Some(doc) = self.opened.as_mut() {
+            doc.textarea.insert_str(&target);
+            doc.dirty = true;
+        }
+        self.refresh_search_after_edit();
+        self.status = format!("inserted translation ({n} chars)");
+        true
+    }
+
+    /// PANE-1 P5 — `e` on a `translation_result`: edit + remember in one gesture.
+    /// Insert the target at the cursor (so the author can edit it in place) AND
+    /// commit the source→target pair to translation memory, so the correction is
+    /// both in the manuscript and recalled next time. A no-op on other kinds.
+    fn edit_output_translation(&mut self) {
+        let is_translation = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default()
+            .get(self.output_selected)
+            .map(|m| m.kind == crate::pane::output::kinds::TRANSLATION_RESULT)
+            .unwrap_or(false);
+        if !is_translation {
+            self.status = "Edit: only for translation results".into();
+            return;
+        }
+        if self.insert_output_translation() {
+            // remember_output_translation sets its own status; follow with a
+            // combined one so the author sees both halves happened.
+            self.remember_output_translation();
+            self.status = format!("inserted + {}", self.status);
+        }
+    }
+
+    /// PANE-1 P5 — open the paragraph an `ai_task_complete` (or any message that
+    /// carries one) points at: the typed `source_paragraph_id`, else a
+    /// `target_paragraph` UUID string in metadata. The "jump to target" half of
+    /// the Primary action (§8.10).
+    fn jump_to_output_target(&mut self) {
+        let id = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default()
+            .get(self.output_selected)
+            .and_then(|m| {
+                m.source_paragraph_id.or_else(|| {
+                    m.metadata
+                        .get("target_paragraph")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                })
+            });
+        let Some(id) = id else {
+            self.status = "jump: this notification has no target paragraph".into();
+            return;
+        };
+        match self.open_paragraph_by_uuid(id) {
+            Ok(()) => self.status = "opened target paragraph".into(),
+            Err(e) => self.status = format!("jump: {e}"),
+        }
     }
 
     /// PANE-1 P3 — the promote action (`Enter`) on a `lexicon_proposal`: commit
