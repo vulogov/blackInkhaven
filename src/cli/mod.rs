@@ -3136,6 +3136,29 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.3.23 LANG-3 P1 — **remember** a confirmed English→conlang translation
+    /// (the correction loop, Amendment A1). The pair is appended to the
+    /// language's translation memory, so `translate` reuses it immediately —
+    /// exactly on the next call, no retraining. Re-remembering an English
+    /// supersedes its prior target.
+    Remember {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The English source.
+        #[arg(long)]
+        english: String,
+        /// The confirmed conlang translation.
+        #[arg(long)]
+        conlang: String,
+    },
+
+    /// 1.3.23 LANG-3 P1 — list a language's **translation memory** (the
+    /// remembered English→conlang pairs `translate` draws on).
+    Memory {
+        /// Target language name (case-insensitive).
+        language: String,
+    },
+
     Lect {
         /// Target language name (case-insensitive).
         language: String,
