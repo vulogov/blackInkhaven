@@ -116,6 +116,17 @@ pub const DEFAULT_DENIED_CATEGORIES: &[&str] = &[
 /// might surface filesystem and network words.
 pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // ── store_read (default-allowed) ──────────────────────────
+    // 1.3.24 PANE-1 — Output channel. print/log and reads stay always-available
+    // (the ergonomic output path, RFC §9 "none"); structured emit and the state
+    // mutations require fs_write.
+    ("ink.io.print", category::STORE_READ),
+    ("ink.io.log", category::STORE_READ),
+    ("ink.io.message.list", category::STORE_READ),
+    ("ink.io.message.count", category::STORE_READ),
+    ("ink.io.notify", category::FS_WRITE),
+    ("ink.io.message.dismiss", category::FS_WRITE),
+    ("ink.io.message.pin", category::FS_WRITE),
+    ("ink.io.message.unpin", category::FS_WRITE),
     ("ink.node.list", category::STORE_READ),
     ("ink.node.get", category::STORE_READ),
     ("ink.node.children", category::STORE_READ),
