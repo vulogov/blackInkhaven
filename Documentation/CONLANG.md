@@ -836,6 +836,23 @@ the lexicon can fully translate (the same maturity signal as `corpus`). The eval
 measures the rule-based engine (not the memory, which would echo confirmed pairs);
 scriptable as `lang.eval`.
 
+### Shipping a translation pack (LANG-3 P3)
+
+Because the "model" is the translation memory, the whole translation system
+exports as one small, portable file you can publish alongside a book:
+
+```
+inkhaven language export-translation Eldar              # → eldar-translation.itm
+inkhaven language export-translation Eldar --out qya.itm
+```
+
+The `.itm` bundle is a zip of the **translation memory** (`memory.tsv` — the
+confirmed `English → conlang` pairs), the **lexicon** (`lexicon.tsv`), a
+`manifest.hjson`, and a `README.md`. It is browsable as a phrasebook with no
+tools, and re-seedable into another project by replaying the pairs through
+`language remember`. Embeddings are left out (large, regenerable). Scriptable as
+`lang.export` (`fs_write`).
+
 Scope of Tier 1: declarative clauses with an optional adjective per noun phrase.
 Subordinate clauses, multi-word phrases beyond one adjective, and the fluency of
 a trained neural model arrive with the later LANG-3 tiers (the rule-based parser

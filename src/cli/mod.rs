@@ -3202,6 +3202,19 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.3.23 LANG-3 P3 — **export** the language's translation system as a
+    /// portable `.itm` bundle (Amendment A1 / RFC §8.9): a single zip of the
+    /// translation memory + lexicon + manifest + README, to ship alongside a
+    /// published work. Under the retrieval architecture the memory *is* the
+    /// model, so the pack is small and re-importable.
+    ExportTranslation {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Output path (defaults to `<lang>-translation.itm`).
+        #[arg(long)]
+        out: Option<String>,
+    },
+
     Lect {
         /// Target language name (case-insensitive).
         language: String,

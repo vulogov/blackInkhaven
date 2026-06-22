@@ -160,9 +160,16 @@ the merge step instead of at decode).
   (§8.8.3) is editor-coupled and lands with the pane. **Deferred from P2:** routing
   the TUI translate pane through the pipeline — held for the planned TUI
   rearchitecture (the engine/CLI/Bund surface it routes through is complete).
-- **P3 — correction loop + export + cross.** Correction = datastore append
-  (immediate); `.itm`-style datastore bundle export; cross-conlang already lands
-  in P0.
+- **P3 — correction loop + export + cross.** ✅ *Landed 1.3.23-dev.* The
+  correction loop is the immediate datastore append from P1 (`remember`);
+  cross-conlang landed in P0; and the **export bundle** (`translate::export`, CLI
+  `language export-translation`, Bund `lang.export`) packages the translation
+  system as a portable single-file `.itm` zip — `memory.tsv` (the confirmed
+  pairs, which *are* the model under A1) + `lexicon.tsv` + `manifest.hjson` +
+  `README.md`. Browsable as a phrasebook with no tools; re-seedable by replaying
+  the pairs through `remember`; embeddings omitted (large, regenerable).
+  Validated live (CLI + Bund). **★ The retrieval-first LANG-3 core (P0–P3) is
+  complete** — Python-free, training-free, zero new deps, no required downloads.
 - **P-opt (deferred, optional) — neural fluency.** *Only if* RBMT + retrieval
   proves insufficient on real conlangs: a base-NLLB run via the in-tree `ort`
   (no training, no new crate, a hosted pre-exported ONNX asset so the user never
