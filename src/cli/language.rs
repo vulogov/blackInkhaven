@@ -223,6 +223,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             remember(project, &language, &english, &conlang)
         }
         LanguageCommand::Memory { language } => memory_list(project, &language),
+        LanguageCommand::Corpus { language, pool, limit, yes, json } => {
+            corpus(project, &language, pool.as_deref(), limit, yes, json)
+        }
         LanguageCommand::Relative {
             language,
             head,
@@ -2954,6 +2957,85 @@ fn memory_list(project: &Path, language: &str) -> Result<()> {
     println!("{language} · {} remembered translation(s):", mem.len());
     for (en, con) in mem.entries() {
         println!("  {en}  →  {con}");
+    }
+    Ok(())
+}
+
+/// 1.3.23 LANG-3 P1 — generate a synthetic corpus and (with --yes) seed memory.
+fn corpus(
+    project: &Path,
+    language: &str,
+    pool_path: Option<&str>,
+    limit: Option<usize>,
+    commit: bool,
+    json: bool,
+) -> Result<()> {
+    use crate::conlang::translate::{corpus as corpusmod, memory::TranslationMemory};
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+
+    let pool_text = match pool_path {
+        Some(p) => std::fs::read_to_string(p)
+            .map_err(|e| Error::Config(format!("reading pool `{p}`: {e}")))?,
+        None => corpusmod::BUNDLED_POOL.to_string(),
+    };
+    let mut pool = corpusmod::parse_pool(&pool_text);
+    if let Some(n) = limit {
+        pool.truncate(n);
+    }
+    let report = corpusmod::generate(&phon, &morph, &grammar_spec.grammar, &entries, &pool);
+
+    if commit && !report.accepted.is_empty() {
+        let mut mem = TranslationMemory::load(project, language)
+            .map_err(|e| Error::Store(format!("loading translation memory: {e}")))?;
+        for (en, con) in &report.accepted {
+            mem.add(en, con);
+        }
+        mem.save(project, language)
+            .map_err(|e| Error::Store(format!("saving translation memory: {e}")))?;
+    }
+
+    if json {
+        let out = serde_json::json!({
+            "scanned": report.scanned,
+            "accepted": report.accepted.len(),
+            "acceptance_rate": report.acceptance_rate(),
+            "top_missing": report.top_missing(10),
+            "committed": commit,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out)
+                .map_err(|e| Error::Store(format!("serializing corpus report: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{language} · corpus: {}/{} accepted ({:.0}% coverage)",
+        report.accepted.len(),
+        report.scanned,
+        report.acceptance_rate() * 100.0
+    );
+    for (en, con) in report.accepted.iter().take(6) {
+        println!("  {en}  →  {con}");
+    }
+    if report.accepted.len() > 6 {
+        println!("  … and {} more", report.accepted.len() - 6);
+    }
+    let missing = report.top_missing(8);
+    if !missing.is_empty() {
+        let list: Vec<String> = missing.iter().map(|(w, n)| format!("{w} ({n})")).collect();
+        eprintln!("\ntop missing words: {}", list.join(", "));
+        eprintln!("add them with `language add-word` to raise coverage.");
+    }
+    if commit {
+        eprintln!("\nseeded {} pair(s) into {language}'s translation memory.", report.accepted.len());
+    } else {
+        eprintln!("\n(preview — re-run with --yes to seed the translation memory)");
     }
     Ok(())
 }

@@ -3159,6 +3159,29 @@ pub enum LanguageCommand {
         language: String,
     },
 
+    /// 1.3.23 LANG-3 P1 — generate a **synthetic corpus**: translate an English
+    /// source pool with the RBMT and keep the sentences the language fully
+    /// covers, seeding the translation memory (Amendment A1). Previews by
+    /// default; `--yes` adds the accepted pairs. The acceptance rate and the
+    /// top missing words gauge how mature the lexicon is.
+    Corpus {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// A custom English pool file (one sentence per line); defaults to the
+        /// bundled pool.
+        #[arg(long)]
+        pool: Option<String>,
+        /// Cap how many pool sentences to translate.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Add the accepted pairs to the language's translation memory.
+        #[arg(long)]
+        yes: bool,
+        /// Emit JSON instead of the formatted display.
+        #[arg(long)]
+        json: bool,
+    },
+
     Lect {
         /// Target language name (case-insensitive).
         language: String,
