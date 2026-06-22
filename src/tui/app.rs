@@ -6668,9 +6668,48 @@ impl App {
                     };
                 }
             }
+            KeyCode::Char('a') if plain => self.ask_ai_about_output(),
             _ => {}
         }
         Ok(false)
+    }
+
+    /// PANE-1 — the ask-AI bridge (RFC §8.9). Take the selected Output message's
+    /// full structured detail into the AI conversation *by reference, not value*:
+    /// the detail is armed as the one-shot `pending_rag_prefix` (prepended to the
+    /// next prompt, exactly like the Ctrl+B P/C RAG flows), a short human-readable
+    /// quote is placed in the AI input, and focus moves to the AI prompt so the
+    /// author just types their question. The model sees the rich context; the
+    /// conversation pane shows only the quote + question.
+    fn ask_ai_about_output(&mut self) {
+        let msgs = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default();
+        let Some(m) = msgs.get(self.output_selected) else {
+            self.status = "Output: nothing to ask about".into();
+            return;
+        };
+        let kind = m.kind.clone();
+        let severity = m.severity.as_str();
+        let detail = serde_json::to_string_pretty(&m.metadata).unwrap_or_default();
+        let quote_text =
+            m.metadata.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        let prefix = format!(
+            "── Output message context ──\nkind: {kind}\nseverity: {severity}\ndetail:\n{detail}\n── end Output context ──"
+        );
+        self.pending_rag_prefix = Some(prefix);
+
+        // A short visible quote in the prompt; the cursor lands after it.
+        self.ai_input.clear();
+        let quote = format!("about [{kind}] \"{quote_text}\" — ");
+        for c in quote.chars() {
+            self.ai_input.insert_char(c);
+        }
+
+        self.right_pane = RightPane::Ai;
+        self.change_focus(Focus::AiPrompt);
+        self.status = "ask AI — type your question and Enter".into();
     }
 
     fn handle_meta_action(&mut self, key: KeyEvent) {

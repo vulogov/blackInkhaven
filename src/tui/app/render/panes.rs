@@ -1563,12 +1563,30 @@ impl super::super::App {
             lines.push(Line::from(vec![Span::raw("   "), Span::styled(text, text_style)]));
         }
 
+        // Reserve the bottom row for an action-key hint when there's space.
+        let footer_h: u16 = if inner.height > 2 { 1 } else { 0 };
+        let list_area = Rect { height: inner.height - footer_h, ..inner };
+
         // Scroll so the selected entry (two lines each) stays visible.
-        let rows = inner.height as usize;
+        let rows = list_area.height as usize;
         let sel_line = self.output_selected.saturating_mul(2);
         let offset = sel_line.saturating_sub(rows.saturating_sub(2)) as u16;
         let para = Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((offset, 0));
-        f.render_widget(para, inner);
+        f.render_widget(para, list_area);
+
+        if footer_h == 1 {
+            let footer = Rect {
+                x: inner.x,
+                y: inner.y + inner.height - 1,
+                width: inner.width,
+                height: 1,
+            };
+            let hint = Paragraph::new(Line::from(Span::styled(
+                " ↑↓ select · a ask AI · d dismiss · p pin · ^B Tab → AI",
+                Style::default().fg(Color::DarkGray),
+            )));
+            f.render_widget(hint, footer);
+        }
     }
 
     pub(in crate::tui::app) fn draw_ai(&self, f: &mut ratatui::Frame, area: Rect) {
