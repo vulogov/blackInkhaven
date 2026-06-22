@@ -74,9 +74,21 @@
 >   a farther heavy one), Earth-calibrated solar/lunar tide ratio (~0.46), calendar
 >   consistency. 6 tests (Earth ≈365d + 0.46 solar tide; equator>poles insolation;
 >   Velmaron ≈324.6 planet-days flags its 348-day calendar; winter-solstice anchor;
->   determinism; HJSON+hex-seed parse→compile). tests 1585→1590. *Next P0: storage
->   (`world_definitions`/`world_astronomy` on StorageEngine), materialize → World
->   book `01-astronomy/*`, `realworld new/validate/compile --layer astronomy` CLI.*
+>   determinism; HJSON+hex-seed parse→compile). tests 1585→1590.
+> - **P0.2 — `realworld` CLI (UNRELEASED, 1.3.25-dev).** `Command::Realworld` +
+>   `src/cli/realworld.rs`: `new <name> [--force]` (scaffolds a valid starter
+>   `world.hjson` at the project root), `validate`, `show [--json]`,
+>   `compile [--layer <l>] [--json]`. Reads `<project>/world.hjson`, parses, runs
+>   `compile_astronomy`, prints a human summary (year in planet-days + Earth-days,
+>   declared-vs-computed divergence with ⚠, seasons by day-of-year, per-moon
+>   synodic period + lunations, dominant moon + solar tide ratio, calendar
+>   consistency) or `--json`. `--layer geology/…` errors "not implemented yet"
+>   (only astronomy has landed). Smoke-validated: Earth-like template →
+>   synodic month 29.5 d (matches reality), sun 0.46× lunar, 360-day calendar
+>   flagged vs the 365.3-day year. tests 1591. ZERO new deps. *Next P0: storage
+>   (`world_definitions`/`world_astronomy` on StorageEngine, output.db precedent),
+>   materialize → World book `01-astronomy/*` (a NEW 10th system book), the
+>   `Ctrl+B W` chord scaffold (resolve the ToggleTypewriter collision).*
 
 ---
 
