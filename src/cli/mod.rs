@@ -3086,6 +3086,135 @@ pub enum LanguageCommand {
     /// variety's sound changes (the same engine diachronics uses,
     /// synchronically) to a `--word` or a `--text` run, showing the base →
     /// variety diff.  A variety is a *dialect*, *register*, or *sociolect*.
+    /// 1.3.23 LANG-3 P0 — **translate** English into the conlang. Tier 1 (the
+    /// deterministic rule-based spine): each English word is mapped to a
+    /// headword by its lexicon gloss, and the LANG-1 syntax engine orders,
+    /// case-marks, inflects, and agrees the result. Pure-Rust and offline; it
+    /// handles simple declarative sentences (the neural tiers, for richer
+    /// parsing and fluency, arrive in later phases). Unknown words are marked
+    /// `«word»` and listed so you can coin or `add-word` them.
+    Translate {
+        /// Source language name (case-insensitive).
+        language: String,
+        /// The English text to translate.
+        text: String,
+        /// Show the per-word decision trace.
+        #[arg(long)]
+        trace: bool,
+        /// Emit JSON instead of the formatted display.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.3.23 LANG-3 P0 — **reverse** a conlang sentence back into English
+    /// (Tier 1 RBMT). Each surface word is un-inflected against the lexicon's
+    /// paradigm forms and glossed; roles are read off the language's
+    /// `word_order`. English generation is deliberately plain.
+    Reverse {
+        /// Source (conlang) language name (case-insensitive).
+        language: String,
+        /// The conlang surface text to reverse-translate.
+        text: String,
+        /// Emit JSON instead of the formatted display.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.3.23 LANG-3 P0 — **cross-translate** one conlang into another by
+    /// pivoting through English (reverse the source, then translate into the
+    /// target). The English waypoint is shown; error compounds across the two
+    /// passes.
+    Cross {
+        /// Source (conlang) language name (case-insensitive).
+        from: String,
+        /// Target (conlang) language name (case-insensitive).
+        to: String,
+        /// The source-language surface text.
+        text: String,
+        /// Emit JSON instead of the formatted display.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.3.23 LANG-3 P1 — **remember** a confirmed English→conlang translation
+    /// (the correction loop, Amendment A1). The pair is appended to the
+    /// language's translation memory, so `translate` reuses it immediately —
+    /// exactly on the next call, no retraining. Re-remembering an English
+    /// supersedes its prior target.
+    Remember {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The English source.
+        #[arg(long)]
+        english: String,
+        /// The confirmed conlang translation.
+        #[arg(long)]
+        conlang: String,
+    },
+
+    /// 1.3.23 LANG-3 P1 — list a language's **translation memory** (the
+    /// remembered English→conlang pairs `translate` draws on).
+    Memory {
+        /// Target language name (case-insensitive).
+        language: String,
+    },
+
+    /// 1.3.23 LANG-3 P1 — generate a **synthetic corpus**: translate an English
+    /// source pool with the RBMT and keep the sentences the language fully
+    /// covers, seeding the translation memory (Amendment A1). Previews by
+    /// default; `--yes` adds the accepted pairs. The acceptance rate and the
+    /// top missing words gauge how mature the lexicon is.
+    Corpus {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// A custom English pool file (one sentence per line); defaults to the
+        /// bundled pool.
+        #[arg(long)]
+        pool: Option<String>,
+        /// Cap how many pool sentences to translate.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Add the accepted pairs to the language's translation memory.
+        #[arg(long)]
+        yes: bool,
+        /// Emit JSON instead of the formatted display.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.3.23 LANG-3 P2 — **evaluate** translation quality without a human
+    /// reference (Amendment A1 / RFC §8.8): *round-trip* semantic similarity
+    /// (translate then reverse, compared to the source by embedding cosine) and
+    /// *coverage* (the fraction of the test set the lexicon fully translates).
+    /// Measures the rule-based engine; the test set defaults to the bundled pool.
+    Eval {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// A custom English test-set file (one sentence per line); defaults to
+        /// the bundled pool.
+        #[arg(long)]
+        test_set: Option<String>,
+        /// Cap how many sentences to evaluate.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Emit JSON instead of the formatted display.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.3.23 LANG-3 P3 — **export** the language's translation system as a
+    /// portable `.itm` bundle (Amendment A1 / RFC §8.9): a single zip of the
+    /// translation memory + lexicon + manifest + README, to ship alongside a
+    /// published work. Under the retrieval architecture the memory *is* the
+    /// model, so the pack is small and re-importable.
+    ExportTranslation {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Output path (defaults to `<lang>-translation.itm`).
+        #[arg(long)]
+        out: Option<String>,
+    },
+
     Lect {
         /// Target language name (case-insensitive).
         language: String,

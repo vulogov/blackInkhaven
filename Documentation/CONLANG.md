@@ -719,6 +719,148 @@ This is the engine a live editor input mode would drive.
 - **`Ctrl+B Q` / `Ctrl+B Shift+Q`** (1.2.13) — translate a paragraph to / from
   an invented language.
 
+## Translation — Tier 1 RBMT (LANG-3 P0)
+
+A constructed language can be *translated into*, deterministically and offline,
+the moment it has a lexicon. RFC LANG-3 plans a three-tier stack (a rule-based
+spine, a per-language neural model, an optional resolver); the first tier — the
+pure-Rust **rule-based machine translator (RBMT)** — is in:
+
+```
+inkhaven language translate <lang> "the bird sees the stone" [--trace] [--json]
+```
+
+Why this is feasible for a conlang where it is not for a natural language: a
+LANG-1 language carries a *complete formal description*, so translation is mostly
+**orchestration over the existing engines**. An English sentence is analysed into
+a simple clause, each word is mapped to a headword **by its lexicon gloss**, and
+the result is handed to the **LANG-1 syntax engine** (`language sentence`) — which
+already orders by `word_order`, case-marks by `alignment`, inflects via the
+morphology spec, and runs agreement. So a translation reorders and inflects for
+free:
+
+```
+the bird sees the stone   →  kira nami pata   (SVO)
+                          →  kira pata nami   (SOV — same lexicon, different word_order)
+```
+
+Every word carries a confidence and a decision **trace** (`--trace`): which
+lexicon entry, or *untranslatable* — an English word the lexicon does not cover
+is passed through marked `«word»`, listed so you can coin it or `add-word` it.
+Output is human-readable or `--json`.
+
+It also runs **in reverse and across languages**:
+
+```
+inkhaven language reverse <lang> "kira nami pata"          # → "the bird see the stone"
+inkhaven language cross <from> <to> "kira nami pata"       # conlang → conlang via English
+```
+
+`reverse` (conlang → English) un-inflects each surface word against the lexicon's
+*paradigm-generated* forms (so an inflected word finds its lemma), reads roles off
+the language's `word_order`, and generates a plain English clause. `cross`
+(conlang A → conlang B) is the documented degraded path — it reverses A into
+English, then forwards that English into B, **exposing the English pivot** and
+multiplying the two passes' confidence (error compounds). So an SVO language's
+`kira nami pata` crosses into an SOV language as `turi moki vela`, reordered for
+free.
+
+Source parsing is **lexicon-aware**: a word's part of speech comes from the
+lexicon, so the verb is found by meaning (not position) and an attributive
+adjective is recovered on a noun phrase (`the bright bird` → `mira kira`, the
+adjective agreeing with its noun). Number flows both ways — `the birds see the
+stones` inflects to `kirai nami patai`, and reverse re-agrees English number and
+tense (`kirai nami patai` → *the birds see the stones*, `kira …` → *the bird
+**sees** …*).
+
+### Translation memory (Tier 2 — retrieval; LANG-3 Amendment A1)
+
+Tier 2 layers a **translation memory** over the rule-based result rather than a
+trained neural model — for a closed conlang the corpus *is* the knowledge, so it
+is retrieved at translation time instead of baked into weights (Python-free,
+training-free, zero new deps). You confirm a translation and it is reused
+**immediately, on the very next call** — no retraining:
+
+```
+inkhaven language remember Eldar --english "the bird sees the stone" --conlang "kira pata nami"
+inkhaven language translate Eldar "the bird sees the stone"   # → kira pata nami (from memory; RBMT kept as alt)
+inkhaven language memory Eldar                                 # list remembered pairs
+```
+
+An **exact** remembered translation becomes the primary (the rule-based reading is
+kept as an `alt:` so nothing is silently overridden); a **near** match is surfaced
+as an alternative to pick. A miss is pure RBMT. Memory lives in the
+`.inkhaven/translation-memory/<lang>.json` sidecar (atomic writes; the books are
+never touched).
+
+Near matches are **semantic**: each remembered English source is embedded once
+with the in-tree `fastembed` model (the same one powering manuscript search) and
+the vector is cached in the sidecar; a translation embeds only the *query* and
+finds the nearest remembered sentence by cosine similarity. So a lexical
+paraphrase still recalls a confirmed translation — *"a soldier lifts his blade
+toward the sun"* matches a remembered *"the warrior raises his sword to the sun"*
+at 92% even with no shared content words. The exact path needs no embedding (a
+seeded sentence costs nothing), and the retrieval strategy (exact → semantic →
+lexical) lives in one place so the merge policy is identical however the match was
+found.
+
+You don't have to seed the memory by hand. **Corpus generation** translates a
+pool of English sentences with the RBMT and keeps the ones the language fully
+covers:
+
+```
+inkhaven language corpus Eldar                 # preview: acceptance rate + samples
+inkhaven language corpus Eldar --yes           # seed the accepted pairs into memory
+inkhaven language corpus Eldar --pool big.txt  # use a custom English pool
+```
+
+A small English pool ships in the binary (core vocabulary); supply a larger one
+with `--pool`. The report's **acceptance rate is a reading of lexicon maturity**,
+and the **top missing words** tell you exactly what to `add-word` to raise
+coverage. Previews by default; `--yes` adds the accepted `(English → conlang)`
+pairs to the translation memory.
+
+### Measuring quality (LANG-3 P2)
+
+A conlang has no human reference translations, so quality is gauged without one:
+
+```
+inkhaven language eval Eldar                  # coverage + round-trip similarity
+inkhaven language eval Eldar --test-set t.txt # against a custom test set
+```
+
+**Round-trip** translates each English sentence, reverses the result back to
+English, and measures how close the recovered meaning is to the source (embedding
+cosine) — a healthy language scores well above 0.7. **Coverage** is the fraction
+the lexicon can fully translate (the same maturity signal as `corpus`). The eval
+measures the rule-based engine (not the memory, which would echo confirmed pairs);
+scriptable as `lang.eval`.
+
+### Shipping a translation pack (LANG-3 P3)
+
+Because the "model" is the translation memory, the whole translation system
+exports as one small, portable file you can publish alongside a book:
+
+```
+inkhaven language export-translation Eldar              # → eldar-translation.itm
+inkhaven language export-translation Eldar --out qya.itm
+```
+
+The `.itm` bundle is a zip of the **translation memory** (`memory.tsv` — the
+confirmed `English → conlang` pairs), the **lexicon** (`lexicon.tsv`), a
+`manifest.hjson`, and a `README.md`. It is browsable as a phrasebook with no
+tools, and re-seedable into another project by replaying the pairs through
+`language remember`. Embeddings are left out (large, regenerable). Scriptable as
+`lang.export` (`fs_write`).
+
+Scope of Tier 1: declarative clauses with an optional adjective per noun phrase.
+Subordinate clauses, multi-word phrases beyond one adjective, and the fluency of
+a trained neural model arrive with the later LANG-3 tiers (the rule-based parser
+hands off to a neural POS+dependency parser behind the same interface). Scriptable
+from Bund as `lang.translate` (`{ surface, gloss, literal, confidence, unresolved }`),
+`lang.reverse` (`{ english, gloss, confidence, unresolved }`), and `lang.cross`
+(`{ english, target, gloss, confidence, unresolved }`) — all `store_read`.
+
 ## Scripting (Bund)
 
 The whole ConLang Suite is reachable from **Bund**, so you can *define and
@@ -742,6 +884,12 @@ lang.tone             ( lang tones -- result )      lang.derive       ( lang roo
 lang.transliterate    ( lang text -- script )       lang.agree        ( lang word pos features -- form )
 lang.gloss            ( lang text -- gloss )        lang.sound_change ( lang form -- evolved )
 lang.sentence         ( lang subj verb obj -- clause )   lang.cognates ( proto form -- reflexes )
+lang.translate        ( lang text -- {surface,gloss,literal,confidence,unresolved,alternatives} )  English → conlang (RBMT + memory)
+lang.reverse          ( lang surface -- {english,gloss,confidence,unresolved} )       conlang → English
+lang.cross            ( from to surface -- {english,target,gloss,confidence,unresolved} )  conlang → conlang via English
+lang.memory           ( lang -- list-of-{english,conlang} )    the translation-memory pairs
+lang.corpus           ( lang -- {scanned,accepted,acceptance_rate,top_missing,pairs} )  RBMT over the bundled English pool (advisory)
+lang.eval             ( lang -- {sentences,covered,coverage,round_trip_similarity} )  translation-quality eval
 lang.relative         ( lang head role verb with relativizer -- clause )
 lang.complement       ( lang subj verb comp comp-subj comp-verb comp-obj -- clause )
 lang.coordinate       ( lang clause-list conjunction -- clause )
@@ -762,7 +910,13 @@ lang.init        ( name -- )                    lang.grammar_set ( lang feature 
 lang.define      ( lang chapter block -- )      lang.idiom_add   ( lang form literal meaning -- )
 lang.add_word    ( lang word pos translation -- )   lang.metaphor_add ( lang source target -- )
 lang.remove_word ( lang word -- )               lang.derive_add  ( lang root gloss pos -- count )
+lang.remember    ( lang english conlang -- )    remember a translation (correction loop)
 ```
+
+A retrieval-first translation pipeline in a few words: `lang.corpus` to seed (loop
+its `pairs` through `lang.remember`), then `lang.translate` returns the memorized
+form (with the rule-based reading in `alternatives`); a `lang.remember` correction
+takes effect on the very next `lang.translate`.
 
 **AI-backed words** (the `ai_write` category — default-denied; enable
 `"ai_write"`). They call the LLM and are **advisory** — they *return* data and

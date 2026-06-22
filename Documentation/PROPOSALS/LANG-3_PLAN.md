@@ -17,6 +17,171 @@
 > areal features, speech communities — shipped 1.3.22), so the translation track
 > is filed here as **LANG-3**. Content is otherwise the author's original.
 
+> **Status (1.3.23-dev): P0.1 — Tier 1 (RBMT) core landed.** The pure-Rust,
+> offline, deterministic spine is in `src/conlang/translate/` (`english.rs` a
+> dependency-free English analyzer, `lexmap.rs` gloss→headword mapping,
+> `mod.rs` the `translate()` orchestrator). It reuses the LANG-1 syntax engine
+> (`syntax::assemble`) wholesale for word order / case / inflection / agreement,
+> so a translation reorders and inflects for free. Surfaces: CLI
+> `inkhaven language translate <lang> "<text>" [--trace] [--json]` and Bund
+> `lang.translate` (`store_read`). Per-word confidence + decision trace;
+> untranslatable words marked `«word»` and listed. Validated live (SVO→SOV
+> reorder, pronoun person, plural, unknown-word handling). Zero new deps; tests
+> 1548 → 1559. **Deliberate deviation from the RFC's P0:** the heavy neural
+> DistilBERT English parser is deferred — the first cut uses a small rule-based
+> analyzer (the RFC's documented fallback) behind the same `analyze` interface,
+> keeping LANG-3 dependency-light and offline-testable until the ML tiers (P1+)
+> are scoped.
+>
+> **P0.2 — `reverse` + `cross` landed.** `src/conlang/translate/reverse.rs`:
+> `reverse` (conlang→English) un-inflects each surface word against the lexicon's
+> paradigm-generated forms (a `ReverseIndex` over headwords + explicit inflections
+> + every `paradigm::generate` form), reads roles off `word_order`, and generates
+> a plain English clause; `cross` (conlang A→B) reverses A then forwards into B
+> through the English pivot (exposed; confidence = product of the two passes).
+> CLI `language reverse <lang> "<surface>"` and `language cross <from> <to>
+> "<surface>"`; Bund `lang.reverse` / `lang.cross` (`store_read`). Validated live
+> (Eldar SVO `kira nami pata` → English → Sindar SOV `turi moki vela`). tests
+> 1559 → 1563.
+>
+> **P0.3 — richer parsing + agreement landed; ★ P0 (Tier 1) complete.**
+> Source parsing is now **lexicon-aware**: a word's POS comes from the lexicon, so
+> the verb is found by meaning (not position) and an attributive **adjective** is
+> recovered on a noun phrase (`the bright bird` → `mira kira`, adjective agreeing
+> with its noun). Number uses the `sg`/`pl` paradigm convention, so forward
+> **inflects** (`the birds see the stones` → `kirai nami patai`) and `reverse`
+> **re-agrees** English number and tense (plural nouns pluralized, a singular
+> subject takes the 3sg verb). Full round-trip verified live. `english::prepare`
+> + `GlossIndex::has_sense` + `structure()` drive the lexicon-aware pass, with the
+> positional analyzer kept as the all-unknown fallback. tests 1563 → 1565.
+>
+> **Deferred to the neural tier (not Tier-1 RBMT work):** subordinate clauses and
+> multi-word phrases beyond a single adjective need real dependency parsing — they
+> arrive when the neural POS+dep parser swaps in behind `english`'s interface. The
+> **routing/merge layer** is a no-op while only Tier 1 exists and is introduced
+> with Tier 2 (P1+), when there is a second tier to route between. **Superseded
+> for the neural specifics by Amendment A1 below — see it before reading §3.2 /
+> §8.4 / §8.6 / §11.**
+
+---
+
+## Amendment A1 — Retrieval-first Tier 2 (Python-free, training-free)
+
+| | |
+|---|---|
+| **Created** | 2026-06-21 |
+| **Author** | Vladimir Ulogov |
+| **Decision** | Adopt **Option A** — Tier 2 is *retrieval-augmented RBMT*, not a fine-tuned NMT |
+| **Supersedes** | §3.2 (Tier-2 goals), §8.4 (fine-tuned NMT), §8.4.3 (Python training), §8.6 (correction loop = retrain), and the candle/NLLB lines of §11 |
+| **Status** | accepted; P1 in progress on 1.3.23-dev |
+
+### Why
+
+The original Tier 2 reached for Python (PyTorch + `transformers` + `peft`) only
+because it assumed Tier 2 must be a **fine-tuned** model — and fine-tuning needs a
+training loop. Two facts make that assumption unnecessary:
+
+1. **A conlang is a closed, author-controlled, synthetic domain.** The synthetic
+   corpus the RBMT manufactures *is* the knowledge. Baking it into adapter
+   weights is one way to use it; **retrieving from it at translation time** is
+   another, and for a closed domain the second is both simpler and more faithful.
+2. **The retrieval stack already ships in the binary.** `fastembed` (multilingual
+   embeddings), `hnsw_rs` / `vecstore` (the `VectorEngine`), `tokenizers`,
+   `safetensors`, and `ort` (ONNX Runtime, via fastembed) are all already direct
+   or transitive dependencies. A retrieval Tier 2 adds **zero new crates**.
+
+So Tier 2 becomes a **semantic translation memory layered over the Tier-1 RBMT
+spine** (the well-known kNN-MT / TM-augmented-MT design). Python and the entire
+training stack leave the critical path.
+
+### The re-architecture
+
+- **Datastore.** Each synthetic `(English → conlang)` pair is stored with the
+  English embedded — exactly the `VectorEngine.store_documents_batch` /
+  `search` shape already used for manuscript semantic search.
+- **At translation time.** Embed the English input; pull the *k* nearest stored
+  examples. An **exact / near-exact** hit is translation memory (return the
+  remembered conlang directly). A **partial** hit supplies word-choice / idiom /
+  phrasing exemplars that steer the RBMT. A **miss** falls back to pure RBMT. The
+  merge policy is the one design-critical piece (it is what TM systems already
+  do); output gains an `alternatives` list so the author always sees the
+  candidates and chooses.
+- **Correction loop = `store_document(...)`.** A correction is *appended to the
+  datastore* and takes effect on the very next sentence — strictly better than
+  the original design, which batched 100 corrections and a training run to
+  achieve less. "Refresh" becomes optional datastore compaction/dedup, never a
+  training run.
+- **The shippable artifact** (RFC §8.9) becomes the **datastore bundle** (vectors
+  + targets + the language data) — smaller than an adapter, and regenerable.
+
+### What stays from the original RFC
+
+Tier 1 RBMT (done, P0); the optional **Tier 3** resolver (reuses `src/ai/` —
+already proven by LANG-2 `propose-dialect`); the **evaluation harness** (§8.8 —
+round-trip similarity, grammar pass-rate, author-acceptance all still apply, and
+round-trip now reuses `reverse`); **cross-conlang** (§8.7, done); the
+**grammar-constrained** check (§8.4.6 — reuses the RBMT inflected-form set, now in
+the merge step instead of at decode).
+
+### Reuse map
+
+| Need | Reused existing code | New |
+|---|---|---|
+| RBMT spine | `src/conlang/translate/` (P0) | — |
+| Datastore | `src/storage/vector.rs` `VectorEngine` | a TM collection + schema |
+| Embeddings | `src/storage/embedding.rs` `EmbeddingEngine` | — |
+| Async corpus build | bg-job harness (`src/tui/app.rs`) | corpus generator (RBMT over a pool) |
+| Tier 3 (optional) | `src/ai/` `AiClient` + `collect_blocking` | — |
+| Tables | DuckDB store | corpus / correction / memory tables |
+
+### Revised phase plan
+
+- **P1 — corpus + translation memory (no deps, no downloads).** ✅ *Landed
+  1.3.23-dev.* The translation-memory datastore (`memory.rs`: exact + lexical-fuzzy
+  matching; `.inkhaven/` sidecar), the retrieve→merge policy (`apply_memory`, with
+  an `alternatives`-bearing output), the correction primitive (`language remember`
+  → reused on the next call, no retrain; `language memory` lists), and the
+  synthetic-corpus generator (`corpus.rs`: RBMT over a **bundled** English pool —
+  `assets/conlang/english-pool-v1.txt`, no download — gated on full lexicon
+  coverage; `language corpus [--pool] [--yes]` seeds memory and reports acceptance
+  rate + top-missing words as a lexicon-maturity signal). Tests through 1572.
+- **P2 — semantic retrieval + pane cutover.** *Semantic retrieval landed
+  1.3.23-dev:* the strategy now lives in `memory::TranslationMemory::best`
+  (exact → semantic → lexical); each remembered English source is embedded once
+  via the in-tree `fastembed` (cached in the sidecar) and a translation embeds
+  only the query, matching by cosine (threshold 0.82). `apply_memory` takes an
+  optional query embedding; the CLI/Bund supply it from `Store::embed_batch` when
+  the memory is non-empty (exact hits skip it). Validated live (a lexical
+  paraphrase recalled a remembered line at 92%). Semantic hits stay *advisory*
+  (alternatives, never silent overrides). The **eval harness** (`translate::eval`,
+  CLI `language eval`, Bund `lang.eval`) ships **round-trip semantic similarity**
+  (translate → `reverse` → cosine via `fastembed`) and **coverage** — validated
+  live (22% coverage, round-trip 0.996 on simple sentences); author-acceptance
+  (§8.8.3) is editor-coupled and lands with the pane. **Deferred from P2:** routing
+  the TUI translate pane through the pipeline — held for the planned TUI
+  rearchitecture (the engine/CLI/Bund surface it routes through is complete).
+- **P3 — correction loop + export + cross.** ✅ *Landed 1.3.23-dev.* The
+  correction loop is the immediate datastore append from P1 (`remember`);
+  cross-conlang landed in P0; and the **export bundle** (`translate::export`, CLI
+  `language export-translation`, Bund `lang.export`) packages the translation
+  system as a portable single-file `.itm` zip — `memory.tsv` (the confirmed
+  pairs, which *are* the model under A1) + `lexicon.tsv` + `manifest.hjson` +
+  `README.md`. Browsable as a phrasebook with no tools; re-seedable by replaying
+  the pairs through `remember`; embeddings omitted (large, regenerable).
+  Validated live (CLI + Bund). **★ The retrieval-first LANG-3 core (P0–P3) is
+  complete** — Python-free, training-free, zero new deps, no required downloads.
+- **P-opt (deferred, optional) — neural fluency.** *Only if* RBMT + retrieval
+  proves insufficient on real conlangs: a base-NLLB run via the in-tree `ort`
+  (no training, no new crate, a hosted pre-exported ONNX asset so the user never
+  touches Python), and/or candle-native LoRA training (the only path that adds
+  candle crates). These are upgrades on the same corpus + datastore spine, not
+  requirements — so the heavy-deps decision is deferred until there is evidence
+  it is worth it.
+
+**Net effect:** the LANG-3 core ships **Python-free, training-free, with zero new
+dependencies and no required model downloads**, fully offline, reusing the
+embedding + vector + background-job + AI infrastructure already in the binary.
+
 ---
 
 ## 1. Summary
