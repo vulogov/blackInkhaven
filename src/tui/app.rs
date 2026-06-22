@@ -6689,9 +6689,134 @@ impl App {
                 }
             }
             KeyCode::Char('r') if plain => self.remember_output_translation(),
+            KeyCode::Enter => self.promote_output_message(),
             _ => {}
         }
         Ok(false)
+    }
+
+    /// PANE-1 P3 — the promote action (`Enter`) on a `lexicon_proposal`: commit
+    /// every word the message carries (`metadata.proposals`) into the language's
+    /// Dictionary through the same rich-import path `generate-lexicon --yes`
+    /// uses, then dismiss the message and reindex. Advisory → committed, with no
+    /// second model call (the forms were already proposed + dedup-gated). A
+    /// no-op on other kinds.
+    fn promote_output_message(&mut self) {
+        let msgs = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default();
+        let Some(m) = msgs.get(self.output_selected) else { return };
+        if m.kind != crate::pane::output::kinds::LEXICON_PROPOSAL {
+            self.status = "Accept: only for lexicon proposals".into();
+            return;
+        }
+        let msg_id = m.id;
+        let language = m
+            .metadata
+            .get("language")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let era = m
+            .metadata
+            .get("era")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let Some(proposals) = m.metadata.get("proposals").and_then(|v| v.as_array()) else {
+            self.status = "Accept: proposal carries no words".into();
+            return;
+        };
+        // Build the import entries from the message metadata (no engine re-run).
+        let entries: Vec<crate::cli::language::ImportEntry> = proposals
+            .iter()
+            .filter_map(|p| {
+                let word = p.get("form").and_then(|v| v.as_str())?.trim().to_string();
+                if word.is_empty() {
+                    return None;
+                }
+                let s = |k: &str| {
+                    p.get(k).and_then(|v| v.as_str()).unwrap_or("").trim().to_string()
+                };
+                let pos = {
+                    let raw = s("pos");
+                    if raw.is_empty() { "noun".to_string() } else { raw }
+                };
+                let domain = p
+                    .get("domain")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|d| d.as_str())
+                            .map(|d| d.trim().to_string())
+                            .filter(|d| !d.is_empty())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                Some(crate::cli::language::ImportEntry {
+                    word,
+                    pos,
+                    translation: s("gloss"),
+                    example: s("example"),
+                    register: s("register"),
+                    domain,
+                    era: era.clone(),
+                    ..Default::default()
+                })
+            })
+            .collect();
+        if entries.is_empty() {
+            self.status = "Accept: no valid words to add".into();
+            return;
+        }
+
+        // Resolve the language sub-book under the project's open hierarchy.
+        let lang_book = self
+            .hierarchy
+            .iter()
+            .find(|n| {
+                n.system_tag.as_deref()
+                    == Some(crate::store::SYSTEM_TAG_LANGUAGES)
+            })
+            .map(|n| n.id)
+            .map(|root| self.hierarchy.children_of(Some(root)))
+            .and_then(|books| {
+                books
+                    .into_iter()
+                    .find(|b| b.title.eq_ignore_ascii_case(&language))
+            });
+        let Some(lang_book) = lang_book else {
+            self.status = format!("Accept: language `{language}` not found");
+            return;
+        };
+
+        let cfg = match crate::config::Config::load_layered(
+            &crate::project::ProjectLayout::new(&self.layout.root).config_path(),
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                self.status = format!("Accept: {e}");
+                return;
+            }
+        };
+
+        let mut added = 0usize;
+        for entry in &entries {
+            match crate::cli::language::add_imported_dictionary_entry(
+                &self.store,
+                &cfg,
+                &lang_book,
+                entry,
+            ) {
+                Ok(_) => added += 1,
+                Err(_) => {}
+            }
+        }
+
+        if let Some(s) = crate::pane::output::active() {
+            let _ = s.dismiss(msg_id);
+        }
+        self.status = format!("accepted {added} word(s) into {language}'s Dictionary");
     }
 
     /// PANE-1 P2 — the `r` Remember action on a `translation_result`: commit its
@@ -6742,6 +6867,148 @@ impl App {
             Ok(()) => self.status = format!("remembered: {source} → {target}"),
             Err(e) => self.status = format!("Remember: save failed: {e}"),
         }
+    }
+
+    /// PANE-1 / LANG-3 — Ctrl+B D ("Deterministic"). Rule-based + translation-memory
+    /// translation of the open paragraph INTO an invented language, routed to the
+    /// Output pane. Sibling to Ctrl+B Q (AI prose → AI pane): same language
+    /// resolution, different engine + destination. No model call, fully
+    /// reproducible. The engine reuses the already-open project store + hierarchy
+    /// (no second DuckDB/bdslib handle on the same file), and emits the result,
+    /// confidence, per-word trace, and uncovered-word report via the shared
+    /// `emit_translation_output` path — so the message carries the same `o`/`r`/`a`
+    /// Output actions a CLI/Bund translation would.
+    fn translate_lang3_to_output(&mut self) {
+        use crate::conlang::translate;
+
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "translate: no paragraph open".into();
+            return;
+        };
+        let text = doc.textarea.lines().join("\n");
+        if text.trim().is_empty() {
+            self.status = "translate: paragraph is empty".into();
+            return;
+        }
+
+        // Resolve the target invented language — mirror Ctrl+B Q exactly:
+        // 0 sub-books → error, 1 → direct, 2+ → first (named on the status bar).
+        let Some(lang_root_id) = self
+            .hierarchy
+            .iter()
+            .find(|n| {
+                n.system_tag.as_deref()
+                    == Some(crate::store::SYSTEM_TAG_LANGUAGES)
+            })
+            .map(|n| n.id)
+        else {
+            self.status = "translate: Language system book missing — \
+                           re-open the project to seed it"
+                .into();
+            return;
+        };
+        let lang_books = self.hierarchy.children_of(Some(lang_root_id));
+        let multiple = lang_books.len() > 1;
+        let Some(lang_book) = lang_books.into_iter().next() else {
+            self.status = "translate: no invented languages defined — \
+                           run `inkhaven language init <name>` first"
+                .into();
+            return;
+        };
+        let language = lang_book.title.clone();
+
+        // Load the engine inputs against the project's open store/hierarchy.
+        // Phonology is optional (inflection/allophony only); the rest default
+        // cleanly so a half-built language still produces a best-effort map.
+        macro_rules! bail {
+            ($e:expr) => {{
+                self.status = format!("translate: {}", $e);
+                return;
+            }};
+        }
+        let phon = match crate::cli::language::load_phonology(
+            &self.store,
+            &self.hierarchy,
+            &lang_book,
+        ) {
+            Ok(p) => p.unwrap_or_default(),
+            Err(e) => bail!(e),
+        };
+        let morph = match crate::cli::language::load_morphology(
+            &self.store,
+            &self.hierarchy,
+            &lang_book,
+        ) {
+            Ok(m) => m.unwrap_or_default(),
+            Err(e) => bail!(e),
+        };
+        let grammar = match crate::cli::language::load_grammar_spec(
+            &self.store,
+            &self.hierarchy,
+            &lang_book,
+        ) {
+            Ok((spec, _)) => spec.grammar,
+            Err(e) => bail!(e),
+        };
+        let entries = match crate::cli::language::load_dictionary(
+            &self.store,
+            &self.hierarchy,
+            &lang_book,
+        ) {
+            Ok(e) => e,
+            Err(e) => bail!(e),
+        };
+
+        // Tier 2 (retrieval): layer translation memory over the rule-based
+        // result. A non-empty memory gets a semantic query embedding.
+        let mem = match translate::memory::TranslationMemory::load(
+            &self.layout.root,
+            &language,
+        ) {
+            Ok(m) => m,
+            Err(e) => bail!(e),
+        };
+        let query_embedding: Option<Vec<f32>> = if mem.is_empty() {
+            None
+        } else {
+            self.store
+                .embed_batch(&[text.as_str()])
+                .ok()
+                .and_then(|mut v| (!v.is_empty()).then(|| v.remove(0)))
+        };
+        let t = translate::apply_memory(
+            translate::translate(&phon, &morph, &grammar, &entries, &text),
+            &mem,
+            query_embedding.as_deref(),
+        );
+        let confidence = t.confidence;
+        let target = t.target.clone();
+        let trace = crate::cli::language::translation_trace_json(&t);
+        crate::cli::language::emit_translation_output(
+            &language,
+            &text,
+            &t.target,
+            t.confidence,
+            "forward",
+            &t.unresolved,
+            trace,
+        );
+
+        // Surface the result: flip to the Output pane and focus it (the Output
+        // pane shares Focus::Ai, disambiguated by `right_pane`).
+        self.right_pane = RightPane::Output;
+        self.output_selected = 0;
+        self.change_focus(Focus::Ai);
+        let note = if multiple {
+            format!(" · multiple languages — used {language}")
+        } else {
+            String::new()
+        };
+        let cov = if target.contains('«') { " (some words uncovered)" } else { "" };
+        self.status = format!(
+            "translated → {language} [{:.0}%]{cov} → Output (^B Tab){note}",
+            confidence * 100.0
+        );
     }
 
     /// PANE-1 — the ask-AI bridge (RFC §8.9). Take the selected Output message's
@@ -8885,6 +9152,7 @@ impl App {
             A::AiRewriteRhythm => self.start_sentence_rhythm_rewrite(),
             A::TranslateToInvented => self.start_translate_to_invented(),
             A::TranslateFromInvented => self.start_translate_from_invented(),
+            A::TranslateLang3 => self.translate_lang3_to_output(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),

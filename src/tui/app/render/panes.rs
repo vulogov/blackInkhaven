@@ -1572,6 +1572,32 @@ impl super::super::App {
                 let dim = Style::default().fg(Color::DarkGray);
                 let trace = m.metadata.get("trace").and_then(|v| v.as_array());
                 let alts = m.metadata.get("alternatives").and_then(|v| v.as_array());
+                // PANE-1 P3 — lexicon proposals: list every candidate word.
+                let proposals = m.metadata.get("proposals").and_then(|v| v.as_array());
+                // PANE-1 P3 — variety renderings: list each base→variety pair.
+                let renderings = m.metadata.get("renderings").and_then(|v| v.as_array());
+                if let Some(proposals) = proposals {
+                    for p in proposals {
+                        let form = p.get("form").and_then(|v| v.as_str()).unwrap_or("");
+                        let gloss = p.get("gloss").and_then(|v| v.as_str()).unwrap_or("");
+                        let pos = p.get("pos").and_then(|v| v.as_str()).unwrap_or("");
+                        lines.push(Line::from(Span::styled(
+                            format!("      {form:<16} {gloss} ({pos})"),
+                            dim,
+                        )));
+                    }
+                }
+                if let Some(renderings) = renderings {
+                    for r in renderings {
+                        let base = r.get("base").and_then(|v| v.as_str()).unwrap_or("");
+                        let rendered = r.get("rendered").and_then(|v| v.as_str()).unwrap_or("");
+                        let arrow = if base == rendered { " =" } else { "→" };
+                        lines.push(Line::from(Span::styled(
+                            format!("      {base}  {arrow}  {rendered}"),
+                            dim,
+                        )));
+                    }
+                }
                 if let Some(trace) = trace {
                     for e in trace {
                         let src = e.get("source").and_then(|v| v.as_str()).unwrap_or("");
@@ -1598,7 +1624,11 @@ impl super::super::App {
                         )));
                     }
                 }
-                if trace.is_none() && alts.is_none() {
+                if trace.is_none()
+                    && alts.is_none()
+                    && proposals.is_none()
+                    && renderings.is_none()
+                {
                     if let Some(obj) = m.metadata.as_object() {
                         for (k, v) in obj.iter().filter(|(k, _)| k.as_str() != "text") {
                             lines.push(Line::from(Span::styled(format!("      {k}: {v}"), dim)));
@@ -1626,8 +1656,17 @@ impl super::super::App {
                 width: inner.width,
                 height: 1,
             };
+            // The action row is context-aware: a lexicon proposal advertises
+            // its Enter→accept; a translation result, r→remember.
+            let sel_kind = msgs.get(self.output_selected).map(|m| m.kind.as_str());
+            let hint_text = match sel_kind {
+                Some(k) if k == crate::pane::output::kinds::LEXICON_PROPOSAL => {
+                    " ↑↓ · ⏎ accept · o expand · a ask AI · d dismiss · p pin · ^B Tab"
+                }
+                _ => " ↑↓ · o expand · r remember · a ask AI · d dismiss · p pin · ^B Tab",
+            };
             let hint = Paragraph::new(Line::from(Span::styled(
-                " ↑↓ · o expand · r remember · a ask AI · d dismiss · p pin · ^B Tab",
+                hint_text,
                 Style::default().fg(Color::DarkGray),
             )));
             f.render_widget(hint, footer);

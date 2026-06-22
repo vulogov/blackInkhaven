@@ -799,6 +799,22 @@ pub enum Action {
     #[serde(rename = "ai.translate_from_invented")]
     TranslateFromInvented,
 
+    /// Ctrl+B D (PANE-1 / LANG-3, "Deterministic").  Translate
+    /// the open paragraph from the project's working language into an
+    /// invented language using the *deterministic* LANG-3
+    /// engine — rule-based morphology + syntax with a
+    /// translation-memory retrieval fallback — and route the
+    /// result, its per-word trace, and any uncovered-word
+    /// report into the **Output pane** (not the AI pane).  No
+    /// model call; reproducible.  Complements `Ctrl+B Q`
+    /// (AI-driven, streams prose into the AI pane): same
+    /// language-resolution (0 → error, 1 → direct, 2+ → first,
+    /// noted), different engine + destination.  In the Output
+    /// pane the result carries `r` remember / `a` ask-AI / `o`
+    /// expand-trace actions.
+    #[serde(rename = "lang.translate_to_output")]
+    TranslateLang3,
+
     /// Runtime-only: a Bund lambda registered under the given
     /// name via `ink.key.bind_lambda`. Dispatch routes to
     /// `scripting::hooks::fire(name, vec![])`. `#[serde(skip)]` —
@@ -938,6 +954,7 @@ impl Action {
             Action::NextFactFinding => "next fact finding".into(),
             Action::TranslateToInvented => "translate →".into(),
             Action::TranslateFromInvented => "translate ←".into(),
+            Action::TranslateLang3 => "translate → out".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -1210,6 +1227,8 @@ impl Action {
                 "AI-driven translation of the open paragraph from the project's working language INTO an invented language defined under the Language system book (1.2.13+, Ctrl+B Q). Composes a prompt envelope from the language's Dictionary (RAG-filtered to words present in the source), Grammar (all rules), Phonology (all rules), and Sample-text chapters, then streams the response into the AI pane. With zero Language sub-books the chord errors out; with exactly one it translates directly; with two or more it pops a picker — ↑↓ + Enter, or type the first letter to jump-and-commit (the proposal's Ctrl+B Q Q for Quenya sub-letter pattern, unbundled). The translation block is wrapped between <<<TRANSLATION>>> / <<<END>>> markers so the I apply chord in the AI pane lifts only the target-language prose, no gloss table or commentary.".into(),
             Action::TranslateFromInvented =>
                 "Reverse-direction AI translation (1.2.13+, Ctrl+B Shift+Q). Translate the open paragraph FROM an invented language defined under the Language system book back into the project's working language. Same prompt envelope shape and language-picker semantics as Ctrl+B Q. The natural roundtrip-test workflow is Ctrl+B Q → copy the translation into the next paragraph → Ctrl+B Shift+Q: when the resulting working-language text matches the original, the grammar rules and dictionary entries hold together end-to-end — exposes grammar drift before it bites in the manuscript.".into(),
+            Action::TranslateLang3 =>
+                "Deterministic translation of the open paragraph from the project's working language INTO an invented language using the LANG-3 engine — rule-based morphology + syntax with a translation-memory retrieval fallback — NO model call, fully reproducible (1.3.25+, Ctrl+B D — \"Deterministic\"). Unlike Ctrl+B Q (AI prose → AI pane), the result, its per-word trace, the confidence score, and any uncovered-word report land in the Output pane (^B Tab), where `o` expands the trace, `r` remembers the pair into translation memory, and `a` asks the AI about it. Same language resolution as Ctrl+B Q: zero Language sub-books → error, one → direct, two or more → first language (named on the status bar).".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -1444,6 +1463,15 @@ impl KeyBindings {
                 // invented back to the working
                 // language.  Roundtrip test.
                 entry("Shift+q", Action::TranslateFromInvented, Scope::Editor),
+                // 1.3.25+ PANE-1 / LANG-3 — Ctrl+B D
+                // ("Deterministic").  Rule-based translation
+                // of the open paragraph INTO an invented
+                // language; result + trace land in the
+                // Output pane.  Sibling to Ctrl+B Q (AI).
+                // Editor-scoped, so it's disjoint from the
+                // Tree's Ctrl+B D (DeleteNode) — same split
+                // pattern as Ctrl+B Q.
+                entry("d", Action::TranslateLang3, Scope::Editor),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),
@@ -2107,6 +2135,30 @@ mod tests {
             k.resolve_meta_sub(&ev('q'), Focus::Tree),
             Some(Action::OpenImpositionPreview),
             "tree Ctrl+B Q opens the imposition preview",
+        );
+    }
+
+    #[test]
+    fn meta_d_resolves_to_lang3_translate_in_editor() {
+        // 1.3.25 PANE-1 / LANG-3: Ctrl+B D ("Deterministic") is the
+        // rule-based translate-to-Output chord, sibling to Ctrl+B Q (AI). It's
+        // editor-scoped, disjoint from the tree's Ctrl+B D (DeleteNode), and
+        // must not collide with Q.
+        let k = KeyBindings::defaults();
+        assert_eq!(
+            k.resolve_meta_sub(&ev('d'), Focus::Editor),
+            Some(Action::TranslateLang3),
+            "editor Ctrl+B D must be the LANG-3 translate-to-Output chord",
+        );
+        assert_eq!(
+            k.resolve_meta_sub(&ev('d'), Focus::Tree),
+            Some(Action::DeleteNode),
+            "tree Ctrl+B D must remain delete-node",
+        );
+        assert_ne!(
+            k.resolve_meta_sub(&ev('d'), Focus::Editor),
+            k.resolve_meta_sub(&ev('q'), Focus::Editor),
+            "D (deterministic→Output) and Q (AI→AI pane) must stay distinct",
         );
     }
 
