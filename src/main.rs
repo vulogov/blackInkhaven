@@ -25,6 +25,7 @@ mod grammar;
 mod language_entry;
 mod book_digest;
 mod manuscript;
+mod pane;
 mod planning;
 mod editorial;
 mod drift;

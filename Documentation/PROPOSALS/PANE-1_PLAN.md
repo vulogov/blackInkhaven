@@ -20,6 +20,21 @@
 > routing (the engine/CLI/Bund surface that routing needs already shipped in
 > 1.3.23).
 
+> **Progress (1.3.24-dev).** *P0 data layer landed:* `src/pane/output/` — the
+> universal `Message` envelope (`types.rs`: kind string + metadata JSON +
+> `Severity`/`Lifetime`/`ActionId`) and the per-project DuckDB-backed
+> `OutputStore` (`store.rs`: `<project>/output.db` on the same `StorageEngine` as
+> the progress/blob stores; emit, `active`/`by_kind` queries pinned-then-newest,
+> dismiss/pin/snooze, and cleanup that drops time-expired and trims `Session(N)`
+> kinds). Headless CLI surface `inkhaven output show|emit|dismiss|clear` (RFC
+> §10.1) wired as the first consumer. Validated live (emit → show with severity
+> icons → JSON filter → dismiss). Timestamps are unix-secs (not the RFC's
+> `TIMESTAMP`) and project scope is the file (no `project_id` column) — both to
+> match the in-tree stores. Zero new deps; tests 1576 → 1582. The rest of the
+> envelope/store API is intentionally complete ahead of its consumers (TUI pane,
+> `ink.io.*`, emitter routing — the next increments). *Next: P1 (Bund `print` →
+> `ink.io.*`) and the ratatui Output pane widget + `Ctrl+B Tab` cycling.*
+
 ---
 
 ## 1. Summary
