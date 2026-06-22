@@ -105,9 +105,16 @@
 > **`r`** Remember (`App::remember_output_translation`) commits a
 > `translation_result`'s `source → target` to the language's LANG-3 translation
 > memory (embedding the source via the project store), guarding against uncovered
-> (`«…»`) targets. Footer hint updated. tests 1582. *Next: the `Ctrl+B U`
-> translation chord family; pane persistence + Output-default; then P3 LANG-1/2
-> emitter retarget, P4–P6.*
+> (`«…»`) targets. Footer hint updated. tests 1582.
+>
+> *Pane persistence landed (1.3.25-dev).* `SessionState` gains a `right_pane`
+> field (serde-default); `save_session` writes `format!("{:?}", self.right_pane)`
+> and `restore_session` restores it — exactly like the existing `focus` field, so
+> the active right-side pane survives a restart, and `cycle_right_pane` saves
+> immediately (not just on exit). The launch default stays **AI** (the
+> Output-default flip the RFC wants is a one-liner, held pending a UX call). tests
+> 1582. *Next: the `Ctrl+B U` translation chord family (needs a binding decision —
+> `Ctrl+B U` is taken by restore-front); P3 LANG-1/2 emitter retarget; P4–P6.*
 
 ---
 

@@ -22,6 +22,10 @@ pub struct SessionState {
     /// is treated as "Tree" on restore.
     #[serde(default)]
     pub focus: String,
+    /// PANE-1 — the active right-side pane: "Output" or "Ai". Empty / unknown
+    /// keeps the launch default on restore.
+    #[serde(default)]
+    pub right_pane: String,
     /// Cursor/scroll positions per paragraph UUID. Updated whenever the
     /// editor loses focus, the user switches paragraphs, or the app exits —
     /// so re-opening any paragraph drops the cursor back where the user

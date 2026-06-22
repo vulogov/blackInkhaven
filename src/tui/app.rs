@@ -4646,6 +4646,13 @@ impl App {
         if let Some(f) = restored_focus {
             self.focus = f;
         }
+
+        // PANE-1 — restore the active right-side pane.
+        match state.right_pane.as_str() {
+            "Output" => self.right_pane = RightPane::Output,
+            "Ai" => self.right_pane = RightPane::Ai,
+            _ => {}
+        }
     }
 
     fn handle_input_key(&mut self, key: KeyEvent, is_search: bool) -> Result<bool> {
@@ -6621,6 +6628,8 @@ impl App {
         };
         self.output_selected = 0;
         self.change_focus(Focus::Ai);
+        // PANE-1 — persist the pane choice so it survives a restart.
+        let _ = self.save_session();
         self.status = match self.right_pane {
             RightPane::Output => "pane → Output".into(),
             RightPane::Ai => "pane → AI".into(),
