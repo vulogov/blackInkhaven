@@ -44,8 +44,25 @@
 > cross-process. **Deliberately deferred: redirecting the *bare* `print` word to
 > Output** — until the ratatui pane renders `output.db`, that would send TUI print
 > output where nothing displays it; it's a one-liner once the pane lands, so it
-> ships with the widget. tests 1582. *Next: the ratatui Output pane widget +
-> `Ctrl+B Tab` cycling (the TUI-app integration).*
+> ships with the widget. tests 1582.
+>
+> *P0 pane widget + cycling landed* — the TUI integration. `src/pane/output/`
+> gains a process-global install (`install`/`active`/`uninstall`, mirroring
+> `crate::progress`) so the App and `ink.io.*` share **one** `output.db` instance
+> (two would clash); the App installs it on open. `App.right_pane: RightPane`
+> (Output | AI; default AI to preserve the launch view) is cycled by **`Ctrl+B
+> Tab` / `Ctrl+B Shift+Tab`** (handled in `handle_meta_action` before the
+> modifier check, since BackTab carries Shift), which toggles the pane and focuses
+> the region. The main `draw` dispatches `body[2]` to `draw_output` or `draw_ai`;
+> `draw_output` (in `render/panes.rs`) renders active messages two lines each
+> (severity icon + kind, then text), the selected row marked + bold when focused.
+> `handle_output_key` drives the pane when focused: ↑/↓ (`j`/`k`) select, `g`/`G`
+> first/last, `d` dismiss, `p` pin/unpin. Compiles clean; the store/CLI/`ink.io`
+> path is validated end-to-end (interactive render verified by construction —
+> mirrors `draw_ai` / `change_focus` / the meta-chord ladder). tests 1582. *Next:
+> P2 — route LANG-3 translation into Output (unblocks the deferred translate-pane
+> integration); the bare-`print`→Output redirect (needs the `Ctrl+Z E` eval-buffer
+> interaction handled); pane persistence (`pane_state` table) + the ask-AI bridge.*
 
 ---
 
