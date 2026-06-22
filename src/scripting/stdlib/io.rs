@@ -19,17 +19,12 @@ use rust_dynamic::value::Value;
 use rust_multistackvm::multistackvm::VM;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use super::helpers::{active_store, pull, push, require_depth, value_to_string};
 use crate::pane::output::{kinds, Lifetime, Message, OutputStore, Severity};
 
 thread_local! {
     static PRINT_BUFFER: RefCell<String> = const { RefCell::new(String::new()) };
-    /// PANE-1 P1 — the active project's Output store, opened once per process.
-    /// Re-opening the same `output.db` would create a second DuckDB instance and
-    /// conflict, so it is cached by project root.
-    static OUTPUT_STORE: RefCell<Option<(PathBuf, OutputStore)>> = const { RefCell::new(None) };
 }
 
 /// Register inkhaven's `print` / `println` overrides plus the `ink.io.*` Output
@@ -61,21 +56,14 @@ fn to_bund_err(e: anyhow::Error) -> BundError {
     easy_error::err_msg(format!("{e}"))
 }
 
-/// The active project's Output store (cached per process; see [`OUTPUT_STORE`]).
+/// The active project's Output store — the process-global instance (the TUI App
+/// installs it on open; CLI Bund installs it lazily here).
 fn output_store(tag: &str) -> Result<OutputStore> {
+    if let Some(os) = crate::pane::output::active() {
+        return Ok(os);
+    }
     let store = active_store(tag)?;
-    let root = store.project_root().to_path_buf();
-    OUTPUT_STORE.with(|c| {
-        let mut g = c.borrow_mut();
-        if let Some((cached, os)) = g.as_ref() {
-            if *cached == root {
-                return Ok(os.clone());
-            }
-        }
-        let os = OutputStore::open_for_project(&root).map_err(|e| anyhow!("{tag}: {e}"))?;
-        *g = Some((root, os.clone()));
-        Ok(os)
-    })
+    crate::pane::output::install(store.project_root()).map_err(|e| anyhow!("{tag}: {e}"))
 }
 
 // ( text -- )  emit a bund_print message to the Output pane

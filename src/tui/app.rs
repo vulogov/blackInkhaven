@@ -1495,6 +1495,14 @@ pub(crate) struct FactCheckNav {
     pub idx: usize,
 }
 
+/// PANE-1 — which pane occupies the right-side region. Cycled by `Ctrl+B Tab`.
+/// `Translation` is reserved for a future active-session flow (not built).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RightPane {
+    Output,
+    Ai,
+}
+
 pub(crate) struct App {
     layout: ProjectLayout,
     store: Store,
@@ -1575,6 +1583,11 @@ pub(crate) struct App {
     modal: Modal,
 
     focus: Focus,
+    /// PANE-1 — which pane the right-side region shows. Default AI preserves the
+    /// pre-PANE-1 launch view; Output is reached with `Ctrl+B Tab`.
+    right_pane: RightPane,
+    /// Selected row in the Output pane.
+    output_selected: usize,
     tree_cursor: usize,
     tree_scroll: usize,
 
@@ -2175,6 +2188,8 @@ impl App {
             bund_pending: false,
             view_pending: false,
             focus: Focus::Tree,
+            right_pane: RightPane::Ai,
+            output_selected: 0,
             tree_cursor: 0,
             tree_scroll: 0,
             search_input: TextInput::new(),
@@ -2270,6 +2285,12 @@ impl App {
     /// store stays uninstalled — progress tracking degrades to
     /// "(disabled)" rather than aborting startup.
     pub(crate) fn install_progress(&mut self) {
+        // PANE-1 — install the process-global Output store so the pane and the
+        // `ink.io.*` words share one `output.db` instance. Failure degrades to
+        // "Output disabled", never aborts startup.
+        if let Err(e) = crate::pane::output::install(&self.layout.root) {
+            tracing::warn!(target: "inkhaven::pane", "output install: {e:#}");
+        }
         if let Err(e) = crate::progress::install(&self.layout.root) {
             tracing::warn!(target: "inkhaven::progress", "install: {e:#}");
             return;
@@ -3704,6 +3725,8 @@ impl App {
         match self.focus {
             Focus::Tree => self.handle_tree_key(key),
             Focus::Editor => self.handle_editor_key(key),
+            // PANE-1 — when the right region shows Output, its keys win; else AI.
+            Focus::Ai if self.right_pane == RightPane::Output => self.handle_output_key(key),
             Focus::Ai => self.handle_passive_key(key),
             Focus::SearchBar => self.handle_input_key(key, true),
             Focus::AiPrompt => self.handle_input_key(key, false),
@@ -6585,11 +6608,89 @@ impl App {
     ///   * Tree (and Search bar): hierarchy operations
     ///   * Editor: save / snapshots / file load / split-edit
     ///   * AI (and AI prompt): inference management
+    /// PANE-1 — cycle the right-side region pane (Ctrl+B Tab / Shift+Tab). With
+    /// only Output and AI today both directions toggle; focus moves to the
+    /// region so its keys (and the cycle chord) take effect immediately.
+    fn cycle_right_pane(&mut self, _forward: bool) {
+        self.right_pane = match self.right_pane {
+            RightPane::Output => RightPane::Ai,
+            RightPane::Ai => RightPane::Output,
+        };
+        self.output_selected = 0;
+        self.change_focus(Focus::Ai);
+        self.status = match self.right_pane {
+            RightPane::Output => "pane → Output".into(),
+            RightPane::Ai => "pane → AI".into(),
+        };
+    }
+
+    /// PANE-1 — keys for the Output pane (active when the right region shows
+    /// Output): ↑/↓ select, `d` dismiss, `p` pin/unpin, `g`/`G` first/last.
+    fn handle_output_key(&mut self, key: KeyEvent) -> Result<bool> {
+        let msgs = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default();
+        let n = msgs.len();
+        if n > 0 && self.output_selected >= n {
+            self.output_selected = n - 1;
+        }
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') if plain => {
+                self.output_selected = self.output_selected.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') if plain => {
+                if self.output_selected + 1 < n {
+                    self.output_selected += 1;
+                }
+            }
+            KeyCode::Char('g') if plain => self.output_selected = 0,
+            KeyCode::Char('G') => self.output_selected = n.saturating_sub(1),
+            KeyCode::Char('d') if plain => {
+                if let Some(m) = msgs.get(self.output_selected) {
+                    if let Some(s) = crate::pane::output::active() {
+                        let _ = s.dismiss(m.id);
+                    }
+                    self.status = "dismissed".into();
+                }
+            }
+            KeyCode::Char('p') if plain => {
+                if let Some(m) = msgs.get(self.output_selected) {
+                    if let Some(s) = crate::pane::output::active() {
+                        let _ = s.set_pinned(m.id, !m.pinned);
+                    }
+                    self.status = if msgs[self.output_selected].pinned {
+                        "unpinned".into()
+                    } else {
+                        "pinned".into()
+                    };
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
     fn handle_meta_action(&mut self, key: KeyEvent) {
         self.meta_pending = false;
         if matches!(key.code, KeyCode::Esc) {
             self.status = "meta cancelled".into();
             return;
+        }
+        // PANE-1 — Ctrl+B Tab / Ctrl+B Shift+Tab cycle the right-side pane.
+        // Handled before the modifier check (BackTab carries Shift).
+        match key.code {
+            KeyCode::Tab => {
+                self.cycle_right_pane(true);
+                return;
+            }
+            KeyCode::BackTab => {
+                self.cycle_right_pane(false);
+                return;
+            }
+            _ => {}
         }
         let plain = !key
             .modifiers
@@ -20159,7 +20260,11 @@ impl App {
             self.draw_secondary_editor(f, body[2]);
         } else {
             self.draw_editor(f, body[1]);
-            self.draw_ai(f, body[2]);
+            // PANE-1 — the right region shows Output or AI.
+            match self.right_pane {
+                RightPane::Output => self.draw_output(f, body[2]),
+                RightPane::Ai => self.draw_ai(f, body[2]),
+            }
         }
         self.draw_ai_prompt(f, outer[2]);
         self.draw_status(f, outer[3]);

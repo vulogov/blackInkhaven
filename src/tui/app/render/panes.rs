@@ -1501,6 +1501,76 @@ impl super::super::App {
         }
     }
 
+    /// PANE-1 — the Output pane: structured notifications from every subsystem.
+    /// Each message is a two-line entry (severity icon + kind, then its text),
+    /// the selected row marked and bold when the region is focused.
+    pub(in crate::tui::app) fn draw_output(&self, f: &mut ratatui::Frame, area: Rect) {
+        use crate::pane::output::Severity;
+
+        let focused = self.focus == Focus::Ai;
+        let border_style = if focused {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let msgs =
+            crate::pane::output::active().and_then(|s| s.active().ok()).unwrap_or_default();
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(format!(" Output · {} ", msgs.len()));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        if msgs.is_empty() {
+            let hint = Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  No notifications.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(Span::styled(
+                    "  Ctrl+B Tab → AI",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ]);
+            f.render_widget(hint, inner);
+            return;
+        }
+
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, m) in msgs.iter().enumerate() {
+            let sel = focused && i == self.output_selected;
+            let (icon, color) = match m.severity {
+                Severity::Info => ('●', Color::Gray),
+                Severity::Warning => ('⚠', Color::Yellow),
+                Severity::Contradiction => ('⊗', Color::Red),
+                Severity::Progress => ('↻', Color::Cyan),
+            };
+            let text =
+                m.metadata.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let pin = if m.pinned { " 📌" } else { "" };
+            let marker = if sel { "▌" } else { " " };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{marker}{icon} "), Style::default().fg(color)),
+                Span::styled(format!("{}{}", m.kind, pin), Style::default().fg(Color::DarkGray)),
+            ]));
+            let text_style = if sel {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(vec![Span::raw("   "), Span::styled(text, text_style)]));
+        }
+
+        // Scroll so the selected entry (two lines each) stays visible.
+        let rows = inner.height as usize;
+        let sel_line = self.output_selected.saturating_mul(2);
+        let offset = sel_line.saturating_sub(rows.saturating_sub(2)) as u16;
+        let para = Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((offset, 0));
+        f.render_widget(para, inner);
+    }
+
     pub(in crate::tui::app) fn draw_ai(&self, f: &mut ratatui::Frame, area: Rect) {
         // Title carries the inference state plus mode chips so the user
         // can see at a glance:
