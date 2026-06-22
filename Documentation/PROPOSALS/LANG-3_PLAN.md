@@ -136,11 +136,15 @@ the merge step instead of at decode).
 
 ### Revised phase plan
 
-- **P1 — corpus + translation memory (no deps, no downloads).** The synthetic
-  corpus generator (RBMT over a bundled English pool) and the
-  translation-memory datastore (exact + lexical-fuzzy matching to start), with
-  the retrieve→merge policy and an `alternatives`-bearing output. Correction
-  primitive = append.
+- **P1 — corpus + translation memory (no deps, no downloads).** ✅ *Landed
+  1.3.23-dev.* The translation-memory datastore (`memory.rs`: exact + lexical-fuzzy
+  matching; `.inkhaven/` sidecar), the retrieve→merge policy (`apply_memory`, with
+  an `alternatives`-bearing output), the correction primitive (`language remember`
+  → reused on the next call, no retrain; `language memory` lists), and the
+  synthetic-corpus generator (`corpus.rs`: RBMT over a **bundled** English pool —
+  `assets/conlang/english-pool-v1.txt`, no download — gated on full lexicon
+  coverage; `language corpus [--pool] [--yes]` seeds memory and reports acceptance
+  rate + top-missing words as a lexicon-maturity signal). Tests through 1572.
 - **P2 — semantic retrieval + pane cutover.** Promote fuzzy matching to semantic
   via `fastembed` + the `VectorEngine`; route the existing translation pane
   (`Ctrl+B U T`) through the pipeline; ship the eval harness.

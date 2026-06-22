@@ -795,6 +795,22 @@ books are never touched). The semantic-retrieval upgrade (embedding the source
 with the in-tree `fastembed` + the HNSW vector store) slots in behind this same
 lookup in P2.
 
+You don't have to seed the memory by hand. **Corpus generation** translates a
+pool of English sentences with the RBMT and keeps the ones the language fully
+covers:
+
+```
+inkhaven language corpus Eldar                 # preview: acceptance rate + samples
+inkhaven language corpus Eldar --yes           # seed the accepted pairs into memory
+inkhaven language corpus Eldar --pool big.txt  # use a custom English pool
+```
+
+A small English pool ships in the binary (core vocabulary); supply a larger one
+with `--pool`. The report's **acceptance rate is a reading of lexicon maturity**,
+and the **top missing words** tell you exactly what to `add-word` to raise
+coverage. Previews by default; `--yes` adds the accepted `(English → conlang)`
+pairs to the translation memory.
+
 Scope of Tier 1: declarative clauses with an optional adjective per noun phrase.
 Subordinate clauses, multi-word phrases beyond one adjective, and the fluency of
 a trained neural model arrive with the later LANG-3 tiers (the rule-based parser

@@ -25,6 +25,7 @@
 //! what decision, what confidence) and a list of any English words the lexicon
 //! could not cover, so the result is always inspectable and honest.
 
+pub mod corpus;
 pub mod english;
 pub mod lexmap;
 pub mod memory;

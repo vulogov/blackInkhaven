@@ -103,7 +103,8 @@ pub fn prepare(text: &str) -> Prepared {
 pub fn depluralize(noun: &str) -> (String, bool) {
     let lower = noun;
     if let Some(stem) = lower.strip_suffix("ies") {
-        if stem.len() >= 1 {
+        // "cities" → "city", but not short -ie words ("dies" → "die", below).
+        if stem.len() >= 3 {
             return (format!("{stem}y"), true);
         }
     }
@@ -130,7 +131,10 @@ pub fn depluralize(noun: &str) -> (String, bool) {
 /// untouched.
 pub fn delemmatize_verb(verb: &str) -> String {
     if let Some(stem) = verb.strip_suffix("ies") {
-        return format!("{stem}y"); // "carries" → "carry"
+        if stem.len() >= 3 {
+            return format!("{stem}y"); // "carries" → "carry"
+        }
+        // short -ie verbs: "dies" → "die", "lies" → "lie" (strip just -s below).
     }
     for suf in ["ses", "xes", "zes", "ches", "shes"] {
         if let Some(stem) = verb.strip_suffix(suf) {
