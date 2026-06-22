@@ -2744,6 +2744,52 @@ pub(crate) fn parse_word(s: &str) -> crate::conlang::syntax::Word {
     }
 }
 
+/// 1.3.24 PANE-1 P2 — route a translation into the Output pane. A no-op unless an
+/// Output store is active (i.e. running in the TUI), so the shell CLI is
+/// unaffected. Emits a `translation_result`, plus a
+/// `translation_uncovered_word_report` when the lexicon missed words.
+pub(crate) fn emit_translation_output(
+    language: &str,
+    source: &str,
+    target: &str,
+    confidence: f32,
+    direction: &str,
+    unresolved: &[String],
+) {
+    use crate::pane::output::{kinds, Lifetime, Message, Severity};
+    let msg = Message::new(
+        kinds::TRANSLATION_RESULT,
+        Severity::Info,
+        Lifetime::Session(500),
+        serde_json::json!({
+            "text": format!("{source}  →  {target}"),
+            "source": source,
+            "target": target,
+            "confidence": confidence,
+            "direction": direction,
+            "language": language,
+        }),
+    )
+    .with_source_language(language);
+    crate::pane::output::emit(&msg);
+
+    if !unresolved.is_empty() {
+        let report = Message::new(
+            kinds::TRANSLATION_UNCOVERED_WORD_REPORT,
+            Severity::Warning,
+            Lifetime::UntilActedOn,
+            serde_json::json!({
+                "text": format!("{} word(s) uncovered: {}", unresolved.len(), unresolved.join(", ")),
+                "uncovered_words": unresolved,
+                "source_text": source,
+                "language": language,
+            }),
+        )
+        .with_source_language(language);
+        crate::pane::output::emit(&report);
+    }
+}
+
 /// 1.3.23 LANG-3 P0 — translate English into the conlang (Tier 1, RBMT).
 fn translate(project: &Path, language: &str, text: &str, trace: bool, json: bool) -> Result<()> {
     use crate::conlang::translate::{self, Decision};
@@ -2769,6 +2815,7 @@ fn translate(project: &Path, language: &str, text: &str, trace: bool, json: bool
         &mem,
         query_embedding.as_deref(),
     );
+    emit_translation_output(language, text, &t.target, t.confidence, "forward", &t.unresolved);
 
     if json {
         let trace_json: Vec<serde_json::Value> = t
@@ -2870,6 +2917,7 @@ fn reverse_translate(project: &Path, language: &str, text: &str, json: bool) -> 
     let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
 
     let r = reverse::reverse(&phon, &morph, &grammar_spec.grammar, &entries, text);
+    emit_translation_output(language, text, &r.english, r.confidence, "reverse", &r.unresolved);
 
     if json {
         let out = serde_json::json!({
@@ -2915,6 +2963,7 @@ fn cross_translate(project: &Path, from: &str, to: &str, text: &str, json: bool)
     let toctx =
         LangCtx { phon: &t_phon, morph: &t_morph, typology: &t_spec.grammar, entries: &t_entries };
     let c = reverse::cross(&fromctx, &toctx, text);
+    emit_translation_output(from, text, &c.target, c.confidence, "cross", &c.unresolved);
 
     if json {
         let out = serde_json::json!({
