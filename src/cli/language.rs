@@ -229,6 +229,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Eval { language, test_set, limit, json } => {
             eval(project, &language, test_set.as_deref(), limit, json)
         }
+        LanguageCommand::ExportTranslation { language, out } => {
+            export_translation(project, &language, out.as_deref())
+        }
         LanguageCommand::Relative {
             language,
             head,
@@ -3067,6 +3070,42 @@ fn corpus(
     } else {
         eprintln!("\n(preview — re-run with --yes to seed the translation memory)");
     }
+    Ok(())
+}
+
+/// 1.3.23 LANG-3 P3 — export the translation system as a portable `.itm` bundle.
+fn export_translation(project: &Path, language: &str, out: Option<&str>) -> Result<()> {
+    use crate::conlang::translate::{export, memory::TranslationMemory};
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let mem = TranslationMemory::load(project, language)
+        .map_err(|e| Error::Store(format!("loading translation memory: {e}")))?;
+
+    let memory_pairs: Vec<(String, String)> =
+        mem.entries().map(|(e, c)| (e.to_string(), c.to_string())).collect();
+    let lexicon: Vec<(String, String, String)> = entries
+        .iter()
+        .map(|e| (e.word.clone(), e.pos.clone(), e.translation.clone()))
+        .collect();
+
+    let meta = export::BundleMeta {
+        language: language.to_string(),
+        exported: chrono::Utc::now().format("%Y-%m-%d").to_string(),
+        inkhaven_version: env!("CARGO_PKG_VERSION").to_string(),
+        memory_pairs: memory_pairs.len(),
+        lexicon_entries: lexicon.len(),
+    };
+    let bytes = export::bundle(&meta, &memory_pairs, &lexicon)
+        .map_err(|e| Error::Store(format!("building translation bundle: {e}")))?;
+
+    let out_path = match out {
+        Some(p) => std::path::PathBuf::from(p),
+        None => std::path::PathBuf::from(format!("{}-translation.itm", language.to_lowercase())),
+    };
+    crate::io_atomic::write(&out_path, &bytes)
+        .map_err(|e| Error::Store(format!("writing {}: {e}", out_path.display())))?;
+    println!("exported {language}'s translation pack → {}", out_path.display());
+    eprintln!("({} memory pair(s), {} lexicon entr(y/ies))", meta.memory_pairs, meta.lexicon_entries);
     Ok(())
 }
 

@@ -331,6 +331,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // reads an SVG (fs_read). `glyph_draft` writes a file AND calls the LLM, so
     // it is gated fs_write here and additionally checks ai_write at run time.
     ("ink.lang.glyph_lint", category::FS_READ),
+    ("ink.lang.export", category::FS_WRITE),
     ("ink.lang.dictionary", category::FS_WRITE),
     ("ink.lang.grammar_book", category::FS_WRITE),
     ("ink.lang.font_build", category::FS_WRITE),

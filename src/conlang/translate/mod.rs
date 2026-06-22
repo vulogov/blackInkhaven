@@ -28,6 +28,7 @@
 pub mod corpus;
 pub mod english;
 pub mod eval;
+pub mod export;
 pub mod lexmap;
 pub mod memory;
 pub mod reverse;

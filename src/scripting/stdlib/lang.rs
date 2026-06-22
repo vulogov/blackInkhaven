@@ -90,6 +90,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.lang.generate_lexicon", w_generate_lexicon),
         // ── file / document output (fs_write; glyph_draft also ai_write) ──
         ("ink.lang.glyph_lint", w_glyph_lint),
+        ("ink.lang.export", w_export),
         ("ink.lang.dictionary", w_dictionary),
         ("ink.lang.grammar_book", w_grammar_book),
         ("ink.lang.font_build", w_font_build),
@@ -2284,6 +2285,43 @@ fn do_glyph_draft(vm: &mut VM) -> Result<&mut VM> {
         ));
     }
     crate::io_atomic::write(&resolved, svg.as_bytes())
+        .map_err(|e| anyhow!("{tag}: write {}: {e}", resolved.display()))?;
+    push(vm, Value::from_string(resolved.display().to_string()));
+    Ok(vm)
+}
+
+// ( lang out-path -- out-path )  export the translation system as a .itm bundle
+fn w_export(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_export(vm).map_err(to_bund_err)
+}
+fn do_export(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::translate::{export, memory::TranslationMemory};
+    let tag = "ink.lang.export";
+    require_depth(vm, 2, tag)?;
+    let out = value_to_string(pull(vm, tag)?, "out", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let resolved = super::helpers::resolve_fs_path(tag, &out)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let entries =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let mem = TranslationMemory::load(store.project_root(), &name)
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    let memory_pairs: Vec<(String, String)> =
+        mem.entries().map(|(e, c)| (e.to_string(), c.to_string())).collect();
+    let lexicon: Vec<(String, String, String)> = entries
+        .iter()
+        .map(|e| (e.word.clone(), e.pos.clone(), e.translation.clone()))
+        .collect();
+    let meta = export::BundleMeta {
+        language: name.clone(),
+        exported: chrono::Utc::now().format("%Y-%m-%d").to_string(),
+        inkhaven_version: env!("CARGO_PKG_VERSION").to_string(),
+        memory_pairs: memory_pairs.len(),
+        lexicon_entries: lexicon.len(),
+    };
+    let bytes =
+        export::bundle(&meta, &memory_pairs, &lexicon).map_err(|e| anyhow!("{tag}: {e}"))?;
+    crate::io_atomic::write(&resolved, &bytes)
         .map_err(|e| anyhow!("{tag}: write {}: {e}", resolved.display()))?;
     push(vm, Value::from_string(resolved.display().to_string()));
     Ok(vm)
