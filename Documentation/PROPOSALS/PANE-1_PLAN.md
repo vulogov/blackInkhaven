@@ -63,6 +63,22 @@
 > P2 — route LANG-3 translation into Output (unblocks the deferred translate-pane
 > integration); the bare-`print`→Output redirect (needs the `Ctrl+Z E` eval-buffer
 > interaction handled); pane persistence (`pane_state` table) + the ask-AI bridge.*
+>
+> *P2 — translation → Output routing landed.* The active-aware emitter
+> `pane::output::emit(&msg)` (no-op unless a store is installed = the TUI) plus
+> `cli::language::emit_translation_output(...)` (a `translation_result`, plus a
+> `translation_uncovered_word_report` ⚠ when words are uncovered), called from
+> both the CLI `translate`/`reverse`/`cross` handlers **and** the Bund
+> `lang.translate`/`reverse`/`cross` words (the TUI runs Bund). So a translation in
+> a TUI script lands in the Output pane; a shell CLI translation emits nothing
+> (no store) and prints to stdout as before. Validated live (covered →
+> `translation_result`, uncovered → result + ⚠ report, read back via `output
+> show`). The generic pane renderer shows each via its `text` summary; the
+> per-word trace expansion, the `r` Remember / `e` Edit actions, the ask-AI
+> bridge, and the dedicated `Ctrl+B U T/V/X/…` chord family are follow-ons.
+> tests 1582. *Next: the `Ctrl+B U` translation chord family, trace expansion +
+> Remember/ask-AI actions; pane persistence + Output-default; then P3 LANG-1/2
+> emitter retarget, P4–P6.*
 
 ---
 

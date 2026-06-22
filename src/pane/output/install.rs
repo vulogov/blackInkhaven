@@ -46,3 +46,11 @@ pub fn active() -> Option<OutputStore> {
 pub fn uninstall() {
     *slot().lock() = None;
 }
+
+/// Emit a message **iff** an Output store is active — a no-op otherwise. This is
+/// how subsystems route to Output "when running in the TUI": the App installs the
+/// store on open, so emission lights up there; a one-shot shell CLI has no store
+/// installed and emits nothing (it still prints to stdout as before).
+pub fn emit(message: &super::Message) -> Option<uuid::Uuid> {
+    active().and_then(|s| s.emit(message).ok())
+}
