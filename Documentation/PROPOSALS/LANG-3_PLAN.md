@@ -59,9 +59,105 @@
 > multi-word phrases beyond a single adjective need real dependency parsing — they
 > arrive when the neural POS+dep parser swaps in behind `english`'s interface. The
 > **routing/merge layer** is a no-op while only Tier 1 exists and is introduced
-> with Tier 2 (P1+), when there is a second tier to route between. **Next phase is
-> P1 — synthetic corpus + offline NMT training (candle/NLLB), the first to pull
-> heavy ML dependencies; scope it explicitly before starting.**
+> with Tier 2 (P1+), when there is a second tier to route between. **Superseded
+> for the neural specifics by Amendment A1 below — see it before reading §3.2 /
+> §8.4 / §8.6 / §11.**
+
+---
+
+## Amendment A1 — Retrieval-first Tier 2 (Python-free, training-free)
+
+| | |
+|---|---|
+| **Created** | 2026-06-21 |
+| **Author** | Vladimir Ulogov |
+| **Decision** | Adopt **Option A** — Tier 2 is *retrieval-augmented RBMT*, not a fine-tuned NMT |
+| **Supersedes** | §3.2 (Tier-2 goals), §8.4 (fine-tuned NMT), §8.4.3 (Python training), §8.6 (correction loop = retrain), and the candle/NLLB lines of §11 |
+| **Status** | accepted; P1 in progress on 1.3.23-dev |
+
+### Why
+
+The original Tier 2 reached for Python (PyTorch + `transformers` + `peft`) only
+because it assumed Tier 2 must be a **fine-tuned** model — and fine-tuning needs a
+training loop. Two facts make that assumption unnecessary:
+
+1. **A conlang is a closed, author-controlled, synthetic domain.** The synthetic
+   corpus the RBMT manufactures *is* the knowledge. Baking it into adapter
+   weights is one way to use it; **retrieving from it at translation time** is
+   another, and for a closed domain the second is both simpler and more faithful.
+2. **The retrieval stack already ships in the binary.** `fastembed` (multilingual
+   embeddings), `hnsw_rs` / `vecstore` (the `VectorEngine`), `tokenizers`,
+   `safetensors`, and `ort` (ONNX Runtime, via fastembed) are all already direct
+   or transitive dependencies. A retrieval Tier 2 adds **zero new crates**.
+
+So Tier 2 becomes a **semantic translation memory layered over the Tier-1 RBMT
+spine** (the well-known kNN-MT / TM-augmented-MT design). Python and the entire
+training stack leave the critical path.
+
+### The re-architecture
+
+- **Datastore.** Each synthetic `(English → conlang)` pair is stored with the
+  English embedded — exactly the `VectorEngine.store_documents_batch` /
+  `search` shape already used for manuscript semantic search.
+- **At translation time.** Embed the English input; pull the *k* nearest stored
+  examples. An **exact / near-exact** hit is translation memory (return the
+  remembered conlang directly). A **partial** hit supplies word-choice / idiom /
+  phrasing exemplars that steer the RBMT. A **miss** falls back to pure RBMT. The
+  merge policy is the one design-critical piece (it is what TM systems already
+  do); output gains an `alternatives` list so the author always sees the
+  candidates and chooses.
+- **Correction loop = `store_document(...)`.** A correction is *appended to the
+  datastore* and takes effect on the very next sentence — strictly better than
+  the original design, which batched 100 corrections and a training run to
+  achieve less. "Refresh" becomes optional datastore compaction/dedup, never a
+  training run.
+- **The shippable artifact** (RFC §8.9) becomes the **datastore bundle** (vectors
+  + targets + the language data) — smaller than an adapter, and regenerable.
+
+### What stays from the original RFC
+
+Tier 1 RBMT (done, P0); the optional **Tier 3** resolver (reuses `src/ai/` —
+already proven by LANG-2 `propose-dialect`); the **evaluation harness** (§8.8 —
+round-trip similarity, grammar pass-rate, author-acceptance all still apply, and
+round-trip now reuses `reverse`); **cross-conlang** (§8.7, done); the
+**grammar-constrained** check (§8.4.6 — reuses the RBMT inflected-form set, now in
+the merge step instead of at decode).
+
+### Reuse map
+
+| Need | Reused existing code | New |
+|---|---|---|
+| RBMT spine | `src/conlang/translate/` (P0) | — |
+| Datastore | `src/storage/vector.rs` `VectorEngine` | a TM collection + schema |
+| Embeddings | `src/storage/embedding.rs` `EmbeddingEngine` | — |
+| Async corpus build | bg-job harness (`src/tui/app.rs`) | corpus generator (RBMT over a pool) |
+| Tier 3 (optional) | `src/ai/` `AiClient` + `collect_blocking` | — |
+| Tables | DuckDB store | corpus / correction / memory tables |
+
+### Revised phase plan
+
+- **P1 — corpus + translation memory (no deps, no downloads).** The synthetic
+  corpus generator (RBMT over a bundled English pool) and the
+  translation-memory datastore (exact + lexical-fuzzy matching to start), with
+  the retrieve→merge policy and an `alternatives`-bearing output. Correction
+  primitive = append.
+- **P2 — semantic retrieval + pane cutover.** Promote fuzzy matching to semantic
+  via `fastembed` + the `VectorEngine`; route the existing translation pane
+  (`Ctrl+B U T`) through the pipeline; ship the eval harness.
+- **P3 — correction loop + export + cross.** Correction = datastore append
+  (immediate); `.itm`-style datastore bundle export; cross-conlang already lands
+  in P0.
+- **P-opt (deferred, optional) — neural fluency.** *Only if* RBMT + retrieval
+  proves insufficient on real conlangs: a base-NLLB run via the in-tree `ort`
+  (no training, no new crate, a hosted pre-exported ONNX asset so the user never
+  touches Python), and/or candle-native LoRA training (the only path that adds
+  candle crates). These are upgrades on the same corpus + datastore spine, not
+  requirements — so the heavy-deps decision is deferred until there is evidence
+  it is worth it.
+
+**Net effect:** the LANG-3 core ships **Python-free, training-free, with zero new
+dependencies and no required model downloads**, fully offline, reusing the
+embedding + vector + background-job + AI infrastructure already in the binary.
 
 ---
 
