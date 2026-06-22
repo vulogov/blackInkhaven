@@ -145,9 +145,17 @@ the merge step instead of at decode).
   `assets/conlang/english-pool-v1.txt`, no download — gated on full lexicon
   coverage; `language corpus [--pool] [--yes]` seeds memory and reports acceptance
   rate + top-missing words as a lexicon-maturity signal). Tests through 1572.
-- **P2 — semantic retrieval + pane cutover.** Promote fuzzy matching to semantic
-  via `fastembed` + the `VectorEngine`; route the existing translation pane
-  (`Ctrl+B U T`) through the pipeline; ship the eval harness.
+- **P2 — semantic retrieval + pane cutover.** *Semantic retrieval landed
+  1.3.23-dev:* the strategy now lives in `memory::TranslationMemory::best`
+  (exact → semantic → lexical); each remembered English source is embedded once
+  via the in-tree `fastembed` (cached in the sidecar) and a translation embeds
+  only the query, matching by cosine (threshold 0.82). `apply_memory` takes an
+  optional query embedding; the CLI/Bund supply it from `Store::embed_batch` when
+  the memory is non-empty (exact hits skip it). Validated live (a lexical
+  paraphrase recalled a remembered line at 92%). Semantic hits stay *advisory*
+  (alternatives, never silent overrides). **Remaining P2:** route the TUI
+  translate pane through the pipeline, and the eval harness (round-trip
+  similarity via `reverse` + `fastembed`, grammar pass-rate, acceptance rate).
 - **P3 — correction loop + export + cross.** Correction = datastore append
   (immediate); `.itm`-style datastore bundle export; cross-conlang already lands
   in P0.

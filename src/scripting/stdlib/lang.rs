@@ -348,9 +348,15 @@ fn do_translate(vm: &mut VM) -> Result<&mut VM> {
     // Tier 2 (retrieval): layer the translation memory over the rule-based result.
     let mem = translate::memory::TranslationMemory::load(store.project_root(), &name)
         .map_err(|e| anyhow!("{tag}: {e}"))?;
+    let query_embedding: Option<Vec<f32>> = if mem.is_empty() {
+        None
+    } else {
+        store.embed_batch(&[text.as_str()]).ok().and_then(|mut v| (!v.is_empty()).then(|| v.remove(0)))
+    };
     let t = translate::apply_memory(
         translate::translate(&phon, &morph, &grammar_spec.grammar, &entries, &text),
         &mem,
+        query_embedding.as_deref(),
     );
     let gloss =
         t.words.iter().map(|(w, g)| format!("{w}={g}")).collect::<Vec<_>>().join(" ");
@@ -559,6 +565,16 @@ fn do_remember(vm: &mut VM) -> Result<&mut VM> {
     let root = store.project_root();
     let mut mem = TranslationMemory::load(root, &name).map_err(|e| anyhow!("{tag}: {e}"))?;
     mem.add(&english, &conlang);
+    // Cache the embedding so a later semantic lookup only embeds the query.
+    let need = mem.needs_embeddings();
+    if !need.is_empty() {
+        let refs: Vec<&str> = need.iter().map(String::as_str).collect();
+        if let Ok(vecs) = store.embed_batch(&refs) {
+            for (en, v) in need.iter().zip(vecs) {
+                mem.set_embedding(en, v);
+            }
+        }
+    }
     mem.save(root, &name).map_err(|e| anyhow!("{tag}: {e}"))?;
     Ok(vm)
 }

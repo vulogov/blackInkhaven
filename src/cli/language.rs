@@ -2750,11 +2750,18 @@ fn translate(project: &Path, language: &str, text: &str, trace: bool, json: bool
     let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
 
     // Tier 2 (retrieval): layer the translation memory over the rule-based result.
+    // A non-empty memory gets a semantic query embedding (an exact hit needs none).
     let mem = translate::memory::TranslationMemory::load(project, language)
         .map_err(|e| Error::Store(format!("loading translation memory: {e}")))?;
+    let query_embedding: Option<Vec<f32>> = if mem.is_empty() {
+        None
+    } else {
+        store.embed_batch(&[text]).ok().and_then(|mut v| (!v.is_empty()).then(|| v.remove(0)))
+    };
     let t = translate::apply_memory(
         translate::translate(&phon, &morph, &grammar_spec.grammar, &entries, text),
         &mem,
+        query_embedding.as_deref(),
     );
 
     if json {
@@ -2926,14 +2933,33 @@ fn cross_translate(project: &Path, from: &str, to: &str, text: &str, json: bool)
     Ok(())
 }
 
+/// Compute and cache embeddings for any memory pairs missing one, via the
+/// store's embedder. Best-effort: an embedding failure leaves the lexical path
+/// intact (semantic retrieval is an upgrade, never a hard dependency).
+fn embed_pending_memory(
+    store: &Store,
+    mem: &mut crate::conlang::translate::memory::TranslationMemory,
+) {
+    let need = mem.needs_embeddings();
+    if need.is_empty() {
+        return;
+    }
+    let refs: Vec<&str> = need.iter().map(String::as_str).collect();
+    if let Ok(vecs) = store.embed_batch(&refs) {
+        for (en, v) in need.iter().zip(vecs) {
+            mem.set_embedding(en, v);
+        }
+    }
+}
+
 /// 1.3.23 LANG-3 P1 — remember a confirmed translation (the correction loop).
 fn remember(project: &Path, language: &str, english: &str, conlang: &str) -> Result<()> {
     use crate::conlang::translate::memory::TranslationMemory;
-    // Validate the language exists (and the project is initialized).
-    let _ = open_lang_book(project, language)?;
+    let (store, _hierarchy, _lang_book) = open_lang_book(project, language)?;
     let mut mem = TranslationMemory::load(project, language)
         .map_err(|e| Error::Store(format!("loading translation memory: {e}")))?;
     mem.add(english, conlang);
+    embed_pending_memory(&store, &mut mem);
     mem.save(project, language)
         .map_err(|e| Error::Store(format!("saving translation memory: {e}")))?;
     println!("remembered: {english}  →  {conlang}");
@@ -2994,6 +3020,7 @@ fn corpus(
         for (en, con) in &report.accepted {
             mem.add(en, con);
         }
+        embed_pending_memory(&store, &mut mem);
         mem.save(project, language)
             .map_err(|e| Error::Store(format!("saving translation memory: {e}")))?;
     }
