@@ -773,6 +773,28 @@ stones` inflects to `kirai nami patai`, and reverse re-agrees English number and
 tense (`kirai nami patai` → *the birds see the stones*, `kira …` → *the bird
 **sees** …*).
 
+### Translation memory (Tier 2 — retrieval; LANG-3 Amendment A1)
+
+Tier 2 layers a **translation memory** over the rule-based result rather than a
+trained neural model — for a closed conlang the corpus *is* the knowledge, so it
+is retrieved at translation time instead of baked into weights (Python-free,
+training-free, zero new deps). You confirm a translation and it is reused
+**immediately, on the very next call** — no retraining:
+
+```
+inkhaven language remember Eldar --english "the bird sees the stone" --conlang "kira pata nami"
+inkhaven language translate Eldar "the bird sees the stone"   # → kira pata nami (from memory; RBMT kept as alt)
+inkhaven language memory Eldar                                 # list remembered pairs
+```
+
+An **exact** remembered translation becomes the primary (the rule-based reading is
+kept as an `alt:` so nothing is silently overridden); a **near** match (token
+overlap) is surfaced as an alternative to pick. A miss is pure RBMT. Memory lives
+in the `.inkhaven/translation-memory/<lang>.json` sidecar (atomic writes; the
+books are never touched). The semantic-retrieval upgrade (embedding the source
+with the in-tree `fastembed` + the HNSW vector store) slots in behind this same
+lookup in P2.
+
 Scope of Tier 1: declarative clauses with an optional adjective per noun phrase.
 Subordinate clauses, multi-word phrases beyond one adjective, and the fluency of
 a trained neural model arrive with the later LANG-3 tiers (the rule-based parser

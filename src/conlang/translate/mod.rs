@@ -27,6 +27,7 @@
 
 pub mod english;
 pub mod lexmap;
+pub mod memory;
 pub mod reverse;
 
 use std::collections::BTreeMap;
@@ -67,6 +68,22 @@ pub enum Decision {
     Untranslatable,
 }
 
+/// An alternative rendering the author can choose instead of the primary — a
+/// rule-based output displaced by a translation-memory hit, or a near-match
+/// retrieved from memory. The merge layer never silently picks; it surfaces
+/// these.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Alternative {
+    /// The alternative conlang surface.
+    pub text: String,
+    /// Where it came from (`"rbmt"` / `"translation-memory"`).
+    pub source: &'static str,
+    /// `0.0..=1.0`.
+    pub confidence: f32,
+    /// Why it is offered.
+    pub rationale: String,
+}
+
 /// A per-constituent record of how the source became the target.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraceEntry {
@@ -99,6 +116,9 @@ pub struct Translation {
     /// English content words the lexicon could not cover (candidates for
     /// coining or for `add-word`).
     pub unresolved: Vec<String>,
+    /// Alternative renderings the author may pick instead (from the translation
+    /// memory). Empty unless the merge layer surfaced any.
+    pub alternatives: Vec<Alternative>,
     /// Which tier produced this.
     pub tier: Tier,
 }
@@ -264,8 +284,45 @@ pub fn translate(
         confidence,
         trace,
         unresolved,
+        alternatives: Vec::new(),
         tier: Tier::Rbmt,
     }
+}
+
+/// **Tier 2 (retrieval).** Layer a translation memory over a rule-based
+/// translation: an *exact* remembered translation (an author-confirmed pair)
+/// replaces the rule-based primary, which is kept as an alternative; a *near*
+/// match is surfaced as an alternative for the author to pick. A miss leaves the
+/// rule-based output untouched. The memory never silently overrides without
+/// keeping the rule-based reading visible.
+pub fn apply_memory(mut t: Translation, mem: &memory::TranslationMemory) -> Translation {
+    match mem.lookup(&t.source) {
+        memory::MemoryHit::Exact { conlang } => {
+            if conlang != t.target {
+                t.alternatives.insert(
+                    0,
+                    Alternative {
+                        text: t.target.clone(),
+                        source: "rbmt",
+                        confidence: t.confidence,
+                        rationale: "rule-based".to_string(),
+                    },
+                );
+                t.target = conlang;
+            }
+            t.confidence = t.confidence.max(0.99);
+        }
+        memory::MemoryHit::Fuzzy { conlang, score, english } => {
+            t.alternatives.push(Alternative {
+                text: conlang,
+                source: "translation-memory",
+                confidence: score,
+                rationale: format!("translation memory · {:.0}% match to \"{english}\"", score * 100.0),
+            });
+        }
+        memory::MemoryHit::None => {}
+    }
+    t
 }
 
 #[cfg(test)]
@@ -335,6 +392,28 @@ mod tests {
         assert_eq!(t.target, "mira kira nami pata");
         // Four constituents traced: subject head, its adjective, verb, object.
         assert_eq!(t.trace.len(), 4);
+    }
+
+    #[test]
+    fn memory_overrides_with_rbmt_as_alternative() {
+        let phon = Phonology::default();
+        let morph = Morphology::default();
+        let mut typ = BTreeMap::new();
+        typ.insert("word_order".to_string(), "svo".to_string());
+        let entries = lexicon();
+
+        let t = translate(&phon, &morph, &typ, &entries, "the bird sees the stone");
+        assert_eq!(t.target, "kira nami pata");
+
+        // An author-confirmed correction in the memory.
+        let mut mem = memory::TranslationMemory::default();
+        mem.add("the bird sees the stone", "kira pata-corrected nami");
+        let t2 = apply_memory(t, &mem);
+        assert_eq!(t2.target, "kira pata-corrected nami");
+        // The rule-based reading is kept as an alternative, not discarded.
+        assert_eq!(t2.alternatives.len(), 1);
+        assert_eq!(t2.alternatives[0].text, "kira nami pata");
+        assert!(t2.confidence > 0.98);
     }
 
     #[test]

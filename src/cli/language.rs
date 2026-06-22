@@ -219,6 +219,10 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Cross { from, to, text, json } => {
             cross_translate(project, &from, &to, &text, json)
         }
+        LanguageCommand::Remember { language, english, conlang } => {
+            remember(project, &language, &english, &conlang)
+        }
+        LanguageCommand::Memory { language } => memory_list(project, &language),
         LanguageCommand::Relative {
             language,
             head,
@@ -2742,7 +2746,13 @@ fn translate(project: &Path, language: &str, text: &str, trace: bool, json: bool
     let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
     let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
 
-    let t = translate::translate(&phon, &morph, &grammar_spec.grammar, &entries, text);
+    // Tier 2 (retrieval): layer the translation memory over the rule-based result.
+    let mem = translate::memory::TranslationMemory::load(project, language)
+        .map_err(|e| Error::Store(format!("loading translation memory: {e}")))?;
+    let t = translate::apply_memory(
+        translate::translate(&phon, &morph, &grammar_spec.grammar, &entries, text),
+        &mem,
+    );
 
     if json {
         let trace_json: Vec<serde_json::Value> = t
@@ -2761,12 +2771,23 @@ fn translate(project: &Path, language: &str, text: &str, trace: bool, json: bool
                 })
             })
             .collect();
+        let alternatives_json: Vec<serde_json::Value> = t
+            .alternatives
+            .iter()
+            .map(|a| {
+                serde_json::json!({
+                    "text": a.text, "source": a.source,
+                    "confidence": a.confidence, "rationale": a.rationale,
+                })
+            })
+            .collect();
         let out = serde_json::json!({
             "source": t.source,
             "target": t.target,
             "literal": t.literal,
             "confidence": t.confidence,
             "unresolved": t.unresolved,
+            "alternatives": alternatives_json,
             "trace": trace_json,
         });
         println!(
@@ -2801,6 +2822,9 @@ fn translate(project: &Path, language: &str, text: &str, trace: bool, json: bool
     }
     println!("  '{}'", t.literal);
 
+    for a in &t.alternatives {
+        println!("  alt: {}  ({})", a.text, a.rationale);
+    }
     if !t.unresolved.is_empty() {
         eprintln!(
             "\nnot in {language}'s lexicon: {} — coin them, or add with `language add-word`",
@@ -2895,6 +2919,41 @@ fn cross_translate(project: &Path, from: &str, to: &str, text: &str, json: bool)
     println!("  {}  ({})", c.target, to);
     if !c.unresolved.is_empty() {
         eprintln!("\nlost in pivot: {}", c.unresolved.join(", "));
+    }
+    Ok(())
+}
+
+/// 1.3.23 LANG-3 P1 — remember a confirmed translation (the correction loop).
+fn remember(project: &Path, language: &str, english: &str, conlang: &str) -> Result<()> {
+    use crate::conlang::translate::memory::TranslationMemory;
+    // Validate the language exists (and the project is initialized).
+    let _ = open_lang_book(project, language)?;
+    let mut mem = TranslationMemory::load(project, language)
+        .map_err(|e| Error::Store(format!("loading translation memory: {e}")))?;
+    mem.add(english, conlang);
+    mem.save(project, language)
+        .map_err(|e| Error::Store(format!("saving translation memory: {e}")))?;
+    println!("remembered: {english}  →  {conlang}");
+    eprintln!("({} translation(s) in {language}'s memory)", mem.len());
+    Ok(())
+}
+
+/// 1.3.23 LANG-3 P1 — list a language's translation memory.
+fn memory_list(project: &Path, language: &str) -> Result<()> {
+    use crate::conlang::translate::memory::TranslationMemory;
+    let _ = open_lang_book(project, language)?;
+    let mem = TranslationMemory::load(project, language)
+        .map_err(|e| Error::Store(format!("loading translation memory: {e}")))?;
+    if mem.is_empty() {
+        println!(
+            "{language} has no remembered translations yet — add one with \
+             `language remember {language} --english … --conlang …`."
+        );
+        return Ok(());
+    }
+    println!("{language} · {} remembered translation(s):", mem.len());
+    for (en, con) in mem.entries() {
+        println!("  {en}  →  {con}");
     }
     Ok(())
 }
