@@ -113,8 +113,27 @@
 > the active right-side pane survives a restart, and `cycle_right_pane` saves
 > immediately (not just on exit). The launch default stays **AI** (the
 > Output-default flip the RFC wants is a one-liner, held pending a UX call). tests
-> 1582. *Next: the `Ctrl+B U` translation chord family (needs a binding decision —
-> `Ctrl+B U` is taken by restore-front); P3 LANG-1/2 emitter retarget; P4–P6.*
+> 1582.
+>
+> *Translation chord + P3 emitter retarget landed (1.3.25-dev).* The RFC's
+> `Ctrl+B U T/V/…` family collided with `Ctrl+B U` (restore-front); resolved
+> (user decision) as a **new coexisting chord, `Ctrl+B D` ("Deterministic")**,
+> editor-scoped (disjoint from the tree's delete-node, same split as `Ctrl+B Q`).
+> `Action::TranslateLang3` → `translate_lang3_to_output`: rule-based translation
+> of the open paragraph through the LANG-3 engine — reusing the project's already
+> -open store/hierarchy (no second DB handle) — emitted to Output via the shared
+> `emit_translation_output`, then flips focus to the pane. `Ctrl+B Q` (AI prose →
+> AI pane) is untouched. *P3:* two new emitters in `cli::language` —
+> `emit_lexicon_proposal` (a `generate-lexicon` dry-run's survivors, carried whole
+> in `metadata.proposals`, with a **promote** action) and `emit_variety_rendering`
+> (a `lect` result, `metadata.renderings`) — wired into both the CLI handlers and
+> the Bund `ink.lang.generate_lexicon` / `ink.lang.lect` words. The Output pane
+> grew an `Enter`→**promote** handler (`promote_output_message`) that commits a
+> lexicon proposal into the Dictionary through the same rich-import path
+> `generate-lexicon --yes` uses (no second model call), plus expanded-detail
+> rendering for both new kinds and a context-aware footer (`⏎ accept` on
+> proposals). tests 1583. *Next: P4 status-line cleanup; P5 `ai_task_complete`;
+> P6 docs; the Output-default flip; the deferred bare-`print`→Output redirect.*
 
 ---
 
