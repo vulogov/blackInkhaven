@@ -12,15 +12,16 @@
 //! Pure and deterministic: no I/O, no model, no allocation beyond the result.
 
 /// A noun phrase recovered from English: a singular noun lemma, its number, and
-/// (reserved for the neural parser) an optional adjective.
+/// an optional attributive adjective.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnglishNp {
     /// The noun, reduced to its singular lemma.
     pub head: String,
-    /// `"singular"` or `"plural"`.
+    /// `"sg"` or `"pl"` (the morphology paradigms' convention).
     pub number: String,
-    /// An attributive adjective, when one is recovered. Always `None` in the
-    /// deterministic first cut.
+    /// An attributive adjective, when one is recovered. The positional
+    /// [`analyze`] fallback never sets it; the lexicon-aware structuring pass in
+    /// the parent module does.
     pub adjective: Option<String>,
 }
 
@@ -62,8 +63,44 @@ fn subject_pronoun(t: &str) -> Option<(&'static str, bool)> {
     })
 }
 
+/// The article-stripped, pronoun-resolved token stream — the input a
+/// lexicon-aware structuring pass works over.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prepared {
+    /// Verb person from a leading subject pronoun (`"1"`/`"2"`/`"3"`).
+    pub person: String,
+    /// Whether a subject *pronoun* filled the subject slot (so no nominal
+    /// subject is expected).
+    pub pronoun_subject: bool,
+    /// The remaining content tokens, lowercased, articles and any leading
+    /// subject pronoun removed.
+    pub tokens: Vec<String>,
+}
+
+/// Tokenize, lowercase, drop articles, and peel a leading subject pronoun
+/// (recording its person). The leftover tokens are handed to the structuring
+/// pass, which assigns roles using the lexicon's parts of speech.
+pub fn prepare(text: &str) -> Prepared {
+    let mut tokens: Vec<String> = text
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_lowercase())
+        .filter(|t| !is_article(t))
+        .collect();
+    let mut person = "3".to_string();
+    let mut pronoun_subject = false;
+    if let Some(first) = tokens.first() {
+        if let Some((p, _plural)) = subject_pronoun(first) {
+            person = p.to_string();
+            pronoun_subject = true;
+            tokens.remove(0);
+        }
+    }
+    Prepared { person, pronoun_subject, tokens }
+}
+
 /// Reduce an English noun to `(singular_lemma, is_plural)`.
-fn depluralize(noun: &str) -> (String, bool) {
+pub fn depluralize(noun: &str) -> (String, bool) {
     let lower = noun;
     if let Some(stem) = lower.strip_suffix("ies") {
         if stem.len() >= 1 {
@@ -91,7 +128,7 @@ fn depluralize(noun: &str) -> (String, bool) {
 /// Reduce an English present-tense verb to its lemma (undo the 3rd-singular
 /// `-s` / `-es`). Leaves a bare-stem verb (plural subject: "birds *see*")
 /// untouched.
-fn delemmatize_verb(verb: &str) -> String {
+pub fn delemmatize_verb(verb: &str) -> String {
     if let Some(stem) = verb.strip_suffix("ies") {
         return format!("{stem}y"); // "carries" → "carry"
     }
@@ -178,8 +215,10 @@ pub fn analyze(text: &str) -> EnglishClause {
     clause
 }
 
+/// The grammatical-number value, in the abbreviated convention the morphology
+/// paradigms and the `sentence` command use (`sg` / `pl`).
 fn number(plural: bool) -> String {
-    if plural { "plural".into() } else { "singular".into() }
+    if plural { "pl".into() } else { "sg".into() }
 }
 
 #[cfg(test)]
@@ -189,18 +228,18 @@ mod tests {
     #[test]
     fn svo_with_articles() {
         let c = analyze("the bird sees the stone");
-        assert_eq!(c.subject, Some(EnglishNp::bare("bird".into(), "singular".into())));
+        assert_eq!(c.subject, Some(EnglishNp::bare("bird".into(), "sg".into())));
         assert_eq!(c.verb.as_deref(), Some("see"));
-        assert_eq!(c.object, Some(EnglishNp::bare("stone".into(), "singular".into())));
+        assert_eq!(c.object, Some(EnglishNp::bare("stone".into(), "sg".into())));
         assert_eq!(c.verb_person, "3");
     }
 
     #[test]
     fn plural_subject_and_object() {
         let c = analyze("birds see stones");
-        assert_eq!(c.subject, Some(EnglishNp::bare("bird".into(), "plural".into())));
+        assert_eq!(c.subject, Some(EnglishNp::bare("bird".into(), "pl".into())));
         assert_eq!(c.verb.as_deref(), Some("see"));
-        assert_eq!(c.object, Some(EnglishNp::bare("stone".into(), "plural".into())));
+        assert_eq!(c.object, Some(EnglishNp::bare("stone".into(), "pl".into())));
     }
 
     #[test]
@@ -209,13 +248,13 @@ mod tests {
         assert!(c.subject.is_none());
         assert_eq!(c.verb_person, "1");
         assert_eq!(c.verb.as_deref(), Some("see"));
-        assert_eq!(c.object, Some(EnglishNp::bare("stone".into(), "singular".into())));
+        assert_eq!(c.object, Some(EnglishNp::bare("stone".into(), "sg".into())));
     }
 
     #[test]
     fn intransitive() {
         let c = analyze("the warrior sleeps");
-        assert_eq!(c.subject, Some(EnglishNp::bare("warrior".into(), "singular".into())));
+        assert_eq!(c.subject, Some(EnglishNp::bare("warrior".into(), "sg".into())));
         assert_eq!(c.verb.as_deref(), Some("sleep"));
         assert!(c.object.is_none());
     }

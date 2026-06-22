@@ -59,16 +59,19 @@ fn is_stopword(t: &str) -> bool {
 fn pos_is(pos: &str, want: PosHint) -> bool {
     let p = pos.to_lowercase();
     match want {
-        PosHint::Noun => p.starts_with('n'), // noun
-        PosHint::Verb => p.starts_with('v'), // verb
+        PosHint::Noun => p.starts_with('n'),     // noun
+        PosHint::Verb => p.starts_with('v'),     // verb
+        PosHint::Adjective => p.starts_with("adj"), // adjective (not adverb)
     }
 }
 
-/// A coarse part-of-speech hint to disambiguate homographs.
+/// A coarse part-of-speech hint to disambiguate homographs and to classify a
+/// source word during analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PosHint {
     Noun,
     Verb,
+    Adjective,
 }
 
 impl GlossIndex {
@@ -84,6 +87,14 @@ impl GlossIndex {
             })
             .collect();
         GlossIndex { senses }
+    }
+
+    /// Does the lexicon record a sense of the given broad class carrying this
+    /// English lemma? Used during analysis to classify a source word (is *bright*
+    /// an adjective here? is *see* a verb?).
+    pub fn has_sense(&self, lemma: &str, hint: PosHint) -> bool {
+        let needle = lemma.to_lowercase();
+        self.senses.iter().any(|s| pos_is(&s.pos, hint) && s.tokens.iter().any(|t| t == &needle))
     }
 
     /// Map one English lemma to a conlang headword, preferring senses whose part

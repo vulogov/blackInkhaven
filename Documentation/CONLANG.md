@@ -765,10 +765,18 @@ multiplying the two passes' confidence (error compounds). So an SVO language's
 `kira nami pata` crosses into an SOV language as `turi moki vela`, reordered for
 free.
 
-Scope of Tier 1: simple declarative sentences (articles, `-s` plural, 3rd-person
-`-s` verbs, subject pronouns for verb person), one content word per constituent.
-The richer source-side parsing (multi-word phrases, subordinate clauses) and the
-fluency of a trained neural model arrive with the later LANG-3 tiers. Scriptable
+Source parsing is **lexicon-aware**: a word's part of speech comes from the
+lexicon, so the verb is found by meaning (not position) and an attributive
+adjective is recovered on a noun phrase (`the bright bird` → `mira kira`, the
+adjective agreeing with its noun). Number flows both ways — `the birds see the
+stones` inflects to `kirai nami patai`, and reverse re-agrees English number and
+tense (`kirai nami patai` → *the birds see the stones*, `kira …` → *the bird
+**sees** …*).
+
+Scope of Tier 1: declarative clauses with an optional adjective per noun phrase.
+Subordinate clauses, multi-word phrases beyond one adjective, and the fluency of
+a trained neural model arrive with the later LANG-3 tiers (the rule-based parser
+hands off to a neural POS+dependency parser behind the same interface). Scriptable
 from Bund as `lang.translate` (`{ surface, gloss, literal, confidence, unresolved }`),
 `lang.reverse` (`{ english, gloss, confidence, unresolved }`), and `lang.cross`
 (`{ english, target, gloss, confidence, unresolved }`) — all `store_read`.
