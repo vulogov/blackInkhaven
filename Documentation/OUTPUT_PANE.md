@@ -35,9 +35,11 @@ The chord works from **any** focus — editor, tree, an overlay — because
 the `Ctrl+B` prefix absorbs the keystroke before the editor sees `Tab`.
 Your editor's plain `Tab` (insert) is unchanged.
 
-The launch default is the **AI pane**. Whichever pane you leave active
-is remembered in `<project>/.session.json` and restored next start, just
-like which paragraph was open.
+On a project's **first** launch the right region shows the **Output
+pane**. After that, whichever pane you leave active is remembered in
+`<project>/.session.json` and restored next start, just like which
+paragraph was open — so returning to a project where you last used the
+AI pane brings you back to the AI pane.
 
 ---
 
@@ -146,7 +148,7 @@ those words to the Dictionary first.
 | **CLI / Bund translation** | `translation_result`, … | `inkhaven language translate / reverse / cross`, and the `lang.translate` / `reverse` / `cross` Bund words. |
 | **Lexicon generation** | `lexicon_proposal` | `inkhaven language generate-lexicon` (dry run) and `ink.lang.generate_lexicon`. Promote with `Enter`. |
 | **Variety rendering** | `variety_rendering` | `inkhaven language lect` and `ink.lang.lect`. |
-| **Bund scripts** | `bund_print`, `bund_log`, *any* | `ink.io.print` / `log` / `notify`. |
+| **Bund scripts** | `bund_print`, `bund_log`, *any* | `ink.io.print` / `log` / `notify`. A bare `print` / `println` is also mirrored here (one message per line) so script output is visible in the pane, not only in the transient floating Bund pane. |
 | **Background / long AI tasks** | `ai_task_complete` | A single completion notice when a long task finishes — the deep world refresh (`Ctrl+V Shift+F`) and a full-chapter fact-check (`Ctrl+B Shift+X`) post one — so you can switch panes during it and still be told. The fact-check's notice jumps to the checked paragraph via `Enter`. |
 
 > Emission is **active-aware**: a producer posts to Output only when an

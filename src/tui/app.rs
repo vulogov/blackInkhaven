@@ -2190,7 +2190,11 @@ impl App {
             bund_pending: false,
             view_pending: false,
             focus: Focus::Tree,
-            right_pane: RightPane::Ai,
+            // PANE-1 — Output is the default right-side pane on first launch
+            // (RFC §6, "Output (default on first launch)"). Returning users keep
+            // whichever pane they left active: `restore_session` overrides this
+            // from `.session.json` when a `right_pane` was saved.
+            right_pane: RightPane::Output,
             output_selected: 0,
             output_expanded: std::collections::HashSet::new(),
             tree_cursor: 0,
@@ -6676,12 +6680,16 @@ impl App {
     /// only Output and AI today both directions toggle; focus moves to the
     /// region so its keys (and the cycle chord) take effect immediately.
     fn cycle_right_pane(&mut self, _forward: bool) {
-        self.right_pane = match self.right_pane {
+        let target = match self.right_pane {
             RightPane::Output => RightPane::Ai,
             RightPane::Ai => RightPane::Output,
         };
         self.output_selected = 0;
+        // change_focus runs the editor-defocus bookkeeping and (for Focus::Ai)
+        // forces right_pane = Ai; re-assert the real target so cycling can land
+        // on the Output pane too.
         self.change_focus(Focus::Ai);
+        self.right_pane = target;
         // PANE-1 — persist the pane choice so it survives a restart.
         let _ = self.save_session();
         self.status = match self.right_pane {
@@ -7153,11 +7161,13 @@ impl App {
             trace,
         );
 
-        // Surface the result: flip to the Output pane and focus it (the Output
-        // pane shares Focus::Ai, disambiguated by `right_pane`).
-        self.right_pane = RightPane::Output;
+        // Surface the result: focus the right region, then flip it to Output.
+        // change_focus(Focus::Ai) forces right_pane = Ai (it does the
+        // editor-defocus bookkeeping), so set Output *after* it — the Output pane
+        // shares Focus::Ai, disambiguated by `right_pane`.
         self.output_selected = 0;
         self.change_focus(Focus::Ai);
+        self.right_pane = RightPane::Output;
         let note = if multiple {
             format!(" · multiple languages — used {language}")
         } else {
@@ -21502,6 +21512,16 @@ impl App {
             if let Some(sp) = &self.sound {
                 sp.play_focus_out();
             }
+        }
+        // PANE-1 — focusing the AI region (prompt or pane) implies the AI pane
+        // should be the visible right-side pane (RFC §162: "focusing the AI
+        // prompt automatically switches the right-side pane to AI"). This is what
+        // makes one-shot AI ops (critique / grammar / fact-check) surface their
+        // streamed output even when Output is the active pane. `cycle_right_pane`
+        // re-asserts its own target right after calling here, so it can still
+        // focus the Output pane.
+        if matches!(new, Focus::Ai | Focus::AiPrompt) {
+            self.right_pane = RightPane::Ai;
         }
         self.focus = new;
     }
