@@ -21,52 +21,49 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.23 — Local Translation: the ConLang Suite learns to translate
+## Latest release · 1.3.24 — The Output Pane
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.23.md`](Documentation/RELEASE_NOTES/1.3.23.md)
-· Reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.24.md`](Documentation/RELEASE_NOTES/1.3.24.md)
+· Plan: [`Documentation/PROPOSALS/PANE-1_PLAN.md`](Documentation/PROPOSALS/PANE-1_PLAN.md)
 
-A constructed language can now be **translated** — English → conlang, conlang →
-English, conlang → conlang — fully offline, deterministically, and improving as
-you correct it (the core of RFC LANG-3). The insight: a conlang is a closed,
-formally-described domain, so translation is mostly orchestration over the LANG-1
-engines plus retrieval over the embedding + vector stack already in the binary.
-**Python-free, training-free, zero new dependencies.**
+A new right-side **Output** pane for structured, one-way notifications from every
+subsystem — the first slice of RFC PANE-1, the planned TUI rearchitecture. The AI
+pane stays a conversation; Output absorbs everything Inkhaven needs to *tell* you:
+translation results, Bund script output, and (later) lexicon proposals, variety
+renderings, world fact-checks. **Zero new dependencies** — it reuses the in-tree
+DuckDB, ratatui, Bund VM, and chord machinery.
 
-### Tier 1 — the rule-based translator
+### The pane
 
-- **`language translate`** maps each English word to a headword by its lexicon
-  gloss and hands the clause to the LANG-1 syntax engine, so it reorders and
-  inflects for free: *the bird sees the stone* → `kira nami pata` (SVO) or `kira
-  pata nami` (SOV) from the same lexicon. Parsing is lexicon-aware — the verb is
-  found by meaning, adjectives agree, number flows through.
-- **`language reverse`** goes back to English (un-inflecting against the
-  paradigms); **`language cross`** translates one conlang into another through an
-  English pivot. Every output carries a per-word confidence + decision trace.
+- **`Ctrl+B Tab` / `Ctrl+B Shift+Tab`** cycle the right region between **Output**
+  and **AI** (default AI, so the launch view is unchanged). Messages carry a
+  severity icon (`●` / `⚠` / `⊗` / `↻`), kind, and summary; pinned on top.
+- Per-message actions: `o`/Space **expand** (a translation's per-word trace +
+  alternatives render inline), `d` dismiss, `p` pin, `r` **remember** (commit a
+  translation to memory), `a` **ask the AI** about it.
+- Persisted in a per-project DuckDB store; a headless CLI mirrors it
+  (`inkhaven output show | emit | dismiss | clear`).
 
-### Tier 2 — retrieval, not a trained model
+### What flows in
 
-A conlang's corpus *is* its knowledge, so it is **retrieved**, not baked into
-weights — reusing the in-binary `fastembed` + vector store.
+- **Translation (LANG-3)** — a translation in the editor lands a
+  `translation_result` (expandable to the per-word trace); an uncovered word adds
+  a `⚠` report; `r` commits it to the language's memory.
+- **Bund `ink.io.*`** — a new stdlib family (`print` / `log` / `notify` /
+  `message.list` / `count` / `dismiss` / `pin` / `unpin`), so script output finally
+  has a reliable home inside the TUI.
 
-- **`language remember`** confirms a translation; it is reused **immediately, on
-  the next call** — no retraining. Exact matches override (rule-based kept as an
-  alternative); near matches are **semantic** (a paraphrase recalls a confirmed
-  translation with no shared words).
-- **`language corpus`** seeds the memory from a bundled English pool;
-  **`language eval`** scores quality without a human reference (round-trip +
-  coverage); **`language export-translation`** ships the whole system as a
-  portable single-file `.itm` pack.
+### The ask-AI bridge
 
-### Scripting
-
-The full pipeline scripts from Bund: `lang.translate` / `reverse` / `cross` /
-`remember` / `memory` / `corpus` / `eval` / `export`.
+`a` carries a message's full structured detail into the AI conversation **by
+reference, not value** — a short quote enters the input, the rich detail arms the
+next prompt as context, focus moves to the prompt. The model sees the derivation;
+the conversation stays clean.
 
 ### Test stats
 
-Tests 1548 → 1576. **Zero new dependencies. No required downloads.** Deterministic
-+ advisory; validated live. Full reference: [`Documentation/CONLANG.md`](Documentation/CONLANG.md).
+Tests 1576 → 1582. **Zero new dependencies.** Non-breaking — every existing AI
+chord is preserved; the shell CLI is unaffected. PANE-1 continues next cycle.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
