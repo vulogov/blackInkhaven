@@ -115,7 +115,53 @@ fn resolve(idx: &GlossIndex, lemma: &str, hint: PosHint) -> (String, Decision, f
     }
 }
 
-/// Build a conlang [`NounPhrase`] from an English NP, recording the trace.
+/// Lexicon-aware structuring: classify each prepared token by the lexicon's
+/// parts of speech. The English source is SVO, so the subject precedes the verb
+/// and the object follows it; within each region the last word is the head noun
+/// and a preceding word the lexicon knows as an adjective is recovered as one.
+/// Falls back to the positional [`english::analyze`] when the verb is not in the
+/// lexicon (so an all-unknown sentence still produces a best-effort parse).
+fn structure(idx: &GlossIndex, text: &str) -> english::EnglishClause {
+    use english::{EnglishClause, EnglishNp};
+    let prep = english::prepare(text);
+    let toks = &prep.tokens;
+
+    // The verb is the first token carrying a verb sense (the subject precedes it).
+    let verb_idx = toks.iter().position(|t| {
+        idx.has_sense(&english::delemmatize_verb(t), PosHint::Verb)
+            || idx.has_sense(t, PosHint::Verb)
+    });
+    let Some(vi) = verb_idx else {
+        return english::analyze(text);
+    };
+
+    let build_np = |region: &[String]| -> Option<EnglishNp> {
+        let head = region.last()?;
+        let (lemma, plural) = english::depluralize(head);
+        let number = if plural { "pl".to_string() } else { "sg".to_string() };
+        // An adjective is the head's immediate predecessor when the lexicon
+        // knows it as one.
+        let adjective = if region.len() >= 2 {
+            let cand = &region[region.len() - 2];
+            idx.has_sense(cand, PosHint::Adjective).then(|| cand.clone())
+        } else {
+            None
+        };
+        Some(EnglishNp { head: lemma, number, adjective })
+    };
+
+    let subject = if prep.pronoun_subject { None } else { build_np(&toks[..vi]) };
+    let object = build_np(&toks[vi + 1..]);
+    EnglishClause {
+        subject,
+        verb: Some(english::delemmatize_verb(&toks[vi])),
+        verb_person: prep.person,
+        object,
+    }
+}
+
+/// Build a conlang [`NounPhrase`] from an English NP, resolving its head and any
+/// adjective and recording the trace.
 fn map_np(
     idx: &GlossIndex,
     np: &EnglishNp,
@@ -134,10 +180,26 @@ fn map_np(
         decision,
         confidence: conf,
     });
+
+    let adjective = np.adjective.as_ref().map(|adj| {
+        let (aroot, adecision, aconf) = resolve(idx, adj, PosHint::Adjective);
+        if matches!(adecision, Decision::Untranslatable) {
+            unresolved.push(adj.clone());
+        }
+        trace.push(TraceEntry {
+            source: adj.clone(),
+            role: "adjective",
+            target: aroot.clone(),
+            decision: adecision,
+            confidence: aconf,
+        });
+        Word { root: aroot, gloss: adj.clone() }
+    });
+
     NounPhrase {
         head: Word { root, gloss: np.head.clone() },
         number: np.number.clone(),
-        adjective: None,
+        adjective,
     }
 }
 
@@ -153,7 +215,7 @@ pub fn translate(
     text: &str,
 ) -> Translation {
     let idx = GlossIndex::build(entries);
-    let parse = english::analyze(text);
+    let parse = structure(&idx, text);
 
     let mut trace: Vec<TraceEntry> = Vec::new();
     let mut unresolved: Vec<String> = Vec::new();
@@ -256,6 +318,23 @@ mod tests {
         let t = translate(&phon, &morph, &typ, &entries, "the bird sees the stone");
         // SOV: subject, object, verb.
         assert_eq!(t.target, "kira pata nami");
+    }
+
+    #[test]
+    fn recovers_and_places_an_adjective() {
+        let phon = Phonology::default();
+        let morph = Morphology::default();
+        let mut typ = BTreeMap::new();
+        typ.insert("word_order".to_string(), "svo".to_string());
+        let mut entries = lexicon();
+        entries.push(entry("mira", "adjective", "bright"));
+
+        let t = translate(&phon, &morph, &typ, &entries, "the bright bird sees the stone");
+        assert!(t.unresolved.is_empty(), "all words resolved: {:?}", t.unresolved);
+        // Adjective before noun (default), then verb, then object.
+        assert_eq!(t.target, "mira kira nami pata");
+        // Four constituents traced: subject head, its adjective, verb, object.
+        assert_eq!(t.trace.len(), 4);
     }
 
     #[test]

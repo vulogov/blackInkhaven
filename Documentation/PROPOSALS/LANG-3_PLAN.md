@@ -44,9 +44,24 @@
 > (Eldar SVO `kira nami pata` → English → Sindar SOV `turi moki vela`). tests
 > 1559 → 1563.
 >
-> Remaining P0 work: richer source parsing (multi-word NPs, adjectives,
-> subordinate clauses), better English generation in `reverse` (number/tense
-> agreement), and the routing/merge layer (trivial while only Tier 1 exists).
+> **P0.3 — richer parsing + agreement landed; ★ P0 (Tier 1) complete.**
+> Source parsing is now **lexicon-aware**: a word's POS comes from the lexicon, so
+> the verb is found by meaning (not position) and an attributive **adjective** is
+> recovered on a noun phrase (`the bright bird` → `mira kira`, adjective agreeing
+> with its noun). Number uses the `sg`/`pl` paradigm convention, so forward
+> **inflects** (`the birds see the stones` → `kirai nami patai`) and `reverse`
+> **re-agrees** English number and tense (plural nouns pluralized, a singular
+> subject takes the 3sg verb). Full round-trip verified live. `english::prepare`
+> + `GlossIndex::has_sense` + `structure()` drive the lexicon-aware pass, with the
+> positional analyzer kept as the all-unknown fallback. tests 1563 → 1565.
+>
+> **Deferred to the neural tier (not Tier-1 RBMT work):** subordinate clauses and
+> multi-word phrases beyond a single adjective need real dependency parsing — they
+> arrive when the neural POS+dep parser swaps in behind `english`'s interface. The
+> **routing/merge layer** is a no-op while only Tier 1 exists and is introduced
+> with Tier 2 (P1+), when there is a second tier to route between. **Next phase is
+> P1 — synthetic corpus + offline NMT training (candle/NLLB), the first to pull
+> heavy ML dependencies; scope it explicitly before starting.**
 
 ---
 

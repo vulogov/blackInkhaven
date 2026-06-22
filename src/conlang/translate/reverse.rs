@@ -32,9 +32,17 @@ pub struct LangCtx<'a> {
     pub entries: &'a [DictionaryEntry],
 }
 
+/// What a conlang surface form reverses to: its English gloss and whether the
+/// form was a plural (so English generation can agree number and tense).
+#[derive(Debug, Clone)]
+struct RevForm {
+    gloss: String,
+    plural: bool,
+}
+
 /// An index from every known conlang surface form to its English gloss.
 pub struct ReverseIndex {
-    forms: HashMap<String, String>,
+    forms: HashMap<String, RevForm>,
 }
 
 /// The broad class a part-of-speech names, for picking a paradigm.
@@ -53,32 +61,82 @@ impl ReverseIndex {
     /// Build the index from a language's dictionary, expanding each entry into
     /// the surface forms its paradigm produces so inflected words are findable.
     pub fn build(phon: &Phonology, morph: &Morphology, entries: &[DictionaryEntry]) -> Self {
-        let mut forms: HashMap<String, String> = HashMap::new();
+        let mut forms: HashMap<String, RevForm> = HashMap::new();
         for e in entries {
             if e.word.trim().is_empty() || e.translation.trim().is_empty() {
                 continue;
             }
-            // Generated paradigm forms first (lowest priority).
+            // Generated paradigm forms first (lowest priority), tagging the
+            // plural cells so number survives the round trip.
             if let Some(name) = broad_paradigm(&e.pos) {
                 if let Some(tmpl) = morph.paradigm(name) {
                     for row in paradigm::generate(phon, morph, tmpl, &e.word, &e.translation) {
-                        forms.entry(row.form.to_lowercase()).or_insert_with(|| e.translation.clone());
+                        let plural = row
+                            .features
+                            .get("number")
+                            .map(|n| n.starts_with("pl"))
+                            .unwrap_or(false);
+                        forms
+                            .entry(row.form.to_lowercase())
+                            .or_insert_with(|| RevForm { gloss: e.translation.clone(), plural });
                     }
                 }
             }
-            // Explicitly recorded inflections.
+            // Explicitly recorded inflections (number unknown → treated singular).
             for v in e.inflection.values() {
-                forms.entry(v.to_lowercase()).or_insert_with(|| e.translation.clone());
+                forms.entry(v.to_lowercase()).or_insert_with(|| RevForm {
+                    gloss: e.translation.clone(),
+                    plural: false,
+                });
             }
             // The bare headword wins any tie.
-            forms.insert(e.word.to_lowercase(), e.translation.clone());
+            forms.insert(
+                e.word.to_lowercase(),
+                RevForm { gloss: e.translation.clone(), plural: false },
+            );
         }
         ReverseIndex { forms }
     }
 
-    fn lookup(&self, surface: &str) -> Option<&str> {
-        self.forms.get(&surface.to_lowercase()).map(String::as_str)
+    fn lookup(&self, surface: &str) -> Option<&RevForm> {
+        self.forms.get(&surface.to_lowercase())
     }
+}
+
+/// Naive English pluralizer for a noun lemma.
+fn pluralize_en(noun: &str) -> String {
+    if let Some(stem) = noun.strip_suffix('y') {
+        if !stem.ends_with(['a', 'e', 'i', 'o', 'u']) {
+            return format!("{stem}ies"); // city → cities
+        }
+    }
+    if noun.ends_with('s')
+        || noun.ends_with('x')
+        || noun.ends_with('z')
+        || noun.ends_with("ch")
+        || noun.ends_with("sh")
+    {
+        return format!("{noun}es"); // box → boxes
+    }
+    format!("{noun}s")
+}
+
+/// English 3rd-person-singular present of a verb lemma (`see` → `sees`).
+fn verb_3sg(verb: &str) -> String {
+    if let Some(stem) = verb.strip_suffix('y') {
+        if !stem.ends_with(['a', 'e', 'i', 'o', 'u']) {
+            return format!("{stem}ies"); // carry → carries
+        }
+    }
+    if verb.ends_with('s')
+        || verb.ends_with('x')
+        || verb.ends_with('z')
+        || verb.ends_with("ch")
+        || verb.ends_with("sh")
+    {
+        return format!("{verb}es"); // watch → watches
+    }
+    format!("{verb}s")
 }
 
 /// The role each surface position fills, in the language's order, for a clause
@@ -138,34 +196,34 @@ pub fn reverse(
     let mut unresolved: Vec<String> = Vec::new();
     let mut confs: Vec<f32> = Vec::new();
 
-    // Reverse-gloss every token to its English meaning (or `«token»`).
-    let glosses: Vec<String> = tokens
+    // Reverse-gloss every token to its English meaning and number (or `«token»`).
+    let glossed: Vec<(String, bool)> = tokens
         .iter()
         .map(|t| match idx.lookup(t) {
-            Some(g) => {
-                words.push((t.clone(), g.to_string()));
+            Some(f) => {
+                words.push((t.clone(), f.gloss.clone()));
                 confs.push(0.9);
-                g.to_string()
+                (f.gloss.clone(), f.plural)
             }
             None => {
                 let marked = format!("«{t}»");
                 words.push((t.clone(), marked.clone()));
                 unresolved.push(t.clone());
                 confs.push(0.2);
-                marked
+                (marked, false)
             }
         })
         .collect();
 
     let word_order = typology.get("word_order").map(String::as_str).unwrap_or("svo");
-    let transitive = glosses.len() >= 3;
+    let transitive = glossed.len() >= 3;
     let roles = role_sequence(word_order, transitive);
 
     // Assign roles positionally per the declared order.
-    let mut subject: Option<&str> = None;
-    let mut verb: Option<&str> = None;
-    let mut object: Option<&str> = None;
-    for (i, g) in glosses.iter().enumerate() {
+    let mut subject: Option<&(String, bool)> = None;
+    let mut verb: Option<&(String, bool)> = None;
+    let mut object: Option<&(String, bool)> = None;
+    for (i, g) in glossed.iter().enumerate() {
         match roles.get(i) {
             Some('s') => subject = Some(g),
             Some('v') => verb = Some(g),
@@ -174,18 +232,22 @@ pub fn reverse(
         }
     }
 
-    // Generate a plain English clause. (English morphology — articles beyond
-    // "the", number, tense agreement — is intentionally minimal in this first
-    // cut; the gloss line carries the faithful word-by-word reading.)
+    // Generate a plain English clause, agreeing number on the nouns and the
+    // present-tense verb with a singular subject. ("the bird sees the stones".)
+    let noun_en = |(gloss, plural): &(String, bool)| -> String {
+        if *plural { pluralize_en(finite(gloss)) } else { finite(gloss).to_string() }
+    };
+    let subject_singular = subject.map(|(_, p)| !*p).unwrap_or(true);
     let mut english = String::new();
     if let Some(s) = subject {
-        english.push_str(&format!("the {} ", finite(s)));
+        english.push_str(&format!("the {} ", noun_en(s)));
     }
-    if let Some(v) = verb {
-        english.push_str(finite(v));
+    if let Some((vg, _)) = verb {
+        let v = finite(vg);
+        english.push_str(&if subject_singular { verb_3sg(v) } else { v.to_string() });
     }
     if let Some(o) = object {
-        english.push_str(&format!(" the {}", finite(o)));
+        english.push_str(&format!(" the {}", noun_en(o)));
     }
     let english = english.trim().to_string();
 
@@ -266,7 +328,7 @@ mod tests {
         let morph = Morphology::default();
         let entries = lexicon();
         let r = reverse(&phon, &morph, &svo(), &entries, "kira nami pata");
-        assert_eq!(r.english, "the bird see the stone");
+        assert_eq!(r.english, "the bird sees the stone");
         assert!(r.unresolved.is_empty());
         assert!(r.confidence > 0.8);
     }
@@ -280,7 +342,31 @@ mod tests {
         let entries = lexicon();
         // In an SOV language the surface is subject–object–verb.
         let r = reverse(&phon, &morph, &sov, &entries, "kira pata nami");
-        assert_eq!(r.english, "the bird see the stone");
+        assert_eq!(r.english, "the bird sees the stone");
+    }
+
+    #[test]
+    fn reverse_agrees_number_and_tense() {
+        let phon = Phonology::default();
+        let morph = Morphology::from_hjson(
+            r#"{
+                kind: "agglutinative"
+                morphemes: [ { id: "pl", gloss: "PL", form: "i", position: "suffix" } ]
+                paradigms: [ { name: "noun", cells: [
+                    { features: { number: "sg" }, morphemes: [] }
+                    { features: { number: "pl" }, morphemes: ["pl"] }
+                ] } ]
+            }"#,
+        )
+        .unwrap()
+        .unwrap();
+        let entries = lexicon();
+        // Singular subject → 3rd-singular verb.
+        let r = reverse(&phon, &morph, &svo(), &entries, "kira nami pata");
+        assert_eq!(r.english, "the bird sees the stone");
+        // Plural subject + object (the -i forms) → bare verb, pluralized nouns.
+        let r2 = reverse(&phon, &morph, &svo(), &entries, "kirai nami patai");
+        assert_eq!(r2.english, "the birds see the stones");
     }
 
     #[test]
@@ -310,7 +396,7 @@ mod tests {
         let from = LangCtx { phon: &phon, morph: &morph, typology: &a_typ, entries: &a_entries };
         let to = LangCtx { phon: &phon, morph: &morph, typology: &b_typ, entries: &b_entries };
         let c = cross(&from, &to, "kira nami pata");
-        assert_eq!(c.english, "the bird see the stone");
+        assert_eq!(c.english, "the bird sees the stone");
         // B is SOV: subject, object, verb.
         assert_eq!(c.target, "turi moki vela");
     }
