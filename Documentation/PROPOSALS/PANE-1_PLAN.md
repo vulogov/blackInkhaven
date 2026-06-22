@@ -92,9 +92,22 @@
 > send — same outcome (structured context reaches the AI; conversation stays the
 > question), and consistent with the existing RAG flows. Compiles clean; verified
 > by construction (mirrors `start_lexicon_inference`'s arm-prefix-then-focus
-> path). tests 1582. *Next: the `Ctrl+B U` translation chord family, trace
-> expansion + Remember/Edit actions; pane persistence + Output-default; then P3
-> LANG-1/2 emitter retarget, P4–P6.*
+> path). tests 1582.
+>
+> *Trace expansion + Remember landed.* The forward `translation_result` now
+> carries `{ trace, alternatives }` in its metadata (`emit_translation_output`
+> gained an `extra` param; `translation_trace_json(&Translation)` builds it;
+> reverse/cross pass null). In the pane: **`o` / Space** toggles per-message
+> expansion (`App.output_expanded: HashSet<Uuid>`), and `draw_output` renders the
+> per-word trace (`bird → kira (lexicon, 0.90)`) + alternatives inline (or the
+> remaining metadata fields for kinds without a trace), with the scroll now
+> tracking the selected entry's true first line (entries vary in height).
+> **`r`** Remember (`App::remember_output_translation`) commits a
+> `translation_result`'s `source → target` to the language's LANG-3 translation
+> memory (embedding the source via the project store), guarding against uncovered
+> (`«…»`) targets. Footer hint updated. tests 1582. *Next: the `Ctrl+B U`
+> translation chord family; pane persistence + Output-default; then P3 LANG-1/2
+> emitter retarget, P4–P6.*
 
 ---
 

@@ -1539,8 +1539,12 @@ impl super::super::App {
         }
 
         let mut lines: Vec<Line> = Vec::new();
+        let mut sel_line_idx = 0usize;
         for (i, m) in msgs.iter().enumerate() {
             let sel = focused && i == self.output_selected;
+            if i == self.output_selected {
+                sel_line_idx = lines.len();
+            }
             let (icon, color) = match m.severity {
                 Severity::Info => ('●', Color::Gray),
                 Severity::Warning => ('⚠', Color::Yellow),
@@ -1561,16 +1565,57 @@ impl super::super::App {
                 Style::default()
             };
             lines.push(Line::from(vec![Span::raw("   "), Span::styled(text, text_style)]));
+
+            // Expanded detail (`o`/Space): per-word trace + alternatives, or the
+            // remaining metadata fields for kinds without a trace.
+            if self.output_expanded.contains(&m.id) {
+                let dim = Style::default().fg(Color::DarkGray);
+                let trace = m.metadata.get("trace").and_then(|v| v.as_array());
+                let alts = m.metadata.get("alternatives").and_then(|v| v.as_array());
+                if let Some(trace) = trace {
+                    for e in trace {
+                        let src = e.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                        let tgt = e.get("target").and_then(|v| v.as_str()).unwrap_or("");
+                        let conf = e.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let dec = e
+                            .get("decision")
+                            .and_then(|d| d.get("kind"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        lines.push(Line::from(Span::styled(
+                            format!("      {src} → {tgt}  ({dec}, {conf:.2})"),
+                            dim,
+                        )));
+                    }
+                }
+                if let Some(alts) = alts {
+                    for a in alts {
+                        let at = a.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                        let rat = a.get("rationale").and_then(|v| v.as_str()).unwrap_or("");
+                        lines.push(Line::from(Span::styled(
+                            format!("      alt: {at}  ({rat})"),
+                            dim,
+                        )));
+                    }
+                }
+                if trace.is_none() && alts.is_none() {
+                    if let Some(obj) = m.metadata.as_object() {
+                        for (k, v) in obj.iter().filter(|(k, _)| k.as_str() != "text") {
+                            lines.push(Line::from(Span::styled(format!("      {k}: {v}"), dim)));
+                        }
+                    }
+                }
+            }
         }
 
         // Reserve the bottom row for an action-key hint when there's space.
         let footer_h: u16 = if inner.height > 2 { 1 } else { 0 };
         let list_area = Rect { height: inner.height - footer_h, ..inner };
 
-        // Scroll so the selected entry (two lines each) stays visible.
+        // Scroll so the selected entry stays visible (entries vary in height when
+        // expanded, so use the selected entry's actual first line).
         let rows = list_area.height as usize;
-        let sel_line = self.output_selected.saturating_mul(2);
-        let offset = sel_line.saturating_sub(rows.saturating_sub(2)) as u16;
+        let offset = sel_line_idx.saturating_sub(rows.saturating_sub(2)) as u16;
         let para = Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((offset, 0));
         f.render_widget(para, list_area);
 
@@ -1582,7 +1627,7 @@ impl super::super::App {
                 height: 1,
             };
             let hint = Paragraph::new(Line::from(Span::styled(
-                " ↑↓ select · a ask AI · d dismiss · p pin · ^B Tab → AI",
+                " ↑↓ · o expand · r remember · a ask AI · d dismiss · p pin · ^B Tab",
                 Style::default().fg(Color::DarkGray),
             )));
             f.render_widget(hint, footer);

@@ -1588,6 +1588,8 @@ pub(crate) struct App {
     right_pane: RightPane,
     /// Selected row in the Output pane.
     output_selected: usize,
+    /// Output messages whose detail is expanded (`o`/Space).
+    output_expanded: std::collections::HashSet<Uuid>,
     tree_cursor: usize,
     tree_scroll: usize,
 
@@ -2190,6 +2192,7 @@ impl App {
             focus: Focus::Tree,
             right_pane: RightPane::Ai,
             output_selected: 0,
+            output_expanded: std::collections::HashSet::new(),
             tree_cursor: 0,
             tree_scroll: 0,
             search_input: TextInput::new(),
@@ -6669,9 +6672,67 @@ impl App {
                 }
             }
             KeyCode::Char('a') if plain => self.ask_ai_about_output(),
+            KeyCode::Char('o') | KeyCode::Char(' ') if plain => {
+                if let Some(m) = msgs.get(self.output_selected) {
+                    if !self.output_expanded.remove(&m.id) {
+                        self.output_expanded.insert(m.id);
+                    }
+                }
+            }
+            KeyCode::Char('r') if plain => self.remember_output_translation(),
             _ => {}
         }
         Ok(false)
+    }
+
+    /// PANE-1 P2 — the `r` Remember action on a `translation_result`: commit its
+    /// `source → target` to the language's translation memory (LANG-3), so the
+    /// next identical translation hits the memory. Embeds the source via the
+    /// project store so semantic recall works. A no-op on other kinds.
+    fn remember_output_translation(&mut self) {
+        let msgs = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default();
+        let Some(m) = msgs.get(self.output_selected) else { return };
+        if m.kind != crate::pane::output::kinds::TRANSLATION_RESULT {
+            self.status = "Remember: only for translation results".into();
+            return;
+        }
+        let get = |k: &str| m.metadata.get(k).and_then(|v| v.as_str()).map(str::to_string);
+        let (Some(lang), Some(source), Some(target)) =
+            (get("language"), get("source"), get("target"))
+        else {
+            self.status = "Remember: message missing language/source/target".into();
+            return;
+        };
+        if target.contains('«') {
+            self.status = "Remember: translation has uncovered words — add them first".into();
+            return;
+        }
+
+        use crate::conlang::translate::memory::TranslationMemory;
+        let mut mem = match TranslationMemory::load(&self.layout.root, &lang) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status = format!("Remember: {e}");
+                return;
+            }
+        };
+        mem.add(&source, &target);
+        // Embed any pending pairs via the project store (best-effort).
+        let need = mem.needs_embeddings();
+        if !need.is_empty() {
+            let refs: Vec<&str> = need.iter().map(String::as_str).collect();
+            if let Ok(vecs) = self.store.embed_batch(&refs) {
+                for (en, v) in need.iter().zip(vecs) {
+                    mem.set_embedding(en, v);
+                }
+            }
+        }
+        match mem.save(&self.layout.root, &lang) {
+            Ok(()) => self.status = format!("remembered: {source} → {target}"),
+            Err(e) => self.status = format!("Remember: save failed: {e}"),
+        }
     }
 
     /// PANE-1 — the ask-AI bridge (RFC §8.9). Take the selected Output message's
