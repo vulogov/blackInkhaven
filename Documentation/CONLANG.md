@@ -820,6 +820,22 @@ and the **top missing words** tell you exactly what to `add-word` to raise
 coverage. Previews by default; `--yes` adds the accepted `(English → conlang)`
 pairs to the translation memory.
 
+### Measuring quality (LANG-3 P2)
+
+A conlang has no human reference translations, so quality is gauged without one:
+
+```
+inkhaven language eval Eldar                  # coverage + round-trip similarity
+inkhaven language eval Eldar --test-set t.txt # against a custom test set
+```
+
+**Round-trip** translates each English sentence, reverses the result back to
+English, and measures how close the recovered meaning is to the source (embedding
+cosine) — a healthy language scores well above 0.7. **Coverage** is the fraction
+the lexicon can fully translate (the same maturity signal as `corpus`). The eval
+measures the rule-based engine (not the memory, which would echo confirmed pairs);
+scriptable as `lang.eval`.
+
 Scope of Tier 1: declarative clauses with an optional adjective per noun phrase.
 Subordinate clauses, multi-word phrases beyond one adjective, and the fluency of
 a trained neural model arrive with the later LANG-3 tiers (the rule-based parser
@@ -856,6 +872,7 @@ lang.reverse          ( lang surface -- {english,gloss,confidence,unresolved} ) 
 lang.cross            ( from to surface -- {english,target,gloss,confidence,unresolved} )  conlang → conlang via English
 lang.memory           ( lang -- list-of-{english,conlang} )    the translation-memory pairs
 lang.corpus           ( lang -- {scanned,accepted,acceptance_rate,top_missing,pairs} )  RBMT over the bundled English pool (advisory)
+lang.eval             ( lang -- {sentences,covered,coverage,round_trip_similarity} )  translation-quality eval
 lang.relative         ( lang head role verb with relativizer -- clause )
 lang.complement       ( lang subj verb comp comp-subj comp-verb comp-obj -- clause )
 lang.coordinate       ( lang clause-list conjunction -- clause )

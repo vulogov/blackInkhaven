@@ -3182,6 +3182,26 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.3.23 LANG-3 P2 — **evaluate** translation quality without a human
+    /// reference (Amendment A1 / RFC §8.8): *round-trip* semantic similarity
+    /// (translate then reverse, compared to the source by embedding cosine) and
+    /// *coverage* (the fraction of the test set the lexicon fully translates).
+    /// Measures the rule-based engine; the test set defaults to the bundled pool.
+    Eval {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// A custom English test-set file (one sentence per line); defaults to
+        /// the bundled pool.
+        #[arg(long)]
+        test_set: Option<String>,
+        /// Cap how many sentences to evaluate.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Emit JSON instead of the formatted display.
+        #[arg(long)]
+        json: bool,
+    },
+
     Lect {
         /// Target language name (case-insensitive).
         language: String,

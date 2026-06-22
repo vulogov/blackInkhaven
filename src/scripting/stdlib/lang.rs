@@ -51,6 +51,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.lang.cross", w_cross),
         ("ink.lang.memory", w_memory),
         ("ink.lang.corpus", w_corpus),
+        ("ink.lang.eval", w_eval),
         ("ink.lang.relative", w_relative),
         ("ink.lang.complement", w_complement),
         ("ink.lang.coordinate", w_coordinate),
@@ -546,6 +547,75 @@ fn do_corpus(vm: &mut VM) -> Result<&mut VM> {
     h.insert("pairs".into(), Value::from_list(pairs));
     push(vm, Value::from_dict(h));
     Ok(vm)
+}
+
+// ( lang -- {sentences,covered,coverage,round_trip_similarity} )  evaluate quality
+// (round-trip similarity + coverage) over the bundled English pool.
+fn w_eval(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_eval(vm).map_err(to_bund_err)
+}
+fn do_eval(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::translate::{corpus, eval};
+    let tag = "ink.lang.eval";
+    require_depth(vm, 1, tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let morph = langapi::load_morphology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let (spec, _) =
+        langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let entries =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let sentences = corpus::parse_pool(corpus::BUNDLED_POOL);
+    let items = eval::round_trip_all(&phon, &morph, &spec.grammar, &entries, &sentences);
+    let coverage = eval::coverage(&items);
+    let covered: Vec<&eval::RoundTrip> = items.iter().filter(|i| i.covered).collect();
+    let round_trip = if covered.is_empty() {
+        Value::nodata()
+    } else {
+        let mut texts: Vec<&str> = Vec::with_capacity(covered.len() * 2);
+        for i in &covered {
+            texts.push(i.english.as_str());
+            texts.push(i.recovered.as_str());
+        }
+        match store.embed_batch(&texts) {
+            Ok(emb) => {
+                let sum: f32 =
+                    (0..covered.len()).map(|k| cosine_sim(&emb[2 * k], &emb[2 * k + 1])).sum();
+                Value::from_float((sum / covered.len() as f32) as f64)
+            }
+            Err(_) => Value::nodata(),
+        }
+    };
+    let mut h: HashMap<String, Value> = HashMap::new();
+    h.insert("sentences".into(), Value::from_int(items.len() as i64));
+    h.insert("covered".into(), Value::from_int(covered.len() as i64));
+    h.insert("coverage".into(), Value::from_float(coverage as f64));
+    h.insert("round_trip_similarity".into(), round_trip);
+    push(vm, Value::from_dict(h));
+    Ok(vm)
+}
+
+/// Cosine similarity of two embedding vectors.
+fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
+    if a.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    let (mut dot, mut na, mut nb) = (0.0f32, 0.0f32, 0.0f32);
+    for i in 0..a.len() {
+        dot += a[i] * b[i];
+        na += a[i] * a[i];
+        nb += b[i] * b[i];
+    }
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        dot / (na.sqrt() * nb.sqrt())
+    }
 }
 
 // ── mutators (store_write) ───────────────────────────────────────────────
