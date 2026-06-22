@@ -147,7 +147,7 @@ those words to the Dictionary first.
 | **Lexicon generation** | `lexicon_proposal` | `inkhaven language generate-lexicon` (dry run) and `ink.lang.generate_lexicon`. Promote with `Enter`. |
 | **Variety rendering** | `variety_rendering` | `inkhaven language lect` and `ink.lang.lect`. |
 | **Bund scripts** | `bund_print`, `bund_log`, *any* | `ink.io.print` / `log` / `notify`. |
-| **Background AI tasks** | `ai_task_complete` | A single completion notice when a long task (e.g. the deep world refresh, `Ctrl+V Shift+F`) finishes — so you can switch panes during it and still be told. |
+| **Background / long AI tasks** | `ai_task_complete` | A single completion notice when a long task finishes — the deep world refresh (`Ctrl+V Shift+F`) and a full-chapter fact-check (`Ctrl+B Shift+X`) post one — so you can switch panes during it and still be told. The fact-check's notice jumps to the checked paragraph via `Enter`. |
 
 > Emission is **active-aware**: a producer posts to Output only when an
 > Output store is installed in the process. That is always true inside

@@ -2861,8 +2861,9 @@ impl App {
 
     /// PANE-1 P5 — emit a single `ai_task_complete` Output message when a
     /// long-running AI task finishes (§8.10). `target` is an optional paragraph
-    /// to jump to via the Primary action. A no-op when no Output store is
-    /// installed.
+    /// to jump to via the Primary action. Delegates to the shared
+    /// `pane::output::emit_task_complete` so the TUI and CLI/Bund builders post
+    /// an identical envelope. A no-op when no Output store is installed.
     fn emit_ai_task_complete(
         &self,
         task: &str,
@@ -2870,28 +2871,7 @@ impl App {
         elapsed_secs: u64,
         target: Option<uuid::Uuid>,
     ) {
-        use crate::pane::output::{kinds, ActionId, Lifetime, Message, Severity};
-        let mut meta = serde_json::json!({
-            "text": summary,
-            "task": task,
-            "elapsed_seconds": elapsed_secs,
-            "summary": summary,
-        });
-        if let (Some(obj), Some(id)) = (meta.as_object_mut(), target) {
-            obj.insert("target_paragraph".into(), serde_json::Value::String(id.to_string()));
-        }
-        // Hours(12) per the RFC's default lifetime for completion notices.
-        let mut msg =
-            Message::new(kinds::AI_TASK_COMPLETE, Severity::Info, Lifetime::Hours(12.0), meta)
-                .with_actions(vec![
-                    ActionId::Primary,
-                    ActionId::Dismiss,
-                    ActionId::Pin,
-                ]);
-        if let Some(id) = target {
-            msg = msg.with_source_paragraph(id);
-        }
-        crate::pane::output::emit(&msg);
+        crate::pane::output::emit_task_complete(task, summary, elapsed_secs, target);
     }
 
     /// 1.3.12 DEEP-1 P2 — kick off the deep AI world refresh (`Ctrl+V Shift+F`)
@@ -2994,6 +2974,11 @@ impl App {
                     .as_ref()
                     .map(|i| i.response.clone())
                     .unwrap_or_default();
+                let elapsed_secs = self
+                    .inference
+                    .as_ref()
+                    .map(|i| i.started_at.elapsed().as_secs())
+                    .unwrap_or(0);
                 let findings = crate::facts_scan::parse_findings(&resp, &title, 0);
                 if !findings.is_empty() {
                     self.status = format!(
@@ -3001,6 +2986,19 @@ impl App {
                         findings.len(),
                     );
                 }
+                // PANE-1 P5 — a full-chapter fact-check is a long AI task with a
+                // target paragraph (§8.10): post a completion notice so an author
+                // who switched panes during the check is told, and can jump to the
+                // checked paragraph via the Primary action.
+                let summary = if findings.is_empty() {
+                    format!("Fact check of \"{title}\": no contradictions.")
+                } else {
+                    format!(
+                        "Fact check of \"{title}\": {} contradiction(s).",
+                        findings.len()
+                    )
+                };
+                self.emit_ai_task_complete("fact_check", &summary, elapsed_secs, Some(target));
                 self.fact_check_nav = FactCheckNav {
                     target: Some(target),
                     findings,
