@@ -49,6 +49,8 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.lang.translate", w_translate),
         ("ink.lang.reverse", w_reverse),
         ("ink.lang.cross", w_cross),
+        ("ink.lang.memory", w_memory),
+        ("ink.lang.corpus", w_corpus),
         ("ink.lang.relative", w_relative),
         ("ink.lang.complement", w_complement),
         ("ink.lang.coordinate", w_coordinate),
@@ -74,6 +76,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.lang.init", w_init),
         ("ink.lang.define", w_define),
         ("ink.lang.add_word", w_add_word),
+        ("ink.lang.remember", w_remember),
         ("ink.lang.remove_word", w_remove_word),
         ("ink.lang.derive_add", w_derive_add),
         ("ink.lang.grammar_set", w_grammar_set),
@@ -342,9 +345,25 @@ fn do_translate(vm: &mut VM) -> Result<&mut VM> {
         langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
     let entries =
         langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
-    let t = translate::translate(&phon, &morph, &grammar_spec.grammar, &entries, &text);
+    // Tier 2 (retrieval): layer the translation memory over the rule-based result.
+    let mem = translate::memory::TranslationMemory::load(store.project_root(), &name)
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    let t = translate::apply_memory(
+        translate::translate(&phon, &morph, &grammar_spec.grammar, &entries, &text),
+        &mem,
+    );
     let gloss =
         t.words.iter().map(|(w, g)| format!("{w}={g}")).collect::<Vec<_>>().join(" ");
+    let alts: Vec<Value> = t
+        .alternatives
+        .iter()
+        .map(|a| {
+            let mut d: HashMap<String, Value> = HashMap::new();
+            d.insert("text".into(), Value::from_string(a.text.clone()));
+            d.insert("rationale".into(), Value::from_string(a.rationale.clone()));
+            Value::from_dict(d)
+        })
+        .collect();
     let mut h: HashMap<String, Value> = HashMap::new();
     h.insert("surface".into(), Value::from_string(t.target));
     h.insert("gloss".into(), Value::from_string(gloss));
@@ -354,6 +373,7 @@ fn do_translate(vm: &mut VM) -> Result<&mut VM> {
         "unresolved".into(),
         Value::from_list(t.unresolved.into_iter().map(Value::from_string).collect()),
     );
+    h.insert("alternatives".into(), Value::from_list(alts));
     push(vm, Value::from_dict(h));
     Ok(vm)
 }
@@ -444,7 +464,104 @@ fn do_cross(vm: &mut VM) -> Result<&mut VM> {
     Ok(vm)
 }
 
+// ( lang -- list-of-{english,conlang} )  the translation memory's pairs
+fn w_memory(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_memory(vm).map_err(to_bund_err)
+}
+fn do_memory(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::translate::memory::TranslationMemory;
+    let tag = "ink.lang.memory";
+    require_depth(vm, 1, tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let store = active_store(tag)?;
+    let mem = TranslationMemory::load(store.project_root(), &name)
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    let out: Vec<Value> = mem
+        .entries()
+        .map(|(en, con)| {
+            let mut d: HashMap<String, Value> = HashMap::new();
+            d.insert("english".into(), Value::from_string(en.to_string()));
+            d.insert("conlang".into(), Value::from_string(con.to_string()));
+            Value::from_dict(d)
+        })
+        .collect();
+    push(vm, Value::from_list(out));
+    Ok(vm)
+}
+
+// ( lang -- {scanned,accepted,acceptance_rate,top_missing,pairs} )  synthetic corpus
+// over the bundled English pool (advisory — seed via add to memory with lang.remember).
+fn w_corpus(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_corpus(vm).map_err(to_bund_err)
+}
+fn do_corpus(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::translate::corpus;
+    let tag = "ink.lang.corpus";
+    require_depth(vm, 1, tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let morph = langapi::load_morphology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .unwrap_or_default();
+    let (spec, _) =
+        langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let entries =
+        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let pool = corpus::parse_pool(corpus::BUNDLED_POOL);
+    let report = corpus::generate(&phon, &morph, &spec.grammar, &entries, &pool);
+    let pairs: Vec<Value> = report
+        .accepted
+        .iter()
+        .map(|(en, con)| {
+            let mut d: HashMap<String, Value> = HashMap::new();
+            d.insert("english".into(), Value::from_string(en.clone()));
+            d.insert("conlang".into(), Value::from_string(con.clone()));
+            Value::from_dict(d)
+        })
+        .collect();
+    let missing: Vec<Value> = report
+        .top_missing(10)
+        .into_iter()
+        .map(|(w, n)| {
+            let mut d: HashMap<String, Value> = HashMap::new();
+            d.insert("word".into(), Value::from_string(w));
+            d.insert("count".into(), Value::from_int(n as i64));
+            Value::from_dict(d)
+        })
+        .collect();
+    let mut h: HashMap<String, Value> = HashMap::new();
+    h.insert("scanned".into(), Value::from_int(report.scanned as i64));
+    h.insert("accepted".into(), Value::from_int(report.accepted.len() as i64));
+    h.insert("acceptance_rate".into(), Value::from_float(report.acceptance_rate() as f64));
+    h.insert("top_missing".into(), Value::from_list(missing));
+    h.insert("pairs".into(), Value::from_list(pairs));
+    push(vm, Value::from_dict(h));
+    Ok(vm)
+}
+
 // ── mutators (store_write) ───────────────────────────────────────────────
+
+// ( lang english conlang -- )  remember a confirmed translation (correction loop)
+fn w_remember(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_remember(vm).map_err(to_bund_err)
+}
+fn do_remember(vm: &mut VM) -> Result<&mut VM> {
+    use crate::conlang::translate::memory::TranslationMemory;
+    let tag = "ink.lang.remember";
+    require_depth(vm, 3, tag)?;
+    let conlang = value_to_string(pull(vm, tag)?, "conlang", tag)?;
+    let english = value_to_string(pull(vm, tag)?, "english", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let store = active_store(tag)?;
+    let root = store.project_root();
+    let mut mem = TranslationMemory::load(root, &name).map_err(|e| anyhow!("{tag}: {e}"))?;
+    mem.add(&english, &conlang);
+    mem.save(root, &name).map_err(|e| anyhow!("{tag}: {e}"))?;
+    Ok(vm)
+}
 
 // ( name -- )
 fn w_init(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {

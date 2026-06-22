@@ -842,9 +842,11 @@ lang.tone             ( lang tones -- result )      lang.derive       ( lang roo
 lang.transliterate    ( lang text -- script )       lang.agree        ( lang word pos features -- form )
 lang.gloss            ( lang text -- gloss )        lang.sound_change ( lang form -- evolved )
 lang.sentence         ( lang subj verb obj -- clause )   lang.cognates ( proto form -- reflexes )
-lang.translate        ( lang text -- {surface,gloss,literal,confidence,unresolved} )  English → conlang (Tier 1 RBMT)
+lang.translate        ( lang text -- {surface,gloss,literal,confidence,unresolved,alternatives} )  English → conlang (RBMT + memory)
 lang.reverse          ( lang surface -- {english,gloss,confidence,unresolved} )       conlang → English
 lang.cross            ( from to surface -- {english,target,gloss,confidence,unresolved} )  conlang → conlang via English
+lang.memory           ( lang -- list-of-{english,conlang} )    the translation-memory pairs
+lang.corpus           ( lang -- {scanned,accepted,acceptance_rate,top_missing,pairs} )  RBMT over the bundled English pool (advisory)
 lang.relative         ( lang head role verb with relativizer -- clause )
 lang.complement       ( lang subj verb comp comp-subj comp-verb comp-obj -- clause )
 lang.coordinate       ( lang clause-list conjunction -- clause )
@@ -865,7 +867,13 @@ lang.init        ( name -- )                    lang.grammar_set ( lang feature 
 lang.define      ( lang chapter block -- )      lang.idiom_add   ( lang form literal meaning -- )
 lang.add_word    ( lang word pos translation -- )   lang.metaphor_add ( lang source target -- )
 lang.remove_word ( lang word -- )               lang.derive_add  ( lang root gloss pos -- count )
+lang.remember    ( lang english conlang -- )    remember a translation (correction loop)
 ```
+
+A retrieval-first translation pipeline in a few words: `lang.corpus` to seed (loop
+its `pairs` through `lang.remember`), then `lang.translate` returns the memorized
+form (with the rule-based reading in `alternatives`); a `lang.remember` correction
+takes effect on the very next `lang.translate`.
 
 **AI-backed words** (the `ai_write` category — default-denied; enable
 `"ai_write"`). They call the LLM and are **advisory** — they *return* data and
