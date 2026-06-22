@@ -2154,20 +2154,44 @@ impl super::super::App {
         // 1.3.12 DEEP-1 — background-job spinner chip (persists regardless of
         // what else writes the status line).
         spans.extend(self.bg_job_chip_spans());
-        spans.push(Span::raw("  "));
-        spans.push(Span::raw(self.status.clone()));
-
-        // Right-aligned progress widget — drawn on its own
-        // Paragraph with right alignment so it can't be pushed
-        // off-screen by a long status message; the left part
-        // truncates if the terminal is narrow.
-        let progress_spans = self.progress_widget_spans();
-        if !progress_spans.is_empty() {
-            let right = Paragraph::new(Line::from(progress_spans))
-                .alignment(ratatui::layout::Alignment::Right);
-            f.render_widget(right, area);
+        // PANE-1 P4 — a thin separator delimits the transient status text from
+        // the persistent state chips to its left, so the eye can tell
+        // "what just happened" apart from "what's always true".
+        if !self.status.is_empty() {
+            spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::raw(self.status.clone()));
+        } else {
+            spans.push(Span::raw("  "));
         }
-        f.render_widget(Paragraph::new(Line::from(spans)), area);
+
+        // PANE-1 P4 — split the bar into two non-overlapping regions instead of
+        // painting the left spans and the right-aligned progress widget onto the
+        // SAME rect (where a long status could overwrite the progress). The left
+        // region (chips + status) truncates within itself; the progress widget
+        // owns a reserved right column and is always visible.
+        let progress_spans = self.progress_widget_spans();
+        if progress_spans.is_empty() {
+            f.render_widget(Paragraph::new(Line::from(spans)), area);
+        } else {
+            let progress_w: u16 = progress_spans
+                .iter()
+                .map(|s| s.content.chars().count() as u16)
+                .sum::<u16>()
+                .saturating_add(1); // one column of breathing room
+            let chunks = ratatui::layout::Layout::default()
+                .direction(ratatui::layout::Direction::Horizontal)
+                .constraints([
+                    ratatui::layout::Constraint::Min(10),
+                    ratatui::layout::Constraint::Length(progress_w),
+                ])
+                .split(area);
+            f.render_widget(Paragraph::new(Line::from(spans)), chunks[0]);
+            f.render_widget(
+                Paragraph::new(Line::from(progress_spans))
+                    .alignment(ratatui::layout::Alignment::Right),
+                chunks[1],
+            );
+        }
     }
 
     pub(in crate::tui::app) fn draw_search_overlay(&self, f: &mut ratatui::Frame, area: Rect) {
