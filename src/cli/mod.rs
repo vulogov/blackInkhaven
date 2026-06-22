@@ -23,6 +23,7 @@ pub mod event;
 pub mod comments;
 pub mod language;
 pub mod output;
+pub mod realworld;
 pub mod templates;
 pub mod thread;
 pub mod tts;
@@ -907,6 +908,12 @@ pub enum Command {
     /// 1.3.24 PANE-1 — the Output message channel (CLI surface; the pane is TUI).
     #[command(subcommand)]
     Output(OutputCommand),
+
+    /// WORLD-4 — the world-simulation compiler. P0 ships the astronomy layer:
+    /// scaffold / validate / compile a `world.hjson`. See
+    /// `Documentation/PROPOSALS/WORLD-4_PLAN.md`.
+    #[command(subcommand)]
+    Realworld(RealworldCommand),
     /// `inkhaven template
     /// <subcommand>`.  Surfaces information about
     /// the project templates available to
@@ -3505,6 +3512,37 @@ pub enum ThreadExportFormat {
 /// 1.3.24 PANE-1 — sub-subcommands under `inkhaven output …`. The minimal CLI
 /// surface over the Output message store (the pane itself is a TUI feature);
 /// useful for scripting and for sshing into a project without a TUI.
+/// WORLD-4 — sub-subcommands under `inkhaven realworld …`. P0 = the astronomy
+/// slice; the surface grows with each layer (RFC §10.1).
+#[derive(Debug, Subcommand)]
+pub enum RealworldCommand {
+    /// Scaffold a starter `world.hjson` at the project root.
+    New {
+        /// The world's name.
+        name: String,
+        /// Overwrite an existing `world.hjson`.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Parse `world.hjson` and report whether it is valid.
+    Validate,
+    /// Show the parsed world definition.
+    Show {
+        /// Emit the full definition as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compile a layer (P0: only `astronomy`) and print the result.
+    Compile {
+        /// Which layer to compile (default: astronomy).
+        #[arg(long)]
+        layer: Option<String>,
+        /// Emit the layer output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 pub enum OutputCommand {
     /// List active Output messages.
@@ -3969,6 +4007,7 @@ impl Cli {
                 language::run(&project, cmd).map_err(Into::into)
             }
             Command::Output(cmd) => output::run(&project, cmd).map_err(Into::into),
+            Command::Realworld(cmd) => realworld::run(&project, cmd).map_err(Into::into),
             Command::Thread(cmd) => {
                 thread::run(&project, cmd).map_err(Into::into)
             }
