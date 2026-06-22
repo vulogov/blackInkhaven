@@ -132,8 +132,27 @@
 > lexicon proposal into the Dictionary through the same rich-import path
 > `generate-lexicon --yes` uses (no second model call), plus expanded-detail
 > rendering for both new kinds and a context-aware footer (`⏎ accept` on
-> proposals). tests 1583. *Next: P4 status-line cleanup; P5 `ai_task_complete`;
-> P6 docs; the Output-default flip; the deferred bare-`print`→Output redirect.*
+> proposals). tests 1583.
+>
+> *P5 + `e` Edit + P4 + P6 landed (1.3.25-dev).* **P5 `ai_task_complete`:**
+> per-kind **Primary** (`Enter`) — `translation_result`→insert at cursor,
+> `lexicon_proposal`→promote, `ai_task_complete`→jump to target paragraph
+> (`output_primary_action` + `insert_output_translation` / `jump_to_output_target`);
+> `e` = edit+remember (insert **and** remember in one gesture). `BgJob` gained a
+> `started: Instant`; `on_bg_job_done` emits a single `ai_task_complete`
+> (`{task,elapsed_seconds,summary}`, Primary/Dismiss/Pin, `Hours(12)`, optional
+> target) on real completion of the deep world refresh — the one long-running TUI
+> bg job today (others emit when they migrate to the harness). **P4
+> (cosmetic-only, user-confirmed):** status bar split into two non-overlapping
+> regions so a long status can't overwrite the right-aligned progress widget, plus
+> a thin separator delimiting transient status from the persistent chips — all
+> chips kept. **P6 docs:** `Documentation/OUTPUT_PANE.md` (full reference),
+> `Documentation/Tutorials/75-the-output-pane.md` (walkthrough), `ink.io.*` added
+> to `Bund/README.md`, index rows in both READMEs; +2 store round-trip tests for
+> the P3/P5 envelopes. tests 1583→1585. *Next: P5 wiring of the other five
+> qualifying AI tasks as they move onto the bg harness; the Output-default flip
+> (one-liner in `App::new`, held for a UX call); the deferred bare-`print`→Output
+> redirect.*
 
 ---
 
