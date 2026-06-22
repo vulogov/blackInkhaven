@@ -1658,10 +1658,17 @@ impl super::super::App {
             };
             // The action row is context-aware: a lexicon proposal advertises
             // its Enter→accept; a translation result, r→remember.
+            use crate::pane::output::kinds as k;
             let sel_kind = msgs.get(self.output_selected).map(|m| m.kind.as_str());
             let hint_text = match sel_kind {
-                Some(k) if k == crate::pane::output::kinds::LEXICON_PROPOSAL => {
+                Some(s) if s == k::LEXICON_PROPOSAL => {
                     " ↑↓ · ⏎ accept · o expand · a ask AI · d dismiss · p pin · ^B Tab"
+                }
+                Some(s) if s == k::TRANSLATION_RESULT => {
+                    " ↑↓ · ⏎ insert · e edit+remember · r remember · a ask AI · d dismiss · ^B Tab"
+                }
+                Some(s) if s == k::AI_TASK_COMPLETE => {
+                    " ↑↓ · ⏎ open target · o expand · d dismiss · p pin · ^B Tab"
                 }
                 _ => " ↑↓ · o expand · r remember · a ask AI · d dismiss · p pin · ^B Tab",
             };
