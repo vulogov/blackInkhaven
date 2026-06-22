@@ -153,9 +153,13 @@ the merge step instead of at decode).
   optional query embedding; the CLI/Bund supply it from `Store::embed_batch` when
   the memory is non-empty (exact hits skip it). Validated live (a lexical
   paraphrase recalled a remembered line at 92%). Semantic hits stay *advisory*
-  (alternatives, never silent overrides). **Remaining P2:** route the TUI
-  translate pane through the pipeline, and the eval harness (round-trip
-  similarity via `reverse` + `fastembed`, grammar pass-rate, acceptance rate).
+  (alternatives, never silent overrides). The **eval harness** (`translate::eval`,
+  CLI `language eval`, Bund `lang.eval`) ships **round-trip semantic similarity**
+  (translate → `reverse` → cosine via `fastembed`) and **coverage** — validated
+  live (22% coverage, round-trip 0.996 on simple sentences); author-acceptance
+  (§8.8.3) is editor-coupled and lands with the pane. **Deferred from P2:** routing
+  the TUI translate pane through the pipeline — held for the planned TUI
+  rearchitecture (the engine/CLI/Bund surface it routes through is complete).
 - **P3 — correction loop + export + cross.** Correction = datastore append
   (immediate); `.itm`-style datastore bundle export; cross-conlang already lands
   in P0.

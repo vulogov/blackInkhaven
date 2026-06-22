@@ -226,6 +226,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Corpus { language, pool, limit, yes, json } => {
             corpus(project, &language, pool.as_deref(), limit, yes, json)
         }
+        LanguageCommand::Eval { language, test_set, limit, json } => {
+            eval(project, &language, test_set.as_deref(), limit, json)
+        }
         LanguageCommand::Relative {
             language,
             head,
@@ -3063,6 +3066,95 @@ fn corpus(
         eprintln!("\nseeded {} pair(s) into {language}'s translation memory.", report.accepted.len());
     } else {
         eprintln!("\n(preview — re-run with --yes to seed the translation memory)");
+    }
+    Ok(())
+}
+
+/// Cosine similarity of two embedding vectors.
+fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
+    if a.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    let (mut dot, mut na, mut nb) = (0.0f32, 0.0f32, 0.0f32);
+    for i in 0..a.len() {
+        dot += a[i] * b[i];
+        na += a[i] * a[i];
+        nb += b[i] * b[i];
+    }
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        dot / (na.sqrt() * nb.sqrt())
+    }
+}
+
+/// 1.3.23 LANG-3 P2 — evaluate translation quality (round-trip + coverage).
+fn eval(
+    project: &Path,
+    language: &str,
+    test_set: Option<&str>,
+    limit: Option<usize>,
+    json: bool,
+) -> Result<()> {
+    use crate::conlang::translate::{corpus as corpusmod, eval as evalmod};
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let (grammar_spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+
+    let pool_text = match test_set {
+        Some(p) => std::fs::read_to_string(p)
+            .map_err(|e| Error::Config(format!("reading test set `{p}`: {e}")))?,
+        None => corpusmod::BUNDLED_POOL.to_string(),
+    };
+    let mut sentences = corpusmod::parse_pool(&pool_text);
+    if let Some(n) = limit {
+        sentences.truncate(n);
+    }
+
+    let items = evalmod::round_trip_all(&phon, &morph, &grammar_spec.grammar, &entries, &sentences);
+    let coverage = evalmod::coverage(&items);
+    let covered: Vec<&evalmod::RoundTrip> = items.iter().filter(|i| i.covered).collect();
+
+    // Round-trip similarity: embed each source and its recovered English, cosine.
+    let round_trip: Option<f32> = if covered.is_empty() {
+        None
+    } else {
+        let mut texts: Vec<&str> = Vec::with_capacity(covered.len() * 2);
+        for i in &covered {
+            texts.push(i.english.as_str());
+            texts.push(i.recovered.as_str());
+        }
+        match store.embed_batch(&texts) {
+            Ok(emb) => {
+                let sum: f32 = (0..covered.len()).map(|k| cosine_sim(&emb[2 * k], &emb[2 * k + 1])).sum();
+                Some(sum / covered.len() as f32)
+            }
+            Err(_) => None,
+        }
+    };
+
+    if json {
+        let out = serde_json::json!({
+            "sentences": items.len(),
+            "covered": covered.len(),
+            "coverage": coverage,
+            "round_trip_similarity": round_trip,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out)
+                .map_err(|e| Error::Store(format!("serializing eval: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("{language} · evaluation · {} sentence(s)", items.len());
+    println!("  coverage:    {:.0}%  ({}/{} fully translatable)", coverage * 100.0, covered.len(), items.len());
+    match round_trip {
+        Some(s) => println!("  round-trip:  {s:.2}  (mean source↔recovered similarity over the {} covered)", covered.len()),
+        None => println!("  round-trip:  n/a  (no covered sentences to round-trip)"),
     }
     Ok(())
 }

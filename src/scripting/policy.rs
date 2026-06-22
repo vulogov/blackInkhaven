@@ -290,6 +290,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.lang.cross", category::STORE_READ),
     ("ink.lang.memory", category::STORE_READ),
     ("ink.lang.corpus", category::STORE_READ),
+    ("ink.lang.eval", category::STORE_READ),
     ("ink.lang.relative", category::STORE_READ),
     ("ink.lang.complement", category::STORE_READ),
     ("ink.lang.coordinate", category::STORE_READ),
