@@ -32,8 +32,20 @@
 > `TIMESTAMP`) and project scope is the file (no `project_id` column) — both to
 > match the in-tree stores. Zero new deps; tests 1576 → 1582. The rest of the
 > envelope/store API is intentionally complete ahead of its consumers (TUI pane,
-> `ink.io.*`, emitter routing — the next increments). *Next: P1 (Bund `print` →
-> `ink.io.*`) and the ratatui Output pane widget + `Ctrl+B Tab` cycling.*
+> emitter routing — the next increments).
+>
+> *P1 — the `ink.io.*` Bund stdlib landed* (RFC §9): in `src/scripting/stdlib/io.rs`,
+> `ink.io.print` / `ink.io.log` (emit `bund_print` / `bund_log`, store_read —
+> always available per §9), `ink.io.notify` (arbitrary kind + metadata dict,
+> fs_write), and `ink.io.message.list` / `count` / `dismiss` / `pin` / `unpin`
+> (reads store_read, mutations fs_write). The active project's `output.db` is
+> cached per-process (re-opening would clash a second DuckDB instance). Validated
+> live: a Bund script emits, the CLI `output show` reads the same store
+> cross-process. **Deliberately deferred: redirecting the *bare* `print` word to
+> Output** — until the ratatui pane renders `output.db`, that would send TUI print
+> output where nothing displays it; it's a one-liner once the pane lands, so it
+> ships with the widget. tests 1582. *Next: the ratatui Output pane widget +
+> `Ctrl+B Tab` cycling (the TUI-app integration).*
 
 ---
 
