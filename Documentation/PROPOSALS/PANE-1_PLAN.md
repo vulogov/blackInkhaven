@@ -76,9 +76,25 @@
 > show`). The generic pane renderer shows each via its `text` summary; the
 > per-word trace expansion, the `r` Remember / `e` Edit actions, the ask-AI
 > bridge, and the dedicated `Ctrl+B U T/V/X/…` chord family are follow-ons.
-> tests 1582. *Next: the `Ctrl+B U` translation chord family, trace expansion +
-> Remember/ask-AI actions; pane persistence + Output-default; then P3 LANG-1/2
-> emitter retarget, P4–P6.*
+> tests 1582.
+>
+> *The ask-AI bridge landed (§8.9).* `a` on an Output message takes its full
+> structured detail into the AI conversation **by reference, not value**:
+> `App::ask_ai_about_output` arms the message's metadata as the one-shot
+> `pending_rag_prefix` (the existing RAG-injection the Ctrl+B P/C flows use —
+> prepended to the next prompt on submit), places a short visible quote
+> (`about [kind] "…" — `) in the AI input, switches to the AI pane, and focuses
+> the prompt so the author just types their question. So the model sees the rich
+> context while the conversation shows only the quote + question. The Output pane
+> gains a footer hint (`↑↓ select · a ask AI · d dismiss · p pin · ^B Tab → AI`).
+> **Deviation from the RFC:** uses the codebase's resolve-at-press
+> `pending_rag_prefix` rather than a hidden `@output-msg:uuid` handle resolved on
+> send — same outcome (structured context reaches the AI; conversation stays the
+> question), and consistent with the existing RAG flows. Compiles clean; verified
+> by construction (mirrors `start_lexicon_inference`'s arm-prefix-then-focus
+> path). tests 1582. *Next: the `Ctrl+B U` translation chord family, trace
+> expansion + Remember/Edit actions; pane persistence + Output-default; then P3
+> LANG-1/2 emitter retarget, P4–P6.*
 
 ---
 
