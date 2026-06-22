@@ -788,12 +788,21 @@ inkhaven language memory Eldar                                 # list remembered
 ```
 
 An **exact** remembered translation becomes the primary (the rule-based reading is
-kept as an `alt:` so nothing is silently overridden); a **near** match (token
-overlap) is surfaced as an alternative to pick. A miss is pure RBMT. Memory lives
-in the `.inkhaven/translation-memory/<lang>.json` sidecar (atomic writes; the
-books are never touched). The semantic-retrieval upgrade (embedding the source
-with the in-tree `fastembed` + the HNSW vector store) slots in behind this same
-lookup in P2.
+kept as an `alt:` so nothing is silently overridden); a **near** match is surfaced
+as an alternative to pick. A miss is pure RBMT. Memory lives in the
+`.inkhaven/translation-memory/<lang>.json` sidecar (atomic writes; the books are
+never touched).
+
+Near matches are **semantic**: each remembered English source is embedded once
+with the in-tree `fastembed` model (the same one powering manuscript search) and
+the vector is cached in the sidecar; a translation embeds only the *query* and
+finds the nearest remembered sentence by cosine similarity. So a lexical
+paraphrase still recalls a confirmed translation — *"a soldier lifts his blade
+toward the sun"* matches a remembered *"the warrior raises his sword to the sun"*
+at 92% even with no shared content words. The exact path needs no embedding (a
+seeded sentence costs nothing), and the retrieval strategy (exact → semantic →
+lexical) lives in one place so the merge policy is identical however the match was
+found.
 
 You don't have to seed the memory by hand. **Corpus generation** translates a
 pool of English sentences with the RBMT and keeps the ones the language fully

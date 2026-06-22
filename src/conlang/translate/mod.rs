@@ -293,11 +293,18 @@ pub fn translate(
 /// **Tier 2 (retrieval).** Layer a translation memory over a rule-based
 /// translation: an *exact* remembered translation (an author-confirmed pair)
 /// replaces the rule-based primary, which is kept as an alternative; a *near*
-/// match is surfaced as an alternative for the author to pick. A miss leaves the
-/// rule-based output untouched. The memory never silently overrides without
-/// keeping the rule-based reading visible.
-pub fn apply_memory(mut t: Translation, mem: &memory::TranslationMemory) -> Translation {
-    match mem.lookup(&t.source) {
+/// match (semantic when `query_embedding` is supplied and the memory is
+/// embedded, else lexical) is surfaced as an alternative for the author to pick.
+/// A miss leaves the rule-based output untouched. The memory never silently
+/// overrides without keeping the rule-based reading visible — and the retrieval
+/// strategy is entirely inside [`memory::TranslationMemory::best`], so this merge
+/// policy is unchanged whether the match was lexical or semantic.
+pub fn apply_memory(
+    mut t: Translation,
+    mem: &memory::TranslationMemory,
+    query_embedding: Option<&[f32]>,
+) -> Translation {
+    match mem.best(&t.source, query_embedding) {
         memory::MemoryHit::Exact { conlang } => {
             if conlang != t.target {
                 t.alternatives.insert(
@@ -409,7 +416,7 @@ mod tests {
         // An author-confirmed correction in the memory.
         let mut mem = memory::TranslationMemory::default();
         mem.add("the bird sees the stone", "kira pata-corrected nami");
-        let t2 = apply_memory(t, &mem);
+        let t2 = apply_memory(t, &mem, None);
         assert_eq!(t2.target, "kira pata-corrected nami");
         // The rule-based reading is kept as an alternative, not discarded.
         assert_eq!(t2.alternatives.len(), 1);
