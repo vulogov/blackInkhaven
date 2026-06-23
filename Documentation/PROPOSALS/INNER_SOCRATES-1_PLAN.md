@@ -227,4 +227,12 @@ for §8 detailed design, Appendix A (schema), B (config), E (overlays).
   `personas.list`, `persona.active`, `ledger.list`, `usage.today`). Store
   `findings_history(paragraph)` + CLI `findings list | history <paragraph>` (the
   findings-over-time view; snapshots are per-paragraph, so ordered by emission).
-  1713. *Remaining: the AI-pane conversation/suggestion scopes + persona wizard.*
+  1713.
+- **P7c — conversation + persona wizard (UNRELEASED, 1.3.28-dev).** `Ctrl+B J → C`
+  opens a Socratic **conversation**: it seeds the AI chat with the active persona's
+  voice + the open paragraph's questions and hands the author the prompt (the
+  persona discusses, never rewrites). `Ctrl+B J → N` seeds the **persona wizard**
+  (the AI guides the author through designing a new persona). A `SOCRATIC_SEED_MARKER`
+  makes re-entry swap rather than stack. CLI `persona new <id>` scaffolds an
+  editable persona file (the non-AI path). 1713. *The full F9 scope-cycling +
+  per-finding outcome buttons remain a refinement; the conversation + wizard ship.*

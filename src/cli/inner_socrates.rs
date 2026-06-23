@@ -180,6 +180,29 @@ fn persona(project: &Path, cmd: crate::cli::PersonaCommand) -> Result<()> {
             println!("active persona: {} ({})", p.name, p.id);
             Ok(())
         }
+        PersonaCommand::New { id, name } => {
+            let dir = personas::project_personas_dir(project);
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| Error::Store(format!("creating {}: {e}", dir.display())))?;
+            let path = dir.join(format!("{id}.hjson"));
+            if path.exists() {
+                return Err(Error::Config(format!("{} already exists", path.display())));
+            }
+            let name = name.unwrap_or_else(|| id.clone());
+            let body = format!(
+                "{{\n    id: \"{id}\"\n    name: \"{name}\"\n    \
+                 voice_summary: \"A one-line tagline for this reader.\"\n    \
+                 voice_notes: \"200-400 words of character — how this reader attends, what it \
+                 notices, what it leaves alone. This feeds the Slow-track prompt.\"\n    \
+                 emphasis: {{\n        // category id -> weight (1.0 = default, 0.0 mutes)\n        \
+                 framing_interrogation: 1.2\n        assumption_surfacing: 1.1\n    }}\n}}\n"
+            );
+            crate::io_atomic::write(&path, body.as_bytes())
+                .map_err(|e| Error::Store(format!("writing {}: {e}", path.display())))?;
+            println!("scaffolded {} — edit it, then `persona activate {id}`", path.display());
+            println!("(or use `Ctrl+B J → N` in the TUI for an AI-guided wizard)");
+            Ok(())
+        }
     }
 }
 
