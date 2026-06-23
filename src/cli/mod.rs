@@ -929,6 +929,13 @@ pub enum Command {
         /// contradictions the patterns miss (needs an LLM provider; cost-capped).
         #[arg(long)]
         slow: bool,
+        /// Slow-track per-call soft cap (estimated tokens). The call is skipped
+        /// with a notice if the estimate exceeds this; `--force` overrides it.
+        #[arg(long, default_value_t = 6000)]
+        max_cost: usize,
+        /// Run the slow track even if the cost estimate exceeds `--max-cost`.
+        #[arg(long)]
+        force: bool,
     },
     /// `inkhaven template
     /// <subcommand>`.  Surfaces information about
@@ -4084,8 +4091,8 @@ impl Cli {
             }
             Command::Output(cmd) => output::run(&project, cmd).map_err(Into::into),
             Command::Realworld(cmd) => realworld::run(&project, cmd).map_err(Into::into),
-            Command::FactCheck { text, paragraph, slow } => {
-                realworld::fact_check(&project, text, paragraph, slow).map_err(Into::into)
+            Command::FactCheck { text, paragraph, slow, max_cost, force } => {
+                realworld::fact_check(&project, text, paragraph, slow, max_cost, force).map_err(Into::into)
             }
             Command::Thread(cmd) => {
                 thread::run(&project, cmd).map_err(Into::into)

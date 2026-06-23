@@ -38,6 +38,8 @@ pub fn fact_check(
     text: Option<String>,
     paragraph: Option<String>,
     slow: bool,
+    max_cost: usize,
+    force: bool,
 ) -> Result<()> {
     use crate::world::fact_check::check_paragraph;
     // The magic ledger (if any) is consulted; a missing world.hjson is fine.
@@ -101,7 +103,7 @@ pub fn fact_check(
 
     let mut findings = check_paragraph(&prose, &ledger, &[], world_ctx.as_ref());
     if slow {
-        match run_slow_track(project, &prose, def.as_ref(), &ledger, &places, &moons, &minerals, &findings) {
+        match run_slow_track(project, &prose, def.as_ref(), &ledger, &places, &moons, &minerals, &findings, max_cost, force) {
             Ok(mut slow_findings) => findings.append(&mut slow_findings),
             Err(e) => eprintln!("slow track skipped: {e}"),
         }
@@ -136,11 +138,14 @@ fn run_slow_track(
     moons: &[String],
     minerals: &[String],
     fast: &[crate::world::fact_check::Finding],
+    soft_cap: usize,
+    force: bool,
 ) -> Result<Vec<crate::world::fact_check::Finding>> {
     use crate::config::Config;
     use crate::project::ProjectLayout;
     use crate::world::fact_check_slow::{
-        build_slow_prompt, magic_summary, parse_slow_findings, world_summary, SLOW_SYSTEM,
+        backoff_delay, build_slow_prompt, is_transient, magic_summary, parse_slow_findings,
+        slow_preflight, world_summary, PreflightVerdict, SLOW_SYSTEM,
     };
     use crate::world::storage::WorldStore;
 
@@ -152,9 +157,6 @@ fn run_slow_track(
     let store = WorldStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("world store: {e}")))?;
     let used = store.llm_calls_today(&day).map_err(|e| Error::Store(format!("{e}")))?;
-    if used >= DAILY_CAP {
-        return Err(Error::Config(format!("daily slow-track cap reached ({DAILY_CAP} calls)")));
-    }
 
     // The LLM provider (errors cleanly when none is configured).
     let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
@@ -168,17 +170,54 @@ fn run_slow_track(
     let magic = magic_summary(ledger);
     let prompt = build_slow_prompt(prose, &summary, &magic, fast);
 
-    eprintln!("slow track · model: {model} · checking…");
-    let raw = crate::ai::stream::collect_blocking(
-        ai.client.clone(),
-        model.to_string(),
-        Some(SLOW_SYSTEM.to_string()),
-        prompt,
-    )
-    .map_err(|e| Error::Store(format!("LLM error: {e}")))?;
-    let _ = store.record_llm_call(&day);
+    // Preflight: estimate the cost and gate on the daily hard cap + per-call soft
+    // cap (the soft cap is overridable with --force; 0 disables it).
+    let effective_soft = if force { 0 } else { soft_cap };
+    let (pf, verdict) = slow_preflight(SLOW_SYSTEM, &prompt, used, DAILY_CAP, effective_soft);
+    match verdict {
+        PreflightVerdict::DailyCapReached => {
+            return Err(Error::Config(format!("daily slow-track cap reached ({DAILY_CAP} calls)")));
+        }
+        PreflightVerdict::OverSoftCap { est_total_tokens, soft_cap } => {
+            return Err(Error::Config(format!(
+                "slow track skipped: estimated ~{est_total_tokens} tokens exceeds soft cap {soft_cap} — \
+                 re-run with --force or raise --max-cost"
+            )));
+        }
+        PreflightVerdict::Proceed => {}
+    }
+    eprintln!(
+        "slow track · model: {model} · ~{} tokens · {}/{} calls today · checking…",
+        pf.est_total_tokens, pf.calls_used, pf.daily_cap
+    );
 
-    Ok(parse_slow_findings(&raw))
+    // Call with retry-on-transient (rate limit / timeout / upstream 5xx).
+    const MAX_ATTEMPTS: u32 = 3;
+    let mut last_err = String::new();
+    for attempt in 0..MAX_ATTEMPTS {
+        match crate::ai::stream::collect_blocking(
+            ai.client.clone(),
+            model.to_string(),
+            Some(SLOW_SYSTEM.to_string()),
+            prompt.clone(),
+        ) {
+            Ok(raw) => {
+                let _ = store.record_llm_call(&day);
+                return Ok(parse_slow_findings(&raw));
+            }
+            Err(e) => {
+                last_err = e.to_string();
+                if attempt + 1 < MAX_ATTEMPTS && is_transient(&last_err) {
+                    let d = backoff_delay(attempt);
+                    eprintln!("  transient error ({last_err}); retrying in {:.1}s…", d.as_secs_f32());
+                    std::thread::sleep(d);
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+    Err(Error::Store(format!("LLM error: {last_err}")))
 }
 
 /// Show (and optionally materialize) the magic ledger.

@@ -203,6 +203,16 @@
 >   End-to-end verified (Aldoria: 5 ranges, 8 rivers, 6 regions, 20 landmarks → PNG +
 >   GeoJSON, 20 Places refined). +7 tests. tests 1635→1642. *Next: `Ctrl+B W M` TUI
 >   chord; slow-track polish (coherence, scope chords, cost preflight).*
+> - **P5.x — slow-track cost preflight + retry/backoff (UNRELEASED, 1.3.27-dev).**
+>   `fact_check_slow.rs` gains pure, tested cost controls: `estimate_tokens` (~4
+>   chars/token), `slow_preflight(system, prompt, calls_used, daily_cap, soft_cap)`
+>   → `(SlowPreflight, PreflightVerdict::{Proceed|DailyCapReached|OverSoftCap})`,
+>   and `backoff_delay`/`is_transient` for retrying rate-limits/timeouts/5xx.
+>   `run_slow_track` now prints the cost estimate + daily tally before calling,
+>   gates on a per-call soft cap (`fact-check --max-cost <tokens>`, default 6000;
+>   `--force` overrides), and retries transient LLM errors up to 3× with exponential
+>   backoff. +7 tests. tests 1642→1649. *Next: cross-paragraph coherence pass;
+>   `Ctrl+B W F` scope chords (book/paragraph/recent); `Ctrl+B W M` map chord.*
 >
 > **DEFERRED DELIVERABLE (user-requested 2026-06-25):** once WORLD-4 is *fully*
 > implemented (all five layers + magic), generate `./examples/realworld/Earth.hjson`
